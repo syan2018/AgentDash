@@ -17,7 +17,12 @@ append_idempotency_key: IdempotencyKey | null, binding_id: RuntimeBindingId | nu
  * Correlation data owned by Managed Runtime. Source identifiers coexist with
  * canonical identifiers here and never replace identifiers inside the event.
  */
-export type RuntimePresentationCoordinate = { runtime_turn_id: RuntimeTurnId | null, runtime_item_id: RuntimeItemId | null, interaction_id: RuntimeInteractionId | null, source_thread_id: string | null, source_turn_id: string | null, source_item_id: string | null, source_request_id: string | null,
+export type RuntimePresentationCoordinate = { runtime_turn_id: RuntimeTurnId | null,
+/**
+ * Session-visible turn identity. Runtime/source identifiers are correlation
+ * coordinates and must never be substituted for this value at API projection.
+ */
+presentation_turn_id: PresentationTurnId | null, runtime_item_id: RuntimeItemId | null, interaction_id: RuntimeInteractionId | null, source_thread_id: string | null, source_turn_id: string | null, source_item_id: string | null, source_request_id: string | null,
 /**
  * Producer-owned presentation entry order from the source session stream.
  * Persistence and journal projection must preserve it verbatim.
@@ -1237,12 +1242,22 @@ export type DriverBinding = { driver_binding_id: DriverBindingId, source_thread_
 
 export type DriverBindingId = string;
 
-export type DriverCommandEnvelope = { request_id: DriverRequestId, presentation_thread_id: PresentationThreadId, binding_id: RuntimeBindingId, generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId,
+export type DriverCommandEnvelope = { request_id: DriverRequestId,
+/**
+ * Managed Runtime operation that owns this delivery. Drivers must preserve
+ * it across acceptance, terminal emission, duplicate dispatch and recovery.
+ */
+operation_id: RuntimeOperationId, presentation_thread_id: PresentationThreadId, binding_id: RuntimeBindingId, generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId,
 /**
  * Managed Runtime 为会产生新 Turn 的命令分配的 canonical identity。
  * Driver 只把自己的 source turn 映射到该 identity，不再创建第二个 Runtime Turn。
  */
-runtime_turn_id: RuntimeTurnId | null, command: RuntimeCommand, };
+runtime_turn_id: RuntimeTurnId | null,
+/**
+ * Session-visible turn identity carried by the protected presentation
+ * protocol. It is distinct from both canonical Runtime and vendor turns.
+ */
+presentation_turn_id: PresentationTurnId | null, command: RuntimeCommand, };
 
 export type DriverContextRevision = string;
 
@@ -1252,7 +1267,12 @@ export type DriverDispatchReceipt = { request_id: DriverRequestId, duplicate: bo
 
 export type DriverError = { "kind": "unsupported", reason: string, } | { "kind": "rejected", reason: string, } | { "kind": "unavailable", reason: string, retryable: boolean, } | { "kind": "stale_generation" } | { "kind": "protocol_violation", reason: string, critical: boolean, } | { "kind": "lost", reason: string, retryable: boolean, };
 
-export type DriverEventEnvelope = { binding_id: RuntimeBindingId, generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId, source_turn_id: DriverTurnId | null, source_item_id: DriverItemId | null,
+export type DriverEventEnvelope = { binding_id: RuntimeBindingId, generation: RuntimeDriverGeneration,
+/**
+ * Accepted Runtime command that caused this emission. Long-lived binding
+ * events may omit it; command/turn events preserve it explicitly.
+ */
+operation_id: RuntimeOperationId | null, source_thread_id: DriverThreadId, source_turn_id: DriverTurnId | null, source_item_id: DriverItemId | null,
 /**
  * Original vendor request identity. Numeric JSON-RPC ids use their exact
  * decimal representation; string ids are preserved byte-for-byte.
@@ -1365,7 +1385,7 @@ export type RuntimeActor = { "user": { subject: string, } } | { "agent": { name:
 
 export type RuntimeBindingId = string;
 
-export type RuntimeCommand = { "kind": "thread_start", thread_id: RuntimeThreadId, presentation_thread_id: PresentationThreadId, presentation_turn_id: PresentationTurnId | null, binding_id: RuntimeBindingId, driver_generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId, profile_digest: ProfileDigest, bound_profile: RuntimeProfile, input: Array<RuntimeInput>, surface: RuntimeSurfaceDescriptor, settings_revision: ThreadSettingsRevision, } | { "kind": "thread_resume", thread_id: RuntimeThreadId, } | { "kind": "thread_rebind", thread_id: RuntimeThreadId, recovery_intent_id: RuntimeRecoveryIntentId, binding_epoch: BindingEpoch, expected_binding_id: RuntimeBindingId, expected_driver_generation: RuntimeDriverGeneration, new_binding_id: RuntimeBindingId, new_driver_generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId, profile_digest: ProfileDigest, bound_profile: RuntimeProfile, } | { "kind": "thread_fork", thread_id: RuntimeThreadId, checkpoint_id: ContextCheckpointId | null, } | { "kind": "thread_settings_update", thread_id: RuntimeThreadId, instructions: Array<string>, } | { "kind": "turn_start", thread_id: RuntimeThreadId, presentation_turn_id: PresentationTurnId, input: Array<RuntimeInput>, } | { "kind": "turn_steer", thread_id: RuntimeThreadId, expected_turn_id: RuntimeTurnId, input: Array<RuntimeInput>, } | { "kind": "turn_interrupt", thread_id: RuntimeThreadId, expected_turn_id: RuntimeTurnId, } | { "kind": "interaction_respond", thread_id: RuntimeThreadId, interaction_id: RuntimeInteractionId, response: InteractionResponse, } | { "kind": "context_compact", thread_id: RuntimeThreadId, compaction_id: ContextCompactionId, trigger: ContextCompactionTrigger, base_checkpoint_id: ContextCheckpointId | null, expected_context_revision: ContextRevision, } | { "kind": "tool_set_replace", thread_id: RuntimeThreadId, expected_tool_set_revision: ToolSetRevision, tool_set_digest: string, } | { "kind": "surface_adopt", thread_id: RuntimeThreadId, expected_surface_revision: SurfaceRevision, expected_surface_digest: SurfaceDigest, target: RuntimeSurfaceDescriptor, };
+export type RuntimeCommand = { "kind": "thread_start", thread_id: RuntimeThreadId, presentation_thread_id: PresentationThreadId, presentation_turn_id: PresentationTurnId | null, binding_id: RuntimeBindingId, driver_generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId, profile_digest: ProfileDigest, bound_profile: RuntimeProfile, input: Array<RuntimeInput>, surface: RuntimeSurfaceDescriptor, settings_revision: ThreadSettingsRevision, } | { "kind": "thread_resume", thread_id: RuntimeThreadId, } | { "kind": "thread_rebind", thread_id: RuntimeThreadId, recovery_intent_id: RuntimeRecoveryIntentId, binding_epoch: BindingEpoch, expected_binding_id: RuntimeBindingId, expected_driver_generation: RuntimeDriverGeneration, new_binding_id: RuntimeBindingId, new_driver_generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId, profile_digest: ProfileDigest, bound_profile: RuntimeProfile, } | { "kind": "thread_fork", thread_id: RuntimeThreadId, checkpoint_id: ContextCheckpointId | null, } | { "kind": "thread_settings_update", thread_id: RuntimeThreadId, instructions: Array<string>, } | { "kind": "turn_start", thread_id: RuntimeThreadId, presentation_turn_id: PresentationTurnId, input: Array<RuntimeInput>, } | { "kind": "turn_steer", thread_id: RuntimeThreadId, expected_turn_id: RuntimeTurnId, input: Array<RuntimeInput>, } | { "kind": "turn_interrupt", thread_id: RuntimeThreadId, expected_turn_id: RuntimeTurnId, } | { "kind": "interaction_respond", thread_id: RuntimeThreadId, interaction_id: RuntimeInteractionId, response: InteractionResponse, } | { "kind": "context_compact", thread_id: RuntimeThreadId, compaction_id: ContextCompactionId, trigger: ContextCompactionTrigger, base_checkpoint_id: ContextCheckpointId | null, expected_context_revision: ContextRevision, } | { "kind": "tool_set_replace", thread_id: RuntimeThreadId, expected_current_tool_set_revision: ToolSetRevision, target_tool_set_revision: ToolSetRevision, tool_set_digest: string, } | { "kind": "surface_adopt", thread_id: RuntimeThreadId, expected_surface_revision: SurfaceRevision, expected_surface_digest: SurfaceDigest, target: RuntimeSurfaceDescriptor, };
 
 export type RuntimeCommandEnvelope = { meta: OperationMeta, presentation: Array<RuntimePresentationInput>, command: RuntimeCommand, };
 

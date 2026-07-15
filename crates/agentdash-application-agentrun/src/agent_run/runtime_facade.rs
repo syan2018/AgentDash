@@ -525,6 +525,7 @@ impl ManagedAgentRunRuntime {
             .map(|(index, frame)| RuntimePresentationInput {
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: Some(turn_id.clone()),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(binding.presentation_thread_id.to_string()),
@@ -570,6 +571,7 @@ impl ManagedAgentRunRuntime {
             .map(|(index, frame)| RuntimePresentationInput {
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: Some(turn_id.clone()),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(binding.presentation_thread_id.to_string()),
@@ -821,6 +823,10 @@ impl ManagedAgentRunRuntime {
         };
         let coordinate = |source_item_id, source_entry_index| RuntimePresentationCoordinate {
             runtime_turn_id: None,
+            presentation_turn_id: Some(
+                agentdash_agent_runtime_contract::PresentationTurnId::new(turn_id.clone())
+                    .expect("validated presentation turn identity"),
+            ),
             runtime_item_id: None,
             interaction_id: None,
             source_thread_id: Some(thread_id.clone()),
@@ -908,6 +914,10 @@ impl ManagedAgentRunRuntime {
         Ok(vec![RuntimePresentationInput {
             coordinate: RuntimePresentationCoordinate {
                 runtime_turn_id: None,
+                presentation_turn_id: Some(
+                    agentdash_agent_runtime_contract::PresentationTurnId::new(turn_id.clone())
+                        .expect("validated presentation turn identity"),
+                ),
                 runtime_item_id: None,
                 interaction_id: None,
                 source_thread_id: Some(thread_id.clone()),

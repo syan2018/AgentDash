@@ -1152,9 +1152,20 @@ async fn claim_runtime_outbox(
     limit: i64,
 ) -> Result<Vec<RuntimeWorkClaim>, RuntimeStoreError> {
     let rows = sqlx::query(
-        "WITH candidates AS (SELECT operation_id FROM agent_runtime_outbox \
-         WHERE dispatched_at IS NULL AND (claim_token IS NULL OR claim_expires_at_ms <= $1) \
-         ORDER BY created_at LIMIT $5 FOR UPDATE SKIP LOCKED) \
+        "WITH candidates AS (SELECT q.operation_id FROM agent_runtime_outbox q \
+         JOIN agent_runtime_operation o ON o.id=q.operation_id AND o.thread_id=q.thread_id \
+         WHERE q.dispatched_at IS NULL \
+         AND (q.claim_token IS NULL OR q.claim_expires_at_ms <= $1) \
+         AND NOT EXISTS ( \
+             SELECT 1 FROM agent_runtime_outbox predecessor \
+             JOIN agent_runtime_operation predecessor_operation \
+               ON predecessor_operation.id=predecessor.operation_id \
+              AND predecessor_operation.thread_id=predecessor.thread_id \
+             WHERE predecessor.thread_id=q.thread_id \
+               AND predecessor.dispatched_at IS NULL \
+               AND predecessor_operation.operation_sequence < o.operation_sequence \
+         ) \
+         ORDER BY q.created_at,q.operation_id LIMIT $5 FOR UPDATE OF q SKIP LOCKED) \
          UPDATE agent_runtime_outbox q SET claim_token=$2,claim_owner=$3,claim_expires_at_ms=$4,\
          attempt_count=q.attempt_count+1,last_error=NULL,updated_at=now() FROM candidates c \
          WHERE q.operation_id=c.operation_id RETURNING q.operation_id,q.payload,q.attempt_count",
@@ -1882,6 +1893,7 @@ async fn write_preparation(
            AND agent_context_preparation.trigger_kind=excluded.trigger_kind \
            AND agent_context_preparation.expected_base_checkpoint_id IS NOT DISTINCT FROM excluded.expected_base_checkpoint_id \
            AND agent_context_preparation.expected_base_revision=excluded.expected_base_revision \
+           AND agent_context_preparation.record->'source_end_event_sequence'=excluded.record->'source_end_event_sequence' \
            AND ((agent_context_preparation.status='pending' AND excluded.status IN ('pending','prepared','terminal')) \
              OR (agent_context_preparation.status='prepared' AND excluded.status IN ('prepared','terminal')) \
              OR (agent_context_preparation.status='terminal' AND excluded.status='terminal'))",
@@ -2527,6 +2539,11 @@ enum TestCommitFailurePoint {
 mod tests {
     use std::{collections::BTreeSet, str::FromStr, sync::Arc, time::Duration};
 
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
+    use agentdash_agent_protocol::{
+        BackboneEvent, ItemCompletedNotification, UserInputSource, UserInputSubmissionKind,
+        UserInputSubmittedNotification,
+    };
     use agentdash_agent_runtime::{
         BoundRuntimeHookEntry, BoundRuntimeHookPlan, CompactionPreparation,
         DriverEventQuarantineReason, HookAdmission, HookCompletion, HookCorrelation, HookEffect,
@@ -2543,15 +2560,138 @@ mod tests {
         AgentRunControlEffectKind, AgentRunControlEffectStatus, AgentRunControlEffectStore,
         NewAgentRunControlEffectRecord,
     };
+    use agentdash_application_ports::agent_run_runtime::{
+        AgentRunContextDeliveryTarget, AgentRunRuntimeBinding, AgentRunRuntimeBindingRepository,
+        AgentRunRuntimeTarget,
+    };
+    use agentdash_integration_api::{
+        AgentRuntimeContextBroker, DriverContextError, DriverTranscriptRequest,
+    };
 
     use super::{PostgresRuntimeRepository, TestCommitFailurePoint, quarantine_reason};
-    use crate::PostgresAgentRunControlEffectStore;
+    use crate::{
+        PostgresAgentRunControlEffectStore, PostgresAgentRuntimeCompositionRepository,
+        PostgresAgentRuntimeContextBroker,
+    };
 
     fn id<T: FromStr>(value: &str) -> T
     where
         T::Err: std::fmt::Debug,
     {
         value.parse().expect("valid runtime id")
+    }
+
+    struct AllowSurface;
+
+    #[async_trait::async_trait]
+    impl agentdash_agent_runtime::RuntimeSurfaceReferenceValidator for AllowSurface {
+        async fn validate_surface_reference(
+            &self,
+            _binding_id: &RuntimeBindingId,
+            _runtime_thread_id: &RuntimeThreadId,
+            _target: &RuntimeSurfaceDescriptor,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    async fn seed_agent_run_target(pool: &sqlx::PgPool) -> AgentRunRuntimeTarget {
+        let target = AgentRunRuntimeTarget {
+            run_id: uuid::Uuid::new_v4(),
+            agent_id: uuid::Uuid::new_v4(),
+        };
+        let project_id = uuid::Uuid::new_v4();
+        let now = chrono::Utc::now();
+        sqlx::query(
+            "INSERT INTO lifecycle_runs \
+             (id,project_id,topology,status,created_at,updated_at,last_activity_at) \
+             VALUES ($1,$2,'plain','ready',$3,$3,$3)",
+        )
+        .bind(target.run_id.to_string())
+        .bind(project_id.to_string())
+        .bind(now)
+        .execute(pool)
+        .await
+        .expect("seed runtime binding lifecycle run");
+        sqlx::query(
+            "INSERT INTO lifecycle_agents (id,run_id,project_id,source,status) \
+             VALUES ($1,$2,$3,'primary','active')",
+        )
+        .bind(target.agent_id.to_string())
+        .bind(target.run_id.to_string())
+        .bind(project_id.to_string())
+        .execute(pool)
+        .await
+        .expect("seed runtime binding lifecycle agent");
+        target
+    }
+
+    async fn seed_runtime_host_binding(fixture: &Fixture) {
+        let service_id = format!("service-{}", fixture.suffix);
+        let offer_id = format!("offer-{}", fixture.suffix);
+        let binding_id = format!("binding-{}", fixture.suffix);
+        let profile_digest = format!("profile-{}", fixture.suffix);
+        let mut tx = fixture
+            .store
+            .pool()
+            .begin()
+            .await
+            .expect("begin runtime Host seed");
+        sqlx::query(
+            "INSERT INTO agent_runtime_service_instance \
+             (id,definition_id,definition_build_digest,revision,config,credentials,placement,\
+              desired_state,observed_state,active_generation) \
+             VALUES ($1,'test-definition','sha256:test-definition',1,'{}','{}','{}','active','{}',7)",
+        )
+        .bind(&service_id)
+        .execute(&mut *tx)
+        .await
+        .expect("seed runtime service instance");
+        sqlx::query(
+            "INSERT INTO agent_runtime_service_instance_revision \
+             (service_instance_id,revision,instance_snapshot) VALUES ($1,1,'{}')",
+        )
+        .bind(&service_id)
+        .execute(&mut *tx)
+        .await
+        .expect("seed runtime service revision");
+        sqlx::query(
+            "INSERT INTO agent_runtime_service_activation \
+             (service_instance_id,instance_revision,driver_generation,protocol_revision,\
+              effective_profile,profile_digest,conformance_evidence,instance_snapshot) \
+             VALUES ($1,1,7,1,'{}',$2,'{}','{}')",
+        )
+        .bind(&service_id)
+        .bind(&profile_digest)
+        .execute(&mut *tx)
+        .await
+        .expect("seed runtime service activation");
+        sqlx::query(
+            "INSERT INTO agent_runtime_offer \
+             (id,service_instance_id,instance_revision,driver_generation,profile_digest,available,offer) \
+             VALUES ($1,$2,1,7,$3,true,'{}')",
+        )
+        .bind(&offer_id)
+        .bind(&service_id)
+        .bind(&profile_digest)
+        .execute(&mut *tx)
+        .await
+        .expect("seed runtime offer");
+        sqlx::query(
+            "INSERT INTO agent_runtime_host_binding \
+             (binding_id,thread_id,offer_id,service_instance_id,instance_revision,\
+              driver_generation,profile_digest,state,lease_epoch,binding) \
+             VALUES ($1,$2,$3,$4,1,7,$5,'active',1,'{}')",
+        )
+        .bind(&binding_id)
+        .bind(fixture.thread_id.as_str())
+        .bind(&offer_id)
+        .bind(&service_id)
+        .bind(&profile_digest)
+        .execute(&mut *tx)
+        .await
+        .expect("seed runtime Host binding");
+        tx.commit().await.expect("commit runtime Host seed");
     }
 
     struct TestTerminalPresentationProjector;
@@ -2573,6 +2713,7 @@ mod tests {
             Ok(vec![RuntimePresentationInput {
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: Some(context.runtime_turn_id.clone()),
+                    presentation_turn_id: Some(context.presentation_turn_id.clone()),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(context.presentation_thread_id.to_string()),
@@ -2622,6 +2763,7 @@ mod tests {
                 event: DriverEventEnvelope {
                     binding_id: id("binding-quarantine"),
                     generation: RuntimeDriverGeneration(3),
+                    operation_id: None,
                     source_thread_id: id("source-quarantine"),
                     source_turn_id: None,
                     source_item_id: None,
@@ -2770,7 +2912,8 @@ mod tests {
             .execute(&pool).await.expect("seed host-owned source coordinate");
         let store = Arc::new(PostgresRuntimeRepository::new(pool));
         let runtime =
-            ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
+            ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector))
+                .with_surface_validator(Arc::new(AllowSurface));
         Fixture {
             store,
             runtime,
@@ -2861,6 +3004,7 @@ mod tests {
                 binding_id: Some(id(&format!("binding-{}", fixture.suffix))),
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: Some(id("source-turn")),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some("source-thread".to_string()),
@@ -2895,6 +3039,7 @@ mod tests {
                 binding_id: Some(id(&format!("binding-{}", fixture.suffix))),
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some("source-thread".to_string()),
@@ -3036,6 +3181,7 @@ mod tests {
                 base.revision,
                 RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some("source-thread".to_string()),
@@ -3062,6 +3208,165 @@ mod tests {
                 .len(),
             1
         );
+
+        let started = start(&fixture);
+        let RuntimeCommand::ThreadStart {
+            presentation_thread_id,
+            binding_id,
+            driver_generation,
+            source_thread_id,
+            profile_digest,
+            bound_profile,
+            surface,
+            settings_revision,
+            ..
+        } = started.command
+        else {
+            unreachable!("fixture starts a thread")
+        };
+        let mut projection = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load compacted projection")
+            .expect("compacted thread");
+        let expected_projection_revision = projection.revision;
+        let tail_turn_id = format!("presentation-tail-{}", fixture.suffix);
+        let tail_tool = BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+            codex::ThreadItem::DynamicToolCall {
+                id: "turn_009:tool_014".to_string(),
+                tool: "fs_glob".to_string(),
+                arguments: serde_json::json!({"pattern":"**/*.rs"}),
+                status: codex::DynamicToolCallStatus::Completed,
+                content_items: Some(Some(vec![
+                    codex::DynamicToolCallOutputContentItem::InputText {
+                        text: "src/lib.rs".to_string(),
+                    },
+                ])),
+                duration_ms: None,
+                namespace: None,
+                success: Some(Some(true)),
+            },
+            presentation_thread_id.to_string(),
+            tail_turn_id.clone(),
+        ));
+        let tail_assistant = BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+            codex::ThreadItem::AgentMessage {
+                id: "assistant-after-compaction".to_string(),
+                text: "assistant tail".to_string(),
+                phase: None,
+                memory_citation: None,
+            },
+            presentation_thread_id.to_string(),
+            tail_turn_id.clone(),
+        ));
+        let tail_records = [tail_tool, tail_assistant]
+            .into_iter()
+            .enumerate()
+            .map(|(entry_index, event)| {
+                projection
+                    .append_durable_fact(
+                        RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+                            PresentationDurability::Durable,
+                            event,
+                        )),
+                        1_710_000_000_100 + u64::try_from(entry_index).unwrap_or_default(),
+                        Some(binding_id.clone()),
+                        None,
+                        RuntimePresentationCoordinate {
+                            runtime_turn_id: None,
+                            presentation_turn_id: Some(id(&tail_turn_id)),
+                            runtime_item_id: None,
+                            interaction_id: None,
+                            source_thread_id: Some(source_thread_id.to_string()),
+                            source_turn_id: Some(tail_turn_id.clone()),
+                            source_item_id: None,
+                            source_request_id: None,
+                            source_entry_index: Some(
+                                u32::try_from(entry_index).unwrap_or(u32::MAX),
+                            ),
+                        },
+                    )
+                    .expect("append post-compaction presentation tail")
+            })
+            .collect::<Vec<_>>();
+        let expected_latest_available = projection.next_event_sequence;
+        let expected_tail_records = tail_records.clone();
+        fixture
+            .store
+            .commit(agentdash_agent_runtime::RuntimeCommit {
+                expected_projection_revision: Some(expected_projection_revision),
+                projection,
+                operation: None,
+                operation_terminals: Vec::new(),
+                records: tail_records,
+                outbox: Vec::new(),
+                terminal_application_effects: Vec::new(),
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: Vec::new(),
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
+                quarantine: Vec::new(),
+            })
+            .await
+            .expect("persist post-compaction presentation tail");
+        let composition = Arc::new(PostgresAgentRuntimeCompositionRepository::new(
+            fixture.store.pool().clone(),
+        ));
+        seed_runtime_host_binding(&fixture).await;
+        let target = seed_agent_run_target(fixture.store.pool()).await;
+        composition
+            .insert(AgentRunRuntimeBinding {
+                target,
+                presentation_thread_id,
+                thread_id: fixture.thread_id.clone(),
+                binding_id: binding_id.clone(),
+                binding_epoch: BindingEpoch(1),
+                driver_generation,
+                source_thread_id,
+                profile_digest,
+                profile_provenance: ProfileProvenance {
+                    service_digest: id("profile-service"),
+                    transport_digest: id("profile-transport"),
+                    host_policy_digest: id("profile-host"),
+                },
+                bound_profile: *bound_profile,
+                surface: *surface,
+                settings_revision,
+                context_delivery_target: AgentRunContextDeliveryTarget {
+                    connector_id: "native".to_string(),
+                    executor: "NATIVE".to_string(),
+                },
+            })
+            .await
+            .expect("persist application binding lineage");
+        let broker = PostgresAgentRuntimeContextBroker::new(fixture.store.clone(), composition);
+        let transcript = broker
+            .load_transcript(DriverTranscriptRequest {
+                binding_id: binding_id.clone(),
+                generation: driver_generation,
+                runtime_thread_id: fixture.thread_id.clone(),
+            })
+            .await
+            .expect("load complete durable transcript through production broker");
+        assert_eq!(transcript.latest_available, expected_latest_available);
+        assert_eq!(transcript.active_compaction_source_end, None);
+        assert!(transcript.records.ends_with(&expected_tail_records));
+        assert!(matches!(
+            broker
+                .load_transcript(DriverTranscriptRequest {
+                    binding_id,
+                    generation: driver_generation,
+                    runtime_thread_id: id("different-runtime-thread"),
+                })
+                .await,
+            Err(DriverContextError::Stale)
+        ));
         fixture.store.clear(&fixture.thread_id).await;
         assert!(
             fixture
@@ -3080,6 +3385,7 @@ mod tests {
                 base.revision,
                 RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some("source-thread".to_string()),
@@ -3145,6 +3451,7 @@ mod tests {
                 binding_id: Some(id(&format!("binding-{}", fixture.suffix))),
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: Some(runtime_turn_id.clone()),
+                    presentation_turn_id: Some(presentation_turn_id.clone()),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(base.presentation_thread_id.to_string()),
@@ -3287,6 +3594,7 @@ mod tests {
                 binding_id: Some(id(&format!("binding-{}", fixture.suffix))),
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: Some(runtime_turn_id),
+                    presentation_turn_id: Some(presentation_turn_id.clone()),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(current.presentation_thread_id.to_string()),
@@ -3530,6 +3838,7 @@ mod tests {
             .ingest_driver_event(DriverEventEnvelope {
                 binding_id: id(&original_binding_id),
                 generation: RuntimeDriverGeneration(7),
+                operation_id: None,
                 source_thread_id: id(&source_thread_id),
                 source_turn_id: None,
                 source_item_id: None,
@@ -4172,6 +4481,255 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_outbox_preserves_thread_causality_across_surface_adopt_retry() {
+        let _serial = serial_test_guard().await;
+        let fixture = fixture("surface adoption outbox causality").await;
+        let mut initial = start(&fixture);
+        let RuntimeCommand::ThreadStart { bound_profile, .. } = &mut initial.command else {
+            unreachable!("fixture starts a Runtime thread")
+        };
+        bound_profile.lifecycle.extend([
+            LifecycleCapability::SurfaceAdopt,
+            LifecycleCapability::TurnStart,
+        ]);
+        let initial_operation_id = initial.meta.operation_id.clone();
+        fixture
+            .runtime
+            .execute(initial)
+            .await
+            .expect("start causal Runtime thread");
+        let initial_claim = fixture
+            .store
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::RuntimeOutbox,
+                owner: RuntimeWorkerId("causal-initial-worker".to_string()),
+                lease_duration_ms: 30_000,
+                limit: 8,
+            })
+            .await
+            .expect("claim initial ThreadStart")
+            .into_iter()
+            .find(|claim| matches!(&claim.identity, agentdash_agent_runtime::RuntimeWorkIdentity::Operation(id) if id == &initial_operation_id))
+            .expect("initial ThreadStart outbox claim");
+        fixture
+            .runtime
+            .complete_driver_dispatch_operation(&fixture.thread_id, &initial_operation_id)
+            .await
+            .expect("complete initial delivery operation");
+        fixture
+            .store
+            .ack(&initial_claim)
+            .await
+            .expect("ack initial ThreadStart");
+
+        let before_adoption = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load Runtime thread before adoption")
+            .expect("Runtime thread exists");
+        let mut target = before_adoption.surface.clone();
+        target.surface_revision = SurfaceRevision(target.surface_revision.0 + 1);
+        target.surface_digest = id(&format!("surface-adopted-{}", fixture.suffix));
+        target.source_frame_id = format!("frame-adopted-{}", fixture.suffix);
+        target.hook_plan.revision = HookPlanRevision(target.hook_plan.revision.0 + 1);
+        target.hook_plan.digest = id(&format!("hook-plan-adopted-{}", fixture.suffix));
+        let adopt_operation_id: RuntimeOperationId =
+            id(&format!("surface-adopt-operation-{}", fixture.suffix));
+        fixture
+            .runtime
+            .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
+                meta: OperationMeta {
+                    operation_id: adopt_operation_id.clone(),
+                    idempotency_key: id(&format!("surface-adopt-key-{}", fixture.suffix)),
+                    expected_thread_revision: Some(before_adoption.revision),
+                    actor: RuntimeActor::System {
+                        component: "surface-adopt-causality-test".to_string(),
+                    },
+                },
+                command: RuntimeCommand::SurfaceAdopt {
+                    thread_id: fixture.thread_id.clone(),
+                    expected_surface_revision: before_adoption.surface.surface_revision,
+                    expected_surface_digest: before_adoption.surface.surface_digest,
+                    target: Box::new(target),
+                },
+            })
+            .await
+            .expect("accept canonical SurfaceAdopt");
+        let after_adoption = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load Runtime thread after adoption")
+            .expect("Runtime thread exists");
+        let turn_operation_id: RuntimeOperationId =
+            id(&format!("turn-after-adopt-operation-{}", fixture.suffix));
+        fixture
+            .runtime
+            .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
+                meta: OperationMeta {
+                    operation_id: turn_operation_id.clone(),
+                    idempotency_key: id(&format!("turn-after-adopt-key-{}", fixture.suffix)),
+                    expected_thread_revision: Some(after_adoption.revision),
+                    actor: RuntimeActor::User {
+                        subject: "causality-test-user".to_string(),
+                    },
+                },
+                command: RuntimeCommand::TurnStart {
+                    thread_id: fixture.thread_id.clone(),
+                    presentation_turn_id: id(&format!(
+                        "presentation-turn-after-adopt-{}",
+                        fixture.suffix
+                    )),
+                    input: vec![RuntimeInput::Text {
+                        text: "must wait for adopted driver surface".to_string(),
+                    }],
+                },
+            })
+            .await
+            .expect("accept TurnStart behind SurfaceAdopt");
+
+        let other_suffix = uuid::Uuid::new_v4().simple().to_string();
+        let other_binding_id = format!("binding-{other_suffix}");
+        let other_source_id = format!("source-{other_suffix}");
+        let other_thread_id = format!("thread-{other_source_id}");
+        sqlx::query("INSERT INTO agent_runtime_binding (id,driver_generation,profile_digest) VALUES ($1,7,$2)")
+            .bind(&other_binding_id)
+            .bind(format!("profile-{other_suffix}"))
+            .execute(fixture.store.pool())
+            .await
+            .expect("seed independent binding");
+        sqlx::query("INSERT INTO agent_runtime_source_coordinate (binding_id,source_thread_id,thread_id) VALUES ($1,$2,$3)")
+            .bind(&other_binding_id)
+            .bind(&other_source_id)
+            .bind(&other_thread_id)
+            .execute(fixture.store.pool())
+            .await
+            .expect("seed independent source coordinate");
+        let mut other_start = start(&fixture);
+        let other_operation_id: RuntimeOperationId =
+            id(&format!("other-thread-operation-{other_suffix}"));
+        other_start.meta.operation_id = other_operation_id.clone();
+        other_start.meta.idempotency_key = id(&format!("other-thread-key-{other_suffix}"));
+        let RuntimeCommand::ThreadStart {
+            thread_id,
+            presentation_thread_id,
+            presentation_turn_id,
+            binding_id,
+            source_thread_id,
+            profile_digest,
+            surface,
+            ..
+        } = &mut other_start.command
+        else {
+            unreachable!("fixture starts a Runtime thread")
+        };
+        *thread_id = id(&other_thread_id);
+        *presentation_thread_id = id(&format!("presentation-{other_suffix}"));
+        *presentation_turn_id = None;
+        *binding_id = id(&other_binding_id);
+        *source_thread_id = id(&other_source_id);
+        *profile_digest = id(&format!("profile-{other_suffix}"));
+        surface.source_frame_id = format!("frame-{other_suffix}");
+        surface.surface_digest = id(&format!("surface-{other_suffix}"));
+        surface.vfs_digest = format!("vfs-{other_suffix}");
+        surface.context_digest = id(&format!("context-{other_suffix}"));
+        surface.tool_set_digest = format!("tools-{other_suffix}");
+        surface.hook_plan.digest = id(&format!("hook-plan-{other_suffix}"));
+        fixture
+            .runtime
+            .execute(other_start)
+            .await
+            .expect("accept independent thread work");
+
+        let first_batch = fixture
+            .store
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::RuntimeOutbox,
+                owner: RuntimeWorkerId("causal-worker".to_string()),
+                lease_duration_ms: 30_000,
+                limit: 8,
+            })
+            .await
+            .expect("claim per-thread outbox heads");
+        assert_eq!(first_batch.len(), 2, "one head per thread is claimable");
+        assert!(first_batch.iter().any(|claim| matches!(&claim.identity, agentdash_agent_runtime::RuntimeWorkIdentity::Operation(id) if id == &adopt_operation_id)));
+        assert!(first_batch.iter().any(|claim| matches!(&claim.identity, agentdash_agent_runtime::RuntimeWorkIdentity::Operation(id) if id == &other_operation_id)));
+        assert!(!first_batch.iter().any(|claim| matches!(&claim.identity, agentdash_agent_runtime::RuntimeWorkIdentity::Operation(id) if id == &turn_operation_id)));
+
+        let adopt_claim = first_batch
+            .iter()
+            .find(|claim| matches!(&claim.identity, agentdash_agent_runtime::RuntimeWorkIdentity::Operation(id) if id == &adopt_operation_id))
+            .expect("SurfaceAdopt head claim")
+            .clone();
+        let other_claim = first_batch
+            .iter()
+            .find(|claim| matches!(&claim.identity, agentdash_agent_runtime::RuntimeWorkIdentity::Operation(id) if id == &other_operation_id))
+            .expect("independent thread head claim")
+            .clone();
+        fixture
+            .store
+            .release(&adopt_claim, "connector surface sync failed".to_string())
+            .await
+            .expect("release failed SurfaceAdopt");
+        fixture
+            .runtime
+            .complete_driver_dispatch_operation(&id(&other_thread_id), &other_operation_id)
+            .await
+            .expect("complete independent thread operation");
+        fixture
+            .store
+            .ack(&other_claim)
+            .await
+            .expect("ack independent thread operation");
+
+        let retry_batch = fixture
+            .store
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::RuntimeOutbox,
+                owner: RuntimeWorkerId("causal-retry-worker".to_string()),
+                lease_duration_ms: 30_000,
+                limit: 8,
+            })
+            .await
+            .expect("retry failed causal head");
+        assert_eq!(retry_batch.len(), 1);
+        let adopt_retry = retry_batch.into_iter().next().expect("SurfaceAdopt retry");
+        assert!(
+            matches!(&adopt_retry.identity, agentdash_agent_runtime::RuntimeWorkIdentity::Operation(id) if id == &adopt_operation_id)
+        );
+        assert_eq!(adopt_retry.attempt, 2);
+        fixture
+            .runtime
+            .complete_driver_dispatch_operation(&fixture.thread_id, &adopt_operation_id)
+            .await
+            .expect("complete adopted driver surface sync");
+        fixture
+            .store
+            .ack(&adopt_retry)
+            .await
+            .expect("ack adopted driver surface sync");
+
+        let resumed = fixture
+            .store
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::RuntimeOutbox,
+                owner: RuntimeWorkerId("causal-turn-worker".to_string()),
+                lease_duration_ms: 30_000,
+                limit: 8,
+            })
+            .await
+            .expect("claim TurnStart after adoption succeeds");
+        assert_eq!(resumed.len(), 1);
+        assert!(
+            matches!(&resumed[0].identity, agentdash_agent_runtime::RuntimeWorkIdentity::Operation(id) if id == &turn_operation_id)
+        );
+        assert_eq!(resumed[0].attempt, 1);
+    }
+
+    #[tokio::test]
     async fn context_work_queues_cover_pending_dispatch_recovery_and_head_checkpoint_consistency() {
         let _serial = serial_test_guard().await;
         let fixture = fixture("runtime context recovery queues").await;
@@ -4251,6 +4809,124 @@ mod tests {
             .expect("claim preparation")
             .pop()
             .expect("pending preparation");
+        let source_end_event_sequence = match &preparation_claim.payload {
+            RuntimeWorkPayload::ContextPreparation(work) => work.source_end_event_sequence,
+            other => panic!("unexpected preparation payload: {other:?}"),
+        };
+
+        // A later turn is allowed to complete while this already-admitted compaction is being
+        // prepared. Its durable presentation facts must remain strictly after the frozen source
+        // boundary so the compaction worker excludes them and cold rebind replays them as tail.
+        let mut projection = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load projection for post-admission turn")
+            .expect("runtime thread");
+        let expected_projection_revision = projection.revision;
+        let presentation_thread_id = format!("presentation-{}", fixture.suffix);
+        let tail_turn_id = format!("post-admission-turn-{}", fixture.suffix);
+        let tail_events = [
+            BackboneEvent::UserInputSubmitted(UserInputSubmittedNotification::new(
+                presentation_thread_id.clone(),
+                tail_turn_id.clone(),
+                "post-admission-user",
+                UserInputSubmissionKind::Prompt,
+                UserInputSource::core_composer(),
+                vec![codex::UserInput::Text {
+                    text: "post-admission prompt".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            )),
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                codex::ThreadItem::DynamicToolCall {
+                    id: "turn_009:tool_014".to_string(),
+                    tool: "fs_glob".to_string(),
+                    arguments: serde_json::json!({"pattern":"**/*.rs"}),
+                    status: codex::DynamicToolCallStatus::Completed,
+                    content_items: Some(Some(vec![
+                        codex::DynamicToolCallOutputContentItem::InputText {
+                            text: "src/lib.rs".to_string(),
+                        },
+                    ])),
+                    duration_ms: None,
+                    namespace: None,
+                    success: Some(Some(true)),
+                },
+                presentation_thread_id.clone(),
+                tail_turn_id.clone(),
+            )),
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                codex::ThreadItem::AgentMessage {
+                    id: "assistant-after-compaction-admission".to_string(),
+                    text: "post-admission answer".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                },
+                presentation_thread_id.clone(),
+                tail_turn_id.clone(),
+            )),
+        ];
+        let tail_records = tail_events
+            .into_iter()
+            .enumerate()
+            .map(|(entry_index, event)| {
+                projection
+                    .append_durable_fact(
+                        RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+                            PresentationDurability::Durable,
+                            event,
+                        )),
+                        1_710_000_000_200 + u64::try_from(entry_index).unwrap_or_default(),
+                        Some(id(&format!("binding-{}", fixture.suffix))),
+                        None,
+                        RuntimePresentationCoordinate {
+                            runtime_turn_id: None,
+                            presentation_turn_id: Some(id(&tail_turn_id)),
+                            runtime_item_id: None,
+                            interaction_id: None,
+                            source_thread_id: Some(format!("source-{}", fixture.suffix)),
+                            source_turn_id: Some(tail_turn_id.clone()),
+                            source_item_id: None,
+                            source_request_id: None,
+                            source_entry_index: Some(
+                                u32::try_from(entry_index).unwrap_or(u32::MAX),
+                            ),
+                        },
+                    )
+                    .expect("append post-admission turn presentation")
+            })
+            .collect::<Vec<_>>();
+        assert!(tail_records.iter().all(|record| {
+            record
+                .carrier()
+                .sequence
+                .is_some_and(|sequence| sequence.0 > source_end_event_sequence.0)
+        }));
+        fixture
+            .store
+            .commit(agentdash_agent_runtime::RuntimeCommit {
+                expected_projection_revision: Some(expected_projection_revision),
+                projection,
+                operation: None,
+                operation_terminals: Vec::new(),
+                records: tail_records,
+                outbox: Vec::new(),
+                terminal_application_effects: Vec::new(),
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: Vec::new(),
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
+                quarantine: Vec::new(),
+            })
+            .await
+            .expect("persist post-admission turn");
+
         let candidate_id: ContextCandidateId = id(&format!("candidate-{}", fixture.suffix));
         let activation_id: ContextActivationId = id(&format!("activation-{}", fixture.suffix));
         let checkpoint_id: ContextCheckpointId = id(&format!("checkpoint-{}", fixture.suffix));
@@ -4266,6 +4942,7 @@ mod tests {
                 trigger: ContextCompactionTrigger::Manual,
                 expected_base_checkpoint_id: None,
                 expected_base_revision: ContextRevision(0),
+                source_end_event_sequence,
                 checkpoint_id: checkpoint_id.clone(),
                 materialized: MaterializedContext {
                     recipe: ContextRecipe {
@@ -4365,6 +5042,100 @@ mod tests {
         assert_eq!(head.checkpoint_id, checkpoint.checkpoint_id);
         assert_eq!(head.revision, checkpoint.revision);
         assert_eq!(head.digest, checkpoint.materialized.digest);
+        let started = start(&fixture);
+        let RuntimeCommand::ThreadStart {
+            presentation_thread_id,
+            binding_id,
+            driver_generation,
+            source_thread_id,
+            profile_digest,
+            bound_profile,
+            surface,
+            settings_revision,
+            ..
+        } = started.command
+        else {
+            unreachable!("fixture starts a thread")
+        };
+        let composition = Arc::new(PostgresAgentRuntimeCompositionRepository::new(
+            fixture.store.pool().clone(),
+        ));
+        seed_runtime_host_binding(&fixture).await;
+        let target = seed_agent_run_target(fixture.store.pool()).await;
+        composition
+            .insert(AgentRunRuntimeBinding {
+                target,
+                presentation_thread_id,
+                thread_id: fixture.thread_id.clone(),
+                binding_id: binding_id.clone(),
+                binding_epoch: BindingEpoch(1),
+                driver_generation,
+                source_thread_id,
+                profile_digest,
+                profile_provenance: ProfileProvenance {
+                    service_digest: id("profile-service"),
+                    transport_digest: id("profile-transport"),
+                    host_policy_digest: id("profile-host"),
+                },
+                bound_profile: *bound_profile,
+                surface: *surface,
+                settings_revision,
+                context_delivery_target: AgentRunContextDeliveryTarget {
+                    connector_id: "native".to_string(),
+                    executor: "NATIVE".to_string(),
+                },
+            })
+            .await
+            .expect("persist compacted application binding lineage");
+        let transcript = PostgresAgentRuntimeContextBroker::new(fixture.store.clone(), composition)
+            .load_transcript(DriverTranscriptRequest {
+                binding_id,
+                generation: driver_generation,
+                runtime_thread_id: fixture.thread_id.clone(),
+            })
+            .await
+            .expect("load compacted transcript through production broker");
+        assert_eq!(
+            transcript.active_compaction_source_end,
+            Some(source_end_event_sequence)
+        );
+        assert!(
+            transcript
+                .completed_presentation_item_ids
+                .iter()
+                .any(|item_id| item_id == "turn_009:tool_014")
+        );
+        assert!(transcript.latest_available.0 > source_end_event_sequence.0);
+        assert_eq!(
+            transcript
+                .records
+                .iter()
+                .filter(|record| {
+                    record
+                        .carrier()
+                        .sequence
+                        .is_some_and(|sequence| sequence.0 > source_end_event_sequence.0)
+                        && record.as_presentation().is_some()
+                        && record
+                            .carrier()
+                            .coordinate
+                            .presentation_turn_id
+                            .as_ref()
+                            .is_some_and(|turn_id| turn_id.as_str() == tail_turn_id)
+                })
+                .count(),
+            3
+        );
+        assert!(transcript.records.iter().any(|record| {
+            matches!(
+                record.as_presentation().map(|presentation| &presentation.event),
+                Some(BackboneEvent::UserInputSubmitted(input))
+                    if input.content.iter().any(|block| matches!(
+                        block,
+                        codex::UserInput::Text { text, .. } if text == "post-admission prompt"
+                    ))
+            )
+        }));
         assert!(
             fixture
                 .store

@@ -110,13 +110,13 @@ impl AgentRunJournalStreamState {
         {
             return Ok(AgentRunJournalLiveEvent::StaleDurable);
         }
-        Ok(AgentRunJournalLiveEvent::Durable(AgentRunJournalEvent {
-            journal_seq: self.prefix_len + sequence.0,
-            segment_role: AgentRunJournalSegmentRole::CurrentDelivery,
-            source_runtime_thread_id: self.delivery_runtime_thread_id.clone(),
-            source_event_seq: Some(sequence),
-            record,
-        }))
+        Ok(AgentRunJournalLiveEvent::Durable(
+            project_current_durable_record(
+                self.prefix_len,
+                &self.delivery_runtime_thread_id,
+                record,
+            )?,
+        ))
     }
 
     fn project_ephemeral(
@@ -230,16 +230,9 @@ impl AgentRunJournalService {
         let snapshot_runtime_sequence = durable.last().and_then(|record| record.carrier().sequence);
         let current = durable
             .into_iter()
-            .enumerate()
-            .map(|(index, record)| AgentRunJournalEvent {
-                journal_seq: prefix_len + index as u64 + 1,
-                segment_role: AgentRunJournalSegmentRole::CurrentDelivery,
-                source_runtime_thread_id: binding.clone(),
-                source_event_seq: record.carrier().sequence,
-                record,
-            })
-            .collect::<Vec<_>>();
-        let visible_snapshot_seq = prefix_len + current.len() as u64;
+            .map(|record| project_current_durable_record(prefix_len, &binding, record))
+            .collect::<Result<Vec<_>, _>>()?;
+        let visible_snapshot_seq = current.last().map_or(prefix_len, |event| event.journal_seq);
         let connected_seq = visible_snapshot_seq.max(resume_from);
         let prefix_events = prefix
             .into_iter()
@@ -291,15 +284,12 @@ impl AgentRunJournalService {
         let mut events = self.load_inherited_prefix(query).await?;
         let current = presentation_records(self.source.durable_records(&binding).await?);
         let prefix_len = events.len() as u64;
-        events.extend(current.into_iter().enumerate().map(|(index, record)| {
-            AgentRunJournalEvent {
-                journal_seq: prefix_len + index as u64 + 1,
-                segment_role: AgentRunJournalSegmentRole::CurrentDelivery,
-                source_runtime_thread_id: binding.clone(),
-                source_event_seq: record.carrier().sequence,
-                record,
-            }
-        }));
+        events.extend(
+            current
+                .into_iter()
+                .map(|record| project_current_durable_record(prefix_len, &binding, record))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
         Ok(events)
     }
 
@@ -355,14 +345,17 @@ impl AgentRunJournalService {
                     ))
                 })?;
             let records = presentation_records(self.source.durable_records(&binding).await?);
-            for record in records.into_iter().take(cutoff as usize) {
-                events.push(AgentRunJournalEvent {
-                    journal_seq: events.len() as u64 + 1,
-                    segment_role: AgentRunJournalSegmentRole::InheritedLineage,
-                    source_runtime_thread_id: binding.clone(),
-                    source_event_seq: record.carrier().sequence,
-                    record,
-                });
+            let prefix_len = events.len() as u64;
+            events.extend(
+                records
+                    .into_iter()
+                    .map(|record| project_current_durable_record(prefix_len, &binding, record))
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            events.retain(|event| event.journal_seq <= cutoff);
+            for (index, event) in events.iter_mut().enumerate() {
+                event.journal_seq = index as u64 + 1;
+                event.segment_role = AgentRunJournalSegmentRole::InheritedLineage;
             }
         }
         Ok(events)
@@ -395,6 +388,25 @@ fn presentation_records(records: Vec<RuntimeJournalRecord>) -> Vec<RuntimeJourna
         .into_iter()
         .filter(|record| record.as_presentation().is_some())
         .collect()
+}
+
+fn project_current_durable_record(
+    prefix_len: u64,
+    binding: &RuntimeThreadId,
+    record: RuntimeJournalRecord,
+) -> Result<AgentRunJournalEvent, WorkflowApplicationError> {
+    let sequence = record.carrier().sequence.ok_or_else(|| {
+        WorkflowApplicationError::Internal(
+            "durable presentation record is missing its Runtime sequence".to_string(),
+        )
+    })?;
+    Ok(AgentRunJournalEvent {
+        journal_seq: prefix_len + sequence.0,
+        segment_role: AgentRunJournalSegmentRole::CurrentDelivery,
+        source_runtime_thread_id: binding.clone(),
+        source_event_seq: Some(sequence),
+        record,
+    })
 }
 
 #[cfg(test)]
@@ -531,6 +543,75 @@ mod tests {
         );
         assert_eq!(reconnect.state.connected_seq, 4);
         assert_eq!(reconnect.state.ephemeral_epoch, 77);
+    }
+
+    #[tokio::test]
+    async fn fork_cutoff_uses_parent_visible_cursor_across_internal_sequence_gaps() {
+        let parent = target(0x91, 0x92);
+        let child = target(0x93, 0x94);
+        let parent_thread = RuntimeThreadId::new("gapped-parent-thread").expect("parent thread");
+        let child_thread = RuntimeThreadId::new("gapped-child-thread").expect("child thread");
+        let service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::from([(child.clone(), lineage(&parent, &child, 4))]),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([
+                    (parent, parent_thread.clone()),
+                    (child.clone(), child_thread.clone()),
+                ]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([
+                    (
+                        parent_thread.clone(),
+                        vec![
+                            internal_record(&parent_thread, 1),
+                            presentation_record(&parent_thread, 2, "parent-tool-start"),
+                            internal_record(&parent_thread, 3),
+                            presentation_record(&parent_thread, 4, "parent-tool-completed"),
+                            presentation_record(&parent_thread, 6, "parent-after-fork"),
+                        ],
+                    ),
+                    (
+                        child_thread.clone(),
+                        vec![presentation_record(&child_thread, 1, "child-marker")],
+                    ),
+                ]),
+                ephemeral: HashMap::new(),
+            }),
+        );
+
+        let page = service
+            .load_visible_journal_page(
+                AgentRunJournalQuery {
+                    run_id: child.run_id,
+                    agent_id: child.agent_id,
+                },
+                0,
+                20,
+            )
+            .await
+            .expect("forked journal page");
+
+        assert_eq!(
+            journal_labels(&page.events),
+            ["parent-tool-start", "parent-tool-completed", "child-marker"]
+        );
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.source_event_seq.map(|sequence| sequence.0))
+                .collect::<Vec<_>>(),
+            [Some(2), Some(4), Some(1)]
+        );
     }
 
     #[tokio::test]
@@ -705,6 +786,122 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn durable_cursor_survives_live_to_replay_with_hidden_internal_gaps() {
+        let current = target(0x81, 0x82);
+        let thread = RuntimeThreadId::new("interleaved-runtime-thread").expect("thread id");
+        let query = AgentRunJournalQuery {
+            run_id: current.run_id,
+            agent_id: current.agent_id,
+        };
+        let initial_service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::new(),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([(current.clone(), thread.clone())]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([(
+                    thread.clone(),
+                    vec![
+                        internal_record(&thread, 1),
+                        presentation_record(&thread, 2, "tool-start"),
+                    ],
+                )]),
+                ephemeral: HashMap::new(),
+            }),
+        );
+
+        let initial = initial_service
+            .subscribe_visible_journal_stream(query.clone(), 0)
+            .await
+            .expect("initial stream");
+        assert_eq!(
+            initial
+                .state
+                .backlog_events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [2]
+        );
+        let live = initial
+            .state
+            .project_live_record(presentation_record(&thread, 4, "tool-update"))
+            .expect("live projection");
+        let AgentRunJournalLiveEvent::Durable(live) = live else {
+            panic!("expected durable live event");
+        };
+        assert_eq!(live.journal_seq, 4);
+        assert_eq!(live.source_event_seq, Some(EventSequence(4)));
+
+        let replay_service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::new(),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([(current, thread.clone())]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([(
+                    thread.clone(),
+                    vec![
+                        internal_record(&thread, 1),
+                        presentation_record(&thread, 2, "tool-start"),
+                        internal_record(&thread, 3),
+                        presentation_record(&thread, 4, "tool-update"),
+                        internal_record(&thread, 5),
+                        presentation_record(&thread, 6, "tool-completed"),
+                    ],
+                )]),
+                ephemeral: HashMap::new(),
+            }),
+        );
+        let replay = replay_service
+            .subscribe_visible_journal_stream(query.clone(), 0)
+            .await
+            .expect("full replay stream");
+        assert_eq!(
+            replay
+                .state
+                .backlog_events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [2, 4, 6]
+        );
+
+        let reconnect = replay_service
+            .subscribe_visible_journal_stream(query.clone(), live.journal_seq)
+            .await
+            .expect("reconnect stream");
+        assert_eq!(
+            reconnect
+                .state
+                .backlog_events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [6]
+        );
+        assert_eq!(reconnect.state.connected_seq, 6);
+
+        let page = replay_service
+            .load_visible_journal_page(query, live.journal_seq, 20)
+            .await
+            .expect("reconnect GET page");
+        assert_eq!(page.snapshot_seq, 6);
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [6]
+        );
+        assert_eq!(journal_labels(&page.events), ["tool-completed"]);
+    }
+
+    #[tokio::test]
     async fn multi_level_fork_applies_each_parent_local_cutoff_before_concatenation() {
         let control = journal_control_fixture();
         let grandparent = target(0x11, 0x12);
@@ -717,7 +914,8 @@ mod tests {
             Arc::new(FixtureLineage {
                 parents: HashMap::from([
                     (parent.clone(), lineage(&grandparent, &parent, 2)),
-                    (child.clone(), lineage(&parent, &child, 2)),
+                    // Parent-visible cursor 4 = two inherited events + parent source sequence 2.
+                    (child.clone(), lineage(&parent, &child, 4)),
                 ]),
             }),
             Arc::new(FixtureBindings {
@@ -1029,6 +1227,7 @@ mod tests {
                 append_idempotency_key: None,
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(thread_id.to_string()),
@@ -1074,6 +1273,7 @@ mod tests {
                 append_idempotency_key: None,
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: frame["notification"]["source"]["connectorId"]
@@ -1119,6 +1319,7 @@ mod tests {
                 append_idempotency_key: None,
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(thread_id.to_string()),
@@ -1141,6 +1342,15 @@ mod tests {
             ),
         )
         .expect("ephemeral presentation record")
+    }
+
+    fn internal_record(_thread_id: &RuntimeThreadId, sequence: u64) -> RuntimeJournalRecord {
+        record(
+            sequence,
+            RuntimeJournalFact::Internal(RuntimeEvent::ThreadStatusChanged {
+                status: RuntimeThreadStatus::Active,
+            }),
+        )
     }
 
     struct FixtureBindings {
@@ -1246,6 +1456,7 @@ mod tests {
                 append_idempotency_key: None,
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: None,

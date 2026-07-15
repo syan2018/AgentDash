@@ -80,6 +80,93 @@ impl<S> ManagedAgentRuntime<S>
 where
     S: RuntimeRepository + RuntimeUnitOfWork + RuntimeTransientEvents,
 {
+    /// Closes a command whose business effect is complete at the driver acceptance boundary.
+    ///
+    /// Turn-start and managed-compaction commands have later business terminals and do not call
+    /// this method. Delivery-only commands use it after the driver receipt so outbox ack cannot
+    /// leave an accepted operation permanently active.
+    pub async fn complete_driver_dispatch_operation(
+        &self,
+        thread_id: &RuntimeThreadId,
+        operation_id: &agentdash_agent_runtime_contract::RuntimeOperationId,
+    ) -> Result<bool, RuntimeExecuteError> {
+        let _ingest = self.driver_event_ingest.lock().await;
+        let mut state = self
+            .store
+            .load_thread(thread_id)
+            .await
+            .map_err(store_execute_error)?
+            .ok_or_else(|| RuntimeExecuteError::InvalidCommand {
+                reason: format!("Runtime thread {thread_id} does not exist"),
+            })?;
+        match state.operations.get(operation_id) {
+            Some(crate::EntityPhase::Terminal(
+                agentdash_agent_runtime_contract::RuntimeOperationTerminal::Succeeded,
+            )) => return Ok(true),
+            Some(crate::EntityPhase::Terminal(terminal)) => {
+                return Err(RuntimeExecuteError::InvalidCommand {
+                    reason: format!(
+                        "driver dispatch operation {operation_id} already reached {terminal:?}"
+                    ),
+                });
+            }
+            Some(crate::EntityPhase::Active) => {}
+            None => {
+                return Err(RuntimeExecuteError::InvalidCommand {
+                    reason: format!("driver dispatch operation {operation_id} was not accepted"),
+                });
+            }
+        }
+
+        let expected = state.revision;
+        let record = state
+            .append_durable_fact(
+                RuntimeJournalFact::Internal(RuntimeEvent::OperationTerminal {
+                    operation_id: operation_id.clone(),
+                    terminal: agentdash_agent_runtime_contract::RuntimeOperationTerminal::Succeeded,
+                }),
+                crate::model::current_time_ms(),
+                Some(state.binding_id.clone()),
+                None,
+                RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    presentation_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: None,
+                    source_turn_id: None,
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: None,
+                },
+            )
+            .map_err(transition_execute_error)?;
+        let operation_terminals = operation_terminals_from_records(std::slice::from_ref(&record));
+        self.store
+            .commit(RuntimeCommit {
+                expected_projection_revision: Some(expected),
+                projection: state,
+                operation: None,
+                operation_terminals,
+                records: vec![record],
+                outbox: Vec::new(),
+                terminal_application_effects: Vec::new(),
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: Vec::new(),
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
+                quarantine: Vec::new(),
+            })
+            .await
+            .map_err(store_execute_error)?;
+        Ok(false)
+    }
+
     pub async fn append_transient_presentation(
         &self,
         request: crate::RuntimeTransientPresentationAppendRequest,
@@ -118,8 +205,8 @@ where
                 "transient presentation requires an active runtime turn".to_string(),
             )
         })?;
-        if request
-            .events
+        let mut events = request.events;
+        if events
             .iter()
             .any(|input| input.coordinate.runtime_turn_id.as_ref() != Some(active_turn_id))
         {
@@ -127,7 +214,10 @@ where
                 "transient presentation must target active runtime turn {active_turn_id}"
             )));
         }
-        for input in request.events {
+        for input in &mut events {
+            normalize_presentation_coordinate(&state, &mut input.coordinate)?;
+        }
+        for input in events {
             self.store
                 .publish_transient_presentation(
                     request.runtime_thread_id.clone(),
@@ -178,6 +268,10 @@ where
             return Err(crate::RuntimePresentationAppendError::ThreadNotFound);
         };
         validate_presentation_thread_ids(&request.events, &state.presentation_thread_id)?;
+        let mut normalized_events = request.events;
+        for input in &mut normalized_events {
+            normalize_presentation_coordinate(&state, &mut input.coordinate)?;
+        }
 
         let append_idempotency_key =
             agentdash_agent_runtime_contract::IdempotencyKey::new(format!(
@@ -209,7 +303,7 @@ where
                     })
                 })
                 .collect::<Vec<_>>();
-            if existing_events != request.events {
+            if existing_events != normalized_events {
                 return Err(crate::RuntimePresentationAppendError::IdempotencyConflict);
             }
             let first_sequence = existing
@@ -230,8 +324,8 @@ where
         let expected = state.revision;
         let binding_id = state.binding_id.clone();
         let recorded_at_ms = crate::model::current_time_ms();
-        let mut records = Vec::with_capacity(request.events.len());
-        for input in request.events {
+        let mut records = Vec::with_capacity(normalized_events.len());
+        for input in normalized_events {
             records.push(
                 state
                     .append_durable_fact(
@@ -351,6 +445,7 @@ where
         let mut observed = false;
         let mut runtime_coordinate = RuntimePresentationCoordinate {
             runtime_turn_id: None,
+            presentation_turn_id: None,
             runtime_item_id: None,
             interaction_id: None,
             source_thread_id: Some(source.source_thread_id.as_str().to_string()),
@@ -382,57 +477,23 @@ where
             }
             if let RuntimeJournalFact::Internal(event) = &fact {
                 update_runtime_coordinate(&mut runtime_coordinate, event);
-                if let RuntimeEvent::TurnTerminal {
-                    turn_id,
-                    terminal,
-                    message,
-                    diagnostic,
-                } = event
+                if let Some(context) =
+                    terminal_presentation_context(&state, event, &prior_records, &records)?
                 {
-                    if terminal_context.is_some() {
+                    if terminal_context.replace(context).is_some() {
                         return Err(RuntimeExecuteError::InvalidCommand {
                             reason: "driver fact batch contains multiple turn terminals".into(),
                         });
                     }
-                    let presentation_turn_id = state
-                        .turns
-                        .get(turn_id)
-                        .map(|turn| turn.presentation_turn_id.clone())
-                        .ok_or_else(|| RuntimeExecuteError::InvalidCommand {
-                            reason: format!(
-                                "turn terminal {} has no presentation turn mapping",
-                                turn_id
-                            ),
-                        })?;
-                    let started_at_ms =
-                        prior_records
-                            .iter()
-                            .chain(records.iter())
-                            .find_map(|record| {
-                                matches!(
-                                    record.fact(),
-                                    RuntimeJournalFact::Internal(RuntimeEvent::TurnStarted {
-                                        turn_id: started_turn_id,
-                                        ..
-                                    }) if started_turn_id == turn_id
-                                )
-                                .then_some(record.carrier().recorded_at_ms)
-                            });
-                    terminal_context = Some(RuntimeTerminalPresentationContext {
-                        presentation_thread_id: state.presentation_thread_id.clone(),
-                        runtime_turn_id: turn_id.clone(),
-                        presentation_turn_id,
-                        terminal: *terminal,
-                        message: message.clone(),
-                        diagnostic: diagnostic.clone(),
-                        started_at_ms,
-                        completed_at_ms: crate::model::current_time_ms(),
-                        prior_records: prior_records.clone(),
-                    });
                 }
                 if let RuntimeEvent::TurnStarted { turn_id, .. } = event
                     && state.active_turn_id.as_ref() == Some(turn_id)
                 {
+                    normalize_presentation_coordinate(&state, &mut runtime_coordinate).map_err(
+                        |error| RuntimeExecuteError::InvalidCommand {
+                            reason: error.to_string(),
+                        },
+                    )?;
                     observed = true;
                     continue;
                 }
@@ -448,6 +509,11 @@ where
                         )
                         .await;
                 }
+                normalize_presentation_coordinate(&state, &mut runtime_coordinate).map_err(
+                    |error| RuntimeExecuteError::InvalidCommand {
+                        reason: error.to_string(),
+                    },
+                )?;
                 closes_live_stream |= closes_driver_stream(event);
             }
 
@@ -481,7 +547,7 @@ where
                     context.completed_at_ms
                 });
             let record = match state.append_durable_fact(
-                fact,
+                fact.clone(),
                 recorded_at_ms,
                 Some(source.binding_id.clone()),
                 None,
@@ -499,8 +565,87 @@ where
             }
             records.push(record);
 
+            if let RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                turn_id,
+                terminal,
+                message,
+                ..
+            }) = &fact
+            {
+                let source_operation_id = source.operation_id.clone().ok_or_else(|| {
+                    RuntimeExecuteError::InvalidCommand {
+                        reason: format!(
+                            "driver turn terminal {turn_id} is missing its accepted operation coordinate"
+                        ),
+                    }
+                })?;
+                let owning_operation_id = state
+                    .operations
+                    .keys()
+                    .find(|operation_id| canonical_turn_id(operation_id) == *turn_id)
+                    .cloned()
+                    .ok_or_else(|| RuntimeExecuteError::InvalidCommand {
+                        reason: format!(
+                            "driver turn terminal {turn_id} has no owning TurnStart operation"
+                        ),
+                    })?;
+                let operation_terminal = turn_operation_terminal(*terminal, message.clone());
+                for operation_id in [owning_operation_id, source_operation_id] {
+                    if records.iter().any(|record| {
+                        matches!(
+                            record.fact(),
+                            RuntimeJournalFact::Internal(RuntimeEvent::OperationTerminal {
+                                operation_id: recorded_operation_id,
+                                ..
+                            }) if recorded_operation_id == &operation_id
+                        )
+                    }) {
+                        continue;
+                    }
+                    if !matches!(
+                        state.operations.get(&operation_id),
+                        Some(crate::EntityPhase::Active)
+                    ) {
+                        return Err(RuntimeExecuteError::InvalidCommand {
+                            reason: format!(
+                                "driver terminal operation {operation_id} is not active"
+                            ),
+                        });
+                    }
+                    update_runtime_coordinate(
+                        &mut runtime_coordinate,
+                        &RuntimeEvent::OperationTerminal {
+                            operation_id: operation_id.clone(),
+                            terminal: operation_terminal.clone(),
+                        },
+                    );
+                    let operation_record = state
+                        .append_durable_fact(
+                            RuntimeJournalFact::Internal(RuntimeEvent::OperationTerminal {
+                                operation_id,
+                                terminal: operation_terminal.clone(),
+                            }),
+                            recorded_at_ms,
+                            Some(source.binding_id.clone()),
+                            None,
+                            runtime_coordinate.clone(),
+                        )
+                        .map_err(transition_execute_error)?;
+                    records.push(operation_record);
+                }
+            }
+
             if let Some(message) = loss_message {
                 for terminal in state.lost_terminal_events(Some(message)) {
+                    if let Some(context) =
+                        terminal_presentation_context(&state, &terminal, &prior_records, &records)?
+                    {
+                        if terminal_context.replace(context).is_some() {
+                            return Err(RuntimeExecuteError::InvalidCommand {
+                                reason: "binding loss produced multiple turn terminals".into(),
+                            });
+                        }
+                    }
                     update_runtime_coordinate(&mut runtime_coordinate, &terminal);
                     let record = state
                         .append_durable_fact(
@@ -804,6 +949,56 @@ fn validate_presentation_thread_ids(
     Ok(())
 }
 
+fn normalize_presentation_coordinate(
+    state: &RuntimeThreadState,
+    coordinate: &mut RuntimePresentationCoordinate,
+) -> Result<(), crate::RuntimePresentationAppendError> {
+    let Some(runtime_turn_id) = coordinate.runtime_turn_id.as_ref() else {
+        return Ok(());
+    };
+    let expected = state
+        .turns
+        .get(runtime_turn_id)
+        .map(|turn| turn.presentation_turn_id.clone())
+        .ok_or_else(|| {
+            crate::RuntimePresentationAppendError::Invalid(format!(
+                "presentation targets unknown runtime turn {runtime_turn_id}"
+            ))
+        })?;
+    if coordinate
+        .presentation_turn_id
+        .as_ref()
+        .is_some_and(|actual| actual != &expected)
+    {
+        return Err(crate::RuntimePresentationAppendError::Invalid(format!(
+            "presentation turn identity does not match runtime turn {runtime_turn_id}"
+        )));
+    }
+    coordinate.presentation_turn_id = Some(expected);
+    Ok(())
+}
+
+fn turn_operation_terminal(
+    terminal: agentdash_agent_runtime_contract::RuntimeTurnTerminal,
+    message: Option<String>,
+) -> agentdash_agent_runtime_contract::RuntimeOperationTerminal {
+    use agentdash_agent_runtime_contract::{RuntimeOperationTerminal, RuntimeTurnTerminal};
+    match terminal {
+        RuntimeTurnTerminal::Completed => RuntimeOperationTerminal::Succeeded,
+        RuntimeTurnTerminal::Lost => RuntimeOperationTerminal::Lost {
+            retryable: false,
+            message,
+        },
+        RuntimeTurnTerminal::Interrupted
+        | RuntimeTurnTerminal::Refused
+        | RuntimeTurnTerminal::LimitReached
+        | RuntimeTurnTerminal::Failed => RuntimeOperationTerminal::Failed {
+            retryable: false,
+            message,
+        },
+    }
+}
+
 fn is_turn_terminal_presentation(record: &RuntimeJournalRecord) -> bool {
     matches!(
         record.fact(),
@@ -974,6 +1169,11 @@ where
             return invalid("active context head changed before compaction admission");
         }
 
+        // Freeze the compacted source boundary before admitting the compaction
+        // operation itself. Later durable records are replayed as the tail
+        // after the compacted context base during a cold driver rebind.
+        let source_end_event_sequence = state.next_event_sequence;
+        let current_tool_set_revision = state.tool_set_revision;
         state.next_operation_sequence.0 += 1;
         let operation_sequence = state.next_operation_sequence;
         let accepted = RuntimeEvent::OperationAccepted {
@@ -1026,10 +1226,16 @@ where
                 trigger: *trigger,
                 expected_base_checkpoint_id: base_checkpoint_id.clone(),
                 expected_base_revision: *expected_context_revision,
+                source_end_event_sequence,
                 status: crate::ContextPreparationStatus::Pending,
             }],
             _ => Vec::new(),
         };
+        let driver_command = driver_dispatch_command(
+            &state.bound_profile,
+            &envelope.command,
+            current_tool_set_revision,
+        );
         let outbox = if matches!(
             envelope.command,
             RuntimeCommand::ContextCompact { .. } | RuntimeCommand::ThreadRebind { .. }
@@ -1043,7 +1249,7 @@ where
                 binding_id: state.binding_id.clone(),
                 binding_epoch: state.binding_epoch,
                 generation: state.driver_generation,
-                command: envelope.command,
+                command: driver_command,
             }]
         };
         let operation_terminals = operation_terminals(&events)
@@ -1052,6 +1258,7 @@ where
             .collect();
         let mut records = crate::internal_journal_records(events).map_err(store_execute_error)?;
         let presentation_binding_id = state.binding_id.clone();
+        let presentation_operation_id = record.operation_id.clone();
         for input in envelope.presentation {
             if input.event.durability
                 != agentdash_agent_runtime_contract::PresentationDurability::Durable
@@ -1087,7 +1294,8 @@ where
                         None,
                         coordinate,
                     )
-                    .map_err(transition_execute_error)?,
+                    .map_err(transition_execute_error)?
+                    .with_operation_id(presentation_operation_id.clone()),
             );
         }
         self.store
@@ -1280,6 +1488,29 @@ where
     }
 }
 
+fn driver_dispatch_command(
+    profile: &agentdash_agent_runtime_contract::RuntimeProfile,
+    command: &RuntimeCommand,
+    current_tool_set_revision: agentdash_agent_runtime_contract::ToolSetRevision,
+) -> RuntimeCommand {
+    match command {
+        RuntimeCommand::SurfaceAdopt {
+            thread_id, target, ..
+        } if !profile
+            .lifecycle
+            .contains(&agentdash_agent_runtime_contract::LifecycleCapability::SurfaceAdopt) =>
+        {
+            RuntimeCommand::ToolSetReplace {
+                thread_id: thread_id.clone(),
+                expected_current_tool_set_revision: current_tool_set_revision,
+                target_tool_set_revision: target.tool_set_revision,
+                tool_set_digest: target.tool_set_digest.clone(),
+            }
+        }
+        other => other.clone(),
+    }
+}
+
 impl<S> ManagedAgentRuntime<S> {}
 
 fn new_thread(command: &RuntimeCommand) -> Result<RuntimeThreadState, RuntimeExecuteError> {
@@ -1438,10 +1669,20 @@ fn validate_command(
             return invalid("interaction is not pending");
         }
         RuntimeCommand::ToolSetReplace {
-            expected_tool_set_revision,
+            expected_current_tool_set_revision,
+            target_tool_set_revision,
+            tool_set_digest,
             ..
-        } if *expected_tool_set_revision != state.tool_set_revision => {
-            return invalid("tool set revision is stale");
+        } => {
+            if *expected_current_tool_set_revision != state.tool_set_revision {
+                return invalid("tool set revision is stale");
+            }
+            if target_tool_set_revision.0 <= expected_current_tool_set_revision.0 {
+                return invalid("tool set replacement target revision must advance");
+            }
+            if tool_set_digest.trim().is_empty() {
+                return invalid("tool set replacement target digest is empty");
+            }
         }
         RuntimeCommand::SurfaceAdopt {
             expected_surface_revision,
@@ -1449,9 +1690,6 @@ fn validate_command(
             target,
             ..
         } => {
-            if state.active_turn_id.is_some() {
-                return invalid("surface adoption requires no active turn");
-            }
             if *expected_surface_revision != state.surface.surface_revision
                 || expected_surface_digest != &state.surface.surface_digest
             {
@@ -1495,12 +1733,14 @@ fn apply_command_projection(
                 plan_digest: surface.hook_plan.digest.clone(),
             });
             if !input.is_empty() {
+                let turn_id = canonical_turn_id(operation_id);
                 events.push(RuntimeEvent::TurnStarted {
-                    turn_id: canonical_turn_id(operation_id),
+                    turn_id: turn_id.clone(),
                     presentation_turn_id: presentation_turn_id
                         .clone()
                         .expect("validated non-empty ThreadStart presentation turn"),
                 });
+                append_runtime_user_item(events, operation_id, turn_id, input)?;
             }
         }
         RuntimeCommand::ThreadResume { .. } => events.push(RuntimeEvent::ThreadStatusChanged {
@@ -1537,13 +1777,25 @@ fn apply_command_projection(
         RuntimeCommand::ThreadSettingsUpdate { .. } => state.settings_revision.0 += 1,
         RuntimeCommand::TurnStart {
             presentation_turn_id,
+            input,
             ..
         } => {
+            let turn_id = canonical_turn_id(operation_id);
             events.push(RuntimeEvent::TurnStarted {
-                turn_id: canonical_turn_id(operation_id),
+                turn_id: turn_id.clone(),
                 presentation_turn_id: presentation_turn_id.clone(),
             });
+            append_runtime_user_item(events, operation_id, turn_id, input)?;
         }
+        RuntimeCommand::TurnSteer { input, .. } => append_runtime_user_item(
+            events,
+            operation_id,
+            state
+                .active_turn_id
+                .clone()
+                .expect("validated active turn for steer"),
+            input,
+        )?,
         RuntimeCommand::InteractionRespond { interaction_id, .. } => {
             let turn_id = state
                 .interactions
@@ -1557,7 +1809,15 @@ fn apply_command_projection(
                 terminal: RuntimeInteractionTerminal::Resolved,
             });
         }
-        RuntimeCommand::ToolSetReplace { .. } => state.tool_set_revision.0 += 1,
+        RuntimeCommand::ToolSetReplace {
+            target_tool_set_revision,
+            tool_set_digest,
+            ..
+        } => {
+            state.tool_set_revision = *target_tool_set_revision;
+            state.surface.tool_set_revision = *target_tool_set_revision;
+            state.surface.tool_set_digest = tool_set_digest.clone();
+        }
         RuntimeCommand::SurfaceAdopt { target, .. } => {
             state.surface = (**target).clone();
             state.settings_revision = target.settings_revision;
@@ -1568,10 +1828,43 @@ fn apply_command_projection(
             });
         }
         RuntimeCommand::ThreadFork { .. }
-        | RuntimeCommand::TurnSteer { .. }
         | RuntimeCommand::TurnInterrupt { .. }
         | RuntimeCommand::ContextCompact { .. } => {}
     }
+    Ok(())
+}
+
+fn append_runtime_user_item(
+    events: &mut Vec<RuntimeEvent>,
+    operation_id: &agentdash_agent_runtime_contract::RuntimeOperationId,
+    turn_id: agentdash_agent_runtime_contract::RuntimeTurnId,
+    input: &[agentdash_agent_runtime_contract::RuntimeInput],
+) -> Result<(), RuntimeExecuteError> {
+    if input.is_empty() {
+        return Ok(());
+    }
+    let item_id = agentdash_agent_runtime_contract::RuntimeItemId::new(format!(
+        "{turn_id}:user:{operation_id}"
+    ))
+    .map_err(|error| RuntimeExecuteError::InvalidCommand {
+        reason: format!("canonical user item identity is invalid: {error}"),
+    })?;
+    let content = agentdash_agent_runtime_contract::RuntimeItemContent::user_message(
+        item_id.to_string(),
+        input.to_vec(),
+    );
+    events.push(RuntimeEvent::ItemStarted {
+        turn_id: turn_id.clone(),
+        item_id: item_id.clone(),
+        initial_content: content.clone(),
+    });
+    events.push(RuntimeEvent::ItemTerminal {
+        turn_id,
+        item_id,
+        terminal: agentdash_agent_runtime_contract::RuntimeItemTerminal::Completed {
+            final_content: content,
+        },
+    });
     Ok(())
 }
 
@@ -1599,6 +1892,54 @@ fn duplicate_receipt(
         });
     }
     Ok(existing.receipt(true))
+}
+
+fn terminal_presentation_context(
+    state: &RuntimeThreadState,
+    event: &RuntimeEvent,
+    prior_records: &[RuntimeJournalRecord],
+    pending_records: &[RuntimeJournalRecord],
+) -> Result<Option<RuntimeTerminalPresentationContext>, RuntimeExecuteError> {
+    let RuntimeEvent::TurnTerminal {
+        turn_id,
+        terminal,
+        message,
+        diagnostic,
+    } = event
+    else {
+        return Ok(None);
+    };
+    let presentation_turn_id = state
+        .turns
+        .get(turn_id)
+        .map(|turn| turn.presentation_turn_id.clone())
+        .ok_or_else(|| RuntimeExecuteError::InvalidCommand {
+            reason: format!("turn terminal {turn_id} has no presentation turn mapping"),
+        })?;
+    let started_at_ms = prior_records
+        .iter()
+        .chain(pending_records.iter())
+        .find_map(|record| {
+            matches!(
+                record.fact(),
+                RuntimeJournalFact::Internal(RuntimeEvent::TurnStarted {
+                    turn_id: started_turn_id,
+                    ..
+                }) if started_turn_id == turn_id
+            )
+            .then_some(record.carrier().recorded_at_ms)
+        });
+    Ok(Some(RuntimeTerminalPresentationContext {
+        presentation_thread_id: state.presentation_thread_id.clone(),
+        runtime_turn_id: turn_id.clone(),
+        presentation_turn_id,
+        terminal: *terminal,
+        message: message.clone(),
+        diagnostic: diagnostic.clone(),
+        started_at_ms,
+        completed_at_ms: crate::model::current_time_ms(),
+        prior_records: prior_records.to_vec(),
+    }))
 }
 
 fn invalid<T>(reason: &str) -> Result<T, RuntimeExecuteError> {

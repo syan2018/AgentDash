@@ -7,12 +7,12 @@ use std::{
 use agentdash_agent_runtime_contract::{
     AgentRuntimeDriver, ConfigurationBoundary, ContextBlock, ContextCandidateId,
     ContextCheckpointId, ContextCompactionId, ContextDigest, ContextFidelity, ContextRecipe,
-    ContextRevision, DriverItemId, DriverThreadId, DriverTurnId, HookAction, HookDefinitionId,
-    HookExecutionSite, HookFailurePolicy, HookPlanDigest, HookPlanRevision, HookPoint,
-    InstructionChannel, MaterializedContext, RuntimeBindingId, RuntimeDriverGeneration,
-    RuntimeInteractionId, RuntimeItemId, RuntimeProfile, RuntimeServiceInstanceId, RuntimeThreadId,
-    RuntimeTurnId, SemanticStrength, SurfaceDigest, SurfaceRevision, ToolChannel, ToolSetRevision,
-    WorkspaceCapability,
+    ContextRevision, DriverItemId, DriverThreadId, DriverTurnId, EventSequence, HookAction,
+    HookDefinitionId, HookExecutionSite, HookFailurePolicy, HookPlanDigest, HookPlanRevision,
+    HookPoint, InstructionChannel, MaterializedContext, RuntimeBindingId, RuntimeDriverGeneration,
+    RuntimeInteractionId, RuntimeItemId, RuntimeJournalRecord, RuntimeProfile,
+    RuntimeServiceInstanceId, RuntimeThreadId, RuntimeTurnId, SemanticStrength, SurfaceDigest,
+    SurfaceRevision, ToolChannel, ToolSetRevision, WorkspaceCapability,
 };
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -235,6 +235,8 @@ pub struct DriverToolDefinition {
     pub parameters_schema: Value,
     pub channels: Vec<ToolChannel>,
     pub protocol_projection: agentdash_agent_runtime_contract::ToolProtocolProjection,
+    /// Effective single presentation producer selected for this exact binding.
+    pub presentation_emitter: agentdash_agent_runtime_contract::ToolPresentationEmitter,
     pub parity_fixture_id: String,
 }
 
@@ -343,6 +345,30 @@ pub struct DriverContextActivation {
     pub materialized: MaterializedContext,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverTranscriptRequest {
+    pub binding_id: RuntimeBindingId,
+    pub generation: RuntimeDriverGeneration,
+    pub runtime_thread_id: RuntimeThreadId,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverTranscript {
+    pub earliest_available: EventSequence,
+    pub latest_available: EventSequence,
+    /// Inclusive durable journal boundary represented by the active compacted
+    /// context base. Records after this sequence must be replayed as the live
+    /// transcript tail instead of being discarded with the compacted prefix.
+    pub active_compaction_source_end: Option<EventSequence>,
+    /// Runtime-projected terminal presentation item identities. Unlike the
+    /// retained journal window, this watermark survives prefix pruning and
+    /// prevents a cold driver from reusing readable vendor item ids.
+    pub completed_presentation_item_ids: Vec<String>,
+    pub records: Vec<RuntimeJournalRecord>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DriverContextError {
     #[error("driver context is unavailable: {reason}")]
@@ -357,6 +383,11 @@ pub enum DriverContextError {
 
 #[async_trait]
 pub trait AgentRuntimeContextBroker: Send + Sync {
+    async fn load_transcript(
+        &self,
+        request: DriverTranscriptRequest,
+    ) -> Result<DriverTranscript, DriverContextError>;
+
     async fn load_checkpoint(
         &self,
         request: DriverContextCheckpointRequest,
@@ -374,6 +405,9 @@ pub struct DriverToolInvocation {
     pub thread_id: RuntimeThreadId,
     pub turn_id: RuntimeTurnId,
     pub item_id: RuntimeItemId,
+    /// Session-visible protocol item identity. This remains distinct from the
+    /// canonical Runtime item used for state and idempotency.
+    pub presentation_item_id: agentdash_agent_runtime_contract::PresentationItemId,
     pub binding_id: RuntimeBindingId,
     pub generation: RuntimeDriverGeneration,
     pub source_thread_id: DriverThreadId,

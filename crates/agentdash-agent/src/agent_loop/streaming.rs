@@ -224,11 +224,8 @@ pub(super) async fn stream_assistant_response(
             let chunk = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => {
-                    stream_failure = Some(BridgeError::provider(
-                        "Agent run aborted",
-                        ProviderErrorClassification::aborted(),
-                    ));
-                    break;
+                    discard_partial(context, &mut partial);
+                    return Err(AgentError::Cancelled);
                 }
                 chunk = stream.next() => chunk,
             };
@@ -236,11 +233,8 @@ pub(super) async fn stream_assistant_response(
                 break;
             };
             if cancel.is_cancelled() {
-                stream_failure = Some(BridgeError::provider(
-                    "Agent run aborted",
-                    ProviderErrorClassification::aborted(),
-                ));
-                break;
+                discard_partial(context, &mut partial);
+                return Err(AgentError::Cancelled);
             }
             match chunk {
                 StreamChunk::TextDelta(text) if !text.is_empty() => {
@@ -722,6 +716,14 @@ fn sync_partial(context: &mut AgentContext, partial: &PartialAssistantState) {
         && let Some(last) = context.messages.last_mut()
     {
         *last = partial.message.clone();
+    }
+}
+
+fn discard_partial(context: &mut AgentContext, partial: &mut PartialAssistantState) {
+    if partial.added_partial {
+        context.messages.pop();
+        context.message_refs.pop();
+        partial.added_partial = false;
     }
 }
 

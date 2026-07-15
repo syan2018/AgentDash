@@ -159,7 +159,8 @@ pub enum RuntimeCommand {
     },
     ToolSetReplace {
         thread_id: RuntimeThreadId,
-        expected_tool_set_revision: ToolSetRevision,
+        expected_current_tool_set_revision: ToolSetRevision,
+        target_tool_set_revision: ToolSetRevision,
         tool_set_digest: String,
     },
     SurfaceAdopt {

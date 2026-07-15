@@ -22,13 +22,11 @@ use agentdash_agent_protocol::{
     ThreadTokenUsage, ThreadTokenUsageUpdatedNotification, TraceInfo, backbone::thread_item,
 };
 use agentdash_agent_protocol::{ContextUsageSource, NormalizedContextUsage, TokenUsageBreakdown};
-use agentdash_agent_runtime_contract::ToolProtocolProjection;
+use agentdash_agent_runtime_contract::{ToolPresentationEmitter, ToolProtocolProjection};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub(crate) enum NativePresentationError {
-    #[error("native tool `{tool_name}` has no owner-declared protocol projector")]
-    MissingToolProjector { tool_name: String },
     #[error("native tool `{tool_name}` cannot be projected as {family}: {reason}")]
     InvalidToolProjection {
         tool_name: String,
@@ -66,6 +64,10 @@ pub(crate) struct ToolCallEmitState {
     entry_index: u32,
     tool_name: String,
     raw_input: Option<serde_json::Value>,
+    /// The owner route is pinned by the first event for this logical call. Surface hot-replace
+    /// may change later calls, but must not change the family or producer halfway through one
+    /// started/updated/completed lifecycle.
+    presentation_route: NativeToolPresentationRoute,
 }
 
 #[derive(Debug, Clone)]
@@ -74,18 +76,26 @@ pub(crate) struct StreamMapperRuntimeContext {
     pub reserve_tokens: u64,
     pub session_identity: Arc<NativeSessionItemIdentity>,
     pub fixed_event_timestamp_ms: Option<i64>,
-    pub tool_protocol_projectors: Arc<RwLock<HashMap<String, ToolProtocolProjection>>>,
+    pub tool_presentation_routes: Arc<RwLock<HashMap<String, NativeToolPresentationRoute>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NativeToolPresentationRoute {
+    pub projection: ToolProtocolProjection,
+    pub emitter: ToolPresentationEmitter,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct NativeSessionItemIdentity {
     state: RwLock<NativeSessionItemIdentityState>,
+    presentation_routes: RwLock<Option<Arc<RwLock<HashMap<String, NativeToolPresentationRoute>>>>>,
 }
 
 #[derive(Debug, Default)]
 struct NativeSessionItemIdentityState {
     turn_aliases: HashMap<String, String>,
     body_aliases: HashMap<(ReadableBodyKind, String), String>,
+    body_kinds: HashMap<(String, String), ReadableBodyKind>,
     next_turn: usize,
     next_tool: usize,
     next_command: usize,
@@ -94,6 +104,32 @@ struct NativeSessionItemIdentityState {
 impl NativeSessionItemIdentity {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    pub(crate) fn bind_presentation_routes(
+        &self,
+        routes: Arc<RwLock<HashMap<String, NativeToolPresentationRoute>>>,
+    ) {
+        *self
+            .presentation_routes
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(routes);
+    }
+
+    fn body_kind_for_tool(&self, tool_name: &str) -> ReadableBodyKind {
+        self.presentation_routes
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .and_then(|routes| {
+                routes
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .get(tool_name)
+                    .map(|route| route.projection.clone())
+            })
+            .filter(|projection| matches!(projection, ToolProtocolProjection::Command))
+            .map_or(ReadableBodyKind::Tool, |_| ReadableBodyKind::Command)
     }
 
     pub(crate) fn observe_tool_result_item_id(&self, item_id: &str) {
@@ -108,6 +144,36 @@ impl NativeSessionItemIdentity {
         match kind {
             ReadableBodyKind::Tool => state.next_tool = state.next_tool.max(body),
             ReadableBodyKind::Command => state.next_command = state.next_command.max(body),
+        }
+    }
+
+    /// Hydrate readable lifecycle watermarks from a durable provider transcript before allocating
+    /// any new Native vendor item or ToolResultRef address.
+    pub(crate) fn observe_messages(&self, messages: &[AgentMessage]) {
+        for message in messages {
+            match message {
+                AgentMessage::Assistant { tool_calls, .. } => {
+                    for tool_call in tool_calls {
+                        self.observe_tool_result_item_id(&tool_call.id);
+                    }
+                }
+                AgentMessage::ToolResult {
+                    tool_call_id,
+                    details,
+                    ..
+                } => {
+                    self.observe_tool_result_item_id(tool_call_id);
+                    if let Some(item_id) = details
+                        .as_ref()
+                        .and_then(|details| details.get("readable_ref"))
+                        .and_then(|readable_ref| readable_ref.get("item_id"))
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        self.observe_tool_result_item_id(item_id);
+                    }
+                }
+                AgentMessage::User { .. } | AgentMessage::CompactionSummary { .. } => {}
+            }
         }
     }
 
@@ -131,6 +197,10 @@ impl NativeSessionItemIdentity {
                 .insert(raw_turn_id.to_string(), alias.clone());
             alias
         };
+        let kind = *state
+            .body_kinds
+            .entry((raw_turn_id.to_string(), raw_tool_call_id.to_string()))
+            .or_insert(kind);
         let key = (kind, raw_tool_call_id.to_string());
         let body_alias = if let Some(alias) = state.body_aliases.get(&key) {
             alias.clone()
@@ -162,6 +232,21 @@ impl NativeSessionItemIdentity {
             item_id,
         }
     }
+
+    pub(crate) fn tool_presentation_item_id(
+        &self,
+        raw_turn_id: &str,
+        raw_tool_call_id: &str,
+        projection: &ToolProtocolProjection,
+    ) -> String {
+        let kind = if matches!(projection, ToolProtocolProjection::Command) {
+            ReadableBodyKind::Command
+        } else {
+            ReadableBodyKind::Tool
+        };
+        self.tool_result_ref_with_kind(raw_turn_id, raw_tool_call_id, kind)
+            .item_id
+    }
 }
 
 impl ToolResultAddressProvider for NativeSessionItemIdentity {
@@ -171,11 +256,7 @@ impl ToolResultAddressProvider for NativeSessionItemIdentity {
         raw_tool_call_id: &str,
         tool_name: &str,
     ) -> ReadableToolResultRef {
-        let kind = if tool_name == "shell_exec" {
-            ReadableBodyKind::Command
-        } else {
-            ReadableBodyKind::Tool
-        };
+        let kind = self.body_kind_for_tool(tool_name);
         self.tool_result_ref_with_kind(raw_turn_id, raw_tool_call_id, kind)
     }
 }
@@ -216,39 +297,62 @@ fn chunk_stream_key(turn_id: &str, entry_index: u32, chunk_kind: &str) -> String
 }
 
 fn upsert_tool_call_state(
+    runtime_context: &StreamMapperRuntimeContext,
     tool_call_states: &mut HashMap<String, ToolCallEmitState>,
     entry_index: &mut u32,
     tool_call_id: &str,
     tool_name: String,
     raw_input: Option<serde_json::Value>,
-) -> (ToolCallEmitState, bool) {
+) -> Result<(ToolCallEmitState, bool), NativePresentationError> {
     if let Some(existing) = tool_call_states.get_mut(tool_call_id) {
-        if !tool_name.trim().is_empty() {
-            existing.tool_name = tool_name;
+        if !tool_name.trim().is_empty() && existing.tool_name != tool_name {
+            return Err(NativePresentationError::InvalidToolProjection {
+                tool_name,
+                family: "presentation_route",
+                reason: format!(
+                    "logical tool call `{tool_call_id}` changed its owner name from `{}`",
+                    existing.tool_name
+                ),
+            });
         }
         if let Some(raw_input) = raw_input {
             existing.raw_input = Some(raw_input);
         }
-        return (existing.clone(), false);
+        return Ok((existing.clone(), false));
     }
 
+    let presentation_route = runtime_context
+        .tool_presentation_routes
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&tool_name)
+        .cloned()
+        .ok_or_else(|| NativePresentationError::InvalidToolProjection {
+            tool_name: tool_name.clone(),
+            family: "presentation_route",
+            reason: "effective Native tool surface has no owner-declared presentation route"
+                .to_string(),
+        })?;
     let state = ToolCallEmitState {
         entry_index: *entry_index,
         tool_name,
         raw_input,
+        presentation_route,
     };
     tool_call_states.insert(tool_call_id.to_string(), state.clone());
-    (state, true)
+    Ok((state, true))
 }
 
 fn upsert_state_from_tool_name(
+    runtime_context: &StreamMapperRuntimeContext,
     tool_call_states: &mut HashMap<String, ToolCallEmitState>,
     entry_index: &mut u32,
     tool_call_id: &str,
     tool_name: &str,
     raw_input: Option<serde_json::Value>,
-) -> (ToolCallEmitState, bool) {
+) -> Result<(ToolCallEmitState, bool), NativePresentationError> {
     upsert_tool_call_state(
+        runtime_context,
         tool_call_states,
         entry_index,
         tool_call_id,
@@ -270,14 +374,16 @@ fn message_tool_call_info<'a>(
 }
 
 fn upsert_state_from_message(
+    runtime_context: &StreamMapperRuntimeContext,
     tool_call_states: &mut HashMap<String, ToolCallEmitState>,
     entry_index: &mut u32,
     message: &AgentMessage,
     tool_call_id: &str,
     fallback_name: &str,
-) -> (ToolCallEmitState, bool) {
+) -> Result<(ToolCallEmitState, bool), NativePresentationError> {
     if let Some(tool_call) = message_tool_call_info(message, tool_call_id) {
         return upsert_tool_call_state(
+            runtime_context,
             tool_call_states,
             entry_index,
             tool_call_id,
@@ -286,27 +392,13 @@ fn upsert_state_from_message(
         );
     }
     upsert_state_from_tool_name(
+        runtime_context,
         tool_call_states,
         entry_index,
         tool_call_id,
         fallback_name,
         None,
     )
-}
-
-fn tool_protocol_projection(
-    runtime_context: &StreamMapperRuntimeContext,
-    tool_name: &str,
-) -> Result<ToolProtocolProjection, NativePresentationError> {
-    runtime_context
-        .tool_protocol_projectors
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(tool_name)
-        .cloned()
-        .ok_or_else(|| NativePresentationError::MissingToolProjector {
-            tool_name: tool_name.to_string(),
-        })
 }
 
 fn tool_result_item_id(
@@ -533,6 +625,43 @@ fn decode_tool_result(
     })
 }
 
+fn decode_tool_result_lossy(
+    value: &serde_json::Value,
+    tool_name: &str,
+    family: &'static str,
+    is_error: bool,
+) -> AgentToolResult {
+    match decode_tool_result(value, tool_name, family) {
+        Ok(result) => result,
+        Err(error) => {
+            diag!(
+                Warn,
+                Subsystem::AgentRun,
+                tool_name = tool_name,
+                family = family,
+                reason = %error,
+                "Native tool result不是完整typed payload，保留lossy presentation"
+            );
+            let content = value
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .map(|text| vec![ContentPart::text(text)])
+                .unwrap_or_else(|| {
+                    if value.is_null() {
+                        Vec::new()
+                    } else {
+                        vec![ContentPart::text(value.to_string())]
+                    }
+                });
+            AgentToolResult {
+                content,
+                is_error,
+                details: value.get("details").cloned(),
+            }
+        }
+    }
+}
+
 fn tool_result_text(
     result: &AgentToolResult,
     tool_name: &str,
@@ -543,11 +672,13 @@ fn tool_result_text(
         match part {
             ContentPart::Text { text: value } => text.push(value.as_str()),
             ContentPart::Image { .. } | ContentPart::Reasoning { .. } => {
-                return Err(NativePresentationError::InvalidToolProjection {
-                    tool_name: tool_name.to_string(),
-                    family,
-                    reason: "text projection received non-text tool result content".to_string(),
-                });
+                diag!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    tool_name = tool_name,
+                    family = family,
+                    "Native text-only tool presentation过滤非文本result part"
+                );
             }
         }
     }
@@ -640,19 +771,6 @@ fn make_shell_exec_item(
     .into())
 }
 
-fn required_string_argument(
-    arguments: &serde_json::Value,
-    key: &'static str,
-    state: &ToolCallEmitState,
-    family: &'static str,
-) -> Result<String, NativePresentationError> {
-    string_arg(arguments, key).ok_or_else(|| NativePresentationError::InvalidToolProjection {
-        tool_name: state.tool_name.clone(),
-        family,
-        reason: format!("typed tool arguments require a string `{key}` field"),
-    })
-}
-
 fn project_tool_item(
     item_id: &str,
     state: &ToolCallEmitState,
@@ -662,15 +780,55 @@ fn project_tool_item(
     success: Option<bool>,
     command: Option<(codex::CommandExecutionStatus, Option<String>, Option<i32>)>,
 ) -> Result<AgentDashThreadItem, NativePresentationError> {
-    let arguments =
-        state
-            .raw_input
-            .clone()
-            .ok_or_else(|| NativePresentationError::InvalidToolProjection {
-                tool_name: state.tool_name.clone(),
-                family: "tool",
-                reason: "tool lifecycle is missing typed arguments".to_string(),
-            })?;
+    match project_tool_item_strict(
+        item_id,
+        state,
+        projection,
+        status,
+        content_items.clone(),
+        success,
+        command.clone(),
+    ) {
+        Ok(item) => Ok(item),
+        Err(error) => {
+            diag!(
+                Warn,
+                Subsystem::AgentRun,
+                tool_name = state.tool_name,
+                projection = ?projection,
+                reason = %error,
+                "Native typed tool presentation尚不完整，按main语义保留dynamic lifecycle"
+            );
+            Ok(main_dynamic_tool_call(
+                item_id,
+                state.tool_name.clone(),
+                state
+                    .raw_input
+                    .clone()
+                    .unwrap_or_else(|| serde_json::json!({})),
+                status,
+                content_items,
+                success,
+                None,
+            )
+            .into())
+        }
+    }
+}
+
+fn project_tool_item_strict(
+    item_id: &str,
+    state: &ToolCallEmitState,
+    projection: &ToolProtocolProjection,
+    status: codex::DynamicToolCallStatus,
+    content_items: Option<Vec<codex::DynamicToolCallOutputContentItem>>,
+    success: Option<bool>,
+    command: Option<(codex::CommandExecutionStatus, Option<String>, Option<i32>)>,
+) -> Result<AgentDashThreadItem, NativePresentationError> {
+    let arguments = state
+        .raw_input
+        .clone()
+        .unwrap_or_else(|| serde_json::json!({}));
     let item = match projection {
         ToolProtocolProjection::Command => {
             let (status, aggregated_output, exit_code) =
@@ -689,7 +847,9 @@ fn project_tool_item(
         )?,
         ToolProtocolProjection::FsRead => AgentDashNativeThreadItem::FsRead {
             id: item_id.to_string(),
-            path: required_string_argument(&arguments, "path", state, "fs_read")?,
+            path: string_arg(&arguments, "path")
+                .or_else(|| string_arg(&arguments, "file_path"))
+                .unwrap_or_default(),
             offset: usize_arg(&arguments, "offset"),
             limit: usize_arg(&arguments, "limit"),
             arguments,
@@ -700,7 +860,7 @@ fn project_tool_item(
         .into(),
         ToolProtocolProjection::FsGrep => AgentDashNativeThreadItem::FsGrep {
             id: item_id.to_string(),
-            pattern: required_string_argument(&arguments, "pattern", state, "fs_grep")?,
+            pattern: string_arg(&arguments, "pattern").unwrap_or_default(),
             path: string_arg(&arguments, "path"),
             glob: string_arg(&arguments, "glob"),
             file_type: string_arg(&arguments, "type"),
@@ -715,7 +875,7 @@ fn project_tool_item(
         .into(),
         ToolProtocolProjection::FsGlob => AgentDashNativeThreadItem::FsGlob {
             id: item_id.to_string(),
-            pattern: required_string_argument(&arguments, "pattern", state, "fs_glob")?,
+            pattern: string_arg(&arguments, "pattern").unwrap_or_default(),
             path: string_arg(&arguments, "path"),
             max_results: usize_arg(&arguments, "max_results")
                 .or_else(|| usize_arg(&arguments, "maxResults")),
@@ -1172,16 +1332,23 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                 ..
             } => {
                 let (state, created) = upsert_state_from_message(
+                    &runtime_context,
                     tool_call_states,
                     entry_index,
                     message,
                     tool_call_id,
                     name,
-                );
+                )?;
+                if !matches!(
+                    state.presentation_route.emitter,
+                    ToolPresentationEmitter::VendorStream
+                ) {
+                    return Ok(Vec::new());
+                }
                 if !created {
                     return Ok(Vec::new());
                 }
-                let projection = tool_protocol_projection(&runtime_context, &state.tool_name)?;
+                let projection = state.presentation_route.projection.clone();
                 let item_id =
                     tool_result_item_id(&runtime_context, turn_id, tool_call_id, &projection, None);
                 let command = matches!(projection, ToolProtocolProjection::Command).then_some((
@@ -1215,13 +1382,20 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                 ..
             } => {
                 let (state, _) = upsert_state_from_message(
+                    &runtime_context,
                     tool_call_states,
                     entry_index,
                     message,
                     tool_call_id,
                     name,
-                );
-                let projection = tool_protocol_projection(&runtime_context, &state.tool_name)?;
+                )?;
+                if !matches!(
+                    state.presentation_route.emitter,
+                    ToolPresentationEmitter::VendorStream
+                ) {
+                    return Ok(Vec::new());
+                }
+                let projection = state.presentation_route.projection.clone();
                 let args = if matches!(projection, ToolProtocolProjection::FileChange) {
                     apply_patch_preview_args_from_draft(draft, *is_parseable)
                 } else {
@@ -1231,12 +1405,13 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                     return Ok(Vec::new());
                 };
                 let (state, _) = upsert_tool_call_state(
+                    &runtime_context,
                     tool_call_states,
                     entry_index,
                     tool_call_id,
                     state.tool_name,
                     Some(args),
-                );
+                )?;
                 let item_id =
                     tool_result_item_id(&runtime_context, turn_id, tool_call_id, &projection, None);
                 let command = matches!(projection, ToolProtocolProjection::Command).then_some((
@@ -1263,14 +1438,20 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                 )]
             }
             agentdash_agent::types::AssistantStreamEvent::ToolCallEnd { tool_call, .. } => {
-                let (_state, _) = upsert_tool_call_state(
+                let (state, _) = upsert_tool_call_state(
+                    &runtime_context,
                     tool_call_states,
                     entry_index,
                     &tool_call.id,
                     tool_call.name.clone(),
                     Some(tool_call.arguments.clone()),
-                );
-                tool_protocol_projection(&runtime_context, &tool_call.name)?;
+                )?;
+                if !matches!(
+                    state.presentation_route.emitter,
+                    ToolPresentationEmitter::VendorStream
+                ) {
+                    return Ok(Vec::new());
+                }
                 Vec::new()
             }
             agentdash_agent::types::AssistantStreamEvent::TextDelta { text, .. } => {
@@ -1403,16 +1584,22 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
 
                 // 对 MessageEnd 里出现的新 tool_call，补发 ItemStarted
                 for tool_call in tool_calls {
-                    let (_state, created) = upsert_tool_call_state(
+                    let (state, created) = upsert_tool_call_state(
+                        &runtime_context,
                         tool_call_states,
                         entry_index,
                         &tool_call.id,
                         tool_call.name.clone(),
                         Some(tool_call.arguments.clone()),
-                    );
+                    )?;
+                    if !matches!(
+                        state.presentation_route.emitter,
+                        ToolPresentationEmitter::VendorStream
+                    ) {
+                        continue;
+                    }
                     if created {
-                        let projection =
-                            tool_protocol_projection(&runtime_context, &_state.tool_name)?;
+                        let projection = state.presentation_route.projection.clone();
                         let item_id = tool_result_item_id(
                             &runtime_context,
                             turn_id,
@@ -1424,7 +1611,7 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                             .then_some((codex::CommandExecutionStatus::InProgress, None, None));
                         let item = project_tool_item(
                             &item_id,
-                            &_state,
+                            &state,
                             &projection,
                             codex::DynamicToolCallStatus::InProgress,
                             None,
@@ -1437,7 +1624,7 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                                 session_id.to_string(),
                                 turn_id.to_string(),
                             )),
-                            _state.entry_index,
+                            state.entry_index,
                         ));
                     }
                 }
@@ -1636,14 +1823,24 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
             tool_name,
             args,
         } => {
-            let (state, _) = upsert_state_from_tool_name(
+            let (state, created) = upsert_state_from_tool_name(
+                &runtime_context,
                 tool_call_states,
                 entry_index,
                 tool_call_id,
                 tool_name,
                 Some(args.clone()),
-            );
-            let projection = tool_protocol_projection(&runtime_context, tool_name)?;
+            )?;
+            if !matches!(
+                state.presentation_route.emitter,
+                ToolPresentationEmitter::VendorStream
+            ) {
+                return Ok(Vec::new());
+            }
+            if !created {
+                return Ok(Vec::new());
+            }
+            let projection = state.presentation_route.projection.clone();
             let item_id =
                 tool_result_item_id(&runtime_context, turn_id, tool_call_id, &projection, None);
             let command = matches!(projection, ToolProtocolProjection::Command).then_some((
@@ -1679,16 +1876,23 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
         } => {
             let details_type = partial_result_details_type(partial_result);
             let is_shell_output = details_type == Some("shell_output");
-            let projection = tool_protocol_projection(&runtime_context, tool_name)?;
-            let is_vfs_uri_rewrite = matches!(projection, ToolProtocolProjection::Command)
-                && details_type == Some("vfs_uri_rewrite");
             let (state, _) = upsert_state_from_tool_name(
+                &runtime_context,
                 tool_call_states,
                 entry_index,
                 tool_call_id,
                 tool_name,
                 Some(args.clone()),
-            );
+            )?;
+            if !matches!(
+                state.presentation_route.emitter,
+                ToolPresentationEmitter::VendorStream
+            ) {
+                return Ok(Vec::new());
+            }
+            let projection = state.presentation_route.projection.clone();
+            let is_vfs_uri_rewrite = matches!(projection, ToolProtocolProjection::Command)
+                && details_type == Some("vfs_uri_rewrite");
 
             if matches!(projection, ToolProtocolProjection::Command)
                 && (is_shell_output || is_vfs_uri_rewrite)
@@ -1700,7 +1904,8 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                     &projection,
                     Some(partial_result),
                 );
-                let result = decode_tool_result(partial_result, tool_name, "command_output")?;
+                let result =
+                    decode_tool_result_lossy(partial_result, tool_name, "command_output", false);
                 let delta =
                     tool_result_text(&result, tool_name, "command_output")?.ok_or_else(|| {
                         NativePresentationError::InvalidToolProjection {
@@ -1722,7 +1927,8 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                     state.entry_index,
                 )]
             } else {
-                let result = decode_tool_result(partial_result, tool_name, "tool_result")?;
+                let result =
+                    decode_tool_result_lossy(partial_result, tool_name, "tool_result", false);
                 let content_items =
                     decode_tool_result_to_content_items(partial_result, &result, tool_name)?;
                 let item_id = tool_result_item_id(
@@ -1765,14 +1971,20 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
             details,
             ..
         } => {
-            tool_protocol_projection(&runtime_context, tool_name)?;
             let (state, _) = upsert_state_from_tool_name(
+                &runtime_context,
                 tool_call_states,
                 entry_index,
                 tool_call_id,
                 tool_name,
                 Some(args.clone()),
-            );
+            )?;
+            if !matches!(
+                state.presentation_route.emitter,
+                ToolPresentationEmitter::VendorStream
+            ) {
+                return Ok(Vec::new());
+            }
             vec![wrap(
                 BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
                     key: "approval_requested".to_string(),
@@ -1797,14 +2009,20 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
             reason,
             ..
         } => {
-            tool_protocol_projection(&runtime_context, tool_name)?;
             let (state, _) = upsert_state_from_tool_name(
+                &runtime_context,
                 tool_call_states,
                 entry_index,
                 tool_call_id,
                 tool_name,
                 Some(args.clone()),
-            );
+            )?;
+            if !matches!(
+                state.presentation_route.emitter,
+                ToolPresentationEmitter::VendorStream
+            ) {
+                return Ok(Vec::new());
+            }
             vec![wrap(
                 BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
                     key: "approval_resolved".to_string(),
@@ -1828,13 +2046,20 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
             is_error,
         } => {
             let (state, _) = upsert_state_from_tool_name(
+                &runtime_context,
                 tool_call_states,
                 entry_index,
                 tool_call_id,
                 tool_name,
                 None,
-            );
-            let projection = tool_protocol_projection(&runtime_context, tool_name)?;
+            )?;
+            if !matches!(
+                state.presentation_route.emitter,
+                ToolPresentationEmitter::VendorStream
+            ) {
+                return Ok(Vec::new());
+            }
+            let projection = state.presentation_route.projection.clone();
             let item_id = tool_result_item_id(
                 &runtime_context,
                 turn_id,
@@ -1843,7 +2068,8 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                 Some(result),
             );
 
-            let decoded_result = decode_tool_result(result, tool_name, "tool_result")?;
+            let decoded_result =
+                decode_tool_result_lossy(result, tool_name, "tool_result", *is_error);
             let command = if matches!(projection, ToolProtocolProjection::Command) {
                 let exit_code = shell_exit_code_from_result(result, &decoded_result, tool_name)?;
                 let aggregated_output = tool_result_text(&decoded_result, tool_name, "command")?;
@@ -1924,7 +2150,7 @@ fn decode_tool_result_to_content_items(
 ) -> Result<Option<Vec<codex::DynamicToolCallOutputContentItem>>, NativePresentationError> {
     let mut items = Vec::new();
     for part in &result.content {
-        items.push(match part {
+        let item = match part {
             ContentPart::Text { text } => {
                 codex::DynamicToolCallOutputContentItem::InputText { text: text.clone() }
             }
@@ -1934,14 +2160,16 @@ fn decode_tool_result_to_content_items(
                 }
             }
             ContentPart::Reasoning { .. } => {
-                return Err(NativePresentationError::InvalidToolProjection {
-                    tool_name: tool_name.to_string(),
-                    family: "tool_result",
-                    reason: "tool result reasoning content has no Codex protocol projection"
-                        .to_string(),
-                });
+                diag!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    tool_name = tool_name,
+                    "Native tool result reasoning part无公开协议投影，已从presentation过滤"
+                );
+                continue;
             }
-        });
+        };
+        items.push(item);
     }
 
     if is_companion_subagent_dispatch_result(value)
@@ -1962,6 +2190,22 @@ mod tests {
     #[test]
     fn restored_tool_item_ids_advance_session_identity_watermarks() {
         let identity = NativeSessionItemIdentity::new();
+        identity.bind_presentation_routes(Arc::new(RwLock::new(HashMap::from([
+            (
+                "read".to_string(),
+                NativeToolPresentationRoute {
+                    projection: ToolProtocolProjection::FsRead,
+                    emitter: ToolPresentationEmitter::VendorStream,
+                },
+            ),
+            (
+                "owner_command_alias".to_string(),
+                NativeToolPresentationRoute {
+                    projection: ToolProtocolProjection::Command,
+                    emitter: ToolPresentationEmitter::VendorStream,
+                },
+            ),
+        ]))));
         identity.observe_tool_result_item_id("turn_004:tool_007");
         identity.observe_tool_result_item_id("turn_003:cmd_002");
 
@@ -1973,7 +2217,7 @@ mod tests {
         );
         assert_eq!(
             identity
-                .tool_result_ref("raw-turn-2", "raw-command", "shell_exec")
+                .tool_result_ref("raw-turn-2", "raw-command", "owner_command_alias")
                 .item_id,
             "turn_006:cmd_003"
         );
@@ -2077,49 +2321,85 @@ mod tests {
     }
 
     #[test]
-    fn tool_projection_requires_owned_arguments_and_required_fields() {
+    fn incomplete_typed_tool_arguments_preserve_main_projection_semantics() {
         let missing_arguments = ToolCallEmitState {
             entry_index: 0,
             tool_name: "read".to_string(),
             raw_input: None,
+            presentation_route: NativeToolPresentationRoute {
+                projection: ToolProtocolProjection::FsRead,
+                emitter: ToolPresentationEmitter::VendorStream,
+            },
         };
+        let missing_arguments = project_tool_item(
+            "item-1",
+            &missing_arguments,
+            &ToolProtocolProjection::FsRead,
+            codex::DynamicToolCallStatus::InProgress,
+            None,
+            None,
+            None,
+        )
+        .expect("partial stream arguments remain displayable");
         assert!(matches!(
-            project_tool_item(
-                "item-1",
-                &missing_arguments,
-                &ToolProtocolProjection::FsRead,
-                codex::DynamicToolCallStatus::InProgress,
-                None,
-                None,
-                None,
-            ),
-            Err(NativePresentationError::InvalidToolProjection { family: "tool", .. })
+            missing_arguments,
+            AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::FsRead { path, .. })
+                if path.is_empty()
         ));
 
         let missing_path = ToolCallEmitState {
             entry_index: 0,
             tool_name: "read".to_string(),
             raw_input: Some(serde_json::json!({})),
+            presentation_route: NativeToolPresentationRoute {
+                projection: ToolProtocolProjection::FsRead,
+                emitter: ToolPresentationEmitter::VendorStream,
+            },
         };
+        let missing_path = project_tool_item(
+            "item-2",
+            &missing_path,
+            &ToolProtocolProjection::FsRead,
+            codex::DynamicToolCallStatus::InProgress,
+            None,
+            None,
+            None,
+        )
+        .expect("partial fs_read arguments remain displayable");
         assert!(matches!(
-            project_tool_item(
-                "item-2",
-                &missing_path,
-                &ToolProtocolProjection::FsRead,
-                codex::DynamicToolCallStatus::InProgress,
-                None,
-                None,
-                None,
-            ),
-            Err(NativePresentationError::InvalidToolProjection {
-                family: "fs_read",
-                ..
-            })
+            missing_path,
+            AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::FsRead { path, .. })
+                if path.is_empty()
+        ));
+
+        let missing_pattern = ToolCallEmitState {
+            entry_index: 0,
+            tool_name: "fs_glob".to_string(),
+            raw_input: Some(serde_json::json!({})),
+            presentation_route: NativeToolPresentationRoute {
+                projection: ToolProtocolProjection::FsGlob,
+                emitter: ToolPresentationEmitter::VendorStream,
+            },
+        };
+        let missing_pattern = project_tool_item(
+            "item-3",
+            &missing_pattern,
+            &ToolProtocolProjection::FsGlob,
+            codex::DynamicToolCallStatus::InProgress,
+            None,
+            None,
+            None,
+        )
+        .expect("main keeps the typed fs_glob lifecycle when pattern is absent");
+        assert!(matches!(
+            missing_pattern,
+            AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::FsGlob { pattern, .. })
+                if pattern.is_empty()
         ));
     }
 
     #[test]
-    fn reasoning_tool_result_is_not_silently_filtered_from_codex_content() {
+    fn reasoning_tool_result_is_filtered_without_breaking_tool_lifecycle() {
         let value = serde_json::json!({
             "content": [{ "type": "reasoning", "text": "private", "id": null, "signature": null }],
             "is_error": false,
@@ -2127,12 +2407,10 @@ mod tests {
         });
         let result = decode_tool_result(&value, "read", "tool_result").expect("decode");
 
-        assert!(matches!(
-            decode_tool_result_to_content_items(&value, &result, "read"),
-            Err(NativePresentationError::InvalidToolProjection {
-                family: "tool_result",
-                ..
-            })
-        ));
+        assert_eq!(
+            decode_tool_result_to_content_items(&value, &result, "read")
+                .expect("reasoning-only tool result remains non-critical"),
+            None
+        );
     }
 }

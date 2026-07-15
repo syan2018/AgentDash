@@ -77,6 +77,9 @@ pub struct DriverHookApplyStatus {
 #[serde(rename_all = "snake_case")]
 pub struct DriverCommandEnvelope {
     pub request_id: DriverRequestId,
+    /// Managed Runtime operation that owns this delivery. Drivers must preserve
+    /// it across acceptance, terminal emission, duplicate dispatch and recovery.
+    pub operation_id: crate::RuntimeOperationId,
     pub presentation_thread_id: crate::PresentationThreadId,
     pub binding_id: RuntimeBindingId,
     pub generation: crate::RuntimeDriverGeneration,
@@ -84,6 +87,9 @@ pub struct DriverCommandEnvelope {
     /// Managed Runtime 为会产生新 Turn 的命令分配的 canonical identity。
     /// Driver 只把自己的 source turn 映射到该 identity，不再创建第二个 Runtime Turn。
     pub runtime_turn_id: Option<RuntimeTurnId>,
+    /// Session-visible turn identity carried by the protected presentation
+    /// protocol. It is distinct from both canonical Runtime and vendor turns.
+    pub presentation_turn_id: Option<crate::PresentationTurnId>,
     pub command: RuntimeCommand,
 }
 
@@ -115,6 +121,9 @@ pub struct DriverToolSetApplyReceipt {
 pub struct DriverEventEnvelope {
     pub binding_id: RuntimeBindingId,
     pub generation: crate::RuntimeDriverGeneration,
+    /// Accepted Runtime command that caused this emission. Long-lived binding
+    /// events may omit it; command/turn events preserve it explicitly.
+    pub operation_id: Option<crate::RuntimeOperationId>,
     pub source_thread_id: DriverThreadId,
     pub source_turn_id: Option<DriverTurnId>,
     pub source_item_id: Option<DriverItemId>,

@@ -17,7 +17,7 @@ impl ContextProjector {
             .into_iter()
             .enumerate()
             .map(|(ordinal, facts)| ContextFrame {
-                id: format!("context-frame-{}-{ordinal}", identity.operation_id),
+                id: main_context_frame_id(identity, ordinal, &facts),
                 kind: facts.kind,
                 source: facts.source,
                 phase_node: facts.phase_node,
@@ -44,6 +44,48 @@ impl ContextProjector {
             transition_phase_node: None,
             bootstrap_frames: frames,
             adoption_frames: Vec::new(),
+        }
+    }
+}
+
+fn main_context_frame_id(
+    identity: &ContextProjectionIdentity,
+    ordinal: usize,
+    facts: &ContextFrameFacts,
+) -> String {
+    use agentdash_agent_protocol::{ContextFrameKind, ContextFrameSection};
+
+    let created_at_ms = identity.recorded_at_ms;
+    match facts.kind {
+        ContextFrameKind::Identity => format!("identity-{created_at_ms}"),
+        ContextFrameKind::UserContext => format!("user_context-{created_at_ms}"),
+        ContextFrameKind::Environment => format!("environment-{created_at_ms}"),
+        ContextFrameKind::SystemGuidelines => format!("system-guidelines-{created_at_ms}"),
+        ContextFrameKind::MemoryContext => format!("memory-context-{created_at_ms}"),
+        ContextFrameKind::AssignmentContext => format!(
+            "assignment-context-{}-{created_at_ms}",
+            facts.phase_node.as_deref().unwrap_or("bootstrap")
+        ),
+        ContextFrameKind::CapabilityStateDelta => format!(
+            "runtime-context-{}-{created_at_ms}",
+            facts.phase_node.as_deref().unwrap_or("bootstrap")
+        ),
+        ContextFrameKind::PendingAction => {
+            let action_id = facts.sections.iter().find_map(|section| match section {
+                ContextFrameSection::PendingAction { action_id, .. } => Some(action_id.as_str()),
+                _ => None,
+            });
+            action_id.map_or_else(
+                || format!("pending-action-{}-{created_at_ms}", identity.operation_id),
+                |action_id| format!("pending-action-{action_id}-{created_at_ms}"),
+            )
+        }
+        ContextFrameKind::CompactionSummary => format!("compaction-summary-{created_at_ms}"),
+        ContextFrameKind::SystemNotice | ContextFrameKind::AutoResume => {
+            identity.operation_id.clone()
+        }
+        ContextFrameKind::SystemDelivery => {
+            format!("context-frame-{}-{ordinal}", identity.operation_id)
         }
     }
 }
@@ -86,7 +128,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&first.bootstrap_frames[0]).unwrap(),
             serde_json::json!({
-                "id": "context-frame-operation-1-0",
+                "id": "identity-1720000000000",
                 "kind": "identity",
                 "source": "runtime_context_update",
                 "delivery_status": "accepted",

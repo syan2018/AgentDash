@@ -1256,6 +1256,7 @@ impl DriverEventSink for GenerationFencedEventSink {
                     .emit(DriverEventEnvelope {
                         binding_id: self.binding_id.clone(),
                         generation: self.generation,
+                        operation_id: None,
                         source_thread_id: self.source_thread_id.clone(),
                         source_turn_id: None,
                         source_item_id: None,

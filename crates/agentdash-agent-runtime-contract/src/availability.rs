@@ -58,7 +58,10 @@ pub fn command_availability(
         RuntimeCommandKind::TurnSteer => Some(LifecycleCapability::TurnSteer),
         RuntimeCommandKind::TurnInterrupt => Some(LifecycleCapability::TurnInterrupt),
         RuntimeCommandKind::ToolSetReplace => Some(LifecycleCapability::ToolSetReplace),
-        RuntimeCommandKind::SurfaceAdopt => Some(LifecycleCapability::SurfaceAdopt),
+        // Surface adoption is a canonical platform transition. A connector can either apply the
+        // complete surface natively or accept the tool-set hot-replace projection while Runtime
+        // remains the owner of the AgentFrame/context presentation facts.
+        RuntimeCommandKind::SurfaceAdopt => None,
         RuntimeCommandKind::ThreadSettingsUpdate
         | RuntimeCommandKind::InteractionRespond
         | RuntimeCommandKind::ContextCompact => None,
@@ -71,10 +74,26 @@ pub fn command_availability(
     }
 
     match command {
-        RuntimeCommandKind::TurnStart | RuntimeCommandKind::SurfaceAdopt
-            if state.has_active_turn =>
-        {
+        RuntimeCommandKind::TurnStart if state.has_active_turn => {
             unmet.push(AvailabilityPredicate::NoActiveTurn);
+        }
+        RuntimeCommandKind::SurfaceAdopt => {
+            if !profile
+                .lifecycle
+                .contains(&LifecycleCapability::SurfaceAdopt)
+            {
+                if !profile
+                    .lifecycle
+                    .contains(&LifecycleCapability::ToolSetReplace)
+                {
+                    unmet.push(AvailabilityPredicate::Lifecycle {
+                        capability: LifecycleCapability::SurfaceAdopt,
+                    });
+                }
+                if profile.tools.configuration_boundary < crate::ConfigurationBoundary::HotReplace {
+                    unmet.push(AvailabilityPredicate::ToolHotReplace);
+                }
+            }
         }
         RuntimeCommandKind::TurnSteer | RuntimeCommandKind::TurnInterrupt
             if !state.has_active_turn =>

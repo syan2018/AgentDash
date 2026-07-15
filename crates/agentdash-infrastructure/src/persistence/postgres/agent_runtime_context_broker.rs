@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime::{RuntimeRepository, RuntimeStoreError};
-use agentdash_agent_runtime_contract::{ContextCandidateId, RuntimeBindingId};
+use agentdash_agent_runtime_contract::{
+    ContextCandidateId, RuntimeBindingId, RuntimeEvent, RuntimeJournalFact,
+};
 use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError,
 };
 use agentdash_integration_api::{
     AgentRuntimeContextBroker, DriverCompactionActivationRequest, DriverContextActivation,
-    DriverContextCheckpointRequest, DriverContextError,
+    DriverContextCheckpointRequest, DriverContextError, DriverTranscript, DriverTranscriptRequest,
 };
 use async_trait::async_trait;
 
@@ -65,6 +67,87 @@ impl PostgresAgentRuntimeContextBroker {
 
 #[async_trait]
 impl AgentRuntimeContextBroker for PostgresAgentRuntimeContextBroker {
+    async fn load_transcript(
+        &self,
+        request: DriverTranscriptRequest,
+    ) -> Result<DriverTranscript, DriverContextError> {
+        let binding = self
+            .validated_binding(&request.binding_id, request.generation)
+            .await?;
+        if binding.thread_id != request.runtime_thread_id {
+            return Err(DriverContextError::Stale);
+        }
+        let batch = self
+            .runtime
+            .journal_records_after(&binding.thread_id, None)
+            .await
+            .map_err(map_runtime_error)?;
+        let completed_presentation_item_ids = self
+            .runtime
+            .load_thread(&binding.thread_id)
+            .await
+            .map_err(map_runtime_error)?
+            .ok_or(DriverContextError::NotFound)?
+            .presentation_transcript
+            .into_iter()
+            .map(|item| item.source_item_id)
+            .collect();
+        let active_compaction_source_end = match self
+            .runtime
+            .load_context_head(&binding.thread_id)
+            .await
+            .map_err(map_runtime_error)?
+        {
+            None => None,
+            Some(head) => {
+                let activation = batch.records.iter().rev().find_map(|record| {
+                    let RuntimeJournalFact::Internal(RuntimeEvent::ContextCheckpointActivated {
+                        checkpoint_id,
+                        candidate_id,
+                        compaction_id,
+                        digest,
+                        ..
+                    }) = record.fact()
+                    else {
+                        return None;
+                    };
+                    (checkpoint_id == &head.checkpoint_id)
+                        .then(|| (candidate_id.clone(), compaction_id.clone(), digest.clone()))
+                });
+                let Some((candidate_id, compaction_id, digest)) = activation else {
+                    return Err(DriverContextError::InvalidMaterialization {
+                        reason: format!(
+                            "active context checkpoint `{}` has no retained activation record",
+                            head.checkpoint_id.as_str()
+                        ),
+                    });
+                };
+                let candidate = self
+                    .runtime
+                    .load_context_candidate(&compaction_id)
+                    .await
+                    .map_err(map_runtime_error)?
+                    .ok_or(DriverContextError::NotFound)?;
+                if candidate.thread_id != binding.thread_id
+                    || candidate.candidate_id != candidate_id
+                    || candidate.checkpoint.checkpoint_id != head.checkpoint_id
+                    || candidate.checkpoint.materialized.digest != digest
+                    || head.digest != digest
+                {
+                    return Err(DriverContextError::Stale);
+                }
+                Some(candidate.source_end_event_sequence)
+            }
+        };
+        Ok(DriverTranscript {
+            earliest_available: batch.earliest_available,
+            latest_available: batch.latest_available,
+            active_compaction_source_end,
+            completed_presentation_item_ids,
+            records: batch.records,
+        })
+    }
+
     async fn load_checkpoint(
         &self,
         request: DriverContextCheckpointRequest,

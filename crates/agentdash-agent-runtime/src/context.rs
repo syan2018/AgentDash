@@ -2,8 +2,8 @@ use agentdash_agent_runtime_contract::{
     ActiveContextHeadView, ContextActivationId, ContextBlock, ContextCandidateId,
     ContextCheckpointId, ContextCheckpointView, ContextCompactionId, ContextCompactionTrigger,
     ContextDigest, ContextFidelity, ContextProvenance, ContextRecipe, ContextRevision,
-    ContextSnapshotConsistencyCode, DriverContextRevision, MaterializedContext, RuntimeCommand,
-    RuntimeContextView, RuntimeEvent, RuntimeJournalFact, RuntimeOperationId,
+    ContextSnapshotConsistencyCode, DriverContextRevision, EventSequence, MaterializedContext,
+    RuntimeCommand, RuntimeContextView, RuntimeEvent, RuntimeJournalFact, RuntimeOperationId,
     RuntimeOperationTerminal, RuntimePresentationCoordinate, RuntimeThreadId, RuntimeThreadStatus,
 };
 use serde::{Deserialize, Serialize};
@@ -72,6 +72,8 @@ pub struct ContextCandidate {
     pub trigger: ContextCompactionTrigger,
     pub expected_base_checkpoint_id: Option<ContextCheckpointId>,
     pub expected_base_revision: ContextRevision,
+    /// Inclusive durable journal coordinate covered by this compacted base.
+    pub source_end_event_sequence: EventSequence,
     pub checkpoint: ContextCheckpoint,
     pub presentation: crate::CompactionPresentationFacts,
 }
@@ -130,6 +132,8 @@ pub struct ContextPreparationWorkItem {
     pub trigger: ContextCompactionTrigger,
     pub expected_base_checkpoint_id: Option<ContextCheckpointId>,
     pub expected_base_revision: ContextRevision,
+    /// Inclusive durable journal coordinate frozen when compaction is admitted.
+    pub source_end_event_sequence: EventSequence,
     pub status: ContextPreparationStatus,
 }
 
@@ -143,6 +147,7 @@ pub struct CompactionPreparation {
     pub trigger: ContextCompactionTrigger,
     pub expected_base_checkpoint_id: Option<ContextCheckpointId>,
     pub expected_base_revision: ContextRevision,
+    pub source_end_event_sequence: EventSequence,
     pub checkpoint_id: ContextCheckpointId,
     pub materialized: MaterializedContext,
     pub presentation: Option<crate::CompactionPresentationFacts>,
@@ -278,11 +283,15 @@ where
         &self,
         preparation: CompactionPreparation,
     ) -> Result<(), ContextRuntimeError> {
-        let presentation = preparation
+        let mut presentation = preparation
             .presentation
             .clone()
             .filter(|facts| !facts.summary.trim().is_empty())
             .ok_or(ContextRuntimeError::MissingCompactionPresentation)?;
+        // The compaction engine owns the summary payload, but Runtime owns the
+        // durable transcript coordinate. Never trust or infer this boundary
+        // from optional presentation metadata.
+        presentation.source_end_event_seq = Some(preparation.source_end_event_sequence.0);
         let operation = self
             .store()
             .find_operation(&preparation.operation_id)
@@ -319,6 +328,7 @@ where
             || work_item.trigger != preparation.trigger
             || work_item.expected_base_checkpoint_id != preparation.expected_base_checkpoint_id
             || work_item.expected_base_revision != preparation.expected_base_revision
+            || work_item.source_end_event_sequence != preparation.source_end_event_sequence
         {
             return Err(ContextRuntimeError::BaseChanged);
         }
@@ -337,6 +347,7 @@ where
             trigger: preparation.trigger,
             expected_base_checkpoint_id: preparation.expected_base_checkpoint_id.clone(),
             expected_base_revision: preparation.expected_base_revision,
+            source_end_event_sequence: preparation.source_end_event_sequence,
             checkpoint: checkpoint.clone(),
             presentation,
         };
@@ -764,6 +775,11 @@ where
                         None,
                         RuntimePresentationCoordinate {
                             runtime_turn_id: thread.active_turn_id.clone(),
+                            presentation_turn_id: thread
+                                .active_turn_id
+                                .as_ref()
+                                .and_then(|turn_id| thread.turns.get(turn_id))
+                                .map(|turn| turn.presentation_turn_id.clone()),
                             runtime_item_id: None,
                             interaction_id: None,
                             source_thread_id: Some(thread.presentation_thread_id.to_string()),

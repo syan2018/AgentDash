@@ -1,13 +1,11 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use agentdash_agent_protocol::{
-    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent, ContextFrame,
-    ContextFrameSection, PlatformEvent, codex_app_server_protocol as codex,
-    user_input_blocks_to_content_parts,
+    BackboneEvent, ContextFrame, ContextFrameSection, PlatformEvent, TranscriptProjectionEvent,
+    project_transcript,
 };
 use agentdash_agent_types::{
-    AgentMessage, ContentPart, MessageRef, StopReason, ToolCallInfo, estimate_content_tokens,
-    estimate_message_tokens,
+    AgentMessage, ContentPart, MessageRef, estimate_content_tokens, estimate_message_tokens,
 };
 use agentdash_contracts::session::{
     SessionAttachmentContextContributionResponse, SessionContextUsageAnalysisResponse,
@@ -165,6 +163,9 @@ fn build_context_projection(
                                 .source_event_seq
                                 .is_none_or(|sequence| sequence > end_event_seq)
                         });
+                        for existing in &mut segments {
+                            existing.provenance.projection_version = Some(projection_version);
+                        }
                     }
                     let insert_at = segment
                         .source_range
@@ -214,276 +215,37 @@ fn build_context_projection(
     }
 }
 
-#[derive(Default)]
-struct AssistantTranscriptState {
-    order: u64,
-    turn_id: String,
-    entry_index: u32,
-    text_deltas: String,
-    reasoning_deltas: String,
-    final_text: Option<String>,
-    final_reasoning: Option<String>,
-    tool_calls: Vec<ToolCallInfo>,
-}
-
-struct TranscriptMessage {
-    order: u64,
-    turn_id: String,
-    entry_index: u32,
-    message: AgentMessage,
-}
-
 fn transcript_segments(
     session_id: &str,
     events: &[AgentRunJournalEvent],
 ) -> Vec<SessionProjectionSegmentViewResponse> {
-    let mut users = HashMap::<String, TranscriptMessage>::new();
-    let mut assistants = HashMap::<String, AssistantTranscriptState>::new();
-    let mut results = HashMap::<String, TranscriptMessage>::new();
-    for journal in events {
-        let Some(presentation) = journal.record.as_presentation() else {
-            continue;
-        };
+    let projected = project_transcript(events.iter().filter_map(|journal| {
+        let presentation = journal.record.as_presentation()?;
         let carrier = journal.record.carrier();
-        let turn = carrier
-            .coordinate
-            .source_turn_id
-            .clone()
-            .unwrap_or_else(|| session_id.to_string());
-        let entry = carrier.coordinate.source_entry_index.unwrap_or(0);
-        let assistant_key = format!("{turn}:{entry}");
-        match &presentation.event {
-            BackboneEvent::UserInputSubmitted(input) => {
-                users
-                    .entry(input.item_id.clone())
-                    .or_insert_with(|| TranscriptMessage {
-                        order: journal.journal_seq,
-                        turn_id: input.turn_id.clone(),
-                        entry_index: entry,
-                        message: AgentMessage::User {
-                            content: user_input_blocks_to_content_parts(&input.content),
-                            timestamp: None,
-                        },
-                    });
-            }
-            BackboneEvent::AgentMessageDelta(delta) if !delta.delta.is_empty() => {
-                let state =
-                    assistants
-                        .entry(assistant_key)
-                        .or_insert_with(|| AssistantTranscriptState {
-                            order: journal.journal_seq,
-                            turn_id: turn.clone(),
-                            entry_index: entry,
-                            ..Default::default()
-                        });
-                state.text_deltas.push_str(&delta.delta);
-            }
-            BackboneEvent::ReasoningTextDelta(delta) if !delta.delta.is_empty() => {
-                let state =
-                    assistants
-                        .entry(assistant_key)
-                        .or_insert_with(|| AssistantTranscriptState {
-                            order: journal.journal_seq,
-                            turn_id: turn.clone(),
-                            entry_index: entry,
-                            ..Default::default()
-                        });
-                state.reasoning_deltas.push_str(&delta.delta);
-            }
-            BackboneEvent::ReasoningSummaryDelta(delta) if !delta.delta.is_empty() => {
-                let state =
-                    assistants
-                        .entry(assistant_key)
-                        .or_insert_with(|| AssistantTranscriptState {
-                            order: journal.journal_seq,
-                            turn_id: turn.clone(),
-                            entry_index: entry,
-                            ..Default::default()
-                        });
-                state.reasoning_deltas.push_str(&delta.delta);
-            }
-            BackboneEvent::ItemStarted(notification) => apply_tool_item(
-                &notification.item,
-                journal.journal_seq,
-                &turn,
-                entry,
-                &assistant_key,
-                &mut assistants,
-                &mut results,
-            ),
-            BackboneEvent::ItemUpdated(notification) => apply_tool_item(
-                &notification.item,
-                journal.journal_seq,
-                &turn,
-                entry,
-                &assistant_key,
-                &mut assistants,
-                &mut results,
-            ),
-            BackboneEvent::ItemCompleted(notification) => match &notification.item {
-                AgentDashThreadItem::Codex(codex::ThreadItem::AgentMessage { text, .. }) => {
-                    let state = assistants.entry(assistant_key).or_insert_with(|| {
-                        AssistantTranscriptState {
-                            order: journal.journal_seq,
-                            turn_id: turn.clone(),
-                            entry_index: entry,
-                            ..Default::default()
-                        }
-                    });
-                    state.final_text = Some(text.clone());
-                }
-                AgentDashThreadItem::Codex(codex::ThreadItem::Reasoning { content, .. }) => {
-                    let state = assistants.entry(assistant_key).or_insert_with(|| {
-                        AssistantTranscriptState {
-                            order: journal.journal_seq,
-                            turn_id: turn.clone(),
-                            entry_index: entry,
-                            ..Default::default()
-                        }
-                    });
-                    state.final_reasoning = Some(content.join(""));
-                }
-                item => apply_tool_item(
-                    item,
-                    journal.journal_seq,
-                    &turn,
-                    entry,
-                    &assistant_key,
-                    &mut assistants,
-                    &mut results,
-                ),
-            },
-            _ => {}
-        }
-    }
-    let mut messages = users.into_values().collect::<Vec<_>>();
-    for state in assistants.into_values() {
-        let mut content = Vec::new();
-        let reasoning = state.final_reasoning.unwrap_or(state.reasoning_deltas);
-        let text = state.final_text.unwrap_or(state.text_deltas);
-        if !reasoning.is_empty() {
-            content.push(ContentPart::reasoning(reasoning, None, None));
-        }
-        if !text.is_empty() {
-            content.push(ContentPart::text(text));
-        }
-        if content.is_empty() && state.tool_calls.is_empty() {
-            continue;
-        }
-        let has_tools = !state.tool_calls.is_empty();
-        messages.push(TranscriptMessage {
-            order: state.order,
-            turn_id: state.turn_id,
-            entry_index: state.entry_index,
-            message: AgentMessage::Assistant {
-                content,
-                tool_calls: state.tool_calls,
-                stop_reason: Some(if has_tools {
-                    StopReason::ToolUse
-                } else {
-                    StopReason::Stop
-                }),
-                error_message: None,
-                usage: None,
-                timestamp: None,
-            },
-        });
-    }
-    messages.extend(results.into_values());
-    messages.sort_by_key(|message| message.order);
-    messages
+        Some(TranscriptProjectionEvent {
+            event_seq: journal.journal_seq,
+            turn_id: carrier
+                .coordinate
+                .presentation_turn_id
+                .as_ref()
+                .map(|turn| turn.as_str())
+                .or(carrier.coordinate.source_turn_id.as_deref())
+                .or(Some(session_id)),
+            entry_index: carrier.coordinate.source_entry_index,
+            event: &presentation.event,
+        })
+    }));
+    projected
+        .entries
         .into_iter()
         .enumerate()
-        .map(|(index, value)| segment_from_message(index, value))
+        .map(|(index, value)| segment_from_projected_message(index, value))
         .collect()
 }
 
-fn apply_tool_item(
-    item: &AgentDashThreadItem,
-    order: u64,
-    turn_id: &str,
-    entry_index: u32,
-    assistant_key: &str,
-    assistants: &mut HashMap<String, AssistantTranscriptState>,
-    results: &mut HashMap<String, TranscriptMessage>,
-) {
-    let Some((id, name, arguments, result, details, is_error)) = tool_item_parts(item) else {
-        return;
-    };
-    let state = assistants
-        .entry(assistant_key.to_string())
-        .or_insert_with(|| AssistantTranscriptState {
-            order,
-            turn_id: turn_id.to_string(),
-            entry_index,
-            ..Default::default()
-        });
-    state.order = state.order.min(order);
-    if let Some(call) = state.tool_calls.iter_mut().find(|call| call.id == id) {
-        call.name = name.clone();
-        call.arguments = arguments.clone();
-    } else {
-        state.tool_calls.push(ToolCallInfo {
-            id: id.clone(),
-            call_id: Some(id.clone()),
-            name: name.clone(),
-            arguments,
-        });
-    }
-    if tool_item_is_terminal(item) {
-        results.insert(
-            id.clone(),
-            TranscriptMessage {
-                order,
-                turn_id: turn_id.to_string(),
-                entry_index,
-                message: AgentMessage::ToolResult {
-                    tool_call_id: id.clone(),
-                    call_id: Some(id),
-                    tool_name: Some(name),
-                    content: vec![ContentPart::text(result)],
-                    details,
-                    is_error,
-                    timestamp: None,
-                },
-            },
-        );
-    }
-}
-
-fn tool_item_is_terminal(item: &AgentDashThreadItem) -> bool {
-    match item {
-        AgentDashThreadItem::Codex(codex::ThreadItem::DynamicToolCall { status, .. }) => matches!(
-            status,
-            codex::DynamicToolCallStatus::Completed | codex::DynamicToolCallStatus::Failed
-        ),
-        AgentDashThreadItem::Codex(codex::ThreadItem::McpToolCall { status, .. }) => matches!(
-            status,
-            codex::McpToolCallStatus::Completed | codex::McpToolCallStatus::Failed
-        ),
-        AgentDashThreadItem::Codex(codex::ThreadItem::CommandExecution { status, .. }) => matches!(
-            status,
-            codex::CommandExecutionStatus::Completed
-                | codex::CommandExecutionStatus::Failed
-                | codex::CommandExecutionStatus::Declined
-        ),
-        AgentDashThreadItem::Codex(codex::ThreadItem::FileChange { status, .. }) => matches!(
-            status,
-            codex::PatchApplyStatus::Completed
-                | codex::PatchApplyStatus::Failed
-                | codex::PatchApplyStatus::Declined
-        ),
-        AgentDashThreadItem::AgentDash(item) => matches!(
-            item.status(),
-            codex::DynamicToolCallStatus::Completed | codex::DynamicToolCallStatus::Failed
-        ),
-        _ => false,
-    }
-}
-
-fn segment_from_message(
+fn segment_from_projected_message(
     index: usize,
-    value: TranscriptMessage,
+    value: agentdash_agent_types::ProjectedEntry,
 ) -> SessionProjectionSegmentViewResponse {
     let role = message_role(&value.message).to_string();
     let preview = message_preview(&value.message);
@@ -499,10 +261,10 @@ fn segment_from_message(
         synthetic: false,
         projection_kind: "model_context".to_string(),
         message_ref: SessionProjectionMessageRefResponse {
-            turn_id: value.turn_id,
-            entry_index: value.entry_index,
+            turn_id: value.message_ref.turn_id,
+            entry_index: value.message_ref.entry_index,
         },
-        source_event_seq: Some(value.order),
+        source_event_seq: value.source_event_seq,
         source_range: None,
         projection_segment_id: None,
         preview,
@@ -519,77 +281,6 @@ fn segment_from_message(
             phase: None,
         },
     }
-}
-
-#[cfg(test)]
-fn presentation_segments(
-    session_id: &str,
-    event_seq: u64,
-    event: &BackboneEvent,
-    source_turn_id: Option<&str>,
-    source_entry_index: Option<u32>,
-    projection_version: u64,
-    index: usize,
-) -> Vec<SessionProjectionSegmentViewResponse> {
-    let (event_turn_id, messages) = match event {
-        BackboneEvent::UserInputSubmitted(input) => (
-            Some(input.turn_id.as_str()),
-            vec![AgentMessage::User {
-                content: user_input_blocks_to_content_parts(&input.content),
-                timestamp: None,
-            }],
-        ),
-        BackboneEvent::ItemCompleted(notification) => (
-            Some(notification.turn_id.as_str()),
-            completed_item_messages(&notification.item),
-        ),
-        _ => return Vec::new(),
-    };
-    let turn_id = source_turn_id
-        .or(event_turn_id)
-        .unwrap_or(session_id)
-        .to_string();
-    let entry_index = source_entry_index.unwrap_or(index as u32);
-    messages
-        .into_iter()
-        .enumerate()
-        .map(|(offset, message)| {
-            let role = message_role(&message);
-            let preview = message_preview(&message);
-            let tool_names = message_tool_names(&message);
-            let attachment_tokens = message_attachment_tokens(&message);
-            let attachment_names = message_attachment_names(&message);
-            SessionProjectionSegmentViewResponse {
-                id: format!("original_event:{}", index + offset),
-                sort_order: (index + offset) as u32,
-                segment_type: "original_event".to_string(),
-                role: role.to_string(),
-                origin: "event".to_string(),
-                synthetic: false,
-                projection_kind: "model_context".to_string(),
-                message_ref: SessionProjectionMessageRefResponse {
-                    turn_id: turn_id.clone(),
-                    entry_index,
-                },
-                source_event_seq: Some(event_seq),
-                source_range: None,
-                projection_segment_id: None,
-                preview,
-                token_estimate: Some(estimate_message_tokens(&message)),
-                attachment_tokens,
-                attachment_names,
-                tool_names,
-                provenance: SessionProjectionSegmentProvenanceResponse {
-                    compaction_id: None,
-                    projection_version: Some(projection_version),
-                    segment_type: None,
-                    strategy: None,
-                    trigger: None,
-                    phase: None,
-                },
-            }
-        })
-        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1029,256 +720,6 @@ fn capability_item<const N: usize>(
     }]
 }
 
-#[cfg(test)]
-fn completed_item_messages(item: &AgentDashThreadItem) -> Vec<AgentMessage> {
-    match item {
-        AgentDashThreadItem::Codex(codex::ThreadItem::AgentMessage { text, .. }) => {
-            vec![AgentMessage::Assistant {
-                content: vec![ContentPart::text(text)],
-                tool_calls: Vec::new(),
-                stop_reason: Some(StopReason::Stop),
-                error_message: None,
-                usage: None,
-                timestamp: None,
-            }]
-        }
-        AgentDashThreadItem::Codex(codex::ThreadItem::Reasoning {
-            summary, content, ..
-        }) => {
-            let text = summary
-                .iter()
-                .chain(content.iter())
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join("\n");
-            (!text.is_empty())
-                .then(|| AgentMessage::Assistant {
-                    content: vec![ContentPart::reasoning(text, None, None)],
-                    tool_calls: Vec::new(),
-                    stop_reason: Some(StopReason::Stop),
-                    error_message: None,
-                    usage: None,
-                    timestamp: None,
-                })
-                .into_iter()
-                .collect()
-        }
-        _ => tool_item_parts(item)
-            .map(|(id, name, arguments, result, details, is_error)| {
-                vec![
-                    AgentMessage::Assistant {
-                        content: Vec::new(),
-                        tool_calls: vec![ToolCallInfo {
-                            id: id.clone(),
-                            call_id: Some(id.clone()),
-                            name: name.clone(),
-                            arguments,
-                        }],
-                        stop_reason: Some(StopReason::ToolUse),
-                        error_message: None,
-                        usage: None,
-                        timestamp: None,
-                    },
-                    AgentMessage::ToolResult {
-                        tool_call_id: id.clone(),
-                        call_id: Some(id),
-                        tool_name: Some(name),
-                        content: vec![ContentPart::text(result)],
-                        details,
-                        is_error,
-                        timestamp: None,
-                    },
-                ]
-            })
-            .unwrap_or_default(),
-    }
-}
-
-fn tool_item_parts(
-    item: &AgentDashThreadItem,
-) -> Option<(
-    String,
-    String,
-    serde_json::Value,
-    String,
-    Option<serde_json::Value>,
-    bool,
-)> {
-    match item {
-        AgentDashThreadItem::Codex(codex::ThreadItem::CommandExecution {
-            id,
-            command,
-            cwd,
-            aggregated_output,
-            ..
-        }) => Some((
-            id.clone(),
-            "command_execution".to_string(),
-            serde_json::json!({ "command": command, "cwd": cwd }),
-            aggregated_output
-                .as_ref()
-                .and_then(Option::as_ref)
-                .cloned()
-                .unwrap_or_else(|| missing_tool_output(id, "command_execution")),
-            aggregated_output
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_none()
-                .then(|| missing_tool_details(id, "command_execution")),
-            aggregated_output
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_none(),
-        )),
-        AgentDashThreadItem::Codex(codex::ThreadItem::FileChange { id, .. }) => Some((
-            id.clone(),
-            "file_change".to_string(),
-            serde_json::json!({}),
-            format!(
-                "[restored tool output missing]\ntool_call_id: {id}\ntool_name: file_change\nThe original tool output was not available in persisted session events. A restored placeholder preserves the tool-call/tool-result pair so continuation can proceed."
-            ),
-            Some(serde_json::json!({
-                "type": "restored_tool_output_missing",
-                "tool_call_id": id,
-                "tool_name": "file_change",
-            })),
-            true,
-        )),
-        AgentDashThreadItem::Codex(codex::ThreadItem::McpToolCall {
-            id,
-            tool,
-            arguments,
-            result: tool_result,
-            error,
-            ..
-        }) => {
-            let details = tool_result
-                .as_ref()
-                .and_then(Option::as_ref)
-                .and_then(|value| serde_json::to_value(value).ok())
-                .or_else(|| {
-                    error
-                        .as_ref()
-                        .and_then(Option::as_ref)
-                        .map(|value| serde_json::Value::String(value.message.clone()))
-                });
-            let missing = details.is_none();
-            let preview = details
-                .as_ref()
-                .map(json_preview)
-                .unwrap_or_else(|| missing_tool_output(id, tool));
-            Some((
-                id.clone(),
-                tool.clone(),
-                arguments.clone(),
-                preview,
-                details.or_else(|| Some(missing_tool_details(id, tool))),
-                error.as_ref().and_then(Option::as_ref).is_some() || missing,
-            ))
-        }
-        AgentDashThreadItem::Codex(codex::ThreadItem::DynamicToolCall {
-            id,
-            tool,
-            arguments,
-            content_items,
-            ..
-        }) => Some((
-            id.clone(),
-            tool.clone(),
-            arguments.clone(),
-            content_items
-                .as_ref()
-                .and_then(Option::as_ref)
-                .map(|items| dynamic_content_preview(items))
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| missing_tool_output(id, tool)),
-            content_items
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_none()
-                .then(|| missing_tool_details(id, tool)),
-            content_items.as_ref().and_then(Option::as_ref).is_none(),
-        )),
-        AgentDashThreadItem::Codex(codex::ThreadItem::CollabAgentToolCall { id, tool, .. }) => {
-            Some((
-                id.clone(),
-                format!("{tool:?}"),
-                serde_json::Value::Null,
-                missing_tool_output(id, &format!("{tool:?}")),
-                Some(missing_tool_details(id, &format!("{tool:?}"))),
-                true,
-            ))
-        }
-        AgentDashThreadItem::AgentDash(native) => Some((
-            native.id().to_string(),
-            native.tool_name().to_string(),
-            native
-                .arguments()
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-            native_result(native)
-                .unwrap_or_else(|| missing_tool_output(native.id(), native.tool_name())),
-            native_result(native)
-                .is_none()
-                .then(|| missing_tool_details(native.id(), native.tool_name())),
-            native.success() == Some(false) || native_result(native).is_none(),
-        )),
-        _ => None,
-    }
-}
-
-fn missing_tool_output(id: &str, name: &str) -> String {
-    format!(
-        "[restored tool output missing]\ntool_call_id: {id}\ntool_name: {name}\nThe original tool output was not available in persisted session events. A restored placeholder preserves the tool-call/tool-result pair so continuation can proceed."
-    )
-}
-
-fn missing_tool_details(id: &str, name: &str) -> serde_json::Value {
-    serde_json::json!({
-        "type": "restored_tool_output_missing",
-        "tool_call_id": id,
-        "tool_name": name,
-    })
-}
-
-fn dynamic_content_preview(items: &[codex::DynamicToolCallOutputContentItem]) -> String {
-    items
-        .iter()
-        .map(|item| match item {
-            codex::DynamicToolCallOutputContentItem::InputText { text } => text.clone(),
-            codex::DynamicToolCallOutputContentItem::InputImage { image_url } => {
-                format!("[image output: {image_url}]")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn json_preview(value: &serde_json::Value) -> String {
-    let rendered = value.to_string();
-    if rendered.chars().count() <= 320 {
-        rendered
-    } else {
-        format!("{}...", rendered.chars().take(320).collect::<String>())
-    }
-}
-
-fn native_result(item: &AgentDashNativeThreadItem) -> Option<String> {
-    match item {
-        AgentDashNativeThreadItem::ShellExec {
-            aggregated_output, ..
-        }
-        | AgentDashNativeThreadItem::TerminalControl {
-            aggregated_output, ..
-        } => aggregated_output.clone(),
-        AgentDashNativeThreadItem::FsRead { content_items, .. }
-        | AgentDashNativeThreadItem::FsGrep { content_items, .. }
-        | AgentDashNativeThreadItem::FsGlob { content_items, .. } => content_items
-            .as_ref()
-            .and_then(|items| serde_json::to_string(items).ok()),
-    }
-}
-
 fn message_role(message: &AgentMessage) -> &'static str {
     match message {
         AgentMessage::User { .. } => "user",
@@ -1540,8 +981,9 @@ fn estimate_tokens(value: &str) -> u64 {
 mod tests {
     use super::*;
     use agentdash_agent_protocol::{
-        ItemCompletedNotification, UserInputSource, UserInputSubmissionKind,
-        UserInputSubmittedNotification, backbone::thread_item, text_user_input_blocks,
+        AgentDashNativeThreadItem, AgentDashThreadItem, ItemCompletedNotification, UserInputSource,
+        UserInputSubmissionKind, UserInputSubmittedNotification, backbone::thread_item,
+        codex_app_server_protocol as codex, text_user_input_blocks,
     };
     use agentdash_agent_runtime_contract::{
         EventSequence, ImmutablePresentationEvent, PresentationDurability, RuntimeCarrierMetadata,
@@ -1567,6 +1009,7 @@ mod tests {
                 binding_id: None,
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some("thread-1".to_string()),
@@ -1695,35 +1138,52 @@ mod tests {
             Some(true),
         ));
 
-        let command = tool_item_parts(&command).expect("command projection");
-        let file = tool_item_parts(&file).expect("file projection");
-        let mcp = tool_item_parts(&mcp).expect("mcp projection");
-        let dynamic = tool_item_parts(&dynamic).expect("dynamic projection");
-        let native = tool_item_parts(&native).expect("native projection");
-        type ToolProjection = (
-            String,
-            String,
-            serde_json::Value,
-            String,
-            Option<serde_json::Value>,
-            bool,
-        );
-        let output_kind = |value: &ToolProjection| {
-            if value.3.starts_with("[restored tool output missing]") {
+        let row = |family: &str, item: AgentDashThreadItem| {
+            let event = BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                item, "thread-1", "turn-1",
+            ));
+            let projected = project_transcript([TranscriptProjectionEvent {
+                event_seq: 1,
+                turn_id: Some("turn-1"),
+                entry_index: Some(0),
+                event: &event,
+            }]);
+            let tool_name = projected
+                .entries
+                .iter()
+                .find_map(|entry| match &entry.message {
+                    AgentMessage::Assistant { tool_calls, .. } => {
+                        tool_calls.first().map(|call| call.name.clone())
+                    }
+                    _ => None,
+                })
+                .expect("projected tool call");
+            let (details, is_error) = projected
+                .entries
+                .iter()
+                .find_map(|entry| match &entry.message {
+                    AgentMessage::ToolResult {
+                        details, is_error, ..
+                    } => Some((details.clone(), *is_error)),
+                    _ => None,
+                })
+                .expect("projected tool result");
+            let output_kind = if details.as_ref().is_some_and(|details| {
+                details.get("type").and_then(serde_json::Value::as_str)
+                    == Some("restored_tool_output_missing")
+            }) {
                 "missing_placeholder"
-            } else if value.4.is_some() {
+            } else if details.is_some() {
                 "structured_result"
             } else {
                 "content"
-            }
-        };
-        let row = |family: &str, value: &ToolProjection| {
+            };
             serde_json::json!({
                 "family": family,
-                "tool_name": value.1,
-                "output_kind": output_kind(value),
-                "details": value.4.is_some(),
-                "is_error": value.5,
+                "tool_name": tool_name,
+                "output_kind": output_kind,
+                "details": details.is_some(),
+                "is_error": is_error,
             })
         };
         let actual = serde_json::json!({
@@ -1736,8 +1196,8 @@ mod tests {
                 ]
             },
             "tool_family_projection": [
-                row("command", &command), row("file", &file), row("mcp", &mcp),
-                row("dynamic", &dynamic), row("native", &native)
+                row("command", command), row("file", file), row("mcp", mcp),
+                row("dynamic", dynamic), row("native", native)
             ]
         });
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -1787,26 +1247,14 @@ mod tests {
             "turn-1",
         ));
 
-        let mut segments =
-            presentation_segments("session-1", 1, &user, Some("turn-1"), Some(0), 0, 0);
-        segments.extend(presentation_segments(
+        let segments = transcript_segments(
             "session-1",
-            2,
-            &assistant,
-            Some("turn-1"),
-            Some(1),
-            0,
-            1,
-        ));
-        segments.extend(presentation_segments(
-            "session-1",
-            3,
-            &tool,
-            Some("turn-1"),
-            Some(2),
-            0,
-            2,
-        ));
+            &[
+                journal_event(1, 0, user),
+                journal_event(2, 1, assistant),
+                journal_event(3, 2, tool),
+            ],
+        );
 
         assert_eq!(
             serde_json::to_value(&segments).expect("segments serialize"),
@@ -1966,26 +1414,17 @@ mod tests {
             "thread-1",
             "turn-1",
         ));
-        let mut full_segments =
-            presentation_segments("session-1", 9, &user, Some("turn-1"), Some(0), 2, 0);
-        full_segments.extend(presentation_segments(
+        let mut full_segments = transcript_segments(
             "session-1",
-            10,
-            &assistant,
-            Some("turn-1"),
-            Some(1),
-            2,
-            1,
-        ));
-        full_segments.extend(presentation_segments(
-            "session-1",
-            11,
-            &tool,
-            Some("turn-1"),
-            Some(2),
-            2,
-            2,
-        ));
+            &[
+                journal_event(9, 0, user),
+                journal_event(10, 1, assistant),
+                journal_event(11, 2, tool),
+            ],
+        );
+        for segment in &mut full_segments {
+            segment.provenance.projection_version = Some(2);
+        }
         full_segments.insert(0, segment);
         for (index, segment) in full_segments.iter_mut().enumerate() {
             segment.sort_order = index as u32;

@@ -251,6 +251,13 @@
             "null"
           ]
         },
+        "presentation_turn_id": {
+          "description": "Session-visible turn identity. Runtime/source identifiers are correlation\ncoordinates and must never be substituted for this value at API projection.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "runtime_item_id": {
           "type": [
             "string",
@@ -9245,7 +9252,12 @@
             "thread_id": {
               "type": "string"
             },
-            "expected_tool_set_revision": {
+            "expected_current_tool_set_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "target_tool_set_revision": {
               "type": "integer",
               "format": "uint64",
               "minimum": 0
@@ -9261,7 +9273,8 @@
           "required": [
             "kind",
             "thread_id",
-            "expected_tool_set_revision",
+            "expected_current_tool_set_revision",
+            "target_tool_set_revision",
             "tool_set_digest"
           ]
         },
@@ -13692,6 +13705,10 @@
         "request_id": {
           "type": "string"
         },
+        "operation_id": {
+          "description": "Managed Runtime operation that owns this delivery. Drivers must preserve\nit across acceptance, terminal emission, duplicate dispatch and recovery.",
+          "type": "string"
+        },
         "presentation_thread_id": {
           "type": "string"
         },
@@ -13713,12 +13730,20 @@
             "null"
           ]
         },
+        "presentation_turn_id": {
+          "description": "Session-visible turn identity carried by the protected presentation\nprotocol. It is distinct from both canonical Runtime and vendor turns.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "command": {
           "$ref": "#/$defs/RuntimeCommand"
         }
       },
       "required": [
         "request_id",
+        "operation_id",
         "presentation_thread_id",
         "binding_id",
         "generation",
@@ -13806,6 +13831,13 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0
+        },
+        "operation_id": {
+          "description": "Accepted Runtime command that caused this emission. Long-lived binding\nevents may omit it; command/turn events preserve it explicitly.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "source_thread_id": {
           "type": "string"

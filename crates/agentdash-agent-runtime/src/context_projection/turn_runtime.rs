@@ -201,7 +201,7 @@ pub fn project_pending_action(
     }
     rendered.push("以上事项来自 Hook Runtime 的待处理回流，优先级高于普通自然对话推进。处理时尽量避免重复总结，聚焦完成剩余动作。".to_string());
 
-    Some(single_frame(
+    let frame = single_frame(
         identity,
         ContextFrameFacts {
             kind: ContextFrameKind::PendingAction,
@@ -224,7 +224,8 @@ pub fn project_pending_action(
                 injections: facts.injections.clone(),
             }],
         },
-    ))
+    );
+    Some(frame)
 }
 
 #[must_use]
@@ -241,7 +242,7 @@ pub fn project_system_delivery(
         "## AgentDash System Delivery\n\n- kind: {}\n- source: {}\n- status: delivered\n- turn_id: {}\n\n{}",
         facts.delivery_kind, facts.source_kind, facts.turn_id, summary
     );
-    Some(single_frame(
+    let mut frame = single_frame(
         identity,
         ContextFrameFacts {
             kind: ContextFrameKind::SystemDelivery,
@@ -261,7 +262,9 @@ pub fn project_system_delivery(
                 body: Some(rendered_text),
             }],
         },
-    ))
+    );
+    frame.id = format!("{}:system-delivery-context", facts.turn_id);
+    Some(frame)
 }
 
 #[must_use]
@@ -353,6 +356,7 @@ mod tests {
             },
         )
         .expect("system delivery");
+        assert_eq!(frame.id, "turn-1:system-delivery-context");
         assert_eq!(frame.kind, ContextFrameKind::SystemDelivery);
         assert_eq!(frame.delivery_status, ContextDeliveryStatus::Accepted);
         assert_eq!(
@@ -413,6 +417,7 @@ mod tests {
             },
         )
         .expect("pending action");
+        assert_eq!(frame.id, "pending-action-action-1-10");
         assert!(matches!(
             frame.sections.as_slice(),
             [ContextFrameSection::PendingAction { revision: 42, instructions, .. }]

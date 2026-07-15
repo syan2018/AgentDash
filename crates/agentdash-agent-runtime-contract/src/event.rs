@@ -559,6 +559,9 @@ impl ImmutablePresentationEvent {
 #[serde(rename_all = "snake_case")]
 pub struct RuntimePresentationCoordinate {
     pub runtime_turn_id: Option<RuntimeTurnId>,
+    /// Session-visible turn identity. Runtime/source identifiers are correlation
+    /// coordinates and must never be substituted for this value at API projection.
+    pub presentation_turn_id: Option<crate::PresentationTurnId>,
     pub runtime_item_id: Option<RuntimeItemId>,
     pub interaction_id: Option<RuntimeInteractionId>,
     pub source_thread_id: Option<String>,
@@ -736,6 +739,16 @@ impl RuntimeJournalRecord {
         &self.carrier
     }
 
+    /// Attach the Runtime operation that atomically published this durable fact.
+    ///
+    /// Command-owned presentation records use this correlation when a driver reconstructs a
+    /// transcript before accepting that same command, preventing the current user input from
+    /// being replayed once from the journal and then appended again by `prompt`.
+    pub fn with_operation_id(mut self, operation_id: RuntimeOperationId) -> Self {
+        self.carrier.operation_id = Some(operation_id);
+        self
+    }
+
     pub const fn fact(&self) -> &RuntimeJournalFact {
         &self.fact
     }
@@ -768,6 +781,7 @@ impl RuntimeJournalRecord {
                 binding_id: None,
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: None,
@@ -858,6 +872,10 @@ mod presentation_tests {
             coordinate: RuntimePresentationCoordinate {
                 runtime_turn_id: Some(
                     RuntimeTurnId::new("runtime-turn-1").expect("runtime turn id"),
+                ),
+                presentation_turn_id: Some(
+                    crate::PresentationTurnId::new("presentation-turn-1")
+                        .expect("presentation turn id"),
                 ),
                 runtime_item_id: Some(
                     RuntimeItemId::new("runtime-item-1").expect("runtime item id"),

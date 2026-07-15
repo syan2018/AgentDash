@@ -123,7 +123,9 @@ impl ToolContribution {
             ToolProtocolProjection::Command => shell_started_item(item_id, arguments),
             ToolProtocolProjection::FsRead => AgentDashThreadItem::AgentDash(Native::FsRead {
                 id: item_id.to_string(),
-                path: string_field(&arguments, "path"),
+                path: optional_string_field(&arguments, "path")
+                    .or_else(|| optional_string_field(&arguments, "file_path"))
+                    .unwrap_or_default(),
                 offset: usize_field(&arguments, "offset"),
                 limit: usize_field(&arguments, "limit"),
                 arguments,
@@ -136,7 +138,7 @@ impl ToolContribution {
                 pattern: string_field(&arguments, "pattern"),
                 path: optional_string_field(&arguments, "path"),
                 glob: optional_string_field(&arguments, "glob"),
-                file_type: optional_string_field(&arguments, "file_type"),
+                file_type: optional_string_field(&arguments, "type"),
                 output_mode: optional_string_field(&arguments, "output_mode"),
                 head_limit: usize_field(&arguments, "head_limit"),
                 offset: usize_field(&arguments, "offset"),
@@ -149,7 +151,8 @@ impl ToolContribution {
                 id: item_id.to_string(),
                 pattern: string_field(&arguments, "pattern"),
                 path: optional_string_field(&arguments, "path"),
-                max_results: usize_field(&arguments, "max_results"),
+                max_results: usize_field(&arguments, "max_results")
+                    .or_else(|| usize_field(&arguments, "maxResults")),
                 arguments,
                 status: codex::DynamicToolCallStatus::InProgress,
                 content_items: None,
@@ -235,7 +238,9 @@ impl ToolContribution {
             }
             ToolProtocolProjection::FsRead => AgentDashThreadItem::AgentDash(Native::FsRead {
                 id: item_id.to_string(),
-                path: string_field(&arguments, "path"),
+                path: optional_string_field(&arguments, "path")
+                    .or_else(|| optional_string_field(&arguments, "file_path"))
+                    .unwrap_or_default(),
                 offset: usize_field(&arguments, "offset"),
                 limit: usize_field(&arguments, "limit"),
                 arguments,
@@ -248,7 +253,7 @@ impl ToolContribution {
                 pattern: string_field(&arguments, "pattern"),
                 path: optional_string_field(&arguments, "path"),
                 glob: optional_string_field(&arguments, "glob"),
-                file_type: optional_string_field(&arguments, "file_type"),
+                file_type: optional_string_field(&arguments, "type"),
                 output_mode: optional_string_field(&arguments, "output_mode"),
                 head_limit: usize_field(&arguments, "head_limit"),
                 offset: usize_field(&arguments, "offset"),
@@ -261,7 +266,8 @@ impl ToolContribution {
                 id: item_id.to_string(),
                 pattern: string_field(&arguments, "pattern"),
                 path: optional_string_field(&arguments, "path"),
-                max_results: usize_field(&arguments, "max_results"),
+                max_results: usize_field(&arguments, "max_results")
+                    .or_else(|| usize_field(&arguments, "maxResults")),
                 arguments,
                 status,
                 content_items: content_items(output)?,

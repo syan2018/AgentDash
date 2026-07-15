@@ -136,6 +136,14 @@ pub(crate) fn message_content(
     message: &AgentMessage,
     item_id: &str,
 ) -> Result<RuntimeItemContent, DriverError> {
+    if !matches!(message, AgentMessage::Assistant { .. }) {
+        return Err(DriverError::ProtocolViolation {
+            reason:
+                "native internal conversation items can only be projected from assistant messages"
+                    .to_string(),
+            critical: true,
+        });
+    }
     if let Some(text) = message.first_text() {
         return Ok(RuntimeItemContent::agent_message(item_id, text));
     }
@@ -198,5 +206,18 @@ mod tests {
             message_content(&image_only, "item-1"),
             Err(DriverError::ProtocolViolation { critical: true, .. })
         ));
+    }
+
+    #[test]
+    fn native_internal_message_mapping_rejects_application_owned_roles() {
+        let user = AgentMessage::user("hello");
+        let tool_result = AgentMessage::tool_result("tool-1", "done", false);
+
+        for message in [user, tool_result] {
+            assert!(matches!(
+                message_content(&message, "item-1"),
+                Err(DriverError::ProtocolViolation { critical: true, .. })
+            ));
+        }
     }
 }

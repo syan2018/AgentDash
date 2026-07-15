@@ -5,9 +5,14 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent::{Agent, AgentConfig, AgentEvent, AssistantStreamEvent, LlmBridge};
+use agentdash_agent::{
+    Agent, AgentConfig, AgentError, AgentEvent, AssistantStreamEvent, LlmBridge,
+    ToolResultRefContext,
+};
+use agentdash_agent_protocol::{TranscriptProjectionEvent, project_transcript};
 use agentdash_agent_runtime_contract::*;
 use agentdash_agent_types::DynAgentTool;
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_integration_api::*;
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -22,8 +27,8 @@ use crate::{
     hook::{NativeHookDelegate, supported_hook},
     mapping::{context_blocks_to_messages, inputs_to_message, message_content},
     presentation::{
-        ChunkEmitState, NativeSessionItemIdentity, StreamMapperEventState,
-        StreamMapperRuntimeContext, ToolCallEmitState,
+        ChunkEmitState, NativeSessionItemIdentity, NativeToolPresentationRoute,
+        StreamMapperEventState, StreamMapperRuntimeContext, ToolCallEmitState,
         convert_event_to_envelopes_with_runtime_context, run_error_terminal_diagnostic,
     },
     tool::NativeRuntimeTool,
@@ -374,6 +379,7 @@ struct NativeThread {
     presentation_context: StreamMapperRuntimeContext,
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
     active_runtime_turn: Arc<RwLock<Option<RuntimeTurnId>>>,
+    active_presentation_turn: Arc<RwLock<Option<PresentationTurnId>>>,
     context_revision: RwLock<ContextRevision>,
     tool_item_identities: Arc<RwLock<BTreeMap<(DriverTurnId, DriverItemId), RuntimeItemId>>>,
 }
@@ -416,6 +422,7 @@ impl NativeAgentDriver {
         &self,
         binding_id: &RuntimeBindingId,
         binding: &Arc<NativeBinding>,
+        exclude_operation_id: Option<&RuntimeOperationId>,
     ) -> Result<Arc<NativeThread>, DriverError> {
         if let Some(thread) = binding.thread.read().await.clone() {
             return Ok(thread);
@@ -423,7 +430,47 @@ impl NativeAgentDriver {
         let surface = binding.surface.read().await.clone();
         let active_turn = Arc::new(RwLock::new(None));
         let active_runtime_turn = Arc::new(RwLock::new(None));
+        let active_presentation_turn = Arc::new(RwLock::new(None));
         let tool_item_identities = Arc::new(RwLock::new(BTreeMap::new()));
+        let presentation_identity = NativeSessionItemIdentity::new();
+        let presentation_routes = Arc::new(std::sync::RwLock::new(tool_presentation_routes(
+            &surface.tools,
+        )));
+        presentation_identity.bind_presentation_routes(presentation_routes.clone());
+        let transcript = self
+            .host
+            .context
+            .load_transcript(DriverTranscriptRequest {
+                binding_id: binding_id.clone(),
+                generation: self.generation,
+                runtime_thread_id: surface.runtime_thread_id.clone(),
+            })
+            .await
+            .map_err(context_error)?;
+        let replay_after = transcript.active_compaction_source_end;
+        let projected_transcript =
+            project_driver_transcript(&transcript, exclude_operation_id, replay_after)?;
+        let identity_projection = if replay_after.is_some() {
+            project_driver_transcript(
+                &transcript,
+                exclude_operation_id,
+                Some(EventSequence(
+                    transcript.earliest_available.0.saturating_sub(1),
+                )),
+            )?
+        } else {
+            projected_transcript.clone()
+        };
+        let transcript_messages = projected_transcript
+            .entries
+            .iter()
+            .map(|entry| entry.message.clone())
+            .collect::<Vec<_>>();
+        hydrate_presentation_identity(
+            presentation_identity.as_ref(),
+            &transcript,
+            &identity_projection,
+        );
         let mut agent = Agent::new(
             self.bridge.clone(),
             AgentConfig {
@@ -451,15 +498,61 @@ impl NativeAgentDriver {
             NativeToolCallContext {
                 active_turn: active_turn.clone(),
                 active_runtime_turn: active_runtime_turn.clone(),
+                active_presentation_turn: active_presentation_turn.clone(),
                 tool_set_revision: surface.tools.revision,
                 item_identities: tool_item_identities.clone(),
+                presentation_identity: presentation_identity.clone(),
             },
             self.host.tools.clone(),
         ));
-        agent
-            .replace_messages(context_blocks_to_messages(&surface.context.blocks)?)
-            .await;
-        let presentation_identity = NativeSessionItemIdentity::new();
+        let has_active_compaction = surface
+            .context
+            .blocks
+            .iter()
+            .any(|block| matches!(block, ContextBlock::CompactionSummary { .. }));
+        if has_active_compaction != transcript.active_compaction_source_end.is_some() {
+            return Err(DriverError::ProtocolViolation {
+                reason: "native materialized context and durable transcript disagree about the active compaction boundary"
+                    .to_string(),
+                critical: true,
+            });
+        }
+        if let Some(source_end) = transcript.active_compaction_source_end {
+            let messages = context_blocks_to_messages(&surface.context.blocks)?;
+            let mut message_refs = vec![None; messages.len()];
+            let mut messages = messages;
+            debug_assert_eq!(Some(source_end), replay_after);
+            messages.extend(
+                projected_transcript
+                    .entries
+                    .iter()
+                    .map(|entry| entry.message.clone()),
+            );
+            message_refs.extend(
+                projected_transcript
+                    .entries
+                    .iter()
+                    .map(|entry| Some(entry.message_ref.clone())),
+            );
+            agent
+                .replace_messages_with_refs(messages, message_refs)
+                .await;
+        } else if projected_transcript.is_empty() {
+            let messages = context_blocks_to_messages(&surface.context.blocks)?;
+            let message_refs = vec![None; messages.len()];
+            agent
+                .replace_messages_with_refs(messages, message_refs)
+                .await;
+        } else {
+            let message_refs = projected_transcript
+                .entries
+                .iter()
+                .map(|entry| Some(entry.message_ref.clone()))
+                .collect();
+            agent
+                .replace_messages_with_refs(transcript_messages, message_refs)
+                .await;
+        }
         for block in &surface.context.blocks {
             if let ContextBlock::RuntimeItem { content } = block {
                 presentation_identity.observe_tool_result_item_id(content.item().id());
@@ -472,12 +565,11 @@ impl NativeAgentDriver {
                 reserve_tokens: self.presentation_metadata.reserve_tokens,
                 session_identity: presentation_identity,
                 fixed_event_timestamp_ms: None,
-                tool_protocol_projectors: Arc::new(std::sync::RwLock::new(
-                    tool_protocol_projectors(&surface.tools),
-                )),
+                tool_presentation_routes: presentation_routes,
             },
             active_turn,
             active_runtime_turn,
+            active_presentation_turn,
             context_revision: RwLock::new(ContextRevision(0)),
             tool_item_identities,
         });
@@ -485,14 +577,16 @@ impl NativeAgentDriver {
         Ok(slot.get_or_insert_with(|| thread.clone()).clone())
     }
 
-    async fn run_turn(
+    async fn start_turn(
         &self,
         envelope: &DriverCommandEnvelope,
         binding: Arc<NativeBinding>,
         input: Vec<RuntimeInput>,
         sink: Arc<dyn DriverEventSink>,
     ) -> Result<(), DriverError> {
-        let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
+        let thread = self
+            .ensure_thread(&envelope.binding_id, &binding, Some(&envelope.operation_id))
+            .await?;
         let source_turn_id: DriverTurnId =
             parsed_id(format!("native-turn-{}", envelope.request_id))?;
         let runtime_turn_id =
@@ -504,88 +598,203 @@ impl NativeAgentDriver {
                         .to_string(),
                     critical: true,
                 })?;
+        let presentation_turn_id = envelope.presentation_turn_id.clone().ok_or_else(|| {
+            DriverError::ProtocolViolation {
+                reason: "native turn command is missing the Session presentation turn identity"
+                    .to_string(),
+                critical: true,
+            }
+        })?;
         *thread.active_turn.write().await = Some(source_turn_id.clone());
         *thread.active_runtime_turn.write().await = Some(runtime_turn_id.clone());
-        let result = async {
-            let (mut events, handle) = {
-                let mut agent = thread.agent.lock().await;
-                agent
-                    .prompt(inputs_to_message(input)?)
-                    .map_err(|error| DriverError::Rejected {
+        *thread.active_presentation_turn.write().await = Some(presentation_turn_id.clone());
+        let (mut events, handle) = {
+            let mut agent = thread.agent.lock().await;
+            agent.set_tool_result_ref_context(Some(ToolResultRefContext {
+                session_id: envelope.presentation_thread_id.to_string(),
+                raw_turn_id: presentation_turn_id.to_string(),
+                address_provider: thread.presentation_context.session_identity.clone(),
+                cache_writer: None,
+            }));
+            match agent.prompt(inputs_to_message(input)?) {
+                Ok(started) => started,
+                Err(error) => {
+                    agent.set_tool_result_ref_context(None);
+                    *thread.active_turn.write().await = None;
+                    *thread.active_runtime_turn.write().await = None;
+                    *thread.active_presentation_turn.write().await = None;
+                    return Err(DriverError::Rejected {
                         reason: error.to_string(),
-                    })?
-            };
-            let mut mapper = NativeEventMapper::new(
-                envelope.presentation_thread_id.to_string(),
-                runtime_turn_id,
-                source_turn_id,
-                thread.presentation_context.clone(),
-            );
-            let stream_result =
-                async {
-                    while let Some(event) = events.next().await {
-                        let terminal = matches!(event, AgentEvent::AgentEnd { .. });
-                        for mapped in mapper.map(event)? {
-                            for fact in &mapped.facts {
-                                if let RuntimeJournalFact::Internal(RuntimeEvent::ItemTerminal {
-                                    turn_id,
-                                    terminal: RuntimeItemTerminal::Completed { final_content },
-                                    ..
-                                }) = fact
-                                    && let Some(source_item_id) = &mapped.source_item_id
-                                {
-                                    binding.projected_items.write().await.push(
-                                        DriverProjectedItem {
-                                            source_turn_id: mapped
-                                                .source_turn_id
-                                                .clone()
-                                                .unwrap_or_else(|| {
-                                                    parsed_id(turn_id.to_string())
-                                                        .expect("mapped turn id")
-                                                }),
-                                            source_item_id: source_item_id.clone(),
-                                            content: final_content.clone(),
-                                        },
-                                    );
-                                }
+                    });
+                }
+            }
+        };
+        // `Agent::prompt` returning is the authoritative delivery-acceptance boundary. Business
+        // execution continues on the event pump; dispatch returns immediately so outbox ack,
+        // steer and interrupt are not serialized behind the whole provider/tool loop.
+        let accepted_receipt = DriverDispatchReceipt {
+            request_id: envelope.request_id.clone(),
+            duplicate: false,
+            applied_tool_set: None,
+            applied_surface: None,
+        };
+        self.dispatch_receipts
+            .lock()
+            .await
+            .insert(accepted_receipt.request_id.clone(), accepted_receipt);
+        let mut mapper = NativeEventMapper::new_with_presentation_turn(
+            envelope.presentation_thread_id.to_string(),
+            runtime_turn_id,
+            source_turn_id,
+            presentation_turn_id,
+            thread.presentation_context.clone(),
+        );
+        let envelope = envelope.clone();
+        tokio::spawn(async move {
+            let mut pending_terminal = None;
+            let stream_result = async {
+                while let Some(event) = events.next().await {
+                    let terminal = matches!(event, AgentEvent::AgentEnd { .. });
+                    for mapped in mapper.map(event)? {
+                        for fact in &mapped.facts {
+                            if let RuntimeJournalFact::Internal(RuntimeEvent::ItemTerminal {
+                                turn_id,
+                                terminal: RuntimeItemTerminal::Completed { final_content },
+                                ..
+                            }) = fact
+                                && let Some(source_item_id) = &mapped.source_item_id
+                            {
+                                binding
+                                    .projected_items
+                                    .write()
+                                    .await
+                                    .push(DriverProjectedItem {
+                                        source_turn_id: mapped
+                                            .source_turn_id
+                                            .clone()
+                                            .unwrap_or_else(|| {
+                                                parsed_id(turn_id.to_string())
+                                                    .expect("mapped turn id")
+                                            }),
+                                        source_item_id: source_item_id.clone(),
+                                        content: final_content.clone(),
+                                    });
                             }
+                        }
+                        if mapped_is_turn_terminal(&mapped) {
+                            if pending_terminal.replace(mapped).is_some() {
+                                return Err(DriverError::ProtocolViolation {
+                                    reason: "native Agent Core emitted duplicate turn terminals"
+                                        .to_string(),
+                                    critical: true,
+                                });
+                            }
+                        } else {
                             emit_driver_event(
-                                envelope,
+                                &envelope,
                                 &binding.source_thread_id,
                                 mapped,
                                 sink.clone(),
                             )
                             .await?;
                         }
-                        if terminal {
-                            break;
-                        }
                     }
-                    Ok::<(), DriverError>(())
+                    if terminal {
+                        break;
+                    }
                 }
-                .await;
-            if let Err(error) = stream_result {
+                Ok::<(), DriverError>(())
+            }
+            .await;
+            let mut result = if let Err(error) = stream_result {
                 thread.agent.lock().await.abort();
                 let _ = handle.await;
-                return Err(error);
+                Err(error)
+            } else {
+                let terminal_emitted = mapper.turn_terminal;
+                match handle.await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(AgentError::Cancelled)) if !terminal_emitted => {
+                        async {
+                            for mapped in mapper.cancelled() {
+                                if mapped_is_turn_terminal(&mapped) {
+                                    if pending_terminal.replace(mapped).is_some() {
+                                        return Err(DriverError::ProtocolViolation {
+                                            reason:
+                                                "native Agent Core emitted duplicate turn terminals"
+                                                    .to_string(),
+                                            critical: true,
+                                        });
+                                    }
+                                } else {
+                                    emit_driver_event(
+                                        &envelope,
+                                        &binding.source_thread_id,
+                                        mapped,
+                                        sink.clone(),
+                                    )
+                                    .await?;
+                                }
+                            }
+                            Ok(())
+                        }
+                        .await
+                    }
+                    Ok(Err(_)) | Err(_) if terminal_emitted => Ok(()),
+                    Ok(Err(error)) => Err(DriverError::Rejected {
+                        reason: error.to_string(),
+                    }),
+                    Err(error) => Err(DriverError::Lost {
+                        reason: format!("native Agent Core task join failed: {error}"),
+                        retryable: false,
+                    }),
+                }
+            };
+            *thread.active_turn.write().await = None;
+            *thread.active_runtime_turn.write().await = None;
+            *thread.active_presentation_turn.write().await = None;
+            thread.agent.lock().await.set_tool_result_ref_context(None);
+            // Runtime may admit the next turn as soon as it observes this
+            // terminal. Publish it only after Agent Core and every Native
+            // active fence have become idle.
+            if result.is_ok()
+                && let Some(terminal) = pending_terminal
+            {
+                result =
+                    emit_driver_event(&envelope, &binding.source_thread_id, terminal, sink.clone())
+                        .await;
             }
-            let terminal_emitted = mapper.turn_terminal;
-            match handle.await {
-                Ok(Ok(_)) => Ok(()),
-                Ok(Err(_)) | Err(_) if terminal_emitted => Ok(()),
-                Ok(Err(error)) => Err(DriverError::Rejected {
-                    reason: error.to_string(),
-                }),
-                Err(error) => Err(DriverError::Lost {
-                    reason: format!("native Agent Core task join failed: {error}"),
-                    retryable: false,
-                }),
+            if let Err(error) = result {
+                let reason = format!("native accepted turn event pump failed: {error}");
+                diag!(
+                    Error,
+                    Subsystem::AgentRun,
+                    operation_id = %envelope.operation_id,
+                    error = %error,
+                    "Native accepted turn event pump失败，终结Runtime binding"
+                );
+                if let Err(terminal_error) = emit_driver_event(
+                    &envelope,
+                    &binding.source_thread_id,
+                    RuntimeEvent::BindingLost {
+                        binding_id: envelope.binding_id.clone(),
+                        reason,
+                    },
+                    sink,
+                )
+                .await
+                {
+                    diag!(
+                        Error,
+                        Subsystem::AgentRun,
+                        operation_id = %envelope.operation_id,
+                        error = %terminal_error,
+                        "Native accepted turn终态写入失败"
+                    );
+                }
             }
-        }
-        .await;
-        *thread.active_turn.write().await = None;
-        *thread.active_runtime_turn.write().await = None;
-        result
+        });
+        Ok(())
     }
 }
 
@@ -740,7 +949,8 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                         reason: "thread start surface digest is stale".to_string(),
                     });
                 }
-                self.ensure_thread(&envelope.binding_id, &binding).await?;
+                self.ensure_thread(&envelope.binding_id, &binding, Some(&envelope.operation_id))
+                    .await?;
                 emit_driver_event(
                     &envelope,
                     &binding.source_thread_id,
@@ -750,11 +960,11 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                     sink.clone(),
                 )
                 .await?;
-                self.run_turn(&envelope, binding, input, sink.clone())
+                self.start_turn(&envelope, binding, input, sink.clone())
                     .await?;
             }
             RuntimeCommand::TurnStart { input, .. } => {
-                self.run_turn(&envelope, binding, input, sink.clone())
+                self.start_turn(&envelope, binding, input, sink.clone())
                     .await?;
             }
             RuntimeCommand::TurnSteer {
@@ -762,7 +972,9 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                 input,
                 ..
             } => {
-                let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
+                let thread = self
+                    .ensure_thread(&envelope.binding_id, &binding, Some(&envelope.operation_id))
+                    .await?;
                 validate_active_turn(&thread, &expected_turn_id).await?;
                 thread
                     .agent
@@ -774,12 +986,15 @@ impl AgentRuntimeDriver for NativeAgentDriver {
             RuntimeCommand::TurnInterrupt {
                 expected_turn_id, ..
             } => {
-                let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
+                let thread = self
+                    .ensure_thread(&envelope.binding_id, &binding, None)
+                    .await?;
                 validate_active_turn(&thread, &expected_turn_id).await?;
                 thread.agent.lock().await.abort();
             }
             RuntimeCommand::ThreadResume { .. } => {
-                self.ensure_thread(&envelope.binding_id, &binding).await?;
+                self.ensure_thread(&envelope.binding_id, &binding, None)
+                    .await?;
                 emit_driver_event(
                     &envelope,
                     &binding.source_thread_id,
@@ -796,7 +1011,9 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                 });
             }
             RuntimeCommand::ThreadFork { checkpoint_id, .. } => {
-                let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
+                let thread = self
+                    .ensure_thread(&envelope.binding_id, &binding, None)
+                    .await?;
                 if let Some(checkpoint_id) = checkpoint_id {
                     let requested_checkpoint_id = checkpoint_id.clone();
                     let activation = self
@@ -848,7 +1065,9 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                 }
             }
             RuntimeCommand::ThreadSettingsUpdate { instructions, .. } => {
-                let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
+                let thread = self
+                    .ensure_thread(&envelope.binding_id, &binding, None)
+                    .await?;
                 thread
                     .agent
                     .lock()
@@ -856,27 +1075,36 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                     .set_system_prompt(instructions.join("\n\n"));
             }
             RuntimeCommand::ToolSetReplace {
-                expected_tool_set_revision,
+                expected_current_tool_set_revision,
+                target_tool_set_revision,
                 tool_set_digest,
                 ..
             } => {
+                if binding.surface.read().await.tools.revision != expected_current_tool_set_revision
+                {
+                    return Err(DriverError::Rejected {
+                        reason: "native tool set changed before hot replacement".to_string(),
+                    });
+                }
                 let tools = self
                     .host
                     .surfaces
                     .materialize_tool_set(
                         envelope.binding_id.clone(),
-                        expected_tool_set_revision,
+                        target_tool_set_revision,
                         &tool_set_digest,
                     )
                     .await
                     .map_err(surface_error)?;
-                if tools.revision != expected_tool_set_revision || tools.digest != tool_set_digest {
+                if tools.revision != target_tool_set_revision || tools.digest != tool_set_digest {
                     return Err(DriverError::ProtocolViolation {
                         reason: "tool broker returned a different hot-replace revision".to_string(),
                         critical: true,
                     });
                 }
-                let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
+                let thread = self
+                    .ensure_thread(&envelope.binding_id, &binding, None)
+                    .await?;
                 let updated_surface = {
                     let mut surface = binding.surface.write().await;
                     surface.tools = tools;
@@ -894,19 +1122,21 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                     NativeToolCallContext {
                         active_turn: thread.active_turn.clone(),
                         active_runtime_turn: thread.active_runtime_turn.clone(),
+                        active_presentation_turn: thread.active_presentation_turn.clone(),
                         tool_set_revision: updated_surface.tools.revision,
                         item_identities: thread.tool_item_identities.clone(),
+                        presentation_identity: thread.presentation_context.session_identity.clone(),
                     },
                     self.host.tools.clone(),
                 ));
                 *thread
                     .presentation_context
-                    .tool_protocol_projectors
+                    .tool_presentation_routes
                     .write()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                    tool_protocol_projectors(&updated_surface.tools);
+                    tool_presentation_routes(&updated_surface.tools);
                 applied_tool_set = Some(DriverToolSetApplyReceipt {
-                    revision: expected_tool_set_revision,
+                    revision: target_tool_set_revision,
                     digest: tool_set_digest,
                 });
             }
@@ -920,7 +1150,9 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                 expected_context_revision,
                 ..
             } => {
-                let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
+                let thread = self
+                    .ensure_thread(&envelope.binding_id, &binding, None)
+                    .await?;
                 if *thread.context_revision.read().await != expected_context_revision {
                     return Err(DriverError::Rejected {
                         reason: "native context revision changed before activation".to_string(),
@@ -990,7 +1222,9 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                 response,
                 ..
             } => {
-                let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
+                let thread = self
+                    .ensure_thread(&envelope.binding_id, &binding, None)
+                    .await?;
                 match response {
                     InteractionResponse::Approved => {
                         thread
@@ -1145,13 +1379,21 @@ fn binding_receipt(binding: &NativeBinding, surface: &MaterializedDriverSurface)
     }
 }
 
-fn tool_protocol_projectors(
+fn tool_presentation_routes(
     surface: &DriverToolSurface,
-) -> HashMap<String, ToolProtocolProjection> {
+) -> HashMap<String, NativeToolPresentationRoute> {
     surface
         .tools
         .iter()
-        .map(|tool| (tool.name.clone(), tool.protocol_projection.clone()))
+        .map(|tool| {
+            (
+                tool.name.clone(),
+                NativeToolPresentationRoute {
+                    projection: tool.protocol_projection.clone(),
+                    emitter: tool.presentation_emitter,
+                },
+            )
+        })
         .collect()
 }
 
@@ -1276,6 +1518,7 @@ struct NativeEventMapper {
     session_id: String,
     runtime_turn_id: RuntimeTurnId,
     source_turn_id: DriverTurnId,
+    presentation_turn_id: PresentationTurnId,
     next_item: u64,
     current_item: Option<(RuntimeItemId, DriverItemId)>,
     turn_started: bool,
@@ -1294,22 +1537,37 @@ fn assistant_has_canonical_content(message: &agentdash_agent::AgentMessage) -> b
     }))
 }
 
-fn is_tool_only_assistant_message(message: &agentdash_agent::AgentMessage) -> bool {
-    matches!(message, agentdash_agent::AgentMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty())
-        && !assistant_has_canonical_content(message)
-}
-
 impl NativeEventMapper {
+    #[cfg(test)]
     fn new(
         session_id: String,
         runtime_turn_id: RuntimeTurnId,
         source_turn_id: DriverTurnId,
         presentation_context: StreamMapperRuntimeContext,
     ) -> Self {
+        let presentation_turn_id = PresentationTurnId::new(runtime_turn_id.to_string())
+            .expect("validated Native test presentation turn identity");
+        Self::new_with_presentation_turn(
+            session_id,
+            runtime_turn_id,
+            source_turn_id,
+            presentation_turn_id,
+            presentation_context,
+        )
+    }
+
+    fn new_with_presentation_turn(
+        session_id: String,
+        runtime_turn_id: RuntimeTurnId,
+        source_turn_id: DriverTurnId,
+        presentation_turn_id: PresentationTurnId,
+        presentation_context: StreamMapperRuntimeContext,
+    ) -> Self {
         Self {
             session_id,
             runtime_turn_id,
             source_turn_id,
+            presentation_turn_id,
             next_item: 0,
             current_item: None,
             turn_started: false,
@@ -1362,39 +1620,55 @@ impl NativeEventMapper {
             connector_type: "pi_agent".to_string(),
             executor_id: None,
         };
-        let presentation = convert_event_to_envelopes_with_runtime_context(
+        let presentation = match convert_event_to_envelopes_with_runtime_context(
             &event,
             &self.session_id,
             &source,
-            self.runtime_turn_id.as_str(),
+            self.presentation_turn_id.as_str(),
             StreamMapperEventState {
                 entry_index: &mut self.presentation_entry_index,
                 chunk_emit_states: &mut self.chunk_emit_states,
                 tool_call_states: &mut self.tool_call_states,
             },
             self.presentation_context.clone(),
-        )
-        .map_err(|error| DriverError::ProtocolViolation {
-            reason: error.to_string(),
-            critical: true,
-        })?;
+        ) {
+            Ok(presentation) => presentation,
+            Err(
+                error @ crate::presentation::NativePresentationError::InvalidToolProjection {
+                    family: "presentation_route",
+                    ..
+                },
+            ) => {
+                return Err(DriverError::ProtocolViolation {
+                    reason: error.to_string(),
+                    critical: true,
+                });
+            }
+            Err(error) => {
+                diag!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    runtime_turn_id = %self.runtime_turn_id,
+                    source_turn_id = %self.source_turn_id,
+                    error = %error,
+                    "Native presentation projection失败，canonical Agent loop继续"
+                );
+                Vec::new()
+            }
+        };
         let mut mapped = Vec::new();
         match event {
             AgentEvent::AgentStart | AgentEvent::TurnStart if !self.turn_started => {
                 self.turn_started = true;
                 mapped.push(self.event(RuntimeEvent::TurnStarted {
                     turn_id: self.runtime_turn_id.clone(),
-                    presentation_turn_id:
-                        agentdash_agent_runtime_contract::PresentationTurnId::new(
-                            self.source_turn_id.to_string(),
-                        )
-                        .expect("validated Native source turn identity"),
+                    presentation_turn_id: self.presentation_turn_id.clone(),
                 }));
             }
             AgentEvent::AgentStart | AgentEvent::TurnStart => {}
             AgentEvent::MessageStart { message } => {
-                if matches!(&message, agentdash_agent::AgentMessage::Assistant { .. })
-                    && !assistant_has_canonical_content(&message)
+                if !matches!(&message, agentdash_agent::AgentMessage::Assistant { .. })
+                    || !assistant_has_canonical_content(&message)
                 {
                     self.current_item = None;
                     return Ok(mapped);
@@ -1419,8 +1693,9 @@ impl NativeEventMapper {
                     && usage.input.saturating_add(usage.cache_read_input).saturating_add(usage.cache_creation_input).saturating_add(usage.output)>0 {
                     mapped.push(self.event(RuntimeEvent::TokenUsageUpdated { turn_id:self.runtime_turn_id.clone(), usage:agentdash_agent_runtime_contract::RuntimeTokenUsage { input_tokens:usage.input, cached_input_tokens:usage.cache_read_input.saturating_add(usage.cache_creation_input), output_tokens:usage.output, reasoning_output_tokens:0, total_tokens:usage.input.saturating_add(usage.cache_read_input).saturating_add(usage.cache_creation_input).saturating_add(usage.output) } }));
                 }
-                let tool_only = is_tool_only_assistant_message(&message);
-                if tool_only {
+                if !matches!(&message, agentdash_agent::AgentMessage::Assistant { .. })
+                    || !assistant_has_canonical_content(&message)
+                {
                     self.current_item = None;
                 } else {
                     let item = match self.current_item.take() {
@@ -1535,19 +1810,7 @@ impl NativeEventMapper {
             }
             AgentEvent::ProviderAttemptStatus { status } if matches!(status.phase, agentdash_agent::ProviderAttemptPhase::RetryScheduled | agentdash_agent::ProviderAttemptPhase::Retrying | agentdash_agent::ProviderAttemptPhase::Failed) => mapped.push(self.event(RuntimeEvent::ProviderStatus { turn_id:self.runtime_turn_id.clone(), status:agentdash_agent_runtime_contract::RuntimeProviderStatus { phase:match status.phase { agentdash_agent::ProviderAttemptPhase::RetryScheduled=>agentdash_agent_runtime_contract::RuntimeProviderPhase::RetryScheduled, agentdash_agent::ProviderAttemptPhase::Retrying=>agentdash_agent_runtime_contract::RuntimeProviderPhase::Retrying, agentdash_agent::ProviderAttemptPhase::Failed=>agentdash_agent_runtime_contract::RuntimeProviderPhase::Failed, _=>unreachable!("guarded provider phase") }, attempt:status.attempt, max_attempts:status.max_attempts, will_retry:status.will_retry, delay_ms:status.delay_ms, reason_code:status.reason_code, message:status.message, provider:status.provider, model:status.model } })),
             AgentEvent::ProviderAttemptStatus { .. } => {}
-            AgentEvent::ToolExecutionUpdate { tool_call_id, partial_result, .. } => {
-                let _: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem> = partial_result
-                    .get("content_items")
-                    .cloned()
-                    .map(serde_json::from_value)
-                    .transpose()
-                    .map_err(|error| DriverError::ProtocolViolation {
-                        reason: format!("native tool update is not typed content_items: {error}"),
-                        critical: true,
-                    })?
-                    .unwrap_or_default();
-                let _ = tool_call_id;
-            }
+            AgentEvent::ToolExecutionUpdate { .. } => {}
         }
         let source_turn_id = mapped
             .iter()
@@ -1592,6 +1855,30 @@ impl NativeEventMapper {
         self.next_item += 1;
         let value = format!("{}-item-{}", self.source_turn_id, self.next_item);
         Ok((parsed_id(value.clone())?, parsed_id(value)?))
+    }
+
+    fn cancelled(&mut self) -> Vec<MappedEvent> {
+        let mut events = Vec::new();
+        if let Some(item) = self.current_item.take() {
+            events.push(self.item_event(
+                &item,
+                RuntimeEvent::ItemTerminal {
+                    turn_id: self.runtime_turn_id.clone(),
+                    item_id: item.0.clone(),
+                    terminal: RuntimeItemTerminal::Cancelled { message: None },
+                },
+            ));
+        }
+        if !self.turn_terminal {
+            self.turn_terminal = true;
+            events.push(self.event(RuntimeEvent::TurnTerminal {
+                turn_id: self.runtime_turn_id.clone(),
+                terminal: RuntimeTurnTerminal::Interrupted,
+                message: None,
+                diagnostic: None,
+            }));
+        }
+        events
     }
 
     fn event(&self, event: RuntimeEvent) -> MappedEvent {
@@ -1644,6 +1931,15 @@ struct MappedEvent {
     facts: Vec<RuntimeJournalFact>,
 }
 
+fn mapped_is_turn_terminal(mapped: &MappedEvent) -> bool {
+    mapped.facts.iter().any(|fact| {
+        matches!(
+            fact,
+            RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal { .. })
+        )
+    })
+}
+
 async fn emit_driver_event(
     command: &DriverCommandEnvelope,
     source_thread_id: &DriverThreadId,
@@ -1654,6 +1950,7 @@ async fn emit_driver_event(
     sink.emit(DriverEventEnvelope {
         binding_id: command.binding_id.clone(),
         generation: command.generation,
+        operation_id: Some(command.operation_id.clone()),
         source_thread_id: source_thread_id.clone(),
         source_turn_id: mapped.source_turn_id,
         source_item_id: mapped.source_item_id,
@@ -1732,6 +2029,93 @@ where
         })
 }
 
+fn project_driver_transcript(
+    transcript: &DriverTranscript,
+    exclude_operation_id: Option<&RuntimeOperationId>,
+    after_sequence: Option<EventSequence>,
+) -> Result<agentdash_agent::ProjectedTranscript, DriverError> {
+    let required_after = after_sequence.unwrap_or(EventSequence(0));
+    if transcript.latest_available.0 > required_after.0
+        && transcript.earliest_available.0 > required_after.0.saturating_add(1)
+    {
+        return Err(DriverError::ProtocolViolation {
+            reason: format!(
+                "native durable transcript is incomplete after sequence {}: earliest_available={}, latest_available={}",
+                required_after.0, transcript.earliest_available.0, transcript.latest_available.0
+            ),
+            critical: true,
+        });
+    }
+
+    let mut last_sequence = 0;
+    let mut events = Vec::new();
+    for record in &transcript.records {
+        let carrier = record.carrier();
+        let sequence = carrier
+            .sequence
+            .as_ref()
+            .map(|sequence| sequence.0)
+            .ok_or_else(|| DriverError::ProtocolViolation {
+                reason: "native durable transcript contains a record without sequence".to_string(),
+                critical: true,
+            })?;
+        if sequence <= last_sequence || sequence > transcript.latest_available.0 {
+            return Err(DriverError::ProtocolViolation {
+                reason: format!(
+                    "native durable transcript sequence {sequence} is outside its ordered retention window"
+                ),
+                critical: true,
+            });
+        }
+        last_sequence = sequence;
+        if after_sequence.is_some_and(|after| sequence <= after.0) {
+            continue;
+        }
+        if exclude_operation_id.is_some_and(|excluded| {
+            carrier
+                .operation_id
+                .as_ref()
+                .is_some_and(|operation_id| operation_id == excluded)
+        }) {
+            continue;
+        }
+        let Some(presentation) = record.as_presentation() else {
+            continue;
+        };
+        if presentation.durability != PresentationDurability::Durable {
+            continue;
+        }
+        events.push(TranscriptProjectionEvent {
+            event_seq: sequence,
+            turn_id: carrier
+                .coordinate
+                .presentation_turn_id
+                .as_ref()
+                .map(|turn_id| turn_id.as_str()),
+            entry_index: carrier.coordinate.source_entry_index,
+            event: &presentation.event,
+        });
+    }
+    Ok(project_transcript(events))
+}
+
+fn hydrate_presentation_identity(
+    identity: &NativeSessionItemIdentity,
+    transcript: &DriverTranscript,
+    projected: &agentdash_agent::ProjectedTranscript,
+) {
+    for item_id in &transcript.completed_presentation_item_ids {
+        identity.observe_tool_result_item_id(item_id);
+    }
+    identity.observe_messages(
+        &projected
+            .entries
+            .iter()
+            .map(|entry| entry.message.clone())
+            .collect::<Vec<_>>(),
+    );
+}
+
 fn surface_error(error: DriverSurfaceError) -> DriverError {
     match error {
         DriverSurfaceError::Unavailable { reason, retryable } => {
@@ -1768,6 +2152,9 @@ fn context_error(error: DriverContextError) -> DriverError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_agent::{AgentMessage, ToolResultAddressProvider};
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
+    use agentdash_agent_protocol::{BackboneEvent, ItemCompletedNotification};
     use agentdash_agent_runtime_test_support::session_parity::{
         NormalizedPresentationEvent, PresentationDurability as StrictDurability,
         compare_ordered_presentation_events,
@@ -1783,22 +2170,36 @@ mod tests {
         session_identity: Arc<NativeSessionItemIdentity>,
         reserve_tokens: u64,
     ) -> StreamMapperRuntimeContext {
+        let tool_presentation_routes = Arc::new(std::sync::RwLock::new(HashMap::from([
+            (
+                "read".to_string(),
+                NativeToolPresentationRoute {
+                    projection: ToolProtocolProjection::Dynamic { namespace: None },
+                    emitter: ToolPresentationEmitter::VendorStream,
+                },
+            ),
+            (
+                "shell_exec".to_string(),
+                NativeToolPresentationRoute {
+                    projection: ToolProtocolProjection::Command,
+                    emitter: ToolPresentationEmitter::VendorStream,
+                },
+            ),
+            (
+                "fs_apply_patch".to_string(),
+                NativeToolPresentationRoute {
+                    projection: ToolProtocolProjection::FileChange,
+                    emitter: ToolPresentationEmitter::VendorStream,
+                },
+            ),
+        ])));
+        session_identity.bind_presentation_routes(tool_presentation_routes.clone());
         StreamMapperRuntimeContext {
             model_context_window: Some(200_000),
             reserve_tokens,
             session_identity,
             fixed_event_timestamp_ms: Some(1_783_684_800_000),
-            tool_protocol_projectors: Arc::new(std::sync::RwLock::new(HashMap::from([
-                (
-                    "read".to_string(),
-                    ToolProtocolProjection::Dynamic { namespace: None },
-                ),
-                ("shell_exec".to_string(), ToolProtocolProjection::Command),
-                (
-                    "fs_apply_patch".to_string(),
-                    ToolProtocolProjection::FileChange,
-                ),
-            ]))),
+            tool_presentation_routes,
         }
     }
 
@@ -1836,7 +2237,7 @@ mod tests {
                 turn_id,
                 presentation_turn_id,
             }] if turn_id.as_str() == "runtime-turn"
-                && presentation_turn_id.as_str() == "source-turn"
+                && presentation_turn_id.as_str() == "runtime-turn"
         ));
         assert!(
             mapper
@@ -1879,6 +2280,41 @@ mod tests {
                 .expect("duplicate agent terminal")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn native_mapper_preserves_explicit_runtime_source_and_presentation_turns() {
+        let mut mapper = NativeEventMapper::new_with_presentation_turn(
+            "presentation-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            parsed_id("presentation-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
+        );
+
+        let started = mapper.map(AgentEvent::AgentStart).expect("turn start");
+        assert!(internal_events(&started).iter().any(|event| matches!(
+            event,
+            RuntimeEvent::TurnStarted {
+                turn_id,
+                presentation_turn_id,
+            } if turn_id.as_str() == "runtime-turn"
+                && presentation_turn_id.as_str() == "presentation-turn"
+        )));
+
+        let text = mapper
+            .map(AgentEvent::MessageUpdate {
+                message: agentdash_agent::AgentMessage::assistant("hello"),
+                event: AssistantStreamEvent::TextDelta {
+                    content_index: 0,
+                    text: "hello".to_string(),
+                },
+            })
+            .expect("presentation text");
+        let body =
+            serde_json::to_value(&presentation_events(&text)[0].event).expect("presentation body");
+        assert_eq!(body["payload"]["threadId"], "presentation-thread");
+        assert_eq!(body["payload"]["turnId"], "presentation-turn");
     }
 
     #[test]
@@ -2030,6 +2466,47 @@ mod tests {
                 .iter()
                 .all(|event| event.durability == PresentationDurability::Durable)
         );
+    }
+
+    #[test]
+    fn native_application_owned_and_empty_messages_do_not_create_items_or_revisions() {
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
+        );
+        let messages = [
+            agentdash_agent::AgentMessage::user("user input"),
+            agentdash_agent::AgentMessage::tool_result("tool-1", "tool output", false),
+            agentdash_agent::AgentMessage::assistant(""),
+        ];
+
+        for message in messages {
+            let started = mapper
+                .map(AgentEvent::MessageStart {
+                    message: message.clone(),
+                })
+                .expect("non-canonical message start");
+            let completed = mapper
+                .map(AgentEvent::MessageEnd { message })
+                .expect("non-canonical message end");
+            assert!(internal_events(&started).is_empty());
+            assert!(internal_events(&completed).is_empty());
+            assert!(presentation_events(&started).is_empty());
+            assert!(presentation_events(&completed).is_empty());
+        }
+
+        let assistant = mapper
+            .map(AgentEvent::MessageEnd {
+                message: agentdash_agent::AgentMessage::assistant("canonical answer"),
+            })
+            .expect("canonical assistant message after application-owned messages");
+        assert!(matches!(
+            internal_events(&assistant).as_slice(),
+            [RuntimeEvent::ItemStarted { item_id: started, .. }, RuntimeEvent::ItemTerminal { item_id: completed, .. }]
+                if started == completed && started.as_str() == "source-turn-item-1"
+        ));
     }
 
     #[test]
@@ -2186,11 +2663,249 @@ mod tests {
     }
 
     #[test]
+    fn native_three_tool_round_trip_emits_one_card_per_call_and_no_generic_runtime_items() {
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
+        );
+        let calls = [
+            (
+                "tool-read",
+                "read",
+                serde_json::json!({"path":"main://README.md"}),
+                serde_json::json!({
+                    "content": [{"type":"text","text":"read complete"}],
+                    "is_error": false,
+                    "details": null
+                }),
+                "turn_001:tool_001",
+            ),
+            (
+                "tool-patch",
+                "fs_apply_patch",
+                serde_json::json!({
+                    "patch":"*** Begin Patch\n*** Add File: main://new.txt\n+hello\n*** End Patch"
+                }),
+                serde_json::json!({
+                    "content": [{"type":"text","text":"patch complete"}],
+                    "is_error": false,
+                    "details": null
+                }),
+                "turn_001:tool_002",
+            ),
+            (
+                "tool-shell",
+                "shell_exec",
+                serde_json::json!({"command":"echo ok"}),
+                serde_json::json!({
+                    "content": [{"type":"text","text":"ok"}],
+                    "is_error": false,
+                    "details": {"exit_code": 0}
+                }),
+                "turn_001:cmd_001",
+            ),
+        ];
+
+        let announced = mapper
+            .map(AgentEvent::MessageEnd {
+                message: agentdash_agent::AgentMessage::Assistant {
+                    content: Vec::new(),
+                    tool_calls: calls
+                        .iter()
+                        .map(|(tool_call_id, tool_name, arguments, _, _)| {
+                            agentdash_agent::ToolCallInfo {
+                                id: (*tool_call_id).to_string(),
+                                call_id: Some((*tool_call_id).to_string()),
+                                name: (*tool_name).to_string(),
+                                arguments: arguments.clone(),
+                            }
+                        })
+                        .collect(),
+                    stop_reason: Some(agentdash_agent::StopReason::ToolUse),
+                    error_message: None,
+                    usage: Some(agentdash_agent::TokenUsage::default()),
+                    timestamp: Some(1),
+                },
+            })
+            .expect("tool-only provider message announces every call once");
+        assert!(internal_events(&announced).is_empty());
+        let announced = presentation_events(&announced)
+            .into_iter()
+            .filter(|event| matches!(event.event, BackboneEvent::ItemStarted(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(announced.len(), calls.len());
+        for (event, (_, _, _, _, expected_item_id)) in announced.iter().zip(calls.iter()) {
+            assert!(matches!(
+                &event.event,
+                BackboneEvent::ItemStarted(notification)
+                    if notification.item.id() == *expected_item_id
+            ));
+        }
+
+        for (tool_call_id, tool_name, arguments, result, expected_item_id) in calls {
+            let started = mapper
+                .map(AgentEvent::ToolExecutionStart {
+                    tool_call_id: tool_call_id.to_string(),
+                    tool_name: tool_name.to_string(),
+                    args: arguments,
+                })
+                .expect("execution start reuses the provider-announced card");
+            let completed = mapper
+                .map(AgentEvent::ToolExecutionEnd {
+                    tool_call_id: tool_call_id.to_string(),
+                    tool_name: tool_name.to_string(),
+                    result,
+                    is_error: false,
+                })
+                .expect("tool completion");
+
+            assert!(internal_events(&started).is_empty());
+            assert!(internal_events(&completed).is_empty());
+            assert!(presentation_events(&started).is_empty());
+            assert!(matches!(
+                presentation_events(&completed).as_slice(),
+                [event] if matches!(
+                    &event.event,
+                    BackboneEvent::ItemCompleted(notification)
+                        if notification.item.id() == expected_item_id
+                )
+            ));
+        }
+    }
+
+    #[test]
+    fn native_tool_call_and_execution_start_emit_one_started_item() {
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
+        );
+        let arguments = serde_json::json!({"path":"main://README.md"});
+        let message = agentdash_agent::AgentMessage::Assistant {
+            content: Vec::new(),
+            tool_calls: vec![agentdash_agent::ToolCallInfo {
+                id: "tool-1".to_string(),
+                call_id: None,
+                name: "read".to_string(),
+                arguments: arguments.clone(),
+            }],
+            stop_reason: None,
+            error_message: None,
+            usage: None,
+            timestamp: None,
+        };
+
+        let streamed_start = mapper
+            .map(AgentEvent::MessageUpdate {
+                message,
+                event: AssistantStreamEvent::ToolCallStart {
+                    content_index: 0,
+                    tool_call_id: "tool-1".to_string(),
+                    name: "read".to_string(),
+                },
+            })
+            .expect("streamed tool start");
+        let execution_start = mapper
+            .map(AgentEvent::ToolExecutionStart {
+                tool_call_id: "tool-1".to_string(),
+                tool_name: "read".to_string(),
+                args: arguments,
+            })
+            .expect("execution tool start");
+
+        assert_eq!(presentation_events(&streamed_start).len(), 1);
+        assert!(presentation_events(&execution_start).is_empty());
+    }
+
+    #[test]
+    fn native_partial_fs_glob_arguments_fall_back_without_aborting() {
+        let context = presentation_context(NativeSessionItemIdentity::new());
+        context.tool_presentation_routes.write().unwrap().insert(
+            "fs_glob".to_string(),
+            NativeToolPresentationRoute {
+                projection: ToolProtocolProjection::FsGlob,
+                emitter: ToolPresentationEmitter::VendorStream,
+            },
+        );
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            context,
+        );
+
+        let started = mapper
+            .map(AgentEvent::ToolExecutionStart {
+                tool_call_id: "glob-1".to_string(),
+                tool_name: "fs_glob".to_string(),
+                args: serde_json::json!({}),
+            })
+            .expect("partial fs_glob start remains non-critical");
+        let body = serde_json::to_value(&presentation_events(&started)[0].event)
+            .expect("typed fs_glob body");
+        assert_eq!(body["payload"]["item"]["type"], "fsGlob");
+    }
+
+    #[test]
+    fn native_tool_broker_route_suppresses_vendor_presentation() {
+        let context = presentation_context(NativeSessionItemIdentity::new());
+        context.tool_presentation_routes.write().unwrap().insert(
+            "read".to_string(),
+            NativeToolPresentationRoute {
+                projection: ToolProtocolProjection::Dynamic { namespace: None },
+                emitter: ToolPresentationEmitter::ToolBroker,
+            },
+        );
+        let routes = context.tool_presentation_routes.clone();
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            context,
+        );
+
+        let mapped = mapper
+            .map(AgentEvent::ToolExecutionStart {
+                tool_call_id: "tool-1".to_string(),
+                tool_name: "read".to_string(),
+                args: serde_json::json!({"path":"main://README.md"}),
+            })
+            .expect("broker-owned tool start");
+        assert!(presentation_events(&mapped).is_empty());
+        routes.write().unwrap().insert(
+            "read".to_string(),
+            NativeToolPresentationRoute {
+                projection: ToolProtocolProjection::Dynamic { namespace: None },
+                emitter: ToolPresentationEmitter::VendorStream,
+            },
+        );
+        let completed = mapper
+            .map(AgentEvent::ToolExecutionEnd {
+                tool_call_id: "tool-1".to_string(),
+                tool_name: "read".to_string(),
+                result: serde_json::json!({
+                    "content": [{"type":"text","text":"complete"}],
+                    "is_error": false,
+                    "details": null
+                }),
+                is_error: false,
+            })
+            .expect("broker-owned tool completion remains pinned after hot replace");
+        assert!(presentation_events(&completed).is_empty());
+    }
+
+    #[test]
     fn native_tool_family_comes_only_from_the_owner_projector() {
         let context = presentation_context(NativeSessionItemIdentity::new());
-        context.tool_protocol_projectors.write().unwrap().insert(
+        context.tool_presentation_routes.write().unwrap().insert(
             "renamed_command".to_string(),
-            ToolProtocolProjection::Command,
+            NativeToolPresentationRoute {
+                projection: ToolProtocolProjection::Command,
+                emitter: ToolPresentationEmitter::VendorStream,
+            },
         );
         let mut mapper = NativeEventMapper::new(
             "native-thread".to_string(),
@@ -2213,9 +2928,9 @@ mod tests {
     }
 
     #[test]
-    fn native_missing_projector_is_a_typed_protocol_failure() {
+    fn native_missing_owner_route_is_a_typed_protocol_violation() {
         let context = presentation_context(NativeSessionItemIdentity::new());
-        context.tool_protocol_projectors.write().unwrap().clear();
+        context.tool_presentation_routes.write().unwrap().clear();
         let mut mapper = NativeEventMapper::new(
             "native-thread".to_string(),
             parsed_id("runtime-turn").unwrap(),
@@ -2228,30 +2943,36 @@ mod tests {
             tool_name: "unknown_tool".to_string(),
             args: serde_json::json!({}),
         }) {
+            Ok(_) => panic!("missing owner route must not silently change protocol variant"),
             Err(error) => error,
-            Ok(_) => panic!("missing projector must fail"),
         };
-        assert!(matches!(
-            error,
-            DriverError::ProtocolViolation { critical: true, ref reason }
-                if reason.contains("no owner-declared protocol projector")
-        ));
+        assert!(
+            error
+                .to_string()
+                .contains("owner-declared presentation route")
+        );
     }
 
     #[test]
-    fn native_dynamic_and_file_change_families_do_not_fallback() {
+    fn native_dynamic_and_incomplete_file_change_keep_a_displayable_lifecycle() {
         let context = presentation_context(NativeSessionItemIdentity::new());
         {
-            let mut projectors = context.tool_protocol_projectors.write().unwrap();
-            projectors.insert(
+            let mut routes = context.tool_presentation_routes.write().unwrap();
+            routes.insert(
                 "explicit_dynamic".to_string(),
-                ToolProtocolProjection::Dynamic {
-                    namespace: Some("owner.namespace".to_string()),
+                NativeToolPresentationRoute {
+                    projection: ToolProtocolProjection::Dynamic {
+                        namespace: Some("owner.namespace".to_string()),
+                    },
+                    emitter: ToolPresentationEmitter::VendorStream,
                 },
             );
-            projectors.insert(
+            routes.insert(
                 "renamed_patch".to_string(),
-                ToolProtocolProjection::FileChange,
+                NativeToolPresentationRoute {
+                    projection: ToolProtocolProjection::FileChange,
+                    emitter: ToolPresentationEmitter::VendorStream,
+                },
             );
         }
         let mut mapper = NativeEventMapper::new(
@@ -2273,18 +2994,227 @@ mod tests {
         assert_eq!(body["payload"]["item"]["type"], "dynamicToolCall");
         assert_eq!(body["payload"]["item"]["namespace"], "owner.namespace");
 
-        let error = match mapper.map(AgentEvent::ToolExecutionStart {
-            tool_call_id: "patch-1".to_string(),
-            tool_name: "renamed_patch".to_string(),
-            args: serde_json::json!({"patch":"not an apply-patch document"}),
-        }) {
-            Err(error) => error,
-            Ok(_) => panic!("invalid FileChange must not become DynamicToolCall"),
+        let partial_patch = mapper
+            .map(AgentEvent::ToolExecutionStart {
+                tool_call_id: "patch-1".to_string(),
+                tool_name: "renamed_patch".to_string(),
+                args: serde_json::json!({"patch":"not an apply-patch document"}),
+            })
+            .expect("partial file change must not abort the Agent loop");
+        let body = serde_json::to_value(&presentation_events(&partial_patch)[0].event)
+            .expect("partial patch presentation JSON");
+        assert_eq!(body["payload"]["item"]["type"], "dynamicToolCall");
+    }
+
+    fn durable_transcript_record(
+        sequence: u64,
+        operation_id: &str,
+        turn_id: &str,
+        entry_index: u32,
+        event: BackboneEvent,
+    ) -> RuntimeJournalRecord {
+        RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: parsed_id("runtime-thread-transcript").unwrap(),
+                recorded_at_ms: sequence,
+                sequence: Some(EventSequence(sequence)),
+                transient: None,
+                revision: RuntimeRevision(sequence),
+                operation_id: Some(parsed_id(operation_id).unwrap()),
+                append_idempotency_key: None,
+                binding_id: Some(parsed_id("binding-transcript").unwrap()),
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    presentation_turn_id: Some(parsed_id(turn_id).unwrap()),
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some("native-source-thread".to_string()),
+                    source_turn_id: Some(turn_id.to_string()),
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: Some(entry_index),
+                },
+            },
+            RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+                PresentationDurability::Durable,
+                event,
+            )),
+        )
+        .expect("durable transcript fixture")
+    }
+
+    #[test]
+    fn native_durable_transcript_excludes_current_operation_and_hydrates_readable_watermarks() {
+        let old_user = BackboneEvent::UserInputSubmitted(
+            agentdash_agent_protocol::UserInputSubmittedNotification::new(
+                "presentation-thread",
+                "presentation-turn-old",
+                "user-old",
+                agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                agentdash_agent_protocol::UserInputSource::core_composer(),
+                vec![codex::UserInput::Text {
+                    text: "old prompt".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            ),
+        );
+        let old_tool = BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+            codex::ThreadItem::DynamicToolCall {
+                id: "turn_005:tool_009".to_string(),
+                tool: "fs_glob".to_string(),
+                arguments: serde_json::json!({"pattern":"**/*.rs"}),
+                status: codex::DynamicToolCallStatus::Completed,
+                content_items: Some(Some(vec![
+                    codex::DynamicToolCallOutputContentItem::InputText {
+                        text: "src/lib.rs".to_string(),
+                    },
+                ])),
+                duration_ms: None,
+                namespace: None,
+                success: Some(Some(true)),
+            },
+            "presentation-thread",
+            "presentation-turn-old",
+        ));
+        let current_user = BackboneEvent::UserInputSubmitted(
+            agentdash_agent_protocol::UserInputSubmittedNotification::new(
+                "presentation-thread",
+                "presentation-turn-current",
+                "user-current",
+                agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                agentdash_agent_protocol::UserInputSource::core_composer(),
+                vec![codex::UserInput::Text {
+                    text: "current prompt".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            ),
+        );
+        let transcript = DriverTranscript {
+            earliest_available: EventSequence(1),
+            latest_available: EventSequence(3),
+            active_compaction_source_end: None,
+            completed_presentation_item_ids: vec!["turn_005:tool_009".to_string()],
+            records: vec![
+                durable_transcript_record(1, "operation-old", "presentation-turn-old", 0, old_user),
+                durable_transcript_record(2, "operation-old", "presentation-turn-old", 1, old_tool),
+                durable_transcript_record(
+                    3,
+                    "operation-current",
+                    "presentation-turn-current",
+                    0,
+                    current_user,
+                ),
+            ],
+        };
+        let current_operation: RuntimeOperationId = parsed_id("operation-current").unwrap();
+        let projected = project_driver_transcript(&transcript, Some(&current_operation), None)
+            .expect("project durable transcript");
+        assert_eq!(projected.entries.len(), 3);
+        assert!(matches!(
+            &projected.entries[0].message,
+            AgentMessage::User { content, .. }
+                if content[0].extract_text() == Some("old prompt")
+        ));
+        assert!(matches!(
+            &projected.entries[1].message,
+            AgentMessage::Assistant { tool_calls, .. }
+                if tool_calls[0].id == "turn_005:tool_009"
+        ));
+        assert!(matches!(
+            &projected.entries[2].message,
+            AgentMessage::ToolResult { tool_call_id, .. }
+                if tool_call_id == "turn_005:tool_009"
+        ));
+        assert!(projected.entries.iter().all(|entry| {
+            entry
+                .message
+                .first_text()
+                .is_none_or(|text| text != "current prompt")
+        }));
+
+        let identity = NativeSessionItemIdentity::new();
+        let messages = projected
+            .entries
+            .iter()
+            .map(|entry| entry.message.clone())
+            .collect::<Vec<_>>();
+        identity.observe_messages(&messages);
+        let next = identity.tool_result_ref("raw-turn-new", "raw-call-new", "fs_glob");
+        assert_eq!(next.item_id, "turn_006:tool_010");
+    }
+
+    #[test]
+    fn native_rejects_a_retention_gapped_durable_transcript() {
+        let transcript = DriverTranscript {
+            earliest_available: EventSequence(8),
+            latest_available: EventSequence(12),
+            active_compaction_source_end: None,
+            completed_presentation_item_ids: Vec::new(),
+            records: Vec::new(),
         };
         assert!(matches!(
-            error,
-            DriverError::ProtocolViolation { critical: true, ref reason }
-                if reason.contains("file_change")
+            project_driver_transcript(&transcript, None, None),
+            Err(DriverError::ProtocolViolation { critical: true, .. })
+        ));
+    }
+
+    #[test]
+    fn native_compacted_replay_accepts_a_pruned_prefix_when_the_tail_is_contiguous() {
+        let tail_user = BackboneEvent::UserInputSubmitted(
+            agentdash_agent_protocol::UserInputSubmittedNotification::new(
+                "presentation-thread",
+                "presentation-turn-tail",
+                "user-tail",
+                agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                agentdash_agent_protocol::UserInputSource::core_composer(),
+                vec![codex::UserInput::Text {
+                    text: "retained tail".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            ),
+        );
+        let transcript = DriverTranscript {
+            earliest_available: EventSequence(9),
+            latest_available: EventSequence(9),
+            active_compaction_source_end: Some(EventSequence(8)),
+            completed_presentation_item_ids: vec!["turn_005:tool_009".to_string()],
+            records: vec![durable_transcript_record(
+                9,
+                "operation-tail",
+                "presentation-turn-tail",
+                0,
+                tail_user,
+            )],
+        };
+        let projected = project_driver_transcript(&transcript, None, Some(EventSequence(8)))
+            .expect("compacted base makes the pruned prefix unnecessary");
+        assert_eq!(projected.entries.len(), 1);
+        assert_eq!(
+            projected.entries[0].message.first_text(),
+            Some("retained tail")
+        );
+        let identity = NativeSessionItemIdentity::new();
+        hydrate_presentation_identity(identity.as_ref(), &transcript, &projected);
+        assert_eq!(
+            identity
+                .tool_result_ref("raw-turn-after-rebind", "raw-call-after-rebind", "fs_glob")
+                .item_id,
+            "turn_006:tool_010"
+        );
+    }
+
+    #[test]
+    fn native_compacted_replay_rejects_a_gap_between_the_base_and_retained_tail() {
+        let transcript = DriverTranscript {
+            earliest_available: EventSequence(10),
+            latest_available: EventSequence(12),
+            active_compaction_source_end: Some(EventSequence(8)),
+            completed_presentation_item_ids: Vec::new(),
+            records: Vec::new(),
+        };
+        assert!(matches!(
+            project_driver_transcript(&transcript, None, Some(EventSequence(8))),
+            Err(DriverError::ProtocolViolation { critical: true, .. })
         ));
     }
 
@@ -2301,7 +3231,7 @@ mod tests {
             "native-thread".to_string(),
             parsed_id("runtime-turn-2").unwrap(),
             parsed_id("source-turn-2").unwrap(),
-            presentation_context(identity),
+            presentation_context(identity.clone()),
         );
 
         let start = |mapper: &mut NativeEventMapper, tool_call_id: &str| {
@@ -2314,7 +3244,28 @@ mod tests {
                 .expect("tool start")
         };
         let first = start(&mut first_turn, "tool-1");
-        let second = start(&mut second_turn, "tool-2");
+        let second = start(&mut first_turn, "tool-2");
+        let truncated_ref = identity.tool_result_ref("runtime-turn-1", "tool-2", "read");
+        let truncated_completed = first_turn
+            .map(AgentEvent::ToolExecutionEnd {
+                tool_call_id: "tool-2".to_string(),
+                tool_name: "read".to_string(),
+                result: serde_json::json!({
+                    "content": [{"type":"text","text":"bounded preview"}],
+                    "is_error": false,
+                    "details": {
+                        "truncation": {"original_bytes": 200000},
+                        "readable_ref": {
+                            "item_id": truncated_ref.item_id,
+                            "lifecycle_path": truncated_ref.lifecycle_path
+                        }
+                    }
+                }),
+                is_error: false,
+            })
+            .expect("truncated tool result");
+        let third = start(&mut first_turn, "tool-3");
+        let later_turn = start(&mut second_turn, "tool-4");
         let item_id = |mapped: &[MappedEvent]| match &presentation_events(mapped)[0].event {
             agentdash_agent_protocol::BackboneEvent::ItemStarted(notification) => {
                 notification.item.id().to_string()
@@ -2323,7 +3274,80 @@ mod tests {
         };
 
         assert_eq!(item_id(&first), "turn_001:tool_001");
-        assert_eq!(item_id(&second), "turn_002:tool_002");
+        assert_eq!(item_id(&second), "turn_001:tool_002");
+        assert!(matches!(
+            &presentation_events(&truncated_completed)[0].event,
+            agentdash_agent_protocol::BackboneEvent::ItemCompleted(notification)
+                if notification.item.id() == item_id(&second)
+        ));
+        assert_eq!(item_id(&third), "turn_001:tool_003");
+        assert_eq!(item_id(&later_turn), "turn_002:tool_004");
+    }
+
+    #[test]
+    fn owner_declared_command_alias_reuses_the_start_id_for_truncated_completion() {
+        let identity = NativeSessionItemIdentity::new();
+        let context = presentation_context(identity.clone());
+        context.tool_presentation_routes.write().unwrap().insert(
+            "owner_command_alias".to_string(),
+            NativeToolPresentationRoute {
+                projection: ToolProtocolProjection::Command,
+                emitter: ToolPresentationEmitter::VendorStream,
+            },
+        );
+        let routes = context.tool_presentation_routes.clone();
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn-command").unwrap(),
+            parsed_id("source-turn-command").unwrap(),
+            context,
+        );
+        let started = mapper
+            .map(AgentEvent::ToolExecutionStart {
+                tool_call_id: "raw-command-call".to_string(),
+                tool_name: "owner_command_alias".to_string(),
+                args: serde_json::json!({"command":"echo main"}),
+            })
+            .expect("command start");
+        routes.write().unwrap().insert(
+            "owner_command_alias".to_string(),
+            NativeToolPresentationRoute {
+                projection: ToolProtocolProjection::Dynamic { namespace: None },
+                emitter: ToolPresentationEmitter::VendorStream,
+            },
+        );
+        let readable_ref = identity.tool_result_ref(
+            "runtime-turn-command",
+            "raw-command-call",
+            "owner_command_alias",
+        );
+        assert_eq!(readable_ref.item_id, "turn_001:cmd_001");
+        let completed = mapper
+            .map(AgentEvent::ToolExecutionEnd {
+                tool_call_id: "raw-command-call".to_string(),
+                tool_name: "owner_command_alias".to_string(),
+                result: serde_json::json!({
+                    "content": [{"type":"text","text":"bounded output"}],
+                    "is_error": false,
+                    "details": {
+                        "exit_code": 0,
+                        "truncation": {"original_bytes": 200000},
+                        "readable_ref": {
+                            "item_id": readable_ref.item_id,
+                            "lifecycle_path": readable_ref.lifecycle_path
+                        }
+                    }
+                }),
+                is_error: false,
+            })
+            .expect("command completion keeps the start-time route after hot replace");
+        let item_id = |mapped: &[MappedEvent]| match &presentation_events(mapped)[0].event {
+            BackboneEvent::ItemStarted(notification) => notification.item.id().to_string(),
+            BackboneEvent::ItemCompleted(notification) => notification.item.id().to_string(),
+            event => panic!("unexpected command lifecycle event: {event:?}"),
+        };
+        assert_eq!(item_id(&started), "turn_001:cmd_001");
+        assert_eq!(item_id(&completed), "turn_001:cmd_001");
     }
 
     #[test]

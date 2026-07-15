@@ -55,6 +55,9 @@ pub mod codex_app_server_protocol {
     pub use crate::generated::codex_v2::tool_request_user_input_params::ToolRequestUserInputParams;
 }
 
+mod transcript_projection;
+pub use transcript_projection::{TranscriptProjectionEvent, project_transcript};
+
 pub use thread_item::{
     AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus,
     DynamicToolCallOutputContentItem, DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus,

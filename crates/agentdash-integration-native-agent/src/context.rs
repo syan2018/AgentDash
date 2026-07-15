@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use agentdash_agent_runtime_contract::{
-    DriverItemId, DriverThreadId, DriverTurnId, RuntimeBindingId, RuntimeDriverGeneration,
-    RuntimeItemId, RuntimeThreadId, RuntimeTurnId, ToolSetRevision,
+    DriverItemId, DriverThreadId, DriverTurnId, PresentationTurnId, RuntimeBindingId,
+    RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId, ToolSetRevision,
 };
 use agentdash_integration_api::AuthIdentity;
 use tokio::sync::RwLock;
@@ -20,6 +20,8 @@ pub(crate) struct NativeBindingContext {
 pub(crate) struct NativeToolCallContext {
     pub active_turn: Arc<RwLock<Option<DriverTurnId>>>,
     pub active_runtime_turn: Arc<RwLock<Option<RuntimeTurnId>>>,
+    pub active_presentation_turn: Arc<RwLock<Option<PresentationTurnId>>>,
     pub tool_set_revision: ToolSetRevision,
     pub item_identities: Arc<RwLock<BTreeMap<(DriverTurnId, DriverItemId), RuntimeItemId>>>,
+    pub presentation_identity: Arc<crate::presentation::NativeSessionItemIdentity>,
 }

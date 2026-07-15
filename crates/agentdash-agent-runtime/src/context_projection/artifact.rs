@@ -84,6 +84,7 @@ impl RuntimeSurfacePresentationPlan {
             .map(|(index, frame)| RuntimePresentationInput {
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: turn_id.cloned(),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(thread_id.to_string()),

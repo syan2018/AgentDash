@@ -766,6 +766,12 @@ where
                     ),
                     agentdash_agent_runtime_contract::RuntimePresentationCoordinate {
                         runtime_turn_id: run.correlation.turn_id.clone(),
+                        presentation_turn_id: run
+                            .correlation
+                            .turn_id
+                            .as_ref()
+                            .and_then(|turn_id| thread.turns.get(turn_id))
+                            .map(|turn| turn.presentation_turn_id.clone()),
                         runtime_item_id: run.correlation.item_id.clone(),
                         interaction_id: run.correlation.interaction_id.clone(),
                         source_thread_id: Some(thread.presentation_thread_id.to_string()),

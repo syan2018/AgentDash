@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    DriverItemId, DriverThreadId, DriverTurnId, RuntimeBindingId, RuntimeDriverGeneration,
-    RuntimeItemId, RuntimeThreadId, RuntimeTurnId, ToolSetRevision,
+    DriverItemId, DriverThreadId, DriverTurnId, PresentationItemId, PresentationTurnId,
+    RuntimeBindingId, RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId,
+    ToolSetRevision,
 };
 use agentdash_agent_types::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
@@ -16,6 +17,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::context::{NativeBindingContext, NativeToolCallContext};
+use crate::presentation::NativeSessionItemIdentity;
 
 fn decode_completed_content(
     output: &serde_json::Value,
@@ -52,11 +54,13 @@ pub(crate) struct NativeRuntimeTool {
     runtime_thread_id: RuntimeThreadId,
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
     active_runtime_turn: Arc<RwLock<Option<RuntimeTurnId>>>,
+    active_presentation_turn: Arc<RwLock<Option<PresentationTurnId>>>,
     tool_set_revision: ToolSetRevision,
     callback: Arc<dyn AgentRuntimeToolCallback>,
     authorization_identity: Option<AuthIdentity>,
     item_identities:
         Arc<RwLock<std::collections::BTreeMap<(DriverTurnId, DriverItemId), RuntimeItemId>>>,
+    presentation_identity: Arc<NativeSessionItemIdentity>,
 }
 
 impl NativeRuntimeTool {
@@ -74,10 +78,12 @@ impl NativeRuntimeTool {
             runtime_thread_id: binding.runtime_thread_id,
             active_turn: call.active_turn,
             active_runtime_turn: call.active_runtime_turn,
+            active_presentation_turn: call.active_presentation_turn,
             tool_set_revision: call.tool_set_revision,
             callback,
             authorization_identity: binding.authorization_identity,
             item_identities: call.item_identities,
+            presentation_identity: call.presentation_identity,
         }
     }
 }
@@ -139,6 +145,16 @@ impl AgentTool for NativeRuntimeTool {
                     "native tool invoked without a canonical Runtime turn".into(),
                 )
             })?;
+        let presentation_turn_id = self
+            .active_presentation_turn
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "native tool invoked without a Session presentation turn".into(),
+                )
+            })?;
         let identity_key = (source_turn_id.clone(), source_item_id.clone());
         let item_id = if let Some(item_id) = self
             .item_identities
@@ -169,6 +185,18 @@ impl AgentTool for NativeRuntimeTool {
             thread_id: self.runtime_thread_id.clone(),
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
+            presentation_item_id: PresentationItemId::new(
+                self.presentation_identity.tool_presentation_item_id(
+                    presentation_turn_id.as_str(),
+                    source_item_id.as_str(),
+                    &self.definition.protocol_projection,
+                ),
+            )
+            .map_err(|error| {
+                AgentToolError::ExecutionFailed(format!(
+                    "invalid Native presentation item identity: {error}"
+                ))
+            })?,
             binding_id: self.binding_id.clone(),
             generation: self.generation,
             source_thread_id: self.source_thread_id.clone(),
@@ -311,6 +339,10 @@ mod tests {
                             thread_id: request.thread_id,
                             turn_id: request.turn_id,
                             item_id: request.item_id,
+                            presentation_item_id: request.presentation_item_id,
+                            source_thread_id: request.source_thread_id,
+                            source_turn_id: request.source_turn_id,
+                            source_item_id: request.source_item_id,
                             binding_id: request.binding_id,
                             binding_generation: request.generation,
                             tool_set_revision: request.tool_set_revision,
@@ -363,7 +395,10 @@ mod tests {
             allowed_channels: [ToolChannel::DirectCallback].into(),
             configuration_boundary: ConfigurationBoundary::Binding,
             protocol_projection: projection,
-            presentation_emitter: ToolPresentationEmitter::ToolBroker,
+            // Native owns the user-visible lifecycle through its vendor event stream. The
+            // broker still journals the independent canonical runtime item, but must not emit a
+            // second presentation lifecycle for the same call.
+            presentation_emitter: ToolPresentationEmitter::VendorStream,
             parity_fixture_id: format!("main_tool_{name}_lifecycle"),
         }
     }
@@ -428,6 +463,7 @@ mod tests {
             Ok(vec![RuntimePresentationInput {
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: Some(context.runtime_turn_id.clone()),
+                    presentation_turn_id: Some(context.presentation_turn_id.clone()),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(context.presentation_thread_id.to_string()),
@@ -559,8 +595,10 @@ mod tests {
         let call = NativeToolCallContext {
             active_turn: Arc::new(RwLock::new(Some(id("native-source-turn")))),
             active_runtime_turn: Arc::new(RwLock::new(Some(id("turn-native-turn-start")))),
+            active_presentation_turn: Arc::new(RwLock::new(Some(id("turn_001")))),
             tool_set_revision: ToolSetRevision(4),
             item_identities: Arc::new(RwLock::new(BTreeMap::new())),
+            presentation_identity: NativeSessionItemIdentity::new(),
         };
         let patch = NativeRuntimeTool::new(
             DriverToolDefinition {
@@ -569,6 +607,7 @@ mod tests {
                 parameters_schema: serde_json::json!({}),
                 channels: vec![ToolChannel::DirectCallback],
                 protocol_projection: ToolProtocolProjection::FileChange,
+                presentation_emitter: ToolPresentationEmitter::VendorStream,
                 parity_fixture_id: "main_tool_fs_apply_patch_lifecycle".into(),
             },
             binding.clone(),
@@ -596,6 +635,7 @@ mod tests {
                 parameters_schema: serde_json::json!({}),
                 channels: vec![ToolChannel::DirectCallback],
                 protocol_projection: ToolProtocolProjection::Command,
+                presentation_emitter: ToolPresentationEmitter::VendorStream,
                 parity_fixture_id: "main_tool_shell_exec_lifecycle".into(),
             },
             binding,
@@ -645,5 +685,15 @@ mod tests {
             }
             other => panic!("unexpected shell item: {other:?}"),
         }
+        assert!(
+            store
+                .journal_records_after(&id("native-thread"), None)
+                .await
+                .expect("native broker journal")
+                .records
+                .iter()
+                .all(|record| !matches!(record.fact(), RuntimeJournalFact::Presentation(_))),
+            "Native VendorStream tools must never receive a duplicate ToolBroker presentation",
+        );
     }
 }

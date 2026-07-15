@@ -16,9 +16,9 @@ use agentdash_agent_runtime_contract::{
     DriverThreadId, HookPlanDigest, HookPlanRevision, IdempotencyKey, OperationMeta, ProfileDigest,
     RuntimeActor, RuntimeBindingId, RuntimeCommand, RuntimeCommandEnvelope,
     RuntimeDriverGeneration, RuntimeEvent, RuntimeHookPlanBinding, RuntimeJournalFact,
-    RuntimeOperationId, RuntimeRecoveryIntentId, RuntimeServiceInstanceId,
-    RuntimeTerminalHookEffectBinding, RuntimeThreadId, SurfaceDigest, SurfaceRevision,
-    ToolSetRevision,
+    RuntimeOperationId, RuntimeRecoveryIntentId, RuntimeServiceInstanceId, RuntimeSnapshotQuery,
+    RuntimeSnapshotResult, RuntimeTerminalHookEffectBinding, RuntimeThreadId, SurfaceDigest,
+    SurfaceRevision, ToolSetRevision,
 };
 use agentdash_agent_runtime_host::{
     ActivateAgentServiceInstance, AgentRuntimeHostError, AgentRuntimeHostRepository,
@@ -101,6 +101,10 @@ impl AgentRuntimeToolCallback for PlatformAgentRuntimeToolCallback {
                         thread_id: request.thread_id,
                         turn_id: request.turn_id,
                         item_id: request.item_id,
+                        presentation_item_id: request.presentation_item_id,
+                        source_thread_id: request.source_thread_id,
+                        source_turn_id: request.source_turn_id,
+                        source_item_id: request.source_item_id,
                         binding_id: request.binding_id,
                         binding_generation: request.generation,
                         tool_set_revision: request.tool_set_revision,
@@ -1115,7 +1119,7 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             .await
             .map_err(host_store_error)?
             .ok_or(AgentRunRuntimeBindingError::NotFound)?;
-        let surface = self
+        let mut surface = self
             .surfaces
             .load_surface(&old.binding_id)
             .await?
@@ -1125,6 +1129,46 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
                     false,
                 )
             })?;
+        let context = self
+            .gateway
+            .snapshot(RuntimeSnapshotQuery::Context {
+                thread_id: old.thread_id.clone(),
+                at_context_revision: None,
+            })
+            .await
+            .map_err(runtime_context_snapshot_error)?;
+        let RuntimeSnapshotResult::Context { context } = context else {
+            return Err(binding_unavailable(
+                "Runtime returned a non-context snapshot for context recovery".to_string(),
+                false,
+            ));
+        };
+        match (context.head.as_ref(), context.checkpoint.as_ref()) {
+            (None, None) => {}
+            (Some(head), Some(checkpoint)) => {
+                if checkpoint.checkpoint_id != head.checkpoint_id
+                    || checkpoint.revision != head.revision
+                    || checkpoint.materialized.digest != head.digest
+                    || checkpoint.materialized.recipe.provenance != head.provenance
+                    || checkpoint.materialized.fidelity != head.fidelity
+                {
+                    return Err(binding_unavailable(
+                        "active Runtime context checkpoint does not match its head".to_string(),
+                        false,
+                    ));
+                }
+                surface.context.recipe = checkpoint.materialized.recipe.clone();
+                surface.context.blocks = checkpoint.materialized.blocks.clone();
+                surface.context.digest = checkpoint.materialized.digest.clone();
+                surface.context.fidelity = checkpoint.materialized.fidelity;
+            }
+            _ => {
+                return Err(binding_unavailable(
+                    "active Runtime context head and checkpoint are incomplete".to_string(),
+                    false,
+                ));
+            }
+        }
         let business_surface = self
             .surfaces
             .load_business_surface(
@@ -1268,6 +1312,13 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             result = "ok",
             "AgentRun Runtime recovery advanced"
         );
+        let surface_descriptor = runtime_surface_descriptor(
+            old.surface.source_frame_id.clone(),
+            &surface,
+            old.surface.hook_plan.clone(),
+            old.surface.terminal_hook_effect_binding.clone(),
+        );
+        let settings_revision = surface.context.recipe.provenance.settings_revision;
         let binding = AgentRunRuntimeBinding {
             target: old.target.clone(),
             presentation_thread_id: old.presentation_thread_id.clone(),
@@ -1279,8 +1330,8 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             profile_digest: offer.profile_digest.clone(),
             profile_provenance: offer.effective_profile.provenance.clone(),
             bound_profile: offer.effective_profile.profile.clone(),
-            surface: old.surface.clone(),
-            settings_revision: old.settings_revision,
+            surface: surface_descriptor,
+            settings_revision,
             context_delivery_target: old.context_delivery_target.clone(),
         };
         self.bindings
@@ -1382,6 +1433,19 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
         );
         Ok(binding)
     }
+}
+
+fn runtime_context_snapshot_error(
+    error: agentdash_agent_runtime_contract::RuntimeSnapshotError,
+) -> AgentRunRuntimeBindingError {
+    use agentdash_agent_runtime_contract::RuntimeSnapshotError;
+    let retryable = matches!(
+        error,
+        RuntimeSnapshotError::Unavailable { .. }
+            | RuntimeSnapshotError::RevisionUnavailable { .. }
+            | RuntimeSnapshotError::ContextRevisionUnavailable { .. }
+    );
+    binding_unavailable(error.to_string(), retryable)
 }
 
 fn runtime_rebind_error(
@@ -1544,32 +1608,7 @@ impl RuntimeOutboxWorker {
         let count = claims.len();
         let mut first_error = None;
         for claim in claims {
-            if self.claim_is_obsolete(&claim).await? {
-                self.store
-                    .ack(&claim)
-                    .await
-                    .map_err(|store| RuntimeOutboxWorkerError::Store(store.to_string()))?;
-                continue;
-            }
-            if let Err(error) = self.dispatch_claim(&claim).await {
-                if self.claim_is_obsolete(&claim).await? {
-                    self.store
-                        .ack(&claim)
-                        .await
-                        .map_err(|store| RuntimeOutboxWorkerError::Store(store.to_string()))?;
-                    continue;
-                }
-                if let Err(store) = self.store.release(&claim, error.to_string()).await {
-                    first_error
-                        .get_or_insert_with(|| RuntimeOutboxWorkerError::Store(store.to_string()));
-                } else {
-                    first_error.get_or_insert(error);
-                }
-                continue;
-            }
-            if let Err(error) = self.store.ack(&claim).await {
-                let error = RuntimeOutboxWorkerError::Store(error.to_string());
-                let _ = self.store.release(&claim, error.to_string()).await;
+            if let Err(error) = self.process_claim(claim).await {
                 first_error.get_or_insert(error);
             }
         }
@@ -1577,6 +1616,35 @@ impl RuntimeOutboxWorker {
             return Err(error);
         }
         Ok(count)
+    }
+
+    async fn process_claim(&self, claim: RuntimeWorkClaim) -> Result<(), RuntimeOutboxWorkerError> {
+        if self.claim_is_obsolete(&claim).await? {
+            return self
+                .store
+                .ack(&claim)
+                .await
+                .map_err(|store| RuntimeOutboxWorkerError::Store(store.to_string()));
+        }
+        if let Err(error) = self.dispatch_claim(&claim).await {
+            if self.claim_is_obsolete(&claim).await? {
+                return self
+                    .store
+                    .ack(&claim)
+                    .await
+                    .map_err(|store| RuntimeOutboxWorkerError::Store(store.to_string()));
+            }
+            return match self.store.release(&claim, error.to_string()).await {
+                Ok(()) => Err(error),
+                Err(store) => Err(RuntimeOutboxWorkerError::Store(store.to_string())),
+            };
+        }
+        if let Err(error) = self.store.ack(&claim).await {
+            let error = RuntimeOutboxWorkerError::Store(error.to_string());
+            let _ = self.store.release(&claim, error.to_string()).await;
+            return Err(error);
+        }
+        Ok(())
     }
 
     async fn claim_is_obsolete(
@@ -1669,11 +1737,28 @@ impl RuntimeOutboxWorker {
         });
         let driver_envelope = DriverCommandEnvelope {
             request_id,
+            operation_id: entry.operation_id.clone(),
             presentation_thread_id: entry.presentation_thread_id.clone(),
             binding_id: entry.binding_id.clone(),
             generation: entry.generation,
             source_thread_id: thread.source_thread_id.clone(),
             runtime_turn_id,
+            presentation_turn_id: match &entry.command {
+                RuntimeCommand::ThreadStart {
+                    presentation_turn_id,
+                    ..
+                } => presentation_turn_id.clone(),
+                RuntimeCommand::TurnStart {
+                    presentation_turn_id,
+                    ..
+                } => Some(presentation_turn_id.clone()),
+                _ => thread.active_turn_id.as_ref().and_then(|turn_id| {
+                    thread
+                        .turns
+                        .get(turn_id)
+                        .map(|turn| turn.presentation_turn_id.clone())
+                }),
+            },
             command: entry.command.clone(),
         };
         #[cfg(test)]
@@ -1715,6 +1800,7 @@ impl RuntimeOutboxWorker {
                     .ingest_driver_event(DriverEventEnvelope {
                         binding_id: entry.binding_id.clone(),
                         generation: entry.generation,
+                        operation_id: Some(entry.operation_id.clone()),
                         source_thread_id: thread.source_thread_id,
                         source_turn_id: None,
                         source_item_id: None,
@@ -1731,6 +1817,12 @@ impl RuntimeOutboxWorker {
             }
             result => {
                 result?;
+                if operation_completes_at_driver_acceptance(&entry.command) {
+                    self.runtime
+                        .complete_driver_dispatch_operation(&entry.thread_id, &entry.operation_id)
+                        .await
+                        .map_err(|error| RuntimeOutboxWorkerError::Host(error.to_string()))?;
+                }
                 Ok(())
             }
         }
@@ -1758,6 +1850,23 @@ impl RuntimeOutboxWorker {
                 }
             }
         })
+    }
+}
+
+fn operation_completes_at_driver_acceptance(command: &RuntimeCommand) -> bool {
+    match command {
+        RuntimeCommand::ThreadStart { input, .. } => input.is_empty(),
+        RuntimeCommand::ThreadResume { .. }
+        | RuntimeCommand::ThreadFork { .. }
+        | RuntimeCommand::ThreadSettingsUpdate { .. }
+        | RuntimeCommand::TurnSteer { .. }
+        | RuntimeCommand::TurnInterrupt { .. }
+        | RuntimeCommand::InteractionRespond { .. }
+        | RuntimeCommand::ToolSetReplace { .. }
+        | RuntimeCommand::SurfaceAdopt { .. } => true,
+        RuntimeCommand::ThreadRebind { .. }
+        | RuntimeCommand::TurnStart { .. }
+        | RuntimeCommand::ContextCompact { .. } => false,
     }
 }
 
@@ -2144,6 +2253,7 @@ mod tests {
             Ok(vec![RuntimePresentationInput {
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: Some(context.runtime_turn_id.clone()),
+                    presentation_turn_id: Some(context.presentation_turn_id.clone()),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(context.presentation_thread_id.to_string()),
@@ -2351,6 +2461,90 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct CodexSurfaceAdoptionFixture {
+        target: RuntimeSurfaceDescriptor,
+        presentation_thread_id: PresentationThreadId,
+        presentation: agentdash_agent_runtime::RuntimeSurfacePresentationPlan,
+    }
+
+    struct CodexSurfaceAdoptingTool {
+        runtime: Arc<ManagedAgentRuntime<PostgresRuntimeRepository>>,
+        fixture: Arc<tokio::sync::RwLock<Option<CodexSurfaceAdoptionFixture>>>,
+    }
+
+    #[async_trait]
+    impl AgentRuntimeToolCallback for CodexSurfaceAdoptingTool {
+        async fn invoke(
+            &self,
+            request: DriverToolInvocation,
+        ) -> Result<DriverToolOutcome, DriverToolCallbackError> {
+            if request.tool_name != "surface_update" {
+                return Err(DriverToolCallbackError::ProtocolViolation {
+                    reason: format!("unexpected Codex tracer tool `{}`", request.tool_name),
+                });
+            }
+            let fixture = self.fixture.read().await.clone().ok_or_else(|| {
+                DriverToolCallbackError::Unavailable {
+                    reason: "Codex surface adoption fixture is not prepared".to_string(),
+                    retryable: false,
+                }
+            })?;
+            let RuntimeSnapshotResult::Thread { snapshot } = self
+                .runtime
+                .snapshot(RuntimeSnapshotQuery::Thread {
+                    thread_id: request.thread_id.clone(),
+                    at_revision: None,
+                })
+                .await
+                .map_err(|error| DriverToolCallbackError::ProtocolViolation {
+                    reason: error.to_string(),
+                })?
+            else {
+                return Err(DriverToolCallbackError::ProtocolViolation {
+                    reason: "Codex surface tool did not resolve its Runtime thread".to_string(),
+                });
+            };
+            let operation_id = format!(
+                "codex-tool-surface-adopt-{}-{}",
+                request.turn_id, fixture.target.surface_revision.0
+            );
+            let presentation = fixture.presentation.adoption_presentation(
+                &fixture.presentation_thread_id,
+                snapshot.active_presentation_turn_id.as_ref(),
+                &operation_id,
+            );
+            self.runtime
+                .execute(RuntimeCommandEnvelope {
+                    presentation,
+                    meta: OperationMeta {
+                        operation_id: RuntimeOperationId::new(operation_id.clone())
+                            .expect("surface tool operation id"),
+                        idempotency_key: IdempotencyKey::new(operation_id)
+                            .expect("surface tool idempotency key"),
+                        expected_thread_revision: Some(snapshot.revision),
+                        actor: RuntimeActor::System {
+                            component: "codex_surface_update_tool".to_string(),
+                        },
+                    },
+                    command: RuntimeCommand::SurfaceAdopt {
+                        thread_id: request.thread_id,
+                        expected_surface_revision: snapshot.surface.surface_revision,
+                        expected_surface_digest: snapshot.surface.surface_digest,
+                        target: Box::new(fixture.target),
+                    },
+                })
+                .await
+                .map_err(|error| DriverToolCallbackError::ProtocolViolation {
+                    reason: error.to_string(),
+                })?;
+            Ok(DriverToolOutcome::Completed {
+                output: json!([{"type":"text","text":"surface updated"}]),
+                is_error: false,
+            })
+        }
+    }
+
     struct ContinueHooks;
 
     struct NoopSurfacePublication;
@@ -2441,6 +2635,7 @@ mod tests {
             thread: &agentdash_agent_runtime::RuntimeThreadState,
             surface: &agentdash_integration_api::MaterializedDriverSurface,
             _instance: &agentdash_agent_runtime_host::AgentServiceInstance,
+            _input: &crate::agent_runtime_workers::ManagedCompactionInput,
             work: &agentdash_agent_runtime::ContextPreparationWorkItem,
         ) -> Result<
             crate::agent_runtime_workers::ManagedCompactionOutput,
@@ -2514,6 +2709,18 @@ mod tests {
             surface.hooks.digest = parsed("sha256:codex-tracer-hooks");
             surface.digest = parsed("sha256:codex-tracer-surface");
             surface.workspace.roots = vec![self.root.display().to_string()];
+            surface.tools.tools = vec![DriverToolDefinition {
+                name: "surface_update".to_string(),
+                description: "Update the canonical AgentFrame surface during the active turn"
+                    .to_string(),
+                parameters_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+                channels: vec![ToolChannel::DirectCallback],
+                protocol_projection: ToolProtocolProjection::Dynamic {
+                    namespace: Some("platform".to_string()),
+                },
+                presentation_emitter: ToolPresentationEmitter::VendorStream,
+                parity_fixture_id: "codex-surface-update-tracer".to_string(),
+            }];
             let profile = self.definition.service_profile_upper_bound.clone();
             let digest = profile_digest(&profile).map_err(|error| {
                 AgentRunRuntimeSurfaceSourceError::Invalid {
@@ -3339,6 +3546,35 @@ mod tests {
             dispatched[0].presentation_thread_id,
             persisted_outbox.presentation_thread_id
         );
+        assert_eq!(dispatched[0].operation_id, first.operation_id);
+        assert_eq!(
+            dispatched[0]
+                .presentation_turn_id
+                .as_ref()
+                .map(|id| id.as_str()),
+            Some("presentation-turn-native-tracer")
+        );
+        let terminal_operation = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let operation = composition
+                    .runtime_repository
+                    .find_operation(&first.operation_id)
+                    .await
+                    .expect("read terminal Native operation")
+                    .expect("Native operation exists");
+                if operation.terminal.is_some() {
+                    break operation;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("Native operation terminal timeout");
+        assert_eq!(
+            terminal_operation.terminal,
+            Some(RuntimeOperationTerminal::Succeeded),
+            "a completed Native turn must close its accepted Runtime operation in the same journal commit"
+        );
         let RuntimeSnapshotResult::Thread { snapshot } = composition
             .gateway
             .snapshot(RuntimeSnapshotQuery::Thread {
@@ -3364,6 +3600,57 @@ mod tests {
             saw_delta,
             "Native delta must be live ephemeral presentation; observed={observed_presentation:?}"
         );
+
+        let settings_operation_id: RuntimeOperationId = parsed("native-tracer-settings-operation");
+        composition
+            .gateway
+            .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
+                meta: OperationMeta {
+                    operation_id: settings_operation_id.clone(),
+                    idempotency_key: parsed("native-tracer-settings-key"),
+                    expected_thread_revision: Some(snapshot.revision),
+                    actor: RuntimeActor::System {
+                        component: "native-production-tracer".to_string(),
+                    },
+                },
+                command: RuntimeCommand::ThreadSettingsUpdate {
+                    thread_id: snapshot.thread_id.clone(),
+                    instructions: vec!["updated system instruction".to_string()],
+                },
+            })
+            .await
+            .expect("accept delivery-only settings update");
+        assert_eq!(
+            composition
+                .outbox_worker
+                .run_once(8)
+                .await
+                .expect("dispatch delivery-only settings update"),
+            1
+        );
+        assert_eq!(
+            composition
+                .runtime_repository
+                .find_operation(&settings_operation_id)
+                .await
+                .expect("read settings operation")
+                .expect("settings operation exists")
+                .terminal,
+            Some(RuntimeOperationTerminal::Succeeded),
+            "driver acceptance must close delivery-only operations without a later event"
+        );
+        let RuntimeSnapshotResult::Thread { snapshot } = composition
+            .gateway
+            .snapshot(RuntimeSnapshotQuery::Thread {
+                thread_id: snapshot.thread_id.clone(),
+                at_revision: None,
+            })
+            .await
+            .expect("canonical Native snapshot after settings update")
+        else {
+            panic!("expected thread snapshot")
+        };
 
         composition
             .gateway
@@ -3619,7 +3906,7 @@ mod tests {
             .expect("durable compaction summary presentation");
         assert_eq!(
             compaction_frame.rendered_text,
-            "## Compaction Summary\nmessages_compacted: 1\ntokens_before: 42\ntimestamp_ms: 1710000000000\ncompaction_id: native-tracer-compaction\nstrategy: summary_prefix\ntrigger: auto\nphase: standalone_compact_turn\n\n以下是之前对话的压缩摘要，用于延续工作上下文。摘要中的路径、函数名等具体信息可能已过时，请在执行前验证。\n\nnative tracer compacted summary"
+            "## Compaction Summary\nmessages_compacted: 1\ntokens_before: 42\ntimestamp_ms: 1710000000000\ncompaction_id: native-tracer-compaction\nstrategy: summary_prefix\ntrigger: auto\nphase: standalone_compact_turn\nsource_end_event_seq: 16\n\n以下是之前对话的压缩摘要，用于延续工作上下文。摘要中的路径、函数名等具体信息可能已过时，请在执行前验证。\n\nnative tracer compacted summary"
         );
         assert!(matches!(
             compaction_frame.sections.as_slice(),
@@ -3629,7 +3916,7 @@ mod tests {
                 messages_compacted: 1,
                 projection_version: None,
                 source_start_event_seq: None,
-                source_end_event_seq: None,
+                source_end_event_seq: Some(16),
                 first_kept_event_seq: None,
                 ..
             }] if summary == "native tracer compacted summary"
@@ -3717,9 +4004,15 @@ rl.on('line', line => {
       send({ id: 700, method: 'item/permissions/requestApproval', params: { threadId, turnId, itemId: 'codex-item-1', cwd: process.cwd(), permissions: {}, reason: 'approve tracer access', startedAtMs: 1 } });
     }, 10);
   } else if (message.id === 700 && !message.method) {
-    send({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId: 'codex-item-1', delta: 'response' } });
-    send({ method: 'item/completed', params: { threadId, turnId, item: { id: 'codex-item-1', type: 'agentMessage', text: 'codex response', phase: null, memoryCitation: null }, completedAtMs: 2000 } });
-    send({ method: 'turn/completed', params: { threadId, turn: { ...activeTurn, status: 'completed', completedAt: 2, durationMs: 1000 } } });
+    send({ method: 'item/started', params: { threadId, turnId, startedAtMs: 1500, item: { id: 'codex-surface-tool-1', type: 'dynamicToolCall', tool: 'surface_update', status: 'inProgress', arguments: {}, success: null, namespace: 'platform', durationMs: null, contentItems: null } } });
+    send({ id: 701, method: 'item/tool/call', params: { threadId, turnId, callId: 'codex-surface-tool-1', namespace: 'platform', tool: 'surface_update', arguments: {} } });
+  } else if (message.id === 701 && !message.method) {
+    setTimeout(() => {
+      send({ method: 'item/completed', params: { threadId, turnId, completedAtMs: 1800, item: { id: 'codex-surface-tool-1', type: 'dynamicToolCall', tool: 'surface_update', status: 'completed', arguments: {}, success: true, namespace: 'platform', durationMs: 300, contentItems: message.result.contentItems } } });
+      send({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId: 'codex-item-1', delta: 'response' } });
+      send({ method: 'item/completed', params: { threadId, turnId, item: { id: 'codex-item-1', type: 'agentMessage', text: 'codex response', phase: null, memoryCitation: null }, completedAtMs: 2000 } });
+      send({ method: 'turn/completed', params: { threadId, turn: { ...activeTurn, status: 'completed', completedAt: 2, durationMs: 1000 } } });
+    }, 500);
   }
 });
 "#,
@@ -3729,6 +4022,8 @@ rl.on('line', line => {
             codex_runtime_contribution_with_launcher(Arc::new(CodexTracerLauncher(script)));
         let definition = contribution.definition.clone();
         let manifest = codex_runtime_trust_manifest();
+        let surface_adoption = Arc::new(tokio::sync::RwLock::new(None));
+        let callback_surface_adoption = surface_adoption.clone();
         let composition = build_agent_runtime_composition(AgentRuntimeCompositionInput {
             pool: pool.clone(),
             contributions: vec![contribution],
@@ -3745,8 +4040,11 @@ rl.on('line', line => {
                 root: root.clone(),
             }),
             credential_broker: Arc::new(NoCredentials),
-            callback_factory: Arc::new(|_| AgentRuntimeCallbacks {
-                tools: Arc::new(NoTools),
+            callback_factory: Arc::new(move |runtime| AgentRuntimeCallbacks {
+                tools: Arc::new(CodexSurfaceAdoptingTool {
+                    runtime,
+                    fixture: callback_surface_adoption.clone(),
+                }),
                 hooks: Arc::new(ContinueHooks),
             }),
             application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
@@ -3787,6 +4085,99 @@ rl.on('line', line => {
             binding.thread_id.as_str(),
             "product presentation identity must remain independent from runtime identity",
         );
+        let original_surface = composition
+            .surfaces
+            .load_surface(&binding.binding_id)
+            .await
+            .expect("load original Codex surface")
+            .expect("original Codex surface exists");
+        let original_business_surface = composition
+            .surfaces
+            .load_business_surface(
+                &binding.binding_id,
+                original_surface.revision,
+                &original_surface.digest,
+            )
+            .await
+            .expect("load original Codex business surface");
+        let mut adopted = original_surface.clone();
+        adopted.revision = SurfaceRevision(adopted.revision.0 + 1);
+        adopted.digest = parsed("sha256:codex-tracer-surface-adopted");
+        adopted.workspace.digest = "sha256:codex-tracer-workspace-adopted".to_string();
+        adopted.context.recipe.revision =
+            ContextRecipeRevision(adopted.context.recipe.revision.0 + 1);
+        adopted.context.digest = parsed("sha256:codex-tracer-context-adopted");
+        adopted.tools.revision = ToolSetRevision(adopted.tools.revision.0 + 1);
+        adopted.tools.digest = "sha256:codex-tracer-tools-adopted".to_string();
+        adopted.hooks.revision = HookPlanRevision(adopted.hooks.revision.0 + 1);
+        adopted.hooks.digest = parsed("sha256:codex-tracer-hooks-adopted");
+        composition
+            .surfaces
+            .put_surface(&binding.binding_id, &adopted, &original_business_surface)
+            .await
+            .expect("persist adopted Codex surface version");
+        let broker = PostgresAgentRuntimeCompositionRepository::new(pool.clone());
+        let retained = agentdash_integration_api::AgentRuntimeSurfaceBroker::materialize(
+            &broker,
+            DriverSurfaceRequest {
+                binding_id: binding.binding_id.clone(),
+                surface_revision: original_surface.revision,
+                surface_digest: original_surface.digest.clone(),
+            },
+        )
+        .await
+        .expect("old surface version remains readable for in-flight outbox");
+        assert_eq!(retained, original_surface);
+        let target_surface = runtime_surface_descriptor(
+            "codex-tracer-frame-adopted".to_string(),
+            &adopted,
+            BoundRuntimeHookPlan {
+                revision: adopted.hooks.revision,
+                digest: adopted.hooks.digest.clone(),
+                entries: Vec::new(),
+            },
+            Some(fixture_terminal_hook_effect_binding()),
+        );
+        let mut surface_presentation = agentdash_agent_runtime::ContextProjector::project(
+            &agentdash_agent_runtime::ContextProjectionIdentity {
+                operation_id: "codex-tool-surface-context".to_string(),
+                source_frame_id: target_surface.source_frame_id.clone(),
+                source_frame_revision: target_surface.surface_revision.0,
+                recorded_at_ms: 1_720_000_000_000,
+            },
+            [agentdash_agent_runtime::ContextFrameFacts {
+                kind: agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta,
+                source: agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
+                phase_node: Some("codex_surface_update".to_string()),
+                apply_mode: Some("live".to_string()),
+                delivery_status:
+                    agentdash_agent_protocol::ContextDeliveryStatus::QueuedForTransformContext,
+                delivery_channel: agentdash_agent_protocol::ContextDeliveryChannel::TurnStart,
+                message_role: agentdash_agent_protocol::ContextMessageRole::User,
+                rendered_text: "surface_update tool is active".to_string(),
+                sections: vec![
+                    agentdash_agent_protocol::ContextFrameSection::ToolSchemaDelta {
+                        added_tools: vec![agentdash_agent_protocol::RuntimeToolSchemaEntry {
+                            name: "surface_update".to_string(),
+                            description: "Update the active AgentFrame surface".to_string(),
+                            parameters_schema: json!({"type":"object","properties":{}}),
+                            capability_key: Some("runtime.surface.update".to_string()),
+                            source: Some("codex-tracer".to_string()),
+                            tool_path: Some("runtime/surface/update".to_string()),
+                            context_usage_kind: Some("system_tools".to_string()),
+                        }],
+                    },
+                ],
+            }],
+        );
+        surface_presentation.adoption_frames =
+            std::mem::take(&mut surface_presentation.bootstrap_frames);
+        surface_presentation.transition_phase_node = Some("codex_surface_update".to_string());
+        *surface_adoption.write().await = Some(CodexSurfaceAdoptionFixture {
+            target: target_surface.clone(),
+            presentation_thread_id: binding.presentation_thread_id.clone(),
+            presentation: surface_presentation.clone(),
+        });
         let start = RuntimeCommandEnvelope {
             presentation: Vec::new(),
             meta: OperationMeta {
@@ -3916,6 +4307,38 @@ rl.on('line', line => {
             .expect("dispatch Codex interaction response"),
             1
         );
+        let active_adopted = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let RuntimeSnapshotResult::Thread { snapshot } = composition
+                    .gateway
+                    .snapshot(RuntimeSnapshotQuery::Thread {
+                        thread_id: binding.thread_id.clone(),
+                        at_revision: None,
+                    })
+                    .await
+                    .expect("Codex active adoption snapshot")
+                else {
+                    panic!("expected Codex thread snapshot")
+                };
+                if snapshot.active_turn_id.is_some() && snapshot.surface == target_surface {
+                    break snapshot;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dynamic tool must commit the canonical surface during the active turn");
+        assert_eq!(active_adopted.surface, target_surface);
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                composition.outbox_worker.run_once(8),
+            )
+            .await
+            .expect("deferred Codex SurfaceAdopt dispatch timeout")
+            .expect("dispatch deferred Codex SurfaceAdopt"),
+            1
+        );
         let final_result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 let RuntimeSnapshotResult::Thread { snapshot } = composition
@@ -3965,104 +4388,6 @@ rl.on('line', line => {
         let serialized = serde_json::to_string(&final_snapshot).expect("snapshot serializes");
         assert!(!serialized.contains("item/agentMessage/delta"));
         assert!(!serialized.contains("turn/completed"));
-
-        let original_surface = composition
-            .surfaces
-            .load_surface(&binding.binding_id)
-            .await
-            .expect("load original Codex surface")
-            .expect("original Codex surface exists");
-        let original_business_surface = composition
-            .surfaces
-            .load_business_surface(
-                &binding.binding_id,
-                original_surface.revision,
-                &original_surface.digest,
-            )
-            .await
-            .expect("load original Codex business surface");
-        let mut adopted = original_surface.clone();
-        adopted.revision = SurfaceRevision(adopted.revision.0 + 1);
-        adopted.digest = parsed("sha256:codex-tracer-surface-adopted");
-        adopted.workspace.digest = "sha256:codex-tracer-workspace-adopted".to_string();
-        adopted.context.recipe.revision =
-            ContextRecipeRevision(adopted.context.recipe.revision.0 + 1);
-        adopted.context.digest = parsed("sha256:codex-tracer-context-adopted");
-        adopted.tools.revision = ToolSetRevision(adopted.tools.revision.0 + 1);
-        adopted.tools.digest = "sha256:codex-tracer-tools-adopted".to_string();
-        adopted.hooks.revision = HookPlanRevision(adopted.hooks.revision.0 + 1);
-        adopted.hooks.digest = parsed("sha256:codex-tracer-hooks-adopted");
-        composition
-            .surfaces
-            .put_surface(&binding.binding_id, &adopted, &original_business_surface)
-            .await
-            .expect("persist adopted Codex surface version");
-        let broker = PostgresAgentRuntimeCompositionRepository::new(pool.clone());
-        let retained = agentdash_integration_api::AgentRuntimeSurfaceBroker::materialize(
-            &broker,
-            DriverSurfaceRequest {
-                binding_id: binding.binding_id.clone(),
-                surface_revision: original_surface.revision,
-                surface_digest: original_surface.digest.clone(),
-            },
-        )
-        .await
-        .expect("old surface version remains readable for in-flight outbox");
-        assert_eq!(retained, original_surface);
-        let target_surface = runtime_surface_descriptor(
-            "codex-tracer-frame-adopted".to_string(),
-            &adopted,
-            BoundRuntimeHookPlan {
-                revision: adopted.hooks.revision,
-                digest: adopted.hooks.digest.clone(),
-                entries: Vec::new(),
-            },
-            Some(fixture_terminal_hook_effect_binding()),
-        );
-        let RuntimeSnapshotResult::Thread {
-            snapshot: adoption_base,
-        } = composition
-            .gateway
-            .snapshot(RuntimeSnapshotQuery::Thread {
-                thread_id: binding.thread_id.clone(),
-                at_revision: None,
-            })
-            .await
-            .expect("load immediate pre-adoption Runtime snapshot")
-        else {
-            panic!("expected pre-adoption Runtime thread snapshot")
-        };
-        composition
-            .gateway
-            .execute(RuntimeCommandEnvelope {
-                presentation: Vec::new(),
-                meta: OperationMeta {
-                    operation_id: parsed("codex-tracer-surface-adopt-operation"),
-                    idempotency_key: parsed("codex-tracer-surface-adopt-key"),
-                    expected_thread_revision: Some(adoption_base.revision),
-                    actor: RuntimeActor::System {
-                        component: "codex-production-tracer".to_string(),
-                    },
-                },
-                command: RuntimeCommand::SurfaceAdopt {
-                    thread_id: binding.thread_id.clone(),
-                    expected_surface_revision: adoption_base.surface.surface_revision,
-                    expected_surface_digest: adoption_base.surface.surface_digest.clone(),
-                    target: Box::new(target_surface.clone()),
-                },
-            })
-            .await
-            .expect("accept Codex full surface adoption");
-        assert_eq!(
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                composition.outbox_worker.run_once(8),
-            )
-            .await
-            .expect("Codex SurfaceAdopt dispatch timeout")
-            .expect("dispatch Codex SurfaceAdopt"),
-            1
-        );
         let adopted_binding = composition
             .host
             .binding(&binding.binding_id)
@@ -4082,6 +4407,57 @@ rl.on('line', line => {
             panic!("expected adopted Runtime thread snapshot")
         };
         assert_eq!(snapshot.surface, target_surface);
+        let records = composition
+            .runtime_repository
+            .journal_records_after(&snapshot.thread_id, None)
+            .await
+            .expect("load Codex surface/tool journal")
+            .records;
+        let context_frames = records
+            .iter()
+            .filter_map(
+                |record| match record.as_presentation().map(|event| &event.event) {
+                    Some(agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(changed),
+                    )) if changed.frame.id == surface_presentation.adoption_frames[0].id => {
+                        Some(changed.frame.id.clone())
+                    }
+                    _ => None,
+                },
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(
+            context_frames.len(),
+            1,
+            "active surface adoption must expose each compiled ContextFrame exactly once"
+        );
+        let tool_lifecycle = records
+            .iter()
+            .filter_map(|record| {
+                let event = &record.as_presentation()?.event;
+                match event {
+                    agentdash_agent_protocol::BackboneEvent::ItemStarted(started)
+                        if started.item.id() == "codex-surface-tool-1" =>
+                    {
+                        Some(("started", started.item.id().to_string()))
+                    }
+                    agentdash_agent_protocol::BackboneEvent::ItemCompleted(completed)
+                        if completed.item.id() == "codex-surface-tool-1" =>
+                    {
+                        Some(("completed", completed.item.id().to_string()))
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tool_lifecycle,
+            vec![
+                ("started", "codex-surface-tool-1".to_string()),
+                ("completed", "codex-surface-tool-1".to_string()),
+            ],
+            "Codex tool start/result must converge on one frontend card identity"
+        );
     }
 
     #[tokio::test]

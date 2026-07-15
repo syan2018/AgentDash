@@ -1,0 +1,11 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"执行Rust分层、lint、测试与production composition质量门禁"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"验证migration、真实PostgreSQL状态与重启恢复"}
+{"file":".trellis/spec/backend/agent-runtime-kernel.md","reason":"复核每个accepted command恰好一个operation terminal且无重复副作用"}
+{"file":".trellis/spec/backend/agent-runtime-persistence.md","reason":"复核outbox、journal、binding与active entity数据库不变量"}
+{"file":".trellis/spec/backend/agent-runtime-surface-tool-broker.md","reason":"复核六类production工具使用真实invocation context与exactly-one presentation producer"}
+{"file":".trellis/spec/backend/agent-runtime-native-adapter.md","reason":"复核用户/工具结果角色过滤、shared identity和tool轮后继续"}
+{"file":".trellis/spec/backend/agent-runtime-codex-adapter.md","reason":"复核Codex 0.144.1标准协议body与平台工具桥接"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"按pinned main oracle严格比较protected body、顺序和null/optional语义"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"验证真实Session API经现有reducer/card形成单卡并继续final assistant"}
+{"file":".trellis/tasks/07-15-session-tool-main-equivalence-restoration/research/main-equivalence-difference-matrix.md","reason":"完成前确认矩阵所有差异都有production code、DB与frontend证据关闭"}
+{"file":".trellis/tasks/07-15-session-tool-main-equivalence-restoration/research/database-failure-forensics.md","reason":"对照失败run验证attempt、terminal、identity与anchor问题不再出现"}

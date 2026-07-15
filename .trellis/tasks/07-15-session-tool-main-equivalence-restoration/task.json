@@ -1,0 +1,34 @@
+{
+  "id": "session-tool-main-equivalence-restoration",
+  "name": "session-tool-main-equivalence-restoration",
+  "title": "恢复 Session 消息与工具调用 main 等价链路",
+  "description": "以固定 main-reference 与真实 PostgreSQL 事件流为 oracle，恢复 Session 消息、工具调用、Runtime surface 和 connector 桥接的完整等价行为。",
+  "status": "in_progress",
+  "dev_type": "fullstack",
+  "scope": "cross-layer",
+  "package": null,
+  "priority": "P0",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-07-15",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/agent-runtime-architecture-convergence",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "D:/Projects/AgentDash-main-reference@957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence"
+  ],
+  "notes": "单一主任务、四个整体工作项；允许并行修改共享工作区，并以文件所有权和共享 Cargo target 协调。",
+  "meta": {
+    "reference_repository": "D:/Projects/AgentDash-main-reference",
+    "reference_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "protected_contract": "BackboneEvent body/content/order/null semantics",
+    "allowed_difference": "Agent Runtime carrier/wrapper only"
+  }
+}

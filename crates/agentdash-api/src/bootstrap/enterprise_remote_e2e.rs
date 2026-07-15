@@ -11,7 +11,7 @@ use agentdash_agent::{
     AgentMessage, BridgeRequest, BridgeResponse, ContentPart, LlmBridge, StopReason, StreamChunk,
     TokenUsage, ToolCallInfo,
 };
-use agentdash_agent_runtime::{RuntimeRepository, RuntimeWorkKind};
+use agentdash_agent_runtime::{RuntimeRepository, RuntimeTransientEvents, RuntimeWorkKind};
 use agentdash_agent_runtime_contract::*;
 use agentdash_agent_runtime_host::*;
 use agentdash_agent_types::{
@@ -55,11 +55,12 @@ use uuid::Uuid;
 
 use super::agent_runtime::{
     AgentRunRuntimeSurfaceSource, AgentRunRuntimeSurfaceSourceError, AgentRuntimeCallbacks,
-    AgentRuntimeCompositionInput, PreparedAgentRunRuntime, build_agent_runtime_composition,
+    AgentRuntimeCompositionInput, AppliedNativeAgentRunSurface, PreparedAgentRunRuntime,
+    build_agent_runtime_composition,
 };
 use super::agent_runtime_surface::{
-    CompiledAgentRunToolRegistry, PendingCompiledAgentRunToolBinding,
-    PostgresAgentRunToolBrokerResolver,
+    CompiledAgentRunToolBinding, CompiledAgentRunToolBindingRecovery, CompiledAgentRunToolRegistry,
+    PendingCompiledAgentRunToolBinding, PostgresAgentRunToolBrokerResolver,
 };
 use crate::relay::registry::{BackendRegistry, ConnectedBackend};
 use crate::relay::{CloudRemoteRuntimeInventory, CloudRuntimeWirePlacementResolver};
@@ -76,6 +77,7 @@ where
 
 struct EnterpriseBridge {
     calls: AtomicUsize,
+    requests: tokio::sync::Mutex<Vec<Vec<AgentMessage>>>,
     block_next: std::sync::atomic::AtomicBool,
     blocked: tokio::sync::Semaphore,
     release: tokio::sync::Semaphore,
@@ -85,8 +87,9 @@ struct EnterpriseBridge {
 impl LlmBridge for EnterpriseBridge {
     async fn stream_complete(
         &self,
-        _request: BridgeRequest,
+        request: BridgeRequest,
     ) -> Pin<Box<dyn Stream<Item = StreamChunk> + Send>> {
+        self.requests.lock().await.push(request.messages);
         if self.block_next.swap(false, Ordering::SeqCst) {
             self.blocked.add_permits(1);
             self.release
@@ -99,12 +102,18 @@ impl LlmBridge for EnterpriseBridge {
         let message = if call.is_multiple_of(2) {
             AgentMessage::Assistant {
                 content: Vec::new(),
-                tool_calls: vec![ToolCallInfo {
-                    id: format!("enterprise-tool-{call}"),
-                    call_id: None,
-                    name: "enterprise_echo".to_string(),
-                    arguments: json!({"value":"through-runtime-wire"}),
-                }],
+                tool_calls: ["first", "second"]
+                    .into_iter()
+                    .map(|ordinal| ToolCallInfo {
+                        id: format!("enterprise-tool-{call}-{ordinal}"),
+                        call_id: None,
+                        name: "enterprise_echo".to_string(),
+                        arguments: json!({
+                            "value": "through-runtime-wire",
+                            "ordinal": ordinal,
+                        }),
+                    })
+                    .collect(),
                 stop_reason: Some(StopReason::ToolUse),
                 error_message: None,
                 usage: None,
@@ -112,7 +121,14 @@ impl LlmBridge for EnterpriseBridge {
             }
         } else {
             AgentMessage::Assistant {
-                content: vec![ContentPart::text("enterprise remote completed")],
+                content: vec![
+                    ContentPart::reasoning(
+                        "enterprise remote reasoning",
+                        Some(format!("enterprise-reasoning-{call}")),
+                        None,
+                    ),
+                    ContentPart::text("enterprise remote completed"),
+                ],
                 tool_calls: Vec::new(),
                 stop_reason: Some(StopReason::Stop),
                 error_message: None,
@@ -120,14 +136,26 @@ impl LlmBridge for EnterpriseBridge {
                 timestamp: None,
             }
         };
-        Box::pin(stream::iter(vec![StreamChunk::Done(BridgeResponse {
+        let mut chunks = Vec::new();
+        if !call.is_multiple_of(2) {
+            chunks.push(StreamChunk::ReasoningDelta {
+                id: Some(format!("enterprise-reasoning-{call}")),
+                text: "enterprise remote reasoning".to_string(),
+                signature: None,
+            });
+            chunks.push(StreamChunk::TextDelta(
+                "enterprise remote completed".to_string(),
+            ));
+        }
+        chunks.push(StreamChunk::Done(BridgeResponse {
             raw_content: match &message {
                 AgentMessage::Assistant { content, .. } => content.clone(),
                 _ => Vec::new(),
             },
             message,
             usage: TokenUsage::default(),
-        })]))
+        }));
+        Box::pin(stream::iter(chunks))
     }
 }
 
@@ -199,9 +227,14 @@ impl AgentTool for EnterpriseEchoTool {
         _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         self.0.fetch_add(1, Ordering::SeqCst);
+        let is_error = args.get("ordinal").and_then(serde_json::Value::as_str) == Some("second");
         Ok(AgentToolResult {
-            content: vec![ContentPart::text("enterprise echo completed")],
-            is_error: false,
+            content: vec![ContentPart::text(if is_error {
+                "enterprise echo business error"
+            } else {
+                "enterprise echo completed"
+            })],
+            is_error,
             details: Some(json!({"echoed": args})),
         })
     }
@@ -265,6 +298,7 @@ impl agentdash_infrastructure::agent_runtime_workers::ManagedCompactionPreparati
         thread: &agentdash_agent_runtime::RuntimeThreadState,
         surface: &agentdash_integration_api::MaterializedDriverSurface,
         _instance: &agentdash_agent_runtime_host::AgentServiceInstance,
+        _input: &agentdash_infrastructure::agent_runtime_workers::ManagedCompactionInput,
         work: &agentdash_agent_runtime::ContextPreparationWorkItem,
     ) -> Result<
         agentdash_infrastructure::agent_runtime_workers::ManagedCompactionOutput,
@@ -322,6 +356,7 @@ fn enterprise_contribution() -> (
 ) {
     let bridge = Arc::new(EnterpriseBridge {
         calls: AtomicUsize::new(0),
+        requests: tokio::sync::Mutex::new(Vec::new()),
         block_next: std::sync::atomic::AtomicBool::new(false),
         blocked: tokio::sync::Semaphore::new(0),
         release: tokio::sync::Semaphore::new(0),
@@ -417,6 +452,8 @@ fn materialized_surface(thread_id: RuntimeThreadId) -> MaterializedDriverSurface
                     agentdash_agent_runtime_contract::ToolProtocolProjection::Dynamic {
                         namespace: Some("enterprise_test".to_string()),
                     },
+                presentation_emitter:
+                    agentdash_agent_runtime_contract::ToolPresentationEmitter::VendorStream,
                 parity_fixture_id: "main_tool_enterprise_remote_e2e_dynamic_lifecycle".to_string(),
             }],
         },
@@ -522,67 +559,153 @@ struct EnterpriseSurfaceSource {
     tool_calls: Arc<AtomicUsize>,
 }
 
+fn enterprise_tool_catalog(
+    surface: &MaterializedDriverSurface,
+) -> agentdash_agent_runtime::ToolCatalogRevision {
+    agentdash_agent_runtime::ToolCatalogRevision {
+        revision: surface.tools.revision,
+        digest: surface.tools.digest.clone(),
+        tools: vec![agentdash_agent_runtime::ToolContribution {
+            meta: agentdash_agent_runtime::ContributionMeta {
+                key: "enterprise_echo".to_string(),
+                source: agentdash_agent_runtime::SurfaceSourceRef {
+                    layer: "enterprise_e2e".to_string(),
+                    key: "enterprise_echo".to_string(),
+                },
+                priority: 0,
+                requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+            },
+            runtime_name: "enterprise_echo".to_string(),
+            description: "Enterprise reverse RuntimeWire tool".to_string(),
+            parameters_schema: json!({"type":"object"}),
+            capability_key: "enterprise".to_string(),
+            tool_path: "enterprise::echo".to_string(),
+            allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
+            configuration_boundary: ConfigurationBoundary::Binding,
+            protocol_projection: ToolProtocolProjection::Dynamic {
+                namespace: Some("enterprise_test".to_string()),
+            },
+            presentation_emitter: ToolPresentationEmitter::VendorStream,
+            parity_fixture_id: "main_tool_enterprise_remote_e2e_dynamic_lifecycle".to_string(),
+        }],
+        mcp_servers: Vec::new(),
+    }
+}
+
+struct EnterpriseCompiledBindingRecovery {
+    registry: Arc<CompiledAgentRunToolRegistry>,
+    repository: Arc<
+        agentdash_infrastructure::persistence::postgres::PostgresAgentRuntimeCompositionRepository,
+    >,
+    tool_calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl CompiledAgentRunToolBindingRecovery for EnterpriseCompiledBindingRecovery {
+    async fn recover(
+        &self,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<(), AgentRunRuntimeSurfaceSourceError> {
+        let binding = self
+            .repository
+            .load_by_runtime_binding(binding_id)
+            .await
+            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Unavailable {
+                reason: error.to_string(),
+                retryable: true,
+            })?
+            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "recovered Enterprise binding is missing".to_string(),
+            })?;
+        let surface = self
+            .repository
+            .load_bound_surface(binding_id)
+            .await
+            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Unavailable {
+                reason: error.to_string(),
+                retryable: true,
+            })?
+            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "recovered Enterprise surface is missing".to_string(),
+            })?;
+        let frame_id = Uuid::nil();
+        let hook_runtime: agentdash_spi::SharedHookRuntime = Arc::new(AgentFrameHookRuntime::new(
+            binding.target.run_id,
+            binding.target.agent_id,
+            frame_id,
+            1,
+            binding.thread_id.to_string(),
+            Arc::new(NoopExecutionHookProvider),
+            AgentFrameHookSnapshot::default(),
+        ));
+        let applied = AppliedNativeAgentRunSurface {
+            runtime_thread_id: binding.thread_id,
+            binding_id: binding.binding_id,
+            generation: binding.driver_generation,
+            source_thread_id: binding.source_thread_id,
+            surface_revision: surface.revision,
+            surface_digest: surface.digest.clone(),
+            tool_set_revision: surface.tools.revision,
+            hook_plan_revision: surface.hooks.revision,
+            hook_plan_digest: surface.hooks.digest.clone(),
+            terminal_hook_effect_binding: binding.surface.terminal_hook_effect_binding,
+        };
+        self.registry
+            .put(CompiledAgentRunToolBinding::from_test_tools(
+                applied,
+                binding.target.run_id,
+                binding.target.agent_id,
+                frame_id,
+                hook_runtime,
+                enterprise_tool_catalog(&surface),
+                vec![Arc::new(EnterpriseEchoTool(self.tool_calls.clone())) as DynAgentTool],
+            ))
+            .await
+    }
+}
+
 #[async_trait]
 impl AgentRunRuntimeSurfaceSource for EnterpriseSurfaceSource {
     async fn prepare(
         &self,
         request: &AgentRunRuntimeProvisionRequest,
         thread_id: &RuntimeThreadId,
-        _binding_id: &RuntimeBindingId,
+        binding_id: &RuntimeBindingId,
     ) -> Result<PreparedAgentRunRuntime, AgentRunRuntimeSurfaceSourceError> {
         let surface = materialized_surface(thread_id.clone());
         let business_surface = compiled_business_surface(&surface);
-        let publication = Arc::new(PendingCompiledAgentRunToolBinding {
-            registry: self.tool_registry.clone(),
-            runtime_session_id: thread_id.to_string(),
-            run_id: request.target.run_id,
-            agent_id: request.target.agent_id,
-            frame_id: Uuid::nil(),
-            hook_runtime: Arc::new(AgentFrameHookRuntime::new(
-                request.target.run_id,
-                request.target.agent_id,
-                Uuid::nil(),
-                1,
-                thread_id.to_string(),
-                Arc::new(NoopExecutionHookProvider),
-                AgentFrameHookSnapshot::default(),
-            )),
-            catalog: agentdash_agent_runtime::ToolCatalogRevision {
-                revision: surface.tools.revision,
-                digest: surface.tools.digest.clone(),
-                tools: vec![agentdash_agent_runtime::ToolContribution {
-                    meta: agentdash_agent_runtime::ContributionMeta {
-                        key: "enterprise_echo".to_string(),
-                        source: agentdash_agent_runtime::SurfaceSourceRef {
-                            layer: "enterprise_e2e".to_string(),
-                            key: "enterprise_echo".to_string(),
-                        },
-                        priority: 0,
-                        requirement: agentdash_agent_runtime::ContributionRequirement::Required,
-                    },
-                    runtime_name: "enterprise_echo".to_string(),
-                    description: "Enterprise reverse RuntimeWire tool".to_string(),
-                    parameters_schema: json!({"type":"object"}),
-                    capability_key: "enterprise".to_string(),
-                    tool_path: "enterprise::echo".to_string(),
-                    allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                    protocol_projection:
-                        agentdash_agent_runtime_contract::ToolProtocolProjection::Dynamic {
-                            namespace: Some("enterprise_test".to_string()),
-                        },
-                    presentation_emitter:
-                        agentdash_agent_runtime_contract::ToolPresentationEmitter::VendorStream,
-                    parity_fixture_id: "main_tool_enterprise_remote_e2e_dynamic_lifecycle"
-                        .to_string(),
-                }],
-                mcp_servers: Vec::new(),
-            },
-            tools: BTreeMap::from([(
-                "enterprise_echo".to_string(),
-                Arc::new(EnterpriseEchoTool(self.tool_calls.clone())) as DynAgentTool,
-            )]),
-        });
+        let applied_coordinates = AppliedNativeAgentRunSurface {
+            runtime_thread_id: thread_id.clone(),
+            binding_id: binding_id.clone(),
+            generation: RuntimeDriverGeneration(1),
+            source_thread_id: DriverThreadId::new("enterprise-source-thread").unwrap(),
+            surface_revision: surface.revision,
+            surface_digest: surface.digest.clone(),
+            tool_set_revision: surface.tools.revision,
+            hook_plan_revision: surface.hooks.revision,
+            hook_plan_digest: surface.hooks.digest.clone(),
+            terminal_hook_effect_binding: None,
+        };
+        let hook_runtime: agentdash_spi::SharedHookRuntime = Arc::new(AgentFrameHookRuntime::new(
+            request.target.run_id,
+            request.target.agent_id,
+            Uuid::nil(),
+            1,
+            thread_id.to_string(),
+            Arc::new(NoopExecutionHookProvider),
+            AgentFrameHookSnapshot::default(),
+        ));
+        let catalog = enterprise_tool_catalog(&surface);
+        let publication = Arc::new(PendingCompiledAgentRunToolBinding::from_test_tools(
+            self.tool_registry.clone(),
+            &applied_coordinates,
+            request.target.run_id,
+            request.target.agent_id,
+            Uuid::nil(),
+            hook_runtime,
+            catalog,
+            vec![Arc::new(EnterpriseEchoTool(self.tool_calls.clone())) as DynAgentTool],
+        ));
         let profile = native_runtime_profile();
         Ok(PreparedAgentRunRuntime {
             source_frame_id: "enterprise-remote-frame".to_string(),
@@ -696,6 +819,7 @@ async fn local_host(
 ) -> (
     Arc<RuntimeWireCommandHandler>,
     AgentServiceDefinitionRegistry,
+    Arc<IntegrationDriverHost>,
 ) {
     let definition = contribution.definition.clone();
     let trusted_registry = AgentServiceDefinitionRegistry::collect(vec![contribution.clone()])
@@ -747,7 +871,7 @@ async fn local_host(
     let transport_id = AgentRuntimePlacementId::new(TRANSPORT_ID).expect("transport id");
     let handler = Arc::new(RuntimeWireCommandHandler::new_with_host_port_router(
         Arc::new(HostRuntimeDriverEndpointResolver::new(
-            host,
+            host.clone(),
             BACKEND_ID,
             agentdash_agent_runtime_contract::HostIncarnationId::new("enterprise-e2e-incarnation")
                 .expect("host incarnation id"),
@@ -763,7 +887,7 @@ async fn local_host(
         },
         host_port_router,
     ));
-    (handler, trusted_registry)
+    (handler, trusted_registry, host)
 }
 
 async fn route_local_message(
@@ -792,7 +916,8 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
     let (cloud_pool, _cloud_postgres) = migrated_pool("enterprise-remote-cloud").await;
     let (enterprise, manifest, bridge) = enterprise_contribution();
     let source_definition = enterprise.definition.clone();
-    let (handler, _trusted_source_registry) = local_host(local_pool, enterprise, &manifest).await;
+    let (handler, _trusted_source_registry, local_runtime_host) =
+        local_host(local_pool, enterprise, &manifest).await;
     let advertisements = handler.advertised_offers().await.expect("local offers");
     assert_eq!(advertisements.len(), 1);
 
@@ -864,7 +989,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         .expect("presentation thread id");
     seed_agent_run_target(&cloud_pool, &target).await;
     let composition = build_agent_runtime_composition(AgentRuntimeCompositionInput {
-        pool: cloud_pool,
+        pool: cloud_pool.clone(),
         contributions: vec![remote_runtime_contribution(
             proxy_definition.clone(),
             placement_resolver,
@@ -876,7 +1001,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         surface_source: Arc::new(EnterpriseSurfaceSource {
             definition: proxy_definition,
             manifest: manifest.clone(),
-            tool_registry,
+            tool_registry: tool_registry.clone(),
             tool_calls: tool_calls.clone(),
         }),
         credential_broker: Arc::new(NoCredentials),
@@ -907,6 +1032,17 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         node_id: "enterprise-cloud-host".to_string(),
     })
     .expect("cloud production composition");
+    tool_registry
+        .bind_recovery(Arc::new(EnterpriseCompiledBindingRecovery {
+            registry: tool_registry.clone(),
+            repository: Arc::new(
+                agentdash_infrastructure::persistence::postgres::PostgresAgentRuntimeCompositionRepository::new(
+                    cloud_pool.clone(),
+                ),
+            ),
+            tool_calls: tool_calls.clone(),
+        }))
+        .expect("configure Enterprise compiled binding recovery");
     let inventory = CloudRemoteRuntimeInventory::new(composition.host.clone());
     inventory.mark_online(BACKEND_ID).await;
     tokio::time::timeout(
@@ -922,9 +1058,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         composition.bindings.clone(),
         composition.provisioner.clone(),
         composition.presentation_plans.clone(),
-        Arc::new(
-            agentdash_application_ports::agent_run_runtime::EmptyAgentRunTurnStartContextSource,
-        ),
+        tool_registry.clone(),
     ));
     let mailbox = RuntimeAgentRunMailbox::new(
         Arc::new(MemoryAgentRunMailboxRepository::default()),
@@ -983,7 +1117,18 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         ),
         RuntimeMailboxSubmitOutcome::Queued { .. } => panic!("idle mailbox must dispatch"),
     };
+    let initial_operation_id = receipt.operation_id.clone();
     assert!(!receipt.duplicate);
+    let pre_dispatch_binding = runtime
+        .inspect(target.clone())
+        .await
+        .expect("inspect prepared enterprise binding")
+        .binding
+        .expect("enterprise binding exists before outbox dispatch");
+    let mut presentation_live = composition
+        .runtime_repository
+        .subscribe_presentation(&pre_dispatch_binding.thread_id)
+        .await;
     let mut runtime_events = runtime
         .read_events(
             agentdash_application_agentrun::agent_run::ReadAgentRunEvents {
@@ -1062,24 +1207,212 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
     };
     let binding = view.binding.expect("remote binding");
     let snapshot = view.snapshot.expect("canonical snapshot");
-    let terminal_presentation = composition
+    let terminal_records = composition
         .runtime_repository
         .journal_records_after(&binding.thread_id, None)
         .await
         .expect("read production terminal presentation")
-        .records
+        .records;
+    let mut live_presentation_records = Vec::new();
+    loop {
+        match presentation_live.try_recv() {
+            Ok(record) => live_presentation_records.push(record),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
+                panic!("production Session live presentation lagged by {skipped} records")
+            }
+        }
+    }
+    let transient_presentation_records = live_presentation_records
         .into_iter()
-        .any(|record| {
-            let Some(event) = record.as_presentation() else {
-                return false;
-            };
-            matches!(
-                &event.event,
-                agentdash_agent_protocol::BackboneEvent::Platform(
-                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
-                ) if key == "turn_terminal"
+        .filter(|record| {
+            record.as_presentation().is_some_and(|event| {
+                event.durability
+                    == agentdash_agent_runtime_contract::PresentationDurability::Ephemeral
+            })
+        })
+        .collect::<Vec<_>>();
+    let journal_session_id =
+        agentdash_application_agentrun::agent_run::agent_run_journal_session_id(
+            target.run_id,
+            target.agent_id,
+        );
+    let session_contracts = terminal_records
+        .iter()
+        .filter(|record| record.as_presentation().is_some())
+        .cloned()
+        .enumerate()
+        .map(|(index, record)| {
+            crate::routes::lifecycle_agents::journal_event_to_contract(
+                agentdash_application_agentrun::agent_run::AgentRunJournalEvent {
+                    journal_seq: index as u64 + 1,
+                    segment_role:
+                        agentdash_application_agentrun::agent_run::AgentRunJournalSegmentRole::CurrentDelivery,
+                    source_runtime_thread_id: binding.thread_id.clone(),
+                    source_event_seq: record.carrier().sequence,
+                    record,
+                },
+                &journal_session_id,
             )
+            .expect("project production Session API wrapper")
+        })
+        .collect::<Vec<_>>();
+    let transient_session_contracts = transient_presentation_records
+        .iter()
+        .filter(|record| record.as_presentation().is_some())
+        .cloned()
+        .enumerate()
+        .map(|(index, record)| {
+            crate::routes::lifecycle_agents::journal_event_to_contract(
+                agentdash_application_agentrun::agent_run::AgentRunJournalEvent {
+                    journal_seq: terminal_records.len() as u64 + index as u64 + 1,
+                    segment_role:
+                        agentdash_application_agentrun::agent_run::AgentRunJournalSegmentRole::CurrentDelivery,
+                    source_runtime_thread_id: binding.thread_id.clone(),
+                    source_event_seq: None,
+                    record,
+                },
+                &journal_session_id,
+            )
+            .expect("project production ephemeral Session API wrapper")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !session_contracts.is_empty(),
+        "production Remote→Native journal must reach the Session API wrapper"
+    );
+    for event in &session_contracts {
+        let protected = serde_json::to_value(&event.notification.event)
+            .expect("serialize protected Session event");
+        assert_eq!(
+            protected["type"], event.session_update_type,
+            "the outer wrapper discriminant must be derived without rewriting the protected body"
+        );
+        assert_eq!(event.session_id, journal_session_id);
+        assert_eq!(event.notification.session_id, journal_session_id);
+        assert_eq!(event.turn_id, event.notification.trace.turn_id);
+        if let Some(tool_call_id) = &event.tool_call_id {
+            assert_eq!(
+                protected["payload"]["item"]["id"],
+                tool_call_id.as_str(),
+                "Session wrapper tool identity must equal the protected item identity"
+            );
+        }
+    }
+    for event in &transient_session_contracts {
+        let protected = serde_json::to_value(&event.notification.event)
+            .expect("serialize ephemeral protected Session event");
+        assert_eq!(protected["type"], event.session_update_type);
+        assert_eq!(event.session_id, journal_session_id);
+        assert_eq!(event.notification.session_id, journal_session_id);
+        assert_eq!(event.turn_id, event.notification.trace.turn_id);
+    }
+    let protected_bodies = session_contracts
+        .iter()
+        .map(|event| {
+            serde_json::to_value(&event.notification.event)
+                .expect("serialize production protected Session body")
+        })
+        .collect::<Vec<_>>();
+    let protected_types = protected_bodies
+        .iter()
+        .map(|event| {
+            event["type"]
+                .as_str()
+                .expect("protected Session event type")
+        })
+        .collect::<Vec<_>>();
+    let transient_protected_types = transient_session_contracts
+        .iter()
+        .map(|event| event.session_update_type.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        protected_types.contains(&"user_input_submitted"),
+        "production Session API must preserve the submitted user item: {protected_types:?}"
+    );
+    let reasoning_position = transient_protected_types
+        .iter()
+        .position(|actual| *actual == "reasoning_text_delta")
+        .unwrap_or_else(|| {
+            panic!("missing ephemeral reasoning_text_delta: {transient_protected_types:?}")
         });
+    let agent_message_position = transient_protected_types
+        .iter()
+        .position(|actual| *actual == "agent_message_delta")
+        .unwrap_or_else(|| {
+            panic!("missing ephemeral agent_message_delta: {transient_protected_types:?}")
+        });
+    assert!(
+        reasoning_position < agent_message_position,
+        "production live Session API must preserve reasoning→final assistant order: {transient_protected_types:?}"
+    );
+    assert!(
+        protected_bodies.iter().any(|body| {
+            body["type"] == "item_completed" && body["payload"]["item"]["type"] == "reasoning"
+        }),
+        "reasoning must also have a durable terminal item for cold replay"
+    );
+    let mut session_tool_lifecycle = BTreeMap::<String, Vec<&str>>::new();
+    let mut observed_business_error = false;
+    for body in &protected_bodies {
+        let phase = match body["type"].as_str() {
+            Some("item_started") => "started",
+            Some("item_completed") => "completed",
+            _ => continue,
+        };
+        let item = &body["payload"]["item"];
+        if item["type"] != "dynamicToolCall" {
+            continue;
+        }
+        let item_id = item["id"]
+            .as_str()
+            .expect("production Session tool item id")
+            .to_string();
+        session_tool_lifecycle
+            .entry(item_id)
+            .or_default()
+            .push(phase);
+        if phase == "started" {
+            assert!(
+                item.get("success").is_some_and(serde_json::Value::is_null),
+                "main-equivalent tool start keeps explicit success:null: {item}"
+            );
+            assert!(
+                item.get("contentItems")
+                    .is_some_and(serde_json::Value::is_null),
+                "main-equivalent tool start keeps explicit contentItems:null: {item}"
+            );
+        } else if item["success"] == false {
+            observed_business_error = true;
+        }
+    }
+    assert_eq!(
+        session_tool_lifecycle.len(),
+        2,
+        "the production Session wrapper must expose one card identity per logical tool"
+    );
+    assert!(
+        session_tool_lifecycle
+            .values()
+            .all(|phases| phases.as_slice() == ["started", "completed"]),
+        "tool start/result must merge by one protected item id: {session_tool_lifecycle:?}"
+    );
+    assert!(
+        observed_business_error,
+        "a business-error tool result must remain visible without aborting provider continuation"
+    );
+    let terminal_presentation = terminal_records.iter().any(|record| {
+        let Some(event) = record.as_presentation() else {
+            return false;
+        };
+        matches!(
+            &event.event,
+            agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
+            ) if key == "turn_terminal"
+        )
+    });
     assert!(
         terminal_presentation,
         "production composition must inject the non-empty AgentRun terminal projector"
@@ -1120,6 +1453,51 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         RuntimeItemContent::new(completed.item.clone()).agent_message_text()
             == Some("enterprise remote completed")
     }));
+    let tool_lifecycle = terminal_records
+        .iter()
+        .filter_map(|record| record.as_presentation())
+        .filter_map(|event| match &event.event {
+            agentdash_agent_protocol::BackboneEvent::ItemStarted(notification) => notification
+                .item
+                .tool_call_id()
+                .map(|id| ("started", id.to_string())),
+            agentdash_agent_protocol::BackboneEvent::ItemCompleted(notification) => notification
+                .item
+                .tool_call_id()
+                .map(|id| ("completed", id.to_string())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let tool_lifecycle_by_item = tool_lifecycle.iter().fold(
+        BTreeMap::<String, Vec<&str>>::new(),
+        |mut lifecycle, (phase, item_id)| {
+            lifecycle.entry(item_id.clone()).or_default().push(*phase);
+            lifecycle
+        },
+    );
+    assert_eq!(
+        tool_lifecycle_by_item.len(),
+        2,
+        "one provider response with two tool calls must create two logical cards: {tool_lifecycle:?}"
+    );
+    assert!(
+        tool_lifecycle_by_item
+            .values()
+            .all(|phases| phases.as_slice() == ["started", "completed"]),
+        "each logical tool must complete the card created by its own start: {tool_lifecycle:?}"
+    );
+    assert_eq!(
+        terminal_records
+            .iter()
+            .filter_map(|record| record.as_presentation())
+            .filter(|event| matches!(
+                &event.event,
+                agentdash_agent_protocol::BackboneEvent::UserInputSubmitted(_)
+            ))
+            .count(),
+        1,
+        "one submitted user message must remain one user presentation event"
+    );
     let host_binding = composition
         .host
         .binding(&binding.binding_id)
@@ -1137,7 +1515,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
     ));
     assert_eq!(
         tool_calls.load(Ordering::SeqCst),
-        1,
+        2,
         "reverse RuntimeWire callbacks={}, last_error={:?}",
         callback_calls.load(Ordering::SeqCst),
         callback_last_error.lock().await.as_deref(),
@@ -1201,6 +1579,34 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
     .expect("remote context activation timeout");
     assert!(compacted.context_revision > context_revision_before);
 
+    {
+        let requests = bridge.requests.lock().await;
+        assert_eq!(
+            requests.len(),
+            2,
+            "one tool turn must make one provider call before and one after the callback"
+        );
+        assert!(
+            requests[1]
+                .iter()
+                .filter(|message| matches!(message, AgentMessage::ToolResult { .. }))
+                .count()
+                == 2,
+            "both tool results must be returned to Agent Core before the final provider call"
+        );
+        assert_eq!(
+            requests[1]
+                .iter()
+                .filter(|message| matches!(
+                    message,
+                    AgentMessage::ToolResult { is_error: true, .. }
+                ))
+                .count(),
+            1,
+            "a tool business error must be returned to the provider without aborting the turn"
+        );
+    }
+
     let duplicate = runtime
         .send_message(
             agentdash_application_agentrun::agent_run::SendAgentRunMessage {
@@ -1230,6 +1636,406 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         0
     );
 
+    let follow_up_started_at_seconds = Utc::now().timestamp();
+    let follow_up = mailbox
+        .submit(EnqueueRuntimeMailboxMessage {
+            target: target.clone(),
+            presentation_thread_id: presentation_thread_id.clone(),
+            presentation: agentdash_application_agentrun::agent_run::AgentRunPresentationDraft {
+                content: agentdash_agent_protocol::text_user_input_blocks(
+                    "continue after compaction",
+                ),
+                source: agentdash_agent_protocol::UserInputSource::core_composer(),
+                launch_source:
+                    agentdash_application_agentrun::agent_run::LaunchPresentationSource::HttpPrompt,
+                submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                started_at_seconds: follow_up_started_at_seconds,
+            },
+            client_command_id: "enterprise-follow-up-after-compaction".to_string(),
+            input: vec![RuntimeInput::Text {
+                text: "continue after compaction".to_string(),
+            }],
+            actor: RuntimeActor::User {
+                subject: "enterprise-user".to_string(),
+            },
+            identity: None,
+            origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User,
+            source: MailboxSourceIdentity::composer(),
+            delivery_intent: None,
+            executor_config: None,
+            backend_selection: None,
+        })
+        .await
+        .expect("submit follow-up after compaction");
+    let follow_up_receipt = match follow_up {
+        RuntimeMailboxSubmitOutcome::Dispatched { receipt, .. } => receipt,
+        RuntimeMailboxSubmitOutcome::Queued { .. } => {
+            panic!("idle compacted runtime must dispatch its follow-up")
+        }
+    };
+    assert_eq!(
+        composition
+            .outbox_worker
+            .run_once(8)
+            .await
+            .expect("dispatch follow-up after compaction"),
+        1
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let view = runtime
+                .inspect(target.clone())
+                .await
+                .expect("inspect follow-up runtime");
+            if bridge.calls.load(Ordering::SeqCst) == 4
+                && view
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.active_turn_id.is_none())
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("follow-up tool turn must continue to final assistant");
+    assert_eq!(tool_calls.load(Ordering::SeqCst), 4);
+    let follow_up_messages = {
+        let requests = bridge.requests.lock().await;
+        format!(
+            "{:?}",
+            requests.last().expect("follow-up final provider request")
+        )
+    };
+    assert!(
+        follow_up_messages.contains("enterprise remote compacted summary")
+            && follow_up_messages.contains("continue after compaction"),
+        "compaction context and the next user message must both reach the provider: {follow_up_messages}"
+    );
+
+    for operation_id in [
+        initial_operation_id.clone(),
+        follow_up_receipt.operation_id.clone(),
+    ] {
+        let operation = composition
+            .runtime_repository
+            .find_operation(&operation_id)
+            .await
+            .expect("read completed production operation")
+            .expect("production operation remains durable");
+        assert_eq!(
+            operation.terminal,
+            Some(RuntimeOperationTerminal::Succeeded),
+            "a later turn must not rewrite an already completed operation"
+        );
+        let (attempt_count, dispatched): (i32, bool) = sqlx::query_as(
+            "SELECT attempt_count,dispatched_at IS NOT NULL FROM agent_runtime_outbox WHERE operation_id=$1",
+        )
+        .bind(operation_id.as_str())
+        .fetch_one(&cloud_pool)
+        .await
+        .expect("read production Runtime outbox delivery");
+        assert_eq!(
+            attempt_count, 1,
+            "accepted prompt side effects are not replayed"
+        );
+        assert!(
+            dispatched,
+            "accepted prompt outbox remains durably acknowledged"
+        );
+    }
+
+    let before_recovery = runtime
+        .inspect(target.clone())
+        .await
+        .expect("inspect before cold binding recovery");
+    let before_recovery_binding = before_recovery.binding.expect("binding before recovery");
+    registry.unregister(BACKEND_ID).await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let view = runtime
+                .inspect(target.clone())
+                .await
+                .expect("inspect idle disconnect");
+            if view.snapshot.as_ref().is_some_and(|snapshot| {
+                snapshot.status == RuntimeThreadStatus::Lost && snapshot.active_turn_id.is_none()
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("idle RuntimeWire disconnect must make the binding recoverable");
+    inventory
+        .withdraw(BACKEND_ID)
+        .await
+        .expect("withdraw disconnected Runtime inventory");
+    let local_instance_id: RuntimeServiceInstanceId = id("enterprise-local-instance");
+    let local_instance = local_runtime_host
+        .service_instance(&local_instance_id)
+        .await
+        .expect("read local service instance before replacement")
+        .expect("local service instance before replacement");
+    local_runtime_host
+        .deactivate(&local_instance_id, local_instance.revision)
+        .await
+        .expect("deactivate disconnected local service generation");
+    let inactive_local_instance = local_runtime_host
+        .service_instance(&local_instance_id)
+        .await
+        .expect("read inactive local service instance")
+        .expect("inactive local service instance");
+    let reenabled_local_instance = local_runtime_host
+        .put_instance(PutAgentServiceInstance {
+            id: inactive_local_instance.id.clone(),
+            definition_id: inactive_local_instance.definition_id.clone(),
+            config: inactive_local_instance.config.clone(),
+            credentials: inactive_local_instance.credentials.clone(),
+            placement: inactive_local_instance.placement.clone(),
+            desired_state: ServiceInstanceDesiredState::Active,
+            expected_revision: Some(inactive_local_instance.revision),
+        })
+        .await
+        .expect("re-enable local service before replacement activation");
+    let recovery_profile = native_runtime_profile();
+    local_runtime_host
+        .activate(ActivateAgentServiceInstance {
+            instance_id: local_instance_id,
+            expected_revision: reenabled_local_instance.revision,
+            transport_profile: recovery_profile.clone(),
+            transport_profile_digest: profile_digest(&recovery_profile)
+                .expect("recovery transport digest"),
+            host_policy_profile: recovery_profile.clone(),
+            host_policy_digest: profile_digest(&recovery_profile).expect("recovery policy digest"),
+            conformance: ConformanceEvidence {
+                suite_revision: manifest.suite_revision.clone(),
+                driver_build_digest: manifest.driver_build_digest.clone(),
+                verified_profile_digest: profile_digest(&manifest.verified_profile)
+                    .expect("recovery verified profile"),
+                verified_at: Utc::now(),
+            },
+        })
+        .await
+        .expect("activate replacement local service generation");
+    let recovery_advertisements = handler
+        .advertised_offers()
+        .await
+        .expect("replacement local offers");
+    assert_eq!(recovery_advertisements.len(), 1);
+    assert!(
+        recovery_advertisements[0].driver_generation > advertisements[0].driver_generation,
+        "Remote recovery requires a genuinely newer advertised driver generation"
+    );
+    registry
+        .try_register(ConnectedBackend {
+            backend_id: BACKEND_ID.to_string(),
+            name: "Enterprise Desktop Rebound".to_string(),
+            version: "1.0.1".to_string(),
+            capabilities: CapabilitiesPayload::default(),
+            sender: cloud_sender.clone(),
+            connected_at: Utc::now(),
+        })
+        .await
+        .expect("re-register backend before cold binding recovery");
+    inventory.mark_online(BACKEND_ID).await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        inventory.sync(BACKEND_ID, &recovery_advertisements),
+    )
+    .await
+    .expect("reconnected Runtime inventory sync timeout")
+    .expect("reconnected Runtime inventory sync");
+
+    let recovery_started_at_seconds = Utc::now().timestamp();
+    let recovery = mailbox
+        .submit(EnqueueRuntimeMailboxMessage {
+            target: target.clone(),
+            presentation_thread_id: presentation_thread_id.clone(),
+            presentation: agentdash_application_agentrun::agent_run::AgentRunPresentationDraft {
+                content: agentdash_agent_protocol::text_user_input_blocks(
+                    "continue after binding recovery",
+                ),
+                source: agentdash_agent_protocol::UserInputSource::core_composer(),
+                launch_source:
+                    agentdash_application_agentrun::agent_run::LaunchPresentationSource::HttpPrompt,
+                submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                started_at_seconds: recovery_started_at_seconds,
+            },
+            client_command_id: "enterprise-follow-up-after-binding-recovery".to_string(),
+            input: vec![RuntimeInput::Text {
+                text: "continue after binding recovery".to_string(),
+            }],
+            actor: RuntimeActor::User {
+                subject: "enterprise-user".to_string(),
+            },
+            identity: None,
+            origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User,
+            source: MailboxSourceIdentity::composer(),
+            delivery_intent: None,
+            executor_config: None,
+            backend_selection: None,
+        })
+        .await
+        .expect("submit follow-up through a recovered binding");
+    let recovery_receipt = match recovery {
+        RuntimeMailboxSubmitOutcome::Dispatched { receipt, .. } => receipt,
+        RuntimeMailboxSubmitOutcome::Queued { .. } => {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    if let Some((_, receipt, steered)) = mailbox
+                        .recover_and_drain_once(&target)
+                        .await
+                        .expect("drain queued recovery delivery")
+                    {
+                        assert!(!steered);
+                        break receipt;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("queued recovery delivery must drain after Runtime inventory reconnect")
+        }
+    };
+    assert_eq!(
+        composition
+            .outbox_worker
+            .run_once(8)
+            .await
+            .expect("dispatch follow-up through recovered binding"),
+        1
+    );
+    let recovered_view = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let view = runtime
+                .inspect(target.clone())
+                .await
+                .expect("inspect recovered runtime");
+            if bridge.calls.load(Ordering::SeqCst) == 6
+                && view
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.active_turn_id.is_none())
+            {
+                break view;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cold binding recovery must restore history and finish the tool loop");
+    let recovered_binding = recovered_view.binding.expect("recovered binding");
+    assert_ne!(
+        recovered_binding.binding_id,
+        before_recovery_binding.binding_id
+    );
+    assert_eq!(
+        recovered_binding.binding_epoch.0,
+        before_recovery_binding.binding_epoch.0 + 1
+    );
+    let (recovery_request_diagnostic, prompt_counts) = {
+        let requests = bridge.requests.lock().await;
+        let prompts = [
+            (0, "run through enterprise remote"),
+            (2, "continue after compaction"),
+            (4, "continue after binding recovery"),
+        ];
+        let counts = prompts.map(|(request_index, prompt)| {
+            requests[request_index]
+                .iter()
+                .filter_map(|message| match message {
+                    AgentMessage::User { content, .. } => Some(content),
+                    _ => None,
+                })
+                .flatten()
+                .filter(|part| part.extract_text() == Some(prompt))
+                .count()
+        });
+        (format!("{requests:#?}"), counts)
+    };
+    assert_eq!(
+        prompt_counts,
+        [1, 1, 1],
+        "each accepted prompt must reach its provider request exactly once: {recovery_request_diagnostic}"
+    );
+    assert_eq!(
+        tool_calls.load(Ordering::SeqCst),
+        6,
+        "recovered tool loop skipped a provider tool phase; bridge_calls={}, requests={recovery_request_diagnostic}",
+        bridge.calls.load(Ordering::SeqCst),
+    );
+    let recovery_messages = {
+        let requests = bridge.requests.lock().await;
+        format!(
+            "{:?}",
+            requests.last().expect("recovered final provider request")
+        )
+    };
+    assert!(
+        recovery_messages.contains("enterprise remote compacted summary")
+            && recovery_messages.contains("continue after compaction")
+            && recovery_messages.contains("continue after binding recovery"),
+        "cold binding recovery must replay the compacted base and durable tail exactly once: {recovery_messages}"
+    );
+    let recovered_records = composition
+        .runtime_repository
+        .journal_records_after(&recovered_binding.thread_id, None)
+        .await
+        .expect("read journal after cold binding recovery")
+        .records;
+    let recovered_tool_lifecycle = recovered_records
+        .iter()
+        .filter_map(|record| record.as_presentation())
+        .filter_map(|event| match &event.event {
+            agentdash_agent_protocol::BackboneEvent::ItemStarted(notification) => notification
+                .item
+                .tool_call_id()
+                .map(|id| ("started", id.to_string())),
+            agentdash_agent_protocol::BackboneEvent::ItemCompleted(notification) => notification
+                .item
+                .tool_call_id()
+                .map(|id| ("completed", id.to_string())),
+            _ => None,
+        })
+        .fold(
+            BTreeMap::<String, Vec<&str>>::new(),
+            |mut lifecycle, (phase, item_id)| {
+                lifecycle.entry(item_id).or_default().push(phase);
+                lifecycle
+            },
+        );
+    assert_eq!(
+        recovered_tool_lifecycle.len(),
+        6,
+        "three two-tool turns must retain six distinct presentation identities after rebind: {recovered_tool_lifecycle:?}"
+    );
+    assert!(
+        recovered_tool_lifecycle
+            .values()
+            .all(|phases| phases.as_slice() == ["started", "completed"]),
+        "cold rebind must preserve one complete card per logical tool: {recovered_tool_lifecycle:?}"
+    );
+    let recovered_operation = composition
+        .runtime_repository
+        .find_operation(&recovery_receipt.operation_id)
+        .await
+        .expect("read recovered operation")
+        .expect("recovered operation remains durable");
+    assert_eq!(
+        recovered_operation.terminal,
+        Some(RuntimeOperationTerminal::Succeeded)
+    );
+    let recovered_attempt_count: i32 =
+        sqlx::query_scalar("SELECT attempt_count FROM agent_runtime_outbox WHERE operation_id=$1")
+            .bind(recovery_receipt.operation_id.as_str())
+            .fetch_one(&cloud_pool)
+            .await
+            .expect("read recovered operation outbox");
+    assert_eq!(recovered_attempt_count, 1);
+
+    let active_disconnect_binding_id = recovered_binding.binding_id.clone();
     bridge.block_next.store(true, Ordering::SeqCst);
     let disconnect_started_at_seconds = Utc::now().timestamp();
     let active = runtime
@@ -1312,7 +2118,8 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
             while let Some(event) = lost_events.next().await {
                 if matches!(
                     event.expect("lost event").event,
-                    RuntimeEvent::BindingLost { .. }
+                    RuntimeEvent::BindingLost { binding_id, .. }
+                        if binding_id == active_disconnect_binding_id
                 ) {
                     count += 1;
                 }
@@ -1325,7 +2132,89 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
     })
     .await
     .expect("BindingLost journal convergence timeout");
-    assert_eq!(binding_lost, 1, "disconnect has exactly one BindingLost");
+    assert_eq!(
+        binding_lost, 1,
+        "the active recovered binding has exactly one BindingLost"
+    );
+    for operation_id in [
+        initial_operation_id,
+        follow_up_receipt.operation_id,
+        recovery_receipt.operation_id,
+    ] {
+        let operation = composition
+            .runtime_repository
+            .find_operation(&operation_id)
+            .await
+            .expect("read historical operation after later BindingLost")
+            .expect("historical operation remains durable after later BindingLost");
+        assert_eq!(
+            operation.terminal,
+            Some(RuntimeOperationTerminal::Succeeded),
+            "BindingLost may terminalize only the active operation"
+        );
+    }
+    let active_operation = composition
+        .runtime_repository
+        .find_operation(&active.operation_id)
+        .await
+        .expect("read active disconnect operation")
+        .expect("active disconnect operation remains durable");
+    assert!(matches!(
+        active_operation.terminal,
+        Some(RuntimeOperationTerminal::Lost { .. })
+    ));
+    let lost_records = composition
+        .runtime_repository
+        .journal_records_after(&recovered_binding.thread_id, None)
+        .await
+        .expect("read Session journal after active binding loss")
+        .records;
+    let lost_session_bodies = lost_records
+        .into_iter()
+        .filter(|record| record.as_presentation().is_some())
+        .enumerate()
+        .map(|(index, record)| {
+            crate::routes::lifecycle_agents::journal_event_to_contract(
+                agentdash_application_agentrun::agent_run::AgentRunJournalEvent {
+                    journal_seq: index as u64 + 1,
+                    segment_role:
+                        agentdash_application_agentrun::agent_run::AgentRunJournalSegmentRole::CurrentDelivery,
+                    source_runtime_thread_id: recovered_binding.thread_id.clone(),
+                    source_event_seq: record.carrier().sequence,
+                    record,
+                },
+                &journal_session_id,
+            )
+            .expect("project failed turn through Session API wrapper")
+        })
+        .map(|event| {
+            serde_json::to_value(event.notification.event)
+                .expect("serialize failed Session protected body")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        lost_session_bodies.iter().any(|body| {
+            body["type"] == "platform"
+                && body["payload"]["kind"] == "session_meta_update"
+                && body["payload"]["data"]["key"] == "turn_terminal"
+                && body["payload"]["data"]["value"]["terminal_type"] == "turn_lost"
+        }),
+        "active disconnect must expose the main-equivalent lost terminal through the Session API"
+    );
+    assert!(
+        lost_session_bodies.iter().any(|body| {
+            body["type"] == "platform" && body["payload"]["kind"] == "session_rewound"
+        }),
+        "failed active turn must expose the main-equivalent rewind through the Session API"
+    );
+    assert_eq!(
+        lost_session_bodies
+            .iter()
+            .filter(|body| body["type"] == "user_input_submitted")
+            .count(),
+        4,
+        "all user submissions, including follow-up and failed turn, remain exact-once Session facts"
+    );
     registry.unregister(BACKEND_ID).await;
 
     tokio::time::timeout(

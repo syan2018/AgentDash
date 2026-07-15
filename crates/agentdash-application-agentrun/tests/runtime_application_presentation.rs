@@ -46,6 +46,7 @@ fn presentation_record(
             binding_id: None,
             coordinate: RuntimePresentationCoordinate {
                 runtime_turn_id: None,
+                presentation_turn_id: None,
                 runtime_item_id: None,
                 interaction_id: None,
                 source_thread_id: Some("session-terminal-0001".into()),

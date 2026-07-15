@@ -248,6 +248,314 @@ describe("W11 Main frontend parity evidence", () => {
     );
   });
 
+  it("keeps user to multiple tools to final assistant continuous with one card per item identity", () => {
+    const turnId = "turn-main-continuation";
+    const protectedEvents: unknown[] = [
+      {
+        type: "user_input_submitted",
+        payload: {
+          threadId: "thread-main-continuation",
+          turnId,
+          itemId: "user-main-continuation",
+          submissionKind: "prompt",
+          source: {
+            namespace: "core",
+            kind: "composer",
+            actor: "user",
+            displayLabelKey: "mailbox.source.core.composer",
+          },
+          content: [{ type: "text", text: "读取工作区并继续回答", textElements: [] }],
+        },
+      },
+      {
+        type: "reasoning_text_delta",
+        payload: {
+          threadId: "thread-main-continuation",
+          turnId,
+          itemId: "reason-main-continuation",
+          contentIndex: 0,
+          delta: "先读取两个来源并比较结果。",
+        },
+      },
+      {
+        type: "item_completed",
+        payload: {
+          item: {
+            type: "reasoning",
+            id: "reason-main-continuation",
+            summary: [],
+            content: ["先读取两个来源并比较结果。"],
+          },
+          threadId: "thread-main-continuation",
+          turnId,
+          completedAtMs: 1,
+        },
+      },
+      {
+        type: "item_started",
+        payload: {
+          item: {
+            type: "dynamicToolCall",
+            id: "turn_001:tool_001",
+            tool: "mounts_list",
+            status: "inProgress",
+            arguments: {},
+            contentItems: null,
+            durationMs: null,
+            success: null,
+            namespace: null,
+          },
+          threadId: "thread-main-continuation",
+          turnId,
+          startedAtMs: 1,
+        },
+      },
+      {
+        type: "item_updated",
+        payload: {
+          item: {
+            type: "dynamicToolCall",
+            id: "turn_001:tool_001",
+            tool: "mounts_list",
+            status: "inProgress",
+            arguments: {},
+            contentItems: [{ type: "inputText", text: "workspace" }],
+            durationMs: null,
+            success: null,
+            namespace: null,
+          },
+          threadId: "thread-main-continuation",
+          turnId,
+          updatedAtMs: 2,
+        },
+      },
+      {
+        type: "item_completed",
+        payload: {
+          item: {
+            type: "dynamicToolCall",
+            id: "turn_001:tool_001",
+            tool: "mounts_list",
+            status: "completed",
+            arguments: {},
+            contentItems: [{ type: "inputText", text: "workspace" }],
+            durationMs: null,
+            success: true,
+            namespace: null,
+          },
+          threadId: "thread-main-continuation",
+          turnId,
+          completedAtMs: 3,
+        },
+      },
+      {
+        type: "item_started",
+        payload: {
+          item: {
+            type: "dynamicToolCall",
+            id: "turn_001:tool_002",
+            tool: "workspace_module_list",
+            status: "inProgress",
+            arguments: {},
+            contentItems: null,
+            durationMs: null,
+            success: null,
+            namespace: null,
+          },
+          threadId: "thread-main-continuation",
+          turnId,
+          startedAtMs: 4,
+        },
+      },
+      {
+        type: "item_completed",
+        payload: {
+          item: {
+            type: "dynamicToolCall",
+            id: "turn_001:tool_002",
+            tool: "workspace_module_list",
+            status: "failed",
+            arguments: {},
+            contentItems: [{ type: "inputText", text: "module visibility denied" }],
+            durationMs: null,
+            success: false,
+            namespace: null,
+          },
+          threadId: "thread-main-continuation",
+          turnId,
+          completedAtMs: 5,
+        },
+      },
+      {
+        type: "agent_message_delta",
+        payload: {
+          threadId: "thread-main-continuation",
+          turnId,
+          itemId: "answer-main-continuation",
+          delta: "已经读取完成。",
+        },
+      },
+      {
+        type: "item_completed",
+        payload: {
+          item: {
+            type: "agentMessage",
+            id: "answer-main-continuation",
+            text: "已经读取完成。",
+            phase: null,
+            memoryCitation: null,
+          },
+          threadId: "thread-main-continuation",
+          turnId,
+          completedAtMs: 6,
+        },
+      },
+      {
+        type: "user_input_submitted",
+        payload: {
+          threadId: "thread-main-continuation",
+          turnId: "turn-main-cancelled",
+          itemId: "user-main-cancelled",
+          submissionKind: "prompt",
+          source: {
+            namespace: "core",
+            kind: "composer",
+            actor: "user",
+            displayLabelKey: "mailbox.source.core.composer",
+          },
+          content: [{ type: "text", text: "停止这一轮", textElements: [] }],
+        },
+      },
+      {
+        type: "error",
+        payload: {
+          error: {
+            message: "cancelled",
+            additionalDetails: null,
+            codexErrorInfo: null,
+          },
+          threadId: "thread-main-continuation",
+          turnId: "turn-main-cancelled",
+          willRetry: false,
+        },
+      },
+      {
+        type: "platform",
+        payload: {
+          kind: "session_meta_update",
+          data: {
+            key: "turn_terminal",
+            value: {
+              terminal_type: "turn_interrupted",
+              message: "cancelled",
+              diagnostic: null,
+            },
+          },
+        },
+      },
+      {
+        type: "platform",
+        payload: {
+          kind: "session_rewound",
+          data: {
+            discarded_turn_id: "turn-main-cancelled",
+            discarded_entry_index: null,
+            stable_event_seq: 10,
+            stable_turn_id: turnId,
+            reason: "runtime_failure",
+            replacement_turn_id: null,
+            message: "cancelled",
+          },
+        },
+      },
+    ];
+    const events = protectedEvents.map((event, index) => {
+      const eventRecord = record(event, `protectedEvents[${index}]`);
+      const payload = record(eventRecord.payload, `protectedEvents[${index}].payload`);
+      const eventTurnId = typeof payload.turnId === "string" ? payload.turnId : turnId;
+      const item = payload.item && typeof payload.item === "object"
+        ? record(payload.item, `protectedEvents[${index}].payload.item`)
+        : null;
+      const toolCallId = item?.type === "dynamicToolCall" && typeof item.id === "string"
+        ? item.id
+        : undefined;
+      const result = parseSessionEventEnvelopePayload({
+        type: "event",
+        session_id: "session-main-continuation",
+        event_seq: index + 1,
+        occurred_at_ms: index + 1,
+        committed_at_ms: index + 1,
+        session_update_type: string(eventRecord.type, `protectedEvents[${index}].type`),
+        turn_id: eventTurnId,
+        entry_index: index,
+        tool_call_id: toolCallId,
+        notification: {
+          sessionId: "session-main-continuation",
+          source: { connectorId: "fixture-connector", connectorType: "native" },
+          trace: { turnId: eventTurnId, entryIndex: index },
+          observedAt: "2026-07-15T00:00:00Z",
+          event,
+        },
+      });
+      if (result.error) throw result.error;
+      if (!result.event) throw new Error(`protectedEvents[${index}] did not produce an event`);
+      expect(result.event.notification.event).toEqual(event);
+      return result.event;
+    });
+    const continuedState = reduceStreamState(createInitialStreamState([]), events.slice(0, 10));
+    const state = reduceStreamState(createInitialStreamState([]), events);
+
+    expect(continuedState.entries.map((entry) => entry.id)).toEqual([
+      `user-input:${turnId}:user-main-continuation`,
+      "item:reason-main-continuation",
+      "item:turn_001:tool_001",
+      "item:turn_001:tool_002",
+      "item:answer-main-continuation",
+    ]);
+    expect(continuedState.entries.filter((entry) => entry.id === "item:turn_001:tool_001"))
+      .toHaveLength(1);
+    expect(continuedState.entries.filter((entry) => entry.id === "item:turn_001:tool_002"))
+      .toHaveLength(1);
+    expect(continuedState.entries[2]?.event.type).toBe("item_completed");
+    expect(continuedState.entries[3]?.event.type).toBe("item_completed");
+    expect(record(record(continuedState.entries[3]?.event, "failed tool event").payload, "failed tool payload").item)
+      .toMatchObject({ status: "failed", success: false });
+    expect(continuedState.entries[4]?.event.type).toBe("agent_message_delta");
+    expect(continuedState.entries[4]?.accumulatedText).toBe("已经读取完成。");
+    expect(continuedState.entries[4]?.isStreaming).toBe(false);
+    expect(state.rawEvents.map((event) => event.notification.event.type)).toEqual(
+      protectedEvents.map((event, index) => string(record(event, `protectedEvents[${index}]`).type, "type")),
+    );
+    expect(state.entries.map((entry) => entry.id)).toEqual([
+      `user-input:${turnId}:user-main-continuation`,
+      "item:reason-main-continuation",
+      "item:turn_001:tool_001",
+      "item:turn_001:tool_002",
+      "item:answer-main-continuation",
+      "user-input:turn-main-cancelled:user-main-cancelled",
+      "event:12",
+      "event:13",
+      "event:14",
+    ]);
+    expect(state.entries.filter((entry) => entry.id === "item:turn_001:tool_001")).toHaveLength(1);
+    expect(state.entries.filter((entry) => entry.id === "item:turn_001:tool_002")).toHaveLength(1);
+    expect(state.entries[2]?.event.type).toBe("item_completed");
+    expect(state.entries[3]?.event.type).toBe("item_completed");
+    expect(state.entries[4]?.event.type).toBe("agent_message_delta");
+    expect(state.entries[4]?.accumulatedText).toBe("已经读取完成。");
+    expect(state.entries[4]?.isStreaming).toBe(false);
+    expect(state.entries.slice(5).map((entry) => entry.event.type)).toEqual([
+      "user_input_submitted",
+      "error",
+      "platform",
+      "platform",
+    ]);
+    expect(state.rawEvents.at(-1)?.notification.event).toMatchObject({
+      type: "platform",
+      payload: { kind: "session_rewound" },
+    });
+  });
+
   it("preserves Main AgentRun fork mailbox context lineage status and system effects", async () => {
     const fixture = readJson("agentrun-outer.json") as AgentRunOuterFixture;
     const commandState = buildAgentRunConversationCommandState(fixture.conversation_input);

@@ -670,7 +670,7 @@ async fn compiled_full_bootstrap_is_committed_by_real_thread_start_in_main_order
             bootstrap_context,
             normalized_context_surface,
             projection_identity: agentdash_agent_runtime::ContextProjectionIdentity {
-                operation_id: "surface-bootstrap".to_string(),
+                operation_id: "fixture-context-projection".to_string(),
                 source_frame_id: "frame-facade".to_string(),
                 source_frame_revision: 1,
                 recorded_at_ms: 1_783_684_800_000,
@@ -881,12 +881,13 @@ async fn turn_start_pending_and_system_delivery_match_main_stream_family_and_ord
         composition.clone(),
         composition.clone(),
     );
-    facade.send_message(send("first")).await.unwrap();
+    let accepted_start = facade.send_message(send("first")).await.unwrap();
     let snapshot = facade.inspect(target()).await.unwrap().snapshot.unwrap();
     runtime
         .ingest_driver_event(DriverEventEnvelope {
             binding_id: id("binding-facade"),
             generation: RuntimeDriverGeneration(3),
+            operation_id: Some(accepted_start.operation_id),
             source_thread_id: id("source-thread-facade"),
             source_turn_id: None,
             source_item_id: None,
@@ -1109,7 +1110,7 @@ async fn runtime_facade_steer_matches_main_input_steer_golden_exactly() {
         submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
         started_at_seconds: 1_783_684_800,
     };
-    facade
+    let accepted_start = facade
         .send_message(initial)
         .await
         .expect("establish active turn");
@@ -1173,6 +1174,7 @@ async fn runtime_facade_steer_matches_main_input_steer_golden_exactly() {
         .ingest_driver_event(DriverEventEnvelope {
             binding_id: id("binding-facade"),
             generation: RuntimeDriverGeneration(3),
+            operation_id: Some(accepted_start.operation_id),
             source_thread_id: id("source-thread-facade"),
             source_turn_id: None,
             source_item_id: None,
@@ -1459,6 +1461,7 @@ async fn runtime_facade_append_presentation_uses_bound_runtime_thread_and_replay
         events: vec![RuntimePresentationInput {
             coordinate: RuntimePresentationCoordinate {
                 runtime_turn_id: None,
+                presentation_turn_id: None,
                 runtime_item_id: None,
                 interaction_id: None,
                 source_thread_id: Some("session-append-port".into()),

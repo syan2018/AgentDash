@@ -11,6 +11,9 @@ pub mod vfs;
 mod enterprise_remote_e2e;
 
 #[cfg(test)]
+mod production_tools_e2e;
+
+#[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::Path;

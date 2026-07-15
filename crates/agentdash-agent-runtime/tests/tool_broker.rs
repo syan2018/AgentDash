@@ -76,6 +76,10 @@ fn invocation(item: &str) -> ToolBrokerInvocation {
             thread_id: id("thread-broker"),
             turn_id: id("turn-broker"),
             item_id: id(item),
+            presentation_item_id: id(item),
+            source_thread_id: id("source-thread-broker"),
+            source_turn_id: id("source-turn-broker"),
+            source_item_id: id(item),
             binding_id: id("binding-broker"),
             binding_generation: RuntimeDriverGeneration(3),
             tool_set_revision: ToolSetRevision(4),
@@ -370,6 +374,106 @@ async fn direct_callback_validates_all_guards_and_deduplicates_side_effect() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_duplicate_invocations_share_one_execution_terminal() {
+    let fixture = fixture(Duration::from_millis(50));
+    let invocation = invocation("item-concurrent-duplicate");
+    let left_broker = fixture.broker.clone();
+    let right_broker = fixture.broker.clone();
+    let left_invocation = invocation.clone();
+
+    let (left, right) = tokio::join!(
+        left_broker.invoke(
+            ToolChannel::DirectCallback,
+            left_invocation,
+            CancellationToken::new(),
+        ),
+        right_broker.invoke(
+            ToolChannel::DirectCallback,
+            invocation,
+            CancellationToken::new(),
+        )
+    );
+    let left = left.expect("left invocation terminal");
+    let right = right.expect("right invocation terminal");
+    let terminal = |outcome: &ToolBrokerOutcome| match outcome {
+        ToolBrokerOutcome::Terminal {
+            status,
+            result,
+            duplicate,
+        } => (*status, result.clone(), *duplicate),
+        other => panic!("expected shared terminal, got {other:?}"),
+    };
+    let left = terminal(&left);
+    let right = terminal(&right);
+
+    assert_eq!(left.0, ToolBrokerCallStatus::Completed);
+    assert_eq!(left.0, right.0);
+    assert_eq!(left.1, right.1);
+    assert_ne!(left.2, right.2);
+    assert_eq!(fixture.executor.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn persisted_running_call_is_not_replayed_after_executor_owner_disappears() {
+    let fixture = fixture(Duration::from_secs(10));
+    let mut invocation = invocation("item-running-after-restart");
+    invocation.timeout_ms = 100;
+    let owner_broker = fixture.broker.clone();
+    let owner_invocation = invocation.clone();
+    let owner = tokio::spawn(async move {
+        owner_broker
+            .invoke(
+                ToolChannel::DirectCallback,
+                owner_invocation,
+                CancellationToken::new(),
+            )
+            .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let call = fixture
+                .repository
+                .load(&id("item-running-after-restart"))
+                .await
+                .expect("load running call");
+            if call.is_some_and(|call| call.status == ToolBrokerCallStatus::Running) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("execution claim persisted");
+    owner.abort();
+    let _ = owner.await;
+
+    let replay = fixture
+        .broker
+        .invoke(
+            ToolChannel::DirectCallback,
+            invocation,
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(matches!(
+        replay,
+        Err(ToolBrokerError::ExecutionInProgress { ref item_id })
+            if item_id == &id("item-running-after-restart")
+    ));
+    assert_eq!(fixture.executor.calls.load(Ordering::SeqCst), 1);
+    assert!(
+        fixture
+            .repository
+            .recoverable()
+            .await
+            .expect("recovery scan")
+            .is_empty(),
+        "Running is an unresolved side-effect boundary, not replay permission"
+    );
+}
+
 #[tokio::test]
 async fn approval_waits_without_executing_then_resumes_same_call() {
     let fixture = fixture(Duration::ZERO);
@@ -422,13 +526,14 @@ async fn approval_waits_without_executing_then_resumes_same_call() {
 }
 
 #[tokio::test]
-async fn running_call_replays_with_persisted_arguments_and_canonical_item_key() {
+async fn orphaned_running_call_preserves_arguments_without_replaying_the_executor() {
     let fixture = fixture(Duration::ZERO);
     fixture
         .policy
         .approval_required
         .store(true, Ordering::SeqCst);
-    let invocation = invocation("item-running-recovery");
+    let mut invocation = invocation("item-running-recovery");
+    invocation.timeout_ms = 10;
     fixture
         .broker
         .invoke(
@@ -466,22 +571,19 @@ async fn running_call_replays_with_persisted_arguments_and_canonical_item_key() 
             invocation,
             CancellationToken::new(),
         )
-        .await
-        .expect("recover running call");
+        .await;
 
     assert!(matches!(
         recovered,
-        ToolBrokerOutcome::Terminal {
-            duplicate: true,
-            ..
-        }
+        Err(ToolBrokerError::ExecutionInProgress { ref item_id })
+            if item_id == &id("item-running-recovery")
     ));
     assert_eq!(
         fixture.policy.checks.load(Ordering::SeqCst),
         checks_before_recovery,
         "a durable Running call must not reinterpret admission policy"
     );
-    assert_eq!(fixture.executor.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.executor.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -586,6 +688,10 @@ async fn mcp_facade_is_session_scoped_and_does_not_publish_credentials() {
     let outcome = facade
         .call(
             id("item-mcp"),
+            id("turn_001:tool_001"),
+            id("source-thread-broker"),
+            id("source-turn-broker"),
+            id("source-item-mcp"),
             "code_scan".to_string(),
             serde_json::json!({"path":"src"}),
             1_000,
@@ -850,6 +956,10 @@ async fn managed_runtime_journal_preserves_true_mcp_owner_lifecycle() {
             thread_id: id("thread-mcp-broker"),
             turn_id: id("turn-mcp-broker-turn-start"),
             item_id: id("item-mcp-broker"),
+            presentation_item_id: id("turn_001:tool_001"),
+            source_thread_id: id("source-thread-mcp-broker"),
+            source_turn_id: id("source-turn-mcp-broker"),
+            source_item_id: id("source-item-mcp-broker"),
             binding_id: id("binding-mcp-broker"),
             binding_generation: RuntimeDriverGeneration(3),
             tool_set_revision: ToolSetRevision(4),
@@ -1059,6 +1169,10 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
             thread_id: id("thread-broker"),
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
+            presentation_item_id: id("turn_001:tool_001"),
+            source_thread_id: id("source-thread-broker"),
+            source_turn_id: id("source-turn-broker"),
+            source_item_id: id("source-item-runtime-journal"),
             binding_id: id("binding-broker"),
             binding_generation: RuntimeDriverGeneration(3),
             tool_set_revision: ToolSetRevision(4),
@@ -1109,6 +1223,12 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
         .read_presentation(&id("thread-broker"), Some(RuntimeDriverGeneration(3)), None)
         .await;
     assert_eq!(replay.len(), 3);
+    assert!(replay.iter().all(|record| {
+        record.carrier().coordinate.source_thread_id.as_deref() == Some("source-thread-broker")
+            && record.carrier().coordinate.source_turn_id.as_deref() == Some("source-turn-broker")
+            && record.carrier().coordinate.source_item_id.as_deref()
+                == Some("source-item-runtime-journal")
+    }));
     assert_eq!(
         replay
             .iter()
@@ -1183,16 +1303,25 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
             .count(),
         1
     );
-    let presentation = store
+    let presentation_records = store
         .journal_records_after(&id("thread-broker"), None)
         .await
         .expect("presentation journal")
         .records
         .into_iter()
-        .filter_map(|record| match record.fact() {
-            RuntimeJournalFact::Presentation(event) => Some(event.event.clone()),
-            RuntimeJournalFact::Internal(_) => None,
-        })
+        .filter(|record| matches!(record.fact(), RuntimeJournalFact::Presentation(_)))
+        .collect::<Vec<_>>();
+    assert!(presentation_records.iter().all(|record| {
+        record.carrier().coordinate.runtime_item_id.as_ref() == Some(&item_id)
+            && record.carrier().coordinate.source_thread_id.as_deref()
+                == Some("source-thread-broker")
+            && record.carrier().coordinate.source_turn_id.as_deref() == Some("source-turn-broker")
+            && record.carrier().coordinate.source_item_id.as_deref()
+                == Some("source-item-runtime-journal")
+    }));
+    let presentation = presentation_records
+        .into_iter()
+        .filter_map(|record| record.as_presentation().map(|event| event.event.clone()))
         .collect::<Vec<_>>();
     assert_eq!(presentation.len(), 2);
     assert!(matches!(
@@ -1203,6 +1332,20 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
         presentation[1],
         agentdash_agent_protocol::BackboneEvent::ItemCompleted(_)
     ));
+    let presentation_item_ids = presentation
+        .iter()
+        .map(|event| match event {
+            agentdash_agent_protocol::BackboneEvent::ItemStarted(notification) => {
+                notification.item.id()
+            }
+            agentdash_agent_protocol::BackboneEvent::ItemCompleted(notification) => {
+                notification.item.id()
+            }
+            other => panic!("unexpected broker presentation event: {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(presentation_item_ids, vec!["turn_001:tool_001"; 2]);
+    assert_ne!(presentation_item_ids[0], item_id.as_str());
 
     let vendor_item_id: RuntimeItemId = id("item-vendor-stream");
     let vendor_invocation = ToolBrokerInvocation {
@@ -1210,6 +1353,10 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
             thread_id: id("thread-broker"),
             turn_id,
             item_id: vendor_item_id.clone(),
+            presentation_item_id: id("turn_001:tool_002"),
+            source_thread_id: id("source-thread-broker"),
+            source_turn_id: id("source-turn-broker"),
+            source_item_id: id("source-item-vendor-stream"),
             binding_id: id("binding-broker"),
             binding_generation: RuntimeDriverGeneration(3),
             tool_set_revision: ToolSetRevision(4),

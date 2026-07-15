@@ -70,6 +70,7 @@ fn abstract_presentation_record(
             binding_id: Some(id("binding-1")),
             coordinate: RuntimePresentationCoordinate {
                 runtime_turn_id: None,
+                presentation_turn_id: Some(id("source-turn")),
                 runtime_item_id: None,
                 interaction_id: None,
                 source_thread_id: Some("source-thread".to_string()),
@@ -217,6 +218,7 @@ async fn memory_repository_preserves_ordered_presentation_records_without_rewrit
             binding_id: Some(id("binding-1")),
             coordinate: RuntimePresentationCoordinate {
                 runtime_turn_id: None,
+                presentation_turn_id: Some(id("source-turn")),
                 runtime_item_id: None,
                 interaction_id: None,
                 source_thread_id: Some("source-thread".to_string()),
@@ -402,14 +404,60 @@ fn start() -> RuntimeCommandEnvelope {
     )
 }
 
+#[tokio::test]
+async fn driver_acceptance_closes_delivery_only_operation_idempotently() {
+    let (_store, runtime) = fixture();
+    let receipt = runtime
+        .execute(start())
+        .await
+        .expect("accept delivery-only empty thread start");
+    assert!(
+        !runtime
+            .complete_driver_dispatch_operation(
+                &receipt.thread_id.expect("thread id"),
+                &receipt.operation_id
+            )
+            .await
+            .expect("first driver acceptance terminal")
+    );
+    assert!(
+        runtime
+            .complete_driver_dispatch_operation(&id("thread-source-1"), &receipt.operation_id)
+            .await
+            .expect("duplicate driver acceptance terminal")
+    );
+    let RuntimeSnapshotResult::Operation { operation } = runtime
+        .snapshot(RuntimeSnapshotQuery::Operation {
+            operation_id: receipt.operation_id,
+        })
+        .await
+        .expect("operation snapshot")
+    else {
+        panic!("expected operation snapshot")
+    };
+    assert_eq!(
+        operation.terminal,
+        Some(RuntimeOperationTerminal::Succeeded)
+    );
+}
+
 fn driver(event: RuntimeEvent) -> DriverEventEnvelope {
     driver_facts(vec![RuntimeJournalFact::Internal(event)])
 }
 
 fn driver_facts(facts: Vec<RuntimeJournalFact>) -> DriverEventEnvelope {
+    let operation_id = facts.iter().find_map(|fact| match fact {
+        RuntimeJournalFact::Internal(
+            RuntimeEvent::TurnStarted { turn_id, .. } | RuntimeEvent::TurnTerminal { turn_id, .. },
+        ) => turn_id.as_str().strip_prefix("turn-").and_then(|value| {
+            agentdash_agent_runtime_contract::RuntimeOperationId::new(value).ok()
+        }),
+        _ => None,
+    });
     DriverEventEnvelope {
         binding_id: id("binding-1"),
         generation: RuntimeDriverGeneration(7),
+        operation_id,
         source_thread_id: id("source-1"),
         source_turn_id: None,
         source_item_id: None,
@@ -685,7 +733,7 @@ fn terminal_effect_binding() -> RuntimeTerminalHookEffectBinding {
 }
 
 #[tokio::test]
-async fn surface_adopt_is_cas_guarded_idle_only_and_enters_driver_outbox() {
+async fn surface_adopt_is_cas_guarded_and_keeps_active_turn_while_connector_sync_is_queued() {
     let (store, runtime) = fixture();
     runtime
         .execute(start())
@@ -825,7 +873,7 @@ async fn surface_adopt_is_cas_guarded_idle_only_and_enters_driver_outbox() {
         active.active_presentation_turn_id,
         Some(id("presentation-turn-486"))
     );
-    let active_rejection = runtime
+    let active_receipt = runtime
         .execute(command(
             "surface-active-operation",
             "surface-active-key",
@@ -836,16 +884,147 @@ async fn surface_adopt_is_cas_guarded_idle_only_and_enters_driver_outbox() {
                 expected_surface_digest: active.surface.surface_digest,
                 target: Box::new(RuntimeSurfaceDescriptor {
                     surface_revision: SurfaceRevision(3),
+                    surface_digest: id("surface-3"),
+                    source_frame_id: "frame-3".to_string(),
                     ..adopted_surface()
                 }),
             },
         ))
-        .await;
+        .await
+        .expect("canonical surface adoption is independent from connector turn boundary");
+    assert!(!active_receipt.duplicate);
+    let active_adopted = thread_snapshot(&runtime, id("thread-source-1")).await;
+    assert_eq!(
+        active_adopted.active_turn_id, active.active_turn_id,
+        "platform surface facts must not interrupt the active turn"
+    );
+    assert_eq!(active_adopted.surface.surface_revision, SurfaceRevision(3));
     assert!(matches!(
-        active_rejection,
-        Err(RuntimeExecuteError::Unsupported { .. })
-            | Err(RuntimeExecuteError::InvalidCommand { .. })
+        &store.outbox().await.last().expect("active surface outbox").command,
+        RuntimeCommand::SurfaceAdopt { target, .. }
+            if target.surface_revision == SurfaceRevision(3)
     ));
+}
+
+#[tokio::test]
+async fn tool_set_replace_keeps_current_and_target_revisions_distinct() {
+    let (store, runtime) = fixture();
+    runtime
+        .execute(start())
+        .await
+        .expect("start runtime thread");
+    let initial = thread_snapshot(&runtime, id("thread-source-1")).await;
+
+    runtime
+        .execute(command(
+            "tool-set-replace-operation",
+            "tool-set-replace-key",
+            Some(initial.revision.0),
+            RuntimeCommand::ToolSetReplace {
+                thread_id: initial.thread_id.clone(),
+                expected_current_tool_set_revision: ToolSetRevision(0),
+                target_tool_set_revision: ToolSetRevision(4),
+                tool_set_digest: "tools-4".to_string(),
+            },
+        ))
+        .await
+        .expect("replace tool set");
+
+    let replaced = thread_snapshot(&runtime, initial.thread_id).await;
+    assert_eq!(replaced.tool_set_revision, ToolSetRevision(4));
+    assert_eq!(replaced.surface.tool_set_revision, ToolSetRevision(4));
+    assert_eq!(replaced.surface.tool_set_digest, "tools-4");
+    assert!(matches!(
+        &store.outbox().await.last().expect("tool replace outbox").command,
+        RuntimeCommand::ToolSetReplace {
+            expected_current_tool_set_revision: ToolSetRevision(0),
+            target_tool_set_revision: ToolSetRevision(4),
+            tool_set_digest,
+            ..
+        } if tool_set_digest == "tools-4"
+    ));
+}
+
+#[tokio::test]
+async fn native_surface_adopt_commits_context_frames_and_lowers_driver_sync_to_tool_replace() {
+    let (store, runtime) = fixture();
+    let mut native_start = start();
+    let RuntimeCommand::ThreadStart { bound_profile, .. } = &mut native_start.command else {
+        unreachable!()
+    };
+    bound_profile
+        .lifecycle
+        .remove(&LifecycleCapability::SurfaceAdopt);
+    runtime
+        .execute(native_start)
+        .await
+        .expect("start native runtime thread");
+    let initial = thread_snapshot(&runtime, id("thread-source-1")).await;
+
+    runtime
+        .execute(command(
+            "native-active-turn-operation",
+            "native-active-turn-key",
+            Some(initial.revision.0),
+            RuntimeCommand::TurnStart {
+                thread_id: initial.thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-native-surface"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("start native active turn");
+    let active = thread_snapshot(&runtime, initial.thread_id.clone()).await;
+    let mut adoption = command(
+        "native-surface-operation",
+        "native-surface-key",
+        Some(active.revision.0),
+        RuntimeCommand::SurfaceAdopt {
+            thread_id: active.thread_id.clone(),
+            expected_surface_revision: active.surface.surface_revision,
+            expected_surface_digest: active.surface.surface_digest.clone(),
+            target: Box::new(adopted_surface()),
+        },
+    );
+    let adoption_plan = surface_adoption_plan();
+    adoption.presentation = adoption_plan.adoption_presentation(
+        &id("presentation-thread-1"),
+        active.active_presentation_turn_id.as_ref(),
+        "native-surface-operation",
+    );
+
+    runtime
+        .execute(adoption)
+        .await
+        .expect("platform-owned surface adoption during native turn");
+
+    let adopted = thread_snapshot(&runtime, initial.thread_id.clone()).await;
+    assert_eq!(adopted.surface, adopted_surface());
+    assert!(matches!(
+        &store.outbox().await.last().expect("native surface outbox").command,
+        RuntimeCommand::ToolSetReplace {
+            expected_current_tool_set_revision: ToolSetRevision(0),
+            target_tool_set_revision: ToolSetRevision(1),
+            tool_set_digest,
+            ..
+        } if tool_set_digest == "tools-2"
+    ));
+    let frames = store
+        .journal_records_after(&initial.thread_id, None)
+        .await
+        .expect("native surface journal")
+        .records
+        .into_iter()
+        .filter_map(
+            |record| match record.as_presentation().map(|event| &event.event) {
+                Some(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))) => {
+                    Some(changed.frame.clone())
+                }
+                _ => None,
+            },
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(frames, adoption_plan.adoption_frames);
 }
 
 #[tokio::test]
@@ -918,6 +1097,7 @@ async fn application_transient_append_publishes_complete_ephemeral_body_without_
             events: vec![RuntimePresentationInput {
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: Some(id("turn-op-application-transient")),
+                    presentation_turn_id: Some(id("presentation-turn-application-transient")),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some("presentation-thread-1".into()),
@@ -1151,6 +1331,7 @@ async fn application_transient_is_rejected_after_terminal_without_reviving_repla
             events: vec![RuntimePresentationInput {
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: Some(runtime_turn_id),
+                    presentation_turn_id: Some(id("presentation-turn-late-transient")),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some("presentation-thread-1".into()),
@@ -1229,6 +1410,7 @@ async fn concurrent_terminal_and_application_transient_never_publish_transient_a
                 events: vec![RuntimePresentationInput {
                     coordinate: RuntimePresentationCoordinate {
                         runtime_turn_id: Some(runtime_turn_id),
+                        presentation_turn_id: Some(id("presentation-turn-transient-terminal-race")),
                         runtime_item_id: None,
                         interaction_id: None,
                         source_thread_id: Some("presentation-thread-1".into()),
@@ -1619,7 +1801,7 @@ async fn acceptance_projection_journal_and_outbox_commit_atomically() {
 
 #[tokio::test]
 async fn thread_start_with_initial_input_owns_the_canonical_turn() {
-    let (_store, runtime) = fixture();
+    let (store, runtime) = fixture();
     let mut start = start();
     let RuntimeCommand::ThreadStart {
         input,
@@ -1641,13 +1823,32 @@ async fn thread_start_with_initial_input_owns_the_canonical_turn() {
         .thread_id
         .expect("thread id");
     let snapshot = thread_snapshot(&runtime, thread_id).await;
-    assert_eq!(snapshot.revision, RuntimeRevision(4));
-    assert_eq!(snapshot.latest_event_sequence, EventSequence(4));
+    assert_eq!(snapshot.revision, RuntimeRevision(6));
+    assert_eq!(snapshot.latest_event_sequence, EventSequence(6));
     assert_eq!(snapshot.active_turn_id, Some(id("turn-op-1")));
     assert_eq!(
         snapshot.active_presentation_turn_id,
         Some(id("presentation-turn-thread-start-input"))
     );
+    let state = store
+        .load_thread(&snapshot.thread_id)
+        .await
+        .expect("load canonical thread")
+        .expect("canonical thread");
+    assert_eq!(state.items.len(), 1);
+    let user = state.items.values().next().expect("canonical user item");
+    let agentdash_agent_runtime::EntityPhase::Terminal(RuntimeItemTerminal::Completed {
+        final_content,
+    }) = &user.phase
+    else {
+        panic!("canonical user item must be completed")
+    };
+    assert!(matches!(
+        final_content.item(),
+        agentdash_agent_protocol::AgentDashThreadItem::Codex(
+            agentdash_agent_protocol::CodexThreadItem::UserMessage { .. }
+        )
+    ));
 }
 
 #[tokio::test]
@@ -1775,6 +1976,7 @@ async fn idempotency_expected_revision_and_operation_sequence_are_enforced() {
     altered_presentation.presentation = vec![RuntimePresentationInput {
         coordinate: RuntimePresentationCoordinate {
             runtime_turn_id: None,
+            presentation_turn_id: None,
             runtime_item_id: None,
             interaction_id: None,
             source_thread_id: Some("source-1".to_string()),
@@ -1911,6 +2113,7 @@ fn presentation_append_request(
         events: vec![RuntimePresentationInput {
             coordinate: RuntimePresentationCoordinate {
                 runtime_turn_id: None,
+                presentation_turn_id: Some(id(source_turn_id)),
                 runtime_item_id: None,
                 interaction_id: None,
                 source_thread_id: None,
@@ -2322,17 +2525,6 @@ async fn exactly_one_terminal_and_lost_are_authoritative() {
         }))
         .await
         .expect("lost");
-    runtime
-        .ingest_driver_event(driver(RuntimeEvent::OperationTerminal {
-            operation_id: id("op-2"),
-            terminal: RuntimeOperationTerminal::Lost {
-                retryable: true,
-                message: None,
-            },
-        }))
-        .await
-        .expect("operation lost");
-
     assert!(matches!(
         runtime
             .ingest_driver_event(driver(RuntimeEvent::TurnTerminal {
@@ -3235,6 +3427,24 @@ async fn binding_loss_atomically_converges_every_active_entity_to_lost() {
             Some(RuntimeOperationTerminal::Lost { .. })
         ));
     }
+    let records = store
+        .journal_records_after(&thread_id, None)
+        .await
+        .expect("binding-loss journal")
+        .records;
+    assert!(records.iter().any(|record| {
+        matches!(
+            record.fact(),
+            RuntimeJournalFact::Presentation(event)
+                if matches!(
+                    &event.event,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value }
+                    ) if key == "turn_terminal"
+                        && value["terminal_type"] == "turn_lost"
+                )
+        )
+    }), "BindingLost must project the generated lost turn terminal into the Session stream");
     assert!(store.quarantined().await.is_empty());
 }
 

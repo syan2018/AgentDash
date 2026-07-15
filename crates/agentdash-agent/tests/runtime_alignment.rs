@@ -1884,7 +1884,7 @@ async fn abort_does_not_append_aborted_assistant_message() {
     ]]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
 
-    let (_rx, handle) = agent
+    let (mut rx, handle) = agent
         .prompt(AgentMessage::user("hi"))
         .expect("prompt should start");
     first_delta_sent.notified().await;
@@ -1895,11 +1895,22 @@ async fn abort_does_not_append_aborted_assistant_message() {
         .await
         .expect("task should not panic")
         .expect_err("abort must remain a typed failure");
-    assert!(matches!(error, AgentError::Bridge(ref error) if error.is_aborted()));
+    assert!(matches!(error, AgentError::Cancelled));
+
+    let mut events = Vec::new();
+    while let Some(event) = rx.next().await {
+        events.push(event);
+    }
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::RunError { .. }))
+    );
 
     let state = agent.state().await;
     assert!(!state.messages.iter().any(|message| message.is_aborted()));
     assert!(state.stream_message.is_none());
+    assert!(state.error.is_none());
 }
 
 #[tokio::test]
@@ -1922,7 +1933,7 @@ async fn abort_interrupts_pending_provider_stream_and_waits_for_idle() {
 
     let provider_started = provider_stream_started.notified();
     tokio::pin!(provider_started);
-    let (_rx, first_handle) = agent
+    let (mut first_rx, first_handle) = agent
         .prompt(AgentMessage::user("first"))
         .expect("first prompt should start");
     provider_started.await;
@@ -1937,7 +1948,17 @@ async fn abort_interrupts_pending_provider_stream_and_waits_for_idle() {
         .await
         .expect("first task should not panic")
         .expect_err("aborted provider stream must remain a typed failure");
-    assert!(matches!(first_error, AgentError::Bridge(ref error) if error.is_aborted()));
+    assert!(matches!(first_error, AgentError::Cancelled));
+    let mut first_events = Vec::new();
+    while let Some(event) = first_rx.next().await {
+        first_events.push(event);
+    }
+    assert!(
+        !first_events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::RunError { .. }))
+    );
+    assert!(agent.state().await.error.is_none());
 
     let (_rx, second_handle) = agent
         .prompt(AgentMessage::user("second"))

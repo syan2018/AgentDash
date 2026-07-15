@@ -65,6 +65,56 @@ async fn no_eligible_messages_terminalizes_the_compaction_without_changing_conte
     ));
 }
 
+#[tokio::test]
+async fn later_turn_is_admitted_without_moving_the_frozen_compaction_source_boundary() {
+    let (store, runtime) = fixture();
+    let thread_id =
+        start_and_accept_compaction(&runtime, "compact-1", ContextCompactionTrigger::Manual).await;
+    let admitted = store
+        .load_context_preparation(&id("compact-1"))
+        .await
+        .expect("load admitted compaction")
+        .expect("pending compaction");
+
+    runtime
+        .execute(envelope(
+            "turn-after-compaction-admission",
+            "turn-after-compaction-admission-key",
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-after-admission"),
+                input: vec![RuntimeInput::Text {
+                    text: "post-admission prompt".to_string(),
+                }],
+            },
+        ))
+        .await
+        .expect("a pending compaction must not freeze later turns");
+
+    let after_turn = store
+        .load_context_preparation(&id("compact-1"))
+        .await
+        .expect("reload admitted compaction")
+        .expect("pending compaction");
+    assert_eq!(
+        after_turn.source_end_event_sequence,
+        admitted.source_end_event_sequence
+    );
+    let thread = store
+        .load_thread(&thread_id)
+        .await
+        .expect("load thread")
+        .expect("runtime thread");
+    assert_eq!(
+        thread
+            .active_turn_id
+            .as_ref()
+            .map(|turn_id| turn_id.as_str()),
+        Some("turn-turn-after-compaction-admission")
+    );
+    assert!(thread.next_event_sequence.0 > admitted.source_end_event_sequence.0);
+}
+
 fn profile() -> RuntimeProfile {
     RuntimeProfile {
         reference_class: ReferenceRuntimeClass::ManagedThread,
@@ -221,6 +271,7 @@ fn preparation(
         trigger,
         expected_base_checkpoint_id: None,
         expected_base_revision: ContextRevision(0),
+        source_end_event_sequence: EventSequence(3),
         checkpoint_id: id(&format!("checkpoint-{suffix}")),
         materialized: MaterializedContext {
             recipe: ContextRecipe {
@@ -247,7 +298,7 @@ fn preparation(
             trigger: Some(format!("{trigger:?}").to_lowercase()),
             phase: Some("pre_provider".to_string()),
             source_start_event_seq: Some(1),
-            source_end_event_seq: Some(8),
+            source_end_event_seq: Some(3),
             first_kept_event_seq: None,
             compacted_until_ref: None,
             timestamp_ms: Some(1_710_000_000_000),
@@ -273,6 +324,7 @@ async fn prepare_is_atomic_and_does_not_change_the_active_head() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].operation_id, prepare.operation_id);
     assert_eq!(pending[0].compaction_id, prepare.compaction_id);
+    assert_eq!(pending[0].source_end_event_sequence, EventSequence(3));
     store.fail_next_commit_at(CommitFailurePoint::AfterContext);
     assert!(matches!(
         runtime.prepare_compaction(prepare.clone()).await,
@@ -306,6 +358,13 @@ async fn prepare_is_atomic_and_does_not_change_the_active_head() {
             .is_none()
     );
     assert_eq!(store.context_activation_outbox().await.len(), 1);
+    let candidate = store
+        .load_context_candidate(&prepare.compaction_id)
+        .await
+        .expect("candidate")
+        .expect("prepared candidate");
+    assert_eq!(candidate.source_end_event_sequence, EventSequence(3));
+    assert_eq!(candidate.presentation.source_end_event_seq, Some(3));
     assert_eq!(
         store
             .pending_context_activations()
@@ -536,7 +595,7 @@ async fn thread_read_and_context_read_have_distinct_fidelity_and_views() {
         prepare.materialized.recipe.provenance
     );
     assert_eq!(store.context_activation_outbox().await.len(), 1);
-    let mut context_frames = store
+    let context_frames = store
         .journal_records_after(&snapshot.thread_id, None)
         .await
         .unwrap()
@@ -556,10 +615,17 @@ async fn thread_read_and_context_read_have_distinct_fidelity_and_views() {
         "fixtures/wi03_compaction_stream_main_957fa9d.json"
     ))
     .unwrap();
-    context_frames[0]["id"] = oracle["frame"]["id"].clone();
-    context_frames[0]["created_at_ms"] = serde_json::json!(0);
-    context_frames[0]["sections"][0]["timestamp_ms"] = serde_json::json!(0);
-    assert_eq!(context_frames[0], oracle["frame"]);
+    let created_at_ms = context_frames[0]["created_at_ms"]
+        .as_i64()
+        .expect("compaction frame timestamp");
+    assert_eq!(
+        context_frames[0]["id"],
+        serde_json::json!(format!("compaction-summary-{created_at_ms}"))
+    );
+    let mut expected_frame = oracle["frame"].clone();
+    expected_frame["id"] = context_frames[0]["id"].clone();
+    expected_frame["created_at_ms"] = serde_json::json!(created_at_ms);
+    assert_eq!(context_frames[0], expected_frame);
     assert_eq!(
         store
             .pending_context_activations()

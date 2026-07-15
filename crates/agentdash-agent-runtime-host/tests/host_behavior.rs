@@ -446,6 +446,13 @@ struct UnexpectedContextBroker;
 
 #[async_trait]
 impl AgentRuntimeContextBroker for UnexpectedContextBroker {
+    async fn load_transcript(
+        &self,
+        _request: DriverTranscriptRequest,
+    ) -> Result<DriverTranscript, DriverContextError> {
+        Err(DriverContextError::NotFound)
+    }
+
     async fn load_checkpoint(
         &self,
         _request: DriverContextCheckpointRequest,

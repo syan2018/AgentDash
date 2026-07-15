@@ -16,7 +16,7 @@
       "frontend_label": "Compaction Summary",
       "connector_profile": { "profile_id": "" }
     },
-    "rendered_text": "## Compaction Summary\nmessages_compacted: 1\ntokens_before: 100\ntimestamp_ms: 1710000000000\ncompaction_id: compact-1\nprojection_version: 9\nstrategy: summary_prefix\ntrigger: manual\nphase: pre_provider\nsource_start_event_seq: 1\nsource_end_event_seq: 8\n\n以下是之前对话的压缩摘要，用于延续工作上下文。摘要中的路径、函数名等具体信息可能已过时，请在执行前验证。\n\nsummary-view",
+    "rendered_text": "## Compaction Summary\nmessages_compacted: 1\ntokens_before: 100\ntimestamp_ms: 1710000000000\ncompaction_id: compact-1\nprojection_version: 9\nstrategy: summary_prefix\ntrigger: manual\nphase: pre_provider\nsource_start_event_seq: 1\nsource_end_event_seq: 3\n\n以下是之前对话的压缩摘要，用于延续工作上下文。摘要中的路径、函数名等具体信息可能已过时，请在执行前验证。\n\nsummary-view",
     "sections": [{
       "kind": "compaction_summary",
       "title": "Compaction Summary",
@@ -29,8 +29,8 @@
       "trigger": "manual",
       "phase": "pre_provider",
       "source_start_event_seq": 1,
-      "source_end_event_seq": 8,
-      "timestamp_ms": 0
+      "source_end_event_seq": 3,
+      "timestamp_ms": 1710000000000
     }],
     "created_at_ms": 0
   }

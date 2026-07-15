@@ -102,6 +102,84 @@ impl LlmBridge for EchoBridge {
     }
 }
 
+#[derive(Clone, Default)]
+struct RecordingBridge {
+    requests: Arc<Mutex<Vec<BridgeRequest>>>,
+}
+
+#[async_trait]
+impl LlmBridge for RecordingBridge {
+    async fn stream_complete(
+        &self,
+        request: BridgeRequest,
+    ) -> Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
+        self.requests.lock().await.push(request);
+        let message = AgentMessage::assistant("restored response");
+        Box::pin(stream::iter(vec![
+            StreamChunk::TextDelta("restored response".to_string()),
+            StreamChunk::Done(BridgeResponse {
+                message,
+                raw_content: vec![ContentPart::text("restored response")],
+                usage: TokenUsage::default(),
+            }),
+        ]))
+    }
+}
+
+struct RecordingResolver(Arc<RecordingBridge>);
+
+#[async_trait]
+impl NativeBridgeResolver for RecordingResolver {
+    async fn resolve(
+        &self,
+        _instance: &ActivatedAgentServiceInstance,
+        _host: &RuntimeDriverHostPorts,
+    ) -> Result<ResolvedNativeBridge, NativeBridgeResolveError> {
+        Ok(ResolvedNativeBridge {
+            bridge: self.0.clone(),
+            presentation: NativePresentationMetadata {
+                model_context_window: 200_000,
+                reserve_tokens: 0,
+            },
+        })
+    }
+}
+
+#[derive(Clone)]
+struct BlockingBridge {
+    started: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl LlmBridge for BlockingBridge {
+    async fn stream_complete(
+        &self,
+        _request: BridgeRequest,
+    ) -> Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
+        self.started.notify_waiters();
+        Box::pin(stream::pending())
+    }
+}
+
+struct BlockingResolver(Arc<BlockingBridge>);
+
+#[async_trait]
+impl NativeBridgeResolver for BlockingResolver {
+    async fn resolve(
+        &self,
+        _instance: &ActivatedAgentServiceInstance,
+        _host: &RuntimeDriverHostPorts,
+    ) -> Result<ResolvedNativeBridge, NativeBridgeResolveError> {
+        Ok(ResolvedNativeBridge {
+            bridge: self.0.clone(),
+            presentation: NativePresentationMetadata {
+                model_context_window: 200_000,
+                reserve_tokens: 0,
+            },
+        })
+    }
+}
+
 struct Resolver;
 
 #[async_trait]
@@ -167,10 +245,18 @@ impl AgentRuntimeSurfaceBroker for Surfaces {
 
 struct Contexts {
     activation: DriverContextActivation,
+    transcript: DriverTranscript,
 }
 
 #[async_trait]
 impl AgentRuntimeContextBroker for Contexts {
+    async fn load_transcript(
+        &self,
+        _request: DriverTranscriptRequest,
+    ) -> Result<DriverTranscript, DriverContextError> {
+        Ok(self.transcript.clone())
+    }
+
     async fn load_checkpoint(
         &self,
         _request: DriverContextCheckpointRequest,
@@ -223,6 +309,54 @@ impl DriverEventSink for Sink {
         self.0.lock().await.push(event);
         Ok(())
     }
+}
+
+struct DispatchOnTerminalSink {
+    driver: Arc<dyn AgentRuntimeDriver>,
+    next: Mutex<Option<DriverCommandEnvelope>>,
+    next_sink: Arc<Sink>,
+    outcome:
+        Mutex<Option<tokio::sync::oneshot::Sender<Result<DriverDispatchReceipt, DriverError>>>>,
+}
+
+#[async_trait]
+impl DriverEventSink for DispatchOnTerminalSink {
+    async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
+        let terminal = event.facts.iter().any(|fact| {
+            matches!(
+                fact,
+                RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal { .. })
+            )
+        });
+        if terminal && let Some(next) = self.next.lock().await.take() {
+            let result = self.driver.dispatch(next, self.next_sink.clone()).await;
+            if let Some(outcome) = self.outcome.lock().await.take() {
+                let _ = outcome.send(result);
+            }
+        }
+        Ok(())
+    }
+}
+
+async fn wait_for_turn_terminal(sink: &Sink) {
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            let terminal = sink.0.lock().await.iter().any(|event| {
+                event.facts.iter().any(|fact| {
+                    matches!(
+                        fact,
+                        RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal { .. })
+                    )
+                })
+            });
+            if terminal {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Native turn terminal timeout");
 }
 
 struct FailingSink;
@@ -348,7 +482,32 @@ fn thread_start(presentation_turn_id: &str, input: Vec<RuntimeInput>) -> Runtime
 }
 
 async fn driver_fixture() -> (Arc<dyn AgentRuntimeDriver>, DriverBinding) {
-    let contribution = native_agent_contribution(Arc::new(Resolver));
+    driver_fixture_with(
+        Arc::new(Resolver),
+        DriverTranscript {
+            earliest_available: EventSequence(1),
+            latest_available: EventSequence(0),
+            active_compaction_source_end: None,
+            completed_presentation_item_ids: Vec::new(),
+            records: Vec::new(),
+        },
+    )
+    .await
+}
+
+async fn driver_fixture_with(
+    resolver: Arc<dyn NativeBridgeResolver>,
+    transcript: DriverTranscript,
+) -> (Arc<dyn AgentRuntimeDriver>, DriverBinding) {
+    driver_fixture_with_surface(resolver, transcript, fixture_surface()).await
+}
+
+async fn driver_fixture_with_surface(
+    resolver: Arc<dyn NativeBridgeResolver>,
+    transcript: DriverTranscript,
+    initial_surface: MaterializedDriverSurface,
+) -> (Arc<dyn AgentRuntimeDriver>, DriverBinding) {
+    let contribution = native_agent_contribution(resolver);
     let instance_id: RuntimeServiceInstanceId = id("native-instance");
     let activation = DriverContextActivation {
         candidate_id: id("candidate-1"),
@@ -382,14 +541,17 @@ async fn driver_fixture() -> (Arc<dyn AgentRuntimeDriver>, DriverBinding) {
             RuntimeDriverHostPorts {
                 credentials: Arc::new(NoCredentials),
                 surfaces: Arc::new(Surfaces {
-                    initial: fixture_surface(),
+                    initial: initial_surface,
                     replacement: DriverToolSurface {
                         revision: ToolSetRevision(4),
                         digest: "sha256:tools-4".to_string(),
                         tools: Vec::new(),
                     },
                 }),
-                context: Arc::new(Contexts { activation }),
+                context: Arc::new(Contexts {
+                    activation,
+                    transcript,
+                }),
                 tools: Arc::new(NoTools),
                 hooks: Arc::new(ContinueHooks),
             },
@@ -409,6 +571,552 @@ async fn driver_fixture() -> (Arc<dyn AgentRuntimeDriver>, DriverBinding) {
     (driver, binding)
 }
 
+fn transcript_record(
+    sequence: u64,
+    operation_id: &str,
+    presentation_turn_id: &str,
+    entry_index: u32,
+    event: agentdash_agent_protocol::BackboneEvent,
+) -> RuntimeJournalRecord {
+    RuntimeJournalRecord::new(
+        RuntimeCarrierMetadata {
+            thread_id: id("runtime-thread-1"),
+            recorded_at_ms: sequence,
+            sequence: Some(EventSequence(sequence)),
+            transient: None,
+            revision: RuntimeRevision(sequence),
+            operation_id: Some(id(operation_id)),
+            append_idempotency_key: None,
+            binding_id: Some(id("binding-1")),
+            coordinate: RuntimePresentationCoordinate {
+                runtime_turn_id: None,
+                presentation_turn_id: Some(id(presentation_turn_id)),
+                runtime_item_id: None,
+                interaction_id: None,
+                source_thread_id: Some("native-thread-binding-1".to_string()),
+                source_turn_id: Some(presentation_turn_id.to_string()),
+                source_item_id: None,
+                source_request_id: None,
+                source_entry_index: Some(entry_index),
+            },
+        },
+        RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+            PresentationDurability::Durable,
+            event,
+        )),
+    )
+    .expect("durable transcript record")
+}
+
+#[tokio::test]
+async fn native_cold_start_replays_durable_tool_history_without_duplicating_current_prompt() {
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
+    use agentdash_agent_protocol::{
+        BackboneEvent, ItemCompletedNotification, UserInputSource, UserInputSubmissionKind,
+        UserInputSubmittedNotification,
+    };
+
+    let old_user = BackboneEvent::UserInputSubmitted(UserInputSubmittedNotification::new(
+        "presentation-thread-1",
+        "presentation-turn-old",
+        "user-old",
+        UserInputSubmissionKind::Prompt,
+        UserInputSource::core_composer(),
+        vec![codex::UserInput::Text {
+            text: "old prompt".to_string(),
+            text_elements: Vec::new(),
+        }],
+    ));
+    let old_tool = BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+        codex::ThreadItem::DynamicToolCall {
+            id: "turn_007:tool_012".to_string(),
+            tool: "fs_glob".to_string(),
+            arguments: serde_json::json!({"pattern":"**/*.rs"}),
+            status: codex::DynamicToolCallStatus::Completed,
+            content_items: Some(Some(vec![
+                codex::DynamicToolCallOutputContentItem::InputText {
+                    text: "src/lib.rs".to_string(),
+                },
+            ])),
+            duration_ms: None,
+            namespace: None,
+            success: Some(Some(true)),
+        },
+        "presentation-thread-1",
+        "presentation-turn-old",
+    ));
+    let old_assistant = BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+        codex::ThreadItem::AgentMessage {
+            id: "message-old".to_string(),
+            text: "old answer".to_string(),
+            phase: None,
+            memory_citation: None,
+        },
+        "presentation-thread-1",
+        "presentation-turn-old",
+    ));
+    let current_user = BackboneEvent::UserInputSubmitted(UserInputSubmittedNotification::new(
+        "presentation-thread-1",
+        "native-turn-request-restore",
+        "user-current",
+        UserInputSubmissionKind::Prompt,
+        UserInputSource::core_composer(),
+        vec![codex::UserInput::Text {
+            text: "current prompt".to_string(),
+            text_elements: Vec::new(),
+        }],
+    ));
+    let transcript = DriverTranscript {
+        earliest_available: EventSequence(1),
+        latest_available: EventSequence(4),
+        active_compaction_source_end: None,
+        completed_presentation_item_ids: vec![
+            "turn_007:tool_012".to_string(),
+            "message-old".to_string(),
+        ],
+        records: vec![
+            transcript_record(1, "operation-old", "presentation-turn-old", 0, old_user),
+            transcript_record(2, "operation-old", "presentation-turn-old", 1, old_tool),
+            transcript_record(
+                3,
+                "operation-old",
+                "presentation-turn-old",
+                2,
+                old_assistant,
+            ),
+            transcript_record(
+                4,
+                "operation-restore",
+                "native-turn-request-restore",
+                0,
+                current_user,
+            ),
+        ],
+    };
+    let bridge = Arc::new(RecordingBridge::default());
+    let (driver, binding) =
+        driver_fixture_with(Arc::new(RecordingResolver(bridge.clone())), transcript).await;
+    let sink = Arc::new(Sink::default());
+    driver
+        .dispatch(
+            DriverCommandEnvelope {
+                request_id: id("request-restore"),
+                operation_id: id("operation-restore"),
+                presentation_thread_id: id("presentation-thread-1"),
+                binding_id: id("binding-1"),
+                generation: RuntimeDriverGeneration(4),
+                source_thread_id: binding.source_thread_id,
+                runtime_turn_id: Some(id("turn-request-restore")),
+                presentation_turn_id: Some(id("native-turn-request-restore")),
+                command: thread_start(
+                    "native-turn-request-restore",
+                    vec![RuntimeInput::Text {
+                        text: "current prompt".to_string(),
+                    }],
+                ),
+            },
+            sink.clone(),
+        )
+        .await
+        .expect("accept restored turn");
+    wait_for_turn_terminal(sink.as_ref()).await;
+
+    let requests = bridge.requests.lock().await;
+    let request = requests.first().expect("provider request");
+    let text_messages = request
+        .messages
+        .iter()
+        .filter_map(AgentMessage::first_text)
+        .collect::<Vec<_>>();
+    assert!(text_messages.contains(&"old prompt"));
+    assert!(text_messages.contains(&"old answer"));
+    assert_eq!(
+        text_messages
+            .iter()
+            .filter(|text| **text == "current prompt")
+            .count(),
+        1,
+        "current operation input is appended by Agent::prompt exactly once"
+    );
+    assert!(request.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Assistant { tool_calls, .. }
+            if tool_calls.iter().any(|call| call.id == "turn_007:tool_012")
+    )));
+    assert!(request.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::ToolResult { tool_call_id, .. }
+            if tool_call_id == "turn_007:tool_012"
+    )));
+}
+
+#[tokio::test]
+async fn native_cold_start_replays_post_admission_tail_once_after_active_compaction_base() {
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
+    use agentdash_agent_protocol::{
+        BackboneEvent, ItemCompletedNotification, UserInputSource, UserInputSubmissionKind,
+        UserInputSubmittedNotification,
+    };
+
+    let user_event = |turn: &str, item: &str, text: &str| {
+        BackboneEvent::UserInputSubmitted(UserInputSubmittedNotification::new(
+            "presentation-thread-1",
+            turn,
+            item,
+            UserInputSubmissionKind::Prompt,
+            UserInputSource::core_composer(),
+            vec![codex::UserInput::Text {
+                text: text.to_string(),
+                text_elements: Vec::new(),
+            }],
+        ))
+    };
+    let assistant_event = |turn: &str, item: &str, text: &str| {
+        BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+            codex::ThreadItem::AgentMessage {
+                id: item.to_string(),
+                text: text.to_string(),
+                phase: None,
+                memory_citation: None,
+            },
+            "presentation-thread-1",
+            turn,
+        ))
+    };
+    let post_compaction_tool = BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+        codex::ThreadItem::DynamicToolCall {
+            id: "turn_011:tool_021".to_string(),
+            tool: "fs_glob".to_string(),
+            arguments: serde_json::json!({"pattern":"**/*.toml"}),
+            status: codex::DynamicToolCallStatus::Completed,
+            content_items: Some(Some(vec![
+                codex::DynamicToolCallOutputContentItem::InputText {
+                    text: "Cargo.toml".to_string(),
+                },
+            ])),
+            duration_ms: None,
+            namespace: None,
+            success: Some(Some(true)),
+        },
+        "presentation-thread-1",
+        "presentation-turn-tail",
+    ));
+    let transcript = DriverTranscript {
+        earliest_available: EventSequence(1),
+        latest_available: EventSequence(6),
+        active_compaction_source_end: Some(EventSequence(2)),
+        completed_presentation_item_ids: vec![
+            "turn_011:tool_021".to_string(),
+            "assistant-tail".to_string(),
+        ],
+        records: vec![
+            transcript_record(
+                1,
+                "operation-before-compaction",
+                "presentation-turn-old",
+                0,
+                user_event("presentation-turn-old", "user-old", "discarded prefix"),
+            ),
+            transcript_record(
+                2,
+                "operation-before-compaction",
+                "presentation-turn-old",
+                1,
+                assistant_event("presentation-turn-old", "assistant-old", "discarded answer"),
+            ),
+            transcript_record(
+                3,
+                "operation-tail",
+                "presentation-turn-tail",
+                0,
+                user_event("presentation-turn-tail", "user-tail", "tail prompt"),
+            ),
+            transcript_record(
+                4,
+                "operation-tail",
+                "presentation-turn-tail",
+                1,
+                post_compaction_tool,
+            ),
+            transcript_record(
+                5,
+                "operation-tail",
+                "presentation-turn-tail",
+                2,
+                assistant_event("presentation-turn-tail", "assistant-tail", "tail answer"),
+            ),
+            transcript_record(
+                6,
+                "operation-after-restore",
+                "presentation-turn-current",
+                0,
+                user_event(
+                    "presentation-turn-current",
+                    "user-current",
+                    "current prompt",
+                ),
+            ),
+        ],
+    };
+    let mut surface = fixture_surface();
+    surface.context.blocks = vec![ContextBlock::CompactionSummary {
+        summary: "active compacted base".to_string(),
+    }];
+    let bridge = Arc::new(RecordingBridge::default());
+    let (driver, binding) = driver_fixture_with_surface(
+        Arc::new(RecordingResolver(bridge.clone())),
+        transcript,
+        surface,
+    )
+    .await;
+    let sink = Arc::new(Sink::default());
+    driver
+        .dispatch(
+            DriverCommandEnvelope {
+                request_id: id("request-after-restore"),
+                operation_id: id("operation-after-restore"),
+                presentation_thread_id: id("presentation-thread-1"),
+                binding_id: id("binding-1"),
+                generation: RuntimeDriverGeneration(4),
+                source_thread_id: binding.source_thread_id,
+                runtime_turn_id: Some(id("turn-after-restore")),
+                presentation_turn_id: Some(id("presentation-turn-current")),
+                command: thread_start(
+                    "presentation-turn-current",
+                    vec![RuntimeInput::Text {
+                        text: "current prompt".to_string(),
+                    }],
+                ),
+            },
+            sink.clone(),
+        )
+        .await
+        .expect("accept turn after compacted restore");
+    wait_for_turn_terminal(sink.as_ref()).await;
+
+    let requests = bridge.requests.lock().await;
+    let request = requests.first().expect("provider request");
+    let text_messages = request
+        .messages
+        .iter()
+        .filter_map(AgentMessage::first_text)
+        .collect::<Vec<_>>();
+    assert_eq!(text_messages.first(), Some(&"active compacted base"));
+    assert_eq!(
+        text_messages
+            .iter()
+            .filter(|text| **text == "active compacted base")
+            .count(),
+        1
+    );
+    assert!(!text_messages.contains(&"discarded prefix"));
+    assert!(!text_messages.contains(&"discarded answer"));
+    assert_eq!(
+        text_messages
+            .iter()
+            .filter(|text| **text == "tail prompt")
+            .count(),
+        1
+    );
+    assert_eq!(
+        text_messages
+            .iter()
+            .filter(|text| **text == "tail answer")
+            .count(),
+        1
+    );
+    assert_eq!(
+        text_messages
+            .iter()
+            .filter(|text| **text == "current prompt")
+            .count(),
+        1
+    );
+    assert_eq!(
+        request
+            .messages
+            .iter()
+            .filter(|message| matches!(
+                message,
+                AgentMessage::Assistant { tool_calls, .. }
+                    if tool_calls.iter().any(|call| call.id == "turn_011:tool_021")
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        request
+            .messages
+            .iter()
+            .filter(|message| matches!(
+                message,
+                AgentMessage::ToolResult { tool_call_id, .. }
+                    if tool_call_id == "turn_011:tool_021"
+            ))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn native_turn_interrupt_emits_one_interrupted_terminal_without_losing_binding() {
+    let bridge = Arc::new(BlockingBridge {
+        started: Arc::new(tokio::sync::Notify::new()),
+    });
+    let provider_started = bridge.started.notified();
+    tokio::pin!(provider_started);
+    let (driver, binding) = driver_fixture_with(
+        Arc::new(BlockingResolver(bridge.clone())),
+        DriverTranscript {
+            earliest_available: EventSequence(1),
+            latest_available: EventSequence(0),
+            active_compaction_source_end: None,
+            completed_presentation_item_ids: Vec::new(),
+            records: Vec::new(),
+        },
+    )
+    .await;
+    let sink = Arc::new(Sink::default());
+    driver
+        .dispatch(
+            DriverCommandEnvelope {
+                request_id: id("request-interrupt-running"),
+                operation_id: id("operation-interrupt-running"),
+                presentation_thread_id: id("presentation-thread-1"),
+                binding_id: id("binding-1"),
+                generation: RuntimeDriverGeneration(4),
+                source_thread_id: binding.source_thread_id.clone(),
+                runtime_turn_id: Some(id("turn-interrupt-running")),
+                presentation_turn_id: Some(id("presentation-turn-interrupt-running")),
+                command: thread_start(
+                    "presentation-turn-interrupt-running",
+                    vec![RuntimeInput::Text {
+                        text: "wait".to_string(),
+                    }],
+                ),
+            },
+            sink.clone(),
+        )
+        .await
+        .expect("accept running turn");
+    provider_started.await;
+
+    driver
+        .dispatch(
+            DriverCommandEnvelope {
+                request_id: id("request-interrupt-command"),
+                operation_id: id("operation-interrupt-command"),
+                presentation_thread_id: id("presentation-thread-1"),
+                binding_id: id("binding-1"),
+                generation: RuntimeDriverGeneration(4),
+                source_thread_id: binding.source_thread_id,
+                runtime_turn_id: None,
+                presentation_turn_id: None,
+                command: RuntimeCommand::TurnInterrupt {
+                    thread_id: id("runtime-thread-1"),
+                    expected_turn_id: id("turn-interrupt-running"),
+                },
+            },
+            sink.clone(),
+        )
+        .await
+        .expect("interrupt active turn");
+    wait_for_turn_terminal(sink.as_ref()).await;
+
+    let events = sink.0.lock().await;
+    let terminal_count = events
+        .iter()
+        .flat_map(|event| &event.facts)
+        .filter(|fact| {
+            matches!(
+                fact,
+                RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                    terminal: RuntimeTurnTerminal::Interrupted,
+                    ..
+                })
+            )
+        })
+        .count();
+    assert_eq!(terminal_count, 1);
+    assert!(!events.iter().flat_map(|event| &event.facts).any(|fact| {
+        matches!(
+            fact,
+            RuntimeJournalFact::Internal(RuntimeEvent::BindingLost { .. })
+                | RuntimeJournalFact::Internal(RuntimeEvent::ConversationError { .. })
+        )
+    }));
+}
+
+#[tokio::test]
+async fn native_terminal_observer_can_dispatch_the_next_turn_without_waiting() {
+    let bridge = Arc::new(RecordingBridge::default());
+    let (driver, binding) = driver_fixture_with(
+        Arc::new(RecordingResolver(bridge.clone())),
+        DriverTranscript {
+            earliest_available: EventSequence(1),
+            latest_available: EventSequence(0),
+            active_compaction_source_end: None,
+            completed_presentation_item_ids: Vec::new(),
+            records: Vec::new(),
+        },
+    )
+    .await;
+    let next_sink = Arc::new(Sink::default());
+    let (outcome_tx, outcome_rx) = tokio::sync::oneshot::channel();
+    let first_sink = Arc::new(DispatchOnTerminalSink {
+        driver: driver.clone(),
+        next: Mutex::new(Some(DriverCommandEnvelope {
+            request_id: id("request-terminal-next"),
+            operation_id: id("operation-terminal-next"),
+            presentation_thread_id: id("presentation-thread-1"),
+            binding_id: id("binding-1"),
+            generation: RuntimeDriverGeneration(4),
+            source_thread_id: binding.source_thread_id.clone(),
+            runtime_turn_id: Some(id("turn-terminal-next")),
+            presentation_turn_id: Some(id("presentation-turn-terminal-next")),
+            command: RuntimeCommand::TurnStart {
+                thread_id: id("runtime-thread-1"),
+                presentation_turn_id: id("presentation-turn-terminal-next"),
+                input: vec![RuntimeInput::Text {
+                    text: "second".to_string(),
+                }],
+            },
+        })),
+        next_sink: next_sink.clone(),
+        outcome: Mutex::new(Some(outcome_tx)),
+    });
+    driver
+        .dispatch(
+            DriverCommandEnvelope {
+                request_id: id("request-terminal-first"),
+                operation_id: id("operation-terminal-first"),
+                presentation_thread_id: id("presentation-thread-1"),
+                binding_id: id("binding-1"),
+                generation: RuntimeDriverGeneration(4),
+                source_thread_id: binding.source_thread_id,
+                runtime_turn_id: Some(id("turn-terminal-first")),
+                presentation_turn_id: Some(id("presentation-turn-terminal-first")),
+                command: thread_start(
+                    "presentation-turn-terminal-first",
+                    vec![RuntimeInput::Text {
+                        text: "first".to_string(),
+                    }],
+                ),
+            },
+            first_sink,
+        )
+        .await
+        .expect("accept first turn");
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), outcome_rx)
+        .await
+        .expect("terminal callback must dispatch synchronously")
+        .expect("terminal callback outcome sender")
+        .expect("Native must be idle before terminal becomes observable");
+    wait_for_turn_terminal(next_sink.as_ref()).await;
+    assert_eq!(bridge.requests.lock().await.len(), 2);
+}
+
 #[tokio::test]
 async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
     let (driver, binding) = driver_fixture().await;
@@ -424,11 +1132,13 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-turn-1"),
+                operation_id: id("operation-turn-1"),
                 presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
                 runtime_turn_id: Some(id("turn-request-turn-1")),
+                presentation_turn_id: Some(id("native-turn-request-turn-1")),
                 command: thread_start(
                     "native-turn-request-turn-1",
                     vec![RuntimeInput::Text {
@@ -441,7 +1151,14 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
         .await
         .expect("native turn");
 
+    wait_for_turn_terminal(sink.as_ref()).await;
     let events = sink.0.lock().await;
+    assert!(events.iter().all(|event| {
+        event
+            .operation_id
+            .as_ref()
+            .is_some_and(|operation_id| operation_id.as_str() == "operation-turn-1")
+    }));
     let internal = events
         .iter()
         .flat_map(|event| event.facts.iter())
@@ -557,11 +1274,13 @@ async fn native_compaction_activation_is_exact_and_idempotently_inspectable() {
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-compact-1"),
+                operation_id: id("operation-compact-1"),
                 presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id,
                 runtime_turn_id: None,
+                presentation_turn_id: None,
                 command: RuntimeCommand::ContextCompact {
                     thread_id: id("thread-1"),
                     compaction_id: id("compaction-1"),
@@ -609,11 +1328,13 @@ async fn native_fork_imports_the_requested_checkpoint_and_preserves_its_digest()
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-fork-1"),
+                operation_id: id("operation-fork-1"),
                 presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
                 runtime_turn_id: None,
+                presentation_turn_id: None,
                 command: RuntimeCommand::ThreadFork {
                     thread_id: id("thread-1"),
                     checkpoint_id: Some(id("checkpoint-1")),
@@ -673,11 +1394,13 @@ async fn native_resume_reuses_the_source_thread_and_materialized_context_digest(
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-resume-1"),
+                operation_id: id("operation-resume-1"),
                 presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-resume"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: source_thread_id.clone(),
                 runtime_turn_id: None,
+                presentation_turn_id: None,
                 command: RuntimeCommand::ThreadResume {
                     thread_id: id("thread-resume"),
                 },
@@ -707,14 +1430,17 @@ async fn native_hot_tool_replace_returns_and_replays_exact_apply_receipt() {
     let (driver, binding) = driver_fixture().await;
     let command = DriverCommandEnvelope {
         request_id: id("request-tools-4"),
+        operation_id: id("operation-tools-4"),
         presentation_thread_id: id("presentation-thread-1"),
         binding_id: id("binding-1"),
         generation: RuntimeDriverGeneration(4),
         source_thread_id: binding.source_thread_id,
         runtime_turn_id: None,
+        presentation_turn_id: None,
         command: RuntimeCommand::ToolSetReplace {
             thread_id: id("thread-1"),
-            expected_tool_set_revision: ToolSetRevision(4),
+            expected_current_tool_set_revision: ToolSetRevision(3),
+            target_tool_set_revision: ToolSetRevision(4),
             tool_set_digest: "sha256:tools-4".to_string(),
         },
     };
@@ -747,11 +1473,13 @@ async fn failed_event_delivery_clears_the_active_turn_fence() {
         .dispatch(
             DriverCommandEnvelope {
                 request_id: failed_request_id,
+                operation_id: id("operation-turn-fail"),
                 presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
                 runtime_turn_id: Some(id("turn-request-turn-fail")),
+                presentation_turn_id: Some(id("native-turn-request-turn-fail")),
                 command: thread_start(
                     "native-turn-request-turn-fail",
                     vec![RuntimeInput::Text {
@@ -768,11 +1496,13 @@ async fn failed_event_delivery_clears_the_active_turn_fence() {
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-interrupt-stale"),
+                operation_id: id("operation-interrupt-stale"),
                 presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id,
                 runtime_turn_id: None,
+                presentation_turn_id: None,
                 command: RuntimeCommand::TurnInterrupt {
                     thread_id: id("thread-1"),
                     expected_turn_id: id("native-turn-request-turn-fail"),
@@ -788,48 +1518,68 @@ async fn failed_event_delivery_clears_the_active_turn_fence() {
 #[tokio::test]
 async fn failed_event_delivery_aborts_agent_core_before_the_next_turn() {
     let (driver, binding) = driver_fixture().await;
-    driver
+    let accepted_then_failed = DriverCommandEnvelope {
+        request_id: id("request-turn-stream-fail"),
+        operation_id: id("operation-turn-stream-fail"),
+        presentation_thread_id: id("presentation-thread-1"),
+        binding_id: id("binding-1"),
+        generation: RuntimeDriverGeneration(4),
+        source_thread_id: binding.source_thread_id.clone(),
+        runtime_turn_id: Some(id("turn-request-turn-stream-fail")),
+        presentation_turn_id: Some(id("native-turn-request-turn-stream-fail")),
+        command: thread_start(
+            "native-turn-request-turn-stream-fail",
+            vec![RuntimeInput::Text {
+                text: "first".to_string(),
+            }],
+        ),
+    };
+    let accepted = driver
         .dispatch(
-            DriverCommandEnvelope {
-                request_id: id("request-turn-stream-fail"),
-                presentation_thread_id: id("presentation-thread-1"),
-                binding_id: id("binding-1"),
-                generation: RuntimeDriverGeneration(4),
-                source_thread_id: binding.source_thread_id.clone(),
-                runtime_turn_id: Some(id("turn-request-turn-stream-fail")),
-                command: thread_start(
-                    "native-turn-request-turn-stream-fail",
-                    vec![RuntimeInput::Text {
-                        text: "first".to_string(),
-                    }],
-                ),
-            },
+            accepted_then_failed.clone(),
             Arc::new(FailAfterFirstEventSink::default()),
         )
         .await
-        .expect_err("active prompt event delivery failure must fail dispatch");
+        .expect("prompt delivery is accepted before its event pump runs");
+    assert!(!accepted.duplicate);
 
-    driver
-        .dispatch(
-            DriverCommandEnvelope {
-                request_id: id("request-turn-after-stream-fail"),
-                presentation_thread_id: id("presentation-thread-1"),
-                binding_id: id("binding-1"),
-                generation: RuntimeDriverGeneration(4),
-                source_thread_id: binding.source_thread_id,
-                runtime_turn_id: Some(id("turn-request-turn-after-stream-fail")),
-                command: RuntimeCommand::TurnStart {
-                    thread_id: id("runtime-thread-1"),
-                    presentation_turn_id: id("native-turn-request-turn-after-stream-fail"),
-                    input: vec![RuntimeInput::Text {
-                        text: "second".to_string(),
-                    }],
-                },
-            },
-            Arc::new(Sink::default()),
-        )
+    let replay = driver
+        .dispatch(accepted_then_failed, Arc::new(Sink::default()))
         .await
-        .expect("Agent Core must be idle before the next turn");
+        .expect("an accepted prompt must replay its receipt after a later delivery failure");
+    assert!(replay.duplicate);
+
+    let after_failure = DriverCommandEnvelope {
+        request_id: id("request-turn-after-stream-fail"),
+        operation_id: id("operation-turn-after-stream-fail"),
+        presentation_thread_id: id("presentation-thread-1"),
+        binding_id: id("binding-1"),
+        generation: RuntimeDriverGeneration(4),
+        source_thread_id: binding.source_thread_id,
+        runtime_turn_id: Some(id("turn-request-turn-after-stream-fail")),
+        presentation_turn_id: Some(id("native-turn-request-turn-after-stream-fail")),
+        command: RuntimeCommand::TurnStart {
+            thread_id: id("runtime-thread-1"),
+            presentation_turn_id: id("native-turn-request-turn-after-stream-fail"),
+            input: vec![RuntimeInput::Text {
+                text: "second".to_string(),
+            }],
+        },
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            match driver
+                .dispatch(after_failure.clone(), Arc::new(Sink::default()))
+                .await
+            {
+                Ok(_) => break,
+                Err(DriverError::Rejected { .. }) => tokio::task::yield_now().await,
+                Err(error) => panic!("unexpected next-turn dispatch error: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("Agent Core must become idle before the next turn");
 }
 
 #[tokio::test]
@@ -851,11 +1601,13 @@ async fn native_descriptor_does_not_claim_prompt_flattened_input_modalities() {
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-structured-input"),
+                operation_id: id("operation-structured-input"),
                 presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id,
                 runtime_turn_id: Some(id("turn-request-structured-input")),
+                presentation_turn_id: Some(id("native-turn-request-structured-input")),
                 command: thread_start(
                     "native-turn-request-structured-input",
                     vec![RuntimeInput::Structured {

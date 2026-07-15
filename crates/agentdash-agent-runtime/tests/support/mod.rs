@@ -39,6 +39,7 @@ impl RuntimeApplicationPresentationProjector for TestTerminalPresentationProject
         Ok(vec![RuntimePresentationInput {
             coordinate: RuntimePresentationCoordinate {
                 runtime_turn_id: Some(context.runtime_turn_id.clone()),
+                presentation_turn_id: Some(context.presentation_turn_id.clone()),
                 runtime_item_id: None,
                 interaction_id: None,
                 source_thread_id: Some(context.presentation_thread_id.to_string()),

@@ -1336,3 +1336,39 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: 收束 Agent Runtime ContextFrame 与工具终态链路
+
+**Date**: 2026-07-15
+**Task**: 收束 Agent Runtime ContextFrame 与工具终态链路
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+按 main-reference 恢复全部 ContextFrame production producer 与原 Session eventstream 行为；补齐 product receipt、重启 callable registry、InProcess rebind、immutable outbox、managed compaction，并修复 Runtime 实体删插导致 ToolBroker 行级联丢失和工具调用卡死。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7c3cf7e2f` | (see git log) |
+| `14cccde83` | (see git log) |
+| `8889bb3e3` | (see git log) |
+| `1b3a8a8f3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

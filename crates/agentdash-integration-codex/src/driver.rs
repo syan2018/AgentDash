@@ -19,7 +19,7 @@ use agentdash_agent_runtime_contract::{
     PresentationDurability, ProfileDigest, ReferenceRuntimeClass, RuntimeCommand,
     RuntimeDescriptor, RuntimeEvent, RuntimeInteractionKind, RuntimeJournalFact, RuntimeProfile,
     RuntimeTurnId, RuntimeTurnTerminal, SemanticStrength, TelemetryCapability, ToolChannel,
-    ToolProfile, WorkspaceCapability, WorkspaceProfile,
+    ToolPresentationEmitter, ToolProfile, WorkspaceCapability, WorkspaceProfile,
 };
 use agentdash_integration_api::{
     ActivatedAgentServiceInstance, AgentRuntimeDriverFactory, AgentRuntimeFactoryKey,
@@ -44,8 +44,8 @@ use crate::{
     contribution::{CODEX_APP_SERVER_PACKAGE, CODEX_PROTOCOL_REVISION},
     hook_bridge::{HookBridgeLease, start_hook_bridge},
     mapping::{
-        MappedEvent, SourceCoordinateMap, dynamic_tool_interaction_request, item_content,
-        main_automatic_server_response, map_input,
+        MappedEvent, MappingError, SourceCoordinateMap, dynamic_tool_interaction_request,
+        item_content, main_automatic_server_response, map_input,
     },
     rpc::{RpcInbound, RpcNotification, RpcRequest, error_response, response},
 };
@@ -182,14 +182,51 @@ struct CodexPumpState {
     pending_interactions: BTreeMap<String, PendingServerRequest>,
     rpc_waiters: BTreeMap<i64, PendingRpc>,
     sink: Option<Arc<dyn DriverEventSink>>,
-    active_turns: BTreeMap<RuntimeTurnId, agentdash_agent_runtime_contract::DriverTurnId>,
+    active_turns: BTreeMap<RuntimeTurnId, ActiveCodexTurn>,
+    turn_idle: Arc<tokio::sync::Notify>,
     native_hook_runs: BTreeMap<String, bool>,
     context_delivered: bool,
 }
 
+impl CodexPumpState {
+    fn finish_turn(&mut self, turn_id: &RuntimeTurnId) {
+        if self.active_turns.remove(turn_id).is_some() && self.active_turns.is_empty() {
+            self.turn_idle.notify_waiters();
+        }
+    }
+
+    fn clear_turns(&mut self) {
+        let had_active_turn = !self.active_turns.is_empty();
+        self.active_turns.clear();
+        if had_active_turn {
+            self.turn_idle.notify_waiters();
+        }
+    }
+
+    fn take_turns(&mut self) -> BTreeMap<RuntimeTurnId, ActiveCodexTurn> {
+        let turns = std::mem::take(&mut self.active_turns);
+        if !turns.is_empty() {
+            self.turn_idle.notify_waiters();
+        }
+        turns
+    }
+}
+
 struct PendingRpc {
     sender: oneshot::Sender<Result<Value, DriverError>>,
-    canonical_turn: Option<RuntimeTurnId>,
+    turn: Option<PendingCodexTurn>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingCodexTurn {
+    runtime_turn_id: RuntimeTurnId,
+    operation_id: agentdash_agent_runtime_contract::RuntimeOperationId,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveCodexTurn {
+    source_turn_id: agentdash_agent_runtime_contract::DriverTurnId,
+    operation_id: agentdash_agent_runtime_contract::RuntimeOperationId,
 }
 
 #[derive(Debug, Clone)]
@@ -201,6 +238,7 @@ struct PendingServerRequest {
     source_turn_id: agentdash_agent_runtime_contract::DriverTurnId,
     source_item_id: Option<agentdash_agent_runtime_contract::DriverItemId>,
     source_request_id: String,
+    operation_id: agentdash_agent_runtime_contract::RuntimeOperationId,
 }
 
 impl Drop for CodexSession {
@@ -434,7 +472,16 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                 reason: "Codex binding is not active".to_string(),
                 retryable: true,
             })?;
-        let mut session = session.lock().await;
+        let surface_adoption = matches!(&envelope.command, RuntimeCommand::SurfaceAdopt { .. });
+        let mut session = loop {
+            let session_guard = session.lock().await;
+            if !surface_adoption || session_guard.state.lock().await.active_turns.is_empty() {
+                break session_guard;
+            }
+            let state = session_guard.state.clone();
+            drop(session_guard);
+            wait_for_codex_turn_idle(&state).await;
+        };
         if session.source_thread_id != envelope.source_thread_id {
             return Err(DriverError::StaleGeneration);
         }
@@ -448,6 +495,7 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
             sink.emit(DriverEventEnvelope {
                 binding_id: envelope.binding_id.clone(),
                 generation: envelope.generation,
+                operation_id: None,
                 source_thread_id: envelope.source_thread_id.clone(),
                 source_turn_id: None,
                 source_item_id: None,
@@ -556,12 +604,6 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                 });
             }
             RuntimeCommand::SurfaceAdopt { target, .. } => {
-                if !session.state.lock().await.active_turns.is_empty() {
-                    return Err(DriverError::Rejected {
-                        reason: "Codex Runtime surface adoption requires no active turn"
-                            .to_string(),
-                    });
-                }
                 let surface = self
                     .host
                     .surfaces
@@ -776,6 +818,19 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                 })
             }
         }
+    }
+}
+
+async fn wait_for_codex_turn_idle(state: &Arc<Mutex<CodexPumpState>>) {
+    loop {
+        let idle = state.lock().await.turn_idle.clone();
+        let notified = idle.notified_owned();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if state.lock().await.active_turns.is_empty() {
+            return;
+        }
+        notified.await;
     }
 }
 
@@ -1028,10 +1083,21 @@ impl CodexRuntimeDriver {
                         .to_string(),
                     critical: true,
                 })?;
+        let _presentation_turn_id = envelope.presentation_turn_id.clone().ok_or_else(|| {
+            DriverError::ProtocolViolation {
+                reason: "Codex turn command is missing the Session presentation turn identity"
+                    .to_string(),
+                critical: true,
+            }
+        })?;
+        let pending_turn = PendingCodexTurn {
+            runtime_turn_id: runtime_turn.clone(),
+            operation_id: envelope.operation_id.clone(),
+        };
         let result = self.rpc_request_inner(session, "turn/start", json!({
             "threadId": session.source_thread_id.as_str(), "input": native,
             "additionalContext": (!additional.is_empty()).then_some(additional), "runtimeWorkspaceRoots": effective_workspace_roots(&self.config, &session.surface)
-        }), Some(runtime_turn.clone())).await?;
+        }), Some(pending_turn.clone())).await?;
         if deliver_context {
             session.state.lock().await.context_delivered = true;
         }
@@ -1042,7 +1108,22 @@ impl CodexRuntimeDriver {
                 reason: "turn/start response misses turn.id".to_string(),
                 critical: true,
             })?;
-        let _ = (source_turn, runtime_turn);
+        let source_turn_id = agentdash_agent_runtime_contract::DriverTurnId::new(source_turn)
+            .map_err(|error| DriverError::ProtocolViolation {
+                reason: error.to_string(),
+                critical: true,
+            })?;
+        let mut state = session.state.lock().await;
+        state
+            .coordinates
+            .register_turn(source_turn, runtime_turn.clone());
+        state.active_turns.insert(
+            runtime_turn,
+            ActiveCodexTurn {
+                source_turn_id,
+                operation_id: pending_turn.operation_id,
+            },
+        );
         Ok(())
     }
 
@@ -1060,20 +1141,19 @@ impl CodexRuntimeDriver {
         session: &mut CodexSession,
         method: &str,
         params: Value,
-        canonical_turn: Option<RuntimeTurnId>,
+        turn: Option<PendingCodexTurn>,
     ) -> Result<Value, DriverError> {
         let id = self.request_counter.fetch_add(1, Ordering::Relaxed);
         let value =
             serde_json::to_value(RpcRequest { id, method, params }).expect("request serializes");
         if session.stdout.is_none() {
             let (sender, receiver) = oneshot::channel();
-            session.state.lock().await.rpc_waiters.insert(
-                id,
-                PendingRpc {
-                    sender,
-                    canonical_turn,
-                },
-            );
+            session
+                .state
+                .lock()
+                .await
+                .rpc_waiters
+                .insert(id, PendingRpc { sender, turn });
             if let Err(error) = write_value(&session.stdin, &value).await {
                 session.state.lock().await.rpc_waiters.remove(&id);
                 return Err(error);
@@ -1138,6 +1218,13 @@ impl CodexRuntimeDriver {
         let tool_set_revision = session.surface.tools.revision;
         let runtime_thread_id = session.surface.runtime_thread_id.clone();
         let authorization_identity = session.surface.authorization_identity.clone();
+        let tool_presentation_emitters = session
+            .surface
+            .tools
+            .tools
+            .iter()
+            .map(|tool| (tool.name.clone(), tool.presentation_emitter))
+            .collect();
         let initial = std::mem::take(&mut session.bootstrap_inbound);
         session.pump = Some(tokio::spawn(async move {
             run_pump(
@@ -1152,6 +1239,7 @@ impl CodexRuntimeDriver {
                     tool_set_revision,
                     runtime_thread_id,
                     authorization_identity,
+                    tool_presentation_emitters,
                 },
                 initial,
             )
@@ -1171,6 +1259,52 @@ struct CodexPumpContext {
     tool_set_revision: agentdash_agent_runtime_contract::ToolSetRevision,
     runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId,
     authorization_identity: Option<agentdash_integration_api::AuthIdentity>,
+    tool_presentation_emitters: BTreeMap<String, ToolPresentationEmitter>,
+}
+
+fn mapped_dynamic_tool_name(mapped: &MappedEvent) -> Option<&str> {
+    let item = match &mapped.presentation.event {
+        agentdash_agent_protocol::BackboneEvent::ItemStarted(notification) => &notification.item,
+        agentdash_agent_protocol::BackboneEvent::ItemCompleted(notification) => &notification.item,
+        _ => return None,
+    };
+    match item {
+        agentdash_agent_protocol::AgentDashThreadItem::Codex(
+            agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::DynamicToolCall {
+                tool,
+                ..
+            },
+        ) => Some(tool.as_str()),
+        agentdash_agent_protocol::AgentDashThreadItem::AgentDash(item) => Some(item.tool_name()),
+        agentdash_agent_protocol::AgentDashThreadItem::Codex(_) => None,
+    }
+}
+
+fn route_bound_dynamic_tool_event(
+    mut mapped: MappedEvent,
+    emitters: &BTreeMap<String, ToolPresentationEmitter>,
+) -> Result<Option<MappedEvent>, MappingError> {
+    let Some(tool_name) = mapped_dynamic_tool_name(&mapped) else {
+        return Ok(Some(mapped));
+    };
+    let emitter =
+        emitters
+            .get(tool_name)
+            .ok_or_else(|| MappingError::MissingToolPresentationRoute {
+                tool: tool_name.to_string(),
+            })?;
+    match emitter {
+        ToolPresentationEmitter::VendorStream => {
+            // PlatformToolBroker owns the canonical Runtime Item. Codex keeps only the
+            // app-server presentation for a VendorStream route.
+            mapped.runtime_event = None;
+            Ok(Some(mapped))
+        }
+        ToolPresentationEmitter::ToolBroker => {
+            // Broker owns both the canonical Item and its protocol presentation.
+            Ok(None)
+        }
+    }
 }
 
 async fn run_pump(
@@ -1217,18 +1351,24 @@ async fn run_pump(
                     None
                 };
                 if let Some(waiter) = waiter {
-                    if let Some(canonical_turn) = waiter.canonical_turn
+                    if let Some(turn) = waiter.turn
                         && let Some(source_turn) =
                             response.result.pointer("/turn/id").and_then(Value::as_str)
                     {
                         let mut state = context.state.lock().await;
                         state
                             .coordinates
-                            .register_turn(source_turn, canonical_turn.clone());
+                            .register_turn(source_turn, turn.runtime_turn_id.clone());
                         if let Ok(source_turn_id) =
                             agentdash_agent_runtime_contract::DriverTurnId::new(source_turn)
                         {
-                            state.active_turns.insert(canonical_turn, source_turn_id);
+                            state.active_turns.insert(
+                                turn.runtime_turn_id,
+                                ActiveCodexTurn {
+                                    source_turn_id,
+                                    operation_id: turn.operation_id,
+                                },
+                            );
                         }
                     }
                     let _ = waiter.sender.send(Ok(response.result));
@@ -1244,47 +1384,61 @@ async fn run_pump(
                 }
             }
             RpcInbound::Notification(notification) => {
-                let (mapped, sink) = {
+                let (mapped, sink, operation_id) = {
                     let mut state = context.state.lock().await;
                     reconcile_native_hook(&mut state, &notification);
-                    let mapped = state.coordinates.map_notification(notification);
-                    if let Ok(Some(MappedEvent {
-                        runtime_event: Some(RuntimeEvent::TurnTerminal { turn_id, .. }),
-                        ..
-                    })) = &mapped
-                    {
-                        state.active_turns.remove(turn_id);
-                    }
-                    (mapped, state.sink.clone())
+                    let mapped =
+                        state
+                            .coordinates
+                            .map_notification(notification)
+                            .and_then(|mapped| match mapped {
+                                Some(mapped) => route_bound_dynamic_tool_event(
+                                    mapped,
+                                    &context.tool_presentation_emitters,
+                                ),
+                                None => Ok(None),
+                            });
+                    let operation_id = mapped
+                        .as_ref()
+                        .ok()
+                        .and_then(Option::as_ref)
+                        .and_then(|mapped| mapped.source_turn_id.as_ref())
+                        .and_then(|source_turn_id| {
+                            state
+                                .coordinates
+                                .canonical_turn(source_turn_id.as_str())
+                                .ok()
+                        })
+                        .and_then(|runtime_turn_id| {
+                            state
+                                .active_turns
+                                .get(&runtime_turn_id)
+                                .map(|turn| turn.operation_id.clone())
+                        });
+                    (mapped, state.sink.clone(), operation_id)
                 };
                 match (mapped, sink) {
                     (Ok(Some(mapped)), Some(sink)) => {
-                        let source_request_id = mapped.source_request_id();
-                        let mut facts = mapped
-                            .runtime_event
-                            .filter(|event| !event.is_transient())
-                            .map(RuntimeJournalFact::Internal)
-                            .into_iter()
-                            .collect::<Vec<_>>();
-                        facts.push(RuntimeJournalFact::Presentation(mapped.presentation));
-                        let _ = sink
-                            .emit(DriverEventEnvelope {
-                                binding_id: context.binding_id.clone(),
-                                generation: context.generation,
-                                source_thread_id: context.source_thread_id.clone(),
-                                source_turn_id: mapped.source_turn_id,
-                                source_item_id: mapped.source_item_id,
-                                source_request_id,
-                                source_entry_index: None,
-                                facts,
-                            })
-                            .await;
+                        if emit_mapped_notification(
+                            &context.state,
+                            sink,
+                            &context.binding_id,
+                            context.generation,
+                            &context.source_thread_id,
+                            operation_id,
+                            mapped,
+                        )
+                        .await
+                        {
+                            return;
+                        }
                     }
                     (Err(error), Some(sink)) => {
                         let _ = sink
                             .emit(DriverEventEnvelope {
                                 binding_id: context.binding_id.clone(),
                                 generation: context.generation,
+                                operation_id: None,
                                 source_thread_id: context.source_thread_id.clone(),
                                 source_turn_id: None,
                                 source_item_id: None,
@@ -1331,8 +1485,25 @@ async fn run_pump(
                     .map_server_request(&request);
                 match mapped {
                     Ok(mapped) => {
-                        let sink = {
+                        let (sink, operation_id) = {
                             let mut state = context.state.lock().await;
+                            let Some(operation_id) = state
+                                .active_turns
+                                .get(&mapped.turn_id)
+                                .map(|turn| turn.operation_id.clone())
+                            else {
+                                drop(state);
+                                let _ = write_value(
+                                    &context.stdin,
+                                    &error_response(
+                                        request.id,
+                                        -32602,
+                                        "Codex server request targets inactive turn",
+                                    ),
+                                )
+                                .await;
+                                continue;
+                            };
                             state.pending_interactions.insert(
                                 mapped.interaction_id.as_str().to_string(),
                                 PendingServerRequest {
@@ -1343,15 +1514,17 @@ async fn run_pump(
                                     source_turn_id: mapped.source_turn_id.clone(),
                                     source_item_id: mapped.source_item_id.clone(),
                                     source_request_id: mapped.source_request_id.clone(),
+                                    operation_id: operation_id.clone(),
                                 },
                             );
-                            state.sink.clone()
+                            (state.sink.clone(), operation_id)
                         };
                         if let Some(sink) = sink {
                             let _ = sink
                                 .emit(DriverEventEnvelope {
                                     binding_id: context.binding_id.clone(),
                                     generation: context.generation,
+                                    operation_id: Some(operation_id),
                                     source_thread_id: context.source_thread_id.clone(),
                                     source_turn_id: Some(mapped.source_turn_id),
                                     source_item_id: mapped.source_item_id,
@@ -1379,6 +1552,125 @@ async fn run_pump(
             }
         }
     }
+}
+
+/// Delivers one mapped Codex notification without forgetting a terminal turn before Managed
+/// Runtime has committed it. A terminal envelope can be rejected by the application presentation
+/// projector even though the vendor turn has already ended; in that case an internal-only
+/// `BindingLost` fact provides a projection-independent path that closes the canonical binding,
+/// turn, interactions and owning operation.
+async fn emit_mapped_notification(
+    state: &Arc<Mutex<CodexPumpState>>,
+    sink: Arc<dyn DriverEventSink>,
+    binding_id: &agentdash_agent_runtime_contract::RuntimeBindingId,
+    generation: agentdash_agent_runtime_contract::RuntimeDriverGeneration,
+    source_thread_id: &DriverThreadId,
+    operation_id: Option<agentdash_agent_runtime_contract::RuntimeOperationId>,
+    mapped: MappedEvent,
+) -> bool {
+    let terminal_turn_id = match mapped.runtime_event.as_ref() {
+        Some(RuntimeEvent::TurnTerminal { turn_id, .. }) => Some(turn_id.clone()),
+        _ => None,
+    };
+    let source_turn_id = mapped.source_turn_id.clone();
+    let source_request_id = mapped.source_request_id();
+    let mut facts = mapped
+        .runtime_event
+        .filter(|event| !event.is_transient())
+        .map(RuntimeJournalFact::Internal)
+        .into_iter()
+        .collect::<Vec<_>>();
+    facts.push(RuntimeJournalFact::Presentation(mapped.presentation));
+    match sink
+        .emit(DriverEventEnvelope {
+            binding_id: binding_id.clone(),
+            generation,
+            operation_id: operation_id.clone(),
+            source_thread_id: source_thread_id.clone(),
+            source_turn_id: source_turn_id.clone(),
+            source_item_id: mapped.source_item_id,
+            source_request_id,
+            source_entry_index: None,
+            facts,
+        })
+        .await
+    {
+        Ok(()) => {
+            if let Some(turn_id) = terminal_turn_id {
+                state.lock().await.finish_turn(&turn_id);
+            }
+            false
+        }
+        Err(error) => {
+            let Some(turn_id) = terminal_turn_id else {
+                return false;
+            };
+            settle_terminal_sink_failure(
+                state,
+                sink,
+                binding_id,
+                generation,
+                source_thread_id,
+                source_turn_id,
+                operation_id,
+                &turn_id,
+                error,
+            )
+            .await
+        }
+    }
+}
+
+async fn settle_terminal_sink_failure(
+    state: &Arc<Mutex<CodexPumpState>>,
+    sink: Arc<dyn DriverEventSink>,
+    binding_id: &agentdash_agent_runtime_contract::RuntimeBindingId,
+    generation: agentdash_agent_runtime_contract::RuntimeDriverGeneration,
+    source_thread_id: &DriverThreadId,
+    source_turn_id: Option<agentdash_agent_runtime_contract::DriverTurnId>,
+    operation_id: Option<agentdash_agent_runtime_contract::RuntimeOperationId>,
+    terminal_turn_id: &RuntimeTurnId,
+    error: DriverError,
+) -> bool {
+    let reason = format!(
+        "Codex terminal delivery for {terminal_turn_id} failed; binding was lost to close the accepted Runtime operation: {error}"
+    );
+    if sink
+        .emit(DriverEventEnvelope {
+            binding_id: binding_id.clone(),
+            generation,
+            operation_id,
+            source_thread_id: source_thread_id.clone(),
+            source_turn_id,
+            source_item_id: None,
+            source_request_id: None,
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::BindingLost {
+                binding_id: binding_id.clone(),
+                reason: reason.clone(),
+            })],
+        })
+        .await
+        .is_err()
+    {
+        // The terminal remains active locally so transport-loss/recovery paths can retry a
+        // projection-independent terminal instead of silently forgetting the operation.
+        return false;
+    }
+
+    let waiters = {
+        let mut state = state.lock().await;
+        state.clear_turns();
+        state.pending_interactions.clear();
+        std::mem::take(&mut state.rpc_waiters)
+    };
+    for (_, waiter) in waiters {
+        let _ = waiter.sender.send(Err(DriverError::Lost {
+            reason: reason.clone(),
+            retryable: true,
+        }));
+    }
+    true
 }
 
 fn reconcile_native_hook(
@@ -1419,33 +1711,19 @@ async fn handle_pump_dynamic_tool(
     context: &CodexPumpContext,
     request: crate::rpc::RpcServerRequest,
 ) {
-    let Some(source_turn) = request.params.get("turnId").and_then(Value::as_str) else {
-        let _ = write_value(
-            &context.stdin,
-            &error_response(request.id, -32602, "item/tool/call misses turnId"),
-        )
-        .await;
-        return;
-    };
-    let Some(source_item) = request.params.get("callId").and_then(Value::as_str) else {
-        let _ = write_value(
-            &context.stdin,
-            &error_response(request.id, -32602, "item/tool/call misses callId"),
-        )
-        .await;
-        return;
-    };
-    let Some(tool_name) = request.params.get("tool").and_then(Value::as_str) else {
-        let _ = write_value(
-            &context.stdin,
-            &error_response(request.id, -32602, "item/tool/call misses tool"),
-        )
-        .await;
-        return;
+    let validated = match validate_dynamic_tool_call(&request.params) {
+        Ok(validated) => validated,
+        Err(message) => {
+            let _ = write_value(&context.stdin, &error_response(request.id, -32602, message)).await;
+            return;
+        }
     };
     let coordinates = {
         let mut state = context.state.lock().await;
-        let canonical_turn = match state.coordinates.canonical_turn(source_turn) {
+        let canonical_turn = match state
+            .coordinates
+            .canonical_turn(validated.source_turn_id.as_str())
+        {
             Ok(value) => value,
             Err(error) => {
                 drop(state);
@@ -1457,26 +1735,23 @@ async fn handle_pump_dynamic_tool(
                 return;
             }
         };
-        let canonical_item = state.coordinates.register_item(source_item);
+        let canonical_item = state
+            .coordinates
+            .register_item(validated.source_item_id.as_str());
         (canonical_turn, canonical_item)
     };
     let invocation = DriverToolInvocation {
         thread_id: context.runtime_thread_id.clone(),
         turn_id: coordinates.0.clone(),
         item_id: coordinates.1.clone(),
+        presentation_item_id: validated.presentation_item_id.clone(),
         binding_id: context.binding_id.clone(),
         generation: context.generation,
         source_thread_id: context.source_thread_id.clone(),
-        source_turn_id: match agentdash_agent_runtime_contract::DriverTurnId::new(source_turn) {
-            Ok(value) => value,
-            Err(_) => return,
-        },
-        source_item_id: match agentdash_agent_runtime_contract::DriverItemId::new(source_item) {
-            Ok(value) => value,
-            Err(_) => return,
-        },
+        source_turn_id: validated.source_turn_id.clone(),
+        source_item_id: validated.source_item_id.clone(),
         tool_set_revision: context.tool_set_revision,
-        tool_name: tool_name.to_string(),
+        tool_name: validated.tool_name.clone(),
         arguments: request
             .params
             .get("arguments")
@@ -1526,54 +1801,69 @@ async fn handle_pump_dynamic_tool(
                     return;
                 }
             };
-            let sink = {
-                let mut state = context.state.lock().await;
-                state.pending_interactions.insert(
-                    interaction_id.as_str().to_string(),
-                    PendingServerRequest {
-                        rpc_id: request.id.clone(),
-                        method: request.method,
-                        params: request.params.clone(),
-                        turn_id: coordinates.0.clone(),
-                        source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new(
-                            source_turn,
-                        )
-                        .expect("validated source turn"),
-                        source_item_id: agentdash_agent_runtime_contract::DriverItemId::new(
-                            source_item,
-                        )
-                        .ok(),
-                        source_request_id: crate::mapping::rpc_coordinate(&request.id),
-                    },
-                );
-                state.sink.clone()
-            };
-            if let Some(sink) = sink {
-                let _ = sink
-                    .emit(DriverEventEnvelope {
-                        binding_id: context.binding_id.clone(),
-                        generation: context.generation,
-                        source_thread_id: context.source_thread_id.clone(),
-                        source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new(
-                            source_turn,
-                        )
-                        .ok(),
-                        source_item_id: agentdash_agent_runtime_contract::DriverItemId::new(
-                            source_item,
-                        )
-                        .ok(),
-                        source_request_id: Some(crate::mapping::rpc_coordinate(&request.id)),
-                        source_entry_index: None,
-                        facts: vec![RuntimeJournalFact::Internal(
-                            RuntimeEvent::InteractionRequested {
-                                turn_id: coordinates.0.clone(),
-                                item_id: Some(coordinates.1),
-                                interaction_id: interaction_id.clone(),
-                                request: interaction_request,
-                            },
-                        )],
-                    })
+            let (sink, operation_id) = {
+                let state = context.state.lock().await;
+                let Some(operation_id) = state
+                    .active_turns
+                    .get(&coordinates.0)
+                    .map(|turn| turn.operation_id.clone())
+                else {
+                    drop(state);
+                    let _ = write_value(
+                        &context.stdin,
+                        &error_response(
+                            request.id,
+                            -32602,
+                            "Codex dynamic tool call targets inactive turn",
+                        ),
+                    )
                     .await;
+                    return;
+                };
+                (state.sink.clone(), operation_id)
+            };
+            let pending = PendingServerRequest {
+                rpc_id: request.id.clone(),
+                method: request.method,
+                params: request.params.clone(),
+                turn_id: coordinates.0.clone(),
+                source_turn_id: validated.source_turn_id.clone(),
+                source_item_id: Some(validated.source_item_id.clone()),
+                source_request_id: crate::mapping::rpc_coordinate(&request.id),
+                operation_id: operation_id.clone(),
+            };
+            let envelope = DriverEventEnvelope {
+                binding_id: context.binding_id.clone(),
+                generation: context.generation,
+                operation_id: Some(operation_id),
+                source_thread_id: context.source_thread_id.clone(),
+                source_turn_id: Some(validated.source_turn_id),
+                source_item_id: Some(validated.source_item_id),
+                source_request_id: Some(crate::mapping::rpc_coordinate(&request.id)),
+                source_entry_index: None,
+                facts: vec![RuntimeJournalFact::Internal(
+                    RuntimeEvent::InteractionRequested {
+                        turn_id: coordinates.0.clone(),
+                        item_id: Some(coordinates.1),
+                        interaction_id: interaction_id.clone(),
+                        request: interaction_request,
+                    },
+                )],
+            };
+            if let Err(error) = publish_dynamic_tool_interaction(
+                &context.state,
+                sink,
+                interaction_id.as_str(),
+                pending,
+                envelope,
+            )
+            .await
+            {
+                let _ = write_value(
+                    &context.stdin,
+                    &error_response(request.id, -32002, error.to_string()),
+                )
+                .await;
             }
         }
         Err(error) => {
@@ -1586,6 +1876,75 @@ async fn handle_pump_dynamic_tool(
     }
 }
 
+struct ValidatedDynamicToolCall {
+    source_turn_id: agentdash_agent_runtime_contract::DriverTurnId,
+    source_item_id: agentdash_agent_runtime_contract::DriverItemId,
+    presentation_item_id: agentdash_agent_runtime_contract::PresentationItemId,
+    tool_name: String,
+}
+
+fn validate_dynamic_tool_call(params: &Value) -> Result<ValidatedDynamicToolCall, String> {
+    let source_turn = params
+        .get("turnId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "item/tool/call misses turnId".to_string())?;
+    let source_item = params
+        .get("callId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "item/tool/call misses callId".to_string())?;
+    let tool_name = params
+        .get("tool")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "item/tool/call misses tool".to_string())?;
+    if tool_name.trim().is_empty() {
+        return Err("item/tool/call has an empty tool".to_string());
+    }
+    let source_turn_id = agentdash_agent_runtime_contract::DriverTurnId::new(source_turn)
+        .map_err(|error| format!("item/tool/call has an invalid turnId: {error}"))?;
+    let source_item_id = agentdash_agent_runtime_contract::DriverItemId::new(source_item)
+        .map_err(|error| format!("item/tool/call has an invalid callId: {error}"))?;
+    let presentation_item_id =
+        agentdash_agent_runtime_contract::PresentationItemId::new(source_item)
+            .map_err(|error| format!("item/tool/call has an invalid callId: {error}"))?;
+    Ok(ValidatedDynamicToolCall {
+        source_turn_id,
+        source_item_id,
+        presentation_item_id,
+        tool_name: tool_name.to_string(),
+    })
+}
+
+async fn publish_dynamic_tool_interaction(
+    state: &Arc<Mutex<CodexPumpState>>,
+    sink: Option<Arc<dyn DriverEventSink>>,
+    interaction_key: &str,
+    pending: PendingServerRequest,
+    envelope: DriverEventEnvelope,
+) -> Result<(), DriverError> {
+    if state
+        .lock()
+        .await
+        .pending_interactions
+        .contains_key(interaction_key)
+    {
+        return Err(DriverError::ProtocolViolation {
+            reason: "Codex dynamic tool interaction identity is already pending".to_string(),
+            critical: false,
+        });
+    }
+    let sink = sink.ok_or_else(|| DriverError::Unavailable {
+        reason: "Codex dynamic tool interaction has no Runtime event sink".to_string(),
+        retryable: true,
+    })?;
+    sink.emit(envelope).await?;
+    state
+        .lock()
+        .await
+        .pending_interactions
+        .insert(interaction_key.to_string(), pending);
+    Ok(())
+}
+
 async fn settle_pump_lost(
     state: &Arc<Mutex<CodexPumpState>>,
     binding_id: &agentdash_agent_runtime_contract::RuntimeBindingId,
@@ -1596,7 +1955,7 @@ async fn settle_pump_lost(
         let mut state = state.lock().await;
         (
             std::mem::take(&mut state.rpc_waiters),
-            std::mem::take(&mut state.active_turns),
+            state.take_turns(),
             std::mem::take(&mut state.pending_interactions),
             state.sink.clone(),
         )
@@ -1608,13 +1967,14 @@ async fn settle_pump_lost(
         }));
     }
     if let Some(sink) = sink {
-        for (turn_id, source_turn_id) in turns {
+        for (turn_id, active_turn) in turns {
             let _ = sink
                 .emit(DriverEventEnvelope {
                     binding_id: binding_id.clone(),
                     generation,
+                    operation_id: Some(active_turn.operation_id),
                     source_thread_id: source_thread_id.clone(),
-                    source_turn_id: Some(source_turn_id),
+                    source_turn_id: Some(active_turn.source_turn_id),
                     source_item_id: None,
                     source_request_id: None,
                     source_entry_index: None,
@@ -1639,6 +1999,7 @@ async fn settle_pump_lost(
                 .emit(DriverEventEnvelope {
                     binding_id: binding_id.clone(),
                     generation,
+                    operation_id: Some(pending.operation_id),
                     source_thread_id: source_thread_id.clone(),
                     source_turn_id: Some(pending.source_turn_id),
                     source_item_id: pending.source_item_id,
@@ -2004,6 +2365,103 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct TerminalProjectionRejectingSink(TokioMutex<Vec<DriverEventEnvelope>>);
+
+    #[async_trait]
+    impl DriverEventSink for TerminalProjectionRejectingSink {
+        async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
+            let rejects_terminal_projection = event.facts.iter().any(|fact| {
+                matches!(
+                    fact,
+                    RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal { .. })
+                )
+            }) && event
+                .facts
+                .iter()
+                .any(|fact| matches!(fact, RuntimeJournalFact::Presentation(_)));
+            self.0.lock().await.push(event);
+            if rejects_terminal_projection {
+                Err(DriverError::ProtocolViolation {
+                    reason: "injected terminal presentation projection failure".to_string(),
+                    critical: false,
+                })
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct AlwaysRejectingSink(TokioMutex<Vec<DriverEventEnvelope>>);
+
+    #[async_trait]
+    impl DriverEventSink for AlwaysRejectingSink {
+        async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
+            self.0.lock().await.push(event);
+            Err(DriverError::Unavailable {
+                reason: "injected dynamic interaction sink failure".to_string(),
+                retryable: true,
+            })
+        }
+    }
+
+    fn dynamic_interaction_fixture() -> (String, PendingServerRequest, DriverEventEnvelope) {
+        let interaction_id = "dynamic-interaction-1".to_string();
+        let turn_id = RuntimeTurnId::new("runtime-turn-dynamic-interaction").unwrap();
+        let source_turn_id =
+            agentdash_agent_runtime_contract::DriverTurnId::new("source-turn-dynamic-interaction")
+                .unwrap();
+        let source_item_id =
+            agentdash_agent_runtime_contract::DriverItemId::new("source-item-dynamic-interaction")
+                .unwrap();
+        let operation_id = agentdash_agent_runtime_contract::RuntimeOperationId::new(
+            "operation-dynamic-interaction",
+        )
+        .unwrap();
+        let pending = PendingServerRequest {
+            rpc_id: json!(701),
+            method: "item/tool/call".to_string(),
+            params: json!({}),
+            turn_id: turn_id.clone(),
+            source_turn_id: source_turn_id.clone(),
+            source_item_id: Some(source_item_id.clone()),
+            source_request_id: "701".to_string(),
+            operation_id: operation_id.clone(),
+        };
+        let envelope = DriverEventEnvelope {
+            binding_id: agentdash_agent_runtime_contract::RuntimeBindingId::new("binding-dynamic")
+                .unwrap(),
+            generation: agentdash_agent_runtime_contract::RuntimeDriverGeneration(1),
+            operation_id: Some(operation_id),
+            source_thread_id: DriverThreadId::new("source-thread-dynamic").unwrap(),
+            source_turn_id: Some(source_turn_id),
+            source_item_id: Some(source_item_id),
+            source_request_id: Some("701".to_string()),
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(
+                RuntimeEvent::InteractionRequested {
+                    turn_id,
+                    item_id: None,
+                    interaction_id: agentdash_agent_runtime_contract::RuntimeInteractionId::new(
+                        interaction_id.clone(),
+                    )
+                    .unwrap(),
+                    request: dynamic_tool_interaction_request(json!({
+                        "threadId": "source-thread-dynamic",
+                        "turnId": "source-turn-dynamic-interaction",
+                        "callId": "source-item-dynamic-interaction",
+                        "namespace": "platform",
+                        "tool": "surface_update",
+                        "arguments": {}
+                    }))
+                    .unwrap(),
+                },
+            )],
+        };
+        (interaction_id, pending, envelope)
+    }
+
     #[test]
     fn profile_is_truthful_about_opaque_compaction_and_thread_start_updates() {
         let profile = codex_runtime_profile();
@@ -2037,6 +2495,8 @@ mod tests {
                 .unwrap(),
             source_item_id: None,
             source_request_id: "1".to_string(),
+            operation_id: agentdash_agent_runtime_contract::RuntimeOperationId::new("operation-1")
+                .unwrap(),
         };
         assert!(
             interaction_result(
@@ -2058,6 +2518,62 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_tool_validation_rejects_empty_turn_and_call_ids_before_registration() {
+        for (params, expected) in [
+            (
+                json!({"turnId":"","callId":"source-call","tool":"surface_update"}),
+                "turnId",
+            ),
+            (
+                json!({"turnId":"source-turn","callId":"","tool":"surface_update"}),
+                "callId",
+            ),
+        ] {
+            let error = validate_dynamic_tool_call(&params)
+                .err()
+                .expect("empty dynamic tool coordinate must be rejected");
+            assert!(error.contains(expected), "{error}");
+            let response = error_response(json!(701), -32602, error);
+            assert_eq!(response["error"]["code"], -32602);
+        }
+    }
+
+    #[tokio::test]
+    async fn dynamic_tool_interaction_without_sink_never_becomes_pending() {
+        let state = Arc::new(Mutex::new(CodexPumpState::default()));
+        let (interaction_key, pending, envelope) = dynamic_interaction_fixture();
+        let error =
+            publish_dynamic_tool_interaction(&state, None, &interaction_key, pending, envelope)
+                .await
+                .expect_err("missing sink must fail the dynamic interaction");
+        assert!(matches!(error, DriverError::Unavailable { .. }));
+        assert!(state.lock().await.pending_interactions.is_empty());
+        let response = error_response(json!(701), -32002, error.to_string());
+        assert_eq!(response["error"]["code"], -32002);
+    }
+
+    #[tokio::test]
+    async fn dynamic_tool_interaction_sink_failure_never_becomes_pending() {
+        let state = Arc::new(Mutex::new(CodexPumpState::default()));
+        let sink = Arc::new(AlwaysRejectingSink::default());
+        let (interaction_key, pending, envelope) = dynamic_interaction_fixture();
+        let error = publish_dynamic_tool_interaction(
+            &state,
+            Some(sink.clone()),
+            &interaction_key,
+            pending,
+            envelope,
+        )
+        .await
+        .expect_err("sink failure must fail the dynamic interaction");
+        assert!(matches!(error, DriverError::Unavailable { .. }));
+        assert_eq!(sink.0.lock().await.len(), 1);
+        assert!(state.lock().await.pending_interactions.is_empty());
+        let response = error_response(json!(701), -32002, error.to_string());
+        assert_eq!(response["error"]["code"], -32002);
+    }
+
+    #[test]
     fn user_input_response_requires_exact_typed_text_answers() {
         let pending = PendingServerRequest {
             rpc_id: json!(2),
@@ -2068,6 +2584,8 @@ mod tests {
                 .unwrap(),
             source_item_id: None,
             source_request_id: "2".to_string(),
+            operation_id: agentdash_agent_runtime_contract::RuntimeOperationId::new("operation-2")
+                .unwrap(),
         };
         let response = interaction_result(
             &pending,
@@ -2176,9 +2694,16 @@ mod tests {
         {
             let mut state = state.lock().await;
             state.sink = Some(sink.clone());
-            state
-                .active_turns
-                .insert(runtime_turn.clone(), source_turn.clone());
+            state.active_turns.insert(
+                runtime_turn.clone(),
+                ActiveCodexTurn {
+                    source_turn_id: source_turn.clone(),
+                    operation_id: agentdash_agent_runtime_contract::RuntimeOperationId::new(
+                        "operation-turn",
+                    )
+                    .unwrap(),
+                },
+            );
             state.pending_interactions.insert(
                 "interaction-1".to_string(),
                 PendingServerRequest {
@@ -2189,6 +2714,10 @@ mod tests {
                     source_turn_id: source_turn.clone(),
                     source_item_id: None,
                     source_request_id: "1".to_string(),
+                    operation_id: agentdash_agent_runtime_contract::RuntimeOperationId::new(
+                        "operation-turn",
+                    )
+                    .unwrap(),
                 },
             );
         }
@@ -2221,6 +2750,125 @@ mod tests {
         assert!(state.lock().await.pending_interactions.is_empty());
     }
 
+    #[tokio::test]
+    async fn full_surface_sync_defers_until_the_active_codex_turn_is_terminal() {
+        let runtime_turn = RuntimeTurnId::new("runtime-turn-surface-sync").unwrap();
+        let state = Arc::new(Mutex::new(CodexPumpState::default()));
+        state.lock().await.active_turns.insert(
+            runtime_turn.clone(),
+            ActiveCodexTurn {
+                source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new(
+                    "source-turn-surface-sync",
+                )
+                .unwrap(),
+                operation_id: agentdash_agent_runtime_contract::RuntimeOperationId::new(
+                    "operation-surface-sync",
+                )
+                .unwrap(),
+            },
+        );
+
+        let waiting_state = state.clone();
+        let waiter = tokio::spawn(async move {
+            wait_for_codex_turn_idle(&waiting_state).await;
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !waiter.is_finished(),
+            "connector full-surface sync must remain deferred while the turn is active"
+        );
+
+        state.lock().await.finish_turn(&runtime_turn);
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("terminal turn wakes deferred surface sync")
+            .expect("surface sync waiter");
+    }
+
+    #[tokio::test]
+    async fn terminal_projection_failure_loses_binding_without_forgetting_active_operation() {
+        let sink = Arc::new(TerminalProjectionRejectingSink::default());
+        let binding_id =
+            agentdash_agent_runtime_contract::RuntimeBindingId::new("binding").expect("binding id");
+        let source_thread_id = DriverThreadId::new("source-thread").expect("source thread");
+        let runtime_turn = RuntimeTurnId::new("runtime-turn").expect("runtime turn");
+        let source_turn = agentdash_agent_runtime_contract::DriverTurnId::new("source-turn")
+            .expect("source turn");
+        let operation_id = agentdash_agent_runtime_contract::RuntimeOperationId::new(
+            "terminal-projection-operation",
+        )
+        .expect("operation id");
+        let state = Arc::new(Mutex::new(CodexPumpState::default()));
+        let mapped = {
+            let mut state = state.lock().await;
+            state
+                .coordinates
+                .register_turn(source_turn.as_str(), runtime_turn.clone());
+            state.active_turns.insert(
+                runtime_turn.clone(),
+                ActiveCodexTurn {
+                    source_turn_id: source_turn.clone(),
+                    operation_id: operation_id.clone(),
+                },
+            );
+            state
+                .coordinates
+                .map_notification(crate::rpc::RpcServerNotification {
+                    method: "turn/completed".to_string(),
+                    params: json!({
+                        "threadId": source_thread_id.as_str(),
+                        "turn": {
+                            "id": source_turn.as_str(),
+                            "status": "completed",
+                            "items": [],
+                            "itemsView": "full",
+                            "error": null,
+                            "startedAt": null,
+                            "completedAt": null,
+                            "durationMs": null
+                        }
+                    }),
+                })
+                .expect("map terminal notification")
+                .expect("mapped terminal notification")
+        };
+
+        let binding_lost = emit_mapped_notification(
+            &state,
+            sink.clone(),
+            &binding_id,
+            agentdash_agent_runtime_contract::RuntimeDriverGeneration(4),
+            &source_thread_id,
+            Some(operation_id.clone()),
+            mapped,
+        )
+        .await;
+
+        assert!(binding_lost, "pump must stop after the binding is lost");
+        assert!(state.lock().await.active_turns.is_empty());
+        let events = sink.0.lock().await;
+        assert_eq!(events.len(), 2);
+        assert!(events[0].facts.iter().any(|fact| matches!(
+            fact,
+            RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                turn_id,
+                terminal: RuntimeTurnTerminal::Completed,
+                ..
+            }) if turn_id == &runtime_turn
+        )));
+        assert_eq!(events[0].operation_id.as_ref(), Some(&operation_id));
+        assert!(matches!(
+            events[1].facts.as_slice(),
+            [RuntimeJournalFact::Internal(RuntimeEvent::BindingLost {
+                binding_id: lost_binding_id,
+                reason,
+            })] if lost_binding_id == &binding_id
+                && reason.contains("terminal presentation projection failure")
+        ));
+        assert_eq!(events[1].operation_id.as_ref(), Some(&operation_id));
+        assert_eq!(events[1].source_turn_id.as_ref(), Some(&source_turn));
+    }
+
     #[test]
     fn thread_projection_keeps_source_coordinates_and_final_item() {
         let items = projected_items(&json!({ "thread": { "turns": [{
@@ -2244,6 +2892,215 @@ mod tests {
                 Err(DriverError::ProtocolViolation { critical: true, .. })
             ));
         }
+    }
+
+    #[test]
+    fn codex_dynamic_tool_presentation_obeys_the_effective_emitter_route() {
+        let mapped = || {
+            let item = agentdash_agent_protocol::AgentDashThreadItem::Codex(
+                agentdash_agent_protocol::backbone::thread_item::dynamic_tool_call(
+                    "source-item",
+                    "platform_read",
+                    json!({"path":"README.md"}),
+                    agentdash_agent_protocol::codex_app_server_protocol::DynamicToolCallStatus::InProgress,
+                    None,
+                    None,
+                ),
+            );
+            MappedEvent {
+                source_turn_id: None,
+                source_item_id: None,
+                runtime_event: Some(RuntimeEvent::ItemStarted {
+                    turn_id: RuntimeTurnId::new("runtime-turn").expect("runtime turn"),
+                    item_id: agentdash_agent_runtime_contract::RuntimeItemId::new(
+                        "runtime-tool-item",
+                    )
+                    .expect("runtime item"),
+                    initial_content: item_content(&json!({
+                        "id":"source-item", "type":"dynamicToolCall",
+                        "tool":"platform_read", "status":"inProgress",
+                        "arguments":{"path":"README.md"}, "success":null,
+                        "namespace":null, "durationMs":null, "contentItems":null
+                    }))
+                    .expect("dynamic tool content"),
+                }),
+                presentation: ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    agentdash_agent_protocol::BackboneEvent::ItemStarted(
+                        agentdash_agent_protocol::ItemStartedNotification::new(
+                            item,
+                            "source-thread",
+                            "source-turn",
+                        ),
+                    ),
+                ),
+            }
+        };
+        assert!(
+            route_bound_dynamic_tool_event(
+                mapped(),
+                &BTreeMap::from([(
+                    "platform_read".to_string(),
+                    ToolPresentationEmitter::ToolBroker,
+                )]),
+            )
+            .unwrap()
+            .is_none()
+        );
+        let vendor = route_bound_dynamic_tool_event(
+            mapped(),
+            &BTreeMap::from([(
+                "platform_read".to_string(),
+                ToolPresentationEmitter::VendorStream,
+            )]),
+        )
+        .unwrap()
+        .expect("VendorStream presentation");
+        assert!(vendor.runtime_event.is_none());
+        assert!(matches!(
+            vendor.presentation.event,
+            agentdash_agent_protocol::BackboneEvent::ItemStarted(_)
+        ));
+        assert!(matches!(
+            route_bound_dynamic_tool_event(mapped(), &BTreeMap::new()),
+            Err(MappingError::MissingToolPresentationRoute { tool }) if tool == "platform_read"
+        ));
+    }
+
+    #[test]
+    fn codex_vendor_tool_callback_keeps_broker_internal_lifecycle_and_continues() {
+        let mut coordinates = SourceCoordinateMap::default();
+        let runtime_turn = RuntimeTurnId::new("runtime-turn").expect("runtime turn");
+        coordinates.register_turn("source-turn", runtime_turn.clone());
+        let emitters = BTreeMap::from([(
+            "platform_read".to_string(),
+            ToolPresentationEmitter::VendorStream,
+        )]);
+
+        let started = coordinates
+            .map_notification(crate::rpc::RpcServerNotification {
+                method: "item/started".to_string(),
+                params: json!({
+                    "threadId":"source-thread", "turnId":"source-turn", "startedAtMs":1,
+                    "item": {
+                        "id":"source-tool", "type":"dynamicToolCall",
+                        "tool":"platform_read", "status":"inProgress",
+                        "arguments":{"path":"README.md"}, "success":null,
+                        "namespace":null, "durationMs":null, "contentItems":null
+                    }
+                }),
+            })
+            .expect("map vendor tool start")
+            .expect("vendor tool start");
+        let broker_start = started
+            .runtime_event
+            .clone()
+            .expect("broker canonical start fixture");
+        let started = route_bound_dynamic_tool_event(started, &emitters)
+            .expect("route vendor tool start")
+            .expect("vendor start presentation");
+
+        let completed = coordinates
+            .map_notification(crate::rpc::RpcServerNotification {
+                method: "item/completed".to_string(),
+                params: json!({
+                    "threadId":"source-thread", "turnId":"source-turn", "completedAtMs":2,
+                    "item": {
+                        "id":"source-tool", "type":"dynamicToolCall",
+                        "tool":"platform_read", "status":"completed",
+                        "arguments":{"path":"README.md"}, "success":true,
+                        "namespace":null, "durationMs":1,
+                        "contentItems":[{"type":"inputText","text":"done"}]
+                    }
+                }),
+            })
+            .expect("map vendor tool terminal")
+            .expect("vendor tool terminal");
+        let broker_terminal = completed
+            .runtime_event
+            .clone()
+            .expect("broker canonical terminal fixture");
+        let completed = route_bound_dynamic_tool_event(completed, &emitters)
+            .expect("route vendor tool terminal")
+            .expect("vendor terminal presentation");
+
+        assert!(started.runtime_event.is_none());
+        assert!(completed.runtime_event.is_none());
+        assert!(matches!(
+            broker_start,
+            RuntimeEvent::ItemStarted { ref turn_id, .. } if turn_id == &runtime_turn
+        ));
+        assert!(matches!(
+            broker_terminal,
+            RuntimeEvent::ItemTerminal { ref turn_id, .. } if turn_id == &runtime_turn
+        ));
+        let visible = [&started.presentation.event, &completed.presentation.event];
+        assert_eq!(
+            visible
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    agentdash_agent_protocol::BackboneEvent::ItemStarted(_)
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            visible
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    agentdash_agent_protocol::BackboneEvent::ItemCompleted(_)
+                ))
+                .count(),
+            1
+        );
+
+        let final_message_started = coordinates
+            .map_notification(crate::rpc::RpcServerNotification {
+                method: "item/started".to_string(),
+                params: json!({
+                    "threadId":"source-thread", "turnId":"source-turn", "startedAtMs":3,
+                    "item": {
+                        "id":"source-message", "type":"agentMessage", "text":"",
+                        "phase":null, "memoryCitation":null
+                    }
+                }),
+            })
+            .expect("map provider continuation start")
+            .expect("final assistant message start");
+        let final_message_started =
+            route_bound_dynamic_tool_event(final_message_started, &emitters)
+                .expect("route final assistant message start")
+                .expect("final assistant message start remains visible");
+        let final_message = coordinates
+            .map_notification(crate::rpc::RpcServerNotification {
+                method: "item/completed".to_string(),
+                params: json!({
+                    "threadId":"source-thread", "turnId":"source-turn", "completedAtMs":4,
+                    "item": {
+                        "id":"source-message", "type":"agentMessage", "text":"finished",
+                        "phase":null, "memoryCitation":null
+                    }
+                }),
+            })
+            .expect("map provider continuation")
+            .expect("final assistant message");
+        let final_message = route_bound_dynamic_tool_event(final_message, &emitters)
+            .expect("route final assistant message")
+            .expect("final assistant message remains visible");
+        assert!(matches!(
+            final_message_started.runtime_event,
+            Some(RuntimeEvent::ItemStarted { .. })
+        ));
+        assert!(matches!(
+            final_message.runtime_event,
+            Some(RuntimeEvent::ItemTerminal { .. })
+        ));
+        assert!(matches!(
+            final_message.presentation.event,
+            agentdash_agent_protocol::BackboneEvent::ItemCompleted(_)
+        ));
     }
 
     #[test]

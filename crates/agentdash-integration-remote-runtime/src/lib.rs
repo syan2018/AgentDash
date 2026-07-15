@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -164,6 +164,9 @@ struct ActiveRemoteBinding {
     generation: RuntimeDriverGeneration,
     source_thread_id: DriverThreadId,
     source_turn_id: Option<DriverTurnId>,
+    operation_id: Option<RuntimeOperationId>,
+    dispatch_request_id: DriverRequestId,
+    terminal_source_turns: HashSet<DriverTurnId>,
     sink: Arc<dyn DriverEventSink>,
 }
 
@@ -230,22 +233,44 @@ impl AgentRuntimeDriver for RemoteRuntimeDriver {
             return Err(DriverError::StaleGeneration);
         }
         let binding_id = command.binding_id.clone();
-        self.active_bindings.lock().await.insert(
-            binding_id.clone(),
-            ActiveRemoteBinding {
-                binding_id: command.binding_id.clone(),
-                generation: command.generation,
-                source_thread_id: command.source_thread_id.clone(),
-                source_turn_id: None,
-                sink,
-            },
-        );
+        let dispatch_request_id = command.request_id.clone();
+        let operation_id = command
+            .runtime_turn_id
+            .as_ref()
+            .map(|_| command.operation_id.clone());
+        let previous = {
+            let mut bindings = self.active_bindings.lock().await;
+            let previous = bindings.remove(&binding_id);
+            bindings.insert(
+                binding_id.clone(),
+                ActiveRemoteBinding {
+                    binding_id: command.binding_id.clone(),
+                    generation: command.generation,
+                    source_thread_id: command.source_thread_id.clone(),
+                    source_turn_id: previous
+                        .as_ref()
+                        .and_then(|binding| binding.source_turn_id.clone()),
+                    operation_id: operation_id.or_else(|| {
+                        previous
+                            .as_ref()
+                            .and_then(|binding| binding.operation_id.clone())
+                    }),
+                    dispatch_request_id: dispatch_request_id.clone(),
+                    terminal_source_turns: previous
+                        .as_ref()
+                        .map(|binding| binding.terminal_source_turns.clone())
+                        .unwrap_or_default(),
+                    sink,
+                },
+            );
+            previous
+        };
         let mut source_command = command;
         source_command.generation = self.source_generation;
         let response = self
             .request(RuntimeWireRequest::DriverDispatch(source_command))
             .await;
-        match response {
+        let result = match response {
             Ok(RuntimeWireResponse::DriverDispatch(RuntimeWireDriverDispatchResult::Ok(value))) => {
                 Ok(*value)
             }
@@ -254,7 +279,12 @@ impl AgentRuntimeDriver for RemoteRuntimeDriver {
             ))) => Err(error),
             Ok(_) => Err(protocol_error("driver dispatch response mismatch")),
             Err(error) => Err(error),
+        };
+        if result.is_err() {
+            self.rollback_dispatch_binding(&binding_id, &dispatch_request_id, previous)
+                .await;
         }
+        result
     }
 
     async fn inspect(&self, query: DriverInspectionQuery) -> Result<DriverInspection, DriverError> {
@@ -371,17 +401,97 @@ impl RemoteRuntimeDriver {
                 if event.generation != self.source_generation {
                     return;
                 }
-                let sink = {
-                    self.active_bindings
-                        .lock()
-                        .await
-                        .get(&event.binding_id)
-                        .map(|binding| binding.sink.clone())
+                let (sink, releases_binding, turn_terminal, source_turn_id, operation_id) = {
+                    let bindings = self.active_bindings.lock().await;
+                    let Some(binding) = bindings.get(&event.binding_id) else {
+                        return;
+                    };
+                    if binding.generation != self.generation
+                        || binding.source_thread_id != event.source_thread_id
+                    {
+                        return;
+                    }
+                    let releases_binding = event_releases_binding(&event);
+                    let source_turn_id = event.source_turn_id.clone();
+                    if source_turn_id.as_ref().is_some_and(|source_turn_id| {
+                        binding.terminal_source_turns.contains(source_turn_id)
+                    }) && !releases_binding
+                    {
+                        return;
+                    }
+                    let turn_terminal = event_contains_turn_terminal(&event);
+                    let operation_id = event
+                        .operation_id
+                        .clone()
+                        .or_else(|| binding.operation_id.clone());
+                    (
+                        binding.sink.clone(),
+                        releases_binding,
+                        turn_terminal,
+                        source_turn_id,
+                        operation_id,
+                    )
                 };
-                if let Some(sink) = sink {
-                    let mut canonical_event = event;
-                    canonical_event.generation = self.generation;
-                    let _ = sink.emit(canonical_event).await;
+                let binding_id = event.binding_id.clone();
+                let source_thread_id = event.source_thread_id.clone();
+                let mut canonical_event = event;
+                canonical_event.generation = self.generation;
+                match sink.emit(canonical_event).await {
+                    Ok(()) => {
+                        let mut bindings = self.active_bindings.lock().await;
+                        let Some(binding) = bindings.get_mut(&binding_id) else {
+                            return;
+                        };
+                        if binding.generation != self.generation
+                            || binding.source_thread_id != source_thread_id
+                        {
+                            return;
+                        }
+                        if let Some(source_turn_id) = source_turn_id {
+                            if turn_terminal {
+                                binding.terminal_source_turns.insert(source_turn_id.clone());
+                                if binding.source_turn_id.is_none()
+                                    || binding.source_turn_id.as_ref() == Some(&source_turn_id)
+                                {
+                                    binding.source_turn_id = None;
+                                    binding.operation_id = None;
+                                }
+                            } else {
+                                binding.source_turn_id = Some(source_turn_id);
+                                if let Some(operation_id) = operation_id {
+                                    binding.operation_id = Some(operation_id);
+                                }
+                            }
+                        }
+                        if releases_binding {
+                            bindings.remove(&binding_id);
+                        }
+                    }
+                    Err(error) if turn_terminal || releases_binding => {
+                        let binding_lost = DriverEventEnvelope {
+                            binding_id: binding_id.clone(),
+                            generation: self.generation,
+                            operation_id,
+                            source_thread_id,
+                            source_turn_id,
+                            source_item_id: None,
+                            source_request_id: None,
+                            source_entry_index: None,
+                            facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::BindingLost {
+                                binding_id: binding_id.clone(),
+                                reason: format!(
+                                    "Remote terminal delivery failed; binding was lost to close the accepted Runtime operation: {error}"
+                                ),
+                            })],
+                        };
+                        if sink.emit(binding_lost).await.is_ok() {
+                            self.active_bindings.lock().await.remove(&binding_id);
+                        }
+                    }
+                    Err(_) => {
+                        // No local coordinate or terminal fence advances until the authoritative
+                        // sink commits the event. A replay can therefore retry the same frame.
+                    }
                 }
             }
             RuntimeWireFrame::Ack(_) => {}
@@ -445,6 +555,24 @@ impl RemoteRuntimeDriver {
                     .map(Box::new)
                     .map_err(host_port_error),
             ),
+            RuntimeWireHostPortRequest::Transcript(mut request) => {
+                if request.generation != self.source_generation {
+                    return Ok(RuntimeWireResponse::HostPort(
+                        RuntimeWireHostPortResponse::Transcript(Err(
+                            stale_source_generation_error(),
+                        )),
+                    ));
+                }
+                request.generation = self.generation;
+                RuntimeWireHostPortResponse::Transcript(
+                    self.host
+                        .context
+                        .load_transcript(request)
+                        .await
+                        .map(Box::new)
+                        .map_err(host_port_error),
+                )
+            }
             RuntimeWireHostPortRequest::ContextCheckpoint(mut request) => {
                 if request.generation != self.source_generation {
                     return Ok(RuntimeWireResponse::HostPort(
@@ -532,6 +660,7 @@ impl RemoteRuntimeDriver {
                 .emit(DriverEventEnvelope {
                     binding_id: binding.binding_id.clone(),
                     generation: binding.generation,
+                    operation_id: binding.operation_id,
                     source_thread_id: binding.source_thread_id,
                     source_turn_id: binding.source_turn_id,
                     source_item_id: None,
@@ -545,6 +674,25 @@ impl RemoteRuntimeDriver {
                 .await;
         }
         self.pending.lock().await.clear();
+    }
+
+    async fn rollback_dispatch_binding(
+        &self,
+        binding_id: &RuntimeBindingId,
+        dispatch_request_id: &DriverRequestId,
+        previous: Option<ActiveRemoteBinding>,
+    ) {
+        let mut bindings = self.active_bindings.lock().await;
+        let still_registered_by_failed_dispatch = bindings
+            .get(binding_id)
+            .is_some_and(|binding| &binding.dispatch_request_id == dispatch_request_id);
+        if !still_registered_by_failed_dispatch {
+            return;
+        }
+        bindings.remove(binding_id);
+        if let Some(previous) = previous {
+            bindings.insert(binding_id.clone(), previous);
+        }
     }
 
     async fn request(
@@ -578,6 +726,30 @@ impl RemoteRuntimeDriver {
             retryable: true,
         })
     }
+}
+
+fn event_contains_turn_terminal(event: &DriverEventEnvelope) -> bool {
+    event.facts.iter().any(|fact| {
+        matches!(
+            fact,
+            RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal { .. })
+        )
+    })
+}
+
+fn event_releases_binding(event: &DriverEventEnvelope) -> bool {
+    event.facts.iter().any(|fact| {
+        matches!(
+            fact,
+            RuntimeJournalFact::Internal(RuntimeEvent::BindingLost { binding_id, .. })
+                if binding_id == &event.binding_id
+        ) || matches!(
+            fact,
+            RuntimeJournalFact::Internal(RuntimeEvent::ThreadStatusChanged {
+                status: RuntimeThreadStatus::Closed,
+            })
+        )
+    })
 }
 
 fn host_port_error(error: impl ToString) -> RuntimeWireHostPortError {
@@ -955,6 +1127,28 @@ struct RuntimeWireContextBroker(Arc<RuntimeWireHostPortRouter>);
 
 #[async_trait]
 impl AgentRuntimeContextBroker for RuntimeWireContextBroker {
+    async fn load_transcript(
+        &self,
+        request: DriverTranscriptRequest,
+    ) -> Result<DriverTranscript, DriverContextError> {
+        let binding_id = request.binding_id.clone();
+        match self
+            .0
+            .client(&binding_id)
+            .await
+            .map_err(context_wire_error)?
+            .request(RuntimeWireHostPortRequest::Transcript(request))
+            .await
+            .map_err(context_wire_error)?
+        {
+            RuntimeWireHostPortResponse::Transcript(Ok(value)) => Ok(*value),
+            RuntimeWireHostPortResponse::Transcript(Err(error)) => Err(context_wire_error(error)),
+            _ => Err(DriverContextError::InvalidMaterialization {
+                reason: "Runtime Wire transcript response mismatch".to_string(),
+            }),
+        }
+    }
+
     async fn load_checkpoint(
         &self,
         request: DriverContextCheckpointRequest,
@@ -1193,6 +1387,11 @@ mod tests {
 
     struct AsyncEventDriver;
 
+    struct TranscriptLoadingDriver {
+        context: Arc<dyn AgentRuntimeContextBroker>,
+        transcript: tokio::sync::Mutex<Option<DriverTranscript>>,
+    }
+
     struct BlockingSink {
         entered: tokio::sync::Semaphore,
         release: tokio::sync::Semaphore,
@@ -1224,9 +1423,70 @@ mod tests {
         }
     }
 
+    struct FailingSink {
+        failures_remaining: tokio::sync::Mutex<usize>,
+        attempts: tokio::sync::Mutex<Vec<DriverEventEnvelope>>,
+    }
+
+    impl FailingSink {
+        fn new(failures: usize) -> Self {
+            Self {
+                failures_remaining: tokio::sync::Mutex::new(failures),
+                attempts: tokio::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl DriverEventSink for FailingSink {
+        async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
+            self.attempts.lock().await.push(event);
+            let mut failures = self.failures_remaining.lock().await;
+            if *failures == 0 {
+                Ok(())
+            } else {
+                *failures -= 1;
+                Err(DriverError::Unavailable {
+                    reason: "injected Runtime sink failure".to_string(),
+                    retryable: true,
+                })
+            }
+        }
+    }
+
     struct ClosedPlacement;
 
     struct TestCredentialBroker;
+
+    #[derive(Default)]
+    struct RecordingTranscriptBroker {
+        requests: tokio::sync::Mutex<Vec<DriverTranscriptRequest>>,
+    }
+
+    #[async_trait]
+    impl AgentRuntimeContextBroker for RecordingTranscriptBroker {
+        async fn load_transcript(
+            &self,
+            request: DriverTranscriptRequest,
+        ) -> Result<DriverTranscript, DriverContextError> {
+            self.requests.lock().await.push(request);
+            Ok(transcript_fixture())
+        }
+
+        async fn load_checkpoint(
+            &self,
+            _request: DriverContextCheckpointRequest,
+        ) -> Result<DriverContextActivation, DriverContextError> {
+            Err(DriverContextError::NotFound)
+        }
+
+        async fn compaction_activation(
+            &self,
+            _request: DriverCompactionActivationRequest,
+        ) -> Result<DriverContextActivation, DriverContextError> {
+            Err(DriverContextError::NotFound)
+        }
+    }
 
     #[async_trait]
     impl AgentRuntimeCredentialBroker for TestCredentialBroker {
@@ -1245,6 +1505,257 @@ mod tests {
 
     fn test_host_ports() -> RuntimeDriverHostPorts {
         Arc::new(RuntimeWireHostPortRouter::default()).host_ports(Arc::new(TestCredentialBroker))
+    }
+
+    fn transcript_fixture() -> DriverTranscript {
+        let thread_id = id("thread-remote-transcript");
+        let binding_id: RuntimeBindingId = id("binding-remote-transcript");
+        let record = RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id,
+                recorded_at_ms: 4,
+                sequence: Some(EventSequence(4)),
+                transient: None,
+                revision: RuntimeRevision(4),
+                operation_id: Some(id("operation-remote-transcript")),
+                append_idempotency_key: None,
+                binding_id: Some(binding_id),
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    presentation_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some("source-thread-remote-transcript".to_string()),
+                    source_turn_id: None,
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: None,
+                },
+            },
+            RuntimeJournalFact::Internal(RuntimeEvent::OperationAccepted {
+                operation_id: id("operation-remote-transcript"),
+            }),
+        )
+        .expect("valid transcript record");
+        DriverTranscript {
+            earliest_available: EventSequence(4),
+            latest_available: EventSequence(4),
+            active_compaction_source_end: None,
+            completed_presentation_item_ids: Vec::new(),
+            records: vec![record],
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_context_broker_roundtrips_typed_transcript_without_fallback() {
+        let router = Arc::new(RuntimeWireHostPortRouter::default());
+        let (outbound, mut requests) = tokio::sync::mpsc::unbounded_channel();
+        let pending = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        let binding_id: RuntimeBindingId = id("binding-remote-transcript");
+        router
+            .bind(
+                binding_id.clone(),
+                RuntimeWireHostPortClient {
+                    outbound,
+                    pending: pending.clone(),
+                    next_frame_id: Arc::new(AtomicU64::new(1)),
+                },
+            )
+            .await;
+        let broker = RuntimeWireContextBroker(router);
+        let request = DriverTranscriptRequest {
+            binding_id,
+            generation: RuntimeDriverGeneration(8),
+            runtime_thread_id: id("thread-remote-transcript"),
+        };
+        let load = tokio::spawn(async move { broker.load_transcript(request).await });
+        let envelope = requests.recv().await.expect("typed transcript request");
+        let encoded = serde_json::to_vec(&envelope).expect("serialize transcript request");
+        let DecodedRuntimeWireFrame::Known(decoded) =
+            decode_frame(&encoded).expect("decode transcript request")
+        else {
+            panic!("transcript request must remain a known critical frame");
+        };
+        assert!(matches!(
+            decoded.frame,
+            RuntimeWireFrame::Request(request)
+                if matches!(
+                    request.as_ref(),
+                    RuntimeWireRequest::HostPort(request)
+                        if matches!(
+                            request.as_ref(),
+                            RuntimeWireHostPortRequest::Transcript(DriverTranscriptRequest {
+                                binding_id,
+                                generation: RuntimeDriverGeneration(8),
+                                runtime_thread_id,
+                            }) if binding_id == &id("binding-remote-transcript")
+                                && runtime_thread_id == &id("thread-remote-transcript")
+                        )
+                )
+        ));
+        let response = RuntimeWireHostPortResponse::Transcript(Ok(Box::new(transcript_fixture())));
+        let response: RuntimeWireHostPortResponse = serde_json::from_value(
+            serde_json::to_value(response).expect("serialize transcript response"),
+        )
+        .expect("deserialize transcript response");
+        pending
+            .lock()
+            .await
+            .remove(&envelope.frame_id.0)
+            .expect("pending transcript correlation")
+            .send(response)
+            .expect("deliver transcript response");
+
+        let transcript = load
+            .await
+            .expect("transcript load task")
+            .expect("authoritative transcript");
+        assert_eq!(transcript, transcript_fixture());
+    }
+
+    #[tokio::test]
+    async fn cloud_transcript_host_port_preserves_binding_and_thread_and_rewrites_generation() {
+        let transcript_broker = Arc::new(RecordingTranscriptBroker::default());
+        let mut host = test_host_ports();
+        host.context = transcript_broker.clone();
+        let driver = RemoteRuntimeDriver {
+            instance_id: id("service-transcript-host"),
+            generation: RuntimeDriverGeneration(3),
+            source_instance_id: id("source-service-transcript-host"),
+            source_generation: RuntimeDriverGeneration(8),
+            placement: Arc::new(ClosedPlacement),
+            host,
+            next_frame_id: AtomicU64::new(1),
+            pending: tokio::sync::Mutex::new(HashMap::new()),
+            active_bindings: tokio::sync::Mutex::new(HashMap::new()),
+            connection_lost: AtomicBool::new(false),
+        };
+        let request = DriverTranscriptRequest {
+            binding_id: id("binding-remote-transcript"),
+            generation: RuntimeDriverGeneration(8),
+            runtime_thread_id: id("thread-remote-transcript"),
+        };
+        let response = driver
+            .handle_host_port_request(RuntimeWireRequest::HostPort(Box::new(
+                RuntimeWireHostPortRequest::Transcript(request.clone()),
+            )))
+            .await
+            .expect("forward transcript request");
+        assert!(matches!(
+            response,
+            RuntimeWireResponse::HostPort(RuntimeWireHostPortResponse::Transcript(Ok(value)))
+                if *value == transcript_fixture()
+        ));
+        assert_eq!(
+            transcript_broker.requests.lock().await.as_slice(),
+            &[DriverTranscriptRequest {
+                binding_id: request.binding_id.clone(),
+                generation: RuntimeDriverGeneration(3),
+                runtime_thread_id: request.runtime_thread_id.clone(),
+            }]
+        );
+
+        let stale = driver
+            .handle_host_port_request(RuntimeWireRequest::HostPort(Box::new(
+                RuntimeWireHostPortRequest::Transcript(DriverTranscriptRequest {
+                    generation: RuntimeDriverGeneration(7),
+                    ..request
+                }),
+            )))
+            .await
+            .expect("stale transcript response");
+        assert!(matches!(
+            stale,
+            RuntimeWireResponse::HostPort(RuntimeWireHostPortResponse::Transcript(Err(
+                RuntimeWireHostPortError { stale: true, .. }
+            )))
+        ));
+        assert_eq!(transcript_broker.requests.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn remote_dispatch_loads_cloud_authoritative_transcript_through_runtime_wire() {
+        let local_router = Arc::new(RuntimeWireHostPortRouter::default());
+        let local_host = local_router.host_ports(Arc::new(TestCredentialBroker));
+        let local_driver = Arc::new(TranscriptLoadingDriver {
+            context: local_host.context,
+            transcript: tokio::sync::Mutex::new(None),
+        });
+        let placement: Arc<dyn RuntimeWirePlacement> =
+            Arc::new(RuntimeWireDriverEndpoint::new_with_host_port_router(
+                local_driver.clone(),
+                local_router,
+            ));
+        let cloud_transcript = Arc::new(RecordingTranscriptBroker::default());
+        let mut cloud_host = test_host_ports();
+        cloud_host.context = cloud_transcript.clone();
+        let remote = Arc::new(RemoteRuntimeDriver {
+            instance_id: id("service-cloud-transcript"),
+            generation: RuntimeDriverGeneration(3),
+            source_instance_id: id("service-local-transcript"),
+            source_generation: RuntimeDriverGeneration(8),
+            placement,
+            host: cloud_host,
+            next_frame_id: AtomicU64::new(1),
+            pending: tokio::sync::Mutex::new(HashMap::new()),
+            active_bindings: tokio::sync::Mutex::new(HashMap::new()),
+            connection_lost: AtomicBool::new(false),
+        });
+        remote.clone().start_receive_pump();
+        let binding = remote
+            .bind(DriverBindRequest {
+                binding_id: id("binding-remote-transcript"),
+                service_instance_id: id("service-cloud-transcript"),
+                surface_revision: SurfaceRevision(1),
+                surface_digest: id("surface-cloud-transcript"),
+                intent: DriverBindIntent::Resume {
+                    source_thread_id: id("source-thread-remote-transcript"),
+                },
+            })
+            .await
+            .expect("bind local transcript-loading driver");
+        assert_eq!(
+            binding.source_thread_id,
+            id("source-thread-remote-transcript")
+        );
+
+        let receipt = remote
+            .dispatch(
+                DriverCommandEnvelope {
+                    request_id: id("request-remote-transcript"),
+                    operation_id: id("operation-remote-transcript-dispatch"),
+                    presentation_thread_id: id("presentation-thread-remote-transcript"),
+                    binding_id: id("binding-remote-transcript"),
+                    generation: RuntimeDriverGeneration(3),
+                    source_thread_id: id("source-thread-remote-transcript"),
+                    runtime_turn_id: None,
+                    presentation_turn_id: None,
+                    command: RuntimeCommand::ThreadResume {
+                        thread_id: id("thread-remote-transcript"),
+                    },
+                },
+                Arc::new(RecordingSink::default()),
+            )
+            .await
+            .expect("dispatch after authoritative transcript replay");
+        assert_eq!(receipt.request_id, id("request-remote-transcript"));
+        assert_eq!(
+            local_driver
+                .transcript
+                .lock()
+                .await
+                .as_ref()
+                .expect("local driver receives transcript"),
+            &transcript_fixture()
+        );
+        assert_eq!(
+            cloud_transcript.requests.lock().await.as_slice(),
+            &[DriverTranscriptRequest {
+                binding_id: id("binding-remote-transcript"),
+                generation: RuntimeDriverGeneration(3),
+                runtime_thread_id: id("thread-remote-transcript"),
+            }]
+        );
     }
 
     struct EpochPlacement {
@@ -1397,6 +1908,7 @@ mod tests {
                 sink.emit(DriverEventEnvelope {
                     binding_id: command.binding_id.clone(),
                     generation: command.generation,
+                    operation_id: Some(command.operation_id.clone()),
                     source_thread_id: command.source_thread_id,
                     source_turn_id: None,
                     source_item_id: None,
@@ -1425,6 +1937,75 @@ mod tests {
         ) -> Result<DriverInspection, DriverError> {
             Err(DriverError::Unsupported {
                 reason: "test".into(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl AgentRuntimeDriver for TranscriptLoadingDriver {
+        async fn describe(
+            &self,
+            request: DriverDescribeRequest,
+        ) -> Result<RuntimeDescriptor, DriverError> {
+            Ok(RuntimeDescriptor {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                service_instance_id: request.service_instance_id,
+                profile: profile(),
+                profile_digest: id("transcript-loading-profile"),
+            })
+        }
+
+        async fn bind(&self, request: DriverBindRequest) -> Result<DriverBinding, DriverError> {
+            Ok(DriverBinding {
+                driver_binding_id: id("transcript-loading-driver-binding"),
+                source_thread_id: id("source-thread-remote-transcript"),
+                applied_surface_revision: request.surface_revision,
+                applied_surface_digest: request.surface_digest,
+                applied_tool_set_revision: ToolSetRevision(1),
+                applied_tool_set_digest: "transcript-loading-tool-set".to_string(),
+                applied_hook_plan_revision: None,
+                applied_hook_plan_digest: None,
+                applied_hooks: Vec::new(),
+            })
+        }
+
+        async fn dispatch(
+            &self,
+            command: DriverCommandEnvelope,
+            _sink: Arc<dyn DriverEventSink>,
+        ) -> Result<DriverDispatchReceipt, DriverError> {
+            let RuntimeCommand::ThreadResume { thread_id } = &command.command else {
+                return Err(DriverError::Unsupported {
+                    reason: "transcript test driver accepts ThreadResume only".to_string(),
+                });
+            };
+            let transcript = self
+                .context
+                .load_transcript(DriverTranscriptRequest {
+                    binding_id: command.binding_id,
+                    generation: command.generation,
+                    runtime_thread_id: thread_id.clone(),
+                })
+                .await
+                .map_err(|error| DriverError::ProtocolViolation {
+                    reason: error.to_string(),
+                    critical: true,
+                })?;
+            *self.transcript.lock().await = Some(transcript);
+            Ok(DriverDispatchReceipt {
+                request_id: command.request_id,
+                duplicate: false,
+                applied_tool_set: None,
+                applied_surface: None,
+            })
+        }
+
+        async fn inspect(
+            &self,
+            _query: DriverInspectionQuery,
+        ) -> Result<DriverInspection, DriverError> {
+            Err(DriverError::Unsupported {
+                reason: "transcript test driver does not inspect".to_string(),
             })
         }
     }
@@ -1523,6 +2104,7 @@ mod tests {
                     thread_id: id("thread-host-port"),
                     turn_id: id("turn-host-port"),
                     item_id: id("item-host-port"),
+                    presentation_item_id: id("turn_001:tool_001"),
                     binding_id: id("binding-host-port"),
                     generation: RuntimeDriverGeneration(2),
                     source_thread_id: id("source-thread-host-port"),
@@ -1542,12 +2124,20 @@ mod tests {
             panic!("expected HostPort request frame")
         };
         let request_frame_id = request.frame_id;
-        assert!(matches!(
-            request.frame,
-            RuntimeWireFrame::Request(request)
-                if matches!(request.as_ref(), RuntimeWireRequest::HostPort(host_port)
-                    if matches!(host_port.as_ref(), RuntimeWireHostPortRequest::ToolInvoke(_)))
-        ));
+        let RuntimeWireFrame::Request(request) = request.frame else {
+            panic!("expected reverse HostPort request")
+        };
+        let RuntimeWireRequest::HostPort(host_port) = request.as_ref() else {
+            panic!("expected reverse HostPort payload")
+        };
+        let RuntimeWireHostPortRequest::ToolInvoke(invocation) = host_port.as_ref() else {
+            panic!("expected reverse tool invocation")
+        };
+        assert_eq!(invocation.item_id, id("item-host-port"));
+        assert_eq!(invocation.presentation_item_id, id("turn_001:tool_001"));
+        assert_eq!(invocation.source_thread_id, id("source-thread-host-port"));
+        assert_eq!(invocation.source_turn_id, id("source-turn-host-port"));
+        assert_eq!(invocation.source_item_id, id("source-item-host-port"));
         endpoint
             .send(RuntimeWireEnvelope {
                 protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
@@ -1644,6 +2234,441 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejected_dispatch_does_not_leave_an_active_binding() {
+        let driver = Arc::new(RemoteRuntimeDriver {
+            instance_id: id("service-rejected-dispatch"),
+            generation: RuntimeDriverGeneration(3),
+            source_instance_id: id("source-service-rejected-dispatch"),
+            source_generation: RuntimeDriverGeneration(8),
+            placement: Arc::new(RuntimeWireDriverEndpoint::new(Arc::new(FakeDriver))),
+            host: test_host_ports(),
+            next_frame_id: AtomicU64::new(1),
+            pending: tokio::sync::Mutex::new(HashMap::new()),
+            active_bindings: tokio::sync::Mutex::new(HashMap::new()),
+            connection_lost: AtomicBool::new(false),
+        });
+        driver.clone().start_receive_pump();
+        let sink = Arc::new(RecordingSink::default());
+        let error = driver
+            .dispatch(
+                DriverCommandEnvelope {
+                    request_id: id("request-rejected-dispatch"),
+                    operation_id: id("operation-rejected-dispatch"),
+                    presentation_thread_id: id("presentation-thread-rejected-dispatch"),
+                    binding_id: id("binding-rejected-dispatch"),
+                    generation: RuntimeDriverGeneration(3),
+                    source_thread_id: id("source-thread-rejected-dispatch"),
+                    runtime_turn_id: None,
+                    presentation_turn_id: None,
+                    command: RuntimeCommand::ThreadResume {
+                        thread_id: id("runtime-thread-rejected-dispatch"),
+                    },
+                },
+                sink.clone(),
+            )
+            .await
+            .expect_err("source rejection must be returned");
+        assert!(matches!(error, DriverError::Unsupported { .. }));
+        assert!(driver.active_bindings.lock().await.is_empty());
+
+        driver
+            .handle_disconnect("after rejection".to_string())
+            .await;
+        assert!(
+            sink.events.lock().await.is_empty(),
+            "a rejected command must not be resurrected as BindingLost"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_rebind_dispatch_restores_the_previous_binding_registration() {
+        let driver = Arc::new(RemoteRuntimeDriver {
+            instance_id: id("service-rejected-rebind"),
+            generation: RuntimeDriverGeneration(3),
+            source_instance_id: id("source-service-rejected-rebind"),
+            source_generation: RuntimeDriverGeneration(8),
+            placement: Arc::new(RuntimeWireDriverEndpoint::new(Arc::new(FakeDriver))),
+            host: test_host_ports(),
+            next_frame_id: AtomicU64::new(1),
+            pending: tokio::sync::Mutex::new(HashMap::new()),
+            active_bindings: tokio::sync::Mutex::new(HashMap::new()),
+            connection_lost: AtomicBool::new(false),
+        });
+        driver.clone().start_receive_pump();
+        let previous_sink = Arc::new(RecordingSink::default());
+        driver.active_bindings.lock().await.insert(
+            id("binding-rejected-rebind"),
+            ActiveRemoteBinding {
+                binding_id: id("binding-rejected-rebind"),
+                generation: RuntimeDriverGeneration(3),
+                source_thread_id: id("source-thread-rejected-rebind"),
+                source_turn_id: Some(id("source-turn-rejected-rebind")),
+                operation_id: Some(id("operation-existing-rebind")),
+                dispatch_request_id: id("request-existing-rebind"),
+                terminal_source_turns: [id("source-turn-completed")].into(),
+                sink: previous_sink.clone(),
+            },
+        );
+        let replacement_sink = Arc::new(RecordingSink::default());
+        driver
+            .dispatch(
+                DriverCommandEnvelope {
+                    request_id: id("request-rejected-rebind"),
+                    operation_id: id("operation-rejected-rebind"),
+                    presentation_thread_id: id("presentation-thread-rejected-rebind"),
+                    binding_id: id("binding-rejected-rebind"),
+                    generation: RuntimeDriverGeneration(3),
+                    source_thread_id: id("source-thread-rejected-rebind"),
+                    runtime_turn_id: None,
+                    presentation_turn_id: Some(id("presentation-turn-rejected-rebind")),
+                    command: RuntimeCommand::ThreadRebind {
+                        thread_id: id("runtime-thread-rejected-rebind"),
+                        recovery_intent_id: id("recovery-rejected-rebind"),
+                        binding_epoch: BindingEpoch(2),
+                        expected_binding_id: id("binding-rejected-rebind"),
+                        expected_driver_generation: RuntimeDriverGeneration(3),
+                        new_binding_id: id("binding-next-rejected-rebind"),
+                        new_driver_generation: RuntimeDriverGeneration(4),
+                        source_thread_id: id("source-thread-next-rejected-rebind"),
+                        profile_digest: id("profile-rejected-rebind"),
+                        bound_profile: Box::new(profile()),
+                    },
+                },
+                replacement_sink,
+            )
+            .await
+            .expect_err("source rebind rejection must be returned");
+
+        let bindings = driver.active_bindings.lock().await;
+        let restored = bindings
+            .get(&id("binding-rejected-rebind"))
+            .expect("previous binding registration is restored");
+        assert_eq!(restored.dispatch_request_id, id("request-existing-rebind"));
+        assert_eq!(
+            restored.source_turn_id.as_ref().map(DriverTurnId::as_str),
+            Some("source-turn-rejected-rebind")
+        );
+        assert!(
+            restored
+                .terminal_source_turns
+                .contains(&id("source-turn-completed"))
+        );
+        assert!(Arc::ptr_eq(
+            &restored.sink,
+            &(previous_sink as Arc<dyn DriverEventSink>)
+        ));
+    }
+
+    #[tokio::test]
+    async fn source_turn_coordinates_are_preserved_for_disconnect() {
+        let driver = RemoteRuntimeDriver {
+            instance_id: id("service-coordinate"),
+            generation: RuntimeDriverGeneration(3),
+            source_instance_id: id("source-service-coordinate"),
+            source_generation: RuntimeDriverGeneration(8),
+            placement: Arc::new(ClosedPlacement),
+            host: test_host_ports(),
+            next_frame_id: AtomicU64::new(1),
+            pending: tokio::sync::Mutex::new(HashMap::new()),
+            active_bindings: tokio::sync::Mutex::new(HashMap::new()),
+            connection_lost: AtomicBool::new(false),
+        };
+        let sink = Arc::new(RecordingSink::default());
+        driver.active_bindings.lock().await.insert(
+            id("binding-coordinate"),
+            ActiveRemoteBinding {
+                binding_id: id("binding-coordinate"),
+                generation: RuntimeDriverGeneration(3),
+                source_thread_id: id("source-thread-coordinate"),
+                source_turn_id: None,
+                operation_id: None,
+                dispatch_request_id: id("request-coordinate"),
+                terminal_source_turns: HashSet::new(),
+                sink: sink.clone(),
+            },
+        );
+        driver
+            .handle_inbound(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(1),
+                critical: true,
+                frame: RuntimeWireFrame::Notification(Box::new(
+                    RuntimeWireNotification::DriverEvent(DriverEventEnvelope {
+                        binding_id: id("binding-coordinate"),
+                        generation: RuntimeDriverGeneration(8),
+                        operation_id: Some(id("operation-coordinate")),
+                        source_thread_id: id("source-thread-coordinate"),
+                        source_turn_id: Some(id("source-turn-coordinate")),
+                        source_item_id: None,
+                        source_request_id: None,
+                        source_entry_index: None,
+                        facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::TurnStarted {
+                            turn_id: id("runtime-turn-coordinate"),
+                            presentation_turn_id: id("presentation-turn-coordinate"),
+                        })],
+                    }),
+                )),
+            })
+            .await;
+
+        driver.handle_disconnect("socket closed".to_string()).await;
+        let events = sink.events.lock().await;
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[1].source_turn_id.as_ref().map(DriverTurnId::as_str),
+            Some("source-turn-coordinate")
+        );
+        assert_eq!(
+            events[1]
+                .operation_id
+                .as_ref()
+                .map(RuntimeOperationId::as_str),
+            Some("operation-coordinate")
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_turn_fences_late_events_and_closed_thread_releases_binding() {
+        let driver = RemoteRuntimeDriver {
+            instance_id: id("service-terminal-fence"),
+            generation: RuntimeDriverGeneration(3),
+            source_instance_id: id("source-service-terminal-fence"),
+            source_generation: RuntimeDriverGeneration(8),
+            placement: Arc::new(ClosedPlacement),
+            host: test_host_ports(),
+            next_frame_id: AtomicU64::new(1),
+            pending: tokio::sync::Mutex::new(HashMap::new()),
+            active_bindings: tokio::sync::Mutex::new(HashMap::new()),
+            connection_lost: AtomicBool::new(false),
+        };
+        let sink = Arc::new(RecordingSink::default());
+        driver.active_bindings.lock().await.insert(
+            id("binding-terminal-fence"),
+            ActiveRemoteBinding {
+                binding_id: id("binding-terminal-fence"),
+                generation: RuntimeDriverGeneration(3),
+                source_thread_id: id("source-thread-terminal-fence"),
+                source_turn_id: Some(id("source-turn-terminal-fence")),
+                operation_id: Some(id("operation-terminal-fence")),
+                dispatch_request_id: id("request-terminal-fence"),
+                terminal_source_turns: HashSet::new(),
+                sink: sink.clone(),
+            },
+        );
+        let terminal = DriverEventEnvelope {
+            binding_id: id("binding-terminal-fence"),
+            generation: RuntimeDriverGeneration(8),
+            operation_id: Some(id("operation-terminal-fence")),
+            source_thread_id: id("source-thread-terminal-fence"),
+            source_turn_id: Some(id("source-turn-terminal-fence")),
+            source_item_id: None,
+            source_request_id: None,
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                turn_id: id("runtime-turn-terminal-fence"),
+                terminal: RuntimeTurnTerminal::Completed,
+                message: None,
+                diagnostic: None,
+            })],
+        };
+        let mut stale_generation_terminal = terminal.clone();
+        stale_generation_terminal.generation = RuntimeDriverGeneration(7);
+        driver
+            .handle_inbound(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(0),
+                critical: true,
+                frame: RuntimeWireFrame::Notification(Box::new(
+                    RuntimeWireNotification::DriverEvent(stale_generation_terminal),
+                )),
+            })
+            .await;
+        assert!(sink.events.lock().await.is_empty());
+        driver
+            .handle_inbound(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(1),
+                critical: true,
+                frame: RuntimeWireFrame::Notification(Box::new(
+                    RuntimeWireNotification::DriverEvent(terminal.clone()),
+                )),
+            })
+            .await;
+        driver
+            .handle_inbound(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(2),
+                critical: true,
+                frame: RuntimeWireFrame::Notification(Box::new(
+                    RuntimeWireNotification::DriverEvent(terminal),
+                )),
+            })
+            .await;
+        assert_eq!(sink.events.lock().await.len(), 1, "late terminal is fenced");
+        {
+            let bindings = driver.active_bindings.lock().await;
+            let binding = bindings
+                .get(&id("binding-terminal-fence"))
+                .expect("binding remains available between turns");
+            assert_eq!(binding.source_turn_id, None);
+            assert_eq!(binding.operation_id, None);
+        }
+
+        driver
+            .handle_inbound(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(3),
+                critical: true,
+                frame: RuntimeWireFrame::Notification(Box::new(
+                    RuntimeWireNotification::DriverEvent(DriverEventEnvelope {
+                        binding_id: id("binding-terminal-fence"),
+                        generation: RuntimeDriverGeneration(8),
+                        operation_id: None,
+                        source_thread_id: id("source-thread-terminal-fence"),
+                        source_turn_id: None,
+                        source_item_id: None,
+                        source_request_id: None,
+                        source_entry_index: None,
+                        facts: vec![RuntimeJournalFact::Internal(
+                            RuntimeEvent::ThreadStatusChanged {
+                                status: RuntimeThreadStatus::Closed,
+                            },
+                        )],
+                    }),
+                )),
+            })
+            .await;
+        assert_eq!(sink.events.lock().await.len(), 2);
+        assert!(driver.active_bindings.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_terminal_delivery_keeps_duplicate_remote_terminal_retryable() {
+        let driver = RemoteRuntimeDriver {
+            instance_id: id("service-terminal-retry"),
+            generation: RuntimeDriverGeneration(3),
+            source_instance_id: id("source-service-terminal-retry"),
+            source_generation: RuntimeDriverGeneration(8),
+            placement: Arc::new(ClosedPlacement),
+            host: test_host_ports(),
+            next_frame_id: AtomicU64::new(1),
+            pending: tokio::sync::Mutex::new(HashMap::new()),
+            active_bindings: tokio::sync::Mutex::new(HashMap::new()),
+            connection_lost: AtomicBool::new(false),
+        };
+        let sink = Arc::new(FailingSink::new(2));
+        let binding_id: RuntimeBindingId = id("binding-terminal-retry");
+        let source_thread_id: DriverThreadId = id("source-thread-terminal-retry");
+        let source_turn_id: DriverTurnId = id("source-turn-terminal-retry");
+        let operation_id: RuntimeOperationId = id("operation-terminal-retry");
+        driver.active_bindings.lock().await.insert(
+            binding_id.clone(),
+            ActiveRemoteBinding {
+                binding_id: binding_id.clone(),
+                generation: RuntimeDriverGeneration(3),
+                source_thread_id: source_thread_id.clone(),
+                source_turn_id: Some(source_turn_id.clone()),
+                operation_id: Some(operation_id.clone()),
+                dispatch_request_id: id("request-terminal-retry"),
+                terminal_source_turns: HashSet::new(),
+                sink: sink.clone(),
+            },
+        );
+        let terminal = DriverEventEnvelope {
+            binding_id: binding_id.clone(),
+            generation: RuntimeDriverGeneration(8),
+            operation_id: Some(operation_id.clone()),
+            source_thread_id: source_thread_id.clone(),
+            source_turn_id: Some(source_turn_id.clone()),
+            source_item_id: None,
+            source_request_id: None,
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                turn_id: id("runtime-turn-terminal-retry"),
+                terminal: RuntimeTurnTerminal::Completed,
+                message: None,
+                diagnostic: None,
+            })],
+        };
+
+        driver
+            .handle_inbound(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(1),
+                critical: true,
+                frame: RuntimeWireFrame::Notification(Box::new(
+                    RuntimeWireNotification::DriverEvent(terminal.clone()),
+                )),
+            })
+            .await;
+
+        {
+            let bindings = driver.active_bindings.lock().await;
+            let binding = bindings
+                .get(&binding_id)
+                .expect("failed terminal and BindingLost keep binding retryable");
+            assert_eq!(binding.source_turn_id.as_ref(), Some(&source_turn_id));
+            assert_eq!(binding.operation_id.as_ref(), Some(&operation_id));
+            assert!(binding.terminal_source_turns.is_empty());
+        }
+        {
+            let attempts = sink.attempts.lock().await;
+            assert_eq!(attempts.len(), 2);
+            assert!(matches!(
+                attempts[0].facts.as_slice(),
+                [RuntimeJournalFact::Internal(
+                    RuntimeEvent::TurnTerminal { .. }
+                )]
+            ));
+            assert!(matches!(
+                attempts[1].facts.as_slice(),
+                [RuntimeJournalFact::Internal(RuntimeEvent::BindingLost {
+                    binding_id: lost_binding_id,
+                    ..
+                })] if lost_binding_id == &binding_id
+            ));
+        }
+
+        driver
+            .handle_inbound(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(2),
+                critical: true,
+                frame: RuntimeWireFrame::Notification(Box::new(
+                    RuntimeWireNotification::DriverEvent(terminal.clone()),
+                )),
+            })
+            .await;
+
+        {
+            let bindings = driver.active_bindings.lock().await;
+            let binding = bindings
+                .get(&binding_id)
+                .expect("successful terminal keeps binding available between turns");
+            assert_eq!(binding.source_turn_id, None);
+            assert_eq!(binding.operation_id, None);
+            assert!(binding.terminal_source_turns.contains(&source_turn_id));
+        }
+        assert_eq!(sink.attempts.lock().await.len(), 3);
+
+        driver
+            .handle_inbound(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(3),
+                critical: true,
+                frame: RuntimeWireFrame::Notification(Box::new(
+                    RuntimeWireNotification::DriverEvent(terminal),
+                )),
+            })
+            .await;
+        assert_eq!(
+            sink.attempts.lock().await.len(),
+            3,
+            "only a committed terminal advances the duplicate fence"
+        );
+    }
+
+    #[tokio::test]
     async fn dispatch_keeps_forwarding_events_after_the_receipt() {
         let placement: Arc<dyn RuntimeWirePlacement> =
             Arc::new(RuntimeWireDriverEndpoint::new(Arc::new(AsyncEventDriver)));
@@ -1665,11 +2690,13 @@ mod tests {
             .dispatch(
                 DriverCommandEnvelope {
                     request_id: id("request-1"),
+                    operation_id: id("operation-1"),
                     presentation_thread_id: id("presentation-thread-1"),
                     binding_id: id("binding-1"),
                     generation: RuntimeDriverGeneration(3),
                     source_thread_id: id("source-thread-1"),
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     command: RuntimeCommand::ThreadResume {
                         thread_id: id("runtime-thread-1"),
                     },
@@ -1728,11 +2755,13 @@ mod tests {
                     .dispatch(
                         DriverCommandEnvelope {
                             request_id: id("request-ordered"),
+                            operation_id: id("operation-ordered"),
                             presentation_thread_id: id("presentation-thread-ordered"),
                             binding_id: id("binding-ordered"),
                             generation: RuntimeDriverGeneration(3),
                             source_thread_id: id("source-thread-ordered"),
                             runtime_turn_id: None,
+                            presentation_turn_id: None,
                             command: RuntimeCommand::ThreadResume {
                                 thread_id: id("thread-ordered"),
                             },
@@ -1753,6 +2782,7 @@ mod tests {
                         RuntimeWireNotification::DriverEvent(DriverEventEnvelope {
                             binding_id: id("binding-ordered"),
                             generation: RuntimeDriverGeneration(8),
+                            operation_id: Some(id("operation-ordered")),
                             source_thread_id: id("source-thread-ordered"),
                             source_turn_id: None,
                             source_item_id: None,
@@ -1895,11 +2925,13 @@ mod tests {
                     .dispatch(
                         DriverCommandEnvelope {
                             request_id: id("request-epoch-1"),
+                            operation_id: id("operation-epoch-1"),
                             presentation_thread_id: id("presentation-thread-epoch-1"),
                             binding_id: id("binding-epoch-1"),
                             generation: RuntimeDriverGeneration(5),
                             source_thread_id: id("source-epoch-1"),
                             runtime_turn_id: None,
+                            presentation_turn_id: None,
                             command: RuntimeCommand::ThreadResume {
                                 thread_id: id("thread-epoch-1"),
                             },
@@ -2018,6 +3050,7 @@ mod tests {
                         RuntimeWireNotification::DriverEvent(DriverEventEnvelope {
                             binding_id: id("binding-epoch-1"),
                             generation: RuntimeDriverGeneration(5),
+                            operation_id: None,
                             source_thread_id: id("source-epoch-1"),
                             source_turn_id: None,
                             source_item_id: None,
@@ -2089,6 +3122,7 @@ mod tests {
                         RuntimeWireNotification::DriverEvent(DriverEventEnvelope {
                             binding_id: id("binding-presentation"),
                             generation: RuntimeDriverGeneration(9),
+                            operation_id: None,
                             source_thread_id: id("source-presentation"),
                             source_turn_id: Some(id("source-turn-presentation")),
                             source_item_id: None,

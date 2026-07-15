@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use agentdash_agent_runtime_wire::{RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireEnvelope};
 use agentdash_integration_remote_runtime::{
@@ -53,6 +56,9 @@ pub(crate) struct CloudRuntimeWirePlacement {
     open_failure: Mutex<Option<RemoteRuntimeTransportError>>,
     ready: Notify,
     disconnect_acknowledged: Notify,
+    /// A disconnected placement is a closed connection epoch. It remains alive long enough for
+    /// its driver to observe/ack loss, but can never be reopened or used for a later binding.
+    retired: AtomicBool,
     registry: Arc<BackendRegistry>,
 }
 
@@ -91,6 +97,7 @@ impl CloudRuntimeWirePlacement {
             open_failure: Mutex::new(None),
             ready: Notify::new(),
             disconnect_acknowledged: Notify::new(),
+            retired: AtomicBool::new(false),
             registry,
         })
     }
@@ -101,6 +108,21 @@ impl CloudRuntimeWirePlacement {
 
     pub(crate) fn stream_id(&self) -> &RuntimeRelayStreamId {
         &self.stream_id
+    }
+
+    pub(crate) fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::Acquire)
+    }
+
+    fn ensure_active(&self) -> Result<(), RemoteRuntimeTransportError> {
+        if self.is_retired() {
+            Err(unavailable(
+                "Runtime Wire placement connection epoch is retired",
+                false,
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     fn open_request(&self, resume_after_sequence: u64) -> RuntimeRelayOpen {
@@ -114,6 +136,7 @@ impl CloudRuntimeWirePlacement {
     }
 
     pub(crate) async fn open(&self) -> Result<(), RemoteRuntimeTransportError> {
+        self.ensure_active()?;
         let open = self.open_request(0);
         let (tx, rx) = oneshot::channel();
         *self.open_waiter.lock().await = Some(tx);
@@ -140,10 +163,12 @@ impl CloudRuntimeWirePlacement {
     }
 
     pub(crate) async fn wait_until_open(&self) -> Result<(), RemoteRuntimeTransportError> {
+        self.ensure_active()?;
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
                 let notified = self.ready.notified();
                 tokio::pin!(notified);
+                self.ensure_active()?;
                 if self.state.lock().await.is_some() {
                     return Ok(());
                 }
@@ -158,6 +183,9 @@ impl CloudRuntimeWirePlacement {
     }
 
     pub(crate) async fn disconnect(&self) {
+        if self.retired.swap(true, Ordering::AcqRel) {
+            return;
+        }
         let disconnected = if let Some(state) = self.state.lock().await.as_mut() {
             let disconnected = state.disconnect().is_some();
             if disconnected {
@@ -175,6 +203,16 @@ impl CloudRuntimeWirePlacement {
                     reason: "Runtime Wire backend connection was lost".to_string(),
                 });
             let _ = tokio::time::timeout(std::time::Duration::from_secs(10), acknowledged).await;
+        } else {
+            let failure = unavailable(
+                "Runtime Wire placement disconnected before open completed",
+                true,
+            );
+            *self.open_failure.lock().await = Some(failure.clone());
+            if let Some(waiter) = self.open_waiter.lock().await.take() {
+                let _ = waiter.send(Err(failure));
+            }
+            self.ready.notify_waiters();
         }
     }
 
@@ -182,6 +220,7 @@ impl CloudRuntimeWirePlacement {
         &self,
         ack: RuntimeRelayOpenAck,
     ) -> Result<Vec<RuntimeRelayFrame>, RemoteRuntimeTransportError> {
+        self.ensure_active()?;
         let mut state = self.state.lock().await;
         let replay = if let Some(existing) = state.as_mut() {
             existing
@@ -212,6 +251,7 @@ impl CloudRuntimeWirePlacement {
         &self,
         frame: RuntimeRelayFrame,
     ) -> Result<RuntimeRelayAck, RemoteRuntimeTransportError> {
+        self.ensure_active()?;
         let mut state = self.state.lock().await;
         let state = state
             .as_mut()
@@ -230,6 +270,7 @@ impl CloudRuntimeWirePlacement {
         &self,
         ack: RuntimeRelayAck,
     ) -> Result<(), RemoteRuntimeTransportError> {
+        self.ensure_active()?;
         self.state
             .lock()
             .await
@@ -252,6 +293,7 @@ impl CloudRuntimeWirePlacement {
 #[async_trait]
 impl RuntimeWirePlacement for CloudRuntimeWirePlacement {
     async fn send(&self, envelope: RuntimeWireEnvelope) -> Result<(), RemoteRuntimeTransportError> {
+        self.ensure_active()?;
         let frame = self
             .state
             .lock()

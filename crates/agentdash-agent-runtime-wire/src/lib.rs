@@ -10,14 +10,15 @@ use agentdash_agent_runtime_contract::{
 use agentdash_integration_api::{
     DriverCompactionActivationRequest, DriverContextActivation, DriverContextCheckpointRequest,
     DriverHookDecision, DriverHookInvocation, DriverSurfaceRequest, DriverToolInvocation,
-    DriverToolOutcome, DriverToolSurface, MaterializedDriverSurface,
+    DriverToolOutcome, DriverToolSurface, DriverTranscript, DriverTranscriptRequest,
+    MaterializedDriverSurface,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 1;
+pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 3;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
@@ -76,6 +77,7 @@ pub enum RuntimeWireResponse {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "port", content = "request", rename_all = "snake_case")]
 pub enum RuntimeWireHostPortRequest {
+    Transcript(DriverTranscriptRequest),
     SurfaceMaterialize(DriverSurfaceRequest),
     ToolSetMaterialize {
         binding_id: agentdash_agent_runtime_contract::RuntimeBindingId,
@@ -99,6 +101,7 @@ pub struct RuntimeWireHostPortError {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "port", content = "result", rename_all = "snake_case")]
 pub enum RuntimeWireHostPortResponse {
+    Transcript(Result<Box<DriverTranscript>, RuntimeWireHostPortError>),
     SurfaceMaterialize(Result<Box<MaterializedDriverSurface>, RuntimeWireHostPortError>),
     ToolSetMaterialize(Result<Box<DriverToolSurface>, RuntimeWireHostPortError>),
     ContextCheckpoint(Result<Box<DriverContextActivation>, RuntimeWireHostPortError>),
@@ -244,7 +247,7 @@ mod tests {
     #[test]
     fn unknown_critical_frame_is_a_protocol_violation() {
         let error = decode_frame(
-            br#"{"protocol_revision":1,"frame_id":7,"critical":true,"frame":{"kind":"future_control","payload":{}}}"#,
+            br#"{"protocol_revision":3,"frame_id":7,"critical":true,"frame":{"kind":"future_control","payload":{}}}"#,
         )
         .expect_err("critical frame must fail");
         assert!(matches!(
@@ -256,7 +259,7 @@ mod tests {
     #[test]
     fn unknown_non_critical_frame_can_be_ignored() {
         let decoded = decode_frame(
-            br#"{"protocol_revision":1,"frame_id":7,"critical":false,"frame":{"kind":"future_hint","payload":{}}}"#,
+            br#"{"protocol_revision":3,"frame_id":7,"critical":false,"frame":{"kind":"future_hint","payload":{}}}"#,
         )
         .expect("non-critical frame may be ignored");
         assert!(matches!(

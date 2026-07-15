@@ -113,6 +113,8 @@ fn wire_owned_type_names() -> BTreeSet<String> {
         "DriverHookInvocation",
         "DriverHookSurface",
         "DriverInstructionSet",
+        "DriverTranscript",
+        "DriverTranscriptRequest",
         "DriverSurfaceRequest",
         "DriverToolDefinition",
         "DriverToolInvocation",
@@ -120,6 +122,7 @@ fn wire_owned_type_names() -> BTreeSet<String> {
         "DriverToolSurface",
         "DriverWorkspaceSurface",
         "MaterializedDriverSurface",
+        "PresentationItemId",
     ]
     .into_iter()
     .map(str::to_string)

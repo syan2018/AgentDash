@@ -380,6 +380,13 @@
             "null"
           ]
         },
+        "presentation_turn_id": {
+          "description": "Session-visible turn identity. Runtime/source identifiers are correlation\ncoordinates and must never be substituted for this value at API projection.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "runtime_item_id": {
           "type": [
             "string",
@@ -9374,7 +9381,12 @@
             "thread_id": {
               "type": "string"
             },
-            "expected_tool_set_revision": {
+            "expected_current_tool_set_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "target_tool_set_revision": {
               "type": "integer",
               "format": "uint64",
               "minimum": 0
@@ -9390,7 +9402,8 @@
           "required": [
             "kind",
             "thread_id",
-            "expected_tool_set_revision",
+            "expected_current_tool_set_revision",
+            "target_tool_set_revision",
             "tool_set_digest"
           ]
         },
@@ -10382,6 +10395,10 @@
         "request_id": {
           "type": "string"
         },
+        "operation_id": {
+          "description": "Managed Runtime operation that owns this delivery. Drivers must preserve\nit across acceptance, terminal emission, duplicate dispatch and recovery.",
+          "type": "string"
+        },
         "presentation_thread_id": {
           "type": "string"
         },
@@ -10403,12 +10420,20 @@
             "null"
           ]
         },
+        "presentation_turn_id": {
+          "description": "Session-visible turn identity carried by the protected presentation\nprotocol. It is distinct from both canonical Runtime and vendor turns.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "command": {
           "$ref": "#/$defs/RuntimeCommand"
         }
       },
       "required": [
         "request_id",
+        "operation_id",
         "presentation_thread_id",
         "binding_id",
         "generation",
@@ -10502,6 +10527,22 @@
     },
     "RuntimeWireHostPortRequest": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "port": {
+              "type": "string",
+              "const": "transcript"
+            },
+            "request": {
+              "$ref": "#/$defs/DriverTranscriptRequest"
+            }
+          },
+          "required": [
+            "port",
+            "request"
+          ]
+        },
         {
           "type": "object",
           "properties": {
@@ -10618,6 +10659,27 @@
         }
       ]
     },
+    "DriverTranscriptRequest": {
+      "type": "object",
+      "properties": {
+        "binding_id": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "runtime_thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id",
+        "generation",
+        "runtime_thread_id"
+      ]
+    },
     "DriverSurfaceRequest": {
       "type": "object",
       "properties": {
@@ -10693,6 +10755,10 @@
         "item_id": {
           "type": "string"
         },
+        "presentation_item_id": {
+          "description": "Session-visible protocol item identity. This remains distinct from the\ncanonical Runtime item used for state and idempotency.",
+          "type": "string"
+        },
         "binding_id": {
           "type": "string"
         },
@@ -10739,6 +10805,7 @@
         "thread_id",
         "turn_id",
         "item_id",
+        "presentation_item_id",
         "binding_id",
         "generation",
         "source_thread_id",
@@ -13307,6 +13374,22 @@
           "properties": {
             "port": {
               "type": "string",
+              "const": "transcript"
+            },
+            "result": {
+              "$ref": "#/$defs/Result_of_DriverTranscript_or_RuntimeWireHostPortError"
+            }
+          },
+          "required": [
+            "port",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "port": {
+              "type": "string",
               "const": "surface_materialize"
             },
             "result": {
@@ -13400,13 +13483,13 @@
         }
       ]
     },
-    "Result_of_MaterializedDriverSurface_or_RuntimeWireHostPortError": {
+    "Result_of_DriverTranscript_or_RuntimeWireHostPortError": {
       "oneOf": [
         {
           "type": "object",
           "properties": {
             "Ok": {
-              "$ref": "#/$defs/MaterializedDriverSurface"
+              "$ref": "#/$defs/DriverTranscript"
             }
           },
           "required": [
@@ -13426,833 +13509,47 @@
         }
       ]
     },
-    "MaterializedDriverSurface": {
-      "description": "Runtime-owned surface materialized for one immutable binding intent.\n\nDrivers may cache this value, but must acknowledge exactly the revisions and digests they\nactually installed. The Integration host never treats a requested digest as proof of apply.",
+    "DriverTranscript": {
       "type": "object",
       "properties": {
-        "runtime_thread_id": {
-          "type": "string"
-        },
-        "revision": {
+        "earliest_available": {
           "type": "integer",
           "format": "uint64",
           "minimum": 0
         },
-        "digest": {
-          "type": "string"
-        },
-        "authorization_identity": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AuthIdentity"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "context": {
-          "$ref": "#/$defs/DriverContextSurface"
-        },
-        "tools": {
-          "$ref": "#/$defs/DriverToolSurface"
-        },
-        "hooks": {
-          "$ref": "#/$defs/DriverHookSurface"
-        },
-        "workspace": {
-          "$ref": "#/$defs/DriverWorkspaceSurface"
-        }
-      },
-      "required": [
-        "runtime_thread_id",
-        "revision",
-        "digest",
-        "context",
-        "tools",
-        "hooks",
-        "workspace"
-      ]
-    },
-    "DriverContextSurface": {
-      "type": "object",
-      "properties": {
-        "recipe": {
-          "$ref": "#/$defs/ContextRecipe"
-        },
-        "instructions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/DriverInstructionSet"
-          }
-        },
-        "blocks": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ContextBlock"
-          }
-        },
-        "digest": {
-          "type": "string"
-        },
-        "fidelity": {
-          "$ref": "#/$defs/ContextFidelity"
-        }
-      },
-      "required": [
-        "recipe",
-        "instructions",
-        "blocks",
-        "digest",
-        "fidelity"
-      ]
-    },
-    "ContextRecipe": {
-      "type": "object",
-      "properties": {
-        "revision": {
+        "latest_available": {
           "type": "integer",
           "format": "uint64",
           "minimum": 0
         },
-        "provenance": {
-          "$ref": "#/$defs/ContextProvenance"
-        },
-        "source_item_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "revision",
-        "provenance",
-        "source_item_ids"
-      ]
-    },
-    "ContextProvenance": {
-      "type": "object",
-      "properties": {
-        "settings_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "tool_set_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "settings_revision",
-        "tool_set_revision"
-      ]
-    },
-    "DriverInstructionSet": {
-      "type": "object",
-      "properties": {
-        "channel": {
-          "$ref": "#/$defs/InstructionChannel"
-        },
-        "entries": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "channel",
-        "entries"
-      ]
-    },
-    "ContextBlock": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "instruction"
-            }
-          },
-          "required": [
-            "kind",
-            "text"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "input": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/RuntimeInput"
-              }
-            },
-            "kind": {
-              "type": "string",
-              "const": "input"
-            }
-          },
-          "required": [
-            "kind",
-            "input"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "content": {
-              "$ref": "#/$defs/AgentDashThreadItem"
-            },
-            "kind": {
-              "type": "string",
-              "const": "runtime_item"
-            }
-          },
-          "required": [
-            "kind",
-            "content"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "summary": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "compaction_summary"
-            }
-          },
-          "required": [
-            "kind",
-            "summary"
-          ]
-        }
-      ]
-    },
-    "DriverToolSurface": {
-      "type": "object",
-      "properties": {
-        "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "digest": {
-          "type": "string"
-        },
-        "tools": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/DriverToolDefinition"
-          }
-        }
-      },
-      "required": [
-        "revision",
-        "digest",
-        "tools"
-      ]
-    },
-    "DriverToolDefinition": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "description": {
-          "type": "string"
-        },
-        "parameters_schema": true,
-        "channels": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ToolChannel"
-          }
-        },
-        "protocol_projection": {
-          "$ref": "#/$defs/ToolProtocolProjection"
-        },
-        "parity_fixture_id": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "name",
-        "description",
-        "parameters_schema",
-        "channels",
-        "protocol_projection",
-        "parity_fixture_id"
-      ]
-    },
-    "ToolProtocolProjection": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "family": {
-              "type": "string",
-              "const": "command"
-            }
-          },
-          "required": [
-            "family"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "family": {
-              "type": "string",
-              "const": "file_change"
-            }
-          },
-          "required": [
-            "family"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "family": {
-              "type": "string",
-              "const": "fs_read"
-            }
-          },
-          "required": [
-            "family"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "family": {
-              "type": "string",
-              "const": "fs_grep"
-            }
-          },
-          "required": [
-            "family"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "family": {
-              "type": "string",
-              "const": "fs_glob"
-            }
-          },
-          "required": [
-            "family"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "server_key": {
-              "type": "string"
-            },
-            "family": {
-              "type": "string",
-              "const": "mcp"
-            }
-          },
-          "required": [
-            "family",
-            "server_key"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "namespace": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "family": {
-              "type": "string",
-              "const": "dynamic"
-            }
-          },
-          "required": [
-            "family"
-          ]
-        }
-      ]
-    },
-    "DriverHookSurface": {
-      "type": "object",
-      "properties": {
-        "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "digest": {
-          "type": "string"
-        },
-        "artifact_digest": {
+        "active_compaction_source_end": {
+          "description": "Inclusive durable journal boundary represented by the active compacted\ncontext base. Records after this sequence must be replayed as the live\ntranscript tail instead of being discarded with the compacted prefix.",
           "type": [
-            "string",
+            "integer",
             "null"
-          ]
+          ],
+          "format": "uint64",
+          "minimum": 0
         },
-        "configuration_boundary": {
-          "$ref": "#/$defs/ConfigurationBoundary"
-        },
-        "bindings": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/DriverHookBinding"
-          }
-        }
-      },
-      "required": [
-        "revision",
-        "digest",
-        "configuration_boundary",
-        "bindings"
-      ]
-    },
-    "DriverHookBinding": {
-      "type": "object",
-      "properties": {
-        "definition_id": {
-          "type": "string"
-        },
-        "point": {
-          "$ref": "#/$defs/HookPoint"
-        },
-        "actions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/HookAction"
-          }
-        },
-        "strength": {
-          "$ref": "#/$defs/SemanticStrength"
-        },
-        "failure_policy": {
-          "$ref": "#/$defs/HookFailurePolicy"
-        },
-        "required": {
-          "type": "boolean"
-        },
-        "site": {
-          "$ref": "#/$defs/HookExecutionSite"
-        }
-      },
-      "required": [
-        "definition_id",
-        "point",
-        "actions",
-        "strength",
-        "failure_policy",
-        "required",
-        "site"
-      ]
-    },
-    "DriverWorkspaceSurface": {
-      "type": "object",
-      "properties": {
-        "digest": {
-          "type": "string"
-        },
-        "capabilities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/WorkspaceCapability"
-          }
-        },
-        "roots": {
+        "completed_presentation_item_ids": {
+          "description": "Runtime-projected terminal presentation item identities. Unlike the\nretained journal window, this watermark survives prefix pruning and\nprevents a cold driver from reusing readable vendor item ids.",
           "type": "array",
           "items": {
             "type": "string"
           }
-        }
-      },
-      "required": [
-        "digest",
-        "capabilities",
-        "roots"
-      ]
-    },
-    "RuntimeWireHostPortError": {
-      "type": "object",
-      "properties": {
-        "reason": {
-          "type": "string"
         },
-        "retryable": {
-          "type": "boolean"
-        },
-        "stale": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "reason",
-        "retryable",
-        "stale"
-      ]
-    },
-    "Result_of_DriverToolSurface_or_RuntimeWireHostPortError": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "Ok": {
-              "$ref": "#/$defs/DriverToolSurface"
-            }
-          },
-          "required": [
-            "Ok"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "Err": {
-              "$ref": "#/$defs/RuntimeWireHostPortError"
-            }
-          },
-          "required": [
-            "Err"
-          ]
-        }
-      ]
-    },
-    "Result_of_DriverContextActivation_or_RuntimeWireHostPortError": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "Ok": {
-              "$ref": "#/$defs/DriverContextActivation"
-            }
-          },
-          "required": [
-            "Ok"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "Err": {
-              "$ref": "#/$defs/RuntimeWireHostPortError"
-            }
-          },
-          "required": [
-            "Err"
-          ]
-        }
-      ]
-    },
-    "DriverContextActivation": {
-      "type": "object",
-      "properties": {
-        "candidate_id": {
-          "type": "string"
-        },
-        "checkpoint_id": {
-          "type": "string"
-        },
-        "context_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "materialized": {
-          "$ref": "#/$defs/MaterializedContext"
-        }
-      },
-      "required": [
-        "candidate_id",
-        "checkpoint_id",
-        "context_revision",
-        "materialized"
-      ]
-    },
-    "MaterializedContext": {
-      "type": "object",
-      "properties": {
-        "recipe": {
-          "$ref": "#/$defs/ContextRecipe"
-        },
-        "blocks": {
+        "records": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/ContextBlock"
+            "$ref": "#/$defs/RuntimeJournalRecord"
           }
-        },
-        "digest": {
-          "type": "string"
-        },
-        "fidelity": {
-          "$ref": "#/$defs/ContextFidelity"
         }
       },
       "required": [
-        "recipe",
-        "blocks",
-        "digest",
-        "fidelity"
-      ]
-    },
-    "Result_of_DriverToolOutcome_or_RuntimeWireHostPortError": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "Ok": {
-              "$ref": "#/$defs/DriverToolOutcome"
-            }
-          },
-          "required": [
-            "Ok"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "Err": {
-              "$ref": "#/$defs/RuntimeWireHostPortError"
-            }
-          },
-          "required": [
-            "Err"
-          ]
-        }
-      ]
-    },
-    "DriverToolOutcome": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "output": true,
-            "is_error": {
-              "type": "boolean"
-            },
-            "kind": {
-              "type": "string",
-              "const": "completed"
-            }
-          },
-          "required": [
-            "kind",
-            "output",
-            "is_error"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "interaction_id": {
-              "type": "string"
-            },
-            "reason": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "interaction_required"
-            }
-          },
-          "required": [
-            "kind",
-            "interaction_id",
-            "reason"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "reason": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "denied"
-            }
-          },
-          "required": [
-            "kind",
-            "reason"
-          ]
-        }
-      ]
-    },
-    "Result_of_DriverHookDecision_or_RuntimeWireHostPortError": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "Ok": {
-              "$ref": "#/$defs/DriverHookDecision"
-            }
-          },
-          "required": [
-            "Ok"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "Err": {
-              "$ref": "#/$defs/RuntimeWireHostPortError"
-            }
-          },
-          "required": [
-            "Err"
-          ]
-        }
-      ]
-    },
-    "DriverHookDecision": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "payload": true,
-            "kind": {
-              "type": "string",
-              "const": "continue"
-            }
-          },
-          "required": [
-            "kind",
-            "payload"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "reason": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "block"
-            }
-          },
-          "required": [
-            "kind",
-            "reason"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "interaction_id": {
-              "type": "string"
-            },
-            "reason": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "interaction_required"
-            }
-          },
-          "required": [
-            "kind",
-            "interaction_id",
-            "reason"
-          ]
-        }
-      ]
-    },
-    "RuntimeWireNotification": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "method": {
-              "type": "string",
-              "const": "journal_fact"
-            },
-            "params": {
-              "$ref": "#/$defs/RuntimeJournalRecord"
-            }
-          },
-          "required": [
-            "method",
-            "params"
-          ]
-        },
-        {
-          "description": "Runtime-only state/audit events. Session presentation consumers must use\n`journal_fact` and filter for `RuntimeJournalFact::Presentation`.",
-          "type": "object",
-          "properties": {
-            "method": {
-              "type": "string",
-              "const": "runtime_event"
-            },
-            "params": {
-              "$ref": "#/$defs/RuntimeEventEnvelope"
-            }
-          },
-          "required": [
-            "method",
-            "params"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "method": {
-              "type": "string",
-              "const": "driver_event"
-            },
-            "params": {
-              "$ref": "#/$defs/DriverEventEnvelope"
-            }
-          },
-          "required": [
-            "method",
-            "params"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "method": {
-              "type": "string",
-              "const": "heartbeat"
-            },
-            "params": {
-              "type": "object",
-              "properties": {
-                "last_received_frame_id": {
-                  "type": "integer",
-                  "format": "uint64",
-                  "minimum": 0
-                }
-              },
-              "required": [
-                "last_received_frame_id"
-              ]
-            }
-          },
-          "required": [
-            "method",
-            "params"
-          ]
-        }
+        "earliest_available",
+        "latest_available",
+        "completed_presentation_item_ids",
+        "records"
       ]
     },
     "RuntimeJournalRecord": {
@@ -15577,6 +14874,873 @@
         "stop"
       ]
     },
+    "RuntimeWireHostPortError": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "reason",
+        "retryable",
+        "stale"
+      ]
+    },
+    "Result_of_MaterializedDriverSurface_or_RuntimeWireHostPortError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "$ref": "#/$defs/MaterializedDriverSurface"
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "$ref": "#/$defs/RuntimeWireHostPortError"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "MaterializedDriverSurface": {
+      "description": "Runtime-owned surface materialized for one immutable binding intent.\n\nDrivers may cache this value, but must acknowledge exactly the revisions and digests they\nactually installed. The Integration host never treats a requested digest as proof of apply.",
+      "type": "object",
+      "properties": {
+        "runtime_thread_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "digest": {
+          "type": "string"
+        },
+        "authorization_identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AuthIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context": {
+          "$ref": "#/$defs/DriverContextSurface"
+        },
+        "tools": {
+          "$ref": "#/$defs/DriverToolSurface"
+        },
+        "hooks": {
+          "$ref": "#/$defs/DriverHookSurface"
+        },
+        "workspace": {
+          "$ref": "#/$defs/DriverWorkspaceSurface"
+        }
+      },
+      "required": [
+        "runtime_thread_id",
+        "revision",
+        "digest",
+        "context",
+        "tools",
+        "hooks",
+        "workspace"
+      ]
+    },
+    "DriverContextSurface": {
+      "type": "object",
+      "properties": {
+        "recipe": {
+          "$ref": "#/$defs/ContextRecipe"
+        },
+        "instructions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverInstructionSet"
+          }
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContextBlock"
+          }
+        },
+        "digest": {
+          "type": "string"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/ContextFidelity"
+        }
+      },
+      "required": [
+        "recipe",
+        "instructions",
+        "blocks",
+        "digest",
+        "fidelity"
+      ]
+    },
+    "ContextRecipe": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "provenance": {
+          "$ref": "#/$defs/ContextProvenance"
+        },
+        "source_item_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "provenance",
+        "source_item_ids"
+      ]
+    },
+    "ContextProvenance": {
+      "type": "object",
+      "properties": {
+        "settings_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "tool_set_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "settings_revision",
+        "tool_set_revision"
+      ]
+    },
+    "DriverInstructionSet": {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "$ref": "#/$defs/InstructionChannel"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "channel",
+        "entries"
+      ]
+    },
+    "ContextBlock": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "instruction"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeInput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "input"
+            }
+          },
+          "required": [
+            "kind",
+            "input"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "content": {
+              "$ref": "#/$defs/AgentDashThreadItem"
+            },
+            "kind": {
+              "type": "string",
+              "const": "runtime_item"
+            }
+          },
+          "required": [
+            "kind",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "compaction_summary"
+            }
+          },
+          "required": [
+            "kind",
+            "summary"
+          ]
+        }
+      ]
+    },
+    "DriverToolSurface": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "digest": {
+          "type": "string"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverToolDefinition"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "digest",
+        "tools"
+      ]
+    },
+    "DriverToolDefinition": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "parameters_schema": true,
+        "channels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolChannel"
+          }
+        },
+        "protocol_projection": {
+          "$ref": "#/$defs/ToolProtocolProjection"
+        },
+        "presentation_emitter": {
+          "description": "Effective single presentation producer selected for this exact binding.",
+          "$ref": "#/$defs/ToolPresentationEmitter"
+        },
+        "parity_fixture_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "parameters_schema",
+        "channels",
+        "protocol_projection",
+        "presentation_emitter",
+        "parity_fixture_id"
+      ]
+    },
+    "ToolProtocolProjection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "family": {
+              "type": "string",
+              "const": "command"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "family": {
+              "type": "string",
+              "const": "file_change"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "family": {
+              "type": "string",
+              "const": "fs_read"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "family": {
+              "type": "string",
+              "const": "fs_grep"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "family": {
+              "type": "string",
+              "const": "fs_glob"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "server_key": {
+              "type": "string"
+            },
+            "family": {
+              "type": "string",
+              "const": "mcp"
+            }
+          },
+          "required": [
+            "family",
+            "server_key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "family": {
+              "type": "string",
+              "const": "dynamic"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        }
+      ]
+    },
+    "ToolPresentationEmitter": {
+      "type": "string",
+      "enum": [
+        "vendor_stream",
+        "tool_broker"
+      ]
+    },
+    "DriverHookSurface": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "digest": {
+          "type": "string"
+        },
+        "artifact_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "configuration_boundary": {
+          "$ref": "#/$defs/ConfigurationBoundary"
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverHookBinding"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "digest",
+        "configuration_boundary",
+        "bindings"
+      ]
+    },
+    "DriverHookBinding": {
+      "type": "object",
+      "properties": {
+        "definition_id": {
+          "type": "string"
+        },
+        "point": {
+          "$ref": "#/$defs/HookPoint"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HookAction"
+          }
+        },
+        "strength": {
+          "$ref": "#/$defs/SemanticStrength"
+        },
+        "failure_policy": {
+          "$ref": "#/$defs/HookFailurePolicy"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "site": {
+          "$ref": "#/$defs/HookExecutionSite"
+        }
+      },
+      "required": [
+        "definition_id",
+        "point",
+        "actions",
+        "strength",
+        "failure_policy",
+        "required",
+        "site"
+      ]
+    },
+    "DriverWorkspaceSurface": {
+      "type": "object",
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkspaceCapability"
+          }
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "digest",
+        "capabilities",
+        "roots"
+      ]
+    },
+    "Result_of_DriverToolSurface_or_RuntimeWireHostPortError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "$ref": "#/$defs/DriverToolSurface"
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "$ref": "#/$defs/RuntimeWireHostPortError"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "Result_of_DriverContextActivation_or_RuntimeWireHostPortError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "$ref": "#/$defs/DriverContextActivation"
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "$ref": "#/$defs/RuntimeWireHostPortError"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "DriverContextActivation": {
+      "type": "object",
+      "properties": {
+        "candidate_id": {
+          "type": "string"
+        },
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "context_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "materialized": {
+          "$ref": "#/$defs/MaterializedContext"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "checkpoint_id",
+        "context_revision",
+        "materialized"
+      ]
+    },
+    "MaterializedContext": {
+      "type": "object",
+      "properties": {
+        "recipe": {
+          "$ref": "#/$defs/ContextRecipe"
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContextBlock"
+          }
+        },
+        "digest": {
+          "type": "string"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/ContextFidelity"
+        }
+      },
+      "required": [
+        "recipe",
+        "blocks",
+        "digest",
+        "fidelity"
+      ]
+    },
+    "Result_of_DriverToolOutcome_or_RuntimeWireHostPortError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "$ref": "#/$defs/DriverToolOutcome"
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "$ref": "#/$defs/RuntimeWireHostPortError"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "DriverToolOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "output": true,
+            "is_error": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "completed"
+            }
+          },
+          "required": [
+            "kind",
+            "output",
+            "is_error"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "interaction_id": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "interaction_required"
+            }
+          },
+          "required": [
+            "kind",
+            "interaction_id",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "denied"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "Result_of_DriverHookDecision_or_RuntimeWireHostPortError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "$ref": "#/$defs/DriverHookDecision"
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "$ref": "#/$defs/RuntimeWireHostPortError"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "DriverHookDecision": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "payload": true,
+            "kind": {
+              "type": "string",
+              "const": "continue"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "block"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "interaction_id": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "interaction_required"
+            }
+          },
+          "required": [
+            "kind",
+            "interaction_id",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "RuntimeWireNotification": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "journal_fact"
+            },
+            "params": {
+              "$ref": "#/$defs/RuntimeJournalRecord"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        },
+        {
+          "description": "Runtime-only state/audit events. Session presentation consumers must use\n`journal_fact` and filter for `RuntimeJournalFact::Presentation`.",
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "runtime_event"
+            },
+            "params": {
+              "$ref": "#/$defs/RuntimeEventEnvelope"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "driver_event"
+            },
+            "params": {
+              "$ref": "#/$defs/DriverEventEnvelope"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "heartbeat"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "last_received_frame_id": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "last_received_frame_id"
+              ]
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        }
+      ]
+    },
     "RuntimeEventEnvelope": {
       "type": "object",
       "properties": {
@@ -15634,6 +15798,13 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0
+        },
+        "operation_id": {
+          "description": "Accepted Runtime command that caused this emission. Long-lived binding\nevents may omit it; command/turn events preserve it explicitly.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "source_thread_id": {
           "type": "string"

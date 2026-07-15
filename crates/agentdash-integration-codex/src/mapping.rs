@@ -99,6 +99,8 @@ pub(crate) enum MappingError {
     InvalidItemPayload(String),
     #[error("Codex item failed owned protocol conformance: {0}")]
     OwnedProtocolMismatch(String),
+    #[error("Codex dynamic tool `{tool}` has no effective presentation route")]
+    MissingToolPresentationRoute { tool: String },
 }
 
 impl SourceCoordinateMap {
@@ -137,6 +139,9 @@ impl SourceCoordinateMap {
     ) -> Result<Option<MappedEvent>, MappingError> {
         let method = notification.method;
         let params = notification.params;
+        if admit_notification(&method, &params)? == NotificationDisposition::TypedNoop {
+            return Ok(None);
+        }
         let presentation = presentation_notification(&method, &params)?;
         match method.as_str() {
             "turn/started" => {
@@ -563,6 +568,183 @@ where
     O: serde::de::DeserializeOwned,
 {
     strict_owned::<V, O>(value).map(drop)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NotificationDisposition {
+    Projected,
+    TypedNoop,
+}
+
+const PROJECTED_SERVER_NOTIFICATION_METHODS: [&str; 34] = [
+    "error",
+    "thread/status/changed",
+    "thread/name/updated",
+    "thread/tokenUsage/updated",
+    "turn/started",
+    "hook/started",
+    "turn/completed",
+    "hook/completed",
+    "turn/diff/updated",
+    "turn/plan/updated",
+    "item/started",
+    "item/autoApprovalReview/started",
+    "item/autoApprovalReview/completed",
+    "item/completed",
+    "item/agentMessage/delta",
+    "item/plan/delta",
+    "item/commandExecution/outputDelta",
+    "item/commandExecution/terminalInteraction",
+    "item/fileChange/outputDelta",
+    "item/fileChange/patchUpdated",
+    "serverRequest/resolved",
+    "item/mcpToolCall/progress",
+    "item/reasoning/summaryTextDelta",
+    "item/reasoning/summaryPartAdded",
+    "item/reasoning/textDelta",
+    "thread/compacted",
+    "model/rerouted",
+    "model/verification",
+    "turn/moderationMetadata",
+    "model/safetyBuffering/updated",
+    "warning",
+    "guardianWarning",
+    "deprecationNotice",
+    "configWarning",
+];
+
+const TYPED_NOOP_SERVER_NOTIFICATION_METHODS: [&str; 34] = [
+    "thread/started",
+    "thread/archived",
+    "thread/deleted",
+    "thread/unarchived",
+    "thread/closed",
+    "skills/changed",
+    "thread/goal/updated",
+    "thread/goal/cleared",
+    "thread/settings/updated",
+    "command/exec/outputDelta",
+    "process/outputDelta",
+    "process/exited",
+    "mcpServer/oauthLogin/completed",
+    "mcpServer/startupStatus/updated",
+    "account/updated",
+    "account/rateLimits/updated",
+    "app/list/updated",
+    "remoteControl/status/changed",
+    "externalAgentConfig/import/progress",
+    "externalAgentConfig/import/completed",
+    "fs/changed",
+    "fuzzyFileSearch/sessionUpdated",
+    "fuzzyFileSearch/sessionCompleted",
+    "thread/realtime/started",
+    "thread/realtime/itemAdded",
+    "thread/realtime/transcript/delta",
+    "thread/realtime/transcript/done",
+    "thread/realtime/outputAudio/delta",
+    "thread/realtime/sdp",
+    "thread/realtime/error",
+    "thread/realtime/closed",
+    "windows/worldWritableWarning",
+    "windowsSandbox/setupCompleted",
+    "account/login/completed",
+];
+
+fn admit_notification(
+    method: &str,
+    params: &Value,
+) -> Result<NotificationDisposition, MappingError> {
+    use agentdash_agent_protocol::generated::codex_v2::server_notification as owned;
+
+    if !PROJECTED_SERVER_NOTIFICATION_METHODS.contains(&method)
+        && !TYPED_NOOP_SERVER_NOTIFICATION_METHODS.contains(&method)
+    {
+        return Err(MappingError::UnsupportedMethod(method.to_string()));
+    }
+    let notification = strict_owned::<codex::ServerNotification, owned::ServerNotification>(
+        &serde_json::json!({ "method": method, "params": params }),
+    )?;
+    Ok(classify_owned_notification(notification))
+}
+
+/// Keep this match exhaustive over the generated 0.144.1 protocol. A protocol
+/// regeneration that adds a notification must make an explicit projection or
+/// typed no-op decision here before the adapter can compile again.
+fn classify_owned_notification(
+    notification: agentdash_agent_protocol::generated::codex_v2::server_notification::ServerNotification,
+) -> NotificationDisposition {
+    use agentdash_agent_protocol::generated::codex_v2::server_notification::ServerNotification as N;
+
+    match notification {
+        N::Error(_)
+        | N::ThreadStatusChanged(_)
+        | N::ThreadNameUpdated(_)
+        | N::ThreadTokenUsageUpdated(_)
+        | N::TurnStarted(_)
+        | N::HookStarted(_)
+        | N::TurnCompleted(_)
+        | N::HookCompleted(_)
+        | N::TurnDiffUpdated(_)
+        | N::TurnPlanUpdated(_)
+        | N::ItemStarted(_)
+        | N::ItemAutoApprovalReviewStarted(_)
+        | N::ItemAutoApprovalReviewCompleted(_)
+        | N::ItemCompleted(_)
+        | N::ItemAgentMessageDelta(_)
+        | N::ItemPlanDelta(_)
+        | N::ItemCommandExecutionOutputDelta(_)
+        | N::ItemCommandExecutionTerminalInteraction(_)
+        | N::ItemFileChangeOutputDelta(_)
+        | N::ItemFileChangePatchUpdated(_)
+        | N::ServerRequestResolved(_)
+        | N::ItemMcpToolCallProgress(_)
+        | N::ItemReasoningSummaryTextDelta(_)
+        | N::ItemReasoningSummaryPartAdded(_)
+        | N::ItemReasoningTextDelta(_)
+        | N::ThreadCompacted(_)
+        | N::ModelRerouted(_)
+        | N::ModelVerification(_)
+        | N::TurnModerationMetadata(_)
+        | N::ModelSafetyBufferingUpdated(_)
+        | N::Warning(_)
+        | N::GuardianWarning(_)
+        | N::DeprecationNotice(_)
+        | N::ConfigWarning(_) => NotificationDisposition::Projected,
+        N::ThreadStarted(_)
+        | N::ThreadArchived(_)
+        | N::ThreadDeleted(_)
+        | N::ThreadUnarchived(_)
+        | N::ThreadClosed(_)
+        | N::SkillsChanged(_)
+        | N::ThreadGoalUpdated(_)
+        | N::ThreadGoalCleared(_)
+        | N::ThreadSettingsUpdated(_)
+        | N::CommandExecOutputDelta(_)
+        | N::ProcessOutputDelta(_)
+        | N::ProcessExited(_)
+        | N::McpServerOauthLoginCompleted(_)
+        | N::McpServerStartupStatusUpdated(_)
+        | N::AccountUpdated(_)
+        | N::AccountRateLimitsUpdated(_)
+        | N::AppListUpdated(_)
+        | N::RemoteControlStatusChanged(_)
+        | N::ExternalAgentConfigImportProgress(_)
+        | N::ExternalAgentConfigImportCompleted(_)
+        | N::FsChanged(_)
+        | N::FuzzyFileSearchSessionUpdated(_)
+        | N::FuzzyFileSearchSessionCompleted(_)
+        | N::ThreadRealtimeStarted(_)
+        | N::ThreadRealtimeItemAdded(_)
+        | N::ThreadRealtimeTranscriptDelta(_)
+        | N::ThreadRealtimeTranscriptDone(_)
+        | N::ThreadRealtimeOutputAudioDelta(_)
+        | N::ThreadRealtimeSdp(_)
+        | N::ThreadRealtimeError(_)
+        | N::ThreadRealtimeClosed(_)
+        | N::WindowsWorldWritableWarning(_)
+        | N::WindowsSandboxSetupCompleted(_)
+        | N::AccountLoginCompleted(_) => NotificationDisposition::TypedNoop,
+    }
 }
 
 fn presentation(
@@ -1001,6 +1183,7 @@ mod tests {
                 )
                 .expect("fixture binding id"),
                 generation: agentdash_agent_runtime_contract::RuntimeDriverGeneration(1),
+                operation_id: None,
                 source_thread_id: agentdash_agent_runtime_contract::DriverThreadId::new(
                     "source-thread",
                 )
@@ -1506,6 +1689,207 @@ mod tests {
         assert!(
             matches!(error, MappingError::UnsupportedMethod(method) if method == "future/notification")
         );
+    }
+
+    #[test]
+    fn generated_notification_classification_is_complete_and_disjoint() {
+        let projected = PROJECTED_SERVER_NOTIFICATION_METHODS
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let noops = TYPED_NOOP_SERVER_NOTIFICATION_METHODS
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(projected.len(), 34);
+        assert_eq!(noops.len(), 34);
+        assert!(projected.is_disjoint(&noops));
+        assert_eq!(projected.union(&noops).count(), 68);
+    }
+
+    #[test]
+    fn every_known_unprojected_notification_is_a_typed_noop() {
+        let cwd = std::env::current_dir()
+            .expect("current directory")
+            .to_string_lossy()
+            .into_owned();
+        let fixtures = [
+            (
+                "thread/started",
+                serde_json::json!({
+                    "thread": {
+                        "cliVersion": "0.144.1", "createdAt": 1, "cwd": cwd,
+                        "ephemeral": false, "id": "source-thread", "modelProvider": "openai",
+                        "preview": "", "sessionId": "source-session", "source": "appServer",
+                        "status": {"type":"idle"}, "turns": [], "updatedAt": 1
+                    }
+                }),
+            ),
+            (
+                "thread/archived",
+                serde_json::json!({"threadId":"source-thread"}),
+            ),
+            (
+                "thread/deleted",
+                serde_json::json!({"threadId":"source-thread"}),
+            ),
+            (
+                "thread/unarchived",
+                serde_json::json!({"threadId":"source-thread"}),
+            ),
+            (
+                "thread/closed",
+                serde_json::json!({"threadId":"source-thread"}),
+            ),
+            ("skills/changed", serde_json::json!({})),
+            (
+                "thread/goal/updated",
+                serde_json::json!({
+                    "threadId":"source-thread", "turnId":null,
+                    "goal": {
+                        "threadId":"source-thread", "objective":"finish", "status":"active",
+                        "tokenBudget":null, "tokensUsed":0, "timeUsedSeconds":0,
+                        "createdAt":1, "updatedAt":1
+                    }
+                }),
+            ),
+            (
+                "thread/goal/cleared",
+                serde_json::json!({"threadId":"source-thread"}),
+            ),
+            (
+                "thread/settings/updated",
+                serde_json::json!({
+                    "threadId":"source-thread",
+                    "threadSettings": {
+                        "approvalPolicy":"never", "approvalsReviewer":"user",
+                        "collaborationMode":{"mode":"default","settings":{"model":"gpt-5"}},
+                        "cwd":cwd, "model":"gpt-5", "modelProvider":"openai",
+                        "sandboxPolicy":{"type":"dangerFullAccess"}
+                    }
+                }),
+            ),
+            (
+                "command/exec/outputDelta",
+                serde_json::json!({
+                    "capReached":false, "deltaBase64":"", "processId":"process-1",
+                    "stream":"stdout"
+                }),
+            ),
+            (
+                "process/outputDelta",
+                serde_json::json!({
+                    "capReached":false, "deltaBase64":"", "processHandle":"process-1",
+                    "stream":"stdout"
+                }),
+            ),
+            (
+                "process/exited",
+                serde_json::json!({
+                    "exitCode":0, "processHandle":"process-1", "stderr":"",
+                    "stderrCapReached":false, "stdout":"", "stdoutCapReached":false
+                }),
+            ),
+            (
+                "mcpServer/oauthLogin/completed",
+                serde_json::json!({"name":"docs","success":true}),
+            ),
+            (
+                "mcpServer/startupStatus/updated",
+                serde_json::json!({"name":"docs","status":"ready"}),
+            ),
+            ("account/updated", serde_json::json!({})),
+            (
+                "account/rateLimits/updated",
+                serde_json::json!({"rateLimits":{}}),
+            ),
+            ("app/list/updated", serde_json::json!({"data":[]})),
+            (
+                "remoteControl/status/changed",
+                serde_json::json!({
+                    "installationId":"install-1", "serverName":"remote",
+                    "status":"connected"
+                }),
+            ),
+            (
+                "externalAgentConfig/import/progress",
+                serde_json::json!({"importId":"import-1","itemTypeResults":[]}),
+            ),
+            (
+                "externalAgentConfig/import/completed",
+                serde_json::json!({"importId":"import-1","itemTypeResults":[]}),
+            ),
+            (
+                "fs/changed",
+                serde_json::json!({"changedPaths":[cwd],"watchId":"watch-1"}),
+            ),
+            (
+                "fuzzyFileSearch/sessionUpdated",
+                serde_json::json!({"files":[],"query":"map","sessionId":"search-1"}),
+            ),
+            (
+                "fuzzyFileSearch/sessionCompleted",
+                serde_json::json!({"sessionId":"search-1"}),
+            ),
+            (
+                "thread/realtime/started",
+                serde_json::json!({"threadId":"source-thread","version":"v1"}),
+            ),
+            (
+                "thread/realtime/itemAdded",
+                serde_json::json!({"threadId":"source-thread","item":{"type":"message"}}),
+            ),
+            (
+                "thread/realtime/transcript/delta",
+                serde_json::json!({"threadId":"source-thread","role":"user","delta":"hi"}),
+            ),
+            (
+                "thread/realtime/transcript/done",
+                serde_json::json!({"threadId":"source-thread","role":"user","text":"hi"}),
+            ),
+            (
+                "thread/realtime/outputAudio/delta",
+                serde_json::json!({
+                    "threadId":"source-thread",
+                    "audio":{"data":"","numChannels":1,"sampleRate":24000}
+                }),
+            ),
+            (
+                "thread/realtime/sdp",
+                serde_json::json!({"threadId":"source-thread","sdp":"v=0"}),
+            ),
+            (
+                "thread/realtime/error",
+                serde_json::json!({"threadId":"source-thread","message":"closed"}),
+            ),
+            (
+                "thread/realtime/closed",
+                serde_json::json!({"threadId":"source-thread","reason":null}),
+            ),
+            (
+                "windows/worldWritableWarning",
+                serde_json::json!({"extraCount":0,"failedScan":false,"samplePaths":[]}),
+            ),
+            (
+                "windowsSandbox/setupCompleted",
+                serde_json::json!({"mode":"unelevated","success":true}),
+            ),
+            (
+                "account/login/completed",
+                serde_json::json!({"loginId":null,"success":true}),
+            ),
+        ];
+        assert_eq!(fixtures.len(), TYPED_NOOP_SERVER_NOTIFICATION_METHODS.len());
+        for (method, params) in fixtures {
+            assert!(
+                SourceCoordinateMap::default()
+                    .map_notification(RpcServerNotification {
+                        method: method.to_string(),
+                        params,
+                    })
+                    .unwrap_or_else(|error| panic!("{method}: {error}"))
+                    .is_none(),
+                "{method} must not become a protocol violation or presentation event"
+            );
+        }
     }
 
     #[test]

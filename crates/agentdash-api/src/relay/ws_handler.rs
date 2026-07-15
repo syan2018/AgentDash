@@ -877,6 +877,7 @@ async fn append_terminal_presentation(
             events: vec![agentdash_agent_runtime_contract::RuntimePresentationInput {
                 coordinate: agentdash_agent_runtime_contract::RuntimePresentationCoordinate {
                     runtime_turn_id: snapshot.active_turn_id,
+                    presentation_turn_id: snapshot.active_presentation_turn_id.clone(),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some(binding.presentation_thread_id.to_string()),

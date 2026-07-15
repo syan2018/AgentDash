@@ -190,10 +190,17 @@ impl BackendRegistry {
                         critical: true,
                     });
                 }
-                let existing = existing.clone();
-                drop(routes);
-                existing.wait_until_open().await?;
-                return Ok(existing);
+                if !existing.is_retired() {
+                    let existing = existing.clone();
+                    drop(routes);
+                    existing.wait_until_open().await?;
+                    return Ok(existing);
+                }
+                return Err(RemoteRuntimeTransportError::Unavailable {
+                    reason: "Runtime Wire placement identity belongs to a retired connection epoch; recovery requires a replacement generation or host incarnation"
+                        .to_string(),
+                    retryable: false,
+                });
             }
             routes.insert(candidate.stream_id().clone(), candidate.clone());
             candidate
@@ -718,7 +725,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn runtime_wire_route_reports_connection_epochs_and_does_not_replay_lost_work() {
+    async fn runtime_wire_recovery_requires_replacement_provenance_and_never_replays_lost_work() {
         let registry = BackendRegistry::new();
         let (first_sender, mut first_outbound) = mpsc::unbounded_channel();
         registry
@@ -739,6 +746,7 @@ mod tests {
             )
             .expect("host incarnation id"),
         };
+        let reconnect_request = request.clone();
         let resolver = CloudRuntimeWirePlacementResolver::new(registry.clone(), 8);
         let resolve = tokio::spawn(async move { resolver.resolve(request).await });
         let open = first_outbound.recv().await.expect("Runtime Wire open");
@@ -818,6 +826,95 @@ mod tests {
                 .is_err(),
             "declared-lost Runtime Wire route must not reopen after backend registration"
         );
+        let same_identity_resolver = CloudRuntimeWirePlacementResolver::new(registry.clone(), 8);
+        assert!(matches!(
+            same_identity_resolver
+                .resolve(reconnect_request.clone())
+                .await,
+            Err(RemoteRuntimeTransportError::Unavailable {
+                retryable: false,
+                ..
+            })
+        ));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), second_outbound.recv())
+                .await
+                .is_err(),
+            "retired same-provenance placement must remain fenced",
+        );
+        let replacement_request = RuntimeWirePlacementRequest {
+            generation: RuntimeDriverGeneration(4),
+            host_incarnation_id: agentdash_agent_runtime_contract::HostIncarnationId::new(
+                "host-incarnation-2",
+            )
+            .expect("replacement host incarnation id"),
+            ..reconnect_request
+        };
+        let reconnect_resolver = CloudRuntimeWirePlacementResolver::new(registry.clone(), 8);
+        let reconnect =
+            tokio::spawn(async move { reconnect_resolver.resolve(replacement_request).await });
+        let fresh_open = second_outbound
+            .recv()
+            .await
+            .expect("replacement provenance opens a fresh connection epoch");
+        let RelayMessage::RuntimeWireOpen {
+            id: fresh_open_id,
+            payload: fresh_open,
+        } = fresh_open
+        else {
+            panic!("expected fresh Runtime Wire open")
+        };
+        assert_eq!(fresh_open.resume_after_sequence, 0);
+        assert_ne!(fresh_open.stream_id, open.stream_id);
+        assert!(
+            registry
+                .handle_runtime_wire_message(
+                    "local-a",
+                    &RelayMessage::RuntimeWireOpenAck {
+                        id: fresh_open_id,
+                        payload: agentdash_relay::RuntimeRelayOpenAck {
+                            stream_id: fresh_open.stream_id.clone(),
+                            selected_protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                            accepted_after_sequence: 0,
+                            transport_profile: profile,
+                            transport_profile_digest: profile_digest,
+                            max_in_flight_frames: 8,
+                        },
+                    },
+                )
+                .await
+        );
+        let fresh_placement = reconnect
+            .await
+            .expect("fresh resolver task")
+            .expect("fresh placement");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), second_outbound.recv())
+                .await
+                .is_err(),
+            "fresh placement must not replay abandoned frames from the retired epoch",
+        );
+        assert!(matches!(
+            placement.send(envelope.clone()).await,
+            Err(RemoteRuntimeTransportError::Unavailable {
+                retryable: false,
+                ..
+            })
+        ));
+        let fresh_envelope = RuntimeWireEnvelope {
+            frame_id: RuntimeWireFrameId(11),
+            ..envelope.clone()
+        };
+        fresh_placement
+            .send(fresh_envelope.clone())
+            .await
+            .expect("fresh placement remains sendable");
+        let fresh_frame = second_outbound.recv().await.expect("fresh placement frame");
+        assert!(matches!(
+            fresh_frame,
+            RelayMessage::RuntimeWireFrame { payload, .. }
+                if payload.envelope == fresh_envelope
+        ));
         assert_eq!(first_frame.envelope, envelope);
     }
 

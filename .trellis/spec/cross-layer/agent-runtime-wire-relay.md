@@ -44,6 +44,9 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 - Backend断连按`registry.unregister -> placement Disconnected -> remote driver BindingLost -> acknowledge_disconnect -> inventory.withdraw`收敛。`unregister`必须等待disconnect acknowledgment后返回，因为offer撤销会改变driver可达性；ack是BindingLost处理完成的屏障，不是“事件已入队”的确认。
 - Remote disconnect先向authoritative sink提交一次BindingLost，再关闭pending response correlation；反向顺序会让pending failure与sink各自产生Lost。
 - EOF/transport loss不得伪造Completed；它向Managed Runtime报告Lost输入，由Runtime收敛active operation/Thread状态。旧generation frame在进入Runtime前被fence。
+- Remote endpoint只在terminal event成功提交到Host sink后推进本地terminal fence与source coordinate。提交失败时尝试binding-scoped `BindingLost`；若Lost也失败则保留active operation，使duplicate terminal仍可重试。
+- RuntimeWire HostPort包含typed transcript request/response，远端rebind读取与本地Native相同的durable provider transcript；协议生成器必须导出其传递依赖闭包，generated TypeScript不得留下悬空类型。
+- Lost placement重新接入使用真实advertised replacement generation/incarnation；retired same-provenance connection保持fence，旧stream未确认frame不进入新placement。
 - Local endpoint只把Driver request交给现有Host-owned Driver；Managed Runtime request必须拒绝，避免本机形成第二Runtime。Local handler通过显式resolver注入，无配置时typed error，不fallback到legacy prompt。
 - Local每个stream拥有独立锁与outbound pump；全局streams registry锁不能跨driver await。Response、notification与delayed event可以在command返回后持续写入WebSocket。
 - Remote Integration由企业/first-party调用者传入真实`AgentServiceDefinition`与factory key；transport crate只提供remote placement factory，不注册`builtin.runtime_wire.remote`伪service。
@@ -66,6 +69,8 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 | Local resolver找不到Host driver/generation | typed error，无legacy fallback |
 | Local endpoint收到Managed Runtime request | typed unsupported，禁止第二Runtime |
 | stale generation event/frame | fence，不推进canonical projection |
+| terminal event sink失败 | 不推进terminal fence；Lost成功则收敛binding，Lost失败则duplicate terminal可重试 |
+| replacement复用retired generation/incarnation | reject；只有新advertised provenance可建立fresh connection epoch |
 
 ## 5. Good / Base / Bad Cases
 
@@ -80,10 +85,12 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 - Relay state测试覆盖negotiation、ordered sequence、duplicate、gap、max-in-flight、ack prune、unacked replay、同/异provenance reconnect与disconnect once。
 - Cloud placement测试必须并发执行`unregister`与`receive`，断言收到Disconnected后只有调用`acknowledge_disconnect`才完成unregister；WebSocket断连集成测试断言offer withdraw发生在该屏障之后。
 - Remote driver测试覆盖response correlation、多个in-flight request、receipt后delayed event、EOF Lost、generation fence及全部receipt字段。
+- Remote driver测试注入terminal sink失败并重放同terminal，断言已提交terminal幂等、未提交terminal可重试且active operation不被提前遗忘。
 - Ordered inbound测试阻塞event sink并断言dispatch response仍pending，释放event后response完成；HostPort callback roundtrip必须同时证明可重入无死锁。
 - Local handler loopback覆盖open -> describe/dispatch -> response -> delayed event -> ack，duplicate ack-only与invalid generation。
 - 验证endpoint拒绝Managed Runtime request，handler无resolver时无fallback。
 - Contract/Wire generation与round-trip测试证明typed envelope没有Value中转。
+- Enterprise E2E覆盖真实disconnect、新replacement offer/rebind、transcript HostPort、三轮provider/tool continuation与old generation零replay。
 - WP08 production test必须覆盖Cloud多帧placement resolver、真实Host resolver注入、WebSocket event channel、disconnect/reconnect与legacy RelayPrompt删除。
 - Relay/Remote/Local/API scoped tests、strict clippy、contracts、fmt与diff check必须通过。
 

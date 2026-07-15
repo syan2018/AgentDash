@@ -2,7 +2,7 @@
 
 本任务保持一个主任务，不创建child task。四个工作项按可交付能力划分，而不是按crate机械拆分；每项都必须带着main-reference行为、production composition与数据库不变量完成。
 
-## WI-1 Runtime / Native 单一事件链与命令终结
+## WI-1 Runtime / Native 单一事件链与命令终结（完成）
 
 目标：恢复从Runtime command到Native Agent Core再到journal的main等价消息和工具presentation，并让driver acceptance与business terminal成为两条清晰生命周期。
 
@@ -13,6 +13,9 @@
 - 在`agentdash-integration-native-agent`恢复User/ToolResult过滤、Assistant/Reasoning/Tool/ContextFrame等全事件映射、shared identity、缺省参数容错与exactly-one producer。
 - 在`agentdash-infrastructure::agent_runtime_composition`与Native driver把receipt登记前移到Core接受点；接受后的mapper/tool/sink失败写terminal并ack delivery，不重投整个prompt。
 - 修复OperationTerminal、TurnTerminal、cancel/abort/follow-up状态机，保证已完成旧operation不会被后续错误改写为Lost。
+- 新增Runtime journal transcript broker并搬运main的恢复投影：user、assistant、配对tool-call/result、command/file/MCP/native typed item完整恢复；Native重绑和compaction共用同一projector。
+- 从durable presentation恢复Native readable item水位，保证重启/rebind后的工具ID继续单调递增且不与旧card冲突。
+- canonical SurfaceAdopt始终先提交平台AgentFrame与ContextFrame事实；Codex执行full adoption，Native按真实profile下沉为ToolSetReplace，不让connector能力抹掉平台展示。
 
 主要代码所有权：
 
@@ -22,9 +25,9 @@
 - `crates/agentdash-agent-runtime/src/{tool_broker,runtime}.rs`
 - `crates/agentdash-infrastructure/src/agent_runtime_composition.rs`
 
-关闭条件：User/ToolResult不生成AgentMessage；每个工具只有一套stable presentation lifecycle；tool轮后继续final assistant；accepted operation恰好一个terminal；post-acceptance错误不增加prompt副作用次数。
+关闭条件：User/ToolResult不生成AgentMessage；每个工具只有一套stable presentation lifecycle；tool轮后继续final assistant；accepted operation恰好一个terminal；post-acceptance错误不增加prompt副作用次数；销毁并重建binding后provider仍收到完整历史且新工具ID不复用；Native live AgentFrame变更仍产生main等价ContextFrame。
 
-## WI-2 Platform Tool逐调用上下文与AgentFrame owner surface
+## WI-2 Platform Tool逐调用上下文与AgentFrame owner surface（完成）
 
 目标：将“可调用工具定义”与“本次调用的业务上下文”分开，恢复六类工具、权限/VFS和不可变provenance的真实接线。
 
@@ -47,7 +50,7 @@
 
 关闭条件：`task_read`与`workspace_module_list`使用真实session/frame成功；六类工具无bootstrap identity；grant/VFS deny前置；残缺surface无法binding；restart/rebind后provenance与generation可恢复。
 
-## WI-3 Native / Codex / Remote connector协议桥接
+## WI-3 Native / Codex / Remote connector协议桥接（完成）
 
 目标：三类connector都只负责协议和坐标转换，共享Platform ToolBroker业务语义，并按binding能力选择唯一presentation producer。
 
@@ -71,7 +74,7 @@
 
 关闭条件：三种connector的真实production binding均证明single producer；Codex标准body与0.144.1 fixture一致；remote replay受generation fence；公共Broker之外不存在connector私有Task/VFS/permission业务规则。
 
-## WI-4 main组合Oracle、真实数据库与Session前端验收
+## WI-4 main组合Oracle、真实数据库与Session前端验收（完成）
 
 目标：建立能阻止同类回归的纵向门禁，并用它关闭WI-1至WI-3，而不是在实现结束后补几条孤立单测。
 
@@ -81,6 +84,7 @@
 - 新建production composition测试，装配真实AgentFrame、surface source、六类tool provider、Broker、Native/Codex/Remote driver和embedded PostgreSQL；禁止mock source替代目标装配。
 - 在数据库断言journal、projection、tool call、operation、turn、binding、outbox/mailbox与terminal effect；用本次失败run的序列形状作为反例fixture。
 - 经真实Session API把eventstream交给现有`sessionStreamReducer`与card registry，断言每个逻辑工具一张卡、顺序与main一致、第二轮和final assistant继续出现。
+- 在同一PostgreSQL场景销毁/重建binding并继续追问，断言恢复后的provider输入含完整user/assistant/tool pair；再执行工具验证readable ID水位继续前进；重复覆盖compaction后继续与shell/fs/MCP工具族。
 - 更新四份Runtime规范与Backbone协议规范，使single presentation producer、typed invocation context和post-acceptance terminal成为长期合同。
 
 主要代码所有权：
@@ -110,3 +114,11 @@
 5. `docs(runtime): 固化 Session 与工具边界契约`
 
 每次提交只在对应工作项production composition断言通过后形成；不会以mapper局部测试或单句对话作为提交完成条件。
+
+## 最终验收
+
+- WI-1：Native 全包 51 tests、Agent protocol 27 tests、Managed Runtime 全包通过；receipt/terminal、单一 producer、完整 transcript、readable identity 与 BindingLost terminal projection 均有行为门禁。
+- WI-2：六类 production provider 在真实 typed owner scope 下执行；Task/Workspace Module、permission/VFS、surface closure、cold rebind provenance 均进入 PostgreSQL/production composition 断言。
+- WI-3：Codex 48 tests、Remote 18 tests；Codex active SurfaceAdopt 等待 terminal 后 full sync，Native 明确降级 ToolSetReplace，Remote generation/transcript/HostPort 恢复完整。
+- WI-4：Remote enterprise E2E 覆盖 user/reasoning/多工具/业务错误/final/compaction/rebind/active disconnect/rewind；Native production E2E 覆盖六工具与 cold rebind；app-web 93 files / 586 tests，Session 目录 99/105 文件与 main 字节一致、其余 6 个为明确 seam。
+- 完整 32 项关闭状态、命令结果及仓库既有质量基线见 `research/main-equivalence-difference-matrix.md`。

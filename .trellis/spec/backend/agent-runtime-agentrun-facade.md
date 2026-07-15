@@ -70,10 +70,11 @@ Migration `0078_rebind_safe_runtime_outbox_coordinates.sql` persists each Runtim
 - `ThreadStart` carries immutable surface settings, tool-set revision and bound Hook plan. It is replayed with identical coordinates after a durable duplicate/retry.
 - `AgentFrameHookPlan.requirements[].site`决定execution route。完整bound plan保留Managed Runtime、Tool Broker、Agent Core Callback与Driver Native entries；`DriverHookSurface`只投影Driver实际执行的site，Tool Broker approval不会成为Driver offer requirement。
 - API/UI command availability comes only from the canonical Runtime view. A product-level status, connector kind or executor kind cannot enable a command.
-- Runtime events use a durable cursor. Authoritative lifecycle events are not reconstructed from Backbone or transient broadcast state.
+- Runtime events use a durable cursor。Session GET、live、replay与fork cutoff都使用`inherited prefix length + raw Runtime EventSequence`；过滤internal-only facts后留下的cursor空洞合法，不能重新enumerate为稠密序列。Authoritative lifecycle events are not reconstructed from Backbone or transient broadcast state.
 - Remote Driver events are ordered within a RuntimeWire stream. Response correlation and reverse HostPort calls may be concurrent, but canonical lifecycle notifications are emitted serially.
 - A disconnected active binding converges exactly once to `BindingLost`; Thread, active Turn and accepted Operation become `Lost`. Re-registration creates a new generation, and late events from the old generation cannot revive canonical state.
-- Restart recovery rebuilds non-serializable callable Tool/Hook handles against the exact durable surface coordinates. Durable context/workspace/presentation remain authoritative and are not replaced by startup-time discovery.
+- Restart recovery rebuilds non-serializable callable Tool/Hook handles against the exact durable surface coordinates，并把active context checkpoint覆盖到materialized driver surface、descriptor、tool/hook/workspace与provider transcript。Durable context/workspace/presentation remain authoritative and are not replaced by startup-time discovery.
+- command-owned presentation record持久化owning operation ID；provider transcript按operation排除当前TurnStart输入，使同一user prompt在initial dispatch与rebind后都只出现一次。
 - An InProcess service with a lost binding reactivates its durable service instance into a new Host generation before `ThreadRebind`; Remote/LocalProcess recovery still requires a real advertised replacement offer.
 - Runtime outbox rows retain the binding epoch/generation accepted with the command. Rebinding the thread never cascades or rewrites those historical fencing coordinates.
 - Runtime Turn/Item/Interaction projections update stable entity rows in place. A normal Runtime UoW must not delete and recreate entity rows because ToolBroker calls, interactions and other durable side-effect records reference those identities across concurrent driver commits.
@@ -93,6 +94,8 @@ Migration `0078_rebind_safe_runtime_outbox_coordinates.sql` persists each Runtim
 | Driver event is out of lifecycle order | critical protocol violation and `Lost` convergence |
 | stale binding generation emits an event | event fenced; snapshot and terminal state unchanged |
 | process restarts before callable Tool/Hook registry is rebuilt | recover executable handles, verify persisted Tool/Hook surface, then dispatch against the durable binding |
+| visible journal夹有internal-only sequence gap | live cursor、GET/replay与fork cutoff仍使用相同raw sequence，不丢紧随gap的tool terminal/ContextFrame |
+| recovery时active head新于启动surface | callable registry与driver bind统一使用active checkpoint版本，不混用旧tool/hook/context |
 | lost InProcess binding has no newer offer | activate the durable owner at a new generation, fence the old offer, then Resume/Rebind |
 | ThreadRebind encounters historical outbox rows | commit succeeds; old binding/epoch/generation values remain unchanged |
 | concurrent driver facts advance a thread while ToolBroker owns an active Item | entity projection is upserted in place; the broker row survives and the Item reaches its durable terminal |
@@ -118,6 +121,7 @@ Migration `0078_rebind_safe_runtime_outbox_coordinates.sql` persists each Runtim
 - Enterprise remote E2E traverses Cloud generic proxy -> RuntimeWire -> Local PostgreSQL Host -> enterprise Native driver -> production Tool Broker and reverse Hook/HostPort calls; the tool call must survive concurrent Runtime projection commits and reach canonical Item/Turn terminal state.
 - Enterprise remote E2E asserts compaction preparation/activation/recovery, disconnect, exactly-once `BindingLost`, reopen, late-event fencing and no duplicate outbox replay.
 - Native production tests cover process-restart callable registry recovery, InProcess generation reactivation and a real `ThreadRebind` with historical outbox rows.
+- Journal tests覆盖含internal gap的live→replay、nested fork cutoff与继承prefix重编号；provider request测试断言当前user prompt exact-once。
 - Migration tests run `0065` against a fresh PostgreSQL root and assert removed tables/columns are absent; bootstrap tests must use isolated data roots.
 - Migration/Frame repository tests断言`0066`使用`agent_frames.hook_plan jsonb`，新建、generic launch、workflow node与runtime surface revision writer都保存并复验相同digest。
 - Contract generation, frontend typecheck/tests, workspace checks, Runtime crate tests and migration guard are required before completion.

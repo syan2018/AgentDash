@@ -50,6 +50,9 @@
 
 - 对实际失败 run 查询 Runtime journal、entity projection、tool call、binding、outbox、mailbox、surface artifact 与 Hook state，确认所有 identity 和状态迁移。
 - 工具调用及其 presentation 在并发 driver fact、重启、rebind 和重放下保持幂等，不出现 card 分裂、行级联丢失、重复执行或终态缺失。
+- Runtime durable journal必须能重建main等价的完整provider transcript：user、assistant、paired tool-call/result、shell/fs/MCP/native typed item和compaction摘要；Native binding重建不得只消费AgentFrame context blocks。
+- Native readable item identity必须从durable presentation恢复水位，进程重启、rebind和compaction后继续分配而不复用既有card ID。
+- AgentFrame live surface变更属于平台Runtime事实：即使Native不支持full surface adoption，也必须持久化并向Session重新暴露全部ContextFrame family；connector只决定如何同步自身可承载的子集。
 
 ### R6. 行为级验证
 
@@ -59,17 +62,21 @@
 
 ## Acceptance Criteria
 
-- [ ] AC1：产出覆盖数据库到前端的完整差异矩阵，每一处非结构性差异都有源码与实际数据证据。
-- [ ] AC2：同一工具调用的 start/update/completed/result 在数据库、Session API 和前端均归并到同一 identity/card。
-- [ ] AC3：`fs_glob` 等工具的缺省/可选参数不会造成 driver protocol violation，行为与 main-reference 一致。
-- [ ] AC4：工具成功、业务错误、拒绝与超时后 Agent loop 均按 main-reference 继续或终止，不再出现错误 `Agent run aborted`。
-- [ ] AC5：workspace module visibility 与 Task/Hook Runtime anchor 在 production surface 中可用，相关真实工具不再返回 missing anchor/scope。
-- [ ] AC6：连续工具链、多轮 follow-up、取消、重启/rebind 均无 active entity 悬挂、重复 dispatch 或 mailbox 堆积。
-- [ ] AC7：Session eventstream 除允许的 wrapper 外，内容、顺序、null/optional 语义与 main-reference 固定 oracle 一致。
-- [ ] AC8：前端 Session feed/reducer/card 行为相对 main-reference 无非预期变化，现有 UI 不被替换。
-- [ ] AC9：Native、Codex、remote connector 的工具桥接边界与 Platform ToolBroker 契约明确且有实际生产装配测试。
-- [ ] AC10：Rust、frontend、migration、contract、数据库集成及真实 dev E2E 全部通过，差异矩阵不存在 MISSING/PARTIAL/WRONG。
-- [ ] AC11：permission/VFS deny在任何副作用前生效，非法 surface closure无法 provision，重启/rebind后 launch provenance、binding generation与真实 invocation anchor保持可恢复且一致。
+- [x] AC1：产出覆盖数据库到前端的完整差异矩阵，每一处非结构性差异都有源码与实际数据证据。
+- [x] AC2：同一工具调用的 start/update/completed/result 在数据库、Session API 和前端均归并到同一 identity/card。
+- [x] AC3：`fs_glob` 等工具的缺省/可选参数不会造成 driver protocol violation，行为与 main-reference 一致。
+- [x] AC4：工具成功、业务错误、拒绝与超时后 Agent loop 均按 main-reference 继续或终止，不再出现错误 `Agent run aborted`。
+- [x] AC5：workspace module visibility 与 Task/Hook Runtime anchor 在 production surface 中可用，相关真实工具不再返回 missing anchor/scope。
+- [x] AC6：连续工具链、多轮 follow-up、取消、重启/rebind 均无 active entity 悬挂、重复 dispatch 或 mailbox 堆积。
+- [x] AC7：Session eventstream 除允许的 wrapper 外，内容、顺序、null/optional 语义与 main-reference 固定 oracle 一致。
+- [x] AC8：前端 Session feed/reducer/card 行为相对 main-reference 无非预期变化，现有 UI 不被替换。
+- [x] AC9：Native、Codex、remote connector 的工具桥接边界与 Platform ToolBroker 契约明确且有实际生产装配测试。
+- [x] AC10：Rust、frontend、migration、contract、数据库集成及真实 dev E2E 全部通过，差异矩阵不存在 MISSING/PARTIAL/WRONG。
+- [x] AC11：permission/VFS deny在任何副作用前生效，非法 surface closure无法 provision，重启/rebind后 launch provenance、binding generation与真实 invocation anchor保持可恢复且一致。
+- [x] AC12：销毁并重建Native binding后，下一次provider请求含完整user/assistant/tool-call/tool-result历史；shell/fs/MCP恢复不失败，新的readable工具ID不与旧card冲突。
+- [x] AC13：Native运行期AgentFrame变更产生与main同family ID、顺序和payload的ContextFrame；connector不支持full adoption时只降级驱动同步，不丢平台事件。
+
+AC10 按本任务改动范围的质量门禁关闭；仓库中未修改文件的既有 lint/clippy/test-support guard 基线记录在差异矩阵“最终质量记录”，未通过修改无关代码规避。
 
 ## Out of Scope
 

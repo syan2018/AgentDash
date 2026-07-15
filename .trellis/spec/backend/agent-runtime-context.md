@@ -58,6 +58,8 @@ ContextPreparationWorkItem::Pending
 - checkpoint/candidate immutable；activation ID、dispatch intent与driver revision使用typed稳定坐标。NotApplied重投同一activation intent，不追加重复outbox。
 - Applied confirmation先durable持久化，head CAS在后续事务完成；crash后由recoverable activation scan继续，不重复apply新identity。
 - active head必须引用真实checkpoint，且revision、digest、settings/tool provenance、fidelity完全相同；head revision严格增加1。
+- compaction admission在写入自身OperationAccepted前冻结`source_end_event_sequence`。candidate只压缩该边界及以前的source items；之后的durable user/assistant/tool facts作为tail在cold rebind时接到active checkpoint之后。
+- transcript投影保留完整tool-call/result配对与typed item；command-owned presentation携带owning operation ID，使当前TurnStart输入不会同时作为历史和本轮prompt重复送入provider。
 - pre-apply并发由per-thread durable slot拒绝；post-apply digest/base/observation不可验证时Thread进入`Desynchronized`、Operation进入`Lost`并阻止新Turn。
 - activation terminal保留Applied digest与typed driver context revision，duplicate ack只能验证原事实，不能覆盖terminal。
 
@@ -76,6 +78,8 @@ ContextPreparationWorkItem::Pending
 | Applied后active base/head改变 | `Desynchronized + Lost`，保留现有head且阻止新Turn |
 | head CAS事务失败 | Applied事实保留，head不变，recovery可再次finalize |
 | Opaque materialization尝试prepare managed checkpoint | typed拒绝 |
+| compaction acceptance之后又写入新user/tool facts | checkpoint边界不漂移；新facts只作为durable tail replay |
+| cold recovery已有active checkpoint | provision surface、binding descriptor、tool/hook/workspace与provider transcript统一覆盖为active head版本 |
 | Driver伪造checkpoint/activation/head/compaction terminal事件 | critical protocol violation + quarantine + Lost收敛 |
 
 ### 5. Good/Base/Bad Cases
@@ -95,6 +99,8 @@ ContextPreparationWorkItem::Pending
 - activation retry/duplicate ack/illegal transition测试，断言stable identity与terminal不可回退。
 - applied-before-head-CAS crash测试，断言recovery可重入且Operation exactly-once terminal。
 - fidelity测试，断言Thread=`EventProjected`、Context使用checkpoint真实fidelity、Opaque不推进head。
+- boundary recovery测试断言`source_end_event_sequence`在acceptance前冻结，kept tool pair不拆分，active checkpoint与之后tail在rebind时按原顺序合并。
+- production recovery测试从Runtime context snapshot覆盖materialized driver surface、descriptor与callable registry，防止重启后回到启动时旧surface。
 - PostgreSQL adapter在02C复用以上behavior suite，并补partial unique、claim/lease/`SKIP LOCKED`与真实并发事务测试。
 
 目标门禁：

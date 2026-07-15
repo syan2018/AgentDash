@@ -48,6 +48,7 @@ impl AgentRuntimeHost {
 - 0061的`agent_runtime_binding`/`agent_runtime_source_coordinate`是Managed Runtime引用的最小Host-owned anchor；0064保存instance history、activation/offer、binding detail、lease和完整coordinates。Runtime repository不写Host authority，Host不写Runtime journal/projection。
 - Relay是placement transport而非service identity。Native/Codex/remote service通过相同contribution/Host seam接入，不在Application/router增加service类型分支。
 - Local Host每次启动生成不可复用的`HostIncarnationId`。Offer advertisement、Runtime Wire placement request与relay provenance携带该identity；Local endpoint在解析Driver前同时校验host、transport、incarnation、instance与generation，使重启前的stream和command无法命中新进程中从1重新计数的generation。
+- Runtime Wire placement断连后成为retired connection epoch：旧placement只保留到Driver确认Lost，所有send/frame/ack/open永久fence。backend重新register只恢复inventory，不自动打开旧stream；相同generation/incarnation的resolve必须typed reject。只有Host广告并选择新的generation或`HostIncarnationId`后才能产生新stream identity并从sequence 0建立fresh epoch，不能重放旧epoch未确认work。
 - Local Host的instance、offer、binding、lease与coordinate属于单个process incarnation，使用production ephemeral repository从Integration definitions与profile重建；Managed Runtime继续持有binding intent与断连Lost裁决。
 
 ## 4. Validation & Error Matrix
@@ -70,6 +71,7 @@ impl AgentRuntimeHost {
 | 新activation offer不满足当前workspace/hook surface | `ensure_offer`返回typed unavailable，不进入Host bind |
 | Driver profile声明fail-open但callback错误仍向上失败 | conformance失败，不得发布该failure policy |
 | source ID跨binding/generation复用 | composite unique/FK或typed conflict |
+| backend断连后以相同generation/incarnation显式冷重绑 | typed reject并保持retired；replacement offer使用新generation/incarnation后才fresh open，旧placement仍Lost且零旧frame replay |
 
 ## 5. Good / Base / Bad Cases
 
@@ -91,6 +93,7 @@ impl AgentRuntimeHost {
 - API/Executor测试证明Integration不再贡献旧connector，Composite不再OR/broadcast/first-success；彻底删除legacy probe随WP08 cutover验证。
 - Host/Integration/API/Executor/Infrastructure tests、contracts、migration guard、fmt、clippy与diff check必须通过。
 - Local Host测试覆盖新incarnation重建、相同generation跨incarnation拒绝，以及无需数据库即可广告offer。
+- Runtime Wire registry测试覆盖register不自动reopen、same-provenance resolver拒绝、replacement generation/incarnation建立fresh connection epoch、旧placement永久fence与abandoned frame零replay。
 
 ## 7. Wrong vs Correct
 

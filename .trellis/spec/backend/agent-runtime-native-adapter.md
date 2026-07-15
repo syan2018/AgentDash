@@ -46,7 +46,8 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - Native descriptor只声明实际原生支持的输入与能力。当前Text/Image可进入本地Core；FileReference/Structured不得文本拍平冒充支持，必须在request lock、status event、prompt或任何side effect前typed Unsupported。
 - Surface materialization返回真实surface/tool-set/hook plan revision与digest。ToolSetReplace receipt必须携带`DriverToolSetApplyReceipt`；其他命令为None。Host只依据ack开放required dispatch gate。
 - Platform tools通过WP03 Direct Callback Broker；Native driver不接收`DynAgentTool`、application delegate、credential或VFS runtime object。Approval使用canonical Interaction。
-- Native tool callback不发送独立Tool ItemStarted/terminal DriverEvent。NativeThread维护`(DriverTurnId, DriverItemId) -> RuntimeItemId`显式映射，callback同时携带source与canonical坐标；ToolContribution/Broker使用canonical item完成唯一lifecycle projection。
+- Native tool callback通过Platform Tool Broker执行并提交canonical internal lifecycle；Native Agent Core vendor stream按binding的effective `VendorStream` route发布唯一session-visible ItemStarted/update/terminal。Broker不为同一调用再发布presentation。只有effective route明确为`ToolBroker`时，Native mapper抑制vendor presentation并由Broker投影展示。
+- Native从durable Runtime journal的presentation与internal facts共同恢复provider transcript，覆盖user、assistant、paired tool-call/result、shell/fs/MCP/native typed item与compaction tail。session-scoped identity allocator从durable presentation ID恢复水位，使rebind后的tool/command/readable ref继续单调递增。
 - AgentCore callback facets只表达真实inner-loop Hook点，业务Hook plan/rule仍由Runtime拥有。Native driver不得查询workflow/project/repository。
 - Context read/Thread projection使用typed inspect。Managed compaction只接受Runtime已durable candidate activation，验证activation/checkpoint/digest后幂等应用；Native Core不拥有AgentDash自动压缩策略或checkpoint事实源。
 - Turn、steer、interrupt、settings与tool replace按binding/request维度幂等。Active-turn fence在成功、mapper error、sink error、Agent task error与cancel所有路径都必须finally清理；失败turn不能继续被steer/interrupt命中。
@@ -73,7 +74,9 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 | mapper/sink/Agent task失败 | error传播且active-turn fence清理 |
 | Turn命令缺少`runtime_turn_id` | side effect前critical protocol error |
 | Tool/Hook callback把source turn作为Runtime turn | Runtime transition拒绝；不得写第二套坐标 |
-| Native与Broker分别投影同一tool started payload | contract violation；只允许Broker owner projector提交 |
+| Native与Broker分别投影同一tool started payload | contract violation；只允许binding effective presentation route选中的owner提交 |
+| effective route为`VendorStream`的Native platform tool | Broker只提交internal lifecycle；Native vendor start/update/terminal使用同一presentation ID并继续provider loop |
+| cold rebind存在历史tool pair与presentation ID | provider transcript保留配对调用/结果；下一ID高于durable水位 |
 | canonical Turn已accepted后Driver回报同identity `TurnStarted` | `Observed` ack；revision/cursor不推进 |
 | 已发送`TurnTerminal`后Agent task返回错误 | dispatch成功收口并ack outbox，不重派命令 |
 | 失败后steer/interrupt旧turn | Rejected |
@@ -92,10 +95,11 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 
 - Native behavior覆盖contribution/factory、truthful descriptor、Start/Resume/Fork、exact checkpoint/digest、Turn/steer/interrupt/settings/idempotency。
 - 覆盖surface/tool/hook applied receipts、hot ToolSetReplace、Direct Callback、approval Interaction与typed inspect。
-- Direct Callback测试必须让source/runtime item ID不同，并覆盖ApplyPatch、shell control及重复调用经Broker投影且不发生idempotency conflict。
+- Direct Callback测试必须让source/runtime/presentation item ID不同，并覆盖ApplyPatch、shell control及重复调用经Broker执行且不发生idempotency conflict；`VendorStream`组合场景断言Broker internal与Native presentation各自恰好一次。
 - 覆盖managed compaction exact activation、wrong digest/checkpoint、duplicate replay和digest选择不依赖map ordering。
 - 覆盖unsupported modality在任何副作用前拒绝，以及mapper/sink/task error的active fence清理。
 - Runtime interface覆盖matching Driver `TurnStarted`只得到`Observed`且revision不变；Native工具轮次覆盖Tool/Hook使用canonical Turn、terminal后task error不触发同request重派。
+- recovery测试从真实durable journal重建完整user/assistant/tool-call/tool-result transcript，并覆盖compaction边界后的tail replay、typed shell/fs/MCP item与readable ID水位。
 - Contract/Wire/TestSupport/Host conformance与generated TS/schema check必须通过。
 - Agent Core dependency tree与source scan必须证明无Application/Domain/Codex/Backbone/repository依赖；Core/Native strict clippy与tests通过。
 - WP08必须验证provider registry抽离后legacy Pi与dead runtime-session compaction SPI物理删除、生产Host composition使用Native Integration。

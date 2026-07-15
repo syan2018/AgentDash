@@ -413,9 +413,8 @@ mod tests {
             agent_id: Uuid::new_v4(),
             frame_id: Some(Uuid::new_v4()),
             frame_revision: Some(1),
-            runtime_session_id: Some("session-1".to_string()),
-            agent_run_turn_id: Some("turn-1".to_string()),
-            protocol_turn_id: Some("protocol-turn-1".to_string()),
+            runtime_thread_id: Some("thread-1".to_string()),
+            runtime_operation_id: Some("operation-1".to_string()),
         }
     }
 

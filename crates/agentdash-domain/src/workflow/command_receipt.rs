@@ -30,7 +30,7 @@ impl TryFrom<&str> for AgentRunCommandStatus {
             "accepted" => Ok(Self::Accepted),
             "terminal_failed" => Ok(Self::TerminalFailed),
             other => Err(DomainError::InvalidConfig(format!(
-                "agent_run_command_receipts.status 无效: {other}"
+                "agent_run_product_command_receipts.status 无效: {other}"
             ))),
         }
     }
@@ -83,7 +83,7 @@ impl TryFrom<&str> for AgentRunCommandKind {
             "cancel" => Ok(Self::Cancel),
             "context_compact" => Ok(Self::ContextCompact),
             other => Err(DomainError::InvalidConfig(format!(
-                "agent_run_command_receipts.command_kind 无效: {other}"
+                "agent_run_product_command_receipts.command_kind 无效: {other}"
             ))),
         }
     }
@@ -95,9 +95,8 @@ pub struct AgentRunAcceptedRefs {
     pub agent_id: Uuid,
     pub frame_id: Option<Uuid>,
     pub frame_revision: Option<i32>,
-    pub runtime_session_id: Option<String>,
-    pub agent_run_turn_id: Option<String>,
-    pub protocol_turn_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
+    pub runtime_operation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

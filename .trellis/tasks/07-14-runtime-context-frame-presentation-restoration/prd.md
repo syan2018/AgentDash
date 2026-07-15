@@ -81,20 +81,20 @@
 
 ## Acceptance Criteria
 
-- [ ] AC1：生产 composition 调用统一 Business Agent Surface compiler，不再由 API 的 Native 专用 compiler 独立拼装业务 surface。
-- [ ] AC2：首个 ThreadStart 的 ContextFrame payload 与 main-reference golden 完全一致，外层 wrapper 差异经过显式映射。
-- [ ] AC3：AgentFrame runtime surface adoption 的 ContextFrame payload与顺序和 main-reference live transition golden 完全一致。
-- [ ] AC4：ContextFrame 与所属 canonical mutation 在同一 Runtime UoW 中提交；失败与重放均不产生半提交或重复展示。
-- [ ] AC5：Native/Codex/Remote adapter 代码中不存在 ContextFrame 业务构造或 AgentFrame repository 读取。
-- [ ] AC6：工具 schema 仍通过 DriverToolSurface 注入并可执行；ContextFrame 缺失或展示策略不再影响工具可用性。
-- [ ] AC7：前端 session ContextFrame reducer/feed/UI 行为相对 main-reference 无变化。
-- [ ] AC8：Runtime thread/context/surface revision 的推进符合 R5，并有并发与幂等回归测试。
-- [ ] AC9：相关 Rust、TypeScript、schema、golden、跨层 E2E 质量门禁通过。
-- [ ] AC10：任务 research 明确记录参考仓库 commit、源文件映射与每个 golden 的原始行为证据。
-- [ ] AC11：真实 bootstrap compile + ThreadStart 至少产生 identity、user、environment、guidelines、memory、capability 与 assignment 中所有满足 main 非空条件的 frame，payload 和 durable 顺序与 main 等价。
-- [ ] AC12：真实 SurfaceAdopt 覆盖 capability key、tool path、MCP、companion、VFS、memory、Skill、tool schema 八维 delta 及独立 assignment frame，不再只有工具 schema。
-- [ ] AC13：Hook/pending/system-delivery/system-notice/compaction 均由 typed production facts 构造；不存在 arbitrary ContextFrame JSON、错误 auto_resume family 或 placeholder compaction payload。
-- [ ] AC14：最终 closure report 每个 family 的七个 production proof 列均非空，且真实 dev journal 明确枚举观察到的 frame kinds/sections/order。
+- [x] AC1：生产 composition 调用统一 Business Agent Surface compiler，不再由 API 的 Native 专用 compiler 独立拼装业务 surface。
+- [x] AC2：首个 ThreadStart 的 ContextFrame payload 与 main-reference golden 完全一致，外层 wrapper 差异经过显式映射。
+- [x] AC3：AgentFrame runtime surface adoption 的 ContextFrame payload与顺序和 main-reference live transition golden 完全一致。
+- [x] AC4：ContextFrame 与所属 canonical mutation 在同一 Runtime UoW 中提交；失败与重放均不产生半提交或重复展示。
+- [x] AC5：Native/Codex/Remote adapter 代码中不存在 ContextFrame 业务构造或 AgentFrame repository 读取。
+- [x] AC6：工具 schema 仍通过 DriverToolSurface 注入并可执行；ContextFrame 缺失或展示策略不再影响工具可用性。
+- [x] AC7：前端 session ContextFrame reducer/feed/UI 行为相对 main-reference 无变化。
+- [x] AC8：Runtime thread/context/surface revision 的推进符合 R5，并有并发与幂等回归测试。
+- [x] AC9：相关 Rust、TypeScript、schema、golden、跨层 E2E 质量门禁通过。
+- [x] AC10：任务 research 明确记录参考仓库 commit、源文件映射与每个 golden 的原始行为证据。
+- [x] AC11：真实 bootstrap compile + ThreadStart 至少产生 identity、user、environment、guidelines、memory、capability 与 assignment 中所有满足 main 非空条件的 frame，payload 和 durable 顺序与 main 等价。
+- [x] AC12：真实 SurfaceAdopt 覆盖 capability key、tool path、MCP、companion、VFS、memory、Skill、tool schema 八维 delta 及独立 assignment frame，不再只有工具 schema。
+- [x] AC13：Hook/pending/system-delivery/system-notice/compaction 均由 typed production facts 构造；不存在 arbitrary ContextFrame JSON、错误 auto_resume family 或 placeholder compaction payload。
+- [x] AC14：最终 closure report 每个 family 的七个 production proof 列均非空，且真实 dev journal 明确枚举观察到的 frame kinds/sections/order。
 
 ## Out of Scope
 

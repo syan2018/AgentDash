@@ -21,8 +21,11 @@ impl PostgresAgentRunCommandReceiptRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        crate::migration::assert_postgres_tables_ready(&self.pool, &["agent_run_command_receipts"])
-            .await
+        crate::migration::assert_postgres_tables_ready(
+            &self.pool,
+            &["agent_run_product_command_receipts"],
+        )
+        .await
     }
 
     async fn find_by_scope_command(
@@ -32,7 +35,7 @@ impl PostgresAgentRunCommandReceiptRepository {
         client_command_id: &str,
     ) -> Result<Option<AgentRunCommandReceipt>, DomainError> {
         sqlx::query_as::<_, AgentRunCommandReceiptRow>(&format!(
-            "SELECT {RECEIPT_COLS} FROM agent_run_command_receipts \
+            "SELECT {RECEIPT_COLS} FROM agent_run_product_command_receipts \
              WHERE scope_kind = $1 AND scope_key = $2 AND client_command_id = $3"
         ))
         .bind(scope_kind)
@@ -40,13 +43,13 @@ impl PostgresAgentRunCommandReceiptRepository {
         .bind(client_command_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| sql_err_for("agent_run_command_receipts", error))?
+        .map_err(|error| sql_err_for("agent_run_product_command_receipts", error))?
         .map(TryInto::try_into)
         .transpose()
     }
 }
 
-const RECEIPT_COLS: &str = "id,scope_kind,scope_key,command_kind,client_command_id,request_digest,status,mailbox_message_id,run_id,agent_id,frame_id,frame_revision,runtime_session_id,agent_run_turn_id,protocol_turn_id,result_json,error_message,created_at,updated_at,accepted_at,failed_at";
+const RECEIPT_COLS: &str = "id,scope_kind,scope_key,command_kind,client_command_id,request_digest,status,mailbox_message_id,run_id,agent_id,frame_id,frame_revision,runtime_thread_id,runtime_operation_id,result_json,error_message,created_at,updated_at,accepted_at,failed_at";
 
 #[async_trait::async_trait]
 impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptRepository {
@@ -88,7 +91,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
         };
 
         let result = sqlx::query(
-            "INSERT INTO agent_run_command_receipts \
+            "INSERT INTO agent_run_product_command_receipts \
              (id,scope_kind,scope_key,command_kind,client_command_id,request_digest,status,created_at,updated_at) \
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
         )
@@ -131,7 +134,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
                     Some(&created.client_command_id),
                     &error,
                 );
-                Err(sql_err_for("agent_run_command_receipts", error))
+                Err(sql_err_for("agent_run_product_command_receipts", error))
             }
         }
     }
@@ -143,24 +146,23 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
     ) -> Result<AgentRunCommandReceipt, DomainError> {
         let now = chrono::Utc::now();
         sqlx::query_as::<_, AgentRunCommandReceiptRow>(&format!(
-            "UPDATE agent_run_command_receipts SET \
-             status=$1,run_id=$2,agent_id=$3,frame_id=$4,frame_revision=$5,runtime_session_id=$6,\
-             agent_run_turn_id=$7,protocol_turn_id=$8,error_message=NULL,updated_at=$9,accepted_at=COALESCE(accepted_at,$9),failed_at=NULL \
-             WHERE id=$10 RETURNING {RECEIPT_COLS}"
+            "UPDATE agent_run_product_command_receipts SET \
+             status=$1,run_id=$2,agent_id=$3,frame_id=$4,frame_revision=$5,runtime_thread_id=$6,\
+             runtime_operation_id=$7,error_message=NULL,updated_at=$8,accepted_at=COALESCE(accepted_at,$8),failed_at=NULL \
+             WHERE id=$9 RETURNING {RECEIPT_COLS}"
         ))
         .bind(AgentRunCommandStatus::Accepted.as_str())
         .bind(accepted_refs.run_id.to_string())
         .bind(accepted_refs.agent_id.to_string())
         .bind(accepted_refs.frame_id.map(|id| id.to_string()))
         .bind(accepted_refs.frame_revision)
-        .bind(accepted_refs.runtime_session_id)
-        .bind(accepted_refs.agent_run_turn_id)
-        .bind(accepted_refs.protocol_turn_id)
+        .bind(accepted_refs.runtime_thread_id)
+        .bind(accepted_refs.runtime_operation_id)
         .bind(now)
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| sql_err_for("agent_run_command_receipts", error))?
+        .map_err(|error| sql_err_for("agent_run_product_command_receipts", error))?
         .ok_or_else(|| DomainError::NotFound {
             entity: "agent_run_command_receipt",
             id: id.to_string(),
@@ -174,7 +176,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
         mailbox_message_id: Uuid,
     ) -> Result<AgentRunCommandReceipt, DomainError> {
         sqlx::query_as::<_, AgentRunCommandReceiptRow>(&format!(
-            "UPDATE agent_run_command_receipts SET mailbox_message_id=$1,updated_at=$2 \
+            "UPDATE agent_run_product_command_receipts SET mailbox_message_id=$1,updated_at=$2 \
              WHERE id=$3 RETURNING {RECEIPT_COLS}"
         ))
         .bind(mailbox_message_id.to_string())
@@ -182,7 +184,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| sql_err_for("agent_run_command_receipts", error))?
+        .map_err(|error| sql_err_for("agent_run_product_command_receipts", error))?
         .ok_or_else(|| DomainError::NotFound {
             entity: "agent_run_command_receipt",
             id: id.to_string(),
@@ -196,7 +198,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
         result_json: Value,
     ) -> Result<AgentRunCommandReceipt, DomainError> {
         sqlx::query_as::<_, AgentRunCommandReceiptRow>(&format!(
-            "UPDATE agent_run_command_receipts SET result_json=$1,updated_at=$2 \
+            "UPDATE agent_run_product_command_receipts SET result_json=$1,updated_at=$2 \
              WHERE id=$3 RETURNING {RECEIPT_COLS}"
         ))
         .bind(result_json)
@@ -204,7 +206,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| sql_err_for("agent_run_command_receipts", error))?
+        .map_err(|error| sql_err_for("agent_run_product_command_receipts", error))?
         .ok_or_else(|| DomainError::NotFound {
             entity: "agent_run_command_receipt",
             id: id.to_string(),
@@ -220,26 +222,25 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
     ) -> Result<AgentRunCommandReceipt, DomainError> {
         let now = chrono::Utc::now();
         sqlx::query_as::<_, AgentRunCommandReceiptRow>(&format!(
-            "UPDATE agent_run_command_receipts SET \
-             status=$1,run_id=$2,agent_id=$3,frame_id=$4,frame_revision=$5,runtime_session_id=$6,\
-             agent_run_turn_id=$7,protocol_turn_id=$8,result_json=$9,error_message=NULL,\
-             updated_at=$10,accepted_at=COALESCE(accepted_at,$10),failed_at=NULL \
-             WHERE id=$11 RETURNING {RECEIPT_COLS}"
+            "UPDATE agent_run_product_command_receipts SET \
+             status=$1,run_id=$2,agent_id=$3,frame_id=$4,frame_revision=$5,runtime_thread_id=$6,\
+             runtime_operation_id=$7,result_json=$8,error_message=NULL,\
+             updated_at=$9,accepted_at=COALESCE(accepted_at,$9),failed_at=NULL \
+             WHERE id=$10 RETURNING {RECEIPT_COLS}"
         ))
         .bind(AgentRunCommandStatus::Accepted.as_str())
         .bind(accepted_refs.run_id.to_string())
         .bind(accepted_refs.agent_id.to_string())
         .bind(accepted_refs.frame_id.map(|id| id.to_string()))
         .bind(accepted_refs.frame_revision)
-        .bind(accepted_refs.runtime_session_id)
-        .bind(accepted_refs.agent_run_turn_id)
-        .bind(accepted_refs.protocol_turn_id)
+        .bind(accepted_refs.runtime_thread_id)
+        .bind(accepted_refs.runtime_operation_id)
         .bind(result_json)
         .bind(now)
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| sql_err_for("agent_run_command_receipts", error))?
+        .map_err(|error| sql_err_for("agent_run_product_command_receipts", error))?
         .ok_or_else(|| DomainError::NotFound {
             entity: "agent_run_command_receipt",
             id: id.to_string(),
@@ -254,7 +255,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
     ) -> Result<AgentRunCommandReceipt, DomainError> {
         let now = chrono::Utc::now();
         sqlx::query_as::<_, AgentRunCommandReceiptRow>(&format!(
-            "UPDATE agent_run_command_receipts SET \
+            "UPDATE agent_run_product_command_receipts SET \
              status=$1,error_message=$2,updated_at=$3,failed_at=COALESCE(failed_at,$3) \
              WHERE id=$4 RETURNING {RECEIPT_COLS}"
         ))
@@ -264,7 +265,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| sql_err_for("agent_run_command_receipts", error))?
+        .map_err(|error| sql_err_for("agent_run_product_command_receipts", error))?
         .ok_or_else(|| DomainError::NotFound {
             entity: "agent_run_command_receipt",
             id: id.to_string(),
@@ -280,7 +281,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
     ) -> Result<AgentRunCommandReceipt, DomainError> {
         let now = chrono::Utc::now();
         sqlx::query_as::<_, AgentRunCommandReceiptRow>(&format!(
-            "UPDATE agent_run_command_receipts SET \
+            "UPDATE agent_run_product_command_receipts SET \
              status=$1,error_message=$2,result_json=$3,updated_at=$4,failed_at=COALESCE(failed_at,$4) \
              WHERE id=$5 RETURNING {RECEIPT_COLS}"
         ))
@@ -291,7 +292,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| sql_err_for("agent_run_command_receipts", error))?
+        .map_err(|error| sql_err_for("agent_run_product_command_receipts", error))?
         .ok_or_else(|| DomainError::NotFound {
             entity: "agent_run_command_receipt",
             id: id.to_string(),
@@ -301,7 +302,7 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
 
     async fn get(&self, id: Uuid) -> Result<Option<AgentRunCommandReceipt>, DomainError> {
         sqlx::query_as::<_, AgentRunCommandReceiptRow>(&format!(
-            "SELECT {RECEIPT_COLS} FROM agent_run_command_receipts WHERE id = $1"
+            "SELECT {RECEIPT_COLS} FROM agent_run_product_command_receipts WHERE id = $1"
         ))
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -343,7 +344,7 @@ fn log_command_receipt_db_error(
     diag_error!(Error, Subsystem::AgentRun,
         context = &context,
         error = error,
-        table = "agent_run_command_receipts",
+        table = "agent_run_product_command_receipts",
         receipt_id = %receipt_id,
         scope_kind = %scope_kind,
         scope_key = %scope_key,
@@ -389,9 +390,8 @@ struct AgentRunCommandReceiptRow {
     agent_id: Option<String>,
     frame_id: Option<String>,
     frame_revision: Option<i32>,
-    runtime_session_id: Option<String>,
-    agent_run_turn_id: Option<String>,
-    protocol_turn_id: Option<String>,
+    runtime_thread_id: Option<String>,
+    runtime_operation_id: Option<String>,
     result_json: Option<Value>,
     error_message: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -426,14 +426,13 @@ impl TryFrom<AgentRunCommandReceiptRow> for AgentRunCommandReceipt {
                 agent_id,
                 frame_id,
                 frame_revision: row.frame_revision,
-                runtime_session_id: row.runtime_session_id,
-                agent_run_turn_id: row.agent_run_turn_id,
-                protocol_turn_id: row.protocol_turn_id,
+                runtime_thread_id: row.runtime_thread_id,
+                runtime_operation_id: row.runtime_operation_id,
             }),
             (None, None) => None,
             _ => {
                 return Err(DomainError::InvalidConfig(
-                    "agent_run_command_receipts accepted refs 不完整".to_string(),
+                    "agent_run_product_command_receipts accepted refs 不完整".to_string(),
                 ));
             }
         };
@@ -473,6 +472,7 @@ mod tests {
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::workflow::AgentRunCommandKind;
     use serde_json::json;
+    use sqlx::PgPool;
 
     fn new_receipt(command_id: &str, digest: &str) -> NewAgentRunCommandReceipt {
         NewAgentRunCommandReceipt {
@@ -482,6 +482,59 @@ mod tests {
             client_command_id: command_id.to_string(),
             request_digest: digest.to_string(),
         }
+    }
+
+    async fn seed_runtime_operation(pool: &PgPool, suffix: &str) -> (String, String) {
+        let binding_id = format!("binding-receipt-{suffix}");
+        let source_thread_id = format!("source-receipt-{suffix}");
+        let thread_id = format!("thread-receipt-{suffix}");
+        let operation_id = format!("operation-receipt-{suffix}");
+        let profile_digest = format!("profile-receipt-{suffix}");
+        sqlx::query(
+            "INSERT INTO agent_runtime_binding (id,driver_generation,profile_digest) VALUES ($1,1,$2)",
+        )
+        .bind(&binding_id)
+        .bind(&profile_digest)
+        .execute(pool)
+        .await
+        .expect("seed runtime binding");
+        sqlx::query(
+            "INSERT INTO agent_runtime_source_coordinate (binding_id,source_thread_id,thread_id) VALUES ($1,$2,$3)",
+        )
+        .bind(&binding_id)
+        .bind(&source_thread_id)
+        .bind(&thread_id)
+        .execute(pool)
+        .await
+        .expect("seed runtime coordinate");
+        sqlx::query(
+            "INSERT INTO agent_runtime_thread \
+             (id,revision,next_event_sequence,next_operation_sequence,status,binding_id,driver_generation,source_thread_id,profile_digest,context_revision,settings_revision,tool_set_revision,projection) \
+             VALUES ($1,0,0,2,'active',$2,1,$3,$4,0,0,0,$5)",
+        )
+        .bind(&thread_id)
+        .bind(&binding_id)
+        .bind(&source_thread_id)
+        .bind(&profile_digest)
+        .bind(json!({}))
+        .execute(pool)
+        .await
+        .expect("seed runtime thread");
+        sqlx::query(
+            "INSERT INTO agent_runtime_operation \
+             (id,thread_id,operation_sequence,idempotency_key,accepted_revision,status,actor,command,terminal,record) \
+             VALUES ($1,$2,1,$3,0,'active',$4,$5,NULL,$6)",
+        )
+        .bind(&operation_id)
+        .bind(&thread_id)
+        .bind(format!("key-receipt-{suffix}"))
+        .bind(json!({"kind":"system","component":"command-receipt-test"}))
+        .bind(json!({"kind":"context_compact","thread_id":thread_id,"compaction_id":format!("compact-{suffix}")}))
+        .bind(json!({}))
+        .execute(pool)
+        .await
+        .expect("seed runtime operation");
+        (thread_id, operation_id)
     }
 
     #[tokio::test]
@@ -528,6 +581,8 @@ mod tests {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
+        let (runtime_thread_id, runtime_operation_id) =
+            seed_runtime_operation(&pool, "accepted").await;
 
         sqlx::query(
             "INSERT INTO lifecycle_runs \
@@ -561,9 +616,8 @@ mod tests {
                     agent_id,
                     frame_id: None,
                     frame_revision: None,
-                    runtime_session_id: None,
-                    agent_run_turn_id: Some("turn-1".to_string()),
-                    protocol_turn_id: None,
+                    runtime_thread_id: Some(runtime_thread_id.clone()),
+                    runtime_operation_id: Some(runtime_operation_id.clone()),
                 },
             )
             .await
@@ -573,8 +627,8 @@ mod tests {
             accepted
                 .accepted_refs
                 .as_ref()
-                .and_then(|refs| refs.agent_run_turn_id.clone()),
-            Some("turn-1".to_string())
+                .and_then(|refs| refs.runtime_operation_id.clone()),
+            Some(runtime_operation_id)
         );
 
         let failed = repo
@@ -605,5 +659,31 @@ mod tests {
             .expect("replay blocked command");
         assert!(blocked_replay.duplicate());
         assert_eq!(blocked_replay.receipt().result_json, Some(blocked_result));
+
+        let mismatch_claim = repo
+            .claim(new_receipt("cmd-mismatch", "sha256:mismatch"))
+            .await
+            .expect("claim mismatched command");
+        let (other_thread_id, _) = seed_runtime_operation(&pool, "other").await;
+        let mismatch = repo
+            .mark_accepted(
+                mismatch_claim.receipt().id,
+                AgentRunAcceptedRefs {
+                    run_id,
+                    agent_id,
+                    frame_id: None,
+                    frame_revision: None,
+                    runtime_thread_id: Some(other_thread_id),
+                    runtime_operation_id: accepted
+                        .accepted_refs
+                        .as_ref()
+                        .and_then(|refs| refs.runtime_operation_id.clone()),
+                },
+            )
+            .await;
+        assert!(
+            mismatch.is_err(),
+            "跨 thread operation 引用必须由复合外键拒绝"
+        );
     }
 }

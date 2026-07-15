@@ -2,8 +2,8 @@ use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 
 use agentdash_agent_runtime::{
     ActivationObservation, CommitFailurePoint, CompactionPreparation, ContextActivationStatus,
-    ContextRuntimeError, ManagedAgentRuntime, RuntimeCommit, RuntimeRepository,
-    RuntimeStoreFixture, RuntimeUnitOfWork,
+    ContextPreparationStatus, ContextRuntimeError, ManagedAgentRuntime, RuntimeCommit,
+    RuntimeRepository, RuntimeStoreFixture, RuntimeUnitOfWork,
 };
 use agentdash_agent_runtime_contract::*;
 
@@ -15,6 +15,54 @@ where
     T::Err: std::fmt::Debug,
 {
     value.parse().expect("valid id")
+}
+
+#[tokio::test]
+async fn no_eligible_messages_terminalizes_the_compaction_without_changing_context() {
+    let (store, runtime) = fixture();
+    let thread_id = start_and_accept_compaction(
+        &runtime,
+        "compact-no-eligible",
+        ContextCompactionTrigger::Manual,
+    )
+    .await;
+
+    runtime
+        .complete_compaction_without_changes(&id("compact-no-eligible"))
+        .await
+        .expect("complete no-op compaction");
+    runtime
+        .complete_compaction_without_changes(&id("compact-no-eligible"))
+        .await
+        .expect("no-op completion is idempotent");
+
+    let thread = store
+        .load_thread(&thread_id)
+        .await
+        .expect("load thread")
+        .expect("thread");
+    assert_eq!(thread.context_revision, ContextRevision(0));
+    assert!(thread.active_checkpoint_id.is_none());
+    let operation = store
+        .find_operation(&id("compact-no-eligible"))
+        .await
+        .expect("load operation")
+        .expect("operation");
+    assert_eq!(
+        operation.terminal,
+        Some(RuntimeOperationTerminal::Succeeded)
+    );
+    let work = store
+        .load_context_preparation(&id("compact-no-eligible"))
+        .await
+        .expect("load preparation")
+        .expect("preparation");
+    assert!(matches!(
+        work.status,
+        ContextPreparationStatus::Terminal {
+            terminal: RuntimeOperationTerminal::Succeeded
+        }
+    ));
 }
 
 fn profile() -> RuntimeProfile {

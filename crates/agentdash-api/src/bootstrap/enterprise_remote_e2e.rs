@@ -254,6 +254,53 @@ impl AgentRunEffectiveCapabilityPort for EnterpriseCapabilityPort {
 #[derive(Default)]
 struct RecordingHookCallback(AtomicUsize);
 
+struct EnterpriseManagedCompactionEngine;
+
+#[async_trait]
+impl agentdash_infrastructure::agent_runtime_workers::ManagedCompactionPreparationEngine
+    for EnterpriseManagedCompactionEngine
+{
+    async fn compact(
+        &self,
+        thread: &agentdash_agent_runtime::RuntimeThreadState,
+        surface: &agentdash_integration_api::MaterializedDriverSurface,
+        _instance: &agentdash_agent_runtime_host::AgentServiceInstance,
+        work: &agentdash_agent_runtime::ContextPreparationWorkItem,
+    ) -> Result<
+        agentdash_infrastructure::agent_runtime_workers::ManagedCompactionOutput,
+        agentdash_infrastructure::agent_runtime_workers::RuntimeDurableWorkerError,
+    > {
+        let summary = "enterprise remote compacted summary".to_string();
+        let mut blocks = surface.context.blocks.clone();
+        blocks.push(
+            agentdash_agent_runtime_contract::ContextBlock::CompactionSummary {
+                summary: summary.clone(),
+            },
+        );
+        Ok(
+            agentdash_infrastructure::agent_runtime_workers::ManagedCompactionOutput {
+                blocks,
+                source_item_ids: thread.item_order.clone(),
+                presentation: agentdash_agent_runtime::CompactionPresentationFacts {
+                    summary,
+                    tokens_before: 42,
+                    messages_compacted: u32::try_from(thread.item_order.len()).unwrap_or(u32::MAX),
+                    compaction_id: Some(work.compaction_id.to_string()),
+                    projection_version: None,
+                    strategy: Some("summary_prefix".to_string()),
+                    trigger: Some("manual".to_string()),
+                    phase: Some("standalone_compact_turn".to_string()),
+                    source_start_event_seq: None,
+                    source_end_event_seq: None,
+                    first_kept_event_seq: None,
+                    compacted_until_ref: None,
+                    timestamp_ms: Some(1_710_000_000_000),
+                },
+            },
+        )
+    }
+}
+
 #[async_trait]
 impl AgentRuntimeHookCallback for RecordingHookCallback {
     async fn execute(
@@ -856,7 +903,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         application_presentation_projector: Arc::new(
             agentdash_application_agentrun::agent_run::AgentRunRuntimeApplicationPresentationProjector,
         ),
-        managed_compaction: None,
+        managed_compaction: Some(Arc::new(EnterpriseManagedCompactionEngine)),
         node_id: "enterprise-cloud-host".to_string(),
     })
     .expect("cloud production composition");

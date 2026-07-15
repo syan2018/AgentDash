@@ -749,18 +749,18 @@ fn mailbox_control_response(
     }
 }
 
-fn domain_agent_run_refs(context: &AgentRunContext) -> DomainAgentRunAcceptedRefs {
+fn domain_agent_run_refs(
+    context: &AgentRunContext,
+    runtime_thread_id: Option<String>,
+    runtime_operation_id: Option<String>,
+) -> DomainAgentRunAcceptedRefs {
     DomainAgentRunAcceptedRefs {
         run_id: context.run.id,
         agent_id: context.agent.id,
         frame_id: None,
         frame_revision: None,
-        runtime_session_id: context
-            .presentation_thread_id
-            .as_ref()
-            .map(ToString::to_string),
-        agent_run_turn_id: None,
-        protocol_turn_id: None,
+        runtime_thread_id,
+        runtime_operation_id,
     }
 }
 
@@ -1075,7 +1075,7 @@ async fn fork_agent_run(
 
 fn domain_fork_child_refs(
     response: &AgentRunForkResponse,
-    runtime_session_id: Option<String>,
+    runtime_thread_id: Option<String>,
 ) -> Result<DomainAgentRunAcceptedRefs, ApiError> {
     let frame = response.child_refs.frame_ref.as_ref();
     Ok(DomainAgentRunAcceptedRefs {
@@ -1085,9 +1085,8 @@ fn domain_fork_child_refs(
             .map(|frame| parse_uuid(&frame.frame_id, "child frame_id"))
             .transpose()?,
         frame_revision: frame.and_then(|frame| frame.revision),
-        runtime_session_id,
-        agent_run_turn_id: response.child_refs.agent_run_turn_id.clone(),
-        protocol_turn_id: response.child_refs.protocol_turn_id.clone(),
+        runtime_thread_id,
+        runtime_operation_id: None,
     })
 }
 
@@ -1374,7 +1373,11 @@ async fn delete_agent_run_mailbox_message(
     );
     response.accepted_refs = Some(contract_agent_run_refs(&context));
     command_service
-        .accept(claim.receipt_id, domain_agent_run_refs(&context), &response)
+        .accept(
+            claim.receipt_id,
+            domain_agent_run_refs(&context, None, None),
+            &response,
+        )
         .await?;
     Ok(Json(response))
 }
@@ -1460,7 +1463,11 @@ async fn promote_agent_run_mailbox_message(
     );
     response.accepted_refs = Some(contract_agent_run_refs(&context));
     command_service
-        .accept(claim.receipt_id, domain_agent_run_refs(&context), &response)
+        .accept(
+            claim.receipt_id,
+            domain_agent_run_refs(&context, None, None),
+            &response,
+        )
         .await?;
     Ok(Json(response))
 }
@@ -1548,7 +1555,11 @@ async fn move_agent_run_mailbox_message(
     .await?;
     let response = serde_json::json!({ "ok": true, "order_key": moved.order_key });
     command_service
-        .accept(claim.receipt_id, domain_agent_run_refs(&context), &response)
+        .accept(
+            claim.receipt_id,
+            domain_agent_run_refs(&context, None, None),
+            &response,
+        )
         .await?;
     Ok(Json(response))
 }
@@ -1609,7 +1620,11 @@ async fn resume_agent_run_mailbox(
     );
     response.accepted_refs = Some(contract_agent_run_refs(&context));
     command_service
-        .accept(claim.receipt_id, domain_agent_run_refs(&context), &response)
+        .accept(
+            claim.receipt_id,
+            domain_agent_run_refs(&context, None, None),
+            &response,
+        )
         .await?;
     Ok(Json(response))
 }
@@ -1700,7 +1715,7 @@ async fn cancel_agent_run(
         body.client_command_id.clone(),
         &view,
     )?;
-    product_command_step(
+    let runtime_receipt = product_command_step(
         &command_service,
         claim.receipt_id,
         state
@@ -1718,7 +1733,17 @@ async fn cancel_agent_run(
         message: None,
     };
     command_service
-        .accept(claim.receipt_id, domain_agent_run_refs(&context), &response)
+        .accept(
+            claim.receipt_id,
+            domain_agent_run_refs(
+                &context,
+                view.snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.thread_id.to_string()),
+                Some(runtime_receipt.operation_id.to_string()),
+            ),
+            &response,
+        )
         .await?;
     Ok(Json(response))
 }
@@ -1788,7 +1813,11 @@ async fn compact_agent_run_context(
             message: Some("当前没有可压缩的消息。".to_string()),
         };
         command_service
-            .accept(claim.receipt_id, domain_agent_run_refs(&context), &response)
+            .accept(
+                claim.receipt_id,
+                domain_agent_run_refs(&context, Some(snapshot.thread_id.to_string()), None),
+                &response,
+            )
             .await?;
         return Ok(Json(response));
     }
@@ -1841,7 +1870,11 @@ async fn compact_agent_run_context(
                     .await?;
             } else {
                 command_service
-                    .accept(claim.receipt_id, domain_agent_run_refs(&context), &response)
+                    .accept(
+                        claim.receipt_id,
+                        domain_agent_run_refs(&context, Some(snapshot.thread_id.to_string()), None),
+                        &response,
+                    )
                     .await?;
             }
             return Ok(Json(response));
@@ -1866,7 +1899,15 @@ async fn compact_agent_run_context(
     };
     refresh_compaction_terminal(state.as_ref(), &mut response).await?;
     command_service
-        .accept(claim.receipt_id, domain_agent_run_refs(&context), &response)
+        .accept(
+            claim.receipt_id,
+            domain_agent_run_refs(
+                &context,
+                Some(snapshot.thread_id.to_string()),
+                Some(receipt.operation_id.to_string()),
+            ),
+            &response,
+        )
         .await?;
     Ok(Json(response))
 }

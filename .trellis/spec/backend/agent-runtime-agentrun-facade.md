@@ -54,6 +54,10 @@ Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-sessio
 
 Migration `0066_agent_frame_hook_plan.sql` adds nullable `agent_frames.hook_plan jsonb`. Existing rows remain explicitly unmaterialized；所有生产Frame writer必须在新的revision中写入可校验的`AgentFrameHookPlan { revision, digest, requirements[] }`，Runtime surface adoption不得从permission policy、executor kind或Driver profile补造计划。
 
+Migration `0077_agent_run_product_command_receipts.sql` restores product-command idempotency after the RuntimeSession cutover as a new product-owned table. It references canonical `runtime_thread_id + runtime_operation_id` and does not restore retired RuntimeSession/AgentRunTurn/ProtocolTurn columns.
+
+Migration `0078_rebind_safe_runtime_outbox_coordinates.sql` persists each Runtime outbox entry's immutable `binding_id + binding_epoch + driver_generation`. Historical dispatch fences reference `agent_runtime_binding`, while `thread_id` independently retains thread ownership, so `ThreadRebind` can advance the thread without rewriting old outbox coordinates.
+
 ## 3. Contracts
 
 - Application depends on the named `AgentRunRuntime` facade and owned Runtime contract. The facade maps product coordinates and commands; it does not own Thread/Turn/Item/Interaction state.
@@ -69,6 +73,10 @@ Migration `0066_agent_frame_hook_plan.sql` adds nullable `agent_frames.hook_plan
 - Runtime events use a durable cursor. Authoritative lifecycle events are not reconstructed from Backbone or transient broadcast state.
 - Remote Driver events are ordered within a RuntimeWire stream. Response correlation and reverse HostPort calls may be concurrent, but canonical lifecycle notifications are emitted serially.
 - A disconnected active binding converges exactly once to `BindingLost`; Thread, active Turn and accepted Operation become `Lost`. Re-registration creates a new generation, and late events from the old generation cannot revive canonical state.
+- Restart recovery rebuilds non-serializable callable Tool/Hook handles against the exact durable surface coordinates. Durable context/workspace/presentation remain authoritative and are not replaced by startup-time discovery.
+- An InProcess service with a lost binding reactivates its durable service instance into a new Host generation before `ThreadRebind`; Remote/LocalProcess recovery still requires a real advertised replacement offer.
+- Runtime outbox rows retain the binding epoch/generation accepted with the command. Rebinding the thread never cascades or rewrites those historical fencing coordinates.
+- Runtime Turn/Item/Interaction projections update stable entity rows in place. A normal Runtime UoW must not delete and recreate entity rows because ToolBroker calls, interactions and other durable side-effect records reference those identities across concurrent driver commits.
 - Context compaction is a Managed Runtime operation: candidate preparation, remote activation, active-head convergence and recovery share one operation identity.
 
 ## 4. Validation & Error Matrix
@@ -84,6 +92,10 @@ Migration `0066_agent_frame_hook_plan.sql` adds nullable `agent_frames.hook_plan
 | Runtime accepts command but product-coordinate persistence fails | binding marked failed and canonical `BindingLost` emitted |
 | Driver event is out of lifecycle order | critical protocol violation and `Lost` convergence |
 | stale binding generation emits an event | event fenced; snapshot and terminal state unchanged |
+| process restarts before callable Tool/Hook registry is rebuilt | recover executable handles, verify persisted Tool/Hook surface, then dispatch against the durable binding |
+| lost InProcess binding has no newer offer | activate the durable owner at a new generation, fence the old offer, then Resume/Rebind |
+| ThreadRebind encounters historical outbox rows | commit succeeds; old binding/epoch/generation values remain unchanged |
+| concurrent driver facts advance a thread while ToolBroker owns an active Item | entity projection is upserted in place; the broker row survives and the Item reaches its durable terminal |
 | active remote transport disconnects | exactly one `BindingLost`; active Thread/Turn/Operation become `Lost` |
 | required surface/tool/hook revision is not applied | dispatch unavailable; no prompt-only degradation |
 | current AgentFrame没有immutable HookPlan或digest复验失败 | frame/runtime materialization typed reject；不读取旧surface或permission policy补齐 |
@@ -103,8 +115,9 @@ Migration `0066_agent_frame_hook_plan.sql` adds nullable `agent_frames.hook_plan
 
 - Facade tests assert product coordinate mapping, duplicate receipt replay, operation IDs and canonical command availability.
 - Native and Codex production composition tests traverse facade/mailbox -> Host/outbox -> driver -> canonical events/snapshot.
-- Enterprise remote E2E traverses Cloud generic proxy -> RuntimeWire -> Local PostgreSQL Host -> enterprise Native driver -> production Tool Broker and reverse Hook/HostPort calls.
+- Enterprise remote E2E traverses Cloud generic proxy -> RuntimeWire -> Local PostgreSQL Host -> enterprise Native driver -> production Tool Broker and reverse Hook/HostPort calls; the tool call must survive concurrent Runtime projection commits and reach canonical Item/Turn terminal state.
 - Enterprise remote E2E asserts compaction preparation/activation/recovery, disconnect, exactly-once `BindingLost`, reopen, late-event fencing and no duplicate outbox replay.
+- Native production tests cover process-restart callable registry recovery, InProcess generation reactivation and a real `ThreadRebind` with historical outbox rows.
 - Migration tests run `0065` against a fresh PostgreSQL root and assert removed tables/columns are absent; bootstrap tests must use isolated data roots.
 - Migration/Frame repository tests断言`0066`使用`agent_frames.hook_plan jsonb`，新建、generic launch、workflow node与runtime surface revision writer都保存并复验相同digest。
 - Contract generation, frontend typecheck/tests, workspace checks, Runtime crate tests and migration guard are required before completion.

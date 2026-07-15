@@ -47,6 +47,8 @@ pub enum RuntimeDurableWorkerError {
     Host(String),
     #[error("Runtime durable worker processing failed: {0}")]
     Processing(String),
+    #[error("Runtime durable worker compaction has no eligible messages")]
+    NoEligibleCompaction,
 }
 
 #[async_trait]
@@ -210,11 +212,7 @@ impl ManagedCompactionPreparationEngine for NativeManagedCompactionEngine {
         )
         .await
         .map_err(|error| RuntimeDurableWorkerError::Processing(error.to_string()))?
-        .ok_or_else(|| {
-            RuntimeDurableWorkerError::Processing(
-                "managed compaction has no eligible canonical messages".to_string(),
-            )
-        })?;
+        .ok_or(RuntimeDurableWorkerError::NoEligibleCompaction)?;
         let (summary, messages_compacted, compacted_until_ref, timestamp_ms) =
             match &result.summary_message {
                 AgentMessage::CompactionSummary {
@@ -720,7 +718,17 @@ impl RuntimeDurableWorkers {
                     "Runtime activation instance does not exist".to_string(),
                 )
             })?;
-        let prepared = engine.compact(&thread, &surface, &instance, work).await?;
+        let prepared = match engine.compact(&thread, &surface, &instance, work).await {
+            Ok(prepared) => prepared,
+            Err(RuntimeDurableWorkerError::NoEligibleCompaction) => {
+                self.runtime
+                    .complete_compaction_without_changes(&work.compaction_id)
+                    .await
+                    .map_err(|error| RuntimeDurableWorkerError::Processing(error.to_string()))?;
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         let blocks = prepared.blocks;
         let source_item_ids = prepared.source_item_ids;
         let recipe = ContextRecipe {

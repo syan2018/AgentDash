@@ -680,6 +680,9 @@ impl RuntimeUnitOfWork for RuntimeStoreFixture {
                         crate::ContextPreparationStatus::Pending,
                         crate::ContextPreparationStatus::Prepared { .. }
                     ) | (
+                        crate::ContextPreparationStatus::Pending,
+                        crate::ContextPreparationStatus::Terminal { .. }
+                    ) | (
                         crate::ContextPreparationStatus::Prepared { .. },
                         crate::ContextPreparationStatus::Terminal { .. }
                     )

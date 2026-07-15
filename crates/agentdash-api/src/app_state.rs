@@ -640,6 +640,18 @@ impl AppState {
                 tool_registry.clone(),
             ),
         );
+        tool_registry
+            .bind_recovery(Arc::new(
+                crate::bootstrap::agent_runtime_surface::CanonicalCompiledAgentRunToolBindingRecovery::new(
+                    Arc::downgrade(&surface_compiler),
+                    Arc::new(
+                        agentdash_infrastructure::persistence::postgres::PostgresAgentRuntimeCompositionRepository::new(
+                            runtime_pool.clone(),
+                        ),
+                    ),
+                ),
+            ))
+            .map_err(anyhow::Error::msg)?;
         let callback_runtime_pool = runtime_pool.clone();
         let callback_tool_registry = tool_registry.clone();
         let callback_effective_capability = agent_run_effective_capability.clone();

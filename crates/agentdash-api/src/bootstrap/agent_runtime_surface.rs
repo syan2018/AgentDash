@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock, Weak},
+};
 
 #[cfg(test)]
 use std::collections::BTreeSet;
@@ -23,7 +26,7 @@ use agentdash_spi::{
 };
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use super::agent_runtime::{
     AgentRunPlatformToolBrokerResolver, AgentRunRuntimeSurfaceSourceError,
@@ -860,9 +863,144 @@ struct CompiledAgentRunToolReservation {
     binding: CompiledAgentRunToolBinding,
 }
 
-#[derive(Default)]
 pub struct CompiledAgentRunToolRegistry {
     state: RwLock<CompiledAgentRunToolRegistryState>,
+    recovery: OnceLock<Arc<dyn CompiledAgentRunToolBindingRecovery>>,
+    recovery_locks: Mutex<BTreeMap<RuntimeBindingId, Arc<Mutex<()>>>>,
+}
+
+impl Default for CompiledAgentRunToolRegistry {
+    fn default() -> Self {
+        Self {
+            state: RwLock::new(CompiledAgentRunToolRegistryState::default()),
+            recovery: OnceLock::new(),
+            recovery_locks: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+pub(crate) trait CompiledAgentRunToolBindingRecovery: Send + Sync {
+    async fn recover(
+        &self,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<(), AgentRunRuntimeSurfaceSourceError>;
+}
+
+pub(crate) struct CanonicalCompiledAgentRunToolBindingRecovery {
+    compiler: Weak<AgentFrameSurfaceCompositionAdapter>,
+    repository: Arc<
+        agentdash_infrastructure::persistence::postgres::PostgresAgentRuntimeCompositionRepository,
+    >,
+}
+
+impl CanonicalCompiledAgentRunToolBindingRecovery {
+    pub(crate) fn new(
+        compiler: Weak<AgentFrameSurfaceCompositionAdapter>,
+        repository: Arc<
+            agentdash_infrastructure::persistence::postgres::PostgresAgentRuntimeCompositionRepository,
+        >,
+    ) -> Self {
+        Self {
+            compiler,
+            repository,
+        }
+    }
+}
+
+#[async_trait]
+impl CompiledAgentRunToolBindingRecovery for CanonicalCompiledAgentRunToolBindingRecovery {
+    async fn recover(
+        &self,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<(), AgentRunRuntimeSurfaceSourceError> {
+        let compiler = self.compiler.upgrade().ok_or_else(|| {
+            AgentRunRuntimeSurfaceSourceError::Unavailable {
+                reason: "AgentRun business surface compiler is no longer available".to_string(),
+                retryable: true,
+            }
+        })?;
+        let binding = self
+            .repository
+            .load_by_runtime_binding(binding_id)
+            .await
+            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Unavailable {
+                reason: error.to_string(),
+                retryable: true,
+            })?
+            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "canonical AgentRun Runtime binding does not exist".to_string(),
+            })?;
+        let persisted_surface = self
+            .repository
+            .load_bound_surface(binding_id)
+            .await
+            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Unavailable {
+                reason: error.to_string(),
+                retryable: true,
+            })?
+            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "canonical materialized Runtime surface does not exist".to_string(),
+            })?;
+        let persisted_business_surface = self
+            .repository
+            .load_business_surface(
+                binding_id,
+                persisted_surface.revision,
+                &persisted_surface.digest,
+            )
+            .await
+            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Unavailable {
+                reason: error.to_string(),
+                retryable: true,
+            })?;
+        let request =
+            agentdash_application_ports::agent_run_runtime::AgentRunRuntimeProvisionRequest {
+                target: binding.target.clone(),
+                presentation_thread_id: binding.presentation_thread_id.clone(),
+                identity: persisted_surface.authorization_identity.clone(),
+                backend_selection: None,
+                fork: None,
+                terminal_hook_effect_binding: binding.surface.terminal_hook_effect_binding.clone(),
+            };
+        let plan = compiler
+            .compile(&request, &binding.thread_id, binding_id)
+            .await?;
+        // Recovery republishes executable handles only. Context, workspace and presentation are
+        // already canonical durable facts and can depend on relay-backed discovery that is not
+        // available during process startup. The freshly built executable portion must still be
+        // byte-for-byte equivalent to the persisted tool/Hook surface before it may be attached
+        // to those durable coordinates.
+        if plan.source_frame_id != persisted_business_surface.presentation.source_frame_id
+            || plan.surface.runtime_thread_id != persisted_surface.runtime_thread_id
+            || plan.surface.revision != persisted_surface.revision
+            || plan.surface.tools != persisted_surface.tools
+            || plan.surface.hooks != persisted_surface.hooks
+            || plan.business_surface.snapshot.tools != persisted_business_surface.snapshot.tools
+            || plan.business_surface.snapshot.hook_plan
+                != persisted_business_surface.snapshot.hook_plan
+            || plan.hook_plan.revision != persisted_surface.hooks.revision
+            || plan.hook_plan.digest != persisted_surface.hooks.digest
+        {
+            return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "recompiled AgentRun executable tool/Hook surface does not match the canonical persisted artifact"
+                    .to_string(),
+            });
+        }
+        let applied = AppliedNativeAgentRunSurface {
+            runtime_thread_id: binding.thread_id,
+            binding_id: binding.binding_id,
+            generation: binding.driver_generation,
+            source_thread_id: binding.source_thread_id,
+            surface_revision: persisted_surface.revision,
+            surface_digest: persisted_surface.digest,
+            tool_set_revision: persisted_surface.tools.revision,
+            hook_plan_revision: plan.hook_plan.revision,
+            hook_plan_digest: plan.hook_plan.digest,
+            terminal_hook_effect_binding: plan.terminal_hook_effect_binding,
+        };
+        plan.publication.reserve(applied).await?.commit().await
+    }
 }
 
 struct RegistryPublicationReservation {
@@ -922,6 +1060,48 @@ fn compiled_binding_matches(
 }
 
 impl CompiledAgentRunToolRegistry {
+    pub(crate) fn bind_recovery(
+        &self,
+        recovery: Arc<dyn CompiledAgentRunToolBindingRecovery>,
+    ) -> Result<(), &'static str> {
+        self.recovery
+            .set(recovery)
+            .map_err(|_| "compiled AgentRun tool binding recovery is already configured")
+    }
+
+    async fn recover_if_missing(
+        &self,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<CompiledAgentRunToolBinding, AgentRunRuntimeSurfaceSourceError> {
+        if let Some(binding) = self.get(binding_id).await {
+            return Ok(binding);
+        }
+        let recovery = self.recovery.get().cloned().ok_or_else(|| {
+            AgentRunRuntimeSurfaceSourceError::Unavailable {
+                reason: "compiled AgentRun binding recovery is not configured".to_string(),
+                retryable: true,
+            }
+        })?;
+        let lock = {
+            let mut locks = self.recovery_locks.lock().await;
+            locks
+                .entry(binding_id.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        let _guard = lock.lock().await;
+        if let Some(binding) = self.get(binding_id).await {
+            return Ok(binding);
+        }
+        recovery.recover(binding_id).await?;
+        self.get(binding_id)
+            .await
+            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "canonical recovery completed without publishing the compiled binding"
+                    .to_string(),
+            })
+    }
+
     pub async fn put(
         &self,
         binding: CompiledAgentRunToolBinding,
@@ -1054,10 +1234,16 @@ impl agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextSou
         agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts,
         agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingError,
     > {
-        let binding = self.get(binding_id).await.ok_or_else(|| {
+        let binding = self.recover_if_missing(binding_id).await.map_err(|error| {
             agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingError::Unavailable {
-                reason: "compiled hook runtime is not published for binding".to_string(),
-                retryable: true,
+                reason: error.to_string(),
+                retryable: matches!(
+                    error,
+                    AgentRunRuntimeSurfaceSourceError::Unavailable {
+                        retryable: true,
+                        ..
+                    }
+                ),
             }
         })?;
         Ok(
@@ -1075,10 +1261,16 @@ impl agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextSou
         notice_ids: &[String],
     ) -> Result<(), agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingError>
     {
-        let binding = self.get(binding_id).await.ok_or_else(|| {
+        let binding = self.recover_if_missing(binding_id).await.map_err(|error| {
             agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingError::Unavailable {
-                reason: "compiled hook runtime is not published for binding".to_string(),
-                retryable: true,
+                reason: error.to_string(),
+                retryable: matches!(
+                    error,
+                    AgentRunRuntimeSurfaceSourceError::Unavailable {
+                        retryable: true,
+                        ..
+                    }
+                ),
             }
         })?;
         binding
@@ -1629,6 +1821,7 @@ mod tests {
         ToolCluster,
         platform::tool_capability::{CAP_FILE_READ, CAP_WORKSPACE_MODULE},
     };
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn fixture_hook_runtime(session_id: &str) -> SharedHookRuntime {
         Arc::new(AgentFrameHookRuntime::new(
@@ -1704,6 +1897,65 @@ mod tests {
             hook_plan_digest: HookPlanDigest::new(format!("hook-{binding_id}-{revision}")).unwrap(),
             terminal_hook_effect_binding: None,
         }
+    }
+
+    struct FixtureCompiledBindingRecovery {
+        registry: Weak<CompiledAgentRunToolRegistry>,
+        binding: CompiledAgentRunToolBinding,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl CompiledAgentRunToolBindingRecovery for FixtureCompiledBindingRecovery {
+        async fn recover(
+            &self,
+            _binding_id: &RuntimeBindingId,
+        ) -> Result<(), AgentRunRuntimeSurfaceSourceError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.registry
+                .upgrade()
+                .expect("fixture registry")
+                .put(self.binding.clone())
+                .await
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_compiled_binding_is_recovered_once_from_the_configured_owner() {
+        let registry = Arc::new(CompiledAgentRunToolRegistry::default());
+        let binding_id = RuntimeBindingId::new("binding-restart-recovery").unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let binding = CompiledAgentRunToolBinding {
+            applied: fixture_applied(binding_id.as_str(), 1),
+            runtime_session_id: "presentation-restart-recovery".into(),
+            run_id: uuid::Uuid::nil(),
+            agent_id: uuid::Uuid::nil(),
+            frame_id: uuid::Uuid::nil(),
+            hook_runtime: fixture_hook_runtime("presentation-restart-recovery"),
+            catalog: agentdash_agent_runtime::ToolCatalogRevision {
+                revision: ToolSetRevision(1),
+                digest: "catalog-restart-recovery".into(),
+                tools: Vec::new(),
+                mcp_servers: Vec::new(),
+            },
+            tools: BTreeMap::new(),
+            terminal_hook_effect_binding: None,
+        };
+        registry
+            .bind_recovery(Arc::new(FixtureCompiledBindingRecovery {
+                registry: Arc::downgrade(&registry),
+                binding,
+                calls: calls.clone(),
+            }))
+            .unwrap();
+
+        let (first, second) = tokio::join!(
+            registry.recover_if_missing(&binding_id),
+            registry.recover_if_missing(&binding_id)
+        );
+        assert_eq!(first.unwrap().catalog.revision, ToolSetRevision(1));
+        assert_eq!(second.unwrap().catalog.revision, ToolSetRevision(1));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     fn fixture_terminal_hook_effect_binding() -> RuntimeTerminalHookEffectBinding {

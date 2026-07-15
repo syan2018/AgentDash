@@ -447,6 +447,73 @@ repo.insert_frame(&frame).await?;
 
 ---
 
+## Scenario: AgentRun Product Command Receipts
+
+### 1. Scope / Trigger
+
+AgentRun 产品命令的 client-command 幂等、结果重放或 accepted Runtime coordinate 持久化发生变化时。
+
+### 2. Signatures
+
+```sql
+CREATE TABLE agent_run_product_command_receipts (
+    scope_kind text NOT NULL,
+    scope_key text NOT NULL,
+    client_command_id text NOT NULL,
+    runtime_thread_id text,
+    runtime_operation_id text,
+    UNIQUE (scope_kind, scope_key, client_command_id),
+    FOREIGN KEY (runtime_thread_id, runtime_operation_id)
+        REFERENCES agent_runtime_operation(thread_id, id)
+);
+```
+
+```rust
+pub struct AgentRunAcceptedRefs {
+    pub runtime_thread_id: Option<String>,
+    pub runtime_operation_id: Option<String>,
+}
+```
+
+### 3. Contracts
+
+- Product receipt 只拥有请求 digest、状态、结果重放与产品坐标；Managed Runtime 仍独占 operation/turn 状态。
+- accepted Runtime 引用使用 `runtime_thread_id + runtime_operation_id`，复合外键保证 operation 属于同一 thread。
+- 纯产品命令可以没有 Runtime operation；Runtime 命令被接受后必须保存原 operation ID。
+- `result_json` 保存对调用方返回的 typed response，用于同一 client command 的精确重放。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 相同 scope/client ID 与相同 digest | 返回首次 receipt/result，不重复 side effect |
+| 相同 scope/client ID 与不同 digest | typed digest conflict |
+| operation ID 不属于给定 thread | 复合外键拒绝整个 accepted update |
+| Runtime command accepted 但 receipt 未保存 operation | API/application 测试失败，不得伪造 protocol turn ID |
+| receipt schema 缺失 | readiness 失败，不装配 repository |
+
+### 5. Cases
+
+- Good: compact command -> Runtime operation receipt -> product receipt stores thread/operation -> duplicate replays result。
+- Base: mailbox reorder has no Runtime operation and stores only product refs/result。
+- Bad: 把 Runtime operation ID 编码为 `protocol_turn_id`，或恢复已退役 RuntimeSession FK。
+
+### 6. Tests Required
+
+- Repository: claim/duplicate/digest conflict、accepted refs/result roundtrip、复合 FK mismatch。
+- Migration: fresh embedded PostgreSQL 与既有 schema 顺序升级后新表 ready，旧 `agent_run_command_receipts` 仍 retired。
+- API: cancel/compaction 接受后保存真实 operation ID；重复 client command 不产生第二 operation。
+
+### 7. Boundary / Canonical
+
+```text
+AgentRun product command -> product receipt claim -> Managed Runtime command
+                         -> accepted thread/operation refs + typed result
+                         -> duplicate result replay
+```
+
+---
+
 ## PL/pgSQL 迁移脚本要点
 
 - `RAISE` 占位符是单个 `%`，参数数量匹配。

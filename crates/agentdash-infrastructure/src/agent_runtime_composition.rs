@@ -839,6 +839,10 @@ fn placement_priority(placement: &AgentRuntimePlacement) -> u8 {
     }
 }
 
+fn backend_selection_requires_activated_offer(selection: Option<&BackendSelectionInput>) -> bool {
+    selection.is_some_and(|selection| selection.mode == BackendSelectionInputMode::Explicit)
+}
+
 fn offer_supports_surface(
     offer: &agentdash_agent_runtime_host::RuntimeOffer,
     surface: &MaterializedDriverSurface,
@@ -883,6 +887,80 @@ fn offer_supports_surface(
                     required: true,
                 })
     })
+}
+
+fn select_recovery_offer(
+    offers: Vec<agentdash_agent_runtime_host::RuntimeOffer>,
+    old_offer: &agentdash_agent_runtime_host::RuntimeOffer,
+    surface: &MaterializedDriverSurface,
+) -> Option<agentdash_agent_runtime_host::RuntimeOffer> {
+    let mut offers =
+        offers
+            .into_iter()
+            .filter(|offer| {
+                offer.available
+                    && offer.id != old_offer.id
+                    && offer.provenance.definition_id == old_offer.provenance.definition_id
+                    && offer.placement == old_offer.placement
+                    && offer.effective_profile.profile.lifecycle.contains(
+                        &agentdash_agent_runtime_contract::LifecycleCapability::ThreadResume,
+                    )
+                    && offer_supports_surface(offer, surface)
+            })
+            .collect::<Vec<_>>();
+    offers.sort_by(|a, b| b.generation.cmp(&a.generation));
+    offers.into_iter().next()
+}
+
+async fn activate_in_process_recovery_offer(
+    host: &IntegrationDriverHost,
+    host_repository: &dyn AgentRuntimeHostRepository,
+    old_offer: &agentdash_agent_runtime_host::RuntimeOffer,
+    surface: &MaterializedDriverSurface,
+) -> Result<agentdash_agent_runtime_host::RuntimeOffer, AgentRunRuntimeBindingError> {
+    if old_offer.placement != AgentRuntimePlacement::InProcess {
+        return Err(binding_unavailable(
+            "no same-owner Runtime offer can Resume the lost binding".to_string(),
+            true,
+        ));
+    }
+    let instance = host_repository
+        .load_instance(&old_offer.service_instance_id)
+        .await
+        .map_err(host_store_error)?
+        .ok_or(AgentRunRuntimeBindingError::NotFound)?;
+    let profile = old_offer.effective_profile.profile.clone();
+    let digest =
+        profile_digest(&profile).map_err(|error| binding_unavailable(error.to_string(), false))?;
+    let offer = host
+        .activate(ActivateAgentServiceInstance {
+            instance_id: instance.id,
+            expected_revision: instance.revision,
+            transport_profile: profile.clone(),
+            transport_profile_digest: digest.clone(),
+            host_policy_profile: profile,
+            host_policy_digest: digest,
+            conformance: old_offer.conformance.clone(),
+        })
+        .await
+        .map_err(host_error)?;
+    if offer.service_instance_id != old_offer.service_instance_id
+        || offer.generation <= old_offer.generation
+        || offer.provenance.definition_id != old_offer.provenance.definition_id
+        || offer.placement != old_offer.placement
+        || !offer
+            .effective_profile
+            .profile
+            .lifecycle
+            .contains(&agentdash_agent_runtime_contract::LifecycleCapability::ThreadResume)
+        || !offer_supports_surface(&offer, surface)
+    {
+        return Err(binding_unavailable(
+            "reactivated InProcess Runtime offer cannot Resume the lost binding".to_string(),
+            false,
+        ));
+    }
+    Ok(offer)
 }
 
 #[async_trait]
@@ -934,7 +1012,11 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
                 .await?
             {
                 Some(offer) => offer,
-                None if prepared.allow_instance_creation && request.backend_selection.is_none() => {
+                None if prepared.allow_instance_creation
+                    && !backend_selection_requires_activated_offer(
+                        request.backend_selection.as_ref(),
+                    ) =>
+                {
                     self.ensure_offer(&prepared).await?
                 }
                 None => {
@@ -1051,30 +1133,19 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
                 &old.surface.surface_digest,
             )
             .await?;
-        let mut offers = self
-            .host
-            .offers()
-            .await
-            .map_err(host_error)?
-            .into_iter()
-            .filter(|offer| {
-                offer.available
-                    && offer.id != old_offer.id
-                    && offer.provenance.definition_id == old_offer.provenance.definition_id
-                    && offer.placement == old_offer.placement
-                    && offer.effective_profile.profile.lifecycle.contains(
-                        &agentdash_agent_runtime_contract::LifecycleCapability::ThreadResume,
-                    )
-                    && offer_supports_surface(offer, &surface)
-            })
-            .collect::<Vec<_>>();
-        offers.sort_by(|a, b| b.generation.cmp(&a.generation));
-        let offer = offers.into_iter().next().ok_or_else(|| {
-            binding_unavailable(
-                "no same-owner Runtime offer can Resume the lost binding".to_string(),
-                true,
-            )
-        })?;
+        let offers = self.host.offers().await.map_err(host_error)?;
+        let offer = match select_recovery_offer(offers, &old_offer, &surface) {
+            Some(offer) => offer,
+            None => {
+                activate_in_process_recovery_offer(
+                    self.host.as_ref(),
+                    self.host_repository.as_ref(),
+                    &old_offer,
+                    &surface,
+                )
+                .await?
+            }
+        };
         let epoch = BindingEpoch(old.binding_epoch.0 + 1);
         let proposed =
             RuntimeBindingId::new(format!("{}-epoch-{}", old.binding_id.as_str(), epoch.0))
@@ -2579,6 +2650,29 @@ mod tests {
     }
 
     #[test]
+    fn only_explicit_backend_selection_requires_an_activated_remote_offer() {
+        assert!(!backend_selection_requires_activated_offer(None));
+        assert!(!backend_selection_requires_activated_offer(Some(
+            &BackendSelectionInput {
+                mode: BackendSelectionInputMode::AutoIdle,
+                backend_id: None,
+            }
+        )));
+        assert!(!backend_selection_requires_activated_offer(Some(
+            &BackendSelectionInput {
+                mode: BackendSelectionInputMode::WorkspaceBinding,
+                backend_id: Some("backend-a".to_string()),
+            }
+        )));
+        assert!(backend_selection_requires_activated_offer(Some(
+            &BackendSelectionInput {
+                mode: BackendSelectionInputMode::Explicit,
+                backend_id: Some("backend-a".to_string()),
+            }
+        )));
+    }
+
+    #[test]
     fn codex_admission_accepts_surface_without_driver_owned_hook_requirements() {
         let mut surface = fixture_surface();
         surface.hooks.bindings.clear();
@@ -2815,7 +2909,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn production_native_composition_provisions_account_scoped_binding_idempotently() {
+    async fn production_native_provisions_with_workspace_backend_idempotently() {
         let (pool, _runtime, _serial) = test_database().await;
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
@@ -2895,7 +2989,10 @@ mod tests {
                 provider: Some("enterprise".to_string()),
                 extra: serde_json::Value::Null,
             }),
-            backend_selection: None,
+            backend_selection: Some(BackendSelectionInput {
+                mode: BackendSelectionInputMode::WorkspaceBinding,
+                backend_id: Some("workspace-backend".to_string()),
+            }),
             fork: None,
             terminal_hook_effect_binding: Some(terminal_hook_effect_binding.clone()),
         };
@@ -2986,6 +3083,59 @@ mod tests {
                 .expect("load service config");
         assert_eq!(config["credential_scope"]["kind"], "user");
         assert_eq!(config["credential_scope"]["user_id"], "account-user-1");
+
+        let host_repository = PostgresAgentRuntimeHostRepository::new(pool.clone());
+        let old_host_binding = host_repository
+            .load_binding(&first.binding_id)
+            .await
+            .expect("load original Host binding")
+            .expect("original Host binding");
+        let old_offer = host_repository
+            .load_offer(&old_host_binding.offer_id)
+            .await
+            .expect("load original Native offer")
+            .expect("original Native offer");
+        let surface = composition
+            .surfaces
+            .load_surface(&first.binding_id)
+            .await
+            .expect("load original Runtime surface")
+            .expect("original Runtime surface");
+        let recovery_offer = activate_in_process_recovery_offer(
+            composition.host.as_ref(),
+            &host_repository,
+            &old_offer,
+            &surface,
+        )
+        .await
+        .expect("reactivate the durable Native owner for recovery");
+        assert_eq!(
+            recovery_offer.service_instance_id,
+            old_offer.service_instance_id
+        );
+        assert_eq!(
+            recovery_offer.generation,
+            RuntimeDriverGeneration(old_offer.generation.0 + 1)
+        );
+        assert!(
+            !host_repository
+                .load_offer(&old_offer.id)
+                .await
+                .expect("reload original Native offer")
+                .expect("original Native offer row")
+                .available,
+            "reactivation must fence the previous Native generation"
+        );
+        assert_eq!(
+            select_recovery_offer(
+                composition.host.offers().await.expect("recovery offers"),
+                &old_offer,
+                &surface,
+            )
+            .expect("new Native generation is selectable")
+            .id,
+            recovery_offer.id
+        );
     }
 
     #[tokio::test]

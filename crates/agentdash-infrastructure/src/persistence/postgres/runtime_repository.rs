@@ -1709,21 +1709,6 @@ async fn write_entity_projection(
     tx: &mut Transaction<'_, Postgres>,
     state: &RuntimeThreadState,
 ) -> Result<(), RuntimeStoreError> {
-    sqlx::query("DELETE FROM agent_runtime_interaction WHERE thread_id=$1")
-        .bind(state.thread_id.as_str())
-        .execute(&mut **tx)
-        .await
-        .map_err(sql_error)?;
-    sqlx::query("DELETE FROM agent_runtime_item WHERE thread_id=$1")
-        .bind(state.thread_id.as_str())
-        .execute(&mut **tx)
-        .await
-        .map_err(sql_error)?;
-    sqlx::query("DELETE FROM agent_runtime_turn WHERE thread_id=$1")
-        .bind(state.thread_id.as_str())
-        .execute(&mut **tx)
-        .await
-        .map_err(sql_error)?;
     for (id, turn) in &state.turns {
         insert_turn(tx, state, id.as_str(), turn).await?;
     }
@@ -1745,14 +1730,19 @@ async fn insert_turn(
     id: &str,
     state: &RuntimeTurnState,
 ) -> Result<(), RuntimeStoreError> {
-    sqlx::query("INSERT INTO agent_runtime_turn (id,thread_id,phase,state) VALUES ($1,$2,$3,$4)")
-        .bind(id)
-        .bind(thread.thread_id.as_str())
-        .bind(entity_phase(&state.phase))
-        .bind(encode(state, "agent_runtime_turn.state")?)
-        .execute(&mut **tx)
-        .await
-        .map_err(sql_error)?;
+    let result = sqlx::query(
+        "INSERT INTO agent_runtime_turn (id,thread_id,phase,state) VALUES ($1,$2,$3,$4) \
+         ON CONFLICT (id) DO UPDATE SET phase=EXCLUDED.phase,state=EXCLUDED.state \
+         WHERE agent_runtime_turn.thread_id=EXCLUDED.thread_id",
+    )
+    .bind(id)
+    .bind(thread.thread_id.as_str())
+    .bind(entity_phase(&state.phase))
+    .bind(encode(state, "agent_runtime_turn.state")?)
+    .execute(&mut **tx)
+    .await
+    .map_err(sql_error)?;
+    ensure_projection_identity(result.rows_affected(), "turn", id)?;
     Ok(())
 }
 
@@ -1763,11 +1753,14 @@ async fn insert_item(
     index: usize,
     state: &RuntimeItemState,
 ) -> Result<(), RuntimeStoreError> {
-    sqlx::query("INSERT INTO agent_runtime_item (id,thread_id,turn_id,sort_order,phase,state) VALUES ($1,$2,$3,$4,$5,$6)")
+    let result = sqlx::query("INSERT INTO agent_runtime_item (id,thread_id,turn_id,sort_order,phase,state) VALUES ($1,$2,$3,$4,$5,$6) \
+        ON CONFLICT (id) DO UPDATE SET sort_order=EXCLUDED.sort_order,phase=EXCLUDED.phase,state=EXCLUDED.state \
+        WHERE agent_runtime_item.thread_id=EXCLUDED.thread_id AND agent_runtime_item.turn_id=EXCLUDED.turn_id")
         .bind(id).bind(thread.thread_id.as_str()).bind(state.turn_id.as_str())
         .bind(i64::try_from(index).map_err(|_| RuntimeStoreError::Unavailable("item order overflow".to_string()))?)
         .bind(entity_phase(&state.phase)).bind(encode(state, "agent_runtime_item.state")?)
         .execute(&mut **tx).await.map_err(sql_error)?;
+    ensure_projection_identity(result.rows_affected(), "item", id)?;
     Ok(())
 }
 
@@ -1777,11 +1770,28 @@ async fn insert_interaction(
     id: &str,
     state: &RuntimeInteractionState,
 ) -> Result<(), RuntimeStoreError> {
-    sqlx::query("INSERT INTO agent_runtime_interaction (id,thread_id,turn_id,phase,state) VALUES ($1,$2,$3,$4,$5)")
+    let result = sqlx::query("INSERT INTO agent_runtime_interaction (id,thread_id,turn_id,phase,state) VALUES ($1,$2,$3,$4,$5) \
+        ON CONFLICT (id) DO UPDATE SET phase=EXCLUDED.phase,state=EXCLUDED.state \
+        WHERE agent_runtime_interaction.thread_id=EXCLUDED.thread_id AND agent_runtime_interaction.turn_id=EXCLUDED.turn_id")
         .bind(id).bind(thread.thread_id.as_str()).bind(state.turn_id.as_str())
         .bind(entity_phase(&state.phase)).bind(encode(state, "agent_runtime_interaction.state")?)
         .execute(&mut **tx).await.map_err(sql_error)?;
+    ensure_projection_identity(result.rows_affected(), "interaction", id)?;
     Ok(())
+}
+
+fn ensure_projection_identity(
+    rows_affected: u64,
+    entity: &'static str,
+    id: &str,
+) -> Result<(), RuntimeStoreError> {
+    if rows_affected == 1 {
+        Ok(())
+    } else {
+        Err(RuntimeStoreError::Unavailable(format!(
+            "runtime {entity} {id} changed immutable projection identity"
+        )))
+    }
 }
 
 async fn write_context(
@@ -1872,7 +1882,7 @@ async fn write_preparation(
            AND agent_context_preparation.trigger_kind=excluded.trigger_kind \
            AND agent_context_preparation.expected_base_checkpoint_id IS NOT DISTINCT FROM excluded.expected_base_checkpoint_id \
            AND agent_context_preparation.expected_base_revision=excluded.expected_base_revision \
-           AND ((agent_context_preparation.status='pending' AND excluded.status IN ('pending','prepared')) \
+           AND ((agent_context_preparation.status='pending' AND excluded.status IN ('pending','prepared','terminal')) \
              OR (agent_context_preparation.status='prepared' AND excluded.status IN ('prepared','terminal')) \
              OR (agent_context_preparation.status='terminal' AND excluded.status='terminal'))",
     )
@@ -2092,8 +2102,10 @@ async fn write_outbox(
 ) -> Result<(), RuntimeStoreError> {
     for entry in entries {
         let payload = encode(entry, "agent_runtime_outbox.payload")?;
-        let result = sqlx::query("INSERT INTO agent_runtime_outbox (operation_id,thread_id,driver_generation,payload) VALUES ($1,$2,$3,$4) ON CONFLICT (operation_id) DO NOTHING")
+        let result = sqlx::query("INSERT INTO agent_runtime_outbox (operation_id,thread_id,binding_id,binding_epoch,driver_generation,payload) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (operation_id) DO NOTHING")
             .bind(entry.operation_id.as_str()).bind(entry.thread_id.as_str())
+            .bind(entry.binding_id.as_str())
+            .bind(u64_to_i64(entry.binding_epoch.0, "binding epoch")?)
             .bind(u64_to_i64(entry.generation.0, "driver generation")?).bind(payload.clone())
             .execute(&mut **tx).await.map_err(sql_error)?;
         if result.rows_affected() == 0 {
@@ -2651,7 +2663,12 @@ mod tests {
                 kinds: BTreeSet::new(),
                 durable_correlation: true,
             },
-            lifecycle: [LifecycleCapability::ThreadStart].into_iter().collect(),
+            lifecycle: [
+                LifecycleCapability::ThreadStart,
+                LifecycleCapability::ThreadResume,
+            ]
+            .into_iter()
+            .collect(),
             hooks: HookProfile {
                 points: Vec::new(),
                 configuration_boundary: ConfigurationBoundary::Binding,
@@ -3450,6 +3467,236 @@ mod tests {
         .await
         .expect("0073 terminal application effect schema");
         assert!(terminal_effect_schema);
+        let outbox_binding_schema: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=78 AND success) \
+             AND EXISTS(SELECT 1 FROM information_schema.columns \
+                        WHERE table_schema='public' AND table_name='agent_runtime_outbox' \
+                          AND column_name='binding_id' AND is_nullable='NO') \
+             AND EXISTS(SELECT 1 FROM information_schema.columns \
+                        WHERE table_schema='public' AND table_name='agent_runtime_outbox' \
+                          AND column_name='binding_epoch' AND is_nullable='NO')",
+        )
+        .fetch_one(&database.pool)
+        .await
+        .expect("0078 immutable outbox binding schema");
+        assert!(outbox_binding_schema);
+        let outbox_binding_fk: String = sqlx::query_scalar(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint \
+             WHERE conrelid='agent_runtime_outbox'::regclass \
+               AND conname='agent_runtime_outbox_binding_generation_fkey'",
+        )
+        .fetch_one(&database.pool)
+        .await
+        .expect("0078 outbox binding generation foreign key");
+        assert!(outbox_binding_fk.contains("FOREIGN KEY (binding_id, driver_generation)"));
+        assert!(outbox_binding_fk.contains("agent_runtime_binding(id, driver_generation)"));
+        let old_thread_generation_fk_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_constraint \
+             WHERE conrelid='agent_runtime_outbox'::regclass \
+               AND conname='agent_runtime_outbox_thread_generation_fkey')",
+        )
+        .fetch_one(&database.pool)
+        .await
+        .expect("retired mutable thread generation foreign key");
+        assert!(!old_thread_generation_fk_exists);
+    }
+
+    #[tokio::test]
+    async fn thread_rebind_preserves_historical_outbox_binding_fence() {
+        let _serial = serial_test_guard().await;
+        let fixture = fixture("rebind outbox coordinates").await;
+        fixture
+            .runtime
+            .execute(start(&fixture))
+            .await
+            .expect("start runtime thread");
+        let original_binding_id = format!("binding-{}", fixture.suffix);
+        let source_thread_id = format!("source-{}", fixture.suffix);
+        let operation_id = format!("operation-{}", fixture.suffix);
+        let before: (String, i64, i64, serde_json::Value) = sqlx::query_as(
+            "SELECT binding_id,binding_epoch,driver_generation,payload \
+             FROM agent_runtime_outbox WHERE operation_id=$1",
+        )
+        .bind(&operation_id)
+        .fetch_one(fixture.store.pool())
+        .await
+        .expect("load original outbox fence");
+        assert_eq!(before.0, original_binding_id);
+        assert_eq!(before.1, 1);
+        assert_eq!(before.2, 7);
+
+        fixture
+            .runtime
+            .ingest_driver_event(DriverEventEnvelope {
+                binding_id: id(&original_binding_id),
+                generation: RuntimeDriverGeneration(7),
+                source_thread_id: id(&source_thread_id),
+                source_turn_id: None,
+                source_item_id: None,
+                source_request_id: Some(format!("lost-{}", fixture.suffix)),
+                source_entry_index: None,
+                facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::BindingLost {
+                    binding_id: id(&original_binding_id),
+                    reason: "fixture driver restart".to_string(),
+                })],
+            })
+            .await
+            .expect("mark runtime thread lost");
+        let lost = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load lost thread")
+            .expect("lost thread");
+        assert_eq!(lost.status, RuntimeThreadStatus::Lost);
+
+        let new_binding_id = format!("{original_binding_id}-epoch-2");
+        let rebound_profile = profile();
+        let rebound_profile_digest = runtime_profile_digest(&rebound_profile);
+        sqlx::query(
+            "INSERT INTO agent_runtime_binding (id,driver_generation,profile_digest) \
+             VALUES ($1,8,$2)",
+        )
+        .bind(&new_binding_id)
+        .bind(rebound_profile_digest.as_str())
+        .execute(fixture.store.pool())
+        .await
+        .expect("seed replacement Host binding");
+        sqlx::query(
+            "INSERT INTO agent_runtime_source_coordinate \
+             (binding_id,source_thread_id,thread_id) VALUES ($1,$2,$3)",
+        )
+        .bind(&new_binding_id)
+        .bind(&source_thread_id)
+        .bind(fixture.thread_id.as_str())
+        .execute(fixture.store.pool())
+        .await
+        .expect("seed replacement source coordinate");
+        fixture
+            .runtime
+            .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
+                meta: OperationMeta {
+                    operation_id: id(&format!("rebind-operation-{}", fixture.suffix)),
+                    idempotency_key: id(&format!("rebind-key-{}", fixture.suffix)),
+                    expected_thread_revision: Some(lost.revision),
+                    actor: RuntimeActor::System {
+                        component: "postgres-runtime-recovery-test".to_string(),
+                    },
+                },
+                command: RuntimeCommand::ThreadRebind {
+                    thread_id: fixture.thread_id.clone(),
+                    recovery_intent_id: id(&format!("recovery-{}", fixture.suffix)),
+                    binding_epoch: BindingEpoch(2),
+                    expected_binding_id: id(&original_binding_id),
+                    expected_driver_generation: RuntimeDriverGeneration(7),
+                    new_binding_id: id(&new_binding_id),
+                    new_driver_generation: RuntimeDriverGeneration(8),
+                    source_thread_id: id(&source_thread_id),
+                    profile_digest: rebound_profile_digest,
+                    bound_profile: Box::new(rebound_profile),
+                },
+            })
+            .await
+            .expect("commit RuntimeRebind with historical outbox present");
+
+        let rebound = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load rebound thread")
+            .expect("rebound thread");
+        assert_eq!(rebound.binding_id, id(&new_binding_id));
+        assert_eq!(rebound.binding_epoch, BindingEpoch(2));
+        assert_eq!(rebound.driver_generation, RuntimeDriverGeneration(8));
+        let after: (String, i64, i64, serde_json::Value) = sqlx::query_as(
+            "SELECT binding_id,binding_epoch,driver_generation,payload \
+             FROM agent_runtime_outbox WHERE operation_id=$1",
+        )
+        .bind(&operation_id)
+        .fetch_one(fixture.store.pool())
+        .await
+        .expect("reload historical outbox fence");
+        assert_eq!(after, before, "RuntimeRebind must not rewrite history");
+    }
+
+    #[tokio::test]
+    async fn outbox_binding_coordinate_migration_upgrades_schema_77_rows() {
+        let _serial = serial_test_guard().await;
+        let database = runtime_test_database().await;
+        let pool = &database.pool;
+        sqlx::raw_sql(
+            "ALTER TABLE agent_runtime_outbox \
+                 DROP CONSTRAINT agent_runtime_outbox_binding_generation_fkey, \
+                 DROP CONSTRAINT agent_runtime_outbox_binding_epoch_check, \
+                 DROP COLUMN binding_id, \
+                 DROP COLUMN binding_epoch; \
+             ALTER TABLE agent_runtime_outbox \
+                 ADD CONSTRAINT agent_runtime_outbox_thread_generation_fkey \
+                 FOREIGN KEY (thread_id,driver_generation) \
+                 REFERENCES agent_runtime_thread(id,driver_generation) ON DELETE CASCADE;",
+        )
+        .execute(pool)
+        .await
+        .expect("restore schema 77 outbox coordinates");
+        sqlx::query(
+            "INSERT INTO agent_runtime_binding (id,driver_generation,profile_digest) \
+             VALUES ('upgrade-binding',7,'upgrade-profile')",
+        )
+        .execute(pool)
+        .await
+        .expect("seed upgrade binding");
+        sqlx::query(
+            "INSERT INTO agent_runtime_source_coordinate \
+             (binding_id,source_thread_id,thread_id) \
+             VALUES ('upgrade-binding','upgrade-source','upgrade-thread')",
+        )
+        .execute(pool)
+        .await
+        .expect("seed upgrade source");
+        sqlx::query(
+            "INSERT INTO agent_runtime_thread \
+             (id,revision,next_event_sequence,next_operation_sequence,status,binding_id,driver_generation,source_thread_id,profile_digest,context_revision,settings_revision,tool_set_revision,projection) \
+             VALUES ('upgrade-thread',0,0,1,'active','upgrade-binding',7,'upgrade-source','upgrade-profile',0,0,0,'{}')",
+        )
+        .execute(pool)
+        .await
+        .expect("seed upgrade thread");
+        sqlx::query(
+            "INSERT INTO agent_runtime_operation \
+             (id,thread_id,operation_sequence,idempotency_key,accepted_revision,status,actor,command,record) \
+             VALUES ('upgrade-operation','upgrade-thread',1,'upgrade-key',0,'active','{}','{}','{}')",
+        )
+        .execute(pool)
+        .await
+        .expect("seed upgrade operation");
+        sqlx::query(
+            "INSERT INTO agent_runtime_outbox \
+             (operation_id,thread_id,driver_generation,payload) \
+             VALUES ('upgrade-operation','upgrade-thread',7,$1)",
+        )
+        .bind(serde_json::json!({
+            "binding_id": "upgrade-binding",
+            "binding_epoch": 1,
+        }))
+        .execute(pool)
+        .await
+        .expect("seed schema 77 outbox row");
+
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/0078_rebind_safe_runtime_outbox_coordinates.sql"
+        ))
+        .execute(pool)
+        .await
+        .expect("apply schema 78 outbox coordinate migration");
+        let upgraded: (String, i64, i64) = sqlx::query_as(
+            "SELECT binding_id,binding_epoch,driver_generation \
+             FROM agent_runtime_outbox WHERE operation_id='upgrade-operation'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("load upgraded outbox row");
+        assert_eq!(upgraded, ("upgrade-binding".to_string(), 1, 7));
     }
 
     #[tokio::test]

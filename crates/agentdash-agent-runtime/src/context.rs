@@ -188,6 +188,92 @@ impl<S> ManagedAgentRuntime<S>
 where
     S: RuntimeRepository + RuntimeUnitOfWork + 'static,
 {
+    pub async fn complete_compaction_without_changes(
+        &self,
+        compaction_id: &ContextCompactionId,
+    ) -> Result<(), ContextRuntimeError> {
+        let mut work_item = self
+            .store()
+            .load_context_preparation(compaction_id)
+            .await
+            .map_err(store_error)?
+            .ok_or(ContextRuntimeError::CompactionNotFound)?;
+        if matches!(work_item.status, ContextPreparationStatus::Terminal { .. }) {
+            return Ok(());
+        }
+        if !matches!(work_item.status, ContextPreparationStatus::Pending) {
+            return Err(ContextRuntimeError::OperationNotActive);
+        }
+        let operation = self
+            .store()
+            .find_operation(&work_item.operation_id)
+            .await
+            .map_err(store_error)?
+            .ok_or(ContextRuntimeError::OperationNotActive)?;
+        let RuntimeCommand::ContextCompact {
+            thread_id,
+            compaction_id: operation_compaction_id,
+            ..
+        } = &operation.command
+        else {
+            return Err(ContextRuntimeError::OperationNotActive);
+        };
+        if thread_id != &work_item.thread_id
+            || operation_compaction_id != compaction_id
+            || operation.thread_id != work_item.thread_id
+            || operation.terminal.is_some()
+        {
+            return Err(ContextRuntimeError::OperationNotActive);
+        }
+        let mut thread = self
+            .store()
+            .load_thread(&work_item.thread_id)
+            .await
+            .map_err(store_error)?
+            .ok_or(ContextRuntimeError::ThreadNotFound)?;
+        let expected_projection_revision = thread.revision;
+        let terminal = RuntimeOperationTerminal::Succeeded;
+        work_item.status = ContextPreparationStatus::Terminal {
+            terminal: terminal.clone(),
+        };
+        let events = thread
+            .append_events([
+                RuntimeEvent::ContextCompactionTerminal {
+                    compaction_id: compaction_id.clone(),
+                    operation_id: work_item.operation_id.clone(),
+                    terminal: terminal.clone(),
+                    context_revision: thread.context_revision,
+                },
+                RuntimeEvent::OperationTerminal {
+                    operation_id: work_item.operation_id.clone(),
+                    terminal: terminal.clone(),
+                },
+            ])
+            .map_err(ContextRuntimeError::Transition)?;
+        self.store()
+            .commit(RuntimeCommit {
+                expected_projection_revision: Some(expected_projection_revision),
+                projection: thread,
+                operation: None,
+                operation_terminals: vec![(work_item.operation_id.clone(), terminal)],
+                records: crate::internal_journal_records(events)?,
+                outbox: Vec::new(),
+                terminal_application_effects: Vec::new(),
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: vec![work_item],
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
+                quarantine: Vec::new(),
+            })
+            .await
+            .map_err(store_error)
+    }
+
     pub async fn prepare_compaction(
         &self,
         preparation: CompactionPreparation,

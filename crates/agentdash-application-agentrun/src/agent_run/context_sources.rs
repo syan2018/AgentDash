@@ -1,8 +1,22 @@
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
+use agentdash_agent_protocol::{
+    RuntimeCompanionAgentEntry, RuntimeContextFragmentEntry, RuntimeMemoryDiagnosticEntry,
+    RuntimeMemorySourceEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry,
+    SkillContextExposure as ProtocolSkillContextExposure,
+};
 use agentdash_agent_runtime::{
-    BusinessAgentSurfaceFacts, ContributionMeta, ContributionRequirement, HookDefinition,
-    HookHandler, HookMatcher, SurfaceSourceRef, ToolContribution, WorkspaceRequirement,
+    AssignmentContextFacts, AssignmentFragmentFacts, BootstrapContextFacts,
+    BusinessAgentSurfaceFacts, ContributionMeta, ContributionRequirement, DiscoveredGuidelineFacts,
+    EnvironmentContextFacts, GuidelinesContextFacts, HookDefinition, HookHandler, HookMatcher,
+    IdentityContextFacts, MemoryContextFacts, MemoryDiagnosticFacts, MemorySourceFacts,
+    NormalizedAssignmentContext, NormalizedContextSurfaceState, NormalizedMcpServerReadiness,
+    NormalizedSkillCluster, NormalizedSurfaceEntity, SurfaceSourceRef, ToolContribution,
+    UserContextFacts, WorkspaceRequirement,
 };
 use agentdash_agent_runtime_contract::{
     ConfigurationBoundary, ContextProvenance, ContextRecipe, ContextRecipeRevision,
@@ -12,17 +26,29 @@ use agentdash_agent_runtime_contract::{
 use agentdash_application_ports::{
     agent_run_runtime::AgentRunRuntimeProvisionRequest, agent_run_surface::AgentRunRuntimeSurface,
 };
+use agentdash_application_vfs::VfsService;
 use agentdash_domain::{
     common::AgentConfig,
+    settings::{SettingScope, SettingsRepository},
     workflow::{AgentFrame, AgentFrameRepository},
 };
 use agentdash_spi::{
     AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, DynAgentTool, ExecutionContext,
     ExecutionHookProvider, ExecutionSessionFrame, ExecutionTurnFrame, HookControlTarget,
-    RuntimeAdapterProvenance, connector::RuntimeToolProvider,
+    MemoryDiscoveryProvider, RuntimeAdapterProvenance, RuntimeMcpSourceReadiness,
+    SkillContextExposure, SkillDiscoveryProvider, connector::RuntimeToolProvider,
+};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+use super::{
+    AgentContextSourceSnapshot, AgentFrameSurfaceExt, BusinessFrameSurfaceQuery,
+    LaunchContextDiscoveryInput, RuntimeSurfaceQueryPurpose, derive_launch_context_discovery,
 };
 
-use super::{AgentFrameSurfaceExt, BusinessFrameSurfaceQuery, RuntimeSurfaceQueryPurpose};
+const BASE_SYSTEM_PROMPT_SETTING_KEY: &str = "agent.pi.base_system_prompt";
+const USER_PREFERENCES_SETTING_KEY: &str = "agent.pi.user_preferences";
+const DEFAULT_SYSTEM_PROMPT: &str = include_str!("default_system_prompt.md");
 
 /// Application-owned source facts passed to Business Agent Surface compilation.
 ///
@@ -76,6 +102,52 @@ pub struct AgentBusinessSurfaceSource {
     frame_repository: Arc<dyn AgentFrameRepository>,
     runtime_tools: Arc<dyn RuntimeToolProvider>,
     hooks: Arc<dyn ExecutionHookProvider>,
+    context: AgentBusinessSurfaceContextDeps,
+}
+
+#[derive(Clone)]
+pub struct AgentBusinessSurfaceContextDeps {
+    pub vfs_service: Arc<VfsService>,
+    pub extra_skill_dirs: Vec<PathBuf>,
+    pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
+    pub memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
+    pub settings_repository: Arc<dyn SettingsRepository>,
+    pub base_identity: BaseIdentitySource,
+}
+
+/// Application-owned startup identity resolved once from settings/environment/default assets.
+#[derive(Debug, Clone)]
+pub struct BaseIdentitySource {
+    prompt: Arc<str>,
+}
+
+impl BaseIdentitySource {
+    #[must_use]
+    pub fn new(prompt: impl Into<String>) -> Self {
+        Self {
+            prompt: Arc::from(prompt.into()),
+        }
+    }
+
+    #[must_use]
+    pub fn prompt(&self) -> &str {
+        &self.prompt
+    }
+
+    pub async fn resolve(settings: &dyn SettingsRepository) -> Self {
+        let setting = settings
+            .get(&SettingScope::system(), BASE_SYSTEM_PROMPT_SETTING_KEY)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|setting| setting.value.as_str().map(ToString::to_string))
+            .filter(|value| !value.is_empty());
+        Self::new(
+            setting
+                .or_else(|| std::env::var("PI_AGENT_SYSTEM_PROMPT").ok())
+                .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()),
+        )
+    }
 }
 
 pub struct LoadedAgentBusinessSurfaceFacts {
@@ -94,12 +166,14 @@ impl AgentBusinessSurfaceSource {
         frame_repository: Arc<dyn AgentFrameRepository>,
         runtime_tools: Arc<dyn RuntimeToolProvider>,
         hooks: Arc<dyn ExecutionHookProvider>,
+        context: AgentBusinessSurfaceContextDeps,
     ) -> Self {
         Self {
             surface_query,
             frame_repository,
             runtime_tools,
             hooks,
+            context,
         }
     }
 
@@ -184,6 +258,21 @@ impl AgentBusinessSurfaceSource {
             })
             .await
             .map_err(|error| error.to_string())?;
+        let effective_identity = request
+            .identity
+            .clone()
+            .or_else(|| surface.identity.clone());
+        let discovery = derive_launch_context_discovery(LaunchContextDiscoveryInput {
+            vfs_service: self.context.vfs_service.as_ref(),
+            launch_vfs: &surface.vfs,
+            identity: effective_identity.as_ref(),
+            extra_skill_dirs: &self.context.extra_skill_dirs,
+            skill_discovery_providers: &self.context.skill_discovery_providers,
+            memory_discovery_providers: &self.context.memory_discovery_providers,
+            diagnostics_label: "business_agent_surface",
+        })
+        .await;
+        let source_snapshot = frame.context_source_snapshot();
         let context_source =
             AgentContextSurfaceSourceFacts::from_runtime_surface(surface, operation_id)
                 .map_err(|error| error.to_string())?;
@@ -255,6 +344,24 @@ impl AgentBusinessSurfaceSource {
                 },
             })
             .collect();
+        let bootstrap_context = build_bootstrap_context_facts(
+            &context_source,
+            &executor,
+            effective_identity.as_ref(),
+            source_snapshot.as_ref(),
+            &hook_snapshot,
+            &discovery,
+            self.context.settings_repository.as_ref(),
+            &self.context.base_identity,
+        )
+        .await?;
+        let normalized_context_surface = build_normalized_context_surface(
+            &context_source,
+            revision,
+            &tool_contributions,
+            &bootstrap_context,
+            &discovery,
+        )?;
         let business_facts = BusinessAgentSurfaceFacts {
             revision: SurfaceRevision(revision),
             context_recipe: ContextRecipe {
@@ -281,6 +388,8 @@ impl AgentBusinessSurfaceSource {
                 .collect(),
             tools: tool_contributions,
             hooks,
+            bootstrap_context,
+            normalized_context_surface,
             projection_identity: agentdash_agent_runtime::ContextProjectionIdentity {
                 operation_id: context_source.projection_identity.operation_id.clone(),
                 source_frame_id: context_source.projection_identity.source_frame_id.clone(),
@@ -298,6 +407,489 @@ impl AgentBusinessSurfaceSource {
             business_facts,
         })
     }
+}
+
+async fn build_bootstrap_context_facts(
+    context_source: &AgentContextSurfaceSourceFacts,
+    executor: &AgentConfig,
+    identity: Option<&agentdash_spi::AuthIdentity>,
+    source_snapshot: Option<&AgentContextSourceSnapshot>,
+    hook_snapshot: &AgentFrameHookSnapshot,
+    discovery: &super::LaunchContextDiscoveryOutput,
+    settings: &dyn SettingsRepository,
+    base_identity: &BaseIdentitySource,
+) -> Result<BootstrapContextFacts, String> {
+    let recorded_at =
+        chrono::DateTime::from_timestamp_millis(context_source.projection_identity.recorded_at_ms)
+            .ok_or("AgentFrame projection timestamp is outside chrono range")?;
+    let assignment = assignment_context_facts(source_snapshot, hook_snapshot);
+    let agent_identity_markdown = assignment
+        .fragments
+        .iter()
+        .find(|fragment| fragment.slot == "agent_identity" && !fragment.content.trim().is_empty())
+        .map(|fragment| fragment.content.clone())
+        .or_else(|| {
+            source_snapshot.and_then(|snapshot| {
+                snapshot
+                    .fragments
+                    .iter()
+                    .find(|fragment| {
+                        fragment.slot == "agent_identity" && !fragment.content.trim().is_empty()
+                    })
+                    .map(|fragment| fragment.content.clone())
+            })
+        });
+    let user_preferences = load_user_preferences(settings, identity).await;
+    let memory = memory_context_facts(&discovery.discovered_memory);
+
+    Ok(BootstrapContextFacts {
+        // A compiled bootstrap plan is consumed only by the first canonical ThreadStart. Live
+        // adoption uses the normalized previous/target state and never replays this plan.
+        include_startup_context: true,
+        identity: IdentityContextFacts {
+            base_system_prompt: base_identity.prompt().to_string(),
+            agent_identity_markdown,
+            agent_system_prompt: executor.system_prompt.clone(),
+        },
+        user: identity.map(|identity| UserContextFacts {
+            user_id: identity.user_id.clone(),
+            display_name: identity.display_name.clone(),
+            email: identity.email.clone(),
+            groups: identity
+                .groups
+                .iter()
+                .map(|group| {
+                    group
+                        .display_name
+                        .as_deref()
+                        .unwrap_or(&group.group_id)
+                        .to_string()
+                })
+                .collect(),
+            provider: identity.provider.clone(),
+            extra: identity.extra.clone(),
+        }),
+        environment: EnvironmentContextFacts {
+            date_utc: recorded_at.format("%Y-%m-%d").to_string(),
+            platform: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            model_id: executor.model_id.clone(),
+            executor: executor.executor.clone(),
+            working_directory: context_source
+                .runtime
+                .vfs
+                .default_mount()
+                .map(|mount| mount.root_ref.clone())
+                .filter(|value| !value.is_empty()),
+        },
+        guidelines: GuidelinesContextFacts {
+            user_preferences,
+            discovered_guidelines: discovery
+                .discovered_guidelines
+                .iter()
+                .map(|guideline| DiscoveredGuidelineFacts {
+                    path: guideline.path.clone(),
+                    content: guideline.content.clone(),
+                })
+                .collect(),
+        },
+        memory,
+        assignment,
+    })
+}
+
+async fn load_user_preferences(
+    settings: &dyn SettingsRepository,
+    identity: Option<&agentdash_spi::AuthIdentity>,
+) -> Vec<String> {
+    let Some(identity) = identity else {
+        return Vec::new();
+    };
+    let Ok(Some(setting)) = settings
+        .get(
+            &SettingScope::user(identity.user_id.clone()),
+            USER_PREFERENCES_SETTING_KEY,
+        )
+        .await
+    else {
+        return Vec::new();
+    };
+    setting
+        .value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn assignment_context_facts(
+    source_snapshot: Option<&AgentContextSourceSnapshot>,
+    hook_snapshot: &AgentFrameHookSnapshot,
+) -> AssignmentContextFacts {
+    if let Some(snapshot) = source_snapshot {
+        return AssignmentContextFacts {
+            phase_tag: Some(snapshot.phase_tag.clone()),
+            apply_mode: None,
+            fragments: snapshot
+                .fragments
+                .iter()
+                .map(|fragment| AssignmentFragmentFacts {
+                    slot: fragment.slot.clone(),
+                    label: fragment.label.clone(),
+                    order: fragment.order,
+                    runtime_agent_scope: fragment.runtime_agent_scope,
+                    source: fragment.source.clone(),
+                    content: fragment.content.clone(),
+                    context_usage_kind: fragment.context_usage_kind.clone(),
+                })
+                .collect(),
+        };
+    }
+
+    AssignmentContextFacts {
+        phase_tag: Some("bootstrap".to_string()),
+        apply_mode: None,
+        fragments: hook_snapshot
+            .injections
+            .iter()
+            .map(|injection| AssignmentFragmentFacts {
+                slot: injection.slot.clone(),
+                label: injection.source.clone(),
+                order: match injection.slot.as_str() {
+                    "workflow" => 83,
+                    "constraint" => 84,
+                    _ => 200,
+                },
+                runtime_agent_scope: true,
+                source: injection.source.clone(),
+                content: injection.content.clone(),
+                context_usage_kind: agentdash_spi::ASSIGNMENT_CONTEXT_SLOTS
+                    .contains(&injection.slot.as_str())
+                    .then(|| agentdash_spi::context_usage_kind::SYSTEM_DEVELOPER.to_string()),
+            })
+            .collect(),
+    }
+}
+
+fn memory_context_facts(inventory: &agentdash_spi::MemoryDiscoveryOutput) -> MemoryContextFacts {
+    MemoryContextFacts {
+        sources: inventory
+            .clusters
+            .iter()
+            .flat_map(|cluster| cluster.sources.iter())
+            .map(|source| MemorySourceFacts {
+                provider_key: source.provider_key.clone(),
+                source_key: source.source_key.clone(),
+                display_name: source.display_name.clone(),
+                source_uri: source.source_uri.clone(),
+                index_uri: source.index_uri.clone(),
+                mount_id: source.mount_id.clone(),
+                scope: enum_name(source.scope),
+                capabilities: source
+                    .capabilities
+                    .iter()
+                    .map(|capability| format!("{capability:?}").to_ascii_lowercase())
+                    .collect(),
+                index_status: enum_name(source.index_status),
+                trust_level: enum_name(source.trust_level),
+                revision: memory_source_revision(source),
+                summary: source.summary.clone(),
+                bounded_index_content: source.bounded_index_content.clone(),
+                context_usage_kind: Some(agentdash_spi::context_usage_kind::MEMORY.to_string()),
+            })
+            .collect(),
+        diagnostics: inventory
+            .diagnostics
+            .iter()
+            .map(|diagnostic| MemoryDiagnosticFacts {
+                provider_key: diagnostic.provider_key.clone(),
+                code: diagnostic.code.clone(),
+                message: diagnostic.message.clone(),
+                source_key: diagnostic.source_key.clone(),
+                uri: diagnostic.uri.clone(),
+                context_usage_kind: Some(agentdash_spi::context_usage_kind::MEMORY.to_string()),
+            })
+            .collect(),
+    }
+}
+
+fn build_normalized_context_surface(
+    context_source: &AgentContextSurfaceSourceFacts,
+    revision: u64,
+    tools: &[ToolContribution],
+    bootstrap: &BootstrapContextFacts,
+    discovery: &super::LaunchContextDiscoveryOutput,
+) -> Result<NormalizedContextSurfaceState, String> {
+    let runtime = &context_source.runtime;
+    let capability_state = &runtime.capability_state;
+    let mcp_servers = runtime
+        .mcp_servers
+        .iter()
+        .map(|server| {
+            Ok((
+                server.name.clone(),
+                NormalizedSurfaceEntity {
+                    fingerprint: fingerprint(server)?,
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
+    let unavailable_mcp_servers = runtime
+        .mcp_servers
+        .iter()
+        .filter_map(|server| match &server.readiness {
+            RuntimeMcpSourceReadiness::Unavailable {
+                reason_code,
+                message,
+            } => Some(NormalizedMcpServerReadiness {
+                name: server.name.clone(),
+                reason_code: reason_code.clone(),
+                message: message.clone(),
+            }),
+            RuntimeMcpSourceReadiness::Pending | RuntimeMcpSourceReadiness::Ready { .. } => None,
+        })
+        .collect();
+    let companion_agents = capability_state
+        .companion
+        .agents
+        .iter()
+        .map(|agent| {
+            (
+                agent.name.clone(),
+                RuntimeCompanionAgentEntry {
+                    agent_key: agent.name.clone(),
+                    executor: agent.executor.clone(),
+                    display_name: agent.display_name.clone(),
+                    context_usage_kind: Some("agents".to_string()),
+                },
+            )
+        })
+        .collect();
+    let companion_agent_order = capability_state
+        .companion
+        .agents
+        .iter()
+        .map(|agent| agent.name.clone())
+        .collect();
+    let vfs_mounts = runtime
+        .vfs
+        .mounts
+        .iter()
+        .map(|mount| {
+            Ok((
+                mount.id.clone(),
+                NormalizedSurfaceEntity {
+                    fingerprint: fingerprint(mount)?,
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
+    let vfs_links = runtime
+        .vfs
+        .links
+        .iter()
+        .map(|link| {
+            Ok((
+                format!(
+                    "{}:{}->{}:{}",
+                    link.from_mount_id, link.from_path, link.to_mount_id, link.to_path
+                ),
+                NormalizedSurfaceEntity {
+                    fingerprint: fingerprint(link)?,
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
+    let memory_sources = bootstrap
+        .memory
+        .sources
+        .iter()
+        .map(|source| {
+            let key = format!("{}:{}", source.provider_key, source.source_key);
+            (key, runtime_memory_source_entry(source))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let memory_source_order = bootstrap
+        .memory
+        .sources
+        .iter()
+        .map(|source| format!("{}:{}", source.provider_key, source.source_key))
+        .collect();
+    let memory_diagnostics = bootstrap
+        .memory
+        .diagnostics
+        .iter()
+        .map(runtime_memory_diagnostic_entry)
+        .collect();
+    let skills = discovery
+        .session_capabilities
+        .skills
+        .iter()
+        .map(|skill| {
+            let key = skill.capability_key_or_name().to_string();
+            (
+                key,
+                RuntimeSkillEntry {
+                    name: skill.name.clone(),
+                    capability_key: skill.capability_key.clone(),
+                    provider_key: skill.provider_key.clone(),
+                    local_name: skill.local_name.clone(),
+                    display_name: skill.display_name.clone(),
+                    description: skill.description.clone(),
+                    file_path: skill.file_path.clone(),
+                    base_dir: skill.base_dir.clone(),
+                    exposure: match skill.exposure {
+                        SkillContextExposure::DefaultExposed => {
+                            ProtocolSkillContextExposure::DefaultExposed
+                        }
+                        SkillContextExposure::ExplicitOnly => {
+                            ProtocolSkillContextExposure::ExplicitOnly
+                        }
+                    },
+                    disable_model_invocation: skill.disable_model_invocation,
+                    context_usage_kind: Some("skills".to_string()),
+                },
+            )
+        })
+        .collect();
+    let skill_clusters = discovery
+        .session_capabilities
+        .skill_clusters
+        .iter()
+        .map(|cluster| NormalizedSkillCluster {
+            provider_key: cluster.provider_key.clone(),
+            display_name: cluster.display_name.clone(),
+            model_summary: cluster.model_summary.clone(),
+        })
+        .collect();
+    let tool_schemas = tools
+        .iter()
+        .map(|tool| {
+            (
+                tool.tool_path.clone(),
+                RuntimeToolSchemaEntry {
+                    name: tool.runtime_name.clone(),
+                    description: tool.description.clone(),
+                    parameters_schema: tool.parameters_schema.clone(),
+                    capability_key: Some(tool.capability_key.clone()),
+                    source: Some(tool.meta.source.key.clone()),
+                    tool_path: Some(tool.tool_path.clone()),
+                    context_usage_kind: Some("system_tools".to_string()),
+                },
+            )
+        })
+        .collect();
+    let assignment_fragments = normalized_assignment_fragments(&bootstrap.assignment);
+    let assignment = (!assignment_fragments.is_empty()).then_some(NormalizedAssignmentContext {
+        revision,
+        fragments: assignment_fragments,
+    });
+
+    Ok(NormalizedContextSurfaceState {
+        capability_keys: capability_state.capability_keys(),
+        excluded_tool_paths: capability_state.excluded_tool_paths(),
+        included_tool_paths: capability_state.included_tool_paths(),
+        mcp_servers,
+        unavailable_mcp_servers,
+        companion_agents,
+        companion_agent_order,
+        vfs_mounts,
+        vfs_links,
+        default_vfs_mount: runtime.vfs.default_mount_id.clone(),
+        memory_sources,
+        memory_source_order,
+        memory_diagnostics,
+        skills,
+        skill_clusters,
+        tool_schemas,
+        assignment,
+    })
+}
+
+fn normalized_assignment_fragments(
+    assignment: &AssignmentContextFacts,
+) -> Vec<RuntimeContextFragmentEntry> {
+    let mut fragments = assignment
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.runtime_agent_scope)
+        .filter(|fragment| {
+            agentdash_spi::ASSIGNMENT_CONTEXT_SLOTS.contains(&fragment.slot.as_str())
+        })
+        .filter(|fragment| !fragment.content.trim().is_empty())
+        .collect::<Vec<_>>();
+    fragments.sort_by_key(|fragment| fragment.order);
+    fragments
+        .into_iter()
+        .map(|fragment| RuntimeContextFragmentEntry {
+            slot: fragment.slot.clone(),
+            label: fragment.label.clone(),
+            source: fragment.source.clone(),
+            content: fragment.content.clone(),
+            context_usage_kind: fragment.context_usage_kind.clone(),
+        })
+        .collect()
+}
+
+fn runtime_memory_source_entry(source: &MemorySourceFacts) -> RuntimeMemorySourceEntry {
+    RuntimeMemorySourceEntry {
+        provider_key: source.provider_key.clone(),
+        source_key: source.source_key.clone(),
+        display_name: source.display_name.clone(),
+        source_uri: source.source_uri.clone(),
+        index_uri: source.index_uri.clone(),
+        mount_id: source.mount_id.clone(),
+        scope: source.scope.clone(),
+        index_status: source.index_status.clone(),
+        trust_level: source.trust_level.clone(),
+        revision: source.revision.clone(),
+        summary: source.summary.clone(),
+        context_usage_kind: source.context_usage_kind.clone(),
+    }
+}
+
+fn runtime_memory_diagnostic_entry(
+    diagnostic: &MemoryDiagnosticFacts,
+) -> RuntimeMemoryDiagnosticEntry {
+    RuntimeMemoryDiagnosticEntry {
+        provider_key: diagnostic.provider_key.clone(),
+        code: diagnostic.code.clone(),
+        message: diagnostic.message.clone(),
+        source_key: diagnostic.source_key.clone(),
+        uri: diagnostic.uri.clone(),
+        context_usage_kind: diagnostic.context_usage_kind.clone(),
+    }
+}
+
+fn memory_source_revision(source: &agentdash_spi::DiscoveredMemorySource) -> String {
+    let payload = serde_json::to_string(source).unwrap_or_else(|_| {
+        format!(
+            "{}:{}:{}:{}",
+            source.provider_key, source.source_key, source.index_uri, source.index_status as u8
+        )
+    });
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in payload.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn enum_name(value: impl Serialize) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToString::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn fingerprint(value: &impl Serialize) -> Result<String, String> {
+    let encoded = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+    Ok(format!("sha256:{:x}", Sha256::digest(encoded)))
 }
 
 pub fn resolve_tool_capability(

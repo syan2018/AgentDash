@@ -7347,6 +7347,8 @@
         "capability_state_delta",
         "memory_context",
         "pending_action",
+        "system_delivery",
+        "system_notice",
         "auto_resume"
       ]
     },
@@ -7363,7 +7365,8 @@
         "accepted",
         "prepared_for_connector",
         "queued_for_transform_context",
-        "applied_before_prompt"
+        "applied_before_prompt",
+        "applied_to_compacted_context"
       ]
     },
     "ContextDeliveryChannel": {
@@ -7371,7 +7374,8 @@
       "enum": [
         "turn_start",
         "connector_context",
-        "transform_context"
+        "transform_context",
+        "continuation"
       ]
     },
     "ContextMessageRole": {

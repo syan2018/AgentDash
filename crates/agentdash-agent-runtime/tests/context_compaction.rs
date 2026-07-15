@@ -189,6 +189,21 @@ fn preparation(
             digest: id(&format!("digest-{suffix}")),
             fidelity: ContextFidelity::PlatformExact,
         },
+        presentation: Some(agentdash_agent_runtime::CompactionPresentationFacts {
+            summary: format!("summary-{suffix}"),
+            tokens_before: 100,
+            messages_compacted: 1,
+            compaction_id: Some(operation.to_string()),
+            projection_version: Some(9),
+            strategy: Some("summary_prefix".to_string()),
+            trigger: Some(format!("{trigger:?}").to_lowercase()),
+            phase: Some("pre_provider".to_string()),
+            source_start_event_seq: Some(1),
+            source_end_event_seq: Some(8),
+            first_kept_event_seq: None,
+            compacted_until_ref: None,
+            timestamp_ms: Some(1_710_000_000_000),
+        }),
     }
 }
 
@@ -271,6 +286,35 @@ async fn prepare_is_atomic_and_does_not_change_the_active_head() {
             .load_context_head(&thread_id)
             .await
             .expect("head")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn managed_compaction_rejects_missing_presentation_facts_instead_of_fabricating_them() {
+    let (store, runtime) = fixture();
+    let thread_id = start_and_accept_compaction(
+        &runtime,
+        "compact-missing",
+        ContextCompactionTrigger::Manual,
+    )
+    .await;
+    let mut prepare = preparation(
+        thread_id,
+        "compact-missing",
+        "missing",
+        ContextCompactionTrigger::Manual,
+    );
+    prepare.presentation = None;
+    assert!(matches!(
+        runtime.prepare_compaction(prepare).await,
+        Err(ContextRuntimeError::MissingCompactionPresentation)
+    ));
+    assert!(
+        store
+            .load_context_candidate(&id("compact-missing"))
+            .await
+            .expect("load candidate")
             .is_none()
     );
 }

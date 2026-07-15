@@ -663,6 +663,7 @@ dependencies = [
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-host",
+ "agentdash-agent-types",
  "agentdash-application-ports",
  "agentdash-diagnostics",
  "agentdash-domain",

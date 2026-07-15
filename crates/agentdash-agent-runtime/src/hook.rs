@@ -77,6 +77,7 @@ pub struct HookRun {
     pub site: HookExecutionSite,
     pub correlation: HookCorrelation,
     pub input: serde_json::Value,
+    pub accepted_at_ms: i64,
     pub status: HookRunStatus,
     pub decision: Option<HookGateDecision>,
     pub terminal_message: Option<String>,
@@ -98,7 +99,7 @@ pub struct HookEffectDescriptor {
     pub payload_digest: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HookEffect {
     pub effect_id: HookEffectId,
     pub hook_run_id: HookRunId,
@@ -106,6 +107,20 @@ pub struct HookEffect {
     pub idempotency_key: String,
     pub descriptor: HookEffectDescriptor,
     pub payload: serde_json::Value,
+    /// Model-visible Hook context is a typed Runtime presentation fact. Application effects
+    /// keep this empty and are dispatched through the effect outbox.
+    pub presentation: Option<crate::ContextFrameFacts>,
+}
+
+pub const RUNTIME_CONTEXT_PRESENTATION_EFFECT_TYPE: &str = "runtime_context_presentation";
+
+impl HookEffect {
+    /// Runtime presentation effects are durable Hook facts, but they are committed directly to
+    /// the Runtime journal and therefore never enter the external effect delivery queue.
+    #[must_use]
+    pub fn requires_external_dispatch(&self) -> bool {
+        self.presentation.is_none()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -195,6 +210,7 @@ fn admit_hook(
         site: entry.site,
         correlation: invocation.correlation,
         input: invocation.input,
+        accepted_at_ms: i64::try_from(crate::model::current_time_ms()).unwrap_or(i64::MAX),
         status: HookRunStatus::Accepted,
         decision: None,
         terminal_message: None,
@@ -272,7 +288,7 @@ impl HookRun {
             || effect.descriptor.effect_type.trim().is_empty()
             || effect.descriptor.schema_version == 0
             || effect.descriptor.target_authority.trim().is_empty()
-            || effect.descriptor.payload_digest != hook_effect_payload_digest(&effect.payload)
+            || effect.descriptor.payload_digest != hook_effect_content_digest(effect)
         {
             return Err(HookRuntimeError::InvalidEffectDescriptor);
         }
@@ -330,6 +346,18 @@ pub fn hook_effect_payload_digest(payload: &serde_json::Value) -> String {
     let bytes = serde_json::to_vec(&canonicalize(payload))
         .expect("serde_json::Value always serializes to canonical JSON");
     format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+#[must_use]
+pub fn hook_effect_content_digest(effect: &HookEffect) -> String {
+    effect.presentation.as_ref().map_or_else(
+        || hook_effect_payload_digest(&effect.payload),
+        |facts| {
+            hook_effect_payload_digest(
+                &serde_json::to_value(facts).expect("typed Hook presentation facts serialize"),
+            )
+        },
+    )
 }
 
 impl<S> crate::ManagedAgentRuntime<S>
@@ -641,6 +669,17 @@ where
         }
         for effect in &effects {
             run.validate_effect(effect)?;
+            if effect.descriptor.effect_type == "context_frame"
+                || (effect.presentation.is_some()
+                    && effect.descriptor.effect_type != RUNTIME_CONTEXT_PRESENTATION_EFFECT_TYPE)
+                || (effect.presentation.is_none()
+                    && effect.descriptor.effect_type == RUNTIME_CONTEXT_PRESENTATION_EFFECT_TYPE)
+            {
+                return Err(HookRuntimeError::InvalidPresentationEffect(
+                    "Hook presentation effects require typed Runtime context facts".to_string(),
+                )
+                .into());
+            }
         }
         let mut effect_ids = BTreeSet::new();
         let mut idempotency_keys = BTreeSet::new();
@@ -682,15 +721,23 @@ where
         let requested_effects = effects.clone();
         let presentation_effects = effects
             .iter()
-            .filter(|effect| effect.descriptor.effect_type == "context_frame")
-            .map(|effect| {
-                serde_json::from_value::<agentdash_agent_protocol::ContextFrame>(
-                    effect.payload.clone(),
-                )
-                .map(|frame| (effect, frame))
-                .map_err(|error| HookRuntimeError::InvalidPresentationEffect(error.to_string()))
+            .filter_map(|effect| {
+                effect.presentation.as_ref().map(|facts| {
+                    let frame = crate::ContextProjector::project(
+                        &crate::ContextProjectionIdentity {
+                            operation_id: run.hook_run_id.to_string(),
+                            source_frame_id: effect.effect_id.to_string(),
+                            source_frame_revision: run.plan_revision.0,
+                            recorded_at_ms: run.accepted_at_ms,
+                        },
+                        [facts.clone()],
+                    )
+                    .bootstrap_frames
+                    .remove(0);
+                    (effect, frame)
+                })
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
         let mut records = crate::internal_journal_records(events)?;
         for (index, (effect, frame)) in presentation_effects.into_iter().enumerate() {
             records.push(

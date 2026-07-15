@@ -282,12 +282,12 @@ async fn attach_hook_plan(
                 message: error.to_string(),
             }
         })?;
-    frame.hook_plan = Some(serde_json::to_value(plan).map_err(|error| {
+    let hook_plan = serde_json::to_value(plan).map_err(|error| {
         agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
             message: format!("AgentFrame HookPlan serialization failed: {error}"),
         }
-    })?);
-    frame.apply_surface_projection();
+    })?;
+    frame.attach_immutable_hook_plan(hook_plan);
     Ok(())
 }
 
@@ -448,5 +448,10 @@ mod tests {
             .unwrap()
             .expect("persisted frame");
         assert!(frame.validated_hook_plan().unwrap().requirements.is_empty());
+        assert_eq!(
+            frame.surface_document().hook_plan,
+            frame.hook_plan,
+            "construction must persist HookPlan in the canonical surface document"
+        );
     }
 }

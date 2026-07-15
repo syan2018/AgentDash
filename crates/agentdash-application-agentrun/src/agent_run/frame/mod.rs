@@ -22,7 +22,10 @@ pub use runtime_launch::{
     FrameLaunchIntent, FrameLaunchRuntimeSurface, FrameLaunchSurface, FrameRuntimeSurface,
     LaunchResolutionTrace, TerminalHookEffectBinding, runtime_backend_anchor_from_vfs,
 };
-pub use surface::{AgentFrameSurfaceExt, FrameContextBundleSummary, FrameSurfaceDraft};
+pub use surface::{
+    AgentContextSourceFragment, AgentContextSourceSnapshot, AgentFrameSurfaceExt,
+    FrameContextBundleSummary, FrameSurfaceDraft,
+};
 pub use surface_service::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameWriteBoundary, AgentFrameWritePrimitive,
     AgentFrameWriteRole, AgentRunFrameConstructionAdapter, AgentRunFrameSurfaceCommand,

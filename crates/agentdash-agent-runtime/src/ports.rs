@@ -125,7 +125,7 @@ pub enum RuntimeWorkIdentity {
     HookRun(agentdash_agent_runtime_contract::HookRunId),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeWorkPayload {
     RuntimeOutbox(RuntimeOutboxEntry),
     ContextPreparation(ContextPreparationWorkItem),
@@ -163,7 +163,7 @@ pub struct RuntimeWorkClaimRequest {
     pub limit: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeWorkClaim {
     pub kind: RuntimeWorkKind,
     pub identity: RuntimeWorkIdentity,

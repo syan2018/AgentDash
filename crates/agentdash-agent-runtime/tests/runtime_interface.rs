@@ -1,14 +1,24 @@
-use std::{collections::BTreeSet, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
-use agentdash_agent_protocol::{BackboneEvent, ContextFrameChanged, PlatformEvent};
+use agentdash_agent_protocol::{
+    BackboneEvent, ContextFrameKind, ContextFrameSection, PlatformEvent,
+    RuntimeCompanionAgentEntry, RuntimeContextFragmentEntry, RuntimeMemorySourceEntry,
+    RuntimeSkillEntry, RuntimeToolSchemaEntry, SkillContextExposure,
+};
 use agentdash_agent_runtime::{
     AgentSurfaceCompiler, BusinessAgentSurfaceFacts, CommitFailurePoint, ContextProjectionIdentity,
     ContributionMeta, ContributionRequirement, DriverEventAdmission, ManagedAgentRuntime,
-    RuntimeCommit, RuntimePresentationAppendError, RuntimePresentationAppendRequest,
-    RuntimeRepository, RuntimeStoreError, RuntimeStoreFixture, RuntimeSurfacePresentationPlan,
-    RuntimeTerminalApplicationEffectClaimRequest, RuntimeTerminalApplicationEffectOutbox,
-    RuntimeTransientEvents, RuntimeUnitOfWork, RuntimeWorkerId, SurfaceSourceRef, ToolContribution,
-    WorkspaceRequirement,
+    NormalizedAssignmentContext, NormalizedContextSurfaceState, NormalizedMcpServerReadiness,
+    NormalizedSkillCluster, NormalizedSurfaceEntity, RuntimeCommit, RuntimePresentationAppendError,
+    RuntimePresentationAppendRequest, RuntimeRepository, RuntimeStoreError, RuntimeStoreFixture,
+    RuntimeSurfacePresentationPlan, RuntimeTerminalApplicationEffectClaimRequest,
+    RuntimeTerminalApplicationEffectOutbox, RuntimeTransientEvents, RuntimeUnitOfWork,
+    RuntimeWorkerId, SurfaceSourceRef, ToolContribution, WorkspaceRequirement,
 };
 use agentdash_agent_runtime_contract::*;
 
@@ -463,8 +473,140 @@ fn adopted_surface() -> RuntimeSurfaceDescriptor {
     }
 }
 
-fn surface_adoption_frames() -> Vec<agentdash_agent_protocol::ContextFrame> {
-    let compile = |revision: u64, description: &str| {
+fn surface_adoption_plan() -> RuntimeSurfacePresentationPlan {
+    let entity = |fingerprint: &str| NormalizedSurfaceEntity {
+        fingerprint: fingerprint.to_string(),
+    };
+    let companion = |key: &str, display_name: &str| RuntimeCompanionAgentEntry {
+        agent_key: key.to_string(),
+        executor: "native".to_string(),
+        display_name: display_name.to_string(),
+        context_usage_kind: Some("agents".to_string()),
+    };
+    let memory = |key: &str, revision: &str| RuntimeMemorySourceEntry {
+        provider_key: "project".to_string(),
+        source_key: key.to_string(),
+        display_name: key.to_string(),
+        source_uri: format!("agentdash://memory/{key}"),
+        index_uri: format!("agentdash://memory/{key}/index"),
+        mount_id: "workspace".to_string(),
+        scope: "project".to_string(),
+        index_status: "ready".to_string(),
+        trust_level: "trusted".to_string(),
+        revision: revision.to_string(),
+        summary: None,
+        context_usage_kind: Some("memory".to_string()),
+    };
+    let skill = |name: &str, description: &str| RuntimeSkillEntry {
+        name: name.to_string(),
+        capability_key: format!("skill:{name}"),
+        provider_key: "builtin".to_string(),
+        local_name: name.to_string(),
+        display_name: None,
+        description: description.to_string(),
+        file_path: format!("skills/{name}/SKILL.md"),
+        base_dir: None,
+        exposure: SkillContextExposure::DefaultExposed,
+        disable_model_invocation: false,
+        context_usage_kind: Some("skills".to_string()),
+    };
+    let previous_state = NormalizedContextSurfaceState {
+        capability_keys: BTreeSet::from(["file_read".to_string()]),
+        excluded_tool_paths: BTreeSet::from(["file_read::grep".to_string()]),
+        mcp_servers: BTreeMap::from([("server-a".to_string(), entity("old"))]),
+        companion_agents: BTreeMap::from([(
+            "reviewer".to_string(),
+            companion("reviewer", "Reviewer"),
+        )]),
+        companion_agent_order: vec!["reviewer".to_string()],
+        vfs_mounts: BTreeMap::from([("workspace".to_string(), entity("old"))]),
+        default_vfs_mount: Some("workspace".to_string()),
+        memory_sources: BTreeMap::from([("project:old".to_string(), memory("old", "1"))]),
+        memory_source_order: vec!["project:old".to_string()],
+        skills: BTreeMap::from([("skill:review".to_string(), skill("review", "old"))]),
+        skill_clusters: vec![NormalizedSkillCluster {
+            provider_key: "builtin".to_string(),
+            display_name: "Builtin".to_string(),
+            model_summary: Some("Project skills".to_string()),
+        }],
+        assignment: Some(NormalizedAssignmentContext {
+            revision: 1,
+            fragments: vec![RuntimeContextFragmentEntry {
+                slot: "task".to_string(),
+                label: "Task".to_string(),
+                source: "workflow".to_string(),
+                content: "Review".to_string(),
+                context_usage_kind: Some("system_developer".to_string()),
+            }],
+        }),
+        ..Default::default()
+    };
+    let mut target_state = previous_state.clone();
+    target_state
+        .capability_keys
+        .extend(["collaboration".to_string(), "file_write".to_string()]);
+    target_state.excluded_tool_paths.clear();
+    target_state
+        .included_tool_paths
+        .insert("file_write::apply_patch".to_string());
+    target_state
+        .mcp_servers
+        .insert("server-a".to_string(), entity("changed"));
+    target_state
+        .mcp_servers
+        .insert("server-b".to_string(), entity("added"));
+    target_state.unavailable_mcp_servers = vec![NormalizedMcpServerReadiness {
+        name: "server-b".to_string(),
+        reason_code: "connection_failed".to_string(),
+        message: "connection refused".to_string(),
+    }];
+    target_state.companion_agents.insert(
+        "reviewer".to_string(),
+        companion("reviewer", "Senior Reviewer"),
+    );
+    target_state
+        .companion_agents
+        .insert("builder".to_string(), companion("builder", "Builder"));
+    target_state.companion_agent_order = vec!["builder".to_string(), "reviewer".to_string()];
+    target_state.vfs_mounts.remove("workspace");
+    target_state
+        .vfs_mounts
+        .insert("project".to_string(), entity("added"));
+    target_state.default_vfs_mount = Some("project".to_string());
+    target_state.memory_sources.remove("project:old");
+    target_state
+        .memory_sources
+        .insert("project:new".to_string(), memory("new", "2"));
+    target_state.memory_source_order = vec!["project:new".to_string()];
+    target_state
+        .skills
+        .insert("skill:review".to_string(), skill("review", "changed"));
+    target_state
+        .skills
+        .insert("skill:test".to_string(), skill("test", "added"));
+    target_state.tool_schemas.insert(
+        "apply_patch".to_string(),
+        RuntimeToolSchemaEntry {
+            name: "apply_patch".to_string(),
+            description: "Apply a patch".to_string(),
+            parameters_schema: serde_json::json!({"type": "object"}),
+            capability_key: Some("file_write".to_string()),
+            source: Some("workspace".to_string()),
+            tool_path: Some("file_write::apply_patch".to_string()),
+            context_usage_kind: Some("system_tools".to_string()),
+        },
+    );
+    target_state.assignment = Some(NormalizedAssignmentContext {
+        revision: 2,
+        fragments: vec![RuntimeContextFragmentEntry {
+            slot: "task".to_string(),
+            label: "Task".to_string(),
+            source: "workflow".to_string(),
+            content: "# Implement\nShip it".to_string(),
+            context_usage_kind: Some("system_developer".to_string()),
+        }],
+    });
+    let compile = |revision: u64, normalized_context_surface| {
         AgentSurfaceCompiler
             .compile_business_facts(BusinessAgentSurfaceFacts {
                 revision: SurfaceRevision(revision),
@@ -500,7 +642,7 @@ fn surface_adoption_frames() -> Vec<agentdash_agent_protocol::ContextFrame> {
                         requirement: ContributionRequirement::Required,
                     },
                     runtime_name: "read".into(),
-                    description: description.into(),
+                    description: "Read a workspace file".into(),
                     parameters_schema: serde_json::json!({
                         "type": "object",
                         "properties": { "path": { "type": "string", "description": "file path" } },
@@ -515,6 +657,8 @@ fn surface_adoption_frames() -> Vec<agentdash_agent_protocol::ContextFrame> {
                     parity_fixture_id: "main_tool_read".into(),
                 }],
                 hooks: Vec::new(),
+                bootstrap_context: Default::default(),
+                normalized_context_surface,
                 projection_identity: ContextProjectionIdentity {
                     operation_id: format!("surface-{revision}"),
                     source_frame_id: "apply".into(),
@@ -524,11 +668,9 @@ fn surface_adoption_frames() -> Vec<agentdash_agent_protocol::ContextFrame> {
             })
             .unwrap()
     };
-    let previous = compile(1, "Read a workspace file");
-    let target = compile(2, "Read a workspace file exactly");
-    RuntimeSurfacePresentationPlan::for_adoption(&previous.snapshot, &target)
-        .unwrap()
-        .adoption_frames
+    let previous = compile(1, previous_state);
+    let target = compile(2, target_state);
+    RuntimeSurfacePresentationPlan::for_adoption(&previous.snapshot, &target).unwrap()
 }
 
 fn terminal_effect_binding() -> RuntimeTerminalHookEffectBinding {
@@ -580,28 +722,12 @@ async fn surface_adopt_is_cas_guarded_idle_only_and_enters_driver_outbox() {
             target: Box::new(adopted_surface()),
         },
     );
-    adoption.presentation = surface_adoption_frames()
-        .into_iter()
-        .enumerate()
-        .map(|(index, frame)| RuntimePresentationInput {
-            coordinate: RuntimePresentationCoordinate {
-                runtime_turn_id: None,
-                runtime_item_id: None,
-                interaction_id: None,
-                source_thread_id: Some("presentation-thread-1".into()),
-                source_turn_id: None,
-                source_item_id: None,
-                source_request_id: Some("surface-success-operation".into()),
-                source_entry_index: Some(index as u32),
-            },
-            event: ImmutablePresentationEvent::new(
-                PresentationDurability::Durable,
-                BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(Box::new(
-                    ContextFrameChanged { frame },
-                ))),
-            ),
-        })
-        .collect();
+    let adoption_plan = surface_adoption_plan();
+    adoption.presentation = adoption_plan.adoption_presentation(
+        &id("presentation-thread-1"),
+        None,
+        "surface-success-operation",
+    );
     let receipt = runtime
         .execute(adoption.clone())
         .await
@@ -648,15 +774,38 @@ async fn surface_adopt_is_cas_guarded_idle_only_and_enters_driver_outbox() {
         )
         .collect::<Vec<_>>();
     assert_eq!(
-        frames.len(),
-        1,
-        "adoption replay must not duplicate ContextFrame"
+        frames, adoption_plan.adoption_frames,
+        "Runtime journal must preserve the exact compiled adoption payload and order"
     );
-    let expected: serde_json::Value = serde_json::from_str(include_str!(
-        "fixtures/wi03_surface_adopt_stream_main_957fa9d.json"
-    ))
-    .unwrap();
-    assert_eq!(serde_json::to_value(&frames[0]).unwrap(), expected["frame"]);
+    assert_eq!(frames.len(), 2, "adoption replay must not duplicate frames");
+    assert_eq!(frames[0].kind, ContextFrameKind::CapabilityStateDelta);
+    assert_eq!(frames[1].kind, ContextFrameKind::AssignmentContext);
+    assert!(matches!(
+        frames[0].sections.as_slice(),
+        [
+            ContextFrameSection::CapabilityKeyDelta { .. },
+            ContextFrameSection::ToolPathDelta { .. },
+            ContextFrameSection::McpServerDelta { .. },
+            ContextFrameSection::CompanionAgentRosterDelta { .. },
+            ContextFrameSection::VfsDelta { .. },
+            ContextFrameSection::MemoryInventory { .. },
+            ContextFrameSection::SkillDelta { .. },
+            ContextFrameSection::ToolSchemaDelta { .. }
+        ]
+    ));
+    assert!(matches!(
+        frames[1].sections.as_slice(),
+        [ContextFrameSection::AssignmentContext { .. }]
+    ));
+    assert_eq!(
+        frames[0]
+            .rendered_text
+            .matches("Step Transition: apply")
+            .count(),
+        8
+    );
+    assert!(frames[0].rendered_text.contains("connection refused"));
+    assert!(frames[1].rendered_text.contains("## Implement"));
 
     runtime
         .execute(command(

@@ -23,7 +23,7 @@ use crate::agent_run::runtime_capability::{
     capability_state_to_frame_surfaces, compose_vfs_with_overlay_and_directives,
 };
 
-use super::surface::{FrameContextBundleSummary, FrameSurfaceDraft};
+use super::surface::{AgentContextSourceSnapshot, FrameContextBundleSummary, FrameSurfaceDraft};
 
 pub struct AgentFrameActivationSurfaceInput<'a> {
     pub activation: &'a ActivityActivation,
@@ -47,6 +47,7 @@ impl AgentFrameActivationSurface {
             vfs: Some(self.vfs.clone()),
             mcp_servers: self.mcp_servers.clone(),
             context_bundle_summary: None,
+            context_source_snapshot: None,
             execution_profile: None,
         }
     }
@@ -83,6 +84,7 @@ pub fn build_lifecycle_activation_surface(
 pub struct AgentFrameBuilder {
     agent_id: Uuid,
     context_slice: Option<serde_json::Value>,
+    context_source_snapshot: Option<serde_json::Value>,
     capability_surface: Option<serde_json::Value>,
     vfs_surface: Option<serde_json::Value>,
     mcp_surface: Option<serde_json::Value>,
@@ -97,6 +99,7 @@ impl AgentFrameBuilder {
         Self {
             agent_id,
             context_slice: None,
+            context_source_snapshot: None,
             capability_surface: None,
             vfs_surface: None,
             mcp_surface: None,
@@ -189,6 +192,12 @@ impl AgentFrameBuilder {
     pub fn with_context_bundle_summary(mut self, bundle: &SessionContextBundle) -> Self {
         self =
             self.with_frame_context_bundle_summary(&FrameContextBundleSummary::from_bundle(bundle));
+        self = self.with_context_source_snapshot(&AgentContextSourceSnapshot::from_bundle(bundle));
+        self
+    }
+
+    pub fn with_context_source_snapshot(mut self, snapshot: &AgentContextSourceSnapshot) -> Self {
+        self.context_source_snapshot = serde_json::to_value(snapshot).ok();
         self
     }
 
@@ -215,6 +224,9 @@ impl AgentFrameBuilder {
         }
         if let Some(summary) = draft.context_bundle_summary.as_ref() {
             self = self.with_frame_context_bundle_summary(summary);
+        }
+        if let Some(snapshot) = draft.context_source_snapshot.as_ref() {
+            self = self.with_context_source_snapshot(snapshot);
         }
         self
     }
@@ -288,6 +300,13 @@ impl AgentFrameBuilder {
             .as_ref()
             .and_then(|frame| frame.visible_workspace_module_refs_json.clone());
         frame.created_by_id = self.created_by_id.clone();
+        let mut surface = frame.surface_document();
+        surface.context_source_snapshot = self.context_source_snapshot.clone().or_else(|| {
+            current
+                .as_ref()
+                .and_then(|frame| frame.surface_document().context_source_snapshot)
+        });
+        frame.surface = Some(surface);
 
         Ok(frame)
     }
@@ -607,6 +626,7 @@ mod tests {
             vfs: Some(vfs),
             mcp_servers,
             context_bundle_summary: Some(FrameContextBundleSummary::from_bundle(&bundle)),
+            context_source_snapshot: Some(AgentContextSourceSnapshot::from_bundle(&bundle)),
             execution_profile: Some(AgentConfig::new("PI_AGENT")),
         };
 

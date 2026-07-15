@@ -73,6 +73,7 @@ pub struct ContextCandidate {
     pub expected_base_checkpoint_id: Option<ContextCheckpointId>,
     pub expected_base_revision: ContextRevision,
     pub checkpoint: ContextCheckpoint,
+    pub presentation: crate::CompactionPresentationFacts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +145,7 @@ pub struct CompactionPreparation {
     pub expected_base_revision: ContextRevision,
     pub checkpoint_id: ContextCheckpointId,
     pub materialized: MaterializedContext,
+    pub presentation: Option<crate::CompactionPresentationFacts>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +174,8 @@ pub enum ContextRuntimeError {
     DigestMismatch,
     #[error("opaque context cannot become a platform context checkpoint")]
     OpaqueContext,
+    #[error("managed compaction did not provide typed presentation facts")]
+    MissingCompactionPresentation,
     #[error("context store failed: {0}")]
     Store(#[from] RuntimeStoreError),
     #[error("context transition failed: {0}")]
@@ -188,6 +192,11 @@ where
         &self,
         preparation: CompactionPreparation,
     ) -> Result<(), ContextRuntimeError> {
+        let presentation = preparation
+            .presentation
+            .clone()
+            .filter(|facts| !facts.summary.trim().is_empty())
+            .ok_or(ContextRuntimeError::MissingCompactionPresentation)?;
         let operation = self
             .store()
             .find_operation(&preparation.operation_id)
@@ -243,6 +252,7 @@ where
             expected_base_checkpoint_id: preparation.expected_base_checkpoint_id.clone(),
             expected_base_revision: preparation.expected_base_revision,
             checkpoint: checkpoint.clone(),
+            presentation,
         };
         if let Some(existing) = self
             .store()
@@ -647,38 +657,39 @@ where
         thread.active_checkpoint_id = Some(new_head.checkpoint_id.clone());
         thread.context_revision = new_head.revision;
         let mut records = crate::internal_journal_records(events)?;
-        let frame = compaction_summary_frame(&candidate);
-        records.push(
-            thread
-                .append_durable_fact(
-                    RuntimeJournalFact::Presentation(
-                        agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
-                            agentdash_agent_runtime_contract::PresentationDurability::Durable,
-                            agentdash_agent_protocol::BackboneEvent::Platform(
-                                agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(
-                                    Box::new(agentdash_agent_protocol::ContextFrameChanged {
-                                        frame,
-                                    }),
+        if let Some(frame) = compaction_summary_frame(&candidate) {
+            records.push(
+                thread
+                    .append_durable_fact(
+                        RuntimeJournalFact::Presentation(
+                            agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                                agentdash_agent_runtime_contract::PresentationDurability::Durable,
+                                agentdash_agent_protocol::BackboneEvent::Platform(
+                                    agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(
+                                        Box::new(agentdash_agent_protocol::ContextFrameChanged {
+                                            frame,
+                                        }),
+                                    ),
                                 ),
                             ),
                         ),
-                    ),
-                    crate::model::current_time_ms(),
-                    Some(thread.binding_id.clone()),
-                    None,
-                    RuntimePresentationCoordinate {
-                        runtime_turn_id: thread.active_turn_id.clone(),
-                        runtime_item_id: None,
-                        interaction_id: None,
-                        source_thread_id: Some(thread.presentation_thread_id.to_string()),
-                        source_turn_id: None,
-                        source_item_id: None,
-                        source_request_id: Some(candidate.operation_id.to_string()),
-                        source_entry_index: Some(0),
-                    },
-                )
-                .map_err(ContextRuntimeError::Transition)?,
-        );
+                        crate::model::current_time_ms(),
+                        Some(thread.binding_id.clone()),
+                        None,
+                        RuntimePresentationCoordinate {
+                            runtime_turn_id: thread.active_turn_id.clone(),
+                            runtime_item_id: None,
+                            interaction_id: None,
+                            source_thread_id: Some(thread.presentation_thread_id.to_string()),
+                            source_turn_id: None,
+                            source_item_id: None,
+                            source_request_id: Some(candidate.operation_id.to_string()),
+                            source_entry_index: Some(0),
+                        },
+                    )
+                    .map_err(ContextRuntimeError::Transition)?,
+            );
+        }
         self.store()
             .commit(RuntimeCommit {
                 expected_projection_revision: Some(expected_projection_revision),
@@ -878,47 +889,16 @@ where
 
 fn compaction_summary_frame(
     candidate: &ContextCandidate,
-) -> agentdash_agent_protocol::ContextFrame {
-    let messages_compacted =
-        u32::try_from(candidate.checkpoint.materialized.blocks.len()).unwrap_or(u32::MAX);
-    crate::ContextProjector::project(
+) -> Option<agentdash_agent_protocol::ContextFrame> {
+    crate::project_compaction_summary(
         &crate::ContextProjectionIdentity {
             operation_id: candidate.operation_id.to_string(),
             source_frame_id: candidate.checkpoint.checkpoint_id.to_string(),
             source_frame_revision: candidate.checkpoint.revision.0,
             recorded_at_ms: i64::try_from(crate::model::current_time_ms()).unwrap_or(i64::MAX),
         },
-        [crate::ContextFrameFacts {
-            kind: agentdash_agent_protocol::ContextFrameKind::CompactionSummary,
-            source: agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
-            phase_node: None,
-            apply_mode: None,
-            delivery_status: agentdash_agent_protocol::ContextDeliveryStatus::PreparedForConnector,
-            delivery_channel: agentdash_agent_protocol::ContextDeliveryChannel::ConnectorContext,
-            message_role: agentdash_agent_protocol::ContextMessageRole::Context,
-            rendered_text: "Earlier context was compacted into the active checkpoint".to_string(),
-            sections: vec![
-                agentdash_agent_protocol::ContextFrameSection::CompactionSummary {
-                    title: "Summary".to_string(),
-                    summary: "Earlier context was compacted into the active checkpoint".to_string(),
-                    tokens_before: 0,
-                    messages_compacted,
-                    compaction_id: Some(candidate.compaction_id.to_string()),
-                    projection_version: Some(candidate.checkpoint.revision.0),
-                    strategy: None,
-                    trigger: Some(format!("{:?}", candidate.trigger).to_lowercase()),
-                    phase: Some("activated".to_string()),
-                    source_start_event_seq: None,
-                    source_end_event_seq: None,
-                    first_kept_event_seq: None,
-                    compacted_until_ref: None,
-                    timestamp_ms: Some(crate::model::current_time_ms()),
-                },
-            ],
-        }],
+        &candidate.presentation,
     )
-    .bootstrap_frames
-    .remove(0)
 }
 
 fn activation_outbox(

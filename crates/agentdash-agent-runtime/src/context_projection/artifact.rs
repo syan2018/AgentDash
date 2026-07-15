@@ -1,4 +1,8 @@
 use agentdash_agent_protocol::ContextFrame;
+use agentdash_agent_runtime_contract::{
+    ImmutablePresentationEvent, PresentationDurability, PresentationThreadId, PresentationTurnId,
+    RuntimePresentationCoordinate, RuntimePresentationInput,
+};
 use serde::{Deserialize, Serialize};
 
 /// Immutable presentation half of a compiled Agent Surface artifact.
@@ -17,65 +21,89 @@ impl RuntimeSurfacePresentationPlan {
         previous: &crate::AgentSurfaceSnapshot,
         target: &crate::CompiledBusinessAgentSurface,
     ) -> Result<Self, RuntimeSurfacePresentationPlanError> {
-        use agentdash_agent_protocol::ContextFrameSection;
-        let previous_tools = previous
-            .tools
-            .tools
-            .iter()
-            .map(|tool| (&tool.runtime_name, tool))
-            .collect::<std::collections::BTreeMap<_, _>>();
-        let changed = target
-            .snapshot
-            .tools
-            .tools
-            .iter()
-            .filter(|tool| previous_tools.get(&tool.runtime_name).copied() != Some(*tool))
-            .map(|tool| agentdash_agent_protocol::RuntimeToolSchemaEntry {
-                name: tool.runtime_name.clone(),
-                description: tool.description.clone(),
-                parameters_schema: tool.parameters_schema.clone(),
-                capability_key: Some(tool.capability_key.clone()),
-                source: Some(tool.meta.source.key.clone()),
-                tool_path: Some(tool.tool_path.clone()),
-                context_usage_kind: Some("system_tools".to_string()),
-            })
-            .collect::<Vec<_>>();
-        let mut plan = target.presentation.clone();
-        plan.bootstrap_frames.clear();
-        plan.adoption_frames = if changed.is_empty() {
+        let delta = super::NormalizedContextSurfaceDelta::between(
+            &previous.normalized_context_surface,
+            &target.snapshot.normalized_context_surface,
+        );
+        let adoption_frames = if delta.is_empty() {
             Vec::new()
         } else {
             let phase_node = target
                 .presentation
                 .transition_phase_node
-                .clone()
+                .as_deref()
                 .ok_or(RuntimeSurfacePresentationPlanError::MissingTransitionPhase)?;
-            let bootstrap = target.presentation.bootstrap_frames.first();
-            let created_at_ms = bootstrap.map_or(0, |frame| frame.created_at_ms);
-            let kind = agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta;
-            let channel = agentdash_agent_protocol::ContextDeliveryChannel::TurnStart;
-            let role = agentdash_agent_protocol::ContextMessageRole::User;
-            vec![ContextFrame {
-                id: format!("runtime-context-{phase_node}-{created_at_ms}"),
-                kind,
-                source: agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
-                phase_node: Some(phase_node.clone()),
-                apply_mode: Some("live".to_string()),
-                delivery_status:
-                    agentdash_agent_protocol::ContextDeliveryStatus::QueuedForTransformContext,
-                delivery_channel: channel,
-                message_role: role,
-                delivery_metadata: agentdash_agent_protocol::ContextDeliveryMetadata::for_frame(
-                    kind, channel, role,
-                ),
-                rendered_text: render_tool_schema_delta(&phase_node, &changed),
-                sections: vec![ContextFrameSection::ToolSchemaDelta {
-                    added_tools: changed,
-                }],
-                created_at_ms,
-            }]
+            let recorded_at_ms = target
+                .presentation
+                .bootstrap_frames
+                .first()
+                .map_or(0, |frame| frame.created_at_ms);
+            super::project_live_surface_transition(
+                &previous.normalized_context_surface,
+                &target.snapshot.normalized_context_surface,
+                &super::ContextProjectionIdentity {
+                    operation_id: format!(
+                        "surface-adopt-{}-{}",
+                        target.presentation.source_frame_id,
+                        target.presentation.source_frame_revision
+                    ),
+                    source_frame_id: target.presentation.source_frame_id.clone(),
+                    source_frame_revision: target.presentation.source_frame_revision,
+                    recorded_at_ms,
+                },
+                phase_node,
+                "live",
+            )
         };
-        Ok(plan)
+        let digest = presentation_digest(&adoption_frames);
+        Ok(Self {
+            digest,
+            source_frame_id: target.presentation.source_frame_id.clone(),
+            source_frame_revision: target.presentation.source_frame_revision,
+            transition_phase_node: target.presentation.transition_phase_node.clone(),
+            bootstrap_frames: Vec::new(),
+            adoption_frames,
+        })
+    }
+
+    /// Materializes the adoption half of this compiled plan into canonical Runtime presentation.
+    ///
+    /// Keeping this mapping beside the immutable plan ensures production adoption and replay tests
+    /// cannot bypass the same frame ordering and coordinate assignment used by the Runtime UoW.
+    #[must_use]
+    pub fn adoption_presentation(
+        &self,
+        thread_id: &PresentationThreadId,
+        turn_id: Option<&PresentationTurnId>,
+        operation_id: &str,
+    ) -> Vec<RuntimePresentationInput> {
+        self.adoption_frames
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, frame)| RuntimePresentationInput {
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(thread_id.to_string()),
+                    source_turn_id: turn_id.map(ToString::to_string),
+                    source_item_id: None,
+                    source_request_id: Some(operation_id.to_string()),
+                    source_entry_index: Some(
+                        u32::try_from(index).expect("surface presentation plan is bounded"),
+                    ),
+                },
+                event: ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(Box::new(
+                            agentdash_agent_protocol::ContextFrameChanged { frame },
+                        )),
+                    ),
+                ),
+            })
+            .collect()
     }
 }
 
@@ -85,7 +113,7 @@ pub enum RuntimeSurfacePresentationPlanError {
     MissingTransitionPhase,
 }
 
-fn render_tool_schema_delta(
+pub(super) fn render_tool_schema_delta(
     phase_node: &str,
     tools: &[agentdash_agent_protocol::RuntimeToolSchemaEntry],
 ) -> String {
@@ -97,6 +125,13 @@ fn render_tool_schema_delta(
     ];
     sections.extend(tools.iter().map(render_tool_schema_entry));
     sections.join("\n\n")
+}
+
+fn presentation_digest(frames: &[ContextFrame]) -> String {
+    use sha2::{Digest, Sha256};
+
+    let encoded = serde_json::to_vec(frames).expect("ContextFrame is serializable");
+    format!("sha256:{:x}", Sha256::digest(encoded))
 }
 
 fn render_tool_schema_entry(tool: &agentdash_agent_protocol::RuntimeToolSchemaEntry) -> String {

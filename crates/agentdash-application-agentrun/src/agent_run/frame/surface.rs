@@ -6,7 +6,9 @@
 
 use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, SessionContextBundle, Vfs};
+use agentdash_spi::{
+    AgentConfig, CapabilityState, FragmentScope, RuntimeMcpServer, SessionContextBundle, Vfs,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -33,6 +35,57 @@ impl FrameContextBundleSummary {
     }
 }
 
+/// Immutable normalized context inputs persisted with one AgentFrame revision.
+///
+/// Unlike `FrameContextBundleSummary`, this snapshot retains the complete source fragments needed
+/// by Business Agent Surface compilation and is safe to replay after the launch request is gone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentContextSourceSnapshot {
+    pub bundle_id: Uuid,
+    pub session_id: String,
+    pub phase_tag: String,
+    pub created_at_ms: u64,
+    pub fragments: Vec<AgentContextSourceFragment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentContextSourceFragment {
+    pub slot: String,
+    pub label: String,
+    pub order: i32,
+    pub runtime_agent_scope: bool,
+    pub source: String,
+    pub content: String,
+    pub context_usage_kind: Option<String>,
+}
+
+impl AgentContextSourceSnapshot {
+    #[must_use]
+    pub fn from_bundle(bundle: &SessionContextBundle) -> Self {
+        Self {
+            bundle_id: bundle.bundle_id,
+            session_id: bundle.session_id.to_string(),
+            phase_tag: bundle.phase_tag.clone(),
+            created_at_ms: bundle.created_at_ms,
+            fragments: bundle
+                .bootstrap_fragments
+                .iter()
+                .map(|fragment| AgentContextSourceFragment {
+                    slot: fragment.slot.clone(),
+                    label: fragment.label.clone(),
+                    order: fragment.order,
+                    runtime_agent_scope: fragment.scope.contains(FragmentScope::RuntimeAgent),
+                    source: fragment.source.clone(),
+                    content: fragment.content.clone(),
+                    context_usage_kind: agentdash_spi::ASSIGNMENT_CONTEXT_SLOTS
+                        .contains(&fragment.slot.as_str())
+                        .then(|| agentdash_spi::context_usage_kind::SYSTEM_DEVELOPER.to_string()),
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Frame construction 产出的可执行 surface 草稿。
 ///
 /// Draft 是写入 `AgentFrame` revision 前的 typed handoff，承载 capability、
@@ -45,6 +98,7 @@ pub struct FrameSurfaceDraft {
     pub vfs: Option<Vfs>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub context_bundle_summary: Option<FrameContextBundleSummary>,
+    pub context_source_snapshot: Option<AgentContextSourceSnapshot>,
     pub execution_profile: Option<AgentConfig>,
 }
 
@@ -55,12 +109,14 @@ impl FrameSurfaceDraft {
             vfs: frame.typed_vfs(),
             mcp_servers: frame.typed_mcp_servers(),
             context_bundle_summary: frame.context_bundle_summary(),
+            context_source_snapshot: frame.context_source_snapshot(),
             execution_profile: frame.typed_execution_profile(),
         }
     }
 
     pub fn with_context_bundle_summary(mut self, bundle: &SessionContextBundle) -> Self {
         self.context_bundle_summary = Some(FrameContextBundleSummary::from_bundle(bundle));
+        self.context_source_snapshot = Some(AgentContextSourceSnapshot::from_bundle(bundle));
         self
     }
 }
@@ -82,6 +138,8 @@ pub trait AgentFrameSurfaceExt {
     /// 只有当 `context_slice_json` 包含 `with_context_bundle_summary` 写入的
     /// 结构时才能成功反序列化；其他格式或缺失均返回 `None`。
     fn context_bundle_summary(&self) -> Option<FrameContextBundleSummary>;
+    /// Complete immutable context source snapshot for this exact frame revision.
+    fn context_source_snapshot(&self) -> Option<AgentContextSourceSnapshot>;
 }
 
 impl AgentFrameSurfaceExt for AgentFrame {
@@ -131,6 +189,12 @@ impl AgentFrameSurfaceExt for AgentFrame {
         self.context_slice_json
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    fn context_source_snapshot(&self) -> Option<AgentContextSourceSnapshot> {
+        self.surface_document()
+            .context_source_snapshot
+            .and_then(|value| serde_json::from_value(value).ok())
     }
 }
 

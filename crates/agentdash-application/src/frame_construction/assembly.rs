@@ -6,7 +6,9 @@ use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{AuthIdentity, CapabilityState, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
-use crate::agent_run::frame::{FrameContextBundleSummary, FrameSurfaceDraft};
+use crate::agent_run::frame::{
+    AgentContextSourceSnapshot, FrameContextBundleSummary, FrameSurfaceDraft,
+};
 #[cfg(test)]
 use crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives;
 use crate::canvas::project_visible_canvas_mounts;
@@ -288,6 +290,10 @@ impl FrameAssemblyBuilder {
                 .context_bundle
                 .as_ref()
                 .map(FrameContextBundleSummary::from_bundle),
+            context_source_snapshot: self
+                .context_bundle
+                .as_ref()
+                .map(AgentContextSourceSnapshot::from_bundle),
             execution_profile: self.executor_config.clone(),
         }
     }

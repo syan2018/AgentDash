@@ -403,6 +403,7 @@ fn compile(contributions: Vec<CapabilityContribution>) -> AgentSurfaceSnapshot {
             },
             contributions,
             capability_packs: Vec::new(),
+            normalized_context_surface: Default::default(),
         })
         .expect("compile surface")
 }
@@ -480,6 +481,7 @@ fn compiler_expands_pack_and_preserves_tool_provenance() {
             key: "pack:workspace".to_string(),
             contributions: vec![CapabilityContribution::Tool(tool.clone())],
         }],
+        normalized_context_surface: Default::default(),
     };
 
     let surface = AgentSurfaceCompiler.compile(input).expect("compile pack");
@@ -516,6 +518,22 @@ fn compiler_derives_tool_catalog_and_presentation_from_one_input_revision() {
         },
         contributions: vec![CapabilityContribution::Tool(tool.clone())],
         capability_packs: Vec::new(),
+        normalized_context_surface: NormalizedContextSurfaceState {
+            capability_keys: BTreeSet::from(["file_read".to_string()]),
+            tool_schemas: std::collections::BTreeMap::from([(
+                tool.runtime_name.clone(),
+                RuntimeToolSchemaEntry {
+                    name: tool.runtime_name.clone(),
+                    description: tool.description.clone(),
+                    parameters_schema: tool.parameters_schema.clone(),
+                    capability_key: Some(tool.capability_key.clone()),
+                    source: Some(tool.meta.source.key.clone()),
+                    tool_path: Some(tool.tool_path.clone()),
+                    context_usage_kind: Some("system_tools".to_string()),
+                },
+            )]),
+            ..Default::default()
+        },
     };
     let artifact = AgentSurfaceCompiler
         .compile_with_presentation(
@@ -558,18 +576,136 @@ fn compiler_derives_tool_catalog_and_presentation_from_one_input_revision() {
     assert!(empty.adoption_frames.is_empty());
     let mut target = artifact.clone();
     target.snapshot.revision = SurfaceRevision(8);
-    target.snapshot.tools.tools[0].description = "Read a workspace file exactly".to_string();
+    target
+        .snapshot
+        .normalized_context_surface
+        .capability_keys
+        .insert("file_write".to_string());
+    target
+        .snapshot
+        .normalized_context_surface
+        .tool_schemas
+        .insert(
+            "apply_patch".to_string(),
+            RuntimeToolSchemaEntry {
+                name: "apply_patch".to_string(),
+                description: "Apply a workspace patch".to_string(),
+                parameters_schema: serde_json::json!({"type": "object"}),
+                capability_key: Some("file_write".to_string()),
+                source: Some("workspace".to_string()),
+                tool_path: Some("file_write::apply_patch".to_string()),
+                context_usage_kind: Some("system_tools".to_string()),
+            },
+        );
     let adoption =
         RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &target).unwrap();
     assert_eq!(adoption.adoption_frames.len(), 1);
-    let ContextFrameSection::ToolSchemaDelta { added_tools } =
-        &adoption.adoption_frames[0].sections[0]
-    else {
-        panic!("adoption must contain typed tool schema delta")
-    };
-    assert_eq!(added_tools[0].description, "Read a workspace file exactly");
+    let added_tools = adoption.adoption_frames[0]
+        .sections
+        .iter()
+        .find_map(|section| match section {
+            ContextFrameSection::ToolSchemaDelta { added_tools } => Some(added_tools),
+            _ => None,
+        })
+        .expect("newly exposed capability must include its tool schema");
+    assert_eq!(added_tools[0].description, "Apply a workspace patch");
     target.presentation.transition_phase_node = None;
     assert!(RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &target).is_err());
+}
+
+#[test]
+fn business_facts_order_initial_capability_then_assignment_then_stable_context() {
+    let artifact = AgentSurfaceCompiler
+        .compile_business_facts(BusinessAgentSurfaceFacts {
+            revision: SurfaceRevision(7),
+            context_recipe: context_recipe(),
+            tool_set_revision: ToolSetRevision(5),
+            hook_plan_revision: HookPlanRevision(2),
+            workspace: WorkspaceRequirement {
+                capabilities: [WorkspaceCapability::Read].into(),
+                minimum_mechanism: DeliveryMechanism::HostAdaptedExact,
+                requirement: ContributionRequirement::Required,
+            },
+            source: SurfaceSourceRef {
+                layer: "workflow".to_string(),
+                key: "bootstrap".to_string(),
+            },
+            transition_phase_node: Some("apply".to_string()),
+            instructions: Vec::new(),
+            tools: Vec::new(),
+            hooks: Vec::new(),
+            bootstrap_context: BootstrapContextFacts {
+                include_startup_context: true,
+                identity: IdentityContextFacts {
+                    base_system_prompt: "Base identity".to_string(),
+                    ..Default::default()
+                },
+                assignment: AssignmentContextFacts {
+                    phase_tag: Some("bootstrap".to_string()),
+                    apply_mode: Some("initial".to_string()),
+                    fragments: vec![AssignmentFragmentFacts {
+                        slot: "task".to_string(),
+                        label: "Task".to_string(),
+                        order: 1,
+                        runtime_agent_scope: true,
+                        source: "workflow".to_string(),
+                        content: "Implement".to_string(),
+                        context_usage_kind: Some("system_developer".to_string()),
+                    }],
+                },
+                ..Default::default()
+            },
+            normalized_context_surface: NormalizedContextSurfaceState {
+                capability_keys: BTreeSet::from(["file_read".to_string()]),
+                tool_schemas: std::collections::BTreeMap::from([(
+                    "read".to_string(),
+                    RuntimeToolSchemaEntry {
+                        name: "read".to_string(),
+                        description: "Read a file".to_string(),
+                        parameters_schema: serde_json::json!({"type": "object"}),
+                        capability_key: Some("file_read".to_string()),
+                        source: Some("workspace".to_string()),
+                        tool_path: Some("file_read::read".to_string()),
+                        context_usage_kind: Some("system_tools".to_string()),
+                    },
+                )]),
+                ..Default::default()
+            },
+            projection_identity: ContextProjectionIdentity {
+                operation_id: "compile-bootstrap".to_string(),
+                source_frame_id: "frame-7".to_string(),
+                source_frame_revision: 7,
+                recorded_at_ms: 7,
+            },
+        })
+        .expect("compile complete bootstrap presentation");
+    let frames = &artifact.presentation.bootstrap_frames;
+    assert_eq!(
+        frames.iter().map(|frame| frame.kind).collect::<Vec<_>>(),
+        [
+            ContextFrameKind::CapabilityStateDelta,
+            ContextFrameKind::AssignmentContext,
+            ContextFrameKind::Identity,
+        ]
+    );
+    assert_eq!(frames[0].phase_node.as_deref(), Some("bootstrap"));
+    assert_eq!(frames[0].apply_mode.as_deref(), Some("initial"));
+    assert_eq!(
+        frames[0].delivery_status,
+        ContextDeliveryStatus::QueuedForTransformContext
+    );
+    assert_eq!(
+        frames[0].delivery_channel,
+        ContextDeliveryChannel::TurnStart
+    );
+    assert_eq!(frames[0].message_role, ContextMessageRole::User);
+    assert!(matches!(
+        frames[0].sections.as_slice(),
+        [
+            ContextFrameSection::CapabilityKeyDelta { .. },
+            ContextFrameSection::ToolSchemaDelta { .. }
+        ]
+    ));
 }
 
 #[test]
@@ -620,6 +756,7 @@ fn conflicting_contribution_key_is_rejected() {
             },
             contributions: vec![first, second],
             capability_packs: Vec::new(),
+            normalized_context_surface: Default::default(),
         })
         .expect_err("conflict");
 
@@ -665,6 +802,7 @@ fn distinct_contribution_keys_cannot_alias_one_tool_runtime_identity() {
                 tool("tool:b", "file_read::b"),
             ],
             capability_packs: Vec::new(),
+            normalized_context_surface: Default::default(),
         })
         .expect_err("runtime tool name must be unambiguous");
 
@@ -707,6 +845,7 @@ fn compiler_rejects_missing_or_shared_main_parity_fixture() {
             },
             contributions: vec![tool("tool:missing", "missing", "")],
             capability_packs: Vec::new(),
+            normalized_context_surface: Default::default(),
         })
         .expect_err("blank fixture must fail admission");
     assert!(matches!(
@@ -730,6 +869,7 @@ fn compiler_rejects_missing_or_shared_main_parity_fixture() {
                 tool("tool:second", "second", "main_tool_shared_lifecycle"),
             ],
             capability_packs: Vec::new(),
+            normalized_context_surface: Default::default(),
         })
         .expect_err("one fixture cannot self-prove multiple contributions");
     assert!(matches!(

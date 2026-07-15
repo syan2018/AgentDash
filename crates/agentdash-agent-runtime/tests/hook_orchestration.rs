@@ -194,6 +194,7 @@ async fn actionful_hook_is_recoverable_and_terminal_effect_is_atomic() {
             payload_digest: hook_effect_payload_digest(&payload),
         },
         payload,
+        presentation: None,
     };
     let terminal = runtime
         .complete_hook(
@@ -258,31 +259,40 @@ async fn context_frame_hook_effect_commits_with_terminal_and_replay_does_not_dup
         panic!("effect hook must be durable")
     };
     let run = runtime.start_hook(&run.hook_run_id).await.unwrap();
-    let frame = ContextProjector::project_auto_resume(
-        &ContextProjectionIdentity {
-            operation_id: "hook-run-context".to_string(),
-            source_frame_id: "frame-hook".to_string(),
-            source_frame_revision: 1,
-            recorded_at_ms: 10,
-        },
-        "hook",
-        "continue",
-    );
-    let payload = serde_json::to_value(frame).unwrap();
-    let effect = HookEffect {
+    let payload = serde_json::Value::Null;
+    let mut effect = HookEffect {
         effect_id: id("hook-effect-context"),
         hook_run_id: run.hook_run_id.clone(),
         thread_id: thread_id.clone(),
         idempotency_key: "context-frame:hook-run-context".to_string(),
         descriptor: HookEffectDescriptor {
-            effect_type: "context_frame".to_string(),
+            effect_type: "runtime_context_presentation".to_string(),
             schema_version: 1,
             target_authority: "agent_runtime_context_projection".to_string(),
             retry_limit: 0,
             payload_digest: hook_effect_payload_digest(&payload),
         },
         payload,
+        presentation: Some(ContextFrameFacts {
+            kind: agentdash_agent_protocol::ContextFrameKind::SystemNotice,
+            source: agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
+            phase_node: None,
+            apply_mode: None,
+            delivery_status:
+                agentdash_agent_protocol::ContextDeliveryStatus::QueuedForTransformContext,
+            delivery_channel: agentdash_agent_protocol::ContextDeliveryChannel::TurnStart,
+            message_role: agentdash_agent_protocol::ContextMessageRole::User,
+            rendered_text: "continue".to_string(),
+            sections: vec![
+                agentdash_agent_protocol::ContextFrameSection::SystemNotice {
+                    title: "TurnStart Notice".to_string(),
+                    summary: "TurnStart notice 已桥接为 ContextFrame。".to_string(),
+                    body: Some("continue".to_string()),
+                },
+            ],
+        }),
     };
+    effect.descriptor.payload_digest = hook_effect_content_digest(&effect);
     let completion = HookCompletion {
         status: HookRunStatus::Completed,
         decision: HookGateDecision::Continue,
@@ -296,7 +306,10 @@ async fn context_frame_hook_effect_commits_with_terminal_and_replay_does_not_dup
         .complete_hook(&run.hook_run_id, completion, vec![effect])
         .await
         .unwrap();
-    let mut frames = store
+    let durable_effects = store.hook_effects(&run.hook_run_id).await.unwrap();
+    assert_eq!(durable_effects.len(), 1);
+    assert!(!durable_effects[0].requires_external_dispatch());
+    let frames = store
         .journal_records_after(&thread_id, None)
         .await
         .unwrap()
@@ -312,19 +325,74 @@ async fn context_frame_hook_effect_commits_with_terminal_and_replay_does_not_dup
         )
         .collect::<Vec<_>>();
     assert_eq!(frames.len(), 1);
-    let oracle: serde_json::Value = serde_json::from_str(include_str!(
-        "../../agentdash-agent-protocol/tests/fixtures/context_frames_main_957fa9d.json"
-    ))
-    .unwrap();
-    let expected = oracle["frames"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|frame| frame["kind"] == "auto_resume")
+    assert_eq!(
+        frames[0].kind,
+        agentdash_agent_protocol::ContextFrameKind::SystemNotice
+    );
+    assert_eq!(frames[0].rendered_text, "continue");
+    assert!(matches!(
+        frames[0].sections.as_slice(),
+        [agentdash_agent_protocol::ContextFrameSection::SystemNotice { body: Some(body), .. }]
+            if body == "continue"
+    ));
+}
+
+#[tokio::test]
+async fn arbitrary_context_frame_json_is_rejected_before_hook_terminal_commit() {
+    let (store, runtime) = fixture();
+    let thread_id = start(&runtime).await;
+    runtime
+        .bind_hook_plan(plan(thread_id.clone(), [HookAction::EmitEffect].into()))
+        .await
         .unwrap();
-    frames[0].id = expected["id"].as_str().unwrap().to_string();
-    frames[0].created_at_ms = expected["created_at_ms"].as_i64().unwrap();
-    assert_eq!(serde_json::to_value(&frames[0]).unwrap(), *expected);
+    let HookAdmission::Durable(run) = runtime
+        .accept_hook(invocation(thread_id, "hook-run-legacy-context"))
+        .await
+        .unwrap()
+    else {
+        panic!("effect hook must be durable")
+    };
+    let run = runtime.start_hook(&run.hook_run_id).await.unwrap();
+    let payload = serde_json::json!({"kind":"system_notice","rendered_text":"forged"});
+    let error = runtime
+        .complete_hook(
+            &run.hook_run_id,
+            HookCompletion {
+                status: HookRunStatus::Completed,
+                decision: HookGateDecision::Continue,
+                message: None,
+            },
+            vec![HookEffect {
+                effect_id: id("legacy-context-effect"),
+                hook_run_id: run.hook_run_id.clone(),
+                thread_id: run.thread_id.clone(),
+                idempotency_key: "legacy-context-effect".to_string(),
+                descriptor: HookEffectDescriptor {
+                    effect_type: "context_frame".to_string(),
+                    schema_version: 1,
+                    target_authority: "agent_runtime_context_projection".to_string(),
+                    retry_limit: 0,
+                    payload_digest: hook_effect_payload_digest(&payload),
+                },
+                payload,
+                presentation: None,
+            }],
+        )
+        .await
+        .expect_err("arbitrary ContextFrame JSON must not cross the Hook boundary");
+    assert!(matches!(
+        error,
+        HookOrchestrationError::Domain(HookRuntimeError::InvalidPresentationEffect(_))
+    ));
+    assert_eq!(
+        store
+            .load_hook_run(&run.hook_run_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        HookRunStatus::Running
+    );
 }
 
 #[tokio::test]
@@ -459,6 +527,7 @@ async fn invalid_effect_digest_cannot_advance_terminal_or_event_cursor() {
                     payload_digest: "sha256:not-the-payload".to_string(),
                 },
                 payload: serde_json::json!({"message": "continue"}),
+                presentation: None,
             }],
         )
         .await

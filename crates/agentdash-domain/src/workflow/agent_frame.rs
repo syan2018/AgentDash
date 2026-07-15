@@ -13,6 +13,12 @@ pub struct AgentFrameSurfaceDocument {
     pub capability_state: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_slice: Option<Value>,
+    /// Immutable, normalized source snapshot used to compile model context and its presentation.
+    ///
+    /// `context_slice` remains a control-plane summary. This payload owns the complete source
+    /// fragments for the exact AgentFrame revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_source_snapshot: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vfs_surface: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,6 +37,7 @@ impl AgentFrameSurfaceDocument {
     pub fn is_empty(&self) -> bool {
         self.capability_state.is_none()
             && self.context_slice.is_none()
+            && self.context_source_snapshot.is_none()
             && self.vfs_surface.is_none()
             && self.mcp_surface.is_none()
             && self.execution_profile.is_none()
@@ -152,6 +159,7 @@ impl AgentFrame {
             .unwrap_or_else(|| AgentFrameSurfaceDocument {
                 capability_state: self.effective_capability_json.clone(),
                 context_slice: self.context_slice_json.clone(),
+                context_source_snapshot: None,
                 vfs_surface: self.vfs_surface_json.clone(),
                 mcp_surface: self.mcp_surface_json.clone(),
                 execution_profile: self.execution_profile_json.clone(),
@@ -175,6 +183,19 @@ impl AgentFrame {
         self.visible_canvas_mount_ids_json = surface.visible_canvas_mount_ids.clone();
         self.visible_workspace_module_refs_json = surface.visible_workspace_module_refs.clone();
         self.surface = Some(surface);
+    }
+
+    /// Attach the immutable HookPlan to the canonical surface document and refresh its split
+    /// read projection in one operation.
+    ///
+    /// HookPlan compilation needs the already allocated frame ID, so frame construction attaches
+    /// this snapshot after `AgentFrameBuilder` has produced the uncommitted revision. Updating only
+    /// the split `hook_plan` field would be lost as soon as the canonical surface is projected.
+    pub fn attach_immutable_hook_plan(&mut self, hook_plan: Value) {
+        let mut surface = self.surface_document();
+        surface.hook_plan = Some(hook_plan);
+        self.surface = Some(surface);
+        self.apply_surface_projection();
     }
 }
 
@@ -243,5 +264,20 @@ mod tests {
             frame.effective_capability_json,
             Some(serde_json::json!({"canonical": true}))
         );
+    }
+
+    #[test]
+    fn immutable_hook_plan_is_written_to_canonical_surface_and_split_projection() {
+        let mut frame = AgentFrame::new_initial(Uuid::new_v4());
+        frame.surface = Some(AgentFrameSurfaceDocument {
+            capability_state: Some(serde_json::json!({"canonical": true})),
+            ..Default::default()
+        });
+        let hook_plan = serde_json::json!({"revision": 1, "requirements": [], "digest": "v1"});
+
+        frame.attach_immutable_hook_plan(hook_plan.clone());
+
+        assert_eq!(frame.hook_plan, Some(hook_plan.clone()));
+        assert_eq!(frame.surface_document().hook_plan, Some(hook_plan));
     }
 }

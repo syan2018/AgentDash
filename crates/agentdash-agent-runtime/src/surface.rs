@@ -15,7 +15,7 @@ use crate::{
     BoundRuntimeHookEntry, BoundRuntimeHookPlan, HookExecutionSite, RuntimeHookPlanBinding,
     context_projection::{
         ContextFrameFacts, ContextProjectionIdentity, ContextProjector,
-        RuntimeSurfacePresentationPlan,
+        NormalizedContextSurfaceState, RuntimeSurfacePresentationPlan,
     },
 };
 
@@ -37,6 +37,8 @@ pub struct BusinessAgentSurfaceFacts {
     pub instructions: Vec<String>,
     pub tools: Vec<ToolContribution>,
     pub hooks: Vec<HookDefinition>,
+    pub bootstrap_context: crate::BootstrapContextFacts,
+    pub normalized_context_surface: NormalizedContextSurfaceState,
     pub projection_identity: ContextProjectionIdentity,
 }
 
@@ -681,6 +683,8 @@ pub struct AgentSurfaceSnapshot {
     pub skills: Vec<SkillContribution>,
     pub workflows: Vec<WorkflowContribution>,
     pub permissions: Vec<PermissionContribution>,
+    #[serde(default)]
+    pub normalized_context_surface: NormalizedContextSurfaceState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -721,6 +725,8 @@ pub struct AgentSurfaceCompileInput {
     pub workspace: WorkspaceRequirement,
     pub contributions: Vec<CapabilityContribution>,
     pub capability_packs: Vec<CapabilityPack>,
+    #[serde(default)]
+    pub normalized_context_surface: NormalizedContextSurfaceState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -802,6 +808,31 @@ impl AgentSurfaceCompiler {
                     })
                 }),
         );
+        let bootstrap_model = facts.bootstrap_context.project_model_context();
+        contributions.extend(bootstrap_model.instructions.into_iter().map(|entry| {
+            CapabilityContribution::Instruction(InstructionContribution {
+                meta: ContributionMeta {
+                    key: entry.key,
+                    source: facts.source.clone(),
+                    priority: entry.priority,
+                    requirement: ContributionRequirement::Required,
+                },
+                channel: entry.channel,
+                content: entry.content,
+            })
+        }));
+        contributions.extend(bootstrap_model.context.into_iter().map(|entry| {
+            CapabilityContribution::Context(ContextContribution {
+                meta: ContributionMeta {
+                    key: entry.key,
+                    source: facts.source.clone(),
+                    priority: entry.priority,
+                    requirement: ContributionRequirement::Required,
+                },
+                blocks: entry.blocks,
+                minimum_strength: entry.minimum_strength,
+            })
+        }));
         contributions.extend(
             facts
                 .hooks
@@ -809,19 +840,13 @@ impl AgentSurfaceCompiler {
                 .cloned()
                 .map(CapabilityContribution::Hook),
         );
-        let added_tools = facts
-            .tools
-            .iter()
-            .map(|tool| agentdash_agent_protocol::RuntimeToolSchemaEntry {
-                name: tool.runtime_name.clone(),
-                description: tool.description.clone(),
-                parameters_schema: tool.parameters_schema.clone(),
-                capability_key: Some(tool.capability_key.clone()),
-                source: Some(tool.meta.source.key.clone()),
-                tool_path: Some(tool.tool_path.clone()),
-                context_usage_kind: Some("system_tools".to_string()),
-            })
-            .collect();
+        let bootstrap = facts.bootstrap_context.project();
+        let initial_capability =
+            crate::context_projection::project_initial_surface(&facts.normalized_context_surface);
+        let presentation_facts = initial_capability
+            .into_iter()
+            .chain(bootstrap.assignment_frame)
+            .chain(bootstrap.stable_frames);
         self.compile_with_presentation(
             AgentSurfaceCompileInput {
                 revision: facts.revision,
@@ -831,23 +856,11 @@ impl AgentSurfaceCompiler {
                 workspace: facts.workspace,
                 contributions,
                 capability_packs: Vec::new(),
+                normalized_context_surface: facts.normalized_context_surface,
             },
             &facts.projection_identity,
             facts.transition_phase_node,
-            [ContextFrameFacts {
-                kind: agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta,
-                source: agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
-                phase_node: None,
-                apply_mode: None,
-                delivery_status: agentdash_agent_protocol::ContextDeliveryStatus::Accepted,
-                delivery_channel:
-                    agentdash_agent_protocol::ContextDeliveryChannel::ConnectorContext,
-                message_role: agentdash_agent_protocol::ContextMessageRole::Context,
-                rendered_text: "Runtime capability and tool surface".to_string(),
-                sections: vec![
-                    agentdash_agent_protocol::ContextFrameSection::ToolSchemaDelta { added_tools },
-                ],
-            }],
+            presentation_facts,
         )
     }
 
@@ -1019,6 +1032,7 @@ impl AgentSurfaceCompiler {
             &skills,
             &workflows,
             &permissions,
+            &input.normalized_context_surface,
         ))?;
         let surface_digest = SurfaceDigest::new(surface_digest_value)
             .map_err(|error| SurfaceCompileError::Digest(error.to_string()))?;
@@ -1033,6 +1047,7 @@ impl AgentSurfaceCompiler {
             skills,
             workflows,
             permissions,
+            normalized_context_surface: input.normalized_context_surface,
         })
     }
 }

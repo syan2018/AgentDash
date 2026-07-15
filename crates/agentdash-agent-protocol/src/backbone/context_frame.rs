@@ -39,6 +39,8 @@ pub enum ContextFrameKind {
     CapabilityStateDelta,
     MemoryContext,
     PendingAction,
+    SystemDelivery,
+    SystemNotice,
     AutoResume,
 }
 
@@ -55,6 +57,8 @@ impl ContextFrameKind {
             Self::CapabilityStateDelta => "capability_state_delta",
             Self::MemoryContext => "memory_context",
             Self::PendingAction => "pending_action",
+            Self::SystemDelivery => "system_delivery",
+            Self::SystemNotice => "system_notice",
             Self::AutoResume => "auto_resume",
         }
     }
@@ -74,6 +78,7 @@ pub enum ContextDeliveryStatus {
     PreparedForConnector,
     QueuedForTransformContext,
     AppliedBeforePrompt,
+    AppliedToCompactedContext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -82,6 +87,7 @@ pub enum ContextDeliveryChannel {
     TurnStart,
     ConnectorContext,
     TransformContext,
+    Continuation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -230,6 +236,12 @@ impl ContextDeliveryMetadata {
                 ContextCachePolicy::TurnEphemeral,
                 "Pending Action",
             ),
+            ContextFrameKind::SystemDelivery | ContextFrameKind::SystemNotice => (
+                ContextDeliveryPhase::TurnRuntime,
+                100,
+                ContextCachePolicy::Uncached,
+                "Context Frame",
+            ),
             ContextFrameKind::AutoResume => (
                 ContextDeliveryPhase::TurnRuntime,
                 80,
@@ -245,6 +257,13 @@ impl ContextDeliveryMetadata {
             ContextFrameKind::AutoResume | ContextFrameKind::PendingAction => {
                 ContextModelChannel::User
             }
+            ContextFrameKind::SystemDelivery | ContextFrameKind::SystemNotice => match message_role
+            {
+                ContextMessageRole::System => ContextModelChannel::System,
+                ContextMessageRole::Developer => ContextModelChannel::Developer,
+                ContextMessageRole::User => ContextModelChannel::User,
+                ContextMessageRole::Context => ContextModelChannel::Context,
+            },
             ContextFrameKind::MemoryContext
             | ContextFrameKind::CompactionSummary
             | ContextFrameKind::AssignmentContext => ContextModelChannel::Context,

@@ -164,15 +164,12 @@ mod tests {
     }
 
     #[test]
-    fn all_main_reference_context_frame_families_round_trip_with_stable_order() {
+    fn owned_context_frame_vocabulary_round_trips_without_claiming_producer_semantics() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/context_frames_main_957fa9d.json"
+            "../tests/fixtures/context_frames_canonical_roundtrip.json"
         ))
-        .expect("parse all-family main-reference oracle");
-        assert_eq!(
-            fixture["oracle"]["commit"],
-            "957fa9d60ea3d67efa1bb278fe5b376cf0c34598"
-        );
+        .expect("parse wrapper-neutral owned vocabulary fixture");
+        assert_eq!(fixture["fixture_kind"], "protocol_roundtrip_only");
         let frames: Vec<ContextFrame> =
             serde_json::from_value(fixture["frames"].clone()).expect("decode owned frames");
         assert_eq!(serde_json::to_value(&frames).unwrap(), fixture["frames"]);
@@ -191,7 +188,8 @@ mod tests {
                 ("capability_state_delta", 50),
                 ("memory_context", 60),
                 ("pending_action", 70),
-                ("auto_resume", 80),
+                ("system_delivery", 100),
+                ("system_notice", 100),
             ]
         );
         for frame in &frames {
@@ -221,7 +219,7 @@ mod tests {
             value
         }
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/context_frames_main_957fa9d.json"
+            "../tests/fixtures/context_frames_canonical_roundtrip.json"
         ))
         .unwrap();
         let frame = fixture["frames"][0].clone();

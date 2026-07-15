@@ -162,10 +162,10 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
             })
             .await
             .map_err(construction_rejected)?;
-        frame.hook_plan = Some(serde_json::to_value(hook_plan).map_err(|error| {
+        let hook_plan = serde_json::to_value(hook_plan).map_err(|error| {
             construction_rejected(format!("AgentFrame HookPlan 无法序列化: {error}"))
-        })?);
-        frame.apply_surface_projection();
+        })?;
+        frame.attach_immutable_hook_plan(hook_plan);
         validate_project_agent_launch_surface(&frame)?;
         self.repos
             .agent_frame_repo

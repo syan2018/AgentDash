@@ -24,9 +24,9 @@ pub mod workspace;
 
 pub use context_projection::AgentRunContextCompactionArchive;
 pub use context_sources::{
-    AgentBusinessSurfaceSource, AgentContextProjectionIdentity, AgentContextSurfaceSourceError,
-    AgentContextSurfaceSourceFacts, LoadedAgentBusinessSurfaceFacts, project_tool_protocol,
-    resolve_tool_capability,
+    AgentBusinessSurfaceContextDeps, AgentBusinessSurfaceSource, AgentContextProjectionIdentity,
+    AgentContextSurfaceSourceError, AgentContextSurfaceSourceFacts, BaseIdentitySource,
+    LoadedAgentBusinessSurfaceFacts, project_tool_protocol, resolve_tool_capability,
 };
 pub use control_effects::{AgentRunControlEffectDeps, AgentRunControlEffectService};
 pub use conversation_snapshot::{
@@ -92,17 +92,17 @@ pub use business_frame_surface_query::{
 pub use execution_state::AgentRunExecutionState;
 pub use fork_command::{AgentRunForkCommandService, AgentRunForkRuntimePort};
 pub use frame::{
-    AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt,
-    AgentFrameWriteBoundary, AgentFrameWritePrimitive, AgentFrameWriteRole,
-    AgentRunFrameConstructionAdapter, AgentRunFrameSurfaceCommand,
-    AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
-    AgentRunHookTargetRuntimeAdapter, AgentRunRuntimeSurfaceUpdateAdapter,
-    AgentRunSurfaceProjectionContext, AgentRunSurfaceProjectionContextResolver,
-    AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason, FrameConstructionCommand,
-    FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
-    FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
-    RuntimeSurfaceUpdateRequest, TerminalHookEffectBinding, agent_frame_write_boundaries,
-    hook_target_runtime_port,
+    AGENT_FRAME_WRITE_BOUNDARIES, AgentContextSourceFragment, AgentContextSourceSnapshot,
+    AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt, AgentFrameWriteBoundary,
+    AgentFrameWritePrimitive, AgentFrameWriteRole, AgentRunFrameConstructionAdapter,
+    AgentRunFrameSurfaceCommand, AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError,
+    AgentRunFrameSurfaceService, AgentRunHookTargetRuntimeAdapter,
+    AgentRunRuntimeSurfaceUpdateAdapter, AgentRunSurfaceProjectionContext,
+    AgentRunSurfaceProjectionContextResolver, AgentRunSurfaceProjectionContextSource,
+    CanvasVisibilityReason, FrameConstructionCommand, FrameContextBundleSummary,
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, FrameSurfaceDraft,
+    RejectingFrameConstructionAdapter, RuntimeSurfaceKind, RuntimeSurfaceUpdateRequest,
+    TerminalHookEffectBinding, agent_frame_write_boundaries, hook_target_runtime_port,
 };
 pub use journal::{
     AgentRunJournalBindingResolver, AgentRunJournalEvent, AgentRunJournalLiveEvent,

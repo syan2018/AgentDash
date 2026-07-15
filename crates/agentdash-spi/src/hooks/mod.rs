@@ -3,7 +3,6 @@ pub mod trace;
 
 use std::sync::Arc;
 
-use agentdash_agent_protocol::ContextFrame;
 use agentdash_domain::workflow::{EffectiveSessionContract, LifecycleRunStatus};
 
 use crate::CapabilityScope;
@@ -247,7 +246,7 @@ pub struct HookTurnStartNotice {
     pub source: RuntimeEventSource,
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_frame: Option<ContextFrame>,
+    pub presentation: Option<HookContextPresentationFacts>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -624,6 +623,30 @@ pub struct HookEffect {
     pub kind: String,
     #[serde(default)]
     pub payload: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation: Option<HookContextPresentationFacts>,
+}
+
+/// Hook 提供的 model-visible 业务事实。
+///
+/// 该边界刻意不暴露 ContextFrame kind/source/delivery/role/section 组合；这些平台展示
+/// 元数据由 Application callback 固定投影，Runtime 负责 durable identity、coordinate 与
+/// 原子提交。脚本只能声明 Hook 确实拥有的 notice 或 injection 内容。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HookContextPresentationFacts {
+    SystemNotice {
+        title: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body: Option<String>,
+    },
+    AssignmentInjection {
+        title: String,
+        summary: String,
+        #[serde(default)]
+        injections: Vec<HookInjection>,
+    },
 }
 
 /// Agent loop 的实时 token 统计。

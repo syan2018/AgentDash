@@ -101,3 +101,22 @@
 - [x] 恢复start/read/write output snapshot回写，保持application terminal projection与local retained buffer职责分离。
 - [x] 增加VFS tool start→read生命周期测试和production composition装配测试，确认running handle可续接、completed retained output可读取。
 - [x] 运行目标Rust测试、fmt、check/clippy，并以最近数据库复现参数验证真实`pnpm dev`链路。
+
+## ARD-012
+
+- [x] 删除Native adapter对Provider retry状态的internal transient重复投影，保留完整ephemeral Backbone presentation并补mapper回归。
+- [x] 将Driver envelope ingestion改为committed base + staged projection归约；所有transition/protocol violation分支从committed base提交，不消费未落库revision。
+- [x] 增加“前置fact可归约、后置fact失败”的Runtime interface与embedded PostgreSQL测试，断言violation/lost/quarantine原子落地且无revision conflict、无前置partial fact。
+- [x] 让critical violation admission明确停止Native/Codex/Remote/durable worker event pump，并复用terminal presentation/application effect构建，断言只有一个对外终态且不追加第二份BindingLost。
+- [x] 让outbox在dispatch error后回读canonical状态；fabricated `Terminalized`遇到active operation必须release/no-ack，只有canonical terminal/obsolete才ack。
+- [x] 复核Driver event、Tool Broker、Context/Hook worker的revision producer与锁/CAS边界，固定ARD-013的mutation owner与revision职责收束方向。
+- [x] 运行Runtime、Native、Codex、Remote、PostgreSQL定向测试、相关crate check、contracts、fmt与diff check。
+- [ ] 以真实`pnpm dev` Provider retry/error/final terminal产品路径确认Turn继续到terminal而非binding lost。
+
+## ARD-013
+
+- [ ] 枚举所有Thread aggregate writer、调用入口、现有锁、work lease、幂等identity与业务precondition，固定唯一mutation ownership矩阵。
+- [ ] 建立keyed per-thread mutation coordinator和typed intent入口，迁移command、driver、Tool Broker、Hook、Context与surface内部writer；外部I/O不得持有数据库事务或mutation guard。
+- [ ] 将presentation transient完全留在live publication；EventSequence只做journal cursor，aggregate revision与surface/context/binding专用revision各自承担明确职责。
+- [ ] 为driver source event建立可持久去重identity，并覆盖双Runtime实例共享PostgreSQL时的CAS reload/reapply、terminal exact-once和column/projection/journal一致性。
+- [ ] 对照main-reference运行前端eventstream payload等价矩阵，并验证新架构的placement/rebind/outbox/recovery收益未因收束而退化。

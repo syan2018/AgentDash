@@ -2463,6 +2463,7 @@ fn quarantine_reason(entry: &QuarantinedDriverEvent) -> &'static str {
         DriverRuntimeOwnedHookEvent => "driver_runtime_owned_hook_event",
         DriverRuntimeOwnedBindingEvent => "driver_runtime_owned_binding_event",
         InvalidTransition { .. } => "invalid_transition",
+        InvalidDriverFact { .. } => "invalid_driver_fact",
     }
 }
 
@@ -2545,7 +2546,7 @@ mod tests {
         UserInputSubmittedNotification,
     };
     use agentdash_agent_runtime::{
-        BoundRuntimeHookEntry, BoundRuntimeHookPlan, CompactionPreparation,
+        BoundRuntimeHookEntry, BoundRuntimeHookPlan, CompactionPreparation, DriverEventAdmission,
         DriverEventQuarantineReason, HookAdmission, HookCompletion, HookCorrelation, HookEffect,
         HookEffectDescriptor, HookExecutionSite, HookGateDecision, HookRunStatus,
         ManagedAgentRuntime, QuarantinedDriverEvent, RuntimeHookInvocation, RuntimeHookPlanBinding,
@@ -4211,6 +4212,245 @@ mod tests {
                     .expect("count outbox");
             assert_eq!(outbox, 0);
         }
+    }
+
+    #[tokio::test]
+    async fn critical_driver_violation_is_one_atomic_postgres_commit_from_the_committed_base() {
+        let _serial = serial_test_guard().await;
+        let fixture = fixture("critical driver violation atomicity").await;
+        let mut initial = start(&fixture);
+        let RuntimeCommand::ThreadStart { bound_profile, .. } = &mut initial.command else {
+            unreachable!("fixture starts a Runtime thread")
+        };
+        bound_profile
+            .lifecycle
+            .insert(LifecycleCapability::TurnStart);
+        fixture
+            .runtime
+            .execute(initial)
+            .await
+            .expect("start runtime thread");
+        let started = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load started thread")
+            .expect("started thread");
+        let turn_operation_id: RuntimeOperationId =
+            id(&format!("operation-violation-{}", fixture.suffix));
+        let runtime_turn_id: RuntimeTurnId = id(&format!("turn-{turn_operation_id}"));
+        fixture
+            .runtime
+            .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
+                meta: OperationMeta {
+                    operation_id: turn_operation_id.clone(),
+                    idempotency_key: id(&format!("key-violation-{}", fixture.suffix)),
+                    expected_thread_revision: Some(started.revision),
+                    actor: RuntimeActor::System {
+                        component: "postgres-critical-violation-test".to_string(),
+                    },
+                },
+                command: RuntimeCommand::TurnStart {
+                    thread_id: fixture.thread_id.clone(),
+                    presentation_turn_id: id(&format!(
+                        "presentation-turn-violation-{}",
+                        fixture.suffix
+                    )),
+                    input: Vec::new(),
+                },
+            })
+            .await
+            .expect("start active turn");
+        let committed_base = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load committed base")
+            .expect("committed base");
+        let event = DriverEventEnvelope {
+            binding_id: id(&format!("binding-{}", fixture.suffix)),
+            generation: RuntimeDriverGeneration(7),
+            operation_id: Some(turn_operation_id.clone()),
+            source_thread_id: id(&format!("source-{}", fixture.suffix)),
+            source_turn_id: Some(id(&format!("source-turn-{}", fixture.suffix))),
+            source_item_id: None,
+            source_request_id: Some(format!("request-violation-{}", fixture.suffix)),
+            source_entry_index: None,
+            facts: vec![
+                RuntimeJournalFact::Internal(RuntimeEvent::ConversationError {
+                    turn_id: Some(runtime_turn_id.clone()),
+                    error: RuntimeConversationError {
+                        code: Some("postgres-staged-prefix-must-not-commit".into()),
+                        message: "valid staged prefix".into(),
+                        retryable: true,
+                        details: None,
+                    },
+                }),
+                RuntimeJournalFact::Internal(RuntimeEvent::ItemTerminal {
+                    turn_id: runtime_turn_id,
+                    item_id: id(&format!("missing-item-{}", fixture.suffix)),
+                    terminal: RuntimeItemTerminal::Lost {
+                        message: Some("invalid suffix".into()),
+                    },
+                }),
+            ],
+        };
+
+        fixture
+            .store
+            .fail_next_commit_at(TestCommitFailurePoint::Outbox);
+        assert!(
+            fixture
+                .runtime
+                .ingest_driver_event(event.clone())
+                .await
+                .is_err()
+        );
+        let rolled_back_projection = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load rolled-back projection")
+            .expect("rolled-back projection");
+        assert_eq!(
+            serde_json::to_value(&rolled_back_projection).expect("encode rolled-back projection"),
+            serde_json::to_value(&committed_base).expect("encode committed base"),
+            "a late UoW failure must roll back the violation projection"
+        );
+        let rolled_back_side_effects: (i64, i64) = sqlx::query_as(
+            "SELECT \
+             (SELECT COUNT(*) FROM agent_runtime_quarantine WHERE binding_id=$2),\
+             (SELECT COUNT(*) FROM agent_runtime_terminal_application_effect_outbox \
+              WHERE runtime_thread_id=$1)",
+        )
+        .bind(fixture.thread_id.as_str())
+        .bind(format!("binding-{}", fixture.suffix))
+        .fetch_one(fixture.store.pool())
+        .await
+        .expect("count rolled-back violation side effects");
+        assert_eq!(rolled_back_side_effects, (0, 0));
+
+        assert!(matches!(
+            fixture
+                .runtime
+                .ingest_driver_event(event)
+                .await
+                .expect("retry critical violation from durable committed base"),
+            DriverEventAdmission::Terminalized { .. }
+        ));
+        let final_projection = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load terminalized projection")
+            .expect("terminalized projection");
+        assert_eq!(final_projection.status, RuntimeThreadStatus::Lost);
+        assert!(final_projection.active_turn_id.is_none());
+        let operation = fixture
+            .store
+            .find_operation(&turn_operation_id)
+            .await
+            .expect("load terminalized operation")
+            .expect("terminalized operation");
+        assert!(matches!(
+            operation.terminal,
+            Some(RuntimeOperationTerminal::Lost { .. })
+        ));
+
+        let records = fixture
+            .store
+            .journal_records_after(&fixture.thread_id, None)
+            .await
+            .expect("load canonical violation journal")
+            .records;
+        assert!(records.iter().all(|record| !matches!(
+            record.fact(),
+            RuntimeJournalFact::Internal(RuntimeEvent::ConversationError { error, .. })
+                if error.code.as_deref() == Some("postgres-staged-prefix-must-not-commit")
+        )));
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| matches!(
+                    record.fact(),
+                    RuntimeJournalFact::Internal(RuntimeEvent::ProtocolViolation {
+                        critical: true,
+                        ..
+                    })
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| matches!(
+                    record.fact(),
+                    RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                        terminal: RuntimeTurnTerminal::Lost,
+                        ..
+                    })
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| matches!(
+                    record.fact(),
+                    RuntimeJournalFact::Presentation(event)
+                        if matches!(
+                            &event.event,
+                            BackboneEvent::Platform(
+                                agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                                    key,
+                                    ..
+                                }
+                            ) if key == "turn_terminal"
+                        )
+                ))
+                .count(),
+            1
+        );
+        let durable_coordinates: (i64, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT t.revision,(t.projection->>'revision')::bigint,\
+                    t.next_event_sequence,MAX(e.revision),MAX(e.event_sequence) \
+             FROM agent_runtime_thread t \
+             JOIN agent_runtime_event e ON e.thread_id=t.id \
+             WHERE t.id=$1 \
+             GROUP BY t.revision,t.projection,t.next_event_sequence",
+        )
+        .bind(fixture.thread_id.as_str())
+        .fetch_one(fixture.store.pool())
+        .await
+        .expect("load durable revision coordinates");
+        assert_eq!(durable_coordinates.0, durable_coordinates.1);
+        assert_eq!(durable_coordinates.0, durable_coordinates.3);
+        assert_eq!(durable_coordinates.2, durable_coordinates.4);
+        assert_eq!(durable_coordinates.0, final_projection.revision.0 as i64);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM agent_runtime_quarantine WHERE binding_id=$1",
+            )
+            .bind(format!("binding-{}", fixture.suffix))
+            .fetch_one(fixture.store.pool())
+            .await
+            .expect("count canonical quarantine"),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM agent_runtime_terminal_application_effect_outbox \
+                 WHERE runtime_thread_id=$1",
+            )
+            .bind(fixture.thread_id.as_str())
+            .fetch_one(fixture.store.pool())
+            .await
+            .expect("count canonical terminal application effect"),
+            1
+        );
     }
 
     #[tokio::test]

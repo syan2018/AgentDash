@@ -132,6 +132,28 @@
 - terminal registry adapter负责把 terminal_id 映射到 backend/mount/cwd 与 AgentRun owner，并记录 start/read/write 的 retained output snapshot；本机 runtime继续拥有真实 process/session buffer，application registry只承担控制路由与产品投影，不复制进程事实。
 - start 返回 `state=running` 时，同一 Agent turn 后续 read/write/status/resize/terminate 必须可按 terminal_id 到达原 local runtime session；terminal完成后 retained session在正常保留窗口内仍可读取最终输出。
 
+### R13. Driver event 原子归约与 Runtime revision 稳定性
+
+**问题 ARD-012：Native accepted turn 因 staged revision 冲突终结 Runtime binding**
+
+- 现象：Native turn 已被 Driver 接受并开始事件泵后，Managed Runtime 返回 `expected thread revision RuntimeRevision(19), actual RuntimeRevision(18)`，adapter随即把 binding 终结为 lost。
+- 已确认首要根因：Native mapper同时为 Provider retry 状态生成 transient internal `RuntimeEvent::ProviderStatus` 与完整 ephemeral presentation；Managed Runtime契约只接受后者，因此先把正常provider retry误判为critical protocol violation并将Turn收敛为lost。
+- 已确认次生根因：Driver envelope按顺序归约多个fact时直接修改工作projection；前置fact已在内存把revision从18推进到19、后置fact transition失败后，violation路径却把这份未提交的staged projection当作committed base，再以19 CAS数据库实际的18，制造确定性的revision conflict并遮蔽原始错误。
+- 已确认错误闭环缺口：critical violation虽然持久化了Turn/Operation Lost，却仍向Driver sink返回普通成功，Native Core因此继续运行并再次发送终态；该分支同时绕过正常terminal presentation与application effect outbox，canonical Lost可能无法驱动前端和产品终结副作用。
+- `RuntimeRevision`继续作为Thread aggregate、durable journal与projection的事务级CAS坐标；修复不拆分第二事实源，也不放宽CAS。归约必须保留immutable committed base，整批成功才提交staged projection；失败必须从committed base原子写入quarantine、protocol violation与lost terminals。
+- ephemeral Provider status/delta只走transient presentation publication，不推进durable revision；Driver adapter不得同时发送语义重复的internal transient fact。
+- 验收必须覆盖Provider retry继续运行、混合fact批次后置transition失败的原子回滚、violation持久化不产生revision conflict，以及critical violation明确停止event pump并产生唯一terminal presentation/effect。
+
+### R14. Runtime mutation ownership 与 revision 职责收束
+
+**问题 ARD-013：多producer直接写Thread aggregate，whole-thread revision耦合无关业务更新**
+
+- 已确认现状：Gateway command/driver ingress/presentation与Tool Broker共享单个Runtime实例内mutex；Context/compaction与Hook mutation仍各自执行`load → mutate → commit`。当前production只装配一个Runtime实例，因此这不是ARD-012的直接根因，但跨producer竞争和未来多实例只能依赖数据库CAS，部分内部路径没有安全rebase语义。
+- main-reference通过数据库原子递增session event sequence建立较薄的单写入边界；新Runtime引入canonical aggregate后获得Host placement、generation fencing、Operation/outbox、跨Integration lifecycle与恢复能力，但没有同步建立统一mutation owner。
+- `EventSequence`只承担durable journal cursor；whole-thread revision只表达aggregate版本和内部CAS，不再作为surface/context/binding等已有专用revision/digest的默认precondition。presentation-only transient不进入aggregate mutation。
+- 目标是per-thread mutation coordinator：各producer提交typed intent，从durable base执行纯归约；进程内keyed serialization降低冲突，数据库CAS提供跨实例权威。内部CAS loser只有在具备producer幂等identity时才有界reload/reapply，不得盲重放或把普通竞争升级为binding lost。
+- 保留canonical Runtime、Host binding/generation、Operation/outbox与Tool/Hook/Context durable事实；删除不产生恢复或审计收益的presentation internal镜像，不恢复旧Connector/RuntimeSession第二事实源。
+
 ## Acceptance Criteria
 
 - [x] ARD-001 已在 `pnpm dev` 启动的真实产品路径复现并记录第一个断点位置。
@@ -161,6 +183,14 @@
 - [x] ARD-010 ephemeral Native binding缺失会收敛为canonical lost，历史outbox命令完成派发且不再重试。
 - [x] ARD-011 `shell_exec` 使用 typed Platform Tool owner 注册 terminal，running start 返回的 terminal_id 可完成后续 read 并取得最终状态/输出。
 - [x] ARD-011 恢复 terminal output snapshot 投影，并以 application/VFS/API 定向测试覆盖 start→read 生命周期和 composition 装配。
+- [x] ARD-012 Native Provider retry只发布ephemeral presentation，不再触发critical Runtime protocol violation或binding lost。
+- [x] ARD-012 Driver fact batch从committed base原子归约；后置fact失败时不提交前置staged mutation，也不再产生staged-vs-database revision conflict。
+- [x] ARD-012 critical violation明确terminalize Driver pump，并通过同一terminal projection/effect边界向前端与产品层发布唯一终态。
+- [x] ARD-012 通过Runtime interface、Native/Codex/Remote pump与真实embedded PostgreSQL UoW验证retry/error/critical terminal稳定收敛。
+- [ ] ARD-012 通过真实`pnpm dev` Provider链验证retry/error/final terminal产品行为。
+- [ ] ARD-013 建立完整Runtime mutation producer矩阵，并将command/driver/tool/hook/context/surface收束到per-thread coordinator或明确的可重试work边界。
+- [ ] ARD-013 解耦EventSequence、aggregate revision与surface/context/binding专用precondition，覆盖无关presentation推进时的内部更新稳定性。
+- [ ] ARD-013 为跨实例driver event引入可持久去重的producer identity后，验证CAS loser可安全reload/reapply且不会重复terminal。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -183,6 +213,8 @@
 | ARD-009 | verified | blocker | 恢复immutable migration历史并以0067收敛schema；ensure有界、Web等待relay registered，目标personal backend已真实online |
 | ARD-010 | verified | blocker | Native缺失binding返回typed lost；outbox写入BindingLost并ack，历史重试命令已停止 |
 | ARD-011 | verified | major | typed owner与terminal registry成为production VFS构造期必需依赖；真实start→read及跨轮retained read通过 |
+| ARD-012 | fixed | blocker | Provider status仅保留ephemeral presentation；violation从committed base原子terminalize并停止全部pump，outbox以canonical二次读取决定ack；待真实Provider产品链复验 |
+| ARD-013 | diagnosed | major | canonical Runtime带来placement/recovery收益，但mutation owner与revision职责未收束，Context/Hook及跨实例CAS仍存在结构性竞争面 |
 
 ## Verification Record
 
@@ -214,3 +246,5 @@
 - Desktop credential claim增加5秒connect/15秒request deadline，timeout进入retryable `desktop_claim_timeout`；Web auto-connect使用complete/pending/inactive三态，仅`running + relay registered + backend identity一致`完成。Rust 9项与前端8项定向测试通过。
 - ARD-011定向验证通过：四个相关crate `cargo check`、VFS running start→write/read生命周期测试、API typed owner/binding与增量snapshot两项测试、workspace fmt与diff check均通过。strict no-deps clippy执行后仅命中既有`apply_patch.rs:246 collapsible_if`与`shell.rs:982 too_many_arguments`，未改无关告警。
 - ARD-011真实`pnpm dev` Run `689ea30d-cdf2-4e1b-aac9-613dc72de8ed` / agent `649e80d6-bd33-4337-929e-f0856fae58f9`：`main://` start返回`running`、terminal `term-1784122916605-a9eb7028`、`next_seq=0`；同轮read返回`completed`、exit 0、`next_seq=4`，下一用户轮不带cursor读取同一已完成terminal仍取得`shell-start`与`shell-done`完整retained output。数据库同时保留旧terminal的“未找到可续接终端”失败与新terminal三条completed记录，完成同库前后对照。
+- ARD-012真实embedded PostgreSQL回归在Runtime UoW末阶段注入失败，证明projection/journal/operation/effect/quarantine全部回滚；重试从committed base提交唯一ProtocolViolation、Lost、terminal presentation/effect/quarantine，且thread column revision、projection revision与journal MAX(revision)一致，event head一致。
+- ARD-012 fabricated `DriverError::Terminalized`真实outbox claim回归证明canonical operation仍active时release/no-ack且可reclaim，claim期间canonical terminal后二次读取才ack。Runtime interface 44、Native 37+16、Codex 50、Remote 19、相关crate check、contracts、fmt与diff check通过；本轮未启动`pnpm dev`，真实Provider产品链仍待复验。

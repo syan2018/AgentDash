@@ -387,6 +387,29 @@ impl DriverEventSink for FailAfterFirstEventSink {
     }
 }
 
+#[derive(Default)]
+struct TerminalizingSink {
+    attempts: std::sync::atomic::AtomicUsize,
+    events: Mutex<Vec<DriverEventEnvelope>>,
+}
+
+#[async_trait]
+impl DriverEventSink for TerminalizingSink {
+    async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
+        self.events.lock().await.push(event);
+        if self
+            .attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            > 0
+        {
+            return Err(DriverError::Terminalized {
+                reason: "test Managed Runtime terminalized the turn".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
 fn recipe(tool_set_revision: ToolSetRevision) -> ContextRecipe {
     ContextRecipe {
         revision: ContextRecipeRevision(1),
@@ -1580,6 +1603,52 @@ async fn failed_event_delivery_aborts_agent_core_before_the_next_turn() {
     })
     .await
     .expect("Agent Core must become idle before the next turn");
+}
+
+#[tokio::test]
+async fn managed_runtime_terminalization_stops_event_pump_without_binding_lost_fallback() {
+    let (driver, binding) = driver_fixture().await;
+    let sink = Arc::new(TerminalizingSink::default());
+    driver
+        .dispatch(
+            DriverCommandEnvelope {
+                request_id: id("request-runtime-terminalized"),
+                operation_id: id("operation-runtime-terminalized"),
+                presentation_thread_id: id("presentation-thread-1"),
+                binding_id: id("binding-1"),
+                generation: RuntimeDriverGeneration(4),
+                source_thread_id: binding.source_thread_id,
+                runtime_turn_id: Some(id("turn-runtime-terminalized")),
+                presentation_turn_id: Some(id("presentation-turn-runtime-terminalized")),
+                command: thread_start(
+                    "presentation-turn-runtime-terminalized",
+                    vec![RuntimeInput::Text {
+                        text: "stop after canonical terminal".into(),
+                    }],
+                ),
+            },
+            sink.clone(),
+        )
+        .await
+        .expect("prompt delivery is accepted before Managed Runtime terminalizes the stream");
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while sink.attempts.load(std::sync::atomic::Ordering::SeqCst) < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("event pump must observe terminalized admission");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    assert!(sink.events.lock().await.iter().all(|event| {
+        event.facts.iter().all(|fact| {
+            !matches!(
+                fact,
+                RuntimeJournalFact::Internal(RuntimeEvent::BindingLost { .. })
+            )
+        })
+    }));
 }
 
 #[tokio::test]

@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     PostgresAgentRuntimeCompositionRepository, PostgresAgentRuntimeContextBroker,
-    PostgresRuntimeRepository,
+    PostgresRuntimeRepository, agent_runtime_driver_sink::admit_driver_event_to_pump,
 };
 use agentdash_agent::compaction::execute_compaction;
 use agentdash_agent::{
@@ -1250,16 +1250,13 @@ impl DriverEventSink for DurableWorkerEventSink {
         &self,
         event: DriverEventEnvelope,
     ) -> Result<(), agentdash_agent_runtime_contract::DriverError> {
-        self.runtime
-            .ingest_driver_event(event)
-            .await
-            .map(|_| ())
-            .map_err(
-                |error| agentdash_agent_runtime_contract::DriverError::Lost {
-                    reason: error.to_string(),
-                    retryable: true,
-                },
-            )
+        match self.runtime.ingest_driver_event(event).await {
+            Ok(admission) => admit_driver_event_to_pump(admission),
+            Err(error) => Err(agentdash_agent_runtime_contract::DriverError::Lost {
+                reason: error.to_string(),
+                retryable: true,
+            }),
+        }
     }
 }
 

@@ -467,6 +467,11 @@ impl RemoteRuntimeDriver {
                             bindings.remove(&binding_id);
                         }
                     }
+                    Err(DriverError::Terminalized { .. }) => {
+                        // Managed Runtime already committed the canonical critical terminal.
+                        // Retire this proxy route without fabricating a second BindingLost fact.
+                        self.active_bindings.lock().await.remove(&binding_id);
+                    }
                     Err(error) if turn_terminal || releases_binding => {
                         let binding_lost = DriverEventEnvelope {
                             binding_id: binding_id.clone(),
@@ -1451,6 +1456,21 @@ mod tests {
                     retryable: true,
                 })
             }
+        }
+    }
+
+    #[derive(Default)]
+    struct TerminalizingSink {
+        attempts: tokio::sync::Mutex<Vec<DriverEventEnvelope>>,
+    }
+
+    #[async_trait]
+    impl DriverEventSink for TerminalizingSink {
+        async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
+            self.attempts.lock().await.push(event);
+            Err(DriverError::Terminalized {
+                reason: "Managed Runtime already committed the critical terminal".into(),
+            })
         }
     }
 
@@ -2666,6 +2686,73 @@ mod tests {
             3,
             "only a committed terminal advances the duplicate fence"
         );
+    }
+
+    #[tokio::test]
+    async fn runtime_terminalized_remote_delivery_retires_route_without_binding_lost_fallback() {
+        let driver = RemoteRuntimeDriver {
+            instance_id: id("service-runtime-terminalized"),
+            generation: RuntimeDriverGeneration(3),
+            source_instance_id: id("source-service-runtime-terminalized"),
+            source_generation: RuntimeDriverGeneration(8),
+            placement: Arc::new(ClosedPlacement),
+            host: test_host_ports(),
+            next_frame_id: AtomicU64::new(1),
+            pending: tokio::sync::Mutex::new(HashMap::new()),
+            active_bindings: tokio::sync::Mutex::new(HashMap::new()),
+            connection_lost: AtomicBool::new(false),
+        };
+        let sink = Arc::new(TerminalizingSink::default());
+        let binding_id: RuntimeBindingId = id("binding-runtime-terminalized");
+        driver.active_bindings.lock().await.insert(
+            binding_id.clone(),
+            ActiveRemoteBinding {
+                binding_id: binding_id.clone(),
+                generation: RuntimeDriverGeneration(3),
+                source_thread_id: id("source-thread-runtime-terminalized"),
+                source_turn_id: Some(id("source-turn-runtime-terminalized")),
+                operation_id: Some(id("operation-runtime-terminalized")),
+                dispatch_request_id: id("request-runtime-terminalized"),
+                terminal_source_turns: HashSet::new(),
+                sink: sink.clone(),
+            },
+        );
+
+        driver
+            .handle_inbound(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(1),
+                critical: true,
+                frame: RuntimeWireFrame::Notification(Box::new(
+                    RuntimeWireNotification::DriverEvent(DriverEventEnvelope {
+                        binding_id: binding_id.clone(),
+                        generation: RuntimeDriverGeneration(8),
+                        operation_id: Some(id("operation-runtime-terminalized")),
+                        source_thread_id: id("source-thread-runtime-terminalized"),
+                        source_turn_id: Some(id("source-turn-runtime-terminalized")),
+                        source_item_id: None,
+                        source_request_id: None,
+                        source_entry_index: None,
+                        facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                            turn_id: id("runtime-turn-runtime-terminalized"),
+                            terminal: RuntimeTurnTerminal::Completed,
+                            message: None,
+                            diagnostic: None,
+                        })],
+                    }),
+                )),
+            })
+            .await;
+
+        assert!(driver.active_bindings.lock().await.is_empty());
+        let attempts = sink.attempts.lock().await;
+        assert_eq!(attempts.len(), 1);
+        assert!(attempts.iter().flat_map(|event| &event.facts).all(|fact| {
+            !matches!(
+                fact,
+                RuntimeJournalFact::Internal(RuntimeEvent::BindingLost { .. })
+            )
+        }));
     }
 
     #[tokio::test]

@@ -202,6 +202,9 @@ pub enum DriverEventQuarantineReason {
     InvalidTransition {
         error: crate::TransitionError,
     },
+    InvalidDriverFact {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

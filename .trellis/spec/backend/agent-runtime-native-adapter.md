@@ -55,6 +55,8 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - `TurnStart` acceptance已经把canonical `TurnStarted`写入Runtime projection；Driver回报相同`runtime_turn_id`的`TurnStarted`是同身份ack，不新增第二条lifecycle transition。不同identity仍属于critical protocol violation。
 - Driver一旦已经发送`TurnTerminal`，底层Agent task返回同一失败只能形成成功的dispatch completion；否则durable outbox会把已终态命令当成“acceptance前拒绝”重派。只有尚未产生authoritative terminal的Rejected/Lost才向dispatch caller返回错误。
 - Driver使用`Arc<dyn DriverEventSink>`，streaming和terminal可以异步送达；authoritative sink failure必须向上返回，不能静默丢事件后报告成功。
+- Provider retry/status只映射为完整ephemeral `PlatformEvent::ProviderAttemptStatus` presentation；Native mapper不生成第二份internal transient summary。该状态不推进durable Runtime revision或cursor。
+- event sink返回`DriverError::Terminalized`表示Managed Runtime已原子提交critical terminal；Native accepted-turn pump必须立即停止并清理active-turn fence，不再发送后续terminal或fallback `BindingLost`。其它sink error继续按其原有失败语义传播。
 - Clean Agent Core只拥有provider-neutral inference/stream/tool loop。它不依赖Application、Domain、Codex/Backbone/vendor DTO、AgentDash lifecycle prompt、runtime compaction policy或repository。
 - Provider-specific DTO放在protocol/adapter；`ThinkingLevel`是provider-neutral Core type。Core不公开RuntimeCompactionDelegate，也不执行pre-provider/compact-only/manual AgentDash policy。
 - API旧Pi生产构造入口在Native阶段删除。Provider registry从legacy Pi源码抽离、Pi物理删除与runtime-session dead compaction SPI删除随WP08唯一cutover完成，不保留双轨或fallback。
@@ -72,6 +74,8 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 | compaction activation重复 | exact idempotent receipt |
 | compaction activation digest不匹配 | reject，不改变live context |
 | mapper/sink/Agent task失败 | error传播且active-turn fence清理 |
+| Provider retry/status | 仅一份ephemeral presentation；无internal fact、durable revision或binding loss |
+| sink返回`Terminalized` | accepted-turn pump停止并清理fence，不追加`BindingLost` |
 | Turn命令缺少`runtime_turn_id` | side effect前critical protocol error |
 | Tool/Hook callback把source turn作为Runtime turn | Runtime transition拒绝；不得写第二套坐标 |
 | Native与Broker分别投影同一tool started payload | contract violation；只允许binding effective presentation route选中的owner提交 |
@@ -98,6 +102,7 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - Direct Callback测试必须让source/runtime/presentation item ID不同，并覆盖ApplyPatch、shell control及重复调用经Broker执行且不发生idempotency conflict；`VendorStream`组合场景断言Broker internal与Native presentation各自恰好一次。
 - 覆盖managed compaction exact activation、wrong digest/checkpoint、duplicate replay和digest选择不依赖map ordering。
 - 覆盖unsupported modality在任何副作用前拒绝，以及mapper/sink/task error的active fence清理。
+- 覆盖Provider retry/status只有ephemeral presentation，以及`Terminalized`在至少一次成功emit后停止pump、零fallback `BindingLost`。
 - Runtime interface覆盖matching Driver `TurnStarted`只得到`Observed`且revision不变；Native工具轮次覆盖Tool/Hook使用canonical Turn、terminal后task error不触发同request重派。
 - recovery测试从真实durable journal重建完整user/assistant/tool-call/tool-result transcript，并覆盖compaction边界后的tail replay、typed shell/fs/MCP item与readable ID水位。
 - Contract/Wire/TestSupport/Host conformance与generated TS/schema check必须通过。

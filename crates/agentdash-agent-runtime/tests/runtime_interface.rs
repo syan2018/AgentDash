@@ -2535,7 +2535,7 @@ async fn exactly_one_terminal_and_lost_are_authoritative() {
             }))
             .await
             .expect("critical protocol fact"),
-        DriverEventAdmission::Durable { .. }
+        DriverEventAdmission::Terminalized { .. }
     ));
     assert_eq!(store.quarantined().await.len(), 1);
     assert!(
@@ -2549,6 +2549,114 @@ async fn exactly_one_terminal_and_lost_are_authoritative() {
             .find_operation(&id("op-2"))
             .await
             .expect("read")
+            .expect("operation")
+            .terminal
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn driver_batch_transition_failure_discards_staged_prefix_and_terminalizes_atomically() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("thread id");
+    runtime
+        .execute(command(
+            "op-staged-violation",
+            "key-staged-violation",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-staged-violation"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("turn");
+
+    let admission = runtime
+        .ingest_driver_event(driver_facts(vec![
+            RuntimeJournalFact::Internal(RuntimeEvent::ConversationError {
+                turn_id: Some(id("turn-op-staged-violation")),
+                error: RuntimeConversationError {
+                    code: Some("staged-prefix-must-not-commit".into()),
+                    message: "valid prefix".into(),
+                    retryable: true,
+                    details: None,
+                },
+            }),
+            RuntimeJournalFact::Internal(RuntimeEvent::ItemTerminal {
+                turn_id: id("turn-op-staged-violation"),
+                item_id: id("missing-item"),
+                terminal: RuntimeItemTerminal::Lost {
+                    message: Some("invalid suffix".into()),
+                },
+            }),
+        ]))
+        .await
+        .expect("critical transition violation must commit from the base revision");
+    assert!(matches!(
+        admission,
+        DriverEventAdmission::Terminalized { .. }
+    ));
+
+    let snapshot = thread_snapshot(&runtime, thread_id.clone()).await;
+    assert_eq!(snapshot.status, RuntimeThreadStatus::Lost);
+    assert!(snapshot.active_turn_id.is_none());
+    let records = store
+        .journal_records_after(&thread_id, None)
+        .await
+        .expect("journal")
+        .records;
+    assert!(records.iter().all(|record| !matches!(
+        record.fact(),
+        RuntimeJournalFact::Internal(RuntimeEvent::ConversationError { error, .. })
+            if error.code.as_deref() == Some("staged-prefix-must-not-commit")
+    )));
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| matches!(
+                record.fact(),
+                RuntimeJournalFact::Internal(RuntimeEvent::ProtocolViolation {
+                    critical: true,
+                    ..
+                })
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| matches!(
+                record.fact(),
+                RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                    terminal: RuntimeTurnTerminal::Lost,
+                    ..
+                })
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| is_turn_terminal_record(record))
+            .count(),
+        1
+    );
+    assert_eq!(store.terminal_application_effects().await.len(), 1);
+    assert_eq!(store.quarantined().await.len(), 1);
+    assert!(
+        store
+            .find_operation(&id("op-staged-violation"))
+            .await
+            .expect("operation read")
             .expect("operation")
             .terminal
             .is_some()
@@ -2665,27 +2773,53 @@ async fn application_terminal_projection_is_committed_after_all_connector_facts_
 }
 
 #[tokio::test]
-async fn terminal_projection_rejects_multiple_terminals_and_missing_turn_mapping() {
-    let (store, runtime) = fixture();
-    let thread_id = runtime
-        .execute(start())
-        .await
-        .expect("thread")
-        .thread_id
-        .expect("thread id");
-    runtime
-        .execute(command(
-            "op-terminal-reject",
-            "key-terminal-reject",
-            Some(3),
-            RuntimeCommand::TurnStart {
-                thread_id: thread_id.clone(),
-                presentation_turn_id: id("presentation-turn-terminal-reject"),
-                input: Vec::new(),
-            },
-        ))
-        .await
-        .expect("turn");
+async fn invalid_driver_terminals_are_atomically_terminalized_and_quarantined() {
+    async fn assert_terminalized(facts: Vec<RuntimeJournalFact>) {
+        let (store, runtime) = fixture();
+        let thread_id = runtime
+            .execute(start())
+            .await
+            .expect("thread")
+            .thread_id
+            .expect("thread id");
+        runtime
+            .execute(command(
+                "op-terminal-reject",
+                "key-terminal-reject",
+                Some(3),
+                RuntimeCommand::TurnStart {
+                    thread_id: thread_id.clone(),
+                    presentation_turn_id: id("presentation-turn-terminal-reject"),
+                    input: Vec::new(),
+                },
+            ))
+            .await
+            .expect("turn");
+        assert!(matches!(
+            runtime
+                .ingest_driver_event(driver_facts(facts))
+                .await
+                .expect("invalid driver lifecycle must commit its critical terminal"),
+            DriverEventAdmission::Terminalized { .. }
+        ));
+        let snapshot = thread_snapshot(&runtime, thread_id.clone()).await;
+        assert_eq!(snapshot.status, RuntimeThreadStatus::Lost);
+        assert!(snapshot.active_turn_id.is_none());
+        assert_eq!(store.quarantined().await.len(), 1);
+        assert_eq!(store.terminal_application_effects().await.len(), 1);
+        assert_eq!(
+            store
+                .journal_records_after(&thread_id, None)
+                .await
+                .expect("journal")
+                .records
+                .iter()
+                .filter(|record| is_turn_terminal_record(record))
+                .count(),
+            1
+        );
+    }
+
     let terminal = || {
         RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
             turn_id: id("turn-op-terminal-reject"),
@@ -2694,26 +2828,16 @@ async fn terminal_projection_rejects_multiple_terminals_and_missing_turn_mapping
             diagnostic: None,
         })
     };
-    assert!(matches!(
-        runtime
-            .ingest_driver_event(driver_facts(vec![terminal(), terminal()]))
-            .await,
-        Err(RuntimeExecuteError::InvalidCommand { .. })
-    ));
-    assert!(matches!(
-        runtime
-            .ingest_driver_event(driver(RuntimeEvent::TurnTerminal {
-                turn_id: id("unknown-terminal-turn"),
-                terminal: RuntimeTurnTerminal::Failed,
-                message: Some("missing mapping".into()),
-                diagnostic: None,
-            }))
-            .await,
-        Err(RuntimeExecuteError::InvalidCommand { .. })
-    ));
-    let snapshot = thread_snapshot(&runtime, thread_id).await;
-    assert!(snapshot.active_turn_id.is_some());
-    assert!(store.quarantined().await.is_empty());
+    assert_terminalized(vec![terminal(), terminal()]).await;
+    assert_terminalized(vec![RuntimeJournalFact::Internal(
+        RuntimeEvent::TurnTerminal {
+            turn_id: id("unknown-terminal-turn"),
+            terminal: RuntimeTurnTerminal::Failed,
+            message: Some("missing mapping".into()),
+            diagnostic: None,
+        },
+    )])
+    .await;
 }
 
 #[tokio::test]
@@ -3312,7 +3436,7 @@ async fn item_and_interaction_transitions_share_the_thread_projection() {
             }))
             .await
             .expect("late delta protocol fact"),
-        DriverEventAdmission::Durable { .. }
+        DriverEventAdmission::Terminalized { .. }
     ));
     assert!(
         thread_snapshot(&runtime, thread_id)
@@ -3490,7 +3614,7 @@ async fn malformed_lifecycle_is_typed_quarantined_and_persists_critical_loss() {
             }))
             .await
             .expect("critical fact"),
-        DriverEventAdmission::Durable { .. }
+        DriverEventAdmission::Terminalized { .. }
     ));
     assert!(matches!(
         store.quarantined().await.as_slice(),

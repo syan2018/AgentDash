@@ -198,6 +198,8 @@ pub enum DriverError {
     ProtocolViolation { reason: String, critical: bool },
     #[error("driver result is lost: {reason}")]
     Lost { reason: String, retryable: bool },
+    #[error("managed runtime already terminalized the driver stream: {reason}")]
+    Terminalized { reason: String },
 }
 
 #[async_trait]

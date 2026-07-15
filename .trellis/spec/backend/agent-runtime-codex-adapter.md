@@ -42,6 +42,7 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 - effective route为`VendorStream`时，Codex标准dynamic tool notification是唯一session presentation producer，Broker只提交internal canonical lifecycle；route为`ToolBroker`时mapper抑制对应vendor presentation。两条路径都复用同一callback执行合同与presentation item identity。
 - 平台`SurfaceAdopt`与ContextFrame mutation在active tool turn中可以先canonical接受。Codex driver的full surface同步等待该turn terminal后再执行thread resume/rebind；等待不占用session锁，使当前tool result能够回灌并继续final assistant。
 - terminal notification只有在presentation sink提交成功后才清理active turn与推进本地terminal fence。terminal sink失败先提交binding-scoped `BindingLost`；若Lost也失败则保留active坐标，允许同terminal重试。
+- sink返回`DriverError::Terminalized`表示Managed Runtime已经提交canonical critical terminal；stdout pump必须清理active turns、pending interactions与RPC waiters并停止，不再进入普通terminal sink failure分支或补`BindingLost`。非terminalized sink error仍保留既有retry/坐标语义。
 - Approval、user input、MCP elicitation与dynamic-tool interaction都形成durable canonical Interaction。Identity包含稳定source坐标与JSON-RPC request coordinate：同request replay稳定，不同request不碰撞。只有response成功写回Codex后才移除pending并发Resolved。
 - Native compaction真实强度为Observed/Opaque：`thread/compacted`只产生opaque observation；ContextCompact不能冒充managed activation；context inspect为Opaque，thread/read为EventProjected。
 - Native Hook使用Adapter隔离HTTP callback bridge与digest-addressed immutable plugin artifact。Artifact digest覆盖plugin manifest、hooks manifest、bridge、schema和adapter revision，但不包含ephemeral endpoint token或worktree路径。
@@ -66,6 +67,7 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 | transport EOF | active turn和全部pending Interaction exactly-once Lost |
 | active dynamic tool触发SurfaceAdopt | ContextFrame exactly-once先落journal；tool完成并继续final assistant后Codex full adopt生效 |
 | terminal presentation sink失败 | 不提前遗忘active operation；BindingLost收敛或保留duplicate terminal重试能力 |
+| sink返回`Terminalized` | 清理turn/interaction/waiter并停止pump；不补第二份`BindingLost` |
 | VendorStream dynamic tool | Codex presentation start/completed各一次，Broker internal lifecycle各一次，不生成第二张card |
 | native compact notification | Opaque observation，不推进managed head |
 | duplicate/concurrent hook callback | 返回相同decision，canonical callback执行一次 |
@@ -88,6 +90,7 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 - Dynamic tool测试覆盖Broker coordinates、image output、denied/completed/interaction-required和unsupported cancellation。
 - production tracer覆盖dynamic tool -> active SurfaceAdopt/ContextFrame -> 同ID tool terminal -> final assistant -> idle full rebind，并断言全程single presentation producer。
 - terminal sink failure测试覆盖BindingLost成功与失败两种路径，验证已提交terminal不会重复、未提交terminal仍可重试。
+- terminalized测试覆盖notification、dynamic tool与EOF清理入口，断言sink只收到原事件、pump停止、waiter收到typed terminalized且没有fallback `BindingLost`。
 - Interaction测试覆盖每类server request、request-coordinate identity、replay、response failure与EOF Lost。
 - Hook测试覆盖artifact完整digest、path、concurrent materialization、trust、decision映射、duplicate callback single execution和reconcile。
 - Codex/first-party/Contract/Host/TestSupport tests、跨包cargo check、strict clippy、contracts generation、fmt与diff check必须通过。

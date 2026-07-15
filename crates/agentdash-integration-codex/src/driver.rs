@@ -1434,7 +1434,7 @@ async fn run_pump(
                         }
                     }
                     (Err(error), Some(sink)) => {
-                        let _ = sink
+                        let result = sink
                             .emit(DriverEventEnvelope {
                                 binding_id: context.binding_id.clone(),
                                 generation: context.generation,
@@ -1453,6 +1453,10 @@ async fn run_pump(
                                 )],
                             })
                             .await;
+                        if let Err(error @ DriverError::Terminalized { .. }) = result {
+                            settle_runtime_terminalized(&context.state, error).await;
+                            return;
+                        }
                     }
                     (Ok(Some(_) | None) | Err(_), None) | (Ok(None), Some(_)) => {}
                 }
@@ -1474,7 +1478,9 @@ async fn run_pump(
                     }
                 }
                 if request.method == "item/tool/call" {
-                    handle_pump_dynamic_tool(&context, request).await;
+                    if handle_pump_dynamic_tool(&context, request).await {
+                        return;
+                    }
                     continue;
                 }
                 let mapped = context
@@ -1520,7 +1526,7 @@ async fn run_pump(
                             (state.sink.clone(), operation_id)
                         };
                         if let Some(sink) = sink {
-                            let _ = sink
+                            let result = sink
                                 .emit(DriverEventEnvelope {
                                     binding_id: context.binding_id.clone(),
                                     generation: context.generation,
@@ -1539,6 +1545,10 @@ async fn run_pump(
                                     .collect(),
                                 })
                                 .await;
+                            if let Err(error @ DriverError::Terminalized { .. }) = result {
+                                settle_runtime_terminalized(&context.state, error).await;
+                                return;
+                            }
                         }
                     }
                     Err(error) => {
@@ -1601,6 +1611,10 @@ async fn emit_mapped_notification(
             }
             false
         }
+        Err(error @ DriverError::Terminalized { .. }) => {
+            settle_runtime_terminalized(state, error).await;
+            true
+        }
         Err(error) => {
             let Some(turn_id) = terminal_turn_id else {
                 return false;
@@ -1618,6 +1632,18 @@ async fn emit_mapped_notification(
             )
             .await
         }
+    }
+}
+
+async fn settle_runtime_terminalized(state: &Arc<Mutex<CodexPumpState>>, error: DriverError) {
+    let waiters = {
+        let mut state = state.lock().await;
+        state.clear_turns();
+        state.pending_interactions.clear();
+        std::mem::take(&mut state.rpc_waiters)
+    };
+    for (_, waiter) in waiters {
+        let _ = waiter.sender.send(Err(error.clone()));
     }
 }
 
@@ -1710,12 +1736,12 @@ fn reconcile_native_hook(
 async fn handle_pump_dynamic_tool(
     context: &CodexPumpContext,
     request: crate::rpc::RpcServerRequest,
-) {
+) -> bool {
     let validated = match validate_dynamic_tool_call(&request.params) {
         Ok(validated) => validated,
         Err(message) => {
             let _ = write_value(&context.stdin, &error_response(request.id, -32602, message)).await;
-            return;
+            return false;
         }
     };
     let coordinates = {
@@ -1732,7 +1758,7 @@ async fn handle_pump_dynamic_tool(
                     &error_response(request.id, -32602, error.to_string()),
                 )
                 .await;
-                return;
+                return false;
             }
         };
         let canonical_item = state
@@ -1770,7 +1796,7 @@ async fn handle_pump_dynamic_tool(
                         &error_response(request.id, -32603, error.to_string()),
                     )
                     .await;
-                    return;
+                    return false;
                 }
             };
             let _ = write_value(
@@ -1798,7 +1824,7 @@ async fn handle_pump_dynamic_tool(
                         &error_response(request.id, -32602, error.to_string()),
                     )
                     .await;
-                    return;
+                    return false;
                 }
             };
             let (sink, operation_id) = {
@@ -1818,7 +1844,7 @@ async fn handle_pump_dynamic_tool(
                         ),
                     )
                     .await;
-                    return;
+                    return false;
                 };
                 (state.sink.clone(), operation_id)
             };
@@ -1864,6 +1890,10 @@ async fn handle_pump_dynamic_tool(
                     &error_response(request.id, -32002, error.to_string()),
                 )
                 .await;
+                if matches!(error, DriverError::Terminalized { .. }) {
+                    settle_runtime_terminalized(&context.state, error).await;
+                    return true;
+                }
             }
         }
         Err(error) => {
@@ -1874,6 +1904,7 @@ async fn handle_pump_dynamic_tool(
             .await;
         }
     }
+    false
 }
 
 struct ValidatedDynamicToolCall {
@@ -1968,7 +1999,7 @@ async fn settle_pump_lost(
     }
     if let Some(sink) = sink {
         for (turn_id, active_turn) in turns {
-            let _ = sink
+            let result = sink
                 .emit(DriverEventEnvelope {
                     binding_id: binding_id.clone(),
                     generation,
@@ -1988,6 +2019,9 @@ async fn settle_pump_lost(
                     })],
                 })
                 .await;
+            if matches!(result, Err(DriverError::Terminalized { .. })) {
+                return;
+            }
         }
         for (interaction_id, pending) in interactions {
             let Ok(interaction_id) =
@@ -1995,7 +2029,7 @@ async fn settle_pump_lost(
             else {
                 continue;
             };
-            let _ = sink
+            let result = sink
                 .emit(DriverEventEnvelope {
                     binding_id: binding_id.clone(),
                     generation,
@@ -2015,6 +2049,9 @@ async fn settle_pump_lost(
                     )],
                 })
                 .await;
+            if matches!(result, Err(DriverError::Terminalized { .. })) {
+                return;
+            }
         }
     }
 }
@@ -2402,6 +2439,19 @@ mod tests {
             Err(DriverError::Unavailable {
                 reason: "injected dynamic interaction sink failure".to_string(),
                 retryable: true,
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct TerminalizingSink(TokioMutex<Vec<DriverEventEnvelope>>);
+
+    #[async_trait]
+    impl DriverEventSink for TerminalizingSink {
+        async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
+            self.0.lock().await.push(event);
+            Err(DriverError::Terminalized {
+                reason: "Managed Runtime committed a critical violation".into(),
             })
         }
     }
@@ -2867,6 +2917,138 @@ mod tests {
         ));
         assert_eq!(events[1].operation_id.as_ref(), Some(&operation_id));
         assert_eq!(events[1].source_turn_id.as_ref(), Some(&source_turn));
+    }
+
+    #[tokio::test]
+    async fn runtime_terminalized_terminal_stops_codex_pump_without_binding_lost_fallback() {
+        let sink = Arc::new(TerminalizingSink::default());
+        let binding_id =
+            agentdash_agent_runtime_contract::RuntimeBindingId::new("binding").unwrap();
+        let source_thread_id = DriverThreadId::new("source-thread").unwrap();
+        let runtime_turn = RuntimeTurnId::new("runtime-turn-terminalized").unwrap();
+        let source_turn =
+            agentdash_agent_runtime_contract::DriverTurnId::new("source-turn-terminalized")
+                .unwrap();
+        let operation_id =
+            agentdash_agent_runtime_contract::RuntimeOperationId::new("operation-terminalized")
+                .unwrap();
+        let state = Arc::new(Mutex::new(CodexPumpState::default()));
+        let (waiter_tx, waiter_rx) = oneshot::channel();
+        let mapped = {
+            let mut state = state.lock().await;
+            state.rpc_waiters.insert(
+                91,
+                PendingRpc {
+                    sender: waiter_tx,
+                    turn: None,
+                },
+            );
+            state
+                .coordinates
+                .register_turn(source_turn.as_str(), runtime_turn.clone());
+            state.active_turns.insert(
+                runtime_turn.clone(),
+                ActiveCodexTurn {
+                    source_turn_id: source_turn,
+                    operation_id: operation_id.clone(),
+                },
+            );
+            state
+                .coordinates
+                .map_notification(crate::rpc::RpcServerNotification {
+                    method: "turn/completed".to_string(),
+                    params: json!({
+                        "threadId": source_thread_id.as_str(),
+                        "turn": {
+                            "id": "source-turn-terminalized",
+                            "status": "completed",
+                            "items": [],
+                            "itemsView": "full",
+                            "error": null,
+                            "startedAt": null,
+                            "completedAt": null,
+                            "durationMs": null
+                        }
+                    }),
+                })
+                .unwrap()
+                .unwrap()
+        };
+
+        assert!(
+            emit_mapped_notification(
+                &state,
+                sink.clone(),
+                &binding_id,
+                agentdash_agent_runtime_contract::RuntimeDriverGeneration(4),
+                &source_thread_id,
+                Some(operation_id),
+                mapped,
+            )
+            .await
+        );
+        assert!(state.lock().await.active_turns.is_empty());
+        assert!(matches!(
+            waiter_rx.await.unwrap(),
+            Err(DriverError::Terminalized { .. })
+        ));
+        let events = sink.0.lock().await;
+        assert_eq!(events.len(), 1);
+        assert!(events.iter().flat_map(|event| &event.facts).all(|fact| {
+            !matches!(
+                fact,
+                RuntimeJournalFact::Internal(RuntimeEvent::BindingLost { .. })
+            )
+        }));
+    }
+
+    #[tokio::test]
+    async fn ordinary_nonterminal_sink_error_does_not_stop_codex_pump() {
+        let sink = Arc::new(AlwaysRejectingSink::default());
+        let state = Arc::new(Mutex::new(CodexPumpState::default()));
+        let runtime_turn = RuntimeTurnId::new("runtime-turn-nonterminal").unwrap();
+        state.lock().await.active_turns.insert(
+            runtime_turn.clone(),
+            ActiveCodexTurn {
+                source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new(
+                    "source-turn-nonterminal",
+                )
+                .unwrap(),
+                operation_id: agentdash_agent_runtime_contract::RuntimeOperationId::new(
+                    "operation-nonterminal",
+                )
+                .unwrap(),
+            },
+        );
+        let mapped = MappedEvent {
+            source_turn_id: None,
+            source_item_id: None,
+            runtime_event: None,
+            presentation: ImmutablePresentationEvent::new(
+                PresentationDurability::Durable,
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                        key: "nonterminal".into(),
+                        value: json!({"value": true}),
+                    },
+                ),
+            ),
+        };
+
+        assert!(
+            !emit_mapped_notification(
+                &state,
+                sink.clone(),
+                &agentdash_agent_runtime_contract::RuntimeBindingId::new("binding").unwrap(),
+                agentdash_agent_runtime_contract::RuntimeDriverGeneration(4),
+                &DriverThreadId::new("source-thread").unwrap(),
+                None,
+                mapped,
+            )
+            .await
+        );
+        assert!(state.lock().await.active_turns.contains_key(&runtime_turn));
+        assert_eq!(sink.0.lock().await.len(), 1);
     }
 
     #[test]

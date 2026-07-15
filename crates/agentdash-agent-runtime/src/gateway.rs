@@ -62,6 +62,11 @@ pub enum DriverEventAdmission {
     Durable {
         sequence: EventSequence,
     },
+    /// Managed Runtime atomically persisted a critical violation and terminalized the binding.
+    /// The driver event pump must stop without emitting a second fallback terminal.
+    Terminalized {
+        sequence: EventSequence,
+    },
     Transient,
     /// Driver 对 Managed Runtime 已建立的 canonical lifecycle transition 的同身份确认。
     Observed,
@@ -385,7 +390,7 @@ where
         // Serialize the read-transition-CAS boundary so a valid event never fails merely because
         // another valid event advanced the projection between load and commit.
         let _ingest = self.driver_event_ingest.lock().await;
-        let Some(mut state) = self
+        let Some(committed_state) = self
             .store
             .find_thread_by_source(&source.binding_id, &source.source_thread_id)
             .await
@@ -396,13 +401,13 @@ where
             return Ok(DriverEventAdmission::Quarantined);
         };
 
-        if source.binding_id != state.binding_id
-            || source.generation != state.driver_generation
-            || source.source_thread_id != state.source_thread_id
+        if source.binding_id != committed_state.binding_id
+            || source.generation != committed_state.driver_generation
+            || source.source_thread_id != committed_state.source_thread_id
         {
             let reason = DriverEventQuarantineReason::StaleBinding {
-                expected_binding_id: state.binding_id.clone(),
-                expected_generation: state.driver_generation,
+                expected_binding_id: committed_state.binding_id.clone(),
+                expected_generation: committed_state.driver_generation,
             };
             self.quarantine(source, reason).await?;
             return Ok(DriverEventAdmission::Quarantined);
@@ -418,28 +423,31 @@ where
                 && let Some((reason, code, message)) = forbidden_driver_internal_fact(event)
             {
                 return self
-                    .persist_protocol_violation(state, source, reason, code, message)
+                    .persist_protocol_violation(committed_state, source, reason, code, message)
                     .await;
             }
         }
 
-        let thread_id = state.thread_id.clone();
+        let thread_id = committed_state.thread_id.clone();
         let prior_records = self
             .store
             .journal_records_after(&thread_id, None)
             .await
             .map_err(store_execute_error)?
             .records;
-        let expected = state.revision;
+        let expected = committed_state.revision;
         let observed_source_turn = source.facts.iter().find_map(|fact| {
             let RuntimeJournalFact::Internal(RuntimeEvent::TurnStarted { turn_id, .. }) = fact
             else {
                 return None;
             };
-            (state.active_turn_id.as_ref() == Some(turn_id))
+            (committed_state.active_turn_id.as_ref() == Some(turn_id))
                 .then(|| source.source_turn_id.as_ref())
                 .flatten()
         });
+        // Every fact in the envelope is reduced into this in-memory projection. The repository
+        // revision remains the immutable committed base until the complete batch is valid.
+        let mut state = committed_state.clone();
         let mut records = Vec::new();
         let mut presentation_publication = Vec::new();
         let mut observed = false;
@@ -477,30 +485,67 @@ where
             }
             if let RuntimeJournalFact::Internal(event) = &fact {
                 update_runtime_coordinate(&mut runtime_coordinate, event);
-                if let Some(context) =
-                    terminal_presentation_context(&state, event, &prior_records, &records)?
-                {
+                let context =
+                    match terminal_presentation_context(&state, event, &prior_records, &records) {
+                        Ok(context) => context,
+                        Err(error) => {
+                            let message = error.to_string();
+                            return self
+                                .persist_protocol_violation(
+                                    committed_state,
+                                    source,
+                                    DriverEventQuarantineReason::InvalidDriverFact {
+                                        message: message.clone(),
+                                    },
+                                    RuntimeProtocolViolationCode::InvalidLifecycleTransition,
+                                    message,
+                                )
+                                .await;
+                        }
+                    };
+                if let Some(context) = context {
                     if terminal_context.replace(context).is_some() {
-                        return Err(RuntimeExecuteError::InvalidCommand {
-                            reason: "driver fact batch contains multiple turn terminals".into(),
-                        });
+                        let message =
+                            "driver fact batch contains multiple turn terminals".to_string();
+                        return self
+                            .persist_protocol_violation(
+                                committed_state,
+                                source,
+                                DriverEventQuarantineReason::InvalidDriverFact {
+                                    message: message.clone(),
+                                },
+                                RuntimeProtocolViolationCode::DuplicateTerminal,
+                                message,
+                            )
+                            .await;
                     }
                 }
                 if let RuntimeEvent::TurnStarted { turn_id, .. } = event
                     && state.active_turn_id.as_ref() == Some(turn_id)
                 {
-                    normalize_presentation_coordinate(&state, &mut runtime_coordinate).map_err(
-                        |error| RuntimeExecuteError::InvalidCommand {
-                            reason: error.to_string(),
-                        },
-                    )?;
+                    if let Err(error) =
+                        normalize_presentation_coordinate(&state, &mut runtime_coordinate)
+                    {
+                        let message = error.to_string();
+                        return self
+                            .persist_protocol_violation(
+                                committed_state,
+                                source,
+                                DriverEventQuarantineReason::InvalidDriverFact {
+                                    message: message.clone(),
+                                },
+                                RuntimeProtocolViolationCode::InvalidLifecycleTransition,
+                                message,
+                            )
+                            .await;
+                    }
                     observed = true;
                     continue;
                 }
                 if event.is_transient() {
                     return self
                         .persist_protocol_violation(
-                            state,
+                            committed_state,
                             source,
                             DriverEventQuarantineReason::TransientInternalFact,
                             RuntimeProtocolViolationCode::InvalidLifecycleTransition,
@@ -509,11 +554,22 @@ where
                         )
                         .await;
                 }
-                normalize_presentation_coordinate(&state, &mut runtime_coordinate).map_err(
-                    |error| RuntimeExecuteError::InvalidCommand {
-                        reason: error.to_string(),
-                    },
-                )?;
+                if let Err(error) =
+                    normalize_presentation_coordinate(&state, &mut runtime_coordinate)
+                {
+                    let message = error.to_string();
+                    return self
+                        .persist_protocol_violation(
+                            committed_state,
+                            source,
+                            DriverEventQuarantineReason::InvalidDriverFact {
+                                message: message.clone(),
+                            },
+                            RuntimeProtocolViolationCode::InvalidLifecycleTransition,
+                            message,
+                        )
+                        .await;
+                }
                 closes_live_stream |= closes_driver_stream(event);
             }
 
@@ -556,7 +612,7 @@ where
                 Ok(record) => record,
                 Err(error) => {
                     return self
-                        .persist_transition_violation(state, source, error)
+                        .persist_transition_violation(committed_state, source, error)
                         .await;
                 }
             };
@@ -572,23 +628,49 @@ where
                 ..
             }) = &fact
             {
-                let source_operation_id = source.operation_id.clone().ok_or_else(|| {
-                    RuntimeExecuteError::InvalidCommand {
-                        reason: format!(
+                let source_operation_id = match source.operation_id.clone() {
+                    Some(operation_id) => operation_id,
+                    None => {
+                        let message = format!(
                             "driver turn terminal {turn_id} is missing its accepted operation coordinate"
-                        ),
+                        );
+                        return self
+                            .persist_protocol_violation(
+                                committed_state,
+                                source,
+                                DriverEventQuarantineReason::InvalidDriverFact {
+                                    message: message.clone(),
+                                },
+                                RuntimeProtocolViolationCode::InvalidLifecycleTransition,
+                                message,
+                            )
+                            .await;
                     }
-                })?;
-                let owning_operation_id = state
+                };
+                let owning_operation_id = match state
                     .operations
                     .keys()
                     .find(|operation_id| canonical_turn_id(operation_id) == *turn_id)
                     .cloned()
-                    .ok_or_else(|| RuntimeExecuteError::InvalidCommand {
-                        reason: format!(
+                {
+                    Some(operation_id) => operation_id,
+                    None => {
+                        let message = format!(
                             "driver turn terminal {turn_id} has no owning TurnStart operation"
-                        ),
-                    })?;
+                        );
+                        return self
+                            .persist_protocol_violation(
+                                committed_state,
+                                source,
+                                DriverEventQuarantineReason::InvalidDriverFact {
+                                    message: message.clone(),
+                                },
+                                RuntimeProtocolViolationCode::InvalidLifecycleTransition,
+                                message,
+                            )
+                            .await;
+                    }
+                };
                 let operation_terminal = turn_operation_terminal(*terminal, message.clone());
                 for operation_id in [owning_operation_id, source_operation_id] {
                     if records.iter().any(|record| {
@@ -606,11 +688,19 @@ where
                         state.operations.get(&operation_id),
                         Some(crate::EntityPhase::Active)
                     ) {
-                        return Err(RuntimeExecuteError::InvalidCommand {
-                            reason: format!(
-                                "driver terminal operation {operation_id} is not active"
-                            ),
-                        });
+                        let message =
+                            format!("driver terminal operation {operation_id} is not active");
+                        return self
+                            .persist_protocol_violation(
+                                committed_state,
+                                source,
+                                DriverEventQuarantineReason::InvalidDriverFact {
+                                    message: message.clone(),
+                                },
+                                RuntimeProtocolViolationCode::InvalidLifecycleTransition,
+                                message,
+                            )
+                            .await;
                     }
                     update_runtime_coordinate(
                         &mut runtime_coordinate,
@@ -619,159 +709,97 @@ where
                             terminal: operation_terminal.clone(),
                         },
                     );
-                    let operation_record = state
-                        .append_durable_fact(
-                            RuntimeJournalFact::Internal(RuntimeEvent::OperationTerminal {
-                                operation_id,
-                                terminal: operation_terminal.clone(),
-                            }),
-                            recorded_at_ms,
-                            Some(source.binding_id.clone()),
-                            None,
-                            runtime_coordinate.clone(),
-                        )
-                        .map_err(transition_execute_error)?;
+                    let operation_record = match state.append_durable_fact(
+                        RuntimeJournalFact::Internal(RuntimeEvent::OperationTerminal {
+                            operation_id,
+                            terminal: operation_terminal.clone(),
+                        }),
+                        recorded_at_ms,
+                        Some(source.binding_id.clone()),
+                        None,
+                        runtime_coordinate.clone(),
+                    ) {
+                        Ok(record) => record,
+                        Err(error) => {
+                            return self
+                                .persist_transition_violation(committed_state, source, error)
+                                .await;
+                        }
+                    };
                     records.push(operation_record);
                 }
             }
 
             if let Some(message) = loss_message {
                 for terminal in state.lost_terminal_events(Some(message)) {
-                    if let Some(context) =
-                        terminal_presentation_context(&state, &terminal, &prior_records, &records)?
-                    {
+                    let context = match terminal_presentation_context(
+                        &state,
+                        &terminal,
+                        &prior_records,
+                        &records,
+                    ) {
+                        Ok(context) => context,
+                        Err(error) => {
+                            let message = error.to_string();
+                            return self
+                                .persist_protocol_violation(
+                                    committed_state,
+                                    source,
+                                    DriverEventQuarantineReason::InvalidDriverFact {
+                                        message: message.clone(),
+                                    },
+                                    RuntimeProtocolViolationCode::InvalidLifecycleTransition,
+                                    message,
+                                )
+                                .await;
+                        }
+                    };
+                    if let Some(context) = context {
                         if terminal_context.replace(context).is_some() {
-                            return Err(RuntimeExecuteError::InvalidCommand {
-                                reason: "binding loss produced multiple turn terminals".into(),
-                            });
+                            let message =
+                                "binding loss produced multiple turn terminals".to_string();
+                            return self
+                                .persist_protocol_violation(
+                                    committed_state,
+                                    source,
+                                    DriverEventQuarantineReason::InvalidDriverFact {
+                                        message: message.clone(),
+                                    },
+                                    RuntimeProtocolViolationCode::DuplicateTerminal,
+                                    message,
+                                )
+                                .await;
                         }
                     }
                     update_runtime_coordinate(&mut runtime_coordinate, &terminal);
-                    let record = state
-                        .append_durable_fact(
-                            RuntimeJournalFact::Internal(terminal),
-                            crate::model::current_time_ms(),
-                            Some(source.binding_id.clone()),
-                            None,
-                            runtime_coordinate.clone(),
-                        )
-                        .map_err(transition_execute_error)?;
+                    let record = match state.append_durable_fact(
+                        RuntimeJournalFact::Internal(terminal),
+                        crate::model::current_time_ms(),
+                        Some(source.binding_id.clone()),
+                        None,
+                        runtime_coordinate.clone(),
+                    ) {
+                        Ok(record) => record,
+                        Err(error) => {
+                            return self
+                                .persist_transition_violation(committed_state, source, error)
+                                .await;
+                        }
+                    };
                     records.push(record);
                 }
             }
         }
 
-        if let Some(mut context) = terminal_context {
-            if context.diagnostic.is_none() {
-                context.diagnostic = records
-                    .iter()
-                    .rev()
-                    .chain(prior_records.iter().rev())
-                    .find_map(|record| {
-                        if record.carrier().coordinate.runtime_turn_id.as_ref()
-                            != Some(&context.runtime_turn_id)
-                        {
-                            return None;
-                        }
-                        let RuntimeJournalFact::Presentation(event) = record.fact() else {
-                            return None;
-                        };
-                        let agentdash_agent_protocol::BackboneEvent::Platform(
-                            agentdash_agent_protocol::PlatformEvent::RuntimeTerminalDiagnostic(
-                                diagnostic,
-                            ),
-                        ) = &event.event
-                        else {
-                            return None;
-                        };
-                        Some(diagnostic.clone())
-                    });
-            }
-            context.prior_records.extend(records.iter().cloned());
-            let completed_at_ms = context.completed_at_ms;
-            let effect_context = context.clone();
-            let projected = self
-                .application_presentation_projector
-                .project_terminal(context)
-                .map_err(|error| RuntimeExecuteError::InvalidCommand {
-                    reason: error.to_string(),
-                })?;
-            validate_presentation_thread_ids(&projected, &state.presentation_thread_id).map_err(
-                |error| RuntimeExecuteError::InvalidCommand {
-                    reason: error.to_string(),
-                },
+        if let Some(context) = terminal_context {
+            self.append_terminal_application_projection(
+                &mut state,
+                &source,
+                &mut records,
+                &mut presentation_publication,
+                &mut terminal_application_effects,
+                context,
             )?;
-            let mut terminal_presentation_record = None;
-            for input in projected {
-                if input.event.durability
-                    != agentdash_agent_runtime_contract::PresentationDurability::Durable
-                {
-                    return Err(RuntimeExecuteError::InvalidCommand {
-                        reason: "application terminal projection must be durable".into(),
-                    });
-                }
-                let record = state
-                    .append_durable_fact(
-                        RuntimeJournalFact::Presentation(input.event),
-                        completed_at_ms,
-                        Some(source.binding_id.clone()),
-                        None,
-                        input.coordinate,
-                    )
-                    .map_err(transition_execute_error)?;
-                if is_turn_terminal_presentation(&record) {
-                    if terminal_presentation_record.is_some() {
-                        return Err(RuntimeExecuteError::InvalidCommand {
-                            reason: "application terminal projector produced multiple turn_terminal presentations"
-                                .into(),
-                        });
-                    }
-                    terminal_presentation_record = Some(record.clone());
-                }
-                presentation_publication.push(PresentationPublication::Durable(record.clone()));
-                records.push(record);
-            }
-            let terminal_presentation_record = terminal_presentation_record.ok_or_else(|| {
-                RuntimeExecuteError::InvalidCommand {
-                    reason:
-                        "application terminal projector must produce one turn_terminal presentation"
-                            .into(),
-                }
-            })?;
-            let terminal_event_sequence = terminal_presentation_record
-                .carrier()
-                .sequence
-                .ok_or_else(|| RuntimeExecuteError::InvalidCommand {
-                    reason: "turn_terminal presentation must be durable".into(),
-                })?;
-            let effect_id = crate::RuntimeTerminalApplicationEffectId::new(format!(
-                "terminal-effect:{}:{}:{}",
-                thread_id, effect_context.runtime_turn_id, terminal_event_sequence.0
-            ))
-            .map_err(store_execute_error)?;
-            terminal_application_effects.push(crate::RuntimeTerminalApplicationEffectOutboxEntry {
-                effect_id,
-                runtime_thread_id: thread_id.clone(),
-                presentation_thread_id: effect_context.presentation_thread_id,
-                runtime_turn_id: effect_context.runtime_turn_id,
-                presentation_turn_id: effect_context.presentation_turn_id,
-                terminal_event_sequence,
-                terminal: effect_context.terminal,
-                message: effect_context.message,
-                diagnostic: effect_context.diagnostic,
-                started_at_ms: effect_context.started_at_ms,
-                completed_at_ms: effect_context.completed_at_ms,
-                binding_id: source.binding_id.clone(),
-                driver_generation: source.generation,
-                surface_revision: state.surface.surface_revision,
-                surface_digest: state.surface.surface_digest.clone(),
-                source_thread_id: source.source_thread_id.as_str().to_string(),
-                source_turn_id: source
-                    .source_turn_id
-                    .as_ref()
-                    .map(|turn_id| turn_id.as_str().to_string()),
-                terminal_hook_effect_binding: state.surface.terminal_hook_effect_binding.clone(),
-            });
         }
 
         let first_sequence = records.first().and_then(|record| record.carrier().sequence);
@@ -843,6 +871,128 @@ where
         }
     }
 
+    fn append_terminal_application_projection(
+        &self,
+        state: &mut RuntimeThreadState,
+        source: &DriverEventEnvelope,
+        records: &mut Vec<RuntimeJournalRecord>,
+        presentation_publication: &mut Vec<PresentationPublication>,
+        terminal_application_effects: &mut Vec<crate::RuntimeTerminalApplicationEffectOutboxEntry>,
+        mut context: RuntimeTerminalPresentationContext,
+    ) -> Result<(), RuntimeExecuteError> {
+        if context.diagnostic.is_none() {
+            context.diagnostic = records
+                .iter()
+                .rev()
+                .chain(context.prior_records.iter().rev())
+                .find_map(|record| {
+                    if record.carrier().coordinate.runtime_turn_id.as_ref()
+                        != Some(&context.runtime_turn_id)
+                    {
+                        return None;
+                    }
+                    let RuntimeJournalFact::Presentation(event) = record.fact() else {
+                        return None;
+                    };
+                    let agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::RuntimeTerminalDiagnostic(
+                            diagnostic,
+                        ),
+                    ) = &event.event
+                    else {
+                        return None;
+                    };
+                    Some(diagnostic.clone())
+                });
+        }
+        context.prior_records.extend(records.iter().cloned());
+        let completed_at_ms = context.completed_at_ms;
+        let effect_context = context.clone();
+        let projected = self
+            .application_presentation_projector
+            .project_terminal(context)
+            .map_err(|error| RuntimeExecuteError::InvalidCommand {
+                reason: error.to_string(),
+            })?;
+        validate_presentation_thread_ids(&projected, &state.presentation_thread_id).map_err(
+            |error| RuntimeExecuteError::InvalidCommand {
+                reason: error.to_string(),
+            },
+        )?;
+        let mut terminal_presentation_record = None;
+        for input in projected {
+            if input.event.durability
+                != agentdash_agent_runtime_contract::PresentationDurability::Durable
+            {
+                return Err(RuntimeExecuteError::InvalidCommand {
+                    reason: "application terminal projection must be durable".into(),
+                });
+            }
+            let record = state
+                .append_durable_fact(
+                    RuntimeJournalFact::Presentation(input.event),
+                    completed_at_ms,
+                    Some(source.binding_id.clone()),
+                    None,
+                    input.coordinate,
+                )
+                .map_err(transition_execute_error)?;
+            if is_turn_terminal_presentation(&record) {
+                if terminal_presentation_record.is_some() {
+                    return Err(RuntimeExecuteError::InvalidCommand {
+                        reason: "application terminal projector produced multiple turn_terminal presentations"
+                            .into(),
+                    });
+                }
+                terminal_presentation_record = Some(record.clone());
+            }
+            presentation_publication.push(PresentationPublication::Durable(record.clone()));
+            records.push(record);
+        }
+        let terminal_presentation_record =
+            terminal_presentation_record.ok_or_else(|| RuntimeExecuteError::InvalidCommand {
+                reason:
+                    "application terminal projector must produce one turn_terminal presentation"
+                        .into(),
+            })?;
+        let terminal_event_sequence =
+            terminal_presentation_record
+                .carrier()
+                .sequence
+                .ok_or_else(|| RuntimeExecuteError::InvalidCommand {
+                    reason: "turn_terminal presentation must be durable".into(),
+                })?;
+        let effect_id = crate::RuntimeTerminalApplicationEffectId::new(format!(
+            "terminal-effect:{}:{}:{}",
+            state.thread_id, effect_context.runtime_turn_id, terminal_event_sequence.0
+        ))
+        .map_err(store_execute_error)?;
+        terminal_application_effects.push(crate::RuntimeTerminalApplicationEffectOutboxEntry {
+            effect_id,
+            runtime_thread_id: state.thread_id.clone(),
+            presentation_thread_id: effect_context.presentation_thread_id,
+            runtime_turn_id: effect_context.runtime_turn_id,
+            presentation_turn_id: effect_context.presentation_turn_id,
+            terminal_event_sequence,
+            terminal: effect_context.terminal,
+            message: effect_context.message,
+            diagnostic: effect_context.diagnostic,
+            started_at_ms: effect_context.started_at_ms,
+            completed_at_ms: effect_context.completed_at_ms,
+            binding_id: source.binding_id.clone(),
+            driver_generation: source.generation,
+            surface_revision: state.surface.surface_revision,
+            surface_digest: state.surface.surface_digest.clone(),
+            source_thread_id: source.source_thread_id.as_str().to_string(),
+            source_turn_id: source
+                .source_turn_id
+                .as_ref()
+                .map(|turn_id| turn_id.as_str().to_string()),
+            terminal_hook_effect_binding: state.surface.terminal_hook_effect_binding.clone(),
+        });
+        Ok(())
+    }
+
     async fn quarantine(
         &self,
         event: DriverEventEnvelope,
@@ -878,25 +1028,100 @@ where
 
     async fn persist_protocol_violation(
         &self,
-        mut state: RuntimeThreadState,
+        committed_state: RuntimeThreadState,
         source: DriverEventEnvelope,
         quarantine_reason: DriverEventQuarantineReason,
         code: RuntimeProtocolViolationCode,
         message: String,
     ) -> Result<DriverEventAdmission, RuntimeExecuteError> {
-        let expected = state.revision;
+        let expected = committed_state.revision;
+        let prior_records = self
+            .store
+            .journal_records_after(&committed_state.thread_id, None)
+            .await
+            .map_err(store_execute_error)?
+            .records;
         let mut canonical_events = vec![RuntimeEvent::ProtocolViolation {
             code,
             message: message.clone(),
             critical: true,
         }];
-        canonical_events.extend(state.lost_terminal_events(Some(message)));
-        let events = state
-            .append_events(canonical_events)
-            .map_err(transition_execute_error)?;
-        let sequence = events[0].sequence.expect("authoritative event has cursor");
-        let operation_terminals = operation_terminals(&events);
-        let records = crate::internal_journal_records(events).map_err(store_execute_error)?;
+        canonical_events.extend(committed_state.lost_terminal_events(Some(message)));
+
+        let mut state = committed_state;
+        let mut records = Vec::new();
+        let mut terminal_context = None;
+        let mut coordinate = RuntimePresentationCoordinate {
+            runtime_turn_id: None,
+            presentation_turn_id: None,
+            runtime_item_id: None,
+            interaction_id: None,
+            source_thread_id: Some(source.source_thread_id.as_str().to_string()),
+            source_turn_id: source
+                .source_turn_id
+                .as_ref()
+                .map(|turn_id| turn_id.as_str().to_string()),
+            source_item_id: source
+                .source_item_id
+                .as_ref()
+                .map(|item_id| item_id.as_str().to_string()),
+            source_request_id: source.source_request_id.clone(),
+            source_entry_index: source.source_entry_index,
+        };
+        for event in canonical_events {
+            if let Some(context) =
+                terminal_presentation_context(&state, &event, &prior_records, &records)?
+            {
+                terminal_context = Some(context);
+            }
+            update_runtime_coordinate(&mut coordinate, &event);
+            normalize_presentation_coordinate(&state, &mut coordinate).map_err(|error| {
+                RuntimeExecuteError::InvalidCommand {
+                    reason: error.to_string(),
+                }
+            })?;
+            let recorded_at_ms = terminal_context
+                .as_ref()
+                .filter(|context| {
+                    matches!(
+                        &event,
+                        RuntimeEvent::TurnTerminal { turn_id, .. }
+                            if turn_id == &context.runtime_turn_id
+                    )
+                })
+                .map_or_else(crate::model::current_time_ms, |context| {
+                    context.completed_at_ms
+                });
+            records.push(
+                state
+                    .append_durable_fact(
+                        RuntimeJournalFact::Internal(event),
+                        recorded_at_ms,
+                        Some(source.binding_id.clone()),
+                        None,
+                        coordinate.clone(),
+                    )
+                    .map_err(transition_execute_error)?,
+            );
+        }
+        let sequence = records
+            .first()
+            .and_then(|record| record.carrier().sequence)
+            .expect("critical violation is durable");
+        let mut presentation_publication = Vec::new();
+        let mut terminal_application_effects = Vec::new();
+        if let Some(context) = terminal_context {
+            self.append_terminal_application_projection(
+                &mut state,
+                &source,
+                &mut records,
+                &mut presentation_publication,
+                &mut terminal_application_effects,
+                context,
+            )?;
+        }
+        let operation_terminals = operation_terminals_from_records(&records);
+        let thread_id = state.thread_id.clone();
         self.store
             .commit(RuntimeCommit {
                 expected_projection_revision: Some(expected),
@@ -905,7 +1130,7 @@ where
                 operation_terminals,
                 records,
                 outbox: Vec::new(),
-                terminal_application_effects: Vec::new(),
+                terminal_application_effects,
                 context_activation_outbox: Vec::new(),
                 context_preparation_work_items: Vec::new(),
                 context_checkpoints: Vec::new(),
@@ -922,7 +1147,14 @@ where
             })
             .await
             .map_err(store_execute_error)?;
-        Ok(DriverEventAdmission::Durable { sequence })
+        for publication in presentation_publication {
+            let PresentationPublication::Durable(record) = publication else {
+                unreachable!("terminal projection is durable");
+            };
+            self.store.publish_durable_presentation(record).await;
+        }
+        self.store.clear(&thread_id).await;
+        Ok(DriverEventAdmission::Terminalized { sequence })
     }
 }
 

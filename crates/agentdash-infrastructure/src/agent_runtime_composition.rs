@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use crate::{
     PostgresAgentRuntimeCompositionRepository, PostgresAgentRuntimeContextBroker,
     PostgresAgentRuntimeHostRepository, PostgresRuntimeRepository,
+    agent_runtime_driver_sink::admit_driver_event_to_pump,
 };
 use agentdash_agent_runtime::{
     ManagedAgentRuntime, PlatformToolBroker, RuntimeRepository, RuntimeTransientEvents,
@@ -1531,14 +1532,13 @@ struct ManagedRuntimeDriverEventSink {
 #[async_trait]
 impl DriverEventSink for ManagedRuntimeDriverEventSink {
     async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
-        self.runtime
-            .ingest_driver_event(event)
-            .await
-            .map(|_| ())
-            .map_err(|error| DriverError::Lost {
+        match self.runtime.ingest_driver_event(event).await {
+            Ok(admission) => admit_driver_event_to_pump(admission),
+            Err(error) => Err(DriverError::Lost {
                 reason: format!("Managed Runtime rejected driver event: {error}"),
                 retryable: true,
-            })
+            }),
+        }
     }
 }
 
@@ -1552,12 +1552,17 @@ pub enum RuntimeOutboxWorkerError {
     Host(String),
     #[error("Runtime outbox binding was lost: {0}")]
     BindingLost(String),
+    #[error("Runtime outbox driver stream was already terminalized: {0}")]
+    Terminalized(String),
 }
 
 fn classify_outbox_dispatch_error(error: AgentRuntimeHostError) -> RuntimeOutboxWorkerError {
     match error {
         AgentRuntimeHostError::Driver(DriverError::Lost { reason, .. }) => {
             RuntimeOutboxWorkerError::BindingLost(reason)
+        }
+        AgentRuntimeHostError::Driver(DriverError::Terminalized { reason }) => {
+            RuntimeOutboxWorkerError::Terminalized(reason)
         }
         error => RuntimeOutboxWorkerError::Host(error.to_string()),
     }
@@ -1626,22 +1631,31 @@ impl RuntimeOutboxWorker {
                 .await
                 .map_err(|store| RuntimeOutboxWorkerError::Store(store.to_string()));
         }
-        if let Err(error) = self.dispatch_claim(&claim).await {
-            if self.claim_is_obsolete(&claim).await? {
+        let dispatch_result = self.dispatch_claim(&claim).await;
+        self.settle_dispatch_result(&claim, dispatch_result).await
+    }
+
+    async fn settle_dispatch_result(
+        &self,
+        claim: &RuntimeWorkClaim,
+        dispatch_result: Result<(), RuntimeOutboxWorkerError>,
+    ) -> Result<(), RuntimeOutboxWorkerError> {
+        if let Err(error) = dispatch_result {
+            if self.claim_is_obsolete(claim).await? {
                 return self
                     .store
-                    .ack(&claim)
+                    .ack(claim)
                     .await
                     .map_err(|store| RuntimeOutboxWorkerError::Store(store.to_string()));
             }
-            return match self.store.release(&claim, error.to_string()).await {
+            return match self.store.release(claim, error.to_string()).await {
                 Ok(()) => Err(error),
                 Err(store) => Err(RuntimeOutboxWorkerError::Store(store.to_string())),
             };
         }
-        if let Err(error) = self.store.ack(&claim).await {
+        if let Err(error) = self.store.ack(claim).await {
             let error = RuntimeOutboxWorkerError::Store(error.to_string());
-            let _ = self.store.release(&claim, error.to_string()).await;
+            let _ = self.store.release(claim, error.to_string()).await;
             return Err(error);
         }
         Ok(())
@@ -2300,6 +2314,216 @@ mod tests {
             RuntimeOutboxWorkerError::BindingLost(reason)
                 if reason == "binding disappeared with the ephemeral host"
         ));
+    }
+
+    #[test]
+    fn outbox_classifies_runtime_terminalization_without_fabricating_binding_loss() {
+        assert!(matches!(
+            classify_outbox_dispatch_error(AgentRuntimeHostError::Driver(
+                DriverError::Terminalized {
+                    reason: "canonical terminal committed".into(),
+                }
+            )),
+            RuntimeOutboxWorkerError::Terminalized(reason)
+                if reason == "canonical terminal committed"
+        ));
+    }
+
+    #[tokio::test]
+    async fn active_outbox_terminalized_dispatch_is_released_until_canonical_state_is_terminal() {
+        let (pool, _postgres, _serial) = test_database().await;
+        let integration = NativeAgentRuntimeIntegration::new(Arc::new(EchoResolver));
+        let contribution = integration
+            .agent_runtime_drivers()
+            .pop()
+            .expect("Native contribution");
+        let definition = contribution.definition.clone();
+        let manifest = native_runtime_trust_manifest();
+        let composition = build_agent_runtime_composition(AgentRuntimeCompositionInput {
+            pool: pool.clone(),
+            contributions: vec![contribution],
+            trusted_manifests: vec![TrustedDriverManifest {
+                verified_profile_digest: profile_digest(&manifest.verified_profile)
+                    .expect("profile digest"),
+                provenance: manifest.provenance,
+                suite_revision: manifest.suite_revision,
+                driver_build_digest: manifest.driver_build_digest,
+                protocol_revision: manifest.protocol_revision,
+            }],
+            surface_source: Arc::new(
+                NativeAgentRunRuntimeSurfaceSource::new(
+                    Arc::new(FixtureSurfaceCompiler),
+                    definition,
+                    Vec::new(),
+                )
+                .expect("Native surface source"),
+            ),
+            credential_broker: Arc::new(NoCredentials),
+            callback_factory: Arc::new(|_| AgentRuntimeCallbacks {
+                tools: Arc::new(NoTools),
+                hooks: Arc::new(ContinueHooks),
+            }),
+            application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
+            managed_compaction: None,
+            node_id: "terminalized-outbox-test".to_string(),
+        })
+        .expect("build outbox test Host");
+        let suffix = Uuid::new_v4().simple().to_string();
+        let binding_id: RuntimeBindingId = parsed(&format!("binding-{suffix}"));
+        let source_thread_id: DriverThreadId = parsed(&format!("source-{suffix}"));
+        let thread_id: RuntimeThreadId = parsed(&format!("thread-{suffix}"));
+        let operation_id: RuntimeOperationId = parsed(&format!("operation-{suffix}"));
+        let profile = native_runtime_profile();
+        let profile_digest = profile_digest(&profile).expect("Native profile digest");
+        sqlx::query(
+            "INSERT INTO agent_runtime_binding (id,driver_generation,profile_digest) \
+             VALUES ($1,1,$2)",
+        )
+        .bind(binding_id.as_str())
+        .bind(profile_digest.as_str())
+        .execute(&pool)
+        .await
+        .expect("seed Runtime binding");
+        sqlx::query(
+            "INSERT INTO agent_runtime_source_coordinate \
+             (binding_id,source_thread_id,thread_id) VALUES ($1,$2,$3)",
+        )
+        .bind(binding_id.as_str())
+        .bind(source_thread_id.as_str())
+        .bind(thread_id.as_str())
+        .execute(&pool)
+        .await
+        .expect("seed Runtime source coordinate");
+        let store = composition.runtime_repository.clone();
+        let runtime = Arc::new(ManagedAgentRuntime::new(
+            store.clone(),
+            Arc::new(TestTerminalPresentationProjector),
+        ));
+        runtime
+            .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
+                meta: OperationMeta {
+                    operation_id: operation_id.clone(),
+                    idempotency_key: parsed(&format!("key-{suffix}")),
+                    expected_thread_revision: None,
+                    actor: RuntimeActor::System {
+                        component: "terminalized-outbox-test".to_string(),
+                    },
+                },
+                command: RuntimeCommand::ThreadStart {
+                    thread_id: thread_id.clone(),
+                    presentation_thread_id: parsed(&format!("presentation-{suffix}")),
+                    presentation_turn_id: None,
+                    binding_id,
+                    driver_generation: RuntimeDriverGeneration(1),
+                    source_thread_id,
+                    profile_digest,
+                    bound_profile: Box::new(profile),
+                    input: Vec::new(),
+                    surface: Box::new(RuntimeSurfaceDescriptor {
+                        source_frame_id: format!("frame-{suffix}"),
+                        surface_revision: SurfaceRevision(1),
+                        surface_digest: parsed(&format!("surface-{suffix}")),
+                        vfs_digest: format!("vfs-{suffix}"),
+                        context_recipe_revision: ContextRecipeRevision(1),
+                        context_digest: parsed(&format!("context-{suffix}")),
+                        settings_revision: ThreadSettingsRevision(0),
+                        tool_set_revision: ToolSetRevision(0),
+                        tool_set_digest: format!("tools-{suffix}"),
+                        hook_plan: BoundRuntimeHookPlan {
+                            revision: HookPlanRevision(1),
+                            digest: parsed(&format!("hooks-{suffix}")),
+                            entries: Vec::new(),
+                        },
+                        terminal_hook_effect_binding: None,
+                    }),
+                    settings_revision: ThreadSettingsRevision(0),
+                },
+            })
+            .await
+            .expect("accept active outbox operation");
+        let worker = RuntimeOutboxWorker::new(
+            store.clone(),
+            runtime.clone(),
+            composition.host.clone(),
+            "terminalized-outbox-worker",
+        );
+        let claim_request = || RuntimeWorkClaimRequest {
+            kind: RuntimeWorkKind::RuntimeOutbox,
+            owner: RuntimeWorkerId("terminalized-outbox-worker".to_string()),
+            lease_duration_ms: 30_000,
+            limit: 8,
+        };
+        let first_claim = store
+            .claim(claim_request())
+            .await
+            .expect("claim active outbox")
+            .into_iter()
+            .find(|claim| {
+                matches!(
+                    &claim.identity,
+                    agentdash_agent_runtime::RuntimeWorkIdentity::Operation(id)
+                        if id == &operation_id
+                )
+            })
+            .expect("active operation claim");
+        let fabricated = || {
+            RuntimeOutboxWorkerError::Terminalized(
+                "fabricated terminalized result while canonical operation is active".to_string(),
+            )
+        };
+        assert!(matches!(
+            worker
+                .settle_dispatch_result(&first_claim, Err(fabricated()))
+                .await,
+            Err(RuntimeOutboxWorkerError::Terminalized(_))
+        ));
+        let released: (bool, bool, Option<String>) = sqlx::query_as(
+            "SELECT dispatched_at IS NULL,claim_token IS NULL,last_error \
+             FROM agent_runtime_outbox WHERE operation_id=$1",
+        )
+        .bind(operation_id.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("load released active outbox");
+        assert_eq!((released.0, released.1), (true, true));
+        assert!(
+            released
+                .2
+                .as_deref()
+                .is_some_and(|error| error.contains("fabricated terminalized result"))
+        );
+
+        let second_claim = store
+            .claim(claim_request())
+            .await
+            .expect("reclaim released outbox")
+            .into_iter()
+            .find(|claim| {
+                matches!(
+                    &claim.identity,
+                    agentdash_agent_runtime::RuntimeWorkIdentity::Operation(id)
+                        if id == &operation_id
+                )
+            })
+            .expect("released operation remains claimable");
+        runtime
+            .complete_driver_dispatch_operation(&thread_id, &operation_id)
+            .await
+            .expect("terminalize canonical operation during dispatch");
+        worker
+            .settle_dispatch_result(&second_claim, Err(fabricated()))
+            .await
+            .expect("canonical terminal re-read acks obsolete claim");
+        assert!(
+            sqlx::query_scalar::<_, bool>(
+                "SELECT dispatched_at IS NOT NULL FROM agent_runtime_outbox WHERE operation_id=$1",
+            )
+            .bind(operation_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("load acked obsolete outbox")
+        );
     }
 
     struct ProviderRepository(LlmProvider);

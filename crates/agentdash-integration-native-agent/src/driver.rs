@@ -765,6 +765,16 @@ impl NativeAgentDriver {
                         .await;
             }
             if let Err(error) = result {
+                if matches!(error, DriverError::Terminalized { .. }) {
+                    diag!(
+                        Warn,
+                        Subsystem::AgentRun,
+                        operation_id = %envelope.operation_id,
+                        error = %error,
+                        "Managed Runtime已终结Native accepted turn，停止event pump"
+                    );
+                    return;
+                }
                 let reason = format!("native accepted turn event pump failed: {error}");
                 diag!(
                     Error,
@@ -1689,9 +1699,34 @@ impl NativeEventMapper {
             }
             AgentEvent::MessageUpdate { .. } => {}
             AgentEvent::MessageEnd { message } => {
-                if let agentdash_agent::AgentMessage::Assistant { usage:Some(usage), .. }=&message
-                    && usage.input.saturating_add(usage.cache_read_input).saturating_add(usage.cache_creation_input).saturating_add(usage.output)>0 {
-                    mapped.push(self.event(RuntimeEvent::TokenUsageUpdated { turn_id:self.runtime_turn_id.clone(), usage:agentdash_agent_runtime_contract::RuntimeTokenUsage { input_tokens:usage.input, cached_input_tokens:usage.cache_read_input.saturating_add(usage.cache_creation_input), output_tokens:usage.output, reasoning_output_tokens:0, total_tokens:usage.input.saturating_add(usage.cache_read_input).saturating_add(usage.cache_creation_input).saturating_add(usage.output) } }));
+                if let agentdash_agent::AgentMessage::Assistant {
+                    usage: Some(usage), ..
+                } = &message
+                    && usage
+                        .input
+                        .saturating_add(usage.cache_read_input)
+                        .saturating_add(usage.cache_creation_input)
+                        .saturating_add(usage.output)
+                        > 0
+                {
+                    mapped.push(
+                        self.event(RuntimeEvent::TokenUsageUpdated {
+                            turn_id: self.runtime_turn_id.clone(),
+                            usage: agentdash_agent_runtime_contract::RuntimeTokenUsage {
+                                input_tokens: usage.input,
+                                cached_input_tokens: usage
+                                    .cache_read_input
+                                    .saturating_add(usage.cache_creation_input),
+                                output_tokens: usage.output,
+                                reasoning_output_tokens: 0,
+                                total_tokens: usage
+                                    .input
+                                    .saturating_add(usage.cache_read_input)
+                                    .saturating_add(usage.cache_creation_input)
+                                    .saturating_add(usage.output),
+                            },
+                        }),
+                    );
                 }
                 if !matches!(&message, agentdash_agent::AgentMessage::Assistant { .. })
                     || !assistant_has_canonical_content(&message)
@@ -1742,13 +1777,34 @@ impl NativeEventMapper {
             }
             AgentEvent::RunError { error } if !self.turn_terminal => {
                 self.turn_terminal = true;
-                mapped.push(self.event(RuntimeEvent::ConversationError {
-                    turn_id: Some(self.runtime_turn_id.clone()),
-                    error: agentdash_agent_runtime_contract::RuntimeConversationError {
-                        code: error.code.clone(), message:error.message.clone(), retryable:error.retryable,
-                        details: Some(agentdash_agent_runtime_contract::RuntimeConversationErrorDetails { error_type:Some(format!("{:?}",error.kind)), http_status:error.http_status, request_id:None, metadata:[("provider".to_string(),error.provider.clone().unwrap_or_default()),("model".to_string(),error.model.clone().unwrap_or_default())].into() }),
-                    },
-                }));
+                mapped.push(
+                    self.event(RuntimeEvent::ConversationError {
+                        turn_id: Some(self.runtime_turn_id.clone()),
+                        error: agentdash_agent_runtime_contract::RuntimeConversationError {
+                            code: error.code.clone(),
+                            message: error.message.clone(),
+                            retryable: error.retryable,
+                            details: Some(
+                                agentdash_agent_runtime_contract::RuntimeConversationErrorDetails {
+                                    error_type: Some(format!("{:?}", error.kind)),
+                                    http_status: error.http_status,
+                                    request_id: None,
+                                    metadata: [
+                                        (
+                                            "provider".to_string(),
+                                            error.provider.clone().unwrap_or_default(),
+                                        ),
+                                        (
+                                            "model".to_string(),
+                                            error.model.clone().unwrap_or_default(),
+                                        ),
+                                    ]
+                                    .into(),
+                                },
+                            ),
+                        },
+                    }),
+                );
                 mapped.push(self.event(RuntimeEvent::TurnTerminal {
                     turn_id: self.runtime_turn_id.clone(),
                     terminal: RuntimeTurnTerminal::Failed,
@@ -1808,7 +1864,6 @@ impl NativeEventMapper {
                     ));
                 }
             }
-            AgentEvent::ProviderAttemptStatus { status } if matches!(status.phase, agentdash_agent::ProviderAttemptPhase::RetryScheduled | agentdash_agent::ProviderAttemptPhase::Retrying | agentdash_agent::ProviderAttemptPhase::Failed) => mapped.push(self.event(RuntimeEvent::ProviderStatus { turn_id:self.runtime_turn_id.clone(), status:agentdash_agent_runtime_contract::RuntimeProviderStatus { phase:match status.phase { agentdash_agent::ProviderAttemptPhase::RetryScheduled=>agentdash_agent_runtime_contract::RuntimeProviderPhase::RetryScheduled, agentdash_agent::ProviderAttemptPhase::Retrying=>agentdash_agent_runtime_contract::RuntimeProviderPhase::Retrying, agentdash_agent::ProviderAttemptPhase::Failed=>agentdash_agent_runtime_contract::RuntimeProviderPhase::Failed, _=>unreachable!("guarded provider phase") }, attempt:status.attempt, max_attempts:status.max_attempts, will_retry:status.will_retry, delay_ms:status.delay_ms, reason_code:status.reason_code, message:status.message, provider:status.provider, model:status.model } })),
             AgentEvent::ProviderAttemptStatus { .. } => {}
             AgentEvent::ToolExecutionUpdate { .. } => {}
         }
@@ -2318,7 +2373,7 @@ mod tests {
     }
 
     #[test]
-    fn native_provider_and_tool_updates_preserve_typed_runtime_events() {
+    fn native_provider_status_is_only_projected_as_ephemeral_presentation() {
         let mut mapper = NativeEventMapper::new(
             "native-thread".to_string(),
             parsed_id("runtime-turn").unwrap(),
@@ -2340,8 +2395,28 @@ mod tests {
                 },
             })
             .unwrap();
-        assert!(
-            matches!(internal_events(&provider).as_slice(), [RuntimeEvent::ProviderStatus { status, .. }] if status.phase==agentdash_agent_runtime_contract::RuntimeProviderPhase::RetryScheduled && status.will_retry)
+        assert!(internal_events(&provider).is_empty());
+        let presentation = presentation_events(&provider);
+        assert_eq!(presentation.len(), 1);
+        assert_eq!(
+            presentation[0].durability,
+            PresentationDurability::Ephemeral
+        );
+        assert!(matches!(
+            &presentation[0].event,
+            agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::ProviderAttemptStatus(status)
+            ) if status.will_retry
+        ));
+    }
+
+    #[test]
+    fn native_tool_updates_preserve_presentation_without_internal_summary() {
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
         );
         let update=mapper.map(AgentEvent::ToolExecutionUpdate { tool_call_id:"tool-item".into(), tool_name:"read".into(), args:serde_json::json!({"path":"main://README.md"}), partial_result:serde_json::json!({"content":[{"type":"text","text":"progress"}],"is_error":false,"details":null}) }).unwrap();
         assert!(internal_events(&update).is_empty());

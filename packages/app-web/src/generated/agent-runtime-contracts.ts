@@ -1265,7 +1265,7 @@ export type DriverDescribeRequest = { service_instance_id: RuntimeServiceInstanc
 
 export type DriverDispatchReceipt = { request_id: DriverRequestId, duplicate: boolean, applied_tool_set: DriverToolSetApplyReceipt | null, applied_surface: DriverSurfaceApplyReceipt | null, };
 
-export type DriverError = { "kind": "unsupported", reason: string, } | { "kind": "rejected", reason: string, } | { "kind": "unavailable", reason: string, retryable: boolean, } | { "kind": "stale_generation" } | { "kind": "protocol_violation", reason: string, critical: boolean, } | { "kind": "lost", reason: string, retryable: boolean, };
+export type DriverError = { "kind": "unsupported", reason: string, } | { "kind": "rejected", reason: string, } | { "kind": "unavailable", reason: string, retryable: boolean, } | { "kind": "stale_generation" } | { "kind": "protocol_violation", reason: string, critical: boolean, } | { "kind": "lost", reason: string, retryable: boolean, } | { "kind": "terminalized", reason: string, };
 
 export type DriverEventEnvelope = { binding_id: RuntimeBindingId, generation: RuntimeDriverGeneration,
 /**

@@ -14216,6 +14216,22 @@
             "reason",
             "retryable"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "terminalized"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
         }
       ]
     }

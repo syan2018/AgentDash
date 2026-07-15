@@ -1372,3 +1372,40 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: 恢复 Session 与工具链 main 等价行为
+
+**Date**: 2026-07-15
+**Task**: 恢复 Session 与工具链 main 等价行为
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+以 pinned main-reference、真实 PostgreSQL production composition 与现有前端 reducer 为共同 oracle，恢复 Native/Codex/Remote 单一事件链、六类工具 typed context、完整 transcript/cold rebind、lost/rewind 与 ContextFrame，并建立跨层组合门禁。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `764b50137` | (see git log) |
+| `50e813ed8` | (see git log) |
+| `32df86aaa` | (see git log) |
+| `5e3b3252f` | (see git log) |
+| `1963f4c37` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

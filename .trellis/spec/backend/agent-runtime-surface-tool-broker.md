@@ -80,6 +80,8 @@ struct ToolCallCoordinates {
 - readable tool-result ref与presentation item必须由同一个session-scoped identity allocator生成，并按effective `ToolProtocolProjection`判断Tool/Command family。调用首事件必须同时固定该call的projector、emitter与readable family；后续update/result不能按工具名或更新后的surface重新猜测，否则会中途换producer或把大结果ref回填到另一张card。
 - Broker首次accept使用owner projector原子提交authoritative ItemStarted；CAS conflict reload，相同turn与initial payload重放幂等，不同payload返回`IdempotencyConflict`。Tool update通过同一journal进入Runtime transient publisher，由store分配generation内单调sequence与唯一event ID。
 - Shell start按owner arguments区分Platform与MountExec；read/write/status/resize/terminate使用独立TerminalControl variant。ApplyPatch使用真实parser逐entry保存path/kind/diff/move path，多文件patch不得把整包diff复制到每个change。
+- Platform shell terminal registration必须直接持有当前`PlatformToolExecutionContext`的`run_id`、`agent_id`与canonical `runtime_thread_id`，并记录`terminal_id -> backend/mount/cwd`路由。production VFS tool composition必须显式注入同一个AgentRun terminal registry；registry缺失时不得暴露可执行`shell_exec`或返回无法续接的`running` handle。local runtime `ShellSessionManager`仍是process与retained output buffer的唯一事实源，application registry只负责control routing与有界产品投影。
+- Shell start返回`running`后，read/write/status/resize/terminate必须用同一typed owner解析原terminal；不同run、agent或runtime thread的continuation必须typed reject。start结果与后续增量chunks都更新同一terminal projection；增量snapshot必须按stream追加并保持`next_seq`单调，空增量不得清除既有preview。
 - 每个Hook Definition只能绑定一个execution route；required hook必须满足actions、minimum strength、failure policy与acknowledgment。编译结果直接形成WP02 `RuntimeHookPlanBinding`，不重算revision/digest。
 - Broker调用保留Thread、Turn、canonical ToolCall Item、presentation Item、source thread/turn/item、Binding、generation、ToolSet revision、tool/capability/path/channel坐标。外部driver不接收trait object、application delegate、本地VFS对象或credential material。
 - 执行顺序固定为：bound catalog与binding/generation/tool-set校验 -> canonical Item durable accept -> broker call/idempotency accept -> BeforeTool同步Hook（含rewrite/block/approval）-> 再校验binding/capability -> permission -> VFS -> credential materialization -> durable Running -> executor side effect -> AfterTool同步Hook -> broker terminal -> canonical Item terminal convergence。
@@ -113,6 +115,9 @@ struct ToolCallCoordinates {
 | 同一Item并发执行 | 原子claim只产生一个`Acquired`；其余调用观察`InProgress`并共享首次terminal，executor只调用一次 |
 | 并发terminal结果不同 | 真实PG行锁只接受一个terminal，另一方typed conflict |
 | Runtime Item terminal暂时失败 | Broker terminal保留，duplicate只重试journal convergence |
+| production VFS composition漏注入terminal registry | composition/工具构造测试失败；不得产生孤儿`running` handle |
+| 同一owner以terminal_id read已完成的短命令 | 路由到local retained buffer，返回最终state/exit/output；application projection保持历史tail |
+| 另一run/agent/runtime thread续接terminal_id | typed owner mismatch；不向local runtime发送control operation |
 
 ## 5. Good / Base / Bad Cases
 
@@ -120,7 +125,7 @@ struct ToolCallCoordinates {
 
 **Base case:** required approval创建durable Interaction并暂停；获批后由唯一claim owner使用同一Item和effective arguments继续。若进程在Running后消失，后续调用保留该不确定边界并返回typed in-progress，不猜测副作用是否发生。
 
-**Bad case:** 把Capability Pack拍成prompt、向driver传`DynAgentTool`、在permission/VFS之前解引用secret，或把持久化Running直接当成executor重放许可。这些行为会伪报能力、绕过执行点policy或重复不可逆副作用，必须由类型和顺序测试阻止。
+**Bad case:** 把Capability Pack拍成prompt、向driver传`DynAgentTool`、在permission/VFS之前解引用secret、把持久化Running直接当成executor重放许可，或让可选terminal registry静默产出孤儿`running` handle。这些行为会伪报能力、绕过执行点policy、重复不可逆副作用或切断terminal control，必须由类型、composition与顺序测试阻止。
 
 ## 6. Tests Required
 
@@ -129,6 +134,7 @@ struct ToolCallCoordinates {
 - Broker behavior覆盖Direct/MCP同状态机、rewrite/block/approval、permission/VFS/credential顺序、cancel/timeout/executor failure/result rewrite。
 - Projector matrix枚举最终production catalog，覆盖每个family的started/update/completed/failed/approval/identity；至少Shell与ApplyPatch必须经过真实owner→Registry→Broker→Runtime链。
 - Shell测试覆盖Platform/MountExec、TerminalControl五类操作及command/cwd/output/exit/status；ApplyPatch覆盖add/update/move/delete多文件逐entry diff。
+- Shell lifecycle测试必须覆盖production composition注入typed owner registry、running start→write/read→completed retained output、跨owner拒绝，以及`after_seq`增量snapshot追加后不清空既有terminal projection。该测试必须在删除composition注入时失败，而不只直接构造adapter。
 - Native callback测试使用刻意不同的source/runtime/presentation item IDs，证明Broker internal state只消费canonical identity，Backbone start/update/completed只消费presentation identity，carrier保留source三元组且重复accept幂等。
 - Native/Codex/Remote emitter矩阵覆盖VendorStream与ToolBroker route，断言每个logical tool只出现一个started和一个completed；ToolBroker route不得由connector重复发布，VendorStream route不得由Broker重复发布。
 - readable identity测试至少覆盖owner-declared Command alias、大结果截断、连续多工具、跨turn与重绑水位，start/completed/readable ref必须复用同一ID。
@@ -170,4 +176,12 @@ match repository.claim_execution(&item_id, effective_arguments).await? {
     ToolExecutionClaim::InProgress(call) => await_terminal_or_in_progress(call).await,
     ToolExecutionClaim::Terminal(call) => replay_terminal(call).await,
 }
+```
+
+```rust
+// Wrong: optional composition dependency让start成功但后续terminal_id无法解析。
+let provider = VfsRuntimeToolProvider::new(vfs, materialization);
+
+// Correct: production composition显式提供typed terminal routing owner。
+let provider = VfsRuntimeToolProvider::new(vfs, materialization, terminal_registry);
 ```

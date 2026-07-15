@@ -36,6 +36,9 @@ use agentdash_application_ports::agent_frame_hook_plan::SharedAgentFrameHookPlan
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_ports::agent_run_runtime::SharedAgentRunRuntimeProvisionerHandle;
 use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
+use agentdash_application_vfs::tools::{
+    ShellTerminalOutputSnapshot, ShellTerminalRegistration, ShellTerminalRegistry,
+};
 use agentdash_application_vfs::{MountProviderRegistryBuilder, VfsService};
 use agentdash_domain::workflow::{
     ActivationRule, ApiRequestExecutorSpec, BashExecExecutorSpec, LifecycleRun,
@@ -66,6 +69,25 @@ use uuid::Uuid;
 struct RejectingFunctionRunner;
 
 struct ProductionCatalogWorkflowScriptEvaluator;
+
+#[derive(Default)]
+struct CatalogShellTerminalRegistry;
+
+impl ShellTerminalRegistry for CatalogShellTerminalRegistry {
+    fn register_shell_terminal(&self, _registration: ShellTerminalRegistration) {}
+
+    fn resolve_shell_terminal(&self, _terminal_id: &str) -> Option<ShellTerminalRegistration> {
+        None
+    }
+
+    fn record_shell_terminal_output_snapshot(&self, _snapshot: ShellTerminalOutputSnapshot<'_>) {}
+
+    fn remove_shell_terminal(&self, _terminal_id: &str) {}
+}
+
+fn catalog_shell_terminal_registry() -> Arc<dyn ShellTerminalRegistry> {
+    Arc::new(CatalogShellTerminalRegistry)
+}
 
 impl WorkflowScriptEvaluator for ProductionCatalogWorkflowScriptEvaluator {
     fn validate_workflow_script(&self, _script: &str) -> Result<(), Vec<String>> {
@@ -471,6 +493,7 @@ async fn final_catalog_uses_six_production_providers_and_executes_representative
                 MountProviderRegistryBuilder::new().build(),
             ))),
             None,
+            catalog_shell_terminal_registry(),
         )),
         Arc::new(WorkflowRuntimeToolProvider::new(
             repos.lifecycle_orchestrator_deps(),
@@ -619,6 +642,7 @@ async fn all_six_production_providers_execute_with_real_typed_owner_scope() {
                 MountProviderRegistryBuilder::new().build(),
             ))),
             None,
+            catalog_shell_terminal_registry(),
         )),
         Arc::new(WorkflowRuntimeToolProvider::new(
             repos.lifecycle_orchestrator_deps(),

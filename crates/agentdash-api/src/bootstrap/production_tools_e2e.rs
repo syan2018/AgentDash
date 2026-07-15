@@ -431,13 +431,20 @@ async fn real_agent_frame_task_and_workspace_tools_continue_to_final_assistant()
     let vfs_service = Arc::new(VfsService::new(Arc::new(
         MountProviderRegistryBuilder::new().build(),
     )));
+    let terminal_registry = AgentRunTerminalRegistry::new();
     let wait_service = WaitActivityService::new(WaitActivityDeps {
         repositories: repos.wait_activity_repositories(),
-        terminal_registry: Arc::new(AgentRunTerminalRegistry::default()),
+        terminal_registry: terminal_registry.clone(),
     });
     let runtime_tools: Arc<dyn RuntimeToolProvider> =
         Arc::new(SessionRuntimeToolComposer::from_final_catalog_providers([
-            Arc::new(VfsRuntimeToolProvider::new(vfs_service.clone(), None)),
+            Arc::new(VfsRuntimeToolProvider::new(
+                vfs_service.clone(),
+                None,
+                crate::bootstrap::runtime_tools::build_shell_terminal_registry_adapter(
+                    terminal_registry,
+                ),
+            )),
             Arc::new(WorkflowRuntimeToolProvider::new(
                 repos.lifecycle_orchestrator_deps(),
                 LifecycleSessionToolServicesHandle,

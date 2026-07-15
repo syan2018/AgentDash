@@ -60,3 +60,13 @@ Web bridge只负责在当前用户可用时触发native ensure，不复制native
 验证分为三层：HTTP悬挂的确定性timeout测试、Web中间态不完成测试、真实`pnpm dev:desktop`中ensure→relay registered→目标backend online→Runtime action成功的产品链验证。
 
 本机Runtime拥有独立的持久数据库，因此已发布到任何开发数据库的migration同样不可原地改写。AgentFrame HookPlan的最终列名由0067 rename migration建立；0066恢复为已应用的原始内容，使既有数据库先通过checksum校验再顺序升级。
+
+## 11. Shell terminal typed owner 与 continuation routing
+
+`shell_exec` 的真实进程与 retained output buffer 继续由 local runtime `ShellSessionManager` 持有；API/application 层只保存可寻址的 terminal control registration。VFS runtime tool provider从当前 `PlatformToolExecutionContext` 取得 `run_id`、`agent_id` 和 canonical `runtime_thread_id`，在 start 前注册 terminal_id 对应的 backend、mount、cwd 与 owner scope，control operation再用同一 registration路由到原 mount/backend。
+
+composition root必须把唯一的 `AgentRunTerminalRegistry` 通过 adapter注入VFS provider。adapter写入typed owner，不依赖前端是否已经订阅presentation stream；兼容旧 session反查不作为新路径。start/read/write取得的output snapshot回写同一registry用于terminal projection，但不得替代local runtime retained buffer或成为命令执行事实源。
+
+`VfsRuntimeToolProvider`与`VfsToolFactory`将terminal registry作为构造期必需依赖，使production composition漏线成为编译错误；`ShellExecTool`在start副作用前再次校验registry与typed owner。start结果是完整snapshot，cursor control返回带sequence的增量chunks；adapter按sequence去重追加有界preview，空增量不覆盖既有投影。
+
+验证至少覆盖两层：VFS tool级 start返回running后以terminal_id read到terminal状态与最终输出；production composition级证明VFS provider确实拥有registry且typed owner被注册。失败路径不得返回一个无法续接的running handle。

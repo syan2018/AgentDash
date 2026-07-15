@@ -530,6 +530,7 @@ name = "agentdash-application-vfs"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
+ "agentdash-agent-runtime-contract",
  "agentdash-agent-types",
  "agentdash-application-ports",
  "agentdash-diagnostics",

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
 use crate::vfs::service::VfsService;
 use crate::vfs::tools::factory::{VfsToolFactory, VfsToolFactoryInput};
-use crate::vfs::tools::fs::ShellTerminalRegistry;
+use crate::vfs::tools::fs::{ShellTerminalOwner, ShellTerminalRegistry};
 use crate::vfs::{VfsMaterializationService, VfsMaterializationTransport};
 
 use super::provider::{runtime_session_id_from_context, shared_runtime_vfs_from_context};
@@ -18,20 +18,21 @@ pub struct VfsRuntimeToolProvider {
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
     materialization: Option<Arc<VfsMaterializationService>>,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
-    terminal_registry: Option<Arc<dyn ShellTerminalRegistry>>,
+    terminal_registry: Arc<dyn ShellTerminalRegistry>,
 }
 
 impl VfsRuntimeToolProvider {
     pub fn new(
         service: Arc<VfsService>,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,
+        terminal_registry: Arc<dyn ShellTerminalRegistry>,
     ) -> Self {
         Self {
             service,
             inline_persister,
             materialization: None,
             shell_output_registry: None,
-            terminal_registry: None,
+            terminal_registry,
         }
     }
 
@@ -40,11 +41,6 @@ impl VfsRuntimeToolProvider {
         registry: Arc<agentdash_relay::ShellOutputRegistry>,
     ) -> Self {
         self.shell_output_registry = Some(registry);
-        self
-    }
-
-    pub fn with_terminal_registry(mut self, registry: Arc<dyn ShellTerminalRegistry>) -> Self {
-        self.terminal_registry = Some(registry);
         self
     }
 
@@ -77,18 +73,34 @@ impl RuntimeToolProvider for VfsRuntimeToolProvider {
             .as_ref()
             .map(|p| Arc::new(InlineContentOverlay::new(p.clone())));
         let session_id = runtime_session_id_from_context(context)?;
+        let platform_owner = context
+            .turn
+            .platform_tool_execution
+            .as_ref()
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "缺少 Platform Tool typed owner context，无法注册 shell terminal".to_string(),
+                )
+            })?;
+        let terminal_owner = ShellTerminalOwner {
+            run_id: platform_owner.run_id,
+            agent_id: platform_owner.agent_id,
+            runtime_thread_id: platform_owner.runtime_thread_id.clone(),
+        };
 
-        Ok(VfsToolFactory::new(self.service.clone())
-            .with_materialization(self.materialization.clone())
-            .with_shell_output_registry(self.shell_output_registry.clone())
-            .with_terminal_registry(self.terminal_registry.clone())
-            .build_tools(VfsToolFactoryInput {
-                shared_vfs,
-                overlay,
-                identity: context.session.identity.clone(),
-                session_id,
-                turn_id: context.session.turn_id.clone(),
-                flow: &context.turn.capability_state,
-            }))
+        Ok(
+            VfsToolFactory::new(self.service.clone(), self.terminal_registry.clone())
+                .with_materialization(self.materialization.clone())
+                .with_shell_output_registry(self.shell_output_registry.clone())
+                .build_tools(VfsToolFactoryInput {
+                    shared_vfs,
+                    overlay,
+                    identity: context.session.identity.clone(),
+                    session_id,
+                    turn_id: context.session.turn_id.clone(),
+                    terminal_owner,
+                    flow: &context.turn.capability_state,
+                }),
+        )
     }
 }

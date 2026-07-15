@@ -34,6 +34,7 @@
 11. **过滤后重编号破坏断线cursor**：对外journal cursor必须沿用durable raw sequence；internal-only记录形成的空洞是合法的，live、GET、replay与fork cutoff必须使用同一坐标系
 12. **动态surface更新阻塞当前工具回调**：平台AgentFrame/ContextFrame mutation先作为canonical事实接受；需要等待idle的connector同步由outbox延后完成，使当前tool result可以先回灌并结束active turn
 13. **schema可见性被误当作工具可执行性**：catalog编译只证明definition存在；production composition还必须用真实AgentFrame、Hook、VFS、permission与workspace owner provider完成调用并继续下一轮provider
+14. **continuation handle存在但路由事实未装配**：返回`terminal_id`、cursor或operation handle之前，production composition必须已经注入它后续控制所需的typed owner与registry；局部工具测试不能替代删除装配线即失败的composition测试
 
 ---
 
@@ -50,6 +51,7 @@
 - [ ] 若事件可由Driver与Broker共同观察，先固定effective presentation route，并在组合测试中断言每个逻辑Item只有一个start/update/terminal序列
 - [ ] 若会过滤internal event，固定对外cursor沿用的durable sequence与fork cutoff语义，覆盖含sequence gap的live→replay
 - [ ] 若工具能更新AgentFrame/surface，明确canonical mutation、ContextFrame提交与connector idle同步的先后关系
+- [ ] 若工具返回可续接handle，确认owner、route registry与retained state owner在返回前同时建立，并覆盖跨owner拒绝及短命令完成后的保留窗口
 - [ ] 若schema被多个进程或数据根消费，列出每个持久实例并验证既有数据库升级，而不只验证空库或Dashboard数据库
 
 **实现后：**
@@ -59,4 +61,5 @@
 - [ ] 若引入新 runtime policy/metadata，验证前端看到的是真实生效的 runtime surface
 - [ ] 验证Driver acknowledgement不会推进第二份canonical lifecycle，并覆盖“终态已发出后底层任务返回失败”的outbox ack语义
 - [ ] 用真实持久数据库和production composition覆盖“user → 多工具（含业务错误）→ tool result回灌 → final assistant → disconnect/rebind → 下一轮”，并断言Operation、outbox、cursor和前端card identity
+- [ ] 对所有continuation handle运行“start返回 → 原owner续接 → terminal后读取 → 错误owner拒绝”的composition测试，且测试在漏注入registry时必须失败
 - [ ] 对外协议升级同时运行generated contract check与前端typecheck，确保generator生成的跨crate类型导入完整

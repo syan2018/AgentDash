@@ -122,6 +122,16 @@
 - auto-connect完成的唯一产品事实是native Runtime已经`running`且relay registration已建立；中间态继续由native supervisor推进，前端不得把它们提升为在线成功。
 - Backend online admission继续以server-side live registry为准，不对离线backend添加fallback；修复目标是让desktop enrollment/relay真实上线并暴露精确失败证据。
 
+### R12. Shell terminal typed ownership 与续接生命周期
+
+**问题 ARD-011：`shell_exec` start 返回 running 后无法按 terminal_id 续接**
+
+- 现象：真实工具调用中，`shell_exec` start 已返回 `state=running`、`terminal_id` 与 `next_seq`，随后 read 却立即失败为“未找到可续接终端”。本机 shell session 实际仍保留，Agent turn 最终也正常完成。
+- 已确认根因：Agent Runtime composition 创建 `VfsRuntimeToolProvider` 时没有注入 shell terminal registry；重构同时删除了 main 上的 terminal registry adapter 与 output snapshot 回写，导致 start 结果虽然暴露 continuation handle，application 侧却没有相同 handle 的 owner/routing 事实。
+- `PlatformToolExecutionContext` 是平台工具调用的 canonical typed owner；VFS tool construction 必须把 `run_id`、`agent_id` 与 `runtime_thread_id` 直接传入 shell terminal registration，不再依赖 presentation session 或 UI stream 建立反向绑定后才能续接。
+- terminal registry adapter负责把 terminal_id 映射到 backend/mount/cwd 与 AgentRun owner，并记录 start/read/write 的 retained output snapshot；本机 runtime继续拥有真实 process/session buffer，application registry只承担控制路由与产品投影，不复制进程事实。
+- start 返回 `state=running` 时，同一 Agent turn 后续 read/write/status/resize/terminate 必须可按 terminal_id 到达原 local runtime session；terminal完成后 retained session在正常保留窗口内仍可读取最终输出。
+
 ## Acceptance Criteria
 
 - [x] ARD-001 已在 `pnpm dev` 启动的真实产品路径复现并记录第一个断点位置。
@@ -149,6 +159,8 @@
 - [x] ARD-009 使用真实产品链验证目标personal backend进入online，Runtime action不再受目标Backend离线admission阻断。
 - [x] ARD-009 Desktop native host不依赖Web bridge先提供token即可按profile自动启动Personal runtime。
 - [x] ARD-010 ephemeral Native binding缺失会收敛为canonical lost，历史outbox命令完成派发且不再重试。
+- [x] ARD-011 `shell_exec` 使用 typed Platform Tool owner 注册 terminal，running start 返回的 terminal_id 可完成后续 read 并取得最终状态/输出。
+- [x] ARD-011 恢复 terminal output snapshot 投影，并以 application/VFS/API 定向测试覆盖 start→read 生命周期和 composition 装配。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -170,6 +182,7 @@
 | ARD-008 | verified | blocker | event、workspace/list/detail lineage、composer/context/interaction与退役consumer均按route ledger完成收束并真实验证 |
 | ARD-009 | verified | blocker | 恢复immutable migration历史并以0067收敛schema；ensure有界、Web等待relay registered，目标personal backend已真实online |
 | ARD-010 | verified | blocker | Native缺失binding返回typed lost；outbox写入BindingLost并ack，历史重试命令已停止 |
+| ARD-011 | verified | major | typed owner与terminal registry成为production VFS构造期必需依赖；真实start→read及跨轮retained read通过 |
 
 ## Verification Record
 
@@ -199,3 +212,5 @@
 - ARD-009真实复现证明server ensure已经领取`local_029f609c03386a19e4f28779`，但`agentdash-local`因已应用migration 66被原地修改而退出；Backend offline是relay进程未存活的结果，不是Backend registry admission误判。
 - 0066恢复原始checksum并新增0067顺序rename；当前Dashboard开发库完成一次migration metadata修复以保留既有业务数据，本机Runtime数据库随后从原始0066成功升级至schema 67。重新执行`pnpm dev`后同一backend完成relay registration，API返回`online=true`且产品“后端连接”显示`dev-local / 项目同步 · 已连接`。
 - Desktop credential claim增加5秒connect/15秒request deadline，timeout进入retryable `desktop_claim_timeout`；Web auto-connect使用complete/pending/inactive三态，仅`running + relay registered + backend identity一致`完成。Rust 9项与前端8项定向测试通过。
+- ARD-011定向验证通过：四个相关crate `cargo check`、VFS running start→write/read生命周期测试、API typed owner/binding与增量snapshot两项测试、workspace fmt与diff check均通过。strict no-deps clippy执行后仅命中既有`apply_patch.rs:246 collapsible_if`与`shell.rs:982 too_many_arguments`，未改无关告警。
+- ARD-011真实`pnpm dev` Run `689ea30d-cdf2-4e1b-aac9-613dc72de8ed` / agent `649e80d6-bd33-4337-929e-f0856fae58f9`：`main://` start返回`running`、terminal `term-1784122916605-a9eb7028`、`next_seq=0`；同轮read返回`completed`、exit 0、`next_seq=4`，下一用户轮不带cursor读取同一已完成terminal仍取得`shell-start`与`shell-done`完整retained output。数据库同时保留旧terminal的“未找到可续接终端”失败与新terminal三条completed记录，完成同库前后对照。

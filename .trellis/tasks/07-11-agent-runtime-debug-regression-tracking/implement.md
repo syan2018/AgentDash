@@ -93,3 +93,11 @@
 - [x] Native ephemeral host找不到旧binding时返回typed `DriverError::Lost`，不再伪装为可重试的命令拒绝。
 - [x] Runtime outbox将binding lost投影为canonical `RuntimeEvent::BindingLost`并完成当前命令ack。
 - [x] 真实历史命令从8614次重复派发收敛为`dispatched_at`，线程状态进入`lost`且后台停止刷错。
+
+## ARD-011
+
+- [x] 从`PlatformToolExecutionContext`向VFS tool construction传递typed `run_id`、`agent_id`与`runtime_thread_id`，由shell start registration直接持有canonical owner。
+- [x] 在API composition恢复`AgentRunTerminalRegistry` adapter并注入`VfsRuntimeToolProvider`；control operation按terminal_id解析backend/mount/cwd，不依赖前端订阅建立session binding。
+- [x] 恢复start/read/write output snapshot回写，保持application terminal projection与local retained buffer职责分离。
+- [x] 增加VFS tool start→read生命周期测试和production composition装配测试，确认running handle可续接、completed retained output可读取。
+- [x] 运行目标Rust测试、fmt、check/clippy，并以最近数据库复现参数验证真实`pnpm dev`链路。

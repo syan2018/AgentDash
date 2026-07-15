@@ -5,6 +5,7 @@ pub mod background_workers;
 pub mod relay;
 pub mod repositories;
 pub mod runtime_gateway;
+pub mod runtime_tools;
 pub mod vfs;
 
 #[cfg(test)]

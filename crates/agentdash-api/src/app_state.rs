@@ -552,6 +552,9 @@ impl AppState {
         let vfs_provider = agentdash_application::runtime_tools::VfsRuntimeToolProvider::new(
             vfs_service.clone(),
             Some(inline_persister),
+            crate::bootstrap::runtime_tools::build_shell_terminal_registry_adapter(
+                terminal_registry.clone(),
+            ),
         )
         .with_materialization_service(vfs_materialization_service)
         .with_shell_output_registry(shell_output_registry.clone());

@@ -132,16 +132,19 @@ impl WaitActivityService {
         }
     }
 
-    async fn resolve_scope(
+    pub(crate) async fn resolve_scope(
         &self,
         context: &WaitToolContext,
     ) -> Result<ResolvedWaitScope, AgentToolError> {
         let mut scope = ResolvedWaitScope {
             runtime_thread_id: context.runtime_thread_id.clone(),
-            run_id: None,
-            agent_id: None,
-            frame_id: None,
+            run_id: context.owner.map(|owner| owner.run_id),
+            agent_id: context.owner.map(|owner| owner.agent_id),
+            frame_id: context.owner.map(|owner| owner.frame_id),
         };
+        if context.owner.is_some() {
+            return Ok(scope);
+        }
         let Some(runtime_thread_id) = context.runtime_thread_id.as_ref() else {
             return Ok(scope);
         };

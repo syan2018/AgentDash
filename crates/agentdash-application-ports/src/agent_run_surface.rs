@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use agentdash_agent_runtime_contract::PresentationThreadId;
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
 use agentdash_spi::{
     AuthIdentity, CapabilityState, RuntimeMcpServer, ToolCapability, ToolCluster, Vfs,
@@ -44,6 +45,7 @@ pub struct AgentRunRuntimeAddress {
 #[derive(Debug, Clone)]
 pub struct AgentRunRuntimeSurface {
     pub runtime_session_id: String,
+    pub presentation_thread_id: PresentationThreadId,
     pub run_id: Uuid,
     pub project_id: Uuid,
     pub agent_id: Uuid,
@@ -52,6 +54,7 @@ pub struct AgentRunRuntimeSurface {
     pub current_surface_frame_id: Uuid,
     pub surface_revision: i32,
     pub capability_state: CapabilityState,
+    pub visible_workspace_module_refs: Vec<String>,
     pub vfs: Vfs,
     pub vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy,
     pub mcp_servers: Vec<RuntimeMcpServer>,
@@ -136,6 +139,16 @@ pub enum AgentRunRuntimeSurfaceQueryError {
         purpose: RuntimeSurfaceQueryPurpose,
         runtime_session_id: String,
         agent_id: Uuid,
+    },
+    #[error(
+        "runtime surface query missing immutable surface closure: component={component}, session_id={runtime_session_id}, frame_id={frame_id}, field={field}",
+        component = purpose.component
+    )]
+    MissingSurfaceClosure {
+        purpose: RuntimeSurfaceQueryPurpose,
+        runtime_session_id: String,
+        frame_id: Uuid,
+        field: &'static str,
     },
     #[error("runtime surface query backend anchor failed: {source}")]
     RuntimeBackendAnchor { source: RuntimeBackendAnchorError },

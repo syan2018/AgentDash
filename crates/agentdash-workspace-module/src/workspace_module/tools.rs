@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
-#[cfg(test)]
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
 use agentdash_application_runtime_gateway::{
     ExtensionRuntimeBackendServiceInvokeResult, ExtensionRuntimeBackendServiceInvoker,
@@ -117,6 +116,11 @@ impl WorkspaceModuleListTool {
         self
     }
 
+    pub fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
+        self.visibility_source = self.visibility_source.with_effective_view(view);
+        self
+    }
+
     pub fn with_runtime_dependencies(
         mut self,
         runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
@@ -133,12 +137,6 @@ impl WorkspaceModuleListTool {
             backend_readiness,
             backend_service_readiness,
         );
-        self
-    }
-
-    #[cfg(test)]
-    fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
-        self.visibility_source = self.visibility_source.with_effective_view(view);
         self
     }
 }
@@ -288,8 +286,7 @@ impl WorkspaceModuleDescribeTool {
         self
     }
 
-    #[cfg(test)]
-    fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
+    pub fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
         self.visibility_source = self.visibility_source.with_effective_view(view);
         self
     }
@@ -828,8 +825,7 @@ impl WorkspaceModuleInvokeTool {
         self
     }
 
-    #[cfg(test)]
-    fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
+    pub fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
         self.visibility_source = self.visibility_source.with_effective_view(view);
         self
     }
@@ -977,6 +973,11 @@ impl WorkspaceModulePresentTool {
 
     pub fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
         self.visibility_source = self.visibility_source.with_current_user(current_user);
+        self
+    }
+
+    pub fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
+        self.visibility_source = self.visibility_source.with_effective_view(view);
         self
     }
 
@@ -2267,6 +2268,25 @@ mod tests {
                 identity: None,
             },
             turn: ExecutionTurnFrame {
+                platform_tool_execution: Some(agentdash_spi::PlatformToolExecutionContext {
+                    run_id: Uuid::new_v4(),
+                    project_id,
+                    agent_id: Uuid::new_v4(),
+                    frame_id: Uuid::new_v4(),
+                    runtime_thread_id: "thread-workspace-module-fixture"
+                        .parse()
+                        .expect("runtime thread"),
+                    presentation_thread_id: "presentation-workspace-module-fixture"
+                        .parse()
+                        .expect("presentation thread"),
+                    visible_workspace_module_refs: Vec::new(),
+                    invocation: None,
+                    launch_evidence_frame_id: Uuid::new_v4(),
+                    current_surface_frame_id: Uuid::new_v4(),
+                    orchestration_id: None,
+                    node_path: None,
+                    node_attempt: None,
+                }),
                 capability_state,
                 ..Default::default()
             },

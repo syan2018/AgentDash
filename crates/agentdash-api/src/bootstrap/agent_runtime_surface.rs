@@ -1,10 +1,7 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, OnceLock, Weak},
 };
-
-#[cfg(test)]
-use std::collections::BTreeSet;
 
 use agentdash_agent_runtime_contract::*;
 use agentdash_application_agentrun::agent_run::{
@@ -12,7 +9,7 @@ use agentdash_application_agentrun::agent_run::{
 };
 use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
 use agentdash_application_ports::agent_run_surface::{
-    AgentRunAdmissionRequest, AgentRunEffectiveCapabilityPort,
+    AgentRunAdmissionRequest, AgentRunEffectiveCapabilityPort, AgentRunRuntimeSurface,
 };
 use agentdash_application_ports::runtime_surface_adoption::{
     AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
@@ -34,6 +31,33 @@ use super::agent_runtime::{
     NativeAgentRunSurfacePublication, NativeAgentRunSurfacePublicationReservation,
 };
 
+#[async_trait]
+pub trait AgentRunToolInvocationFactory: Send + Sync {
+    async fn build_tools(
+        &self,
+        surface: &AgentRunRuntimeSurface,
+        executor: &agentdash_spi::AgentConfig,
+        coordinates: &agentdash_agent_runtime::ToolCallCoordinates,
+        hook_runtime: SharedHookRuntime,
+        identity: Option<agentdash_spi::AuthIdentity>,
+    ) -> Result<Vec<DynAgentTool>, String>;
+}
+
+#[async_trait]
+impl AgentRunToolInvocationFactory for AgentBusinessSurfaceSource {
+    async fn build_tools(
+        &self,
+        surface: &AgentRunRuntimeSurface,
+        executor: &agentdash_spi::AgentConfig,
+        coordinates: &agentdash_agent_runtime::ToolCallCoordinates,
+        hook_runtime: SharedHookRuntime,
+        identity: Option<agentdash_spi::AuthIdentity>,
+    ) -> Result<Vec<DynAgentTool>, String> {
+        self.build_tools_for_invocation(surface, executor, coordinates, hook_runtime, identity)
+            .await
+    }
+}
+
 #[derive(Clone)]
 pub struct CompiledAgentRunToolBinding {
     pub applied: AppliedNativeAgentRunSurface,
@@ -43,7 +67,10 @@ pub struct CompiledAgentRunToolBinding {
     pub frame_id: uuid::Uuid,
     pub hook_runtime: SharedHookRuntime,
     pub catalog: agentdash_agent_runtime::ToolCatalogRevision,
-    pub tools: BTreeMap<String, DynAgentTool>,
+    pub tool_factory: Arc<dyn AgentRunToolInvocationFactory>,
+    pub surface: AgentRunRuntimeSurface,
+    pub executor: agentdash_spi::AgentConfig,
+    pub tool_names: BTreeSet<String>,
     pub terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
 }
 
@@ -56,7 +83,10 @@ pub(crate) struct PendingCompiledAgentRunToolBinding {
     pub(crate) frame_id: uuid::Uuid,
     pub(crate) hook_runtime: SharedHookRuntime,
     pub(crate) catalog: agentdash_agent_runtime::ToolCatalogRevision,
-    pub(crate) tools: BTreeMap<String, DynAgentTool>,
+    pub(crate) tool_factory: Arc<dyn AgentRunToolInvocationFactory>,
+    pub(crate) surface: AgentRunRuntimeSurface,
+    pub(crate) executor: agentdash_spi::AgentConfig,
+    pub(crate) tool_names: BTreeSet<String>,
 }
 
 impl PendingCompiledAgentRunToolBinding {
@@ -64,10 +94,28 @@ impl PendingCompiledAgentRunToolBinding {
         &self,
         applied: AppliedNativeAgentRunSurface,
     ) -> Result<CompiledAgentRunToolBinding, AgentRunRuntimeSurfaceSourceError> {
-        if self.catalog.revision != applied.tool_set_revision {
+        let surface_revision = u64::try_from(self.surface.surface_revision).map_err(|_| {
+            AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "compiled invocation surface revision is invalid".to_string(),
+            }
+        })?;
+        let hook_target = self.hook_runtime.control_target();
+        if self.catalog.revision != applied.tool_set_revision
+            || SurfaceRevision(surface_revision) != applied.surface_revision
+            || self.runtime_session_id != applied.runtime_thread_id.to_string()
+            || self.surface.runtime_session_id != self.runtime_session_id
+            || self.surface.current_surface_frame_id != self.frame_id
+            || self.surface.run_id != self.run_id
+            || self.surface.agent_id != self.agent_id
+            || self.hook_runtime.session_id() != self.runtime_session_id
+            || hook_target.run_id != self.run_id
+            || hook_target.agent_id != self.agent_id
+            || hook_target.frame_id != self.frame_id
+        {
             return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
-                reason: "compiled tool catalog revision does not match the adopted surface"
-                    .to_string(),
+                reason:
+                    "compiled invocation context does not match the adopted Runtime coordinates"
+                        .to_string(),
             });
         }
         let terminal_hook_effect_binding = applied.terminal_hook_effect_binding.clone();
@@ -79,9 +127,147 @@ impl PendingCompiledAgentRunToolBinding {
             frame_id: self.frame_id,
             hook_runtime: self.hook_runtime.clone(),
             catalog: self.catalog.clone(),
-            tools: self.tools.clone(),
+            tool_factory: self.tool_factory.clone(),
+            surface: self.surface.clone(),
+            executor: self.executor.clone(),
+            tool_names: self.tool_names.clone(),
             terminal_hook_effect_binding,
         })
+    }
+}
+
+#[cfg(test)]
+impl CompiledAgentRunToolBinding {
+    pub(crate) fn from_test_tools(
+        applied: AppliedNativeAgentRunSurface,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+        frame_id: uuid::Uuid,
+        hook_runtime: SharedHookRuntime,
+        catalog: agentdash_agent_runtime::ToolCatalogRevision,
+        tools: Vec<DynAgentTool>,
+    ) -> Self {
+        PendingCompiledAgentRunToolBinding::from_test_tools(
+            Arc::new(CompiledAgentRunToolRegistry::default()),
+            &applied,
+            run_id,
+            agent_id,
+            frame_id,
+            hook_runtime,
+            catalog,
+            tools,
+        )
+        .applied_binding(applied)
+        .expect("test compiled invocation binding")
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct StaticTestToolInvocationFactory {
+    tools: Vec<DynAgentTool>,
+}
+
+#[cfg(test)]
+#[async_trait]
+impl AgentRunToolInvocationFactory for StaticTestToolInvocationFactory {
+    async fn build_tools(
+        &self,
+        _surface: &AgentRunRuntimeSurface,
+        _executor: &agentdash_spi::AgentConfig,
+        _coordinates: &agentdash_agent_runtime::ToolCallCoordinates,
+        _hook_runtime: SharedHookRuntime,
+        _identity: Option<agentdash_spi::AuthIdentity>,
+    ) -> Result<Vec<DynAgentTool>, String> {
+        Ok(self.tools.clone())
+    }
+}
+
+#[cfg(test)]
+fn test_invocation_surface(
+    runtime_session_id: String,
+    run_id: uuid::Uuid,
+    agent_id: uuid::Uuid,
+    frame_id: uuid::Uuid,
+    revision: SurfaceRevision,
+) -> AgentRunRuntimeSurface {
+    AgentRunRuntimeSurface {
+        presentation_thread_id: format!("presentation-{runtime_session_id}")
+            .parse()
+            .expect("test presentation thread"),
+        runtime_session_id,
+        run_id,
+        project_id: uuid::Uuid::nil(),
+        agent_id,
+        runtime_address: agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress {
+            run_id,
+            agent_id,
+            frame_id,
+        },
+        launch_evidence_frame_id: frame_id,
+        current_surface_frame_id: frame_id,
+        surface_revision: i32::try_from(revision.0).expect("test surface revision"),
+        capability_state: agentdash_spi::CapabilityState::default(),
+        visible_workspace_module_refs: Vec::new(),
+        vfs: agentdash_spi::Vfs::default(),
+        vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy::default(),
+        mcp_servers: Vec::new(),
+        runtime_backend_anchor: None,
+        active_turn_id: None,
+        identity: None,
+        provenance:
+            agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceProvenance {
+                launch_evidence_frame_id: frame_id,
+                launch_created_by_kind: "test".to_string(),
+                current_surface_frame_id: frame_id,
+                surface_revision: i32::try_from(revision.0).expect("test surface revision"),
+                surface_created_by_kind: "test".to_string(),
+                anchor_updated_at: chrono::Utc::now(),
+                orchestration_id: None,
+                node_path: None,
+                node_attempt: None,
+            },
+        closure: agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceClosure {
+            capability_field_present: true,
+            vfs_field_present: true,
+            mcp_field_present: true,
+        },
+    }
+}
+
+#[cfg(test)]
+impl PendingCompiledAgentRunToolBinding {
+    pub(crate) fn from_test_tools(
+        registry: Arc<CompiledAgentRunToolRegistry>,
+        applied: &AppliedNativeAgentRunSurface,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+        frame_id: uuid::Uuid,
+        hook_runtime: SharedHookRuntime,
+        catalog: agentdash_agent_runtime::ToolCatalogRevision,
+        tools: Vec<DynAgentTool>,
+    ) -> Self {
+        let runtime_session_id = applied.runtime_thread_id.to_string();
+        let tool_names = tools.iter().map(|tool| tool.name().to_string()).collect();
+        Self {
+            registry,
+            runtime_session_id: runtime_session_id.clone(),
+            run_id,
+            agent_id,
+            frame_id,
+            hook_runtime,
+            catalog,
+            tool_factory: Arc::new(StaticTestToolInvocationFactory { tools }),
+            surface: test_invocation_surface(
+                runtime_session_id,
+                run_id,
+                agent_id,
+                frame_id,
+                applied.surface_revision,
+            ),
+            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            tool_names,
+        }
     }
 }
 
@@ -158,11 +344,13 @@ impl CanonicalAgentRuntimeHookCallback {
         let input = RuntimePresentationInput {
             coordinate: RuntimePresentationCoordinate {
                 runtime_turn_id: request.turn_id.clone(),
+                presentation_turn_id: snapshot.active_presentation_turn_id.clone(),
                 runtime_item_id: request.item_id.clone(),
                 interaction_id: None,
                 source_thread_id: Some(binding.runtime_session_id.clone()),
                 source_turn_id: snapshot
                     .active_presentation_turn_id
+                    .clone()
                     .map(|turn_id| turn_id.to_string()),
                 source_item_id: request.item_id.as_ref().map(ToString::to_string),
                 source_request_id: Some(hook_run_id.to_string()),
@@ -568,6 +756,41 @@ impl RegistryToolBrokerPolicy {
             capabilities,
         }
     }
+
+    async fn binding(
+        &self,
+        invocation: &agentdash_agent_runtime::ToolBrokerInvocation,
+    ) -> Result<CompiledAgentRunToolBinding, agentdash_agent_runtime::ToolBrokerError> {
+        binding_for_invocation(self.registry.as_ref(), invocation).await
+    }
+}
+
+async fn binding_for_invocation(
+    registry: &CompiledAgentRunToolRegistry,
+    invocation: &agentdash_agent_runtime::ToolBrokerInvocation,
+) -> Result<CompiledAgentRunToolBinding, agentdash_agent_runtime::ToolBrokerError> {
+    let coordinates = &invocation.coordinates;
+    let binding = registry
+        .get_revision(&coordinates.binding_id, coordinates.tool_set_revision)
+        .await
+        .ok_or(agentdash_agent_runtime::ToolBrokerError::StaleCoordinates)?;
+    let applied = &binding.applied;
+    if applied.binding_id != coordinates.binding_id
+        || applied.runtime_thread_id != coordinates.thread_id
+        || applied.generation != coordinates.binding_generation
+        || applied.tool_set_revision != coordinates.tool_set_revision
+        || binding.catalog.revision != coordinates.tool_set_revision
+        || binding.runtime_session_id != coordinates.thread_id.to_string()
+        || binding.surface.current_surface_frame_id != binding.frame_id
+        || !binding.tool_names.contains(&invocation.tool_name)
+    {
+        return Err(agentdash_agent_runtime::ToolBrokerError::StaleCoordinates);
+    }
+    Ok(binding)
+}
+
+fn surface_policy_revision(binding: &CompiledAgentRunToolBinding) -> u64 {
+    u64::try_from(binding.surface.surface_revision).unwrap_or_default()
 }
 
 #[async_trait]
@@ -577,12 +800,11 @@ impl agentdash_agent_runtime::ToolBrokerPolicyPort for RegistryToolBrokerPolicy 
         invocation: &agentdash_agent_runtime::ToolBrokerInvocation,
     ) -> Result<agentdash_agent_runtime::ToolGuardDecision, agentdash_agent_runtime::ToolBrokerError>
     {
-        self.registry
-            .get(&invocation.coordinates.binding_id)
-            .await
-            .ok_or(agentdash_agent_runtime::ToolBrokerError::StaleCoordinates)?;
+        let binding = self.binding(invocation).await?;
         Ok(agentdash_agent_runtime::ToolGuardDecision::Allowed(
-            agentdash_agent_runtime::ToolPolicyCheck { revision: 1 },
+            agentdash_agent_runtime::ToolPolicyCheck {
+                revision: surface_policy_revision(&binding),
+            },
         ))
     }
 
@@ -592,11 +814,43 @@ impl agentdash_agent_runtime::ToolBrokerPolicyPort for RegistryToolBrokerPolicy 
         tool: &agentdash_agent_runtime::ToolContribution,
     ) -> Result<agentdash_agent_runtime::ToolGuardDecision, agentdash_agent_runtime::ToolBrokerError>
     {
-        let binding = self
-            .registry
-            .get(&invocation.coordinates.binding_id)
+        let binding = self.binding(invocation).await?;
+        let revision = surface_policy_revision(&binding);
+        let decision = self
+            .capabilities
+            .admit_tool(AgentRunAdmissionRequest::tool(
+                binding.runtime_session_id.clone(),
+                tool.capability_key.clone(),
+                tool.runtime_name.clone(),
+                None,
+            ))
             .await
-            .ok_or(agentdash_agent_runtime::ToolBrokerError::StaleCoordinates)?;
+            .map_err(|error| {
+                agentdash_agent_runtime::ToolBrokerError::Execution(error.to_string())
+            })?;
+        Ok(if decision.allowed {
+            agentdash_agent_runtime::ToolGuardDecision::Allowed(
+                agentdash_agent_runtime::ToolPolicyCheck { revision },
+            )
+        } else {
+            agentdash_agent_runtime::ToolGuardDecision::Denied {
+                reason: decision
+                    .reason
+                    .unwrap_or_else(|| "AgentFrame capability denied the tool".to_string()),
+            }
+        })
+    }
+
+    async fn authorize_permission(
+        &self,
+        invocation: &agentdash_agent_runtime::ToolBrokerInvocation,
+        tool: &agentdash_agent_runtime::ToolContribution,
+    ) -> Result<
+        agentdash_agent_runtime::ToolPermissionDecision,
+        agentdash_agent_runtime::ToolBrokerError,
+    > {
+        let binding = self.binding(invocation).await?;
+        let revision = surface_policy_revision(&binding);
         let decision = self
             .capabilities
             .admit_tool(AgentRunAdmissionRequest::tool(
@@ -610,39 +864,55 @@ impl agentdash_agent_runtime::ToolBrokerPolicyPort for RegistryToolBrokerPolicy 
                 agentdash_agent_runtime::ToolBrokerError::Execution(error.to_string())
             })?;
         Ok(if decision.allowed {
-            agentdash_agent_runtime::ToolGuardDecision::Allowed(
-                agentdash_agent_runtime::ToolPolicyCheck { revision: 1 },
+            agentdash_agent_runtime::ToolPermissionDecision::Allowed(
+                agentdash_agent_runtime::ToolPolicyCheck { revision },
             )
         } else {
-            agentdash_agent_runtime::ToolGuardDecision::Denied {
+            agentdash_agent_runtime::ToolPermissionDecision::Denied {
                 reason: decision
                     .reason
-                    .unwrap_or_else(|| "AgentFrame capability denied the tool".to_string()),
+                    .unwrap_or_else(|| "AgentFrame permission denied the tool".to_string()),
             }
         })
     }
 
-    async fn authorize_permission(
-        &self,
-        _invocation: &agentdash_agent_runtime::ToolBrokerInvocation,
-        _tool: &agentdash_agent_runtime::ToolContribution,
-    ) -> Result<
-        agentdash_agent_runtime::ToolPermissionDecision,
-        agentdash_agent_runtime::ToolBrokerError,
-    > {
-        Ok(agentdash_agent_runtime::ToolPermissionDecision::Allowed(
-            agentdash_agent_runtime::ToolPolicyCheck { revision: 1 },
-        ))
-    }
-
     async fn authorize_vfs(
         &self,
-        _invocation: &agentdash_agent_runtime::ToolBrokerInvocation,
-        _tool: &agentdash_agent_runtime::ToolContribution,
+        invocation: &agentdash_agent_runtime::ToolBrokerInvocation,
+        tool: &agentdash_agent_runtime::ToolContribution,
     ) -> Result<agentdash_agent_runtime::ToolGuardDecision, agentdash_agent_runtime::ToolBrokerError>
     {
+        let binding = self.binding(invocation).await?;
+        let required_operation = match &tool.protocol_projection {
+            ToolProtocolProjection::Command => Some(agentdash_spi::RuntimeVfsOperation::Exec),
+            ToolProtocolProjection::FileChange => {
+                Some(agentdash_spi::RuntimeVfsOperation::ApplyPatch)
+            }
+            ToolProtocolProjection::FsRead => Some(agentdash_spi::RuntimeVfsOperation::Read),
+            ToolProtocolProjection::FsGrep | ToolProtocolProjection::FsGlob => {
+                Some(agentdash_spi::RuntimeVfsOperation::Search)
+            }
+            ToolProtocolProjection::Mcp { .. } | ToolProtocolProjection::Dynamic { .. } => None,
+        };
+        if let Some(required_operation) = required_operation
+            && !binding
+                .surface
+                .vfs_access_policy
+                .rules
+                .iter()
+                .any(|rule| rule.operations.contains(&required_operation))
+        {
+            return Ok(agentdash_agent_runtime::ToolGuardDecision::Denied {
+                reason: format!(
+                    "AgentFrame VFS policy does not grant {required_operation:?} for tool `{}`",
+                    tool.runtime_name
+                ),
+            });
+        }
         Ok(agentdash_agent_runtime::ToolGuardDecision::Allowed(
-            agentdash_agent_runtime::ToolPolicyCheck { revision: 1 },
+            agentdash_agent_runtime::ToolPolicyCheck {
+                revision: surface_policy_revision(&binding),
+            },
         ))
     }
 }
@@ -669,6 +939,7 @@ impl agentdash_agent_runtime::ToolCredentialResolver for EmbeddedToolCredentialR
 
 struct RegistryToolExecutor {
     registry: Arc<CompiledAgentRunToolRegistry>,
+    authorization_identity: Option<agentdash_spi::AuthIdentity>,
 }
 
 fn project_agent_tool_content(
@@ -707,19 +978,47 @@ impl agentdash_agent_runtime::ToolExecutionPort for RegistryToolExecutor {
         request: agentdash_agent_runtime::ToolExecutionRequest,
     ) -> Result<agentdash_agent_runtime::ToolBrokerResult, agentdash_agent_runtime::ToolBrokerError>
     {
-        let binding = self
-            .registry
-            .get(&request.invocation.coordinates.binding_id)
+        let binding = binding_for_invocation(self.registry.as_ref(), &request.invocation).await?;
+        let hook_target = binding.hook_runtime.control_target();
+        if hook_target.run_id != binding.run_id
+            || hook_target.agent_id != binding.agent_id
+            || hook_target.frame_id != binding.frame_id
+            || binding.hook_runtime.session_id() != binding.runtime_session_id
+        {
+            return Err(agentdash_agent_runtime::ToolBrokerError::StaleCoordinates);
+        }
+        let rebuilt_tools = binding
+            .tool_factory
+            .build_tools(
+                &binding.surface,
+                &binding.executor,
+                &request.invocation.coordinates,
+                binding.hook_runtime.clone(),
+                self.authorization_identity.clone(),
+            )
             .await
-            .ok_or(agentdash_agent_runtime::ToolBrokerError::StaleCoordinates)?;
-        let tool = binding
-            .tools
-            .get(&request.invocation.tool_name)
-            .ok_or_else(|| {
-                agentdash_agent_runtime::ToolBrokerError::UnknownTool(
-                    request.invocation.tool_name.clone(),
-                )
-            })?;
+            .map_err(agentdash_agent_runtime::ToolBrokerError::Execution)?;
+        let mut rebuilt_names = BTreeSet::new();
+        let mut selected_tool = None;
+        for tool in rebuilt_tools {
+            let name = tool.name().trim().to_string();
+            if name.is_empty() || !rebuilt_names.insert(name.clone()) {
+                return Err(agentdash_agent_runtime::ToolBrokerError::Execution(
+                    "invocation tool rebuild produced an empty or duplicate tool name".to_string(),
+                ));
+            }
+            if name == request.invocation.tool_name {
+                selected_tool = Some(tool);
+            }
+        }
+        if rebuilt_names != binding.tool_names {
+            return Err(agentdash_agent_runtime::ToolBrokerError::StaleCoordinates);
+        }
+        let tool = selected_tool.ok_or_else(|| {
+            agentdash_agent_runtime::ToolBrokerError::UnknownTool(
+                request.invocation.tool_name.clone(),
+            )
+        })?;
         let update_projection_error = Arc::new(std::sync::Mutex::new(None::<String>));
         let result = tool
             .execute(
@@ -795,7 +1094,6 @@ pub struct PostgresAgentRunToolBrokerResolver {
         >,
     >,
     policy: Arc<RegistryToolBrokerPolicy>,
-    executor: Arc<RegistryToolExecutor>,
 }
 
 impl PostgresAgentRunToolBrokerResolver {
@@ -818,9 +1116,6 @@ impl PostgresAgentRunToolBrokerResolver {
                 registry.clone(),
                 capabilities,
             )),
-            executor: Arc::new(RegistryToolExecutor {
-                registry: registry.clone(),
-            }),
             registry,
         }
     }
@@ -837,6 +1132,12 @@ impl AgentRunPlatformToolBrokerResolver for PostgresAgentRunToolBrokerResolver {
             .get_revision(&request.binding_id, request.tool_set_revision)
             .await
             .ok_or(DriverToolCallbackError::Stale)?;
+        if binding.applied.runtime_thread_id != request.thread_id
+            || binding.applied.generation != request.generation
+            || binding.applied.source_thread_id != request.source_thread_id
+        {
+            return Err(DriverToolCallbackError::Stale);
+        }
         Ok(agentdash_agent_runtime::PlatformToolBroker::new(
             binding.catalog,
             request.binding_id.clone(),
@@ -846,7 +1147,10 @@ impl AgentRunPlatformToolBrokerResolver for PostgresAgentRunToolBrokerResolver {
                 journal: self.journal.clone(),
                 policy: self.policy.clone(),
                 credentials: Arc::new(EmbeddedToolCredentialResolver),
-                executor: self.executor.clone(),
+                executor: Arc::new(RegistryToolExecutor {
+                    registry: self.registry.clone(),
+                    authorization_identity: request.authorization_identity.clone(),
+                }),
             },
         ))
     }
@@ -1052,7 +1356,35 @@ fn compiled_binding_matches(
         && existing.run_id == binding.run_id
         && existing.agent_id == binding.agent_id
         && existing.frame_id == binding.frame_id
-        && existing.tools.keys().eq(binding.tools.keys())
+        && Arc::ptr_eq(&existing.tool_factory, &binding.tool_factory)
+        && existing.surface.runtime_session_id == binding.surface.runtime_session_id
+        && existing.surface.presentation_thread_id == binding.surface.presentation_thread_id
+        && existing.surface.run_id == binding.surface.run_id
+        && existing.surface.project_id == binding.surface.project_id
+        && existing.surface.agent_id == binding.surface.agent_id
+        && existing.surface.runtime_address == binding.surface.runtime_address
+        && existing.surface.launch_evidence_frame_id == binding.surface.launch_evidence_frame_id
+        && existing.surface.current_surface_frame_id == binding.surface.current_surface_frame_id
+        && existing.surface.surface_revision == binding.surface.surface_revision
+        && existing.surface.capability_state == binding.surface.capability_state
+        && existing.surface.visible_workspace_module_refs
+            == binding.surface.visible_workspace_module_refs
+        && existing.surface.vfs == binding.surface.vfs
+        && existing.surface.vfs_access_policy == binding.surface.vfs_access_policy
+        && existing.surface.mcp_servers == binding.surface.mcp_servers
+        && existing.surface.runtime_backend_anchor == binding.surface.runtime_backend_anchor
+        && existing.surface.active_turn_id == binding.surface.active_turn_id
+        && existing.surface.identity == binding.surface.identity
+        && existing.surface.provenance == binding.surface.provenance
+        && existing.surface.closure == binding.surface.closure
+        && existing.executor.executor == binding.executor.executor
+        && existing.executor.provider_id == binding.executor.provider_id
+        && existing.executor.model_id == binding.executor.model_id
+        && existing.executor.agent_id == binding.executor.agent_id
+        && existing.executor.thinking_level == binding.executor.thinking_level
+        && existing.executor.permission_policy == binding.executor.permission_policy
+        && existing.executor.system_prompt == binding.executor.system_prompt
+        && existing.tool_names == binding.tool_names
         && existing.hook_runtime.session_id() == binding.hook_runtime.session_id()
         && existing.hook_runtime.control_target() == binding.hook_runtime.control_target()
         && existing.hook_runtime.snapshot() == binding.hook_runtime.snapshot()
@@ -1325,7 +1657,7 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
     async fn adopt_runtime_surface(
         &self,
         target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
+    ) -> Result<(), RuntimeSurfaceAdoptionError> {
         let binding = self
             .bindings
             .load_by_thread_id(&target.runtime_thread_id)
@@ -1439,7 +1771,7 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
                 .tools
                 .get_revision(&binding.binding_id, descriptor.tool_set_revision)
                 .await
-                .map(|binding| binding.tools.into_values().collect())
+                .map(|_| ())
                 .ok_or_else(|| RuntimeSurfaceAdoptionError::Failed {
                     message: "idempotent surface adoption has no compiled tool binding".to_string(),
                 });
@@ -1510,7 +1842,7 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
         self.tools
             .get_revision(&binding.binding_id, descriptor.tool_set_revision)
             .await
-            .map(|binding| binding.tools.into_values().collect())
+            .map(|_| ())
             .ok_or_else(|| RuntimeSurfaceAdoptionError::Failed {
                 message: "canonical surface adoption did not publish its compiled tool binding"
                     .to_string(),
@@ -1591,7 +1923,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameSurfaceCompositionAdapter {
                 reason: "AgentFrame surface revision must be positive".to_string(),
             });
         }
-        let mut direct_tools = BTreeMap::new();
+        let mut tool_names = BTreeSet::new();
         let mut driver_tools = Vec::new();
         let catalog_tools = business_facts
             .tools
@@ -1600,7 +1932,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameSurfaceCompositionAdapter {
             .collect::<BTreeMap<_, _>>();
         for tool in tools {
             let name = tool.name().trim().to_string();
-            if name.is_empty() || direct_tools.insert(name.clone(), tool.clone()).is_some() {
+            if name.is_empty() || !tool_names.insert(name.clone()) {
                 return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
                     reason: format!("assembled runtime tool name is empty or duplicated: {name}"),
                 });
@@ -1616,6 +1948,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameSurfaceCompositionAdapter {
                 parameters_schema: contribution.parameters_schema.clone(),
                 channels: vec![ToolChannel::DirectCallback],
                 protocol_projection: contribution.protocol_projection.clone(),
+                presentation_emitter: contribution.presentation_emitter,
                 parity_fixture_id: contribution.parity_fixture_id.clone(),
             });
         }
@@ -1644,7 +1977,10 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameSurfaceCompositionAdapter {
                 frame_id: frame.id,
                 hook_runtime,
                 catalog: catalog.clone(),
-                tools: direct_tools,
+                tool_factory: self.source.clone(),
+                surface: surface.clone(),
+                executor: executor.clone(),
+                tool_names,
             });
         let recipe = business_surface.snapshot.context.recipe.clone();
         let (instructions, blocks) = materialize_driver_context(&business_surface.snapshot.context);
@@ -1835,6 +2171,177 @@ mod tests {
         ))
     }
 
+    #[derive(Clone, Default)]
+    struct FixtureToolInvocationFactory {
+        tools: Vec<DynAgentTool>,
+    }
+
+    #[async_trait]
+    impl AgentRunToolInvocationFactory for FixtureToolInvocationFactory {
+        async fn build_tools(
+            &self,
+            _surface: &AgentRunRuntimeSurface,
+            _executor: &agentdash_spi::AgentConfig,
+            _coordinates: &agentdash_agent_runtime::ToolCallCoordinates,
+            _hook_runtime: SharedHookRuntime,
+            _identity: Option<agentdash_spi::AuthIdentity>,
+        ) -> Result<Vec<DynAgentTool>, String> {
+            Ok(self.tools.clone())
+        }
+    }
+
+    fn fixture_tool_factory(tools: Vec<DynAgentTool>) -> Arc<dyn AgentRunToolInvocationFactory> {
+        Arc::new(FixtureToolInvocationFactory { tools })
+    }
+
+    struct OwnerEchoTool {
+        owner: serde_json::Value,
+    }
+
+    #[async_trait]
+    impl agentdash_spi::AgentTool for OwnerEchoTool {
+        fn name(&self) -> &str {
+            "owner_echo"
+        }
+
+        fn description(&self) -> &str {
+            "Echo the final invocation owner"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "additionalProperties": false})
+        }
+
+        async fn execute(
+            &self,
+            _tool_use_id: &str,
+            _args: serde_json::Value,
+            _cancel: tokio_util::sync::CancellationToken,
+            _update: Option<agentdash_spi::ToolUpdateCallback>,
+        ) -> Result<agentdash_spi::AgentToolResult, agentdash_spi::AgentToolError> {
+            Ok(agentdash_spi::AgentToolResult {
+                content: vec![agentdash_spi::ContentPart::text("typed invocation owner")],
+                details: Some(self.owner.clone()),
+                is_error: false,
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct OwnerEchoToolInvocationFactory {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl AgentRunToolInvocationFactory for OwnerEchoToolInvocationFactory {
+        async fn build_tools(
+            &self,
+            surface: &AgentRunRuntimeSurface,
+            _executor: &agentdash_spi::AgentConfig,
+            coordinates: &agentdash_agent_runtime::ToolCallCoordinates,
+            _hook_runtime: SharedHookRuntime,
+            _identity: Option<agentdash_spi::AuthIdentity>,
+        ) -> Result<Vec<DynAgentTool>, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![Arc::new(OwnerEchoTool {
+                owner: serde_json::json!({
+                    "run_id": surface.run_id,
+                    "project_id": surface.project_id,
+                    "agent_id": surface.agent_id,
+                    "frame_id": surface.current_surface_frame_id,
+                    "launch_evidence_frame_id": surface.launch_evidence_frame_id,
+                    "runtime_thread_id": coordinates.thread_id,
+                    "presentation_thread_id": surface.presentation_thread_id,
+                    "runtime_turn_id": coordinates.turn_id,
+                    "runtime_item_id": coordinates.item_id,
+                    "presentation_item_id": coordinates.presentation_item_id,
+                    "source_thread_id": coordinates.source_thread_id,
+                    "source_turn_id": coordinates.source_turn_id,
+                    "source_item_id": coordinates.source_item_id,
+                    "binding_id": coordinates.binding_id,
+                    "binding_generation": coordinates.binding_generation.0,
+                    "tool_set_revision": coordinates.tool_set_revision.0,
+                }),
+            })])
+        }
+    }
+
+    struct UnusedCapabilityPort;
+
+    #[async_trait]
+    impl AgentRunEffectiveCapabilityPort for UnusedCapabilityPort {
+        async fn effective_capability(
+            &self,
+            _request: agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityRequest,
+        ) -> Result<
+            agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView,
+            agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityError,
+        > {
+            panic!("VFS policy test must not query capability projection")
+        }
+
+        async fn admit_tool(
+            &self,
+            _request: AgentRunAdmissionRequest,
+        ) -> Result<
+            agentdash_application_ports::agent_run_surface::AgentRunAdmissionDecision,
+            agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityError,
+        > {
+            panic!("VFS policy test must not query capability admission")
+        }
+    }
+
+    fn fixture_runtime_surface(
+        runtime_session_id: &str,
+        frame_id: uuid::Uuid,
+        revision: u64,
+    ) -> AgentRunRuntimeSurface {
+        AgentRunRuntimeSurface {
+            runtime_session_id: runtime_session_id.to_string(),
+            presentation_thread_id: format!("presentation-{runtime_session_id}")
+                .parse()
+                .expect("fixture presentation thread"),
+            run_id: uuid::Uuid::nil(),
+            project_id: uuid::Uuid::nil(),
+            agent_id: uuid::Uuid::nil(),
+            runtime_address:
+                agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress {
+                    run_id: uuid::Uuid::nil(),
+                    agent_id: uuid::Uuid::nil(),
+                    frame_id,
+                },
+            launch_evidence_frame_id: frame_id,
+            current_surface_frame_id: frame_id,
+            surface_revision: i32::try_from(revision).unwrap(),
+            capability_state: CapabilityState::default(),
+            visible_workspace_module_refs: Vec::new(),
+            vfs: agentdash_spi::Vfs::default(),
+            vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy::default(),
+            mcp_servers: Vec::new(),
+            runtime_backend_anchor: None,
+            active_turn_id: None,
+            identity: None,
+            provenance:
+                agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceProvenance {
+                    launch_evidence_frame_id: frame_id,
+                    launch_created_by_kind: "fixture".to_string(),
+                    current_surface_frame_id: frame_id,
+                    surface_revision: i32::try_from(revision).unwrap(),
+                    surface_created_by_kind: "fixture".to_string(),
+                    anchor_updated_at: chrono::Utc::now(),
+                    orchestration_id: None,
+                    node_path: None,
+                    node_attempt: None,
+                },
+            closure:
+                agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceClosure {
+                    capability_field_present: true,
+                    vfs_field_present: true,
+                    mcp_field_present: true,
+                },
+        }
+    }
+
     #[test]
     fn hook_semantic_notice_derives_platform_metadata() {
         let facts = hook_context_presentation_facts(
@@ -1925,20 +2432,53 @@ mod tests {
         let registry = Arc::new(CompiledAgentRunToolRegistry::default());
         let binding_id = RuntimeBindingId::new("binding-restart-recovery").unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
+        let run_id = uuid::Uuid::new_v4();
+        let project_id = uuid::Uuid::new_v4();
+        let agent_id = uuid::Uuid::new_v4();
+        let launch_evidence_frame_id = uuid::Uuid::new_v4();
+        let current_surface_frame_id = uuid::Uuid::new_v4();
+        let orchestration_id = uuid::Uuid::new_v4();
+        let applied = fixture_applied(binding_id.as_str(), 1);
+        let runtime_thread_id = applied.runtime_thread_id.to_string();
+        let presentation_thread_id = agentdash_agent_runtime_contract::PresentationThreadId::new(
+            "presentation-restart-recovery",
+        )
+        .unwrap();
+        let mut surface = fixture_runtime_surface(&runtime_thread_id, current_surface_frame_id, 1);
+        surface.presentation_thread_id = presentation_thread_id.clone();
+        surface.run_id = run_id;
+        surface.project_id = project_id;
+        surface.agent_id = agent_id;
+        surface.runtime_address =
+            agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress {
+                run_id,
+                agent_id,
+                frame_id: current_surface_frame_id,
+            };
+        surface.launch_evidence_frame_id = launch_evidence_frame_id;
+        surface.visible_workspace_module_refs = vec!["workspace.module.fixture".to_string()];
+        surface.provenance.launch_evidence_frame_id = launch_evidence_frame_id;
+        surface.provenance.current_surface_frame_id = current_surface_frame_id;
+        surface.provenance.orchestration_id = Some(orchestration_id);
+        surface.provenance.node_path = Some("root/recovered".to_string());
+        surface.provenance.node_attempt = Some(3);
         let binding = CompiledAgentRunToolBinding {
-            applied: fixture_applied(binding_id.as_str(), 1),
-            runtime_session_id: "presentation-restart-recovery".into(),
-            run_id: uuid::Uuid::nil(),
-            agent_id: uuid::Uuid::nil(),
-            frame_id: uuid::Uuid::nil(),
-            hook_runtime: fixture_hook_runtime("presentation-restart-recovery"),
+            applied,
+            runtime_session_id: runtime_thread_id.clone(),
+            run_id,
+            agent_id,
+            frame_id: current_surface_frame_id,
+            hook_runtime: fixture_hook_runtime(&runtime_thread_id),
             catalog: agentdash_agent_runtime::ToolCatalogRevision {
                 revision: ToolSetRevision(1),
                 digest: "catalog-restart-recovery".into(),
                 tools: Vec::new(),
                 mcp_servers: Vec::new(),
             },
-            tools: BTreeMap::new(),
+            tool_factory: fixture_tool_factory(Vec::new()),
+            surface,
+            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            tool_names: BTreeSet::new(),
             terminal_hook_effect_binding: None,
         };
         registry
@@ -1953,9 +2493,190 @@ mod tests {
             registry.recover_if_missing(&binding_id),
             registry.recover_if_missing(&binding_id)
         );
-        assert_eq!(first.unwrap().catalog.revision, ToolSetRevision(1));
-        assert_eq!(second.unwrap().catalog.revision, ToolSetRevision(1));
+        let first = first.unwrap();
+        let second = second.unwrap();
+        assert_eq!(first.catalog.revision, ToolSetRevision(1));
+        assert_eq!(second.catalog.revision, ToolSetRevision(1));
+        for recovered in [&first, &second] {
+            assert_eq!(recovered.run_id, run_id);
+            assert_eq!(recovered.agent_id, agent_id);
+            assert_eq!(recovered.frame_id, current_surface_frame_id);
+            assert_eq!(recovered.surface.project_id, project_id);
+            assert_eq!(recovered.surface.runtime_session_id, runtime_thread_id);
+            assert_eq!(
+                recovered.surface.presentation_thread_id,
+                presentation_thread_id
+            );
+            assert_ne!(
+                recovered.surface.runtime_session_id,
+                recovered.surface.presentation_thread_id.as_str()
+            );
+            assert_eq!(
+                recovered.surface.launch_evidence_frame_id,
+                launch_evidence_frame_id
+            );
+            assert_eq!(
+                recovered.surface.current_surface_frame_id,
+                current_surface_frame_id
+            );
+            assert_eq!(
+                recovered.surface.visible_workspace_module_refs,
+                ["workspace.module.fixture"]
+            );
+            assert_eq!(
+                recovered.surface.provenance.orchestration_id,
+                Some(orchestration_id)
+            );
+            assert_eq!(
+                recovered.surface.provenance.node_path.as_deref(),
+                Some("root/recovered")
+            );
+            assert_eq!(recovered.surface.provenance.node_attempt, Some(3));
+        }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn registry_executor_rebuilds_final_tool_with_real_owner_surface() {
+        let registry = Arc::new(CompiledAgentRunToolRegistry::default());
+        let binding_id = RuntimeBindingId::new("binding-real-owner").unwrap();
+        let applied = fixture_applied(binding_id.as_str(), 7);
+        let runtime_thread_id = applied.runtime_thread_id.clone();
+        let presentation_thread_id =
+            agentdash_agent_runtime_contract::PresentationThreadId::new("presentation-real-owner")
+                .unwrap();
+        let run_id = uuid::Uuid::new_v4();
+        let project_id = uuid::Uuid::new_v4();
+        let agent_id = uuid::Uuid::new_v4();
+        let launch_frame_id = uuid::Uuid::new_v4();
+        let current_frame_id = uuid::Uuid::new_v4();
+        let mut surface = fixture_runtime_surface(runtime_thread_id.as_str(), current_frame_id, 7);
+        surface.presentation_thread_id = presentation_thread_id.clone();
+        surface.run_id = run_id;
+        surface.project_id = project_id;
+        surface.agent_id = agent_id;
+        surface.runtime_address =
+            agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress {
+                run_id,
+                agent_id,
+                frame_id: current_frame_id,
+            };
+        surface.launch_evidence_frame_id = launch_frame_id;
+        surface.current_surface_frame_id = current_frame_id;
+        surface.provenance.launch_evidence_frame_id = launch_frame_id;
+        surface.provenance.current_surface_frame_id = current_frame_id;
+        let hook_runtime: SharedHookRuntime = Arc::new(AgentFrameHookRuntime::new(
+            run_id,
+            agent_id,
+            current_frame_id,
+            7,
+            runtime_thread_id.to_string(),
+            Arc::new(NoopExecutionHookProvider),
+            agentdash_spi::AgentFrameHookSnapshot::default(),
+        ));
+        let factory = Arc::new(OwnerEchoToolInvocationFactory::default());
+        registry
+            .put(CompiledAgentRunToolBinding {
+                applied: applied.clone(),
+                runtime_session_id: runtime_thread_id.to_string(),
+                run_id,
+                agent_id,
+                frame_id: current_frame_id,
+                hook_runtime,
+                catalog: agentdash_agent_runtime::ToolCatalogRevision {
+                    revision: ToolSetRevision(7),
+                    digest: "real-owner-catalog".into(),
+                    tools: Vec::new(),
+                    mcp_servers: Vec::new(),
+                },
+                tool_factory: factory.clone(),
+                surface,
+                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                tool_names: BTreeSet::from(["owner_echo".to_string()]),
+                terminal_hook_effect_binding: None,
+            })
+            .await
+            .unwrap();
+
+        let turn_id = RuntimeTurnId::new("turn-real-owner").unwrap();
+        let item_id = RuntimeItemId::new("item-real-owner").unwrap();
+        let (updates, _updates_rx) = tokio::sync::mpsc::unbounded_channel();
+        let result = RegistryToolExecutor {
+            registry,
+            authorization_identity: None,
+        }
+        .execute(agentdash_agent_runtime::ToolExecutionRequest {
+            idempotency_key: item_id.clone(),
+            invocation: agentdash_agent_runtime::ToolBrokerInvocation {
+                coordinates: agentdash_agent_runtime::ToolCallCoordinates {
+                    thread_id: runtime_thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    presentation_item_id:
+                        agentdash_agent_runtime_contract::PresentationItemId::new(
+                            "turn-real-owner:tool-real-owner",
+                        )
+                        .unwrap(),
+                    source_thread_id: agentdash_agent_runtime_contract::DriverThreadId::new(
+                        "source-real-owner",
+                    )
+                    .unwrap(),
+                    source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new(
+                        "source-turn-real-owner",
+                    )
+                    .unwrap(),
+                    source_item_id: agentdash_agent_runtime_contract::DriverItemId::new(
+                        "source-item-real-owner",
+                    )
+                    .unwrap(),
+                    binding_id: binding_id.clone(),
+                    binding_generation: RuntimeDriverGeneration(1),
+                    tool_set_revision: ToolSetRevision(7),
+                },
+                tool_name: "owner_echo".to_string(),
+                arguments: serde_json::json!({}),
+                timeout_ms: 1_000,
+            },
+            credentials: agentdash_agent_runtime::CredentialMaterial::new(BTreeMap::new()),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            updates,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(factory.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.output["run_id"], run_id.to_string());
+        assert_eq!(result.output["project_id"], project_id.to_string());
+        assert_eq!(result.output["agent_id"], agent_id.to_string());
+        assert_eq!(result.output["frame_id"], current_frame_id.to_string());
+        assert_eq!(
+            result.output["launch_evidence_frame_id"],
+            launch_frame_id.to_string()
+        );
+        assert_eq!(
+            result.output["runtime_thread_id"],
+            runtime_thread_id.as_str()
+        );
+        assert_eq!(
+            result.output["presentation_thread_id"],
+            presentation_thread_id.as_str()
+        );
+        assert_ne!(
+            result.output["runtime_thread_id"],
+            result.output["presentation_thread_id"]
+        );
+        assert_eq!(result.output["runtime_turn_id"], turn_id.as_str());
+        assert_eq!(result.output["runtime_item_id"], item_id.as_str());
+        assert_eq!(
+            result.output["presentation_item_id"],
+            "turn-real-owner:tool-real-owner"
+        );
+        assert_eq!(result.output["source_thread_id"], "source-real-owner");
+        assert_eq!(result.output["source_turn_id"], "source-turn-real-owner");
+        assert_eq!(result.output["source_item_id"], "source-item-real-owner");
+        assert_eq!(result.output["binding_id"], binding_id.as_str());
+        assert_eq!(result.output["binding_generation"], 1);
+        assert_eq!(result.output["tool_set_revision"], 7);
     }
 
     fn fixture_terminal_hook_effect_binding() -> RuntimeTerminalHookEffectBinding {
@@ -2037,51 +2758,74 @@ mod tests {
     async fn malformed_tool_update_fails_terminal_without_diagnostic_content_item() {
         let binding_id = RuntimeBindingId::new("binding-malformed-update").unwrap();
         let registry = Arc::new(CompiledAgentRunToolRegistry::default());
+        let applied = fixture_applied("binding-malformed-update", 1);
+        let runtime_session_id = applied.runtime_thread_id.to_string();
+        let malformed_tool = Arc::new(MalformedUpdateTool) as DynAgentTool;
         registry
             .put(CompiledAgentRunToolBinding {
-                applied: fixture_applied("binding-malformed-update", 1),
-                runtime_session_id: "session-malformed-update".into(),
+                applied: applied.clone(),
+                runtime_session_id: runtime_session_id.clone(),
                 run_id: uuid::Uuid::nil(),
                 agent_id: uuid::Uuid::nil(),
                 frame_id: uuid::Uuid::nil(),
-                hook_runtime: fixture_hook_runtime("session-malformed-update"),
+                hook_runtime: fixture_hook_runtime(&runtime_session_id),
                 catalog: agentdash_agent_runtime::ToolCatalogRevision {
                     revision: ToolSetRevision(1),
                     digest: "malformed-update".into(),
                     tools: Vec::new(),
                     mcp_servers: Vec::new(),
                 },
-                tools: BTreeMap::from([(
-                    "malformed_update".to_string(),
-                    Arc::new(MalformedUpdateTool) as DynAgentTool,
-                )]),
+                tool_factory: fixture_tool_factory(vec![malformed_tool]),
+                surface: fixture_runtime_surface(&runtime_session_id, uuid::Uuid::nil(), 1),
+                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                tool_names: BTreeSet::from(["malformed_update".to_string()]),
                 terminal_hook_effect_binding: None,
             })
             .await
             .unwrap();
         let (updates, mut updates_rx) = tokio::sync::mpsc::unbounded_channel();
-        let error = RegistryToolExecutor { registry }
-            .execute(agentdash_agent_runtime::ToolExecutionRequest {
-                idempotency_key: RuntimeItemId::new("malformed-update-item").unwrap(),
-                invocation: agentdash_agent_runtime::ToolBrokerInvocation {
-                    coordinates: agentdash_agent_runtime::ToolCallCoordinates {
-                        thread_id: RuntimeThreadId::new("malformed-update-thread").unwrap(),
-                        turn_id: RuntimeTurnId::new("malformed-update-turn").unwrap(),
-                        item_id: RuntimeItemId::new("malformed-update-item").unwrap(),
-                        binding_id,
-                        binding_generation: RuntimeDriverGeneration(1),
-                        tool_set_revision: ToolSetRevision(1),
-                    },
-                    tool_name: "malformed_update".into(),
-                    arguments: serde_json::json!({}),
-                    timeout_ms: 1_000,
+        let error = RegistryToolExecutor {
+            registry,
+            authorization_identity: None,
+        }
+        .execute(agentdash_agent_runtime::ToolExecutionRequest {
+            idempotency_key: RuntimeItemId::new("malformed-update-item").unwrap(),
+            invocation: agentdash_agent_runtime::ToolBrokerInvocation {
+                coordinates: agentdash_agent_runtime::ToolCallCoordinates {
+                    thread_id: applied.runtime_thread_id,
+                    turn_id: RuntimeTurnId::new("malformed-update-turn").unwrap(),
+                    item_id: RuntimeItemId::new("malformed-update-item").unwrap(),
+                    presentation_item_id:
+                        agentdash_agent_runtime_contract::PresentationItemId::new(
+                            "turn_001:tool_001",
+                        )
+                        .unwrap(),
+                    source_thread_id: agentdash_agent_runtime_contract::DriverThreadId::new(
+                        "source-malformed-update",
+                    )
+                    .unwrap(),
+                    source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new(
+                        "source-turn-malformed-update",
+                    )
+                    .unwrap(),
+                    source_item_id: agentdash_agent_runtime_contract::DriverItemId::new(
+                        "source-item-malformed-update",
+                    )
+                    .unwrap(),
+                    binding_id,
+                    binding_generation: RuntimeDriverGeneration(1),
+                    tool_set_revision: ToolSetRevision(1),
                 },
-                credentials: agentdash_agent_runtime::CredentialMaterial::new(BTreeMap::new()),
-                cancellation: tokio_util::sync::CancellationToken::new(),
-                updates,
-            })
-            .await
-            .expect_err("malformed update must fail the terminal execution");
+                tool_name: "malformed_update".into(),
+                arguments: serde_json::json!({}),
+                timeout_ms: 1_000,
+            },
+            credentials: agentdash_agent_runtime::CredentialMaterial::new(BTreeMap::new()),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            updates,
+        })
+        .await
+        .expect_err("malformed update must fail the terminal execution");
         assert!(error.to_string().contains("unsupported reasoning content"));
         assert_eq!(
             updates_rx.recv().await,
@@ -2115,25 +2859,32 @@ mod tests {
                     tools: Vec::new(),
                     mcp_servers: Vec::new(),
                 },
-                tools: BTreeMap::new(),
+                tool_factory: fixture_tool_factory(Vec::new()),
+                surface: fixture_runtime_surface("presentation-applied", uuid::Uuid::nil(), 1),
+                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                tool_names: BTreeSet::new(),
                 terminal_hook_effect_binding: None,
             })
             .await
             .unwrap();
+        let pending_session = "thread-binding-atomic-adopt";
         let pending = PendingCompiledAgentRunToolBinding {
             registry: registry.clone(),
-            runtime_session_id: "presentation-pending".into(),
+            runtime_session_id: pending_session.into(),
             run_id: uuid::Uuid::nil(),
             agent_id: uuid::Uuid::nil(),
             frame_id: uuid::Uuid::nil(),
-            hook_runtime: fixture_hook_runtime("presentation-pending"),
+            hook_runtime: fixture_hook_runtime(pending_session),
             catalog: agentdash_agent_runtime::ToolCatalogRevision {
                 revision: ToolSetRevision(2),
                 digest: "catalog-pending".into(),
                 tools: Vec::new(),
                 mcp_servers: Vec::new(),
             },
-            tools: BTreeMap::new(),
+            tool_factory: fixture_tool_factory(Vec::new()),
+            surface: fixture_runtime_surface(pending_session, uuid::Uuid::nil(), 2),
+            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            tool_names: BTreeSet::new(),
         };
 
         for _failure in [
@@ -2157,6 +2908,7 @@ mod tests {
     #[tokio::test]
     async fn concurrent_conflicting_publication_is_rejected_before_adoption() {
         let registry = Arc::new(CompiledAgentRunToolRegistry::default());
+        let applied = fixture_applied("binding-reservation", 1);
         let pending = |session: &str| PendingCompiledAgentRunToolBinding {
             registry: registry.clone(),
             runtime_session_id: session.into(),
@@ -2170,14 +2922,16 @@ mod tests {
                 tools: Vec::new(),
                 mcp_servers: Vec::new(),
             },
-            tools: BTreeMap::new(),
+            tool_factory: fixture_tool_factory(Vec::new()),
+            surface: fixture_runtime_surface(session, uuid::Uuid::nil(), 1),
+            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            tool_names: BTreeSet::new(),
         };
-        let first = pending("presentation-reservation-a");
+        let first = pending(applied.runtime_thread_id.as_str());
         let conflicting = pending("presentation-reservation-b");
-        let applied = fixture_applied("binding-reservation", 1);
 
         let reservation = first.reserve(applied.clone()).await.unwrap();
-        assert!(conflicting.reserve(applied).await.is_err());
+        assert!(conflicting.reserve(applied.clone()).await.is_err());
         assert!(
             registry
                 .get(&RuntimeBindingId::new("binding-reservation").unwrap())
@@ -2191,7 +2945,7 @@ mod tests {
                 .await
                 .unwrap()
                 .runtime_session_id,
-            "presentation-reservation-a"
+            applied.runtime_thread_id.to_string()
         );
     }
 
@@ -2258,6 +3012,8 @@ mod tests {
         let run_id = uuid::Uuid::nil();
         let agent_id = uuid::Uuid::nil();
         let frame_id = uuid::Uuid::nil();
+        let tool_factory = fixture_tool_factory(Vec::new());
+        let surface = fixture_runtime_surface("presentation-thread-1", frame_id, 1);
         let binding = |hook_runtime| CompiledAgentRunToolBinding {
             applied: fixture_applied("binding-refresh", 1),
             runtime_session_id: "presentation-thread-1".into(),
@@ -2271,7 +3027,10 @@ mod tests {
                 tools: Vec::new(),
                 mcp_servers: Vec::new(),
             },
-            tools: BTreeMap::new(),
+            tool_factory: tool_factory.clone(),
+            surface: surface.clone(),
+            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            tool_names: BTreeSet::new(),
             terminal_hook_effect_binding: None,
         };
         registry.put(binding(first_runtime.clone())).await.unwrap();
@@ -2295,20 +3054,24 @@ mod tests {
         let terminal_binding = fixture_terminal_hook_effect_binding();
         let mut applied = fixture_applied("binding-terminal-effect", 3);
         applied.terminal_hook_effect_binding = Some(terminal_binding.clone());
+        let runtime_session_id = applied.runtime_thread_id.to_string();
         let pending = PendingCompiledAgentRunToolBinding {
             registry: registry.clone(),
-            runtime_session_id: "presentation-terminal-effect".into(),
+            runtime_session_id: runtime_session_id.clone(),
             run_id: uuid::Uuid::nil(),
             agent_id: uuid::Uuid::nil(),
             frame_id: uuid::Uuid::nil(),
-            hook_runtime: fixture_hook_runtime("presentation-terminal-effect"),
+            hook_runtime: fixture_hook_runtime(&runtime_session_id),
             catalog: agentdash_agent_runtime::ToolCatalogRevision {
                 revision: applied.tool_set_revision,
                 digest: "catalog-terminal-effect".into(),
                 tools: Vec::new(),
                 mcp_servers: Vec::new(),
             },
-            tools: BTreeMap::new(),
+            tool_factory: fixture_tool_factory(Vec::new()),
+            surface: fixture_runtime_surface(&runtime_session_id, uuid::Uuid::nil(), 3),
+            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            tool_names: BTreeSet::new(),
         };
 
         pending
@@ -2372,6 +3135,7 @@ mod tests {
     #[tokio::test]
     async fn hook_registry_accepts_only_the_current_applied_coordinates() {
         let registry = CompiledAgentRunToolRegistry::default();
+        let tool_factory = fixture_tool_factory(Vec::new());
         let binding = |revision| CompiledAgentRunToolBinding {
             applied: fixture_applied("binding-hook-fence", revision),
             runtime_session_id: "presentation-hook-fence".into(),
@@ -2385,7 +3149,14 @@ mod tests {
                 tools: Vec::new(),
                 mcp_servers: Vec::new(),
             },
-            tools: BTreeMap::new(),
+            tool_factory: tool_factory.clone(),
+            surface: fixture_runtime_surface(
+                "presentation-hook-fence",
+                uuid::Uuid::nil(),
+                revision,
+            ),
+            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            tool_names: BTreeSet::new(),
             terminal_hook_effect_binding: None,
         };
         let first = binding(1);
@@ -2523,6 +3294,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn vfs_policy_denies_before_owner_executor_dispatch() {
+        let contribution = agentdash_agent_runtime::ToolContribution {
+            meta: agentdash_agent_runtime::ContributionMeta {
+                key: "tool:fs-read-denied".into(),
+                source: agentdash_agent_runtime::SurfaceSourceRef {
+                    layer: "platform".into(),
+                    key: "vfs".into(),
+                },
+                priority: 1,
+                requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+            },
+            runtime_name: "fs_read".into(),
+            description: "fixture".into(),
+            parameters_schema: serde_json::json!({"type":"object"}),
+            capability_key: "file_read".into(),
+            tool_path: "vfs::fs_read".into(),
+            allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
+            configuration_boundary: ConfigurationBoundary::Binding,
+            protocol_projection: ToolProtocolProjection::FsRead,
+            presentation_emitter:
+                agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker,
+            parity_fixture_id: "main_tool_fs_read_denied".into(),
+        };
+        let registry = Arc::new(CompiledAgentRunToolRegistry::default());
+        let applied = fixture_applied("binding-vfs-deny", 1);
+        let runtime_session_id = applied.runtime_thread_id.to_string();
+        registry
+            .put(CompiledAgentRunToolBinding {
+                applied: applied.clone(),
+                runtime_session_id: runtime_session_id.clone(),
+                run_id: uuid::Uuid::nil(),
+                agent_id: uuid::Uuid::nil(),
+                frame_id: uuid::Uuid::nil(),
+                hook_runtime: fixture_hook_runtime(&runtime_session_id),
+                catalog: agentdash_agent_runtime::ToolCatalogRevision {
+                    revision: ToolSetRevision(1),
+                    digest: "vfs-deny".into(),
+                    tools: vec![contribution.clone()],
+                    mcp_servers: Vec::new(),
+                },
+                tool_factory: fixture_tool_factory(Vec::new()),
+                surface: fixture_runtime_surface(&runtime_session_id, uuid::Uuid::nil(), 1),
+                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                tool_names: BTreeSet::from(["fs_read".to_string()]),
+                terminal_hook_effect_binding: None,
+            })
+            .await
+            .unwrap();
+        let invocation = agentdash_agent_runtime::ToolBrokerInvocation {
+            coordinates: agentdash_agent_runtime::ToolCallCoordinates {
+                thread_id: applied.runtime_thread_id,
+                turn_id: RuntimeTurnId::new("turn-vfs-deny").unwrap(),
+                item_id: RuntimeItemId::new("item-vfs-deny").unwrap(),
+                presentation_item_id: agentdash_agent_runtime_contract::PresentationItemId::new(
+                    "turn_001:tool_001",
+                )
+                .unwrap(),
+                source_thread_id: agentdash_agent_runtime_contract::DriverThreadId::new(
+                    "source-vfs-deny",
+                )
+                .unwrap(),
+                source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new(
+                    "source-turn-vfs-deny",
+                )
+                .unwrap(),
+                source_item_id: agentdash_agent_runtime_contract::DriverItemId::new(
+                    "source-item-vfs-deny",
+                )
+                .unwrap(),
+                binding_id: applied.binding_id,
+                binding_generation: applied.generation,
+                tool_set_revision: applied.tool_set_revision,
+            },
+            tool_name: "fs_read".into(),
+            arguments: serde_json::json!({"path":"secret.txt"}),
+            timeout_ms: 1_000,
+        };
+        let policy = RegistryToolBrokerPolicy::new(registry, Arc::new(UnusedCapabilityPort));
+
+        let decision = agentdash_agent_runtime::ToolBrokerPolicyPort::authorize_vfs(
+            &policy,
+            &invocation,
+            &contribution,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            decision,
+            agentdash_agent_runtime::ToolGuardDecision::Denied { .. }
+        ));
+    }
+
+    #[tokio::test]
     async fn production_shell_owner_survives_registry_and_terminal_projection() {
         let tool: DynAgentTool = Arc::new(agentdash_application_vfs::tools::ShellExecTool::new(
             Arc::new(agentdash_application_vfs::VfsService::new(Arc::new(
@@ -2566,49 +3431,75 @@ mod tests {
         };
         let binding_id = RuntimeBindingId::new("binding-shell-owner").unwrap();
         let registry = Arc::new(CompiledAgentRunToolRegistry::default());
+        let applied = fixture_applied("binding-shell-owner", 1);
+        let runtime_session_id = applied.runtime_thread_id.to_string();
+        let tool_name = tool.name().to_string();
         registry
             .put(CompiledAgentRunToolBinding {
-                applied: fixture_applied("binding-shell-owner", 1),
-                runtime_session_id: "session-shell-owner".into(),
-                run_id: uuid::Uuid::new_v4(),
-                agent_id: uuid::Uuid::new_v4(),
-                frame_id: uuid::Uuid::new_v4(),
-                hook_runtime: fixture_hook_runtime("session-shell-owner"),
+                applied: applied.clone(),
+                runtime_session_id: runtime_session_id.clone(),
+                run_id: uuid::Uuid::nil(),
+                agent_id: uuid::Uuid::nil(),
+                frame_id: uuid::Uuid::nil(),
+                hook_runtime: fixture_hook_runtime(&runtime_session_id),
                 catalog: agentdash_agent_runtime::ToolCatalogRevision {
                     revision: ToolSetRevision(1),
                     digest: "shell-owner".into(),
                     tools: vec![contribution.clone()],
                     mcp_servers: Vec::new(),
                 },
-                tools: BTreeMap::from([(tool.name().to_string(), tool)]),
+                tool_factory: fixture_tool_factory(vec![tool]),
+                surface: fixture_runtime_surface(&runtime_session_id, uuid::Uuid::nil(), 1),
+                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                tool_names: BTreeSet::from([tool_name]),
                 terminal_hook_effect_binding: None,
             })
             .await
             .unwrap();
         let (updates, _updates_rx) = tokio::sync::mpsc::unbounded_channel();
         let arguments = serde_json::json!({"command":"pwd"});
-        let result = RegistryToolExecutor { registry }
-            .execute(agentdash_agent_runtime::ToolExecutionRequest {
-                idempotency_key: RuntimeItemId::new("shell-owner-item").unwrap(),
-                invocation: agentdash_agent_runtime::ToolBrokerInvocation {
-                    coordinates: agentdash_agent_runtime::ToolCallCoordinates {
-                        thread_id: RuntimeThreadId::new("shell-owner-thread").unwrap(),
-                        turn_id: RuntimeTurnId::new("shell-owner-turn").unwrap(),
-                        item_id: RuntimeItemId::new("shell-owner-item").unwrap(),
-                        binding_id,
-                        binding_generation: RuntimeDriverGeneration(1),
-                        tool_set_revision: ToolSetRevision(1),
-                    },
-                    tool_name: "shell_exec".into(),
-                    arguments: arguments.clone(),
-                    timeout_ms: 1_000,
+        let result = RegistryToolExecutor {
+            registry,
+            authorization_identity: None,
+        }
+        .execute(agentdash_agent_runtime::ToolExecutionRequest {
+            idempotency_key: RuntimeItemId::new("shell-owner-item").unwrap(),
+            invocation: agentdash_agent_runtime::ToolBrokerInvocation {
+                coordinates: agentdash_agent_runtime::ToolCallCoordinates {
+                    thread_id: applied.runtime_thread_id,
+                    turn_id: RuntimeTurnId::new("shell-owner-turn").unwrap(),
+                    item_id: RuntimeItemId::new("shell-owner-item").unwrap(),
+                    presentation_item_id:
+                        agentdash_agent_runtime_contract::PresentationItemId::new(
+                            "turn_001:cmd_001",
+                        )
+                        .unwrap(),
+                    source_thread_id: agentdash_agent_runtime_contract::DriverThreadId::new(
+                        "source-shell-owner",
+                    )
+                    .unwrap(),
+                    source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new(
+                        "source-turn-shell-owner",
+                    )
+                    .unwrap(),
+                    source_item_id: agentdash_agent_runtime_contract::DriverItemId::new(
+                        "source-item-shell-owner",
+                    )
+                    .unwrap(),
+                    binding_id,
+                    binding_generation: RuntimeDriverGeneration(1),
+                    tool_set_revision: ToolSetRevision(1),
                 },
-                credentials: agentdash_agent_runtime::CredentialMaterial::new(BTreeMap::new()),
-                cancellation: tokio_util::sync::CancellationToken::new(),
-                updates,
-            })
-            .await
-            .unwrap();
+                tool_name: "shell_exec".into(),
+                arguments: arguments.clone(),
+                timeout_ms: 1_000,
+            },
+            credentials: agentdash_agent_runtime::CredentialMaterial::new(BTreeMap::new()),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            updates,
+        })
+        .await
+        .unwrap();
         assert_eq!(result.output["cwd"], "platform://");
         assert_eq!(result.output["exit_code"], 0);
         let terminal = serde_json::to_value(
@@ -2668,21 +3559,27 @@ mod tests {
         };
         let binding_id = RuntimeBindingId::new("binding-patch-owner").unwrap();
         let registry = Arc::new(CompiledAgentRunToolRegistry::default());
+        let applied = fixture_applied("binding-patch-owner", 1);
+        let runtime_session_id = applied.runtime_thread_id.to_string();
+        let tool_name = tool.name().to_string();
         registry
             .put(CompiledAgentRunToolBinding {
-                applied: fixture_applied("binding-patch-owner", 1),
-                runtime_session_id: "session-patch-owner".into(),
-                run_id: uuid::Uuid::new_v4(),
-                agent_id: uuid::Uuid::new_v4(),
-                frame_id: uuid::Uuid::new_v4(),
-                hook_runtime: fixture_hook_runtime("session-patch-owner"),
+                applied: applied.clone(),
+                runtime_session_id: runtime_session_id.clone(),
+                run_id: uuid::Uuid::nil(),
+                agent_id: uuid::Uuid::nil(),
+                frame_id: uuid::Uuid::nil(),
+                hook_runtime: fixture_hook_runtime(&runtime_session_id),
                 catalog: agentdash_agent_runtime::ToolCatalogRevision {
                     revision: ToolSetRevision(1),
                     digest: "patch-owner".into(),
                     tools: vec![contribution.clone()],
                     mcp_servers: Vec::new(),
                 },
-                tools: BTreeMap::from([(tool.name().to_string(), tool)]),
+                tool_factory: fixture_tool_factory(vec![tool]),
+                surface: fixture_runtime_surface(&runtime_session_id, uuid::Uuid::nil(), 1),
+                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                tool_names: BTreeSet::from([tool_name]),
                 terminal_hook_effect_binding: None,
             })
             .await
@@ -2690,27 +3587,47 @@ mod tests {
         let patch = "*** Begin Patch\n*** Add File: main://src/new.rs\n+new\n*** Update File: main://src/lib.rs\n*** Move to: main://src/moved.rs\n@@\n-old\n+new\n*** Delete File: main://src/old.rs\n*** End Patch";
         let arguments = serde_json::json!({"patch":patch});
         let (updates, _updates_rx) = tokio::sync::mpsc::unbounded_channel();
-        let execution = RegistryToolExecutor { registry }
-            .execute(agentdash_agent_runtime::ToolExecutionRequest {
-                idempotency_key: RuntimeItemId::new("patch-owner-item").unwrap(),
-                invocation: agentdash_agent_runtime::ToolBrokerInvocation {
-                    coordinates: agentdash_agent_runtime::ToolCallCoordinates {
-                        thread_id: RuntimeThreadId::new("patch-owner-thread").unwrap(),
-                        turn_id: RuntimeTurnId::new("patch-owner-turn").unwrap(),
-                        item_id: RuntimeItemId::new("patch-owner-item").unwrap(),
-                        binding_id,
-                        binding_generation: RuntimeDriverGeneration(1),
-                        tool_set_revision: ToolSetRevision(1),
-                    },
-                    tool_name: "fs_apply_patch".into(),
-                    arguments: arguments.clone(),
-                    timeout_ms: 1_000,
+        let execution = RegistryToolExecutor {
+            registry,
+            authorization_identity: None,
+        }
+        .execute(agentdash_agent_runtime::ToolExecutionRequest {
+            idempotency_key: RuntimeItemId::new("patch-owner-item").unwrap(),
+            invocation: agentdash_agent_runtime::ToolBrokerInvocation {
+                coordinates: agentdash_agent_runtime::ToolCallCoordinates {
+                    thread_id: applied.runtime_thread_id,
+                    turn_id: RuntimeTurnId::new("patch-owner-turn").unwrap(),
+                    item_id: RuntimeItemId::new("patch-owner-item").unwrap(),
+                    presentation_item_id:
+                        agentdash_agent_runtime_contract::PresentationItemId::new(
+                            "turn_001:tool_001",
+                        )
+                        .unwrap(),
+                    source_thread_id: agentdash_agent_runtime_contract::DriverThreadId::new(
+                        "source-patch-owner",
+                    )
+                    .unwrap(),
+                    source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new(
+                        "source-turn-patch-owner",
+                    )
+                    .unwrap(),
+                    source_item_id: agentdash_agent_runtime_contract::DriverItemId::new(
+                        "source-item-patch-owner",
+                    )
+                    .unwrap(),
+                    binding_id,
+                    binding_generation: RuntimeDriverGeneration(1),
+                    tool_set_revision: ToolSetRevision(1),
                 },
-                credentials: agentdash_agent_runtime::CredentialMaterial::new(BTreeMap::new()),
-                cancellation: tokio_util::sync::CancellationToken::new(),
-                updates,
-            })
-            .await;
+                tool_name: "fs_apply_patch".into(),
+                arguments: arguments.clone(),
+                timeout_ms: 1_000,
+            },
+            credentials: agentdash_agent_runtime::CredentialMaterial::new(BTreeMap::new()),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            updates,
+        })
+        .await;
         assert!(
             execution.is_err(),
             "missing production mount must fail through Registry"

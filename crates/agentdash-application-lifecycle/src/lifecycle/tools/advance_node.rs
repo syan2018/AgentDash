@@ -33,6 +33,7 @@ pub struct CompleteLifecycleNodeTool {
     function_runner: Option<Arc<dyn FunctionRunner>>,
     current_turn_id: String,
     hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
+    owner: Option<agentdash_spi::PlatformToolExecutionContext>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -70,6 +71,7 @@ impl CompleteLifecycleNodeTool {
             function_runner,
             current_turn_id: context.session.turn_id.clone(),
             hook_runtime: context.turn.hook_runtime.clone(),
+            owner: context.turn.platform_tool_execution.clone(),
         }
     }
 }
@@ -125,12 +127,17 @@ impl AgentTool for CompleteLifecycleNodeTool {
             StepOutcome::Completed => LifecycleNodeAdvanceOutcome::Completed,
             StepOutcome::Failed => LifecycleNodeAdvanceOutcome::Failed,
         };
-        let snapshot = hook_runtime.snapshot();
+        let owner = self.owner.clone().ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "当前 Platform Tool 调用缺少 typed owner context，无法推进 lifecycle node"
+                    .to_string(),
+            )
+        })?;
         let result = orchestrator
             .advance_current_activity(AdvanceCurrentActivityInput {
                 hook_runtime: hook_runtime.clone(),
                 turn_id: self.current_turn_id.clone(),
-                runtime_session_id: snapshot.runtime_adapter_session_id.clone(),
+                owner,
                 outcome,
                 summary: params.summary.clone(),
             })

@@ -90,11 +90,7 @@ pub fn capability_state_to_frame_surfaces(state: &CapabilityState) -> FrameCapab
             .active
             .as_ref()
             .and_then(|vfs| serde_json::to_value(vfs).ok()),
-        mcp_surface_json: if state.tool.mcp_servers.is_empty() {
-            None
-        } else {
-            serde_json::to_value(&state.tool.mcp_servers).ok()
-        },
+        mcp_surface_json: serde_json::to_value(&state.tool.mcp_servers).ok(),
     }
 }
 
@@ -1038,6 +1034,13 @@ mod tests {
         assert_eq!(projected.tool.mcp_servers[0].name, "test-server");
         assert_eq!(projected.companion.agents.len(), 1);
         assert_eq!(projected.companion.agents[0].name, "helper");
+    }
+
+    #[test]
+    fn empty_mcp_surface_is_materialized_as_present_empty_list() {
+        let surfaces = capability_state_to_frame_surfaces(&CapabilityState::default());
+
+        assert_eq!(surfaces.mcp_surface_json, Some(serde_json::json!([])));
     }
 
     #[test]

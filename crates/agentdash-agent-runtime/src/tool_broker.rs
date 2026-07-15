@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use agentdash_agent_runtime_contract::{
-    RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent, RuntimeInteractionId, RuntimeItemId,
+    DriverItemId, DriverThreadId, DriverTurnId, PresentationItemId, RuntimeBindingId,
+    RuntimeDriverGeneration, RuntimeEvent, RuntimeInteractionId, RuntimeItemId,
     RuntimeItemTerminal, RuntimeThreadId, RuntimeTurnId, ToolChannel, ToolSetRevision,
 };
 use async_trait::async_trait;
@@ -17,7 +18,13 @@ use crate::{ToolCatalogRevision, ToolContribution};
 pub struct ToolCallCoordinates {
     pub thread_id: RuntimeThreadId,
     pub turn_id: RuntimeTurnId,
+    /// Canonical Runtime state/idempotency identity.
     pub item_id: RuntimeItemId,
+    /// Protocol-visible identity used only inside presentation payloads.
+    pub presentation_item_id: PresentationItemId,
+    pub source_thread_id: DriverThreadId,
+    pub source_turn_id: DriverTurnId,
+    pub source_item_id: DriverItemId,
     pub binding_id: RuntimeBindingId,
     pub binding_generation: RuntimeDriverGeneration,
     pub tool_set_revision: ToolSetRevision,
@@ -68,7 +75,7 @@ pub struct ToolBrokerCall {
     pub channel: ToolChannel,
     pub status: ToolBrokerCallStatus,
     /// The arguments acknowledged by the synchronous BeforeTool boundary. They are persisted
-    /// before execution so a crashed Running call can be replayed with identical input.
+    /// before execution so duplicate callers can verify the immutable execution claim.
     pub effective_arguments: Option<serde_json::Value>,
     pub pending_interaction_id: Option<RuntimeInteractionId>,
     pub result: Option<ToolBrokerResult>,
@@ -79,6 +86,13 @@ pub struct ToolBrokerCall {
 pub enum ToolCallAdmission {
     Accepted,
     Existing,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolExecutionClaim {
+    Acquired(ToolBrokerCall),
+    InProgress(ToolBrokerCall),
+    Terminal(ToolBrokerCall),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -187,6 +201,8 @@ pub enum ToolBrokerError {
     IdempotencyConflict,
     #[error("tool timeout must be greater than zero")]
     InvalidTimeout,
+    #[error("tool call `{item_id}` is already executing")]
+    ExecutionInProgress { item_id: RuntimeItemId },
     #[error("tool credentials could not be resolved: {0}")]
     Credential(String),
     #[error("tool executor failed: {0}")]
@@ -205,9 +221,17 @@ pub trait ToolBrokerRepository: Send + Sync {
     async fn accept(&self, call: ToolBrokerCall)
     -> Result<ToolCallAdmission, ToolBrokerStoreError>;
 
-    /// Returns calls that a recovery worker can safely replay. Running execution is at-least-once
-    /// and relies on the canonical Item idempotency key at the executor boundary.
+    /// Returns calls that have not acquired the durable execution claim yet. A persisted Running
+    /// call may have crossed an irreversible side-effect boundary and must never be auto-replayed.
     async fn recoverable(&self) -> Result<Vec<ToolBrokerCall>, ToolBrokerStoreError>;
+
+    /// Atomically moves an admitted call into Running and identifies the sole execution owner.
+    /// Existing Running calls are observations, not permission to replay the executor.
+    async fn claim_execution(
+        &self,
+        item_id: &RuntimeItemId,
+        effective_arguments: serde_json::Value,
+    ) -> Result<ToolExecutionClaim, ToolBrokerStoreError>;
 
     async fn transition(
         &self,
@@ -246,9 +270,10 @@ pub trait ToolBrokerRuntimeJournal: Send + Sync {
 
 /// Canonical Runtime journal used by production ToolBroker callbacks.
 ///
-/// The Driver must already have committed `ItemStarted(ToolCall)` before entering the broker.
-/// This adapter validates that authoritative fact, then owns terminal and approval interaction
-/// convergence through the same Runtime projection/event UoW.
+/// PlatformToolBroker is the unique owner of the canonical ToolCall Item. This adapter commits
+/// its first `ItemStarted(ToolCall)` and owns terminal and approval interaction convergence through
+/// the same Runtime projection/event UoW. An identical existing Item is accepted only as an
+/// idempotent replay of that broker-owned fact; connector mappers own presentation only.
 pub struct ManagedRuntimeToolJournal<S> {
     runtime: Arc<crate::ManagedAgentRuntime<S>>,
 }
@@ -289,6 +314,7 @@ where
             }
             let expected = thread.revision;
             let recorded_at_ms = crate::model::current_time_ms();
+            let presentation_turn_id = presentation_turn_id(&thread, invocation)?;
             let events = thread
                 .append_events([RuntimeEvent::ItemStarted {
                     turn_id: invocation.coordinates.turn_id.clone(),
@@ -300,6 +326,12 @@ where
             if tool.presentation_emitter
                 == agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker
             {
+                let presentation_content = tool
+                    .project_started(
+                        invocation.coordinates.presentation_item_id.as_str(),
+                        invocation.arguments.clone(),
+                    )
+                    .map_err(|error| ToolBrokerError::Execution(error.to_string()))?;
                 records.push(
                     thread
                         .append_durable_fact(
@@ -308,9 +340,9 @@ where
                                     agentdash_agent_runtime_contract::PresentationDurability::Durable,
                                     agentdash_agent_protocol::BackboneEvent::ItemStarted(
                                         agentdash_agent_protocol::ItemStartedNotification {
-                                            item: initial_content.item().clone(),
+                                            item: presentation_content.item().clone(),
                                             thread_id: thread.presentation_thread_id.to_string(),
-                                            turn_id: invocation.coordinates.turn_id.to_string(),
+                                            turn_id: presentation_turn_id.to_string(),
                                             started_at_ms: timestamp_i64(recorded_at_ms),
                                         },
                                     ),
@@ -319,7 +351,7 @@ where
                             recorded_at_ms,
                             Some(invocation.coordinates.binding_id.clone()),
                             None,
-                            tool_presentation_coordinate(invocation),
+                            tool_presentation_coordinate(&thread, invocation)?,
                         )
                         .map_err(transition_tool_error)?,
                 );
@@ -337,40 +369,51 @@ where
 
     async fn record_tool_terminal(&self, call: &ToolBrokerCall) -> Result<(), ToolBrokerError> {
         let _mutation = self.runtime.lock_mutation().await;
-        let mut thread = self.load_matching_thread(&call.invocation).await?;
         let terminal = broker_terminal(call)?;
-        let item = thread
-            .items
-            .get(&call.invocation.coordinates.item_id)
-            .ok_or(ToolBrokerError::StaleCoordinates)?;
-        if item.turn_id != call.invocation.coordinates.turn_id {
-            return Err(ToolBrokerError::StaleCoordinates);
-        }
-        match &item.phase {
-            EntityPhase::Terminal(existing) if existing == &terminal => return Ok(()),
-            EntityPhase::Terminal(_) => return Err(ToolBrokerError::IdempotencyConflict),
-            EntityPhase::Active => {}
-        }
-        let expected = thread.revision;
-        let recorded_at_ms = crate::model::current_time_ms();
-        let events = thread
-            .append_events([RuntimeEvent::ItemTerminal {
-                turn_id: call.invocation.coordinates.turn_id.clone(),
-                item_id: call.invocation.coordinates.item_id.clone(),
-                terminal: terminal.clone(),
-            }])
-            .map_err(transition_tool_error)?;
-        let mut records = crate::internal_journal_records(events).map_err(store_tool_error)?;
-        let final_content = match &terminal {
-            RuntimeItemTerminal::Completed { final_content } => final_content.clone(),
-            RuntimeItemTerminal::Failed { .. }
-            | RuntimeItemTerminal::Cancelled { .. }
-            | RuntimeItemTerminal::Lost { .. } => broker_terminal_content(call)?,
-        };
-        if call.tool.presentation_emitter
-            == agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker
-        {
-            records.push(
+        loop {
+            let mut thread = self.load_matching_thread(&call.invocation).await?;
+            let item = thread
+                .items
+                .get(&call.invocation.coordinates.item_id)
+                .ok_or(ToolBrokerError::StaleCoordinates)?;
+            if item.turn_id != call.invocation.coordinates.turn_id {
+                return Err(ToolBrokerError::StaleCoordinates);
+            }
+            match &item.phase {
+                EntityPhase::Terminal(existing) if existing == &terminal => return Ok(()),
+                EntityPhase::Terminal(_) => return Err(ToolBrokerError::IdempotencyConflict),
+                EntityPhase::Active => {}
+            }
+            let expected = thread.revision;
+            let recorded_at_ms = crate::model::current_time_ms();
+            let presentation_turn_id = presentation_turn_id(&thread, &call.invocation)?;
+            let events = thread
+                .append_events([RuntimeEvent::ItemTerminal {
+                    turn_id: call.invocation.coordinates.turn_id.clone(),
+                    item_id: call.invocation.coordinates.item_id.clone(),
+                    terminal: terminal.clone(),
+                }])
+                .map_err(transition_tool_error)?;
+            let mut records = crate::internal_journal_records(events).map_err(store_tool_error)?;
+            if call.tool.presentation_emitter
+                == agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker
+            {
+                let presentation_content = call
+                    .tool
+                    .project_completed(
+                        call.invocation.coordinates.presentation_item_id.as_str(),
+                        call.effective_arguments
+                            .clone()
+                            .unwrap_or_else(|| call.invocation.arguments.clone()),
+                        &call
+                            .result
+                            .as_ref()
+                            .ok_or(ToolBrokerStoreError::Conflict)?
+                            .output,
+                        call.status != ToolBrokerCallStatus::Completed,
+                    )
+                    .map_err(|error| ToolBrokerError::Execution(error.to_string()))?;
+                records.push(
                 thread
                     .append_durable_fact(
                         agentdash_agent_runtime_contract::RuntimeJournalFact::Presentation(
@@ -378,9 +421,9 @@ where
                                 agentdash_agent_runtime_contract::PresentationDurability::Durable,
                                 agentdash_agent_protocol::BackboneEvent::ItemCompleted(
                                     agentdash_agent_protocol::ItemCompletedNotification {
-                                        item: final_content.item().clone(),
+                                        item: presentation_content.item().clone(),
                                         thread_id: thread.presentation_thread_id.to_string(),
-                                        turn_id: call.invocation.coordinates.turn_id.to_string(),
+                                        turn_id: presentation_turn_id.to_string(),
                                         completed_at_ms: timestamp_i64(recorded_at_ms),
                                     },
                                 ),
@@ -389,13 +432,20 @@ where
                         recorded_at_ms,
                         Some(call.invocation.coordinates.binding_id.clone()),
                         None,
-                        tool_presentation_coordinate(&call.invocation),
+                        tool_presentation_coordinate(&thread, &call.invocation)?,
                     )
                     .map_err(transition_tool_error)?,
             );
+            }
+            match self
+                .commit_projection_records_store_result(thread, expected, records)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(RuntimeStoreError::ProjectionConflict { .. }) => continue,
+                Err(error) => return Err(store_tool_error(error)),
+            }
         }
-        self.commit_projection_records(thread, expected, records)
-            .await
     }
 
     async fn request_tool_approval(
@@ -405,24 +455,33 @@ where
         reason: &str,
     ) -> Result<(), ToolBrokerError> {
         let _mutation = self.runtime.lock_mutation().await;
-        let mut thread = self.load_matching_thread(invocation).await?;
-        if thread.interactions.contains_key(interaction_id) {
-            return Ok(());
-        }
-        let expected = thread.revision;
-        let request = agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_permission_approval(
+        loop {
+            let mut thread = self.load_matching_thread(invocation).await?;
+            if thread.interactions.contains_key(interaction_id) {
+                return Ok(());
+            }
+            let expected = thread.revision;
+            let request = agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_permission_approval(
             thread.thread_id.as_str(), invocation.coordinates.turn_id.as_str(),
             invocation.coordinates.item_id.as_str(), reason.to_string(),
         );
-        let events = thread
-            .append_events([RuntimeEvent::InteractionRequested {
-                turn_id: invocation.coordinates.turn_id.clone(),
-                item_id: Some(invocation.coordinates.item_id.clone()),
-                interaction_id: interaction_id.clone(),
-                request,
-            }])
-            .map_err(transition_tool_error)?;
-        self.commit_projection(thread, expected, events).await
+            let events = thread
+                .append_events([RuntimeEvent::InteractionRequested {
+                    turn_id: invocation.coordinates.turn_id.clone(),
+                    item_id: Some(invocation.coordinates.item_id.clone()),
+                    interaction_id: interaction_id.clone(),
+                    request,
+                }])
+                .map_err(transition_tool_error)?;
+            match self
+                .commit_projection_store_result(thread, expected, events)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(RuntimeStoreError::ProjectionConflict { .. }) => continue,
+                Err(error) => return Err(store_tool_error(error)),
+            }
+        }
     }
 
     async fn record_tool_update(
@@ -438,6 +497,8 @@ where
             return Ok(());
         }
         let thread = self.load_matching_thread(invocation).await?;
+        let presentation_turn_id = presentation_turn_id(&thread, invocation)?;
+        let presentation_coordinate = tool_presentation_coordinate(&thread, invocation)?;
         if matches!(
             tool.protocol_projection,
             agentdash_agent_runtime_contract::ToolProtocolProjection::Mcp { .. }
@@ -463,14 +524,17 @@ where
                         invocation.coordinates.binding_generation,
                         Some(invocation.coordinates.turn_id.clone()),
                         thread.revision,
-                        tool_presentation_coordinate(invocation),
+                        presentation_coordinate.clone(),
                         agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
                             agentdash_agent_runtime_contract::PresentationDurability::Ephemeral,
                             agentdash_agent_protocol::BackboneEvent::McpToolCallProgress(
                                 agentdash_agent_protocol::codex_app_server_protocol::McpToolCallProgressNotification {
                                     thread_id: thread.presentation_thread_id.to_string(),
-                                    turn_id: invocation.coordinates.turn_id.to_string(),
-                                    item_id: invocation.coordinates.item_id.to_string(),
+                                    turn_id: presentation_turn_id.to_string(),
+                                    item_id: invocation
+                                        .coordinates
+                                        .presentation_item_id
+                                        .to_string(),
                                     message,
                                 },
                             ),
@@ -498,15 +562,18 @@ where
             agentdash_agent_protocol::BackboneEvent::CommandOutputDelta(
                 agentdash_agent_protocol::codex_app_server_protocol::CommandExecutionOutputDeltaNotification {
                     thread_id: thread.presentation_thread_id.to_string(),
-                    turn_id: invocation.coordinates.turn_id.to_string(),
-                    item_id: invocation.coordinates.item_id.to_string(),
+                    turn_id: presentation_turn_id.to_string(),
+                    item_id: invocation
+                        .coordinates
+                        .presentation_item_id
+                        .to_string(),
                     delta,
                 },
             )
         } else {
             let item = tool
                 .project_updated(
-                    invocation.coordinates.item_id.as_str(),
+                    invocation.coordinates.presentation_item_id.as_str(),
                     invocation.arguments.clone(),
                     content_items,
                 )
@@ -515,7 +582,7 @@ where
                 agentdash_agent_protocol::ItemUpdatedNotification {
                     item: item.item().clone(),
                     thread_id: thread.presentation_thread_id.to_string(),
-                    turn_id: invocation.coordinates.turn_id.to_string(),
+                    turn_id: presentation_turn_id.to_string(),
                     updated_at_ms: timestamp_i64(crate::model::current_time_ms()),
                 },
             )
@@ -528,7 +595,7 @@ where
                 invocation.coordinates.binding_generation,
                 Some(invocation.coordinates.turn_id.clone()),
                 thread.revision,
-                tool_presentation_coordinate(invocation),
+                presentation_coordinate,
                 agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
                     agentdash_agent_runtime_contract::PresentationDurability::Ephemeral,
                     event,
@@ -563,17 +630,6 @@ where
         Ok(thread)
     }
 
-    async fn commit_projection(
-        &self,
-        projection: crate::RuntimeThreadState,
-        expected_projection_revision: agentdash_agent_runtime_contract::RuntimeRevision,
-        events: Vec<agentdash_agent_runtime_contract::RuntimeEventEnvelope>,
-    ) -> Result<(), ToolBrokerError> {
-        self.commit_projection_store_result(projection, expected_projection_revision, events)
-            .await
-            .map_err(store_tool_error)
-    }
-
     async fn commit_projection_store_result(
         &self,
         projection: crate::RuntimeThreadState,
@@ -586,21 +642,6 @@ where
             crate::internal_journal_records(events)?,
         )
         .await
-    }
-
-    async fn commit_projection_records(
-        &self,
-        projection: crate::RuntimeThreadState,
-        expected_projection_revision: agentdash_agent_runtime_contract::RuntimeRevision,
-        records: Vec<agentdash_agent_runtime_contract::RuntimeJournalRecord>,
-    ) -> Result<(), ToolBrokerError> {
-        self.commit_projection_records_store_result(
-            projection,
-            expected_projection_revision,
-            records,
-        )
-        .await
-        .map_err(store_tool_error)
     }
 
     async fn commit_projection_records_store_result(
@@ -639,34 +680,33 @@ fn timestamp_i64(value: u64) -> i64 {
 }
 
 fn tool_presentation_coordinate(
+    thread: &crate::RuntimeThreadState,
     invocation: &ToolBrokerInvocation,
-) -> agentdash_agent_runtime_contract::RuntimePresentationCoordinate {
-    agentdash_agent_runtime_contract::RuntimePresentationCoordinate {
-        runtime_turn_id: Some(invocation.coordinates.turn_id.clone()),
-        runtime_item_id: Some(invocation.coordinates.item_id.clone()),
-        interaction_id: None,
-        source_thread_id: None,
-        source_turn_id: None,
-        source_item_id: Some(invocation.coordinates.item_id.to_string()),
-        source_request_id: None,
-        source_entry_index: None,
-    }
+) -> Result<agentdash_agent_runtime_contract::RuntimePresentationCoordinate, ToolBrokerError> {
+    Ok(
+        agentdash_agent_runtime_contract::RuntimePresentationCoordinate {
+            runtime_turn_id: Some(invocation.coordinates.turn_id.clone()),
+            presentation_turn_id: Some(presentation_turn_id(thread, invocation)?),
+            runtime_item_id: Some(invocation.coordinates.item_id.clone()),
+            interaction_id: None,
+            source_thread_id: Some(invocation.coordinates.source_thread_id.to_string()),
+            source_turn_id: Some(invocation.coordinates.source_turn_id.to_string()),
+            source_item_id: Some(invocation.coordinates.source_item_id.to_string()),
+            source_request_id: None,
+            source_entry_index: None,
+        },
+    )
 }
 
-fn broker_terminal_content(
-    call: &ToolBrokerCall,
-) -> Result<agentdash_agent_runtime_contract::RuntimeItemContent, ToolBrokerError> {
-    let result = call.result.as_ref().ok_or(ToolBrokerStoreError::Conflict)?;
-    call.tool
-        .project_completed(
-            call.invocation.coordinates.item_id.as_str(),
-            call.effective_arguments
-                .clone()
-                .unwrap_or_else(|| call.invocation.arguments.clone()),
-            &result.output,
-            call.status != ToolBrokerCallStatus::Completed,
-        )
-        .map_err(|error| ToolBrokerError::Execution(error.to_string()))
+fn presentation_turn_id(
+    thread: &crate::RuntimeThreadState,
+    invocation: &ToolBrokerInvocation,
+) -> Result<agentdash_agent_runtime_contract::PresentationTurnId, ToolBrokerError> {
+    thread
+        .turns
+        .get(&invocation.coordinates.turn_id)
+        .map(|turn| turn.presentation_turn_id.clone())
+        .ok_or(ToolBrokerError::StaleCoordinates)
 }
 
 fn broker_terminal(call: &ToolBrokerCall) -> Result<RuntimeItemTerminal, ToolBrokerError> {
@@ -821,12 +861,7 @@ impl ToolBrokerRepository for ToolBrokerRepositoryFixture {
             .lock()
             .await
             .values()
-            .filter(|call| {
-                matches!(
-                    call.status,
-                    ToolBrokerCallStatus::Accepted | ToolBrokerCallStatus::Running
-                )
-            })
+            .filter(|call| matches!(call.status, ToolBrokerCallStatus::Accepted))
             .cloned()
             .collect::<Vec<_>>();
         calls.sort_by(|left, right| {
@@ -836,6 +871,44 @@ impl ToolBrokerRepository for ToolBrokerRepositoryFixture {
                 .cmp(&right.invocation.coordinates.item_id)
         });
         Ok(calls)
+    }
+
+    async fn claim_execution(
+        &self,
+        item_id: &RuntimeItemId,
+        effective_arguments: serde_json::Value,
+    ) -> Result<ToolExecutionClaim, ToolBrokerStoreError> {
+        let mut calls = self.calls.lock().await;
+        let call = calls
+            .get_mut(item_id)
+            .ok_or(ToolBrokerStoreError::Conflict)?;
+        match call.status {
+            ToolBrokerCallStatus::Accepted => {
+                call.status = ToolBrokerCallStatus::Running;
+                call.effective_arguments = Some(effective_arguments);
+                call.pending_interaction_id = None;
+                Ok(ToolExecutionClaim::Acquired(call.clone()))
+            }
+            ToolBrokerCallStatus::AwaitingApproval
+                if call.effective_arguments.as_ref() == Some(&effective_arguments) =>
+            {
+                call.status = ToolBrokerCallStatus::Running;
+                call.pending_interaction_id = None;
+                Ok(ToolExecutionClaim::Acquired(call.clone()))
+            }
+            ToolBrokerCallStatus::Running
+                if call.effective_arguments.as_ref() == Some(&effective_arguments) =>
+            {
+                Ok(ToolExecutionClaim::InProgress(call.clone()))
+            }
+            status
+                if status.is_terminal()
+                    && call.effective_arguments.as_ref() == Some(&effective_arguments) =>
+            {
+                Ok(ToolExecutionClaim::Terminal(call.clone()))
+            }
+            _ => Err(ToolBrokerStoreError::Conflict),
+        }
     }
 
     async fn transition(
@@ -995,7 +1068,7 @@ impl PlatformToolBroker {
             return self.terminal_outcome(existing, true).await;
         }
         if existing.status == ToolBrokerCallStatus::Running {
-            return self.execute_running(existing, cancellation, true).await;
+            return self.await_claimed_execution(existing, cancellation).await;
         }
 
         let mut invocation = invocation;
@@ -1107,28 +1180,65 @@ impl PlatformToolBroker {
                 .await;
         }
 
-        self.repository
-            .transition(
-                &invocation.coordinates.item_id,
-                ToolBrokerTransition {
-                    expected: vec![
-                        ToolBrokerCallStatus::Accepted,
-                        ToolBrokerCallStatus::AwaitingApproval,
-                    ],
-                    next: ToolBrokerCallStatus::Running,
-                    effective_arguments: Some(invocation.arguments.clone()),
-                    pending_interaction_id: None,
-                    result: None,
-                    message: None,
-                },
-            )
-            .await?;
-        let running = self
+        match self
             .repository
-            .load(&invocation.coordinates.item_id)
+            .claim_execution(
+                &invocation.coordinates.item_id,
+                invocation.arguments.clone(),
+            )
             .await?
-            .ok_or(ToolBrokerStoreError::Conflict)?;
-        self.execute_running(running, cancellation, false).await
+        {
+            ToolExecutionClaim::Acquired(running) => {
+                self.execute_running(running, cancellation, false).await
+            }
+            ToolExecutionClaim::InProgress(running) => {
+                self.await_claimed_execution(running, cancellation).await
+            }
+            ToolExecutionClaim::Terminal(terminal) => self.terminal_outcome(terminal, true).await,
+        }
+    }
+
+    async fn await_claimed_execution(
+        &self,
+        running: ToolBrokerCall,
+        cancellation: CancellationToken,
+    ) -> Result<ToolBrokerOutcome, ToolBrokerError> {
+        if running.status != ToolBrokerCallStatus::Running {
+            return Err(ToolBrokerStoreError::Conflict.into());
+        }
+        let item_id = running.invocation.coordinates.item_id;
+        let deadline = tokio::time::Instant::now()
+            + Duration::from_millis(running.invocation.timeout_ms.max(1));
+        loop {
+            let current = self
+                .repository
+                .load(&item_id)
+                .await?
+                .ok_or(ToolBrokerStoreError::Conflict)?;
+            if current.status.is_terminal() {
+                return self.terminal_outcome(current, true).await;
+            }
+            if current.status != ToolBrokerCallStatus::Running {
+                return Err(ToolBrokerStoreError::Conflict.into());
+            }
+            tokio::select! {
+                _ = cancellation.cancelled() => {
+                    return Err(ToolBrokerError::ExecutionInProgress { item_id });
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    let current = self
+                        .repository
+                        .load(&item_id)
+                        .await?
+                        .ok_or(ToolBrokerStoreError::Conflict)?;
+                    if current.status.is_terminal() {
+                        return self.terminal_outcome(current, true).await;
+                    }
+                    return Err(ToolBrokerError::ExecutionInProgress { item_id });
+                }
+                _ = tokio::time::sleep(Duration::from_millis(5)) => {}
+            }
+        }
     }
 
     async fn execute_running(
@@ -1392,6 +1502,10 @@ impl SessionToolMcpFacade {
     pub async fn call(
         &self,
         item_id: RuntimeItemId,
+        presentation_item_id: PresentationItemId,
+        source_thread_id: DriverThreadId,
+        source_turn_id: DriverTurnId,
+        source_item_id: DriverItemId,
         name: String,
         arguments: serde_json::Value,
         timeout_ms: u64,
@@ -1405,6 +1519,10 @@ impl SessionToolMcpFacade {
                         thread_id: self.thread_id.clone(),
                         turn_id: self.turn_id.clone(),
                         item_id,
+                        presentation_item_id,
+                        source_thread_id,
+                        source_turn_id,
+                        source_item_id,
                         binding_id: self.broker.binding_id.clone(),
                         binding_generation: self.broker.binding_generation,
                         tool_set_revision: self.broker.catalog.revision,

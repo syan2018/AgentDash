@@ -205,6 +205,14 @@ impl WorkspaceModuleRuntimeContext {
                 events: vec![RuntimePresentationInput {
                     coordinate: RuntimePresentationCoordinate {
                         runtime_turn_id: Some(runtime_turn_id),
+                        presentation_turn_id: Some(
+                            agentdash_agent_runtime_contract::PresentationTurnId::new(turn_id)
+                                .map_err(|error| {
+                                    WorkspaceModuleRuntimeBridgeError::ExecutionFailed(
+                                        error.to_string(),
+                                    )
+                                })?,
+                        ),
                         runtime_item_id: Some(runtime_item_id),
                         interaction_id: None,
                         source_thread_id: Some(binding.presentation_thread_id.to_string()),

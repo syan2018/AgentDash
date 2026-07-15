@@ -610,6 +610,7 @@ impl AppState {
                 run_repo: repos.lifecycle_run_repo.clone(),
                 agent_repo: repos.lifecycle_agent_repo.clone(),
                 frame_repo: repos.agent_frame_repo.clone(),
+                permission_grant_repo: repos.permission_grant_repo.clone(),
             },
         ));
         let runtime_surface_query_port: Arc<dyn AgentRunRuntimeSurfaceQueryPort> =

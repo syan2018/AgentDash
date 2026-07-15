@@ -1,6 +1,5 @@
 use std::{path::PathBuf, sync::Arc};
 
-use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::agent_frame_materialization::{
     CanvasVisibilityReason, RuntimeSurfaceUpdateRequest,
 };
@@ -71,7 +70,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
     pub async fn adopt_persisted_frame_revision_into_active_runtime(
         &self,
         target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, String> {
+    ) -> Result<(), String> {
         self.active_adopter
             .adopt_runtime_surface(target)
             .await
@@ -535,7 +534,7 @@ impl RuntimeSurfaceAdoptionPort for AgentRunRuntimeSurfaceUpdateService {
     async fn adopt_runtime_surface(
         &self,
         target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
+    ) -> Result<(), RuntimeSurfaceAdoptionError> {
         self.active_adopter.adopt_runtime_surface(target).await
     }
 }
@@ -607,9 +606,9 @@ mod tests {
         async fn adopt_runtime_surface(
             &self,
             target: AgentFrameRuntimeTarget,
-        ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
+        ) -> Result<(), RuntimeSurfaceAdoptionError> {
             self.targets.lock().await.push(target);
-            Ok(Vec::new())
+            Ok(())
         }
     }
 
@@ -1074,6 +1073,9 @@ mod tests {
         let vfs_access_policy = agentdash_spi::RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs);
         AgentRunRuntimeSurface {
             runtime_session_id: runtime_session_id.to_string(),
+            presentation_thread_id: format!("presentation-{runtime_session_id}")
+                .parse()
+                .expect("fixture presentation thread"),
             run_id,
             project_id,
             agent_id: frame.agent_id,
@@ -1086,6 +1088,7 @@ mod tests {
             current_surface_frame_id: frame.id,
             surface_revision: frame.revision,
             capability_state,
+            visible_workspace_module_refs: frame.visible_workspace_module_refs(),
             vfs,
             vfs_access_policy,
             mcp_servers: Vec::new(),

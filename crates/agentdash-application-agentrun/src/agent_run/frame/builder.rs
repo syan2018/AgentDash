@@ -161,11 +161,7 @@ impl AgentFrameBuilder {
 
     /// 从结构化 `Vec<RuntimeMcpServer>` 填充 mcp_surface。
     pub fn with_mcp_servers(mut self, servers: &[RuntimeMcpServer]) -> Self {
-        if servers.is_empty() {
-            self.mcp_surface = None;
-        } else {
-            self.mcp_surface = serde_json::to_value(servers).ok();
-        }
+        self.mcp_surface = serde_json::to_value(servers).ok();
         self
     }
 
@@ -216,9 +212,7 @@ impl AgentFrameBuilder {
         if let Some(vfs) = draft.vfs.as_ref() {
             self = self.with_vfs_typed(vfs);
         }
-        if !draft.mcp_servers.is_empty() {
-            self = self.with_mcp_servers(&draft.mcp_servers);
-        }
+        self = self.with_mcp_servers(&draft.mcp_servers);
         if let Some(config) = draft.execution_profile.as_ref() {
             self = self.with_execution_profile(config);
         }
@@ -656,5 +650,17 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("PI_AGENT")
         );
+    }
+
+    #[tokio::test]
+    async fn build_revision_materializes_empty_mcp_closure() {
+        let repo = FixtureFrameRepo::default();
+        let frame = AgentFrameBuilder::new(Uuid::new_v4())
+            .with_mcp_servers(&[])
+            .build(&repo)
+            .await
+            .expect("frame");
+
+        assert_eq!(frame.mcp_surface_json, Some(serde_json::json!([])));
     }
 }

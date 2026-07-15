@@ -442,9 +442,8 @@ impl AgentTool for TaskReadTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: TaskReadParams = serde_json::from_value(args)
             .map_err(|error| AgentToolError::InvalidArguments(format!("参数解析失败: {error}")))?;
-        let scope = AgentRunTaskScopeResolver::from_repos(&self.repos)
+        let scope = AgentRunTaskScopeResolver
             .resolve(&self.scope_input)
-            .await
             .map_err(scope_error)?;
         let view = TaskPlanWorkspace::from_repos(&self.repos)
             .read(&scope, params.into_query())
@@ -484,9 +483,8 @@ impl AgentTool for TaskWriteTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: TaskWriteParams = serde_json::from_value(args)
             .map_err(|error| AgentToolError::InvalidArguments(format!("参数解析失败: {error}")))?;
-        let scope = AgentRunTaskScopeResolver::from_repos(&self.repos)
+        let scope = AgentRunTaskScopeResolver
             .resolve(&self.scope_input)
-            .await
             .map_err(scope_error)?;
         let result = TaskPlanWorkspace::from_repos(&self.repos)
             .apply(&scope, params.into_changeset()?)

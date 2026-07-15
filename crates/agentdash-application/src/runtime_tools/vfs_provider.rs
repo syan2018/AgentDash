@@ -76,7 +76,7 @@ impl RuntimeToolProvider for VfsRuntimeToolProvider {
             .inline_persister
             .as_ref()
             .map(|p| Arc::new(InlineContentOverlay::new(p.clone())));
-        let session_id = runtime_session_id_from_context(context);
+        let session_id = runtime_session_id_from_context(context)?;
 
         Ok(VfsToolFactory::new(self.service.clone())
             .with_materialization(self.materialization.clone())

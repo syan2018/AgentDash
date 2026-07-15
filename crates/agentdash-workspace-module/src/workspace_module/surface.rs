@@ -64,7 +64,6 @@ pub(crate) struct WorkspaceModuleVisibilitySource {
     agent_run_bridge_handle: Option<SharedWorkspaceModuleAgentRunBridgeHandle>,
     runtime_thread_id: Option<String>,
     current_user: Option<ProjectAuthorizationContext>,
-    #[cfg(test)]
     effective_view: Option<AgentRunEffectiveCapabilityView>,
 }
 
@@ -91,7 +90,6 @@ impl WorkspaceModuleVisibilitySource {
         self.current_user.as_ref()
     }
 
-    #[cfg(test)]
     pub(crate) fn with_effective_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
         self.effective_view = Some(view);
         self
@@ -100,7 +98,6 @@ impl WorkspaceModuleVisibilitySource {
     async fn effective_view(
         &self,
     ) -> Result<AgentRunEffectiveCapabilityView, WorkspaceModuleSurfaceError> {
-        #[cfg(test)]
         if let Some(view) = self.effective_view.clone() {
             return Ok(view);
         }

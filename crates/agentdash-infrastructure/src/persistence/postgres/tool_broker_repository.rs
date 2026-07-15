@@ -1,6 +1,6 @@
 use agentdash_agent_runtime::{
     ToolBrokerCall, ToolBrokerCallStatus, ToolBrokerRepository, ToolBrokerStoreError,
-    ToolBrokerTransition, ToolCallAdmission,
+    ToolBrokerTransition, ToolCallAdmission, ToolExecutionClaim,
 };
 use agentdash_agent_runtime_contract::RuntimeItemId;
 use async_trait::async_trait;
@@ -69,7 +69,7 @@ impl ToolBrokerRepository for PostgresToolBrokerRepository {
 
     async fn recoverable(&self) -> Result<Vec<ToolBrokerCall>, ToolBrokerStoreError> {
         let rows = sqlx::query(
-            "SELECT record FROM agent_runtime_tool_call WHERE status IN ('accepted','running') ORDER BY updated_at,item_id",
+            "SELECT record FROM agent_runtime_tool_call WHERE status='accepted' ORDER BY updated_at,item_id",
         )
         .fetch_all(&self.pool)
         .await
@@ -77,6 +77,62 @@ impl ToolBrokerRepository for PostgresToolBrokerRepository {
         rows.into_iter()
             .map(|row| decode_call(row.get("record")))
             .collect()
+    }
+
+    async fn claim_execution(
+        &self,
+        item_id: &RuntimeItemId,
+        effective_arguments: serde_json::Value,
+    ) -> Result<ToolExecutionClaim, ToolBrokerStoreError> {
+        let mut transaction = self.pool.begin().await.map_err(store_error)?;
+        let row =
+            sqlx::query("SELECT record FROM agent_runtime_tool_call WHERE item_id=$1 FOR UPDATE")
+                .bind(item_id.as_str())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(store_error)?
+                .ok_or(ToolBrokerStoreError::Conflict)?;
+        let mut call = decode_call(row.get("record"))?;
+        let claim = match call.status {
+            ToolBrokerCallStatus::Accepted => {
+                call.status = ToolBrokerCallStatus::Running;
+                call.effective_arguments = Some(effective_arguments);
+                call.pending_interaction_id = None;
+                ToolExecutionClaim::Acquired(call.clone())
+            }
+            ToolBrokerCallStatus::AwaitingApproval
+                if call.effective_arguments.as_ref() == Some(&effective_arguments) =>
+            {
+                call.status = ToolBrokerCallStatus::Running;
+                call.pending_interaction_id = None;
+                ToolExecutionClaim::Acquired(call.clone())
+            }
+            ToolBrokerCallStatus::Running
+                if call.effective_arguments.as_ref() == Some(&effective_arguments) =>
+            {
+                transaction.commit().await.map_err(store_error)?;
+                return Ok(ToolExecutionClaim::InProgress(call));
+            }
+            status
+                if status.is_terminal()
+                    && call.effective_arguments.as_ref() == Some(&effective_arguments) =>
+            {
+                transaction.commit().await.map_err(store_error)?;
+                return Ok(ToolExecutionClaim::Terminal(call));
+            }
+            _ => return Err(ToolBrokerStoreError::Conflict),
+        };
+        let record = serde_json::to_value(&call).map_err(json_error)?;
+        sqlx::query(
+            "UPDATE agent_runtime_tool_call SET status='running',pending_interaction_id=NULL,record=$2,updated_at=now() WHERE item_id=$1",
+        )
+        .bind(item_id.as_str())
+        .bind(record)
+        .execute(&mut *transaction)
+        .await
+        .map_err(store_error)?;
+        transaction.commit().await.map_err(store_error)?;
+        Ok(claim)
     }
 
     async fn transition(
@@ -200,6 +256,7 @@ mod tests {
         ContributionMeta, ContributionRequirement, SurfaceSourceRef, ToolBrokerCall,
         ToolBrokerCallStatus, ToolBrokerInvocation, ToolBrokerRepository, ToolBrokerResult,
         ToolBrokerTransition, ToolCallAdmission, ToolCallCoordinates, ToolContribution,
+        ToolExecutionClaim,
     };
     use agentdash_agent_runtime_contract::{
         ConfigurationBoundary, RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId,
@@ -295,6 +352,10 @@ mod tests {
                     thread_id: id::<RuntimeThreadId>("thread-tool"),
                     turn_id: id::<RuntimeTurnId>("turn-tool"),
                     item_id: id::<RuntimeItemId>("item-tool"),
+                    presentation_item_id: id("turn_001:tool_001"),
+                    source_thread_id: id("source-tool"),
+                    source_turn_id: id("source-turn-tool"),
+                    source_item_id: id("source-item-tool"),
                     binding_id: id::<RuntimeBindingId>("binding-tool"),
                     binding_generation: RuntimeDriverGeneration(3),
                     tool_set_revision: ToolSetRevision(4),
@@ -377,23 +438,31 @@ mod tests {
             output: serde_json::json!({"content":"ok"}),
             is_error: false,
         };
-        repository
-            .transition(
-                &id("item-tool"),
-                ToolBrokerTransition {
-                    expected: vec![ToolBrokerCallStatus::Accepted],
-                    next: ToolBrokerCallStatus::Running,
-                    effective_arguments: Some(serde_json::json!({"path":"README.md"})),
-                    pending_interaction_id: None,
-                    result: None,
-                    message: None,
-                },
-            )
-            .await
-            .expect("running");
         assert_eq!(
             repository.recoverable().await.expect("recoverable").len(),
             1
+        );
+        let item_id: RuntimeItemId = id("item-tool");
+        let effective_arguments = serde_json::json!({"path":"README.md"});
+        let (left, right) = tokio::join!(
+            repository.claim_execution(&item_id, effective_arguments.clone()),
+            repository.claim_execution(&item_id, effective_arguments.clone())
+        );
+        assert!(
+            matches!(&left, Ok(ToolExecutionClaim::Acquired(_)))
+                ^ matches!(&right, Ok(ToolExecutionClaim::Acquired(_)))
+        );
+        assert!(
+            matches!(&left, Ok(ToolExecutionClaim::InProgress(_)))
+                ^ matches!(&right, Ok(ToolExecutionClaim::InProgress(_)))
+        );
+        assert!(
+            repository
+                .recoverable()
+                .await
+                .expect("running recovery scan")
+                .is_empty(),
+            "a persisted Running call must not be replayed after restart"
         );
         let terminal = repository
             .transition(

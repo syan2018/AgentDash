@@ -15,8 +15,8 @@ use agentdash_agent_runtime::{
     EnvironmentContextFacts, GuidelinesContextFacts, HookDefinition, HookHandler, HookMatcher,
     IdentityContextFacts, MemoryContextFacts, MemoryDiagnosticFacts, MemorySourceFacts,
     NormalizedAssignmentContext, NormalizedContextSurfaceState, NormalizedMcpServerReadiness,
-    NormalizedSkillCluster, NormalizedSurfaceEntity, SurfaceSourceRef, ToolContribution,
-    UserContextFacts, WorkspaceRequirement,
+    NormalizedSkillCluster, NormalizedSurfaceEntity, SurfaceSourceRef, ToolCallCoordinates,
+    ToolContribution, UserContextFacts, WorkspaceRequirement,
 };
 use agentdash_agent_runtime_contract::{
     ConfigurationBoundary, ContextProvenance, ContextRecipe, ContextRecipeRevision,
@@ -33,10 +33,12 @@ use agentdash_domain::{
     workflow::{AgentFrame, AgentFrameRepository},
 };
 use agentdash_spi::{
-    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, DynAgentTool, ExecutionContext,
-    ExecutionHookProvider, ExecutionSessionFrame, ExecutionTurnFrame, HookControlTarget,
-    MemoryDiscoveryProvider, RuntimeAdapterProvenance, RuntimeMcpSourceReadiness,
-    SkillContextExposure, SkillDiscoveryProvider, connector::RuntimeToolProvider,
+    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, AuthIdentity, DynAgentTool,
+    ExecutionContext, ExecutionHookProvider, ExecutionSessionFrame, ExecutionTurnFrame,
+    HookControlTarget, MemoryDiscoveryProvider, PlatformToolExecutionContext,
+    PlatformToolInvocationCoordinates, RuntimeAdapterProvenance, RuntimeMcpSourceReadiness,
+    SharedHookRuntime, SkillContextExposure, SkillDiscoveryProvider,
+    connector::RuntimeToolProvider,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -188,6 +190,7 @@ impl AgentBusinessSurfaceSource {
             .surface_for_provision_target(
                 &request.target,
                 thread_id,
+                &request.presentation_thread_id,
                 RuntimeSurfaceQueryPurpose::new("canonical_agent_runtime_surface"),
             )
             .await
@@ -211,32 +214,17 @@ impl AgentBusinessSurfaceSource {
             .ok_or("AgentFrame has no execution profile")?;
         let executor: AgentConfig =
             serde_json::from_value(profile).map_err(|error| error.to_string())?;
-        let working_directory = surface
-            .vfs
-            .default_mount()
-            .map(|mount| PathBuf::from(mount.root_ref.trim()))
-            .filter(|path| !path.as_os_str().is_empty())
-            .ok_or("AgentRun VFS has no usable default mount")?;
-        let execution_context = ExecutionContext {
-            session: ExecutionSessionFrame {
-                turn_id: surface.active_turn_id.clone().unwrap_or_else(|| {
-                    format!("surface-bootstrap-{}", surface.current_surface_frame_id)
-                }),
-                working_directory,
-                environment_variables: Default::default(),
-                executor_config: executor.clone(),
-                mcp_servers: surface.mcp_servers.clone(),
-                vfs: Some(surface.vfs.clone()),
-                vfs_access_policy: Some(surface.vfs_access_policy.clone()),
-                backend_execution: None,
-                runtime_backend_anchor: surface.runtime_backend_anchor.clone(),
-                identity: request.identity.clone().or(surface.identity.clone()),
-            },
-            turn: ExecutionTurnFrame {
-                capability_state: surface.capability_state.clone(),
-                ..Default::default()
-            },
-        };
+        validate_surface_closure(&surface)?;
+        let execution_context = execution_context_for_surface(
+            &surface,
+            &executor,
+            surface.active_turn_id.clone().unwrap_or_else(|| {
+                format!("surface-definition-{}", surface.current_surface_frame_id)
+            }),
+            None,
+            None,
+            request.identity.clone().or(surface.identity.clone()),
+        )?;
         let tools = self
             .runtime_tools
             .build_tools(&execution_context)
@@ -313,7 +301,7 @@ impl AgentBusinessSurfaceSource {
                 allowed_channels: [ToolChannel::DirectCallback].into(),
                 configuration_boundary: ConfigurationBoundary::Binding,
                 protocol_projection,
-                presentation_emitter: ToolPresentationEmitter::ToolBroker,
+                presentation_emitter: ToolPresentationEmitter::VendorStream,
                 parity_fixture_id,
             });
         }
@@ -407,6 +395,301 @@ impl AgentBusinessSurfaceSource {
             business_facts,
         })
     }
+
+    /// Rebuilds callable handles for one canonical Runtime invocation.
+    ///
+    /// Surface compilation may inspect short-lived definition handles for schemas/projectors, but
+    /// those handles are never published as executables. Every invocation gets a fresh handle
+    /// built from the exact bound surface plus the real Runtime turn and Hook runtime.
+    pub async fn build_tools_for_invocation(
+        &self,
+        surface: &AgentRunRuntimeSurface,
+        executor: &AgentConfig,
+        coordinates: &ToolCallCoordinates,
+        hook_runtime: SharedHookRuntime,
+        identity: Option<AuthIdentity>,
+    ) -> Result<Vec<DynAgentTool>, String> {
+        validate_surface_closure(surface)?;
+        let context = execution_context_for_surface(
+            surface,
+            executor,
+            coordinates.turn_id.to_string(),
+            Some(coordinates),
+            Some(hook_runtime),
+            identity.or_else(|| surface.identity.clone()),
+        )?;
+        self.runtime_tools
+            .build_tools(&context)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn validate_surface_closure(surface: &AgentRunRuntimeSurface) -> Result<(), String> {
+    validate_surface_closure_fields(&surface.closure)
+}
+
+fn validate_surface_closure_fields(
+    closure: &agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceClosure,
+) -> Result<(), String> {
+    if !closure.capability_field_present {
+        return Err("AgentFrame surface closure is missing capability_state".to_string());
+    }
+    if !closure.vfs_field_present {
+        return Err("AgentFrame surface closure is missing vfs".to_string());
+    }
+    if !closure.mcp_field_present {
+        return Err("AgentFrame surface closure is missing mcp".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod surface_closure_tests {
+    use std::str::FromStr;
+
+    use super::*;
+    use agentdash_agent_runtime_contract::{
+        RuntimeBindingId, RuntimeDriverGeneration, RuntimeItemId, RuntimeTurnId, ToolSetRevision,
+    };
+    use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceClosure;
+    use agentdash_domain::common::{Mount, MountCapability, Vfs};
+
+    fn id<T: FromStr>(value: &str) -> T
+    where
+        T::Err: std::fmt::Debug,
+    {
+        value.parse().expect("valid runtime coordinate")
+    }
+
+    #[test]
+    fn executable_tools_reject_missing_capability_state() {
+        let error = validate_surface_closure_fields(&AgentRunRuntimeSurfaceClosure {
+            capability_field_present: false,
+            vfs_field_present: true,
+            mcp_field_present: true,
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            "AgentFrame surface closure is missing capability_state"
+        );
+    }
+
+    #[test]
+    fn executable_tools_reject_missing_vfs() {
+        let error = validate_surface_closure_fields(&AgentRunRuntimeSurfaceClosure {
+            capability_field_present: true,
+            vfs_field_present: false,
+            mcp_field_present: true,
+        })
+        .unwrap_err();
+
+        assert_eq!(error, "AgentFrame surface closure is missing vfs");
+    }
+
+    #[test]
+    fn executable_tools_reject_missing_mcp_surface() {
+        let error = validate_surface_closure_fields(&AgentRunRuntimeSurfaceClosure {
+            capability_field_present: true,
+            vfs_field_present: true,
+            mcp_field_present: false,
+        })
+        .unwrap_err();
+
+        assert_eq!(error, "AgentFrame surface closure is missing mcp");
+    }
+
+    #[test]
+    fn invocation_context_preserves_owner_call_and_launch_provenance() {
+        let run_id = uuid::Uuid::new_v4();
+        let project_id = uuid::Uuid::new_v4();
+        let agent_id = uuid::Uuid::new_v4();
+        let launch_frame_id = uuid::Uuid::new_v4();
+        let current_frame_id = uuid::Uuid::new_v4();
+        let orchestration_id = uuid::Uuid::new_v4();
+        let runtime_thread_id = RuntimeThreadId::new("thread-owner-context").unwrap();
+        let presentation_thread_id = agentdash_agent_runtime_contract::PresentationThreadId::new(
+            "presentation-owner-context",
+        )
+        .unwrap();
+        let turn_id = RuntimeTurnId::new("turn-owner-context").unwrap();
+        let item_id = RuntimeItemId::new("item-owner-context").unwrap();
+        let binding_id = RuntimeBindingId::new("binding-owner-context").unwrap();
+        let surface = AgentRunRuntimeSurface {
+            runtime_session_id: runtime_thread_id.to_string(),
+            presentation_thread_id: presentation_thread_id.clone(),
+            run_id,
+            project_id,
+            agent_id,
+            runtime_address:
+                agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress {
+                    run_id,
+                    agent_id,
+                    frame_id: current_frame_id,
+                },
+            launch_evidence_frame_id: launch_frame_id,
+            current_surface_frame_id: current_frame_id,
+            surface_revision: 7,
+            capability_state: agentdash_spi::CapabilityState::default(),
+            visible_workspace_module_refs: vec!["canvas:dashboard".to_string()],
+            vfs: Vfs {
+                mounts: vec![Mount {
+                    id: "workspace".to_string(),
+                    provider: "fixture".to_string(),
+                    backend_id: "backend-1".to_string(),
+                    root_ref: "D:/workspace".to_string(),
+                    capabilities: vec![MountCapability::Read],
+                    default_write: false,
+                    display_name: "Workspace".to_string(),
+                    metadata: serde_json::Value::Null,
+                }],
+                default_mount_id: Some("workspace".to_string()),
+                source_project_id: Some(project_id.to_string()),
+                source_story_id: None,
+                links: Vec::new(),
+            },
+            vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy::default(),
+            mcp_servers: Vec::new(),
+            runtime_backend_anchor: None,
+            active_turn_id: Some(turn_id.to_string()),
+            identity: None,
+            provenance:
+                agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceProvenance {
+                    launch_evidence_frame_id: launch_frame_id,
+                    launch_created_by_kind: "launch".to_string(),
+                    current_surface_frame_id: current_frame_id,
+                    surface_revision: 7,
+                    surface_created_by_kind: "surface_adopt".to_string(),
+                    anchor_updated_at: chrono::Utc::now(),
+                    orchestration_id: Some(orchestration_id),
+                    node_path: Some("root/tool".to_string()),
+                    node_attempt: Some(4),
+                },
+            closure: AgentRunRuntimeSurfaceClosure {
+                capability_field_present: true,
+                vfs_field_present: true,
+                mcp_field_present: true,
+            },
+        };
+        let coordinates = ToolCallCoordinates {
+            thread_id: runtime_thread_id.clone(),
+            turn_id: turn_id.clone(),
+            item_id: item_id.clone(),
+            presentation_item_id: id("turn_001:tool_001"),
+            source_thread_id: id("source-thread-owner"),
+            source_turn_id: id("source-turn-owner"),
+            source_item_id: id("source-item-owner"),
+            binding_id: binding_id.clone(),
+            binding_generation: RuntimeDriverGeneration(5),
+            tool_set_revision: ToolSetRevision(6),
+        };
+
+        let context = execution_context_for_surface(
+            &surface,
+            &AgentConfig::default(),
+            turn_id.to_string(),
+            Some(&coordinates),
+            None,
+            None,
+        )
+        .unwrap();
+        let owner = context
+            .turn
+            .platform_tool_execution
+            .expect("typed owner context");
+        let invocation = owner.invocation.expect("typed invocation coordinates");
+
+        assert_eq!(owner.run_id, run_id);
+        assert_eq!(owner.project_id, project_id);
+        assert_eq!(owner.agent_id, agent_id);
+        assert_eq!(owner.frame_id, current_frame_id);
+        assert_eq!(owner.runtime_thread_id, runtime_thread_id);
+        assert_eq!(owner.presentation_thread_id, presentation_thread_id);
+        assert_eq!(owner.launch_evidence_frame_id, launch_frame_id);
+        assert_eq!(owner.current_surface_frame_id, current_frame_id);
+        assert_eq!(owner.orchestration_id, Some(orchestration_id));
+        assert_eq!(owner.node_path.as_deref(), Some("root/tool"));
+        assert_eq!(owner.node_attempt, Some(4));
+        assert_eq!(
+            owner.visible_workspace_module_refs,
+            vec!["canvas:dashboard".to_string()]
+        );
+        assert_eq!(invocation.runtime_turn_id, turn_id);
+        assert_eq!(invocation.runtime_item_id, item_id);
+        assert_eq!(
+            invocation.presentation_item_id.as_str(),
+            "turn_001:tool_001"
+        );
+        assert_eq!(invocation.source_thread_id.as_str(), "source-thread-owner");
+        assert_eq!(invocation.source_turn_id.as_str(), "source-turn-owner");
+        assert_eq!(invocation.source_item_id.as_str(), "source-item-owner");
+        assert_eq!(invocation.binding_id, binding_id);
+        assert_eq!(invocation.binding_generation, RuntimeDriverGeneration(5));
+        assert_eq!(invocation.tool_set_revision, ToolSetRevision(6));
+    }
+}
+
+fn execution_context_for_surface(
+    surface: &AgentRunRuntimeSurface,
+    executor: &AgentConfig,
+    turn_id: String,
+    coordinates: Option<&ToolCallCoordinates>,
+    hook_runtime: Option<SharedHookRuntime>,
+    identity: Option<AuthIdentity>,
+) -> Result<ExecutionContext, String> {
+    let working_directory = surface
+        .vfs
+        .default_mount()
+        .map(|mount| PathBuf::from(mount.root_ref.trim()))
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or("AgentRun VFS has no usable default mount")?;
+    Ok(ExecutionContext {
+        session: ExecutionSessionFrame {
+            turn_id,
+            working_directory,
+            environment_variables: Default::default(),
+            executor_config: executor.clone(),
+            mcp_servers: surface.mcp_servers.clone(),
+            vfs: Some(surface.vfs.clone()),
+            vfs_access_policy: Some(surface.vfs_access_policy.clone()),
+            backend_execution: None,
+            runtime_backend_anchor: surface.runtime_backend_anchor.clone(),
+            identity,
+        },
+        turn: ExecutionTurnFrame {
+            hook_runtime,
+            platform_tool_execution: Some(PlatformToolExecutionContext {
+                run_id: surface.run_id,
+                project_id: surface.project_id,
+                agent_id: surface.agent_id,
+                frame_id: surface.current_surface_frame_id,
+                runtime_thread_id: RuntimeThreadId::new(surface.runtime_session_id.clone())
+                    .map_err(|error| error.to_string())?,
+                presentation_thread_id: surface.presentation_thread_id.clone(),
+                visible_workspace_module_refs: surface.visible_workspace_module_refs.clone(),
+                invocation: coordinates.map(|coordinates| PlatformToolInvocationCoordinates {
+                    runtime_turn_id: coordinates.turn_id.clone(),
+                    runtime_item_id: coordinates.item_id.clone(),
+                    presentation_item_id: coordinates.presentation_item_id.clone(),
+                    source_thread_id: coordinates.source_thread_id.clone(),
+                    source_turn_id: coordinates.source_turn_id.clone(),
+                    source_item_id: coordinates.source_item_id.clone(),
+                    binding_id: coordinates.binding_id.clone(),
+                    binding_generation: coordinates.binding_generation,
+                    tool_set_revision: coordinates.tool_set_revision,
+                }),
+                launch_evidence_frame_id: surface.launch_evidence_frame_id,
+                current_surface_frame_id: surface.current_surface_frame_id,
+                orchestration_id: surface.provenance.orchestration_id,
+                node_path: surface.provenance.node_path.clone(),
+                node_attempt: surface.provenance.node_attempt,
+            }),
+            capability_state: surface.capability_state.clone(),
+            ..Default::default()
+        },
+    })
 }
 
 async fn build_bootstrap_context_facts(

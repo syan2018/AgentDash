@@ -5,6 +5,11 @@ use std::{
 };
 
 use agentdash_agent_protocol::{ContextDeliveryPlan, ContextFrame};
+use agentdash_agent_runtime_contract::{
+    DriverItemId, DriverThreadId, DriverTurnId, PresentationItemId, PresentationThreadId,
+    RuntimeBindingId, RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId,
+    ToolSetRevision,
+};
 use agentdash_agent_types::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
@@ -204,6 +209,11 @@ pub enum ExecutionTurnMode {
 pub struct ExecutionTurnFrame {
     pub mode: ExecutionTurnMode,
     pub hook_runtime: Option<Arc<dyn HookRuntimeAccess>>,
+    /// Canonical owner coordinates for a single Platform Tool invocation.
+    ///
+    /// Business tool providers consume this typed scope directly. HookRuntime remains the Hook
+    /// evaluator and must not be used to infer session/run/frame ownership.
+    pub platform_tool_execution: Option<PlatformToolExecutionContext>,
     pub capability_state: CapabilityState,
     pub runtime_delegates: AgentRuntimeDelegateSet,
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
@@ -219,6 +229,40 @@ pub struct ExecutionTurnFrame {
     /// 内嵌 connector 只持有并调用这里的 `DynAgentTool`，不重新持有
     /// `McpServer` 声明，也不自行区分 direct / relay MCP。
     pub assembled_tools: Vec<agentdash_agent_types::DynAgentTool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformToolExecutionContext {
+    pub run_id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub agent_id: uuid::Uuid,
+    pub frame_id: uuid::Uuid,
+    /// Canonical runtime/control-plane thread owned by the Agent Runtime binding.
+    pub runtime_thread_id: RuntimeThreadId,
+    /// Product delivery/presentation thread used by workflow and transcript associations.
+    pub presentation_thread_id: PresentationThreadId,
+    pub visible_workspace_module_refs: Vec<String>,
+    /// Present only for a callable invocation. Definition/schema materialization retains the
+    /// exact owner surface but has no fabricated per-call coordinates.
+    pub invocation: Option<PlatformToolInvocationCoordinates>,
+    pub launch_evidence_frame_id: uuid::Uuid,
+    pub current_surface_frame_id: uuid::Uuid,
+    pub orchestration_id: Option<uuid::Uuid>,
+    pub node_path: Option<String>,
+    pub node_attempt: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformToolInvocationCoordinates {
+    pub runtime_turn_id: RuntimeTurnId,
+    pub runtime_item_id: RuntimeItemId,
+    pub presentation_item_id: PresentationItemId,
+    pub source_thread_id: DriverThreadId,
+    pub source_turn_id: DriverTurnId,
+    pub source_item_id: DriverItemId,
+    pub binding_id: RuntimeBindingId,
+    pub binding_generation: RuntimeDriverGeneration,
+    pub tool_set_revision: ToolSetRevision,
 }
 
 /// 连接器拿到的一次 `prompt(...)` 调用上下文。

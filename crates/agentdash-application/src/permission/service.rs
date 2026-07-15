@@ -390,7 +390,6 @@ mod tests {
     use super::*;
     use crate::agent_run::runtime_capability::project_capability_state_from_frame;
     use crate::agent_run::{AgentFrameBuilder, AgentRunGrantProjection};
-    use agentdash_agent_types::DynAgentTool;
     use agentdash_application_ports::runtime_surface_adoption::{
         AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
     };
@@ -611,13 +610,13 @@ mod tests {
         async fn adopt_runtime_surface(
             &self,
             _target: AgentFrameRuntimeTarget,
-        ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
+        ) -> Result<(), RuntimeSurfaceAdoptionError> {
             if self.fail_adoption {
                 Err(RuntimeSurfaceAdoptionError::Failed {
                     message: "connector refresh failed".to_string(),
                 })
             } else {
-                Ok(Vec::new())
+                Ok(())
             }
         }
     }

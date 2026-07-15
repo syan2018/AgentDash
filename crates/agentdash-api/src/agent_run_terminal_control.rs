@@ -706,6 +706,7 @@ mod tests {
                 binding_id: None,
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some("presentation-thread".into()),
@@ -859,43 +860,42 @@ mod tests {
     async fn typed_terminal_hook_binding_executes_exact_surface_with_stable_effect_identity() {
         let binding = terminal_hook_binding();
         let registry = Arc::new(CompiledAgentRunToolRegistry::default());
+        let applied = AppliedNativeAgentRunSurface {
+            runtime_thread_id: RuntimeThreadId::new("runtime-thread").unwrap(),
+            binding_id: RuntimeBindingId::new("binding").unwrap(),
+            generation: RuntimeDriverGeneration(3),
+            source_thread_id: DriverThreadId::new("source-thread").unwrap(),
+            surface_revision: SurfaceRevision(4),
+            surface_digest: SurfaceDigest::new("surface-digest").unwrap(),
+            tool_set_revision: ToolSetRevision(1),
+            hook_plan_revision: HookPlanRevision(1),
+            hook_plan_digest: HookPlanDigest::new("hook-plan").unwrap(),
+            terminal_hook_effect_binding: Some(binding.clone()),
+        };
         registry
             .put(
-                crate::bootstrap::agent_runtime_surface::CompiledAgentRunToolBinding {
-                    applied: AppliedNativeAgentRunSurface {
-                        runtime_thread_id: RuntimeThreadId::new("runtime-thread").unwrap(),
-                        binding_id: RuntimeBindingId::new("binding").unwrap(),
-                        generation: RuntimeDriverGeneration(3),
-                        source_thread_id: DriverThreadId::new("source-thread").unwrap(),
-                        surface_revision: SurfaceRevision(4),
-                        surface_digest: SurfaceDigest::new("surface-digest").unwrap(),
-                        tool_set_revision: ToolSetRevision(1),
-                        hook_plan_revision: HookPlanRevision(1),
-                        hook_plan_digest: HookPlanDigest::new("hook-plan").unwrap(),
-                        terminal_hook_effect_binding: Some(binding.clone()),
-                    },
-                    runtime_session_id: "presentation-thread".into(),
-                    run_id: uuid::Uuid::nil(),
-                    agent_id: uuid::Uuid::nil(),
-                    frame_id: uuid::Uuid::nil(),
-                    hook_runtime: Arc::new(AgentFrameHookRuntime::new(
+                crate::bootstrap::agent_runtime_surface::CompiledAgentRunToolBinding::from_test_tools(
+                    applied,
+                    uuid::Uuid::nil(),
+                    uuid::Uuid::nil(),
+                    uuid::Uuid::nil(),
+                    Arc::new(AgentFrameHookRuntime::new(
                         uuid::Uuid::nil(),
                         uuid::Uuid::nil(),
                         uuid::Uuid::nil(),
                         1,
-                        "presentation-thread".into(),
+                        "runtime-thread".into(),
                         Arc::new(TerminalEffectProvider),
                         AgentFrameHookSnapshot::default(),
                     )),
-                    catalog: agentdash_agent_runtime::ToolCatalogRevision {
+                    agentdash_agent_runtime::ToolCatalogRevision {
                         revision: ToolSetRevision(1),
                         digest: "catalog".into(),
                         tools: vec![],
                         mcp_servers: vec![],
                     },
-                    tools: std::collections::BTreeMap::new(),
-                    terminal_hook_effect_binding: Some(binding.clone()),
-                },
+                    vec![],
+                ),
             )
             .await
             .unwrap();

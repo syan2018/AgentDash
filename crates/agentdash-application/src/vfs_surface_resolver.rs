@@ -313,7 +313,8 @@ fn runtime_surface_query_error(error: AgentRunRuntimeSurfaceQueryError) -> Appli
                 "lifecycle_agent {agent_id} 没有可用 current runtime surface"
             ))
         }
-        AgentRunRuntimeSurfaceQueryError::RuntimeBackendAnchor { .. }
+        AgentRunRuntimeSurfaceQueryError::MissingSurfaceClosure { .. }
+        | AgentRunRuntimeSurfaceQueryError::RuntimeBackendAnchor { .. }
         | AgentRunRuntimeSurfaceQueryError::Projection { .. } => {
             ApplicationError::Conflict(error.to_string())
         }

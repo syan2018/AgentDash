@@ -1,5 +1,4 @@
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::HookControlTarget;
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -47,5 +46,5 @@ pub trait RuntimeSurfaceAdoptionPort: Send + Sync {
     async fn adopt_runtime_surface(
         &self,
         target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError>;
+    ) -> Result<(), RuntimeSurfaceAdoptionError>;
 }

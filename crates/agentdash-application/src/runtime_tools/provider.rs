@@ -112,13 +112,19 @@ pub(crate) fn shared_runtime_vfs_from_context(
     Ok(SharedRuntimeVfs::new_with_policy(vfs, access_policy))
 }
 
-pub(crate) fn runtime_session_id_from_context(context: &ExecutionContext) -> String {
+pub(crate) fn runtime_session_id_from_context(
+    context: &ExecutionContext,
+) -> Result<String, ConnectorError> {
     context
         .turn
-        .hook_runtime
+        .platform_tool_execution
         .as_ref()
-        .map(|session| session.session_id().to_string())
-        .unwrap_or_else(|| context.session.turn_id.clone())
+        .map(|owner| owner.runtime_thread_id.to_string())
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "缺少 Platform Tool typed owner context，无法定位 runtime session".to_string(),
+            )
+        })
 }
 
 #[cfg(test)]

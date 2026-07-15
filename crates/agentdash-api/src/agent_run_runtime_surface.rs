@@ -254,7 +254,8 @@ fn runtime_surface_query_error_to_api(error: AgentRunRuntimeSurfaceQueryError) -
             ))
         }
         AgentRunRuntimeSurfaceQueryError::Repository { message, .. } => ApiError::Internal(message),
-        AgentRunRuntimeSurfaceQueryError::RuntimeBackendAnchor { .. }
+        AgentRunRuntimeSurfaceQueryError::MissingSurfaceClosure { .. }
+        | AgentRunRuntimeSurfaceQueryError::RuntimeBackendAnchor { .. }
         | AgentRunRuntimeSurfaceQueryError::Projection { .. } => {
             ApiError::Conflict(error.to_string())
         }

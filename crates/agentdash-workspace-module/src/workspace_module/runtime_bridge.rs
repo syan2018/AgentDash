@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
-use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
+use agentdash_application_ports::agent_run_surface::{
+    AgentRunEffectiveCapabilityView, AgentRunGrantProjection,
+};
+use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
 use agentdash_application_runtime_gateway::{
     ExtensionInvocationWorkspaceContext, RuntimeGateway, resolve_extension_invocation_workspace,
 };
@@ -140,30 +143,65 @@ pub fn shared_runtime_vfs_from_context(
     Ok(SharedRuntimeVfs::new_with_policy(vfs, access_policy))
 }
 
-pub fn runtime_thread_id_from_context(context: &ExecutionContext) -> String {
+pub fn runtime_thread_id_from_context(
+    context: &ExecutionContext,
+) -> Result<String, ConnectorError> {
     context
         .turn
-        .hook_runtime
+        .platform_tool_execution
         .as_ref()
-        .map(|session| session.session_id().to_string())
-        .unwrap_or_else(|| context.session.turn_id.clone())
+        .map(|owner| owner.runtime_thread_id.to_string())
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "缺少 Platform Tool typed owner context，无法定位 runtime thread".to_string(),
+            )
+        })
 }
 
-pub fn project_id_from_context(context: &ExecutionContext) -> Option<Uuid> {
-    if let Some(hook_runtime) = context.turn.hook_runtime.as_ref() {
-        let snapshot = hook_runtime.snapshot();
-
-        if let Some(run_context) = &snapshot.run_context {
-            return Some(run_context.project_id);
-        }
-    }
-
+pub fn project_id_from_context(context: &ExecutionContext) -> Result<Uuid, ConnectorError> {
     context
-        .session
-        .vfs
+        .turn
+        .platform_tool_execution
         .as_ref()
-        .and_then(|space| space.source_project_id.as_deref())
-        .and_then(|project_id| Uuid::parse_str(project_id).ok())
+        .map(|owner| owner.project_id)
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "缺少 Platform Tool typed owner context，无法定位 project".to_string(),
+            )
+        })
+}
+
+pub fn effective_capability_view_from_context(
+    context: &ExecutionContext,
+) -> Result<AgentRunEffectiveCapabilityView, ConnectorError> {
+    let owner = context
+        .turn
+        .platform_tool_execution
+        .as_ref()
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "缺少 Platform Tool typed owner context，无法定位 capability surface".to_string(),
+            )
+        })?;
+    Ok(AgentRunEffectiveCapabilityView {
+        target: AgentFrameRuntimeTarget {
+            frame_id: owner.current_surface_frame_id,
+            runtime_thread_id: owner.runtime_thread_id.clone(),
+        },
+        capability_state: context.turn.capability_state.clone(),
+        visible_capabilities: context.turn.capability_state.tool.capabilities.clone(),
+        vfs_surface: context
+            .turn
+            .capability_state
+            .vfs
+            .active
+            .clone()
+            .or_else(|| context.session.vfs.clone())
+            .unwrap_or_default(),
+        mcp_surface: context.session.mcp_servers.clone(),
+        visible_workspace_module_refs: owner.visible_workspace_module_refs.clone(),
+        grant_projection: AgentRunGrantProjection::default(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -315,8 +353,9 @@ mod tests {
     use agentdash_domain::canvas::Canvas;
     use agentdash_spi::{
         AgentConfig, CapabilityState, ExecutionSessionFrame, ExecutionTurnFrame, Mount,
-        MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource,
-        RuntimeVfsOperation, RuntimeVfsPathPattern, Vfs,
+        MountCapability, PlatformToolExecutionContext, RuntimeVfsAccessPolicy,
+        RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern,
+        Vfs,
     };
     use async_trait::async_trait;
 
@@ -411,6 +450,51 @@ mod tests {
                 .admits("main", "src/lib.rs", RuntimeVfsOperation::Read),
             "workspace module bridge must not widen policy to whole-mount access"
         );
+    }
+
+    #[test]
+    fn workspace_owner_coordinates_come_only_from_typed_platform_context() {
+        let project_id = Uuid::new_v4();
+        let frame_id = Uuid::new_v4();
+        let mut context = execution_context(vfs(vec![mount("main")]), docs_only_policy());
+        context.turn.platform_tool_execution = Some(PlatformToolExecutionContext {
+            run_id: Uuid::new_v4(),
+            project_id,
+            agent_id: Uuid::new_v4(),
+            frame_id,
+            runtime_thread_id: "thread-typed-owner".parse().expect("runtime thread"),
+            presentation_thread_id: "presentation-typed-owner"
+                .parse()
+                .expect("presentation thread"),
+            visible_workspace_module_refs: vec!["canvas:dashboard".to_string()],
+            invocation: None,
+            launch_evidence_frame_id: Uuid::new_v4(),
+            current_surface_frame_id: frame_id,
+            orchestration_id: Some(Uuid::new_v4()),
+            node_path: Some("root/workspace".to_string()),
+            node_attempt: Some(3),
+        });
+
+        assert_eq!(project_id_from_context(&context).unwrap(), project_id);
+        assert_eq!(
+            runtime_thread_id_from_context(&context).unwrap(),
+            "thread-typed-owner"
+        );
+        let view = effective_capability_view_from_context(&context).unwrap();
+        assert_eq!(view.target.frame_id, frame_id);
+        assert_eq!(
+            view.visible_workspace_module_refs,
+            vec!["canvas:dashboard".to_string()]
+        );
+    }
+
+    #[test]
+    fn workspace_owner_inference_is_rejected_without_typed_platform_context() {
+        let context = execution_context(vfs(vec![mount("main")]), docs_only_policy());
+
+        assert!(project_id_from_context(&context).is_err());
+        assert!(runtime_thread_id_from_context(&context).is_err());
+        assert!(effective_capability_view_from_context(&context).is_err());
     }
 
     #[derive(Clone)]

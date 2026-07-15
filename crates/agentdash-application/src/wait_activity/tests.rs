@@ -28,6 +28,31 @@ use super::types::ResolvedWaitScope;
 use super::*;
 
 #[tokio::test]
+async fn typed_owner_scope_does_not_require_runtime_binding_inference() {
+    let service = test_service(AgentRunTerminalRegistry::new());
+    let run_id = Uuid::new_v4();
+    let agent_id = Uuid::new_v4();
+    let frame_id = Uuid::new_v4();
+
+    let scope = service
+        .resolve_scope(&WaitToolContext {
+            runtime_thread_id: Some(RuntimeThreadId::new("unbound-runtime").unwrap()),
+            turn_id: "turn-owner".to_string(),
+            owner: Some(WaitActivityOwnerScope {
+                run_id,
+                agent_id,
+                frame_id,
+            }),
+        })
+        .await
+        .expect("typed owner scope");
+
+    assert_eq!(scope.run_id, Some(run_id));
+    assert_eq!(scope.agent_id, Some(agent_id));
+    assert_eq!(scope.frame_id, Some(frame_id));
+}
+
+#[tokio::test]
 async fn wait_timeout_keeps_running_exec_activity_alive() {
     let terminal_registry = AgentRunTerminalRegistry::new();
     terminal_registry.register_terminal_with_metadata(
@@ -48,6 +73,7 @@ async fn wait_timeout_keeps_running_exec_activity_alive() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -93,6 +119,7 @@ async fn wait_returns_completed_exec_with_shell_exec_next_ref() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -178,6 +205,7 @@ async fn wait_returns_failed_exec_for_non_zero_exit_with_diagnostic_refs() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -319,6 +347,7 @@ async fn later_wait_salvages_completed_exec_with_preview_and_read_refs() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -383,6 +412,7 @@ async fn wait_timeout_does_not_consume_exec_output_projection() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -437,6 +467,7 @@ async fn wait_exec_preview_is_bounded_to_terminal_projection_tail() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -485,6 +516,7 @@ async fn wait_returns_resolved_lifecycle_gate_activity() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec![gate_id.to_string()],
@@ -538,6 +570,7 @@ async fn wait_uses_resolved_lifecycle_gate_payload_status() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec![gate_id.to_string()],
@@ -629,6 +662,7 @@ async fn wait_exposes_gate_payload_child_evidence_refs() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("parent-session").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec![gate_id.to_string()],
@@ -682,6 +716,7 @@ async fn wait_and_workspace_gate_projection_share_kind_preview_and_status() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec![gate_id.to_string()],
@@ -835,6 +870,7 @@ async fn wait_after_cursor_filters_older_items() {
             WaitToolContext {
                 runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: Vec::new(),

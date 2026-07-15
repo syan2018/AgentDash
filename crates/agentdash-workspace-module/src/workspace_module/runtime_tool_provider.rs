@@ -28,7 +28,7 @@ use crate::workspace_module::runtime_bridge::{
 };
 use crate::workspace_module::{
     WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
-    WorkspaceModuleOperateTool, WorkspaceModulePresentTool,
+    WorkspaceModuleOperateTool, WorkspaceModulePresentTool, effective_capability_view_from_context,
     project_authorization_context_from_identity, project_id_from_context,
     resolve_invocation_backend, runtime_thread_id_from_context, shared_runtime_vfs_from_context,
 };
@@ -201,17 +201,11 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
         {
             return Ok(Vec::new());
         }
-        let Some(project_id) = project_id_from_context(context) else {
-            diag!(
-                Warn,
-                Subsystem::AgentRun,
-                "workspace module tools 注入失败：无法从 hook session 解析 project_id"
-            );
-            return Ok(Vec::new());
-        };
+        let project_id = project_id_from_context(context)?;
 
         let shared_vfs = shared_runtime_vfs_from_context(context)?;
-        let runtime_thread_id = runtime_thread_id_from_context(context);
+        let runtime_thread_id = runtime_thread_id_from_context(context)?;
+        let effective_capability_view = effective_capability_view_from_context(context)?;
         let current_user = context
             .session
             .identity
@@ -237,10 +231,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     project_id,
                 )
                 .with_current_user(current_user.clone())
-                .with_agent_run_visibility(
-                    self.agent_run_bridge_handle.clone(),
-                    runtime_thread_id.clone(),
-                )
+                .with_effective_capability_view(effective_capability_view.clone())
                 .with_runtime_dependencies(
                     self.runtime_gateway_handle.clone(),
                     runtime_thread_id.clone(),
@@ -263,10 +254,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     project_id,
                 )
                 .with_current_user(current_user.clone())
-                .with_agent_run_visibility(
-                    self.agent_run_bridge_handle.clone(),
-                    runtime_thread_id.clone(),
-                )
+                .with_effective_capability_view(effective_capability_view.clone())
                 .with_runtime_dependencies(
                     self.runtime_gateway_handle.clone(),
                     runtime_thread_id.clone(),
@@ -306,6 +294,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 project_id,
                 &runtime_thread_id,
                 current_user.clone(),
+                &effective_capability_view,
                 &mut tools,
             )
             .await;
@@ -331,6 +320,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
             }
             tools.push(Arc::new(
                 tool.with_current_user(current_user.clone())
+                    .with_effective_capability_view(effective_capability_view)
                     .with_runtime_dependencies(
                         self.runtime_gateway_handle.clone(),
                         channel_transport_available,
@@ -393,6 +383,7 @@ impl WorkspaceModuleRuntimeToolProvider {
         project_id: uuid::Uuid,
         runtime_thread_id: &str,
         current_user: Option<agentdash_domain::project::ProjectAuthorizationContext>,
+        effective_capability_view: &agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView,
         tools: &mut Vec<DynAgentTool>,
     ) {
         let (gateway, transport) = match self.invoke_runtime_deps().await {
@@ -468,7 +459,7 @@ impl WorkspaceModuleRuntimeToolProvider {
                 backend_service_invoker,
             )
             .with_current_user(current_user)
-            .with_agent_run_visibility(self.agent_run_bridge_handle.clone()),
+            .with_effective_capability_view(effective_capability_view.clone()),
         ));
     }
 

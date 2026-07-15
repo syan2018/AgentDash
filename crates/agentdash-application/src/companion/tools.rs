@@ -63,7 +63,6 @@ use super::{
 use crate::channel::{
     ChannelService, LifecycleRunChannelOwnerStore, UnsupportedChannelBindingResolver,
 };
-use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::wait_activity::{WaitActivityService, WaitToolContext};
 use agentdash_agent_runtime_contract::{RuntimeActor, RuntimeInput};
@@ -1320,12 +1319,11 @@ impl CompanionRequestTool {
 
         let current_session_id = self
             .tool_context
-            .require_runtime_thread_id("派发 companion agent")?
+            .require_delivery_runtime_session_id("派发 companion agent")?
             .to_string();
         let anchor = self
             .tool_context
-            .require_lifecycle_anchor("派发 companion agent", &self.repos)
-            .await?;
+            .require_lifecycle_anchor("派发 companion agent")?;
         let project_id = anchor.project_id;
         let parent_run_id = anchor.run_id;
         let parent_agent_id = anchor.agent_id;
@@ -1734,10 +1732,11 @@ impl CompanionRequestTool {
             .wait_service
             .wait_for_lifecycle_gate_payload(
                 WaitToolContext {
-                    runtime_thread_id: self.tool_context.runtime_thread_id().and_then(|value| {
-                        agentdash_agent_runtime_contract::RuntimeThreadId::new(value).ok()
-                    }),
+                    runtime_thread_id: self.tool_context.canonical_runtime_thread_id().and_then(
+                        |value| agentdash_agent_runtime_contract::RuntimeThreadId::new(value).ok(),
+                    ),
                     turn_id: self.tool_context.turn_id().to_string(),
+                    owner: self.tool_context.wait_owner_scope(),
                 },
                 gate_id,
                 cancel,
@@ -1770,7 +1769,7 @@ impl CompanionRequestTool {
 
         let current_session_id = self
             .tool_context
-            .require_runtime_thread_id("向上提审")?
+            .require_delivery_runtime_session_id("向上提审")?
             .to_string();
         let session_services =
             require_session_services(&self.session_services_handle, "向上提审").await?;
@@ -1811,12 +1810,11 @@ impl CompanionRequestTool {
 
         let current_session_id = self
             .tool_context
-            .require_runtime_thread_id("向用户发起请求")?
+            .require_delivery_runtime_session_id("向用户发起请求")?
             .to_string();
         let anchor = self
             .tool_context
-            .require_lifecycle_anchor("向用户发起请求", &self.repos)
-            .await?;
+            .require_lifecycle_anchor("向用户发起请求")?;
         let agent = self
             .repos
             .lifecycle_agent_repo
@@ -1991,8 +1989,7 @@ impl CompanionRequestTool {
 
         let project_id = self
             .tool_context
-            .require_lifecycle_anchor("执行 workflow script preflight", &self.repos)
-            .await?
+            .require_lifecycle_anchor("执行 workflow script preflight")?
             .project_id;
         let runtime_session_id = payload
             .get("runtime_session_id")
@@ -2002,7 +1999,7 @@ impl CompanionRequestTool {
             .map(ToString::to_string)
             .or_else(|| {
                 self.tool_context
-                    .runtime_thread_id()
+                    .delivery_runtime_session_id()
                     .map(ToString::to_string)
             });
         let user_id = self
@@ -2188,14 +2185,12 @@ impl AgentTool for CompanionRespondTool {
 
         let current_session_id = self
             .tool_context
-            .require_runtime_thread_id("回应 companion 请求")?
+            .require_delivery_runtime_session_id("回应 companion 请求")?
             .to_string();
         let session_services =
             require_session_services(&self.session_services_handle, "回应 companion 请求").await?;
 
-        let reply_target = self
-            .resolve_reply_target(raw.reply_to.as_ref(), &current_session_id)
-            .await?;
+        let reply_target = self.resolve_reply_target(raw.reply_to.as_ref()).await?;
         let request_id = reply_target.request_id.as_str();
 
         let result = match reply_target.route {
@@ -2241,9 +2236,8 @@ impl CompanionRespondTool {
     async fn resolve_reply_target(
         &self,
         selector: Option<&CompanionReplySelectorParam>,
-        current_session_id: &str,
     ) -> Result<CompanionReplyContract, AgentToolError> {
-        let candidates = self.active_reply_targets(current_session_id).await?;
+        let candidates = self.active_reply_targets().await?;
         let matches = match selector {
             None => candidates.clone(),
             Some(CompanionReplySelectorParam::Current { channel }) => {
@@ -2294,47 +2288,37 @@ impl CompanionRespondTool {
         }
     }
 
-    async fn active_reply_targets(
-        &self,
-        current_session_id: &str,
-    ) -> Result<Vec<CompanionReplyContract>, AgentToolError> {
+    async fn active_reply_targets(&self) -> Result<Vec<CompanionReplyContract>, AgentToolError> {
         let mut targets = Vec::new();
 
-        if let Some((_anchor, _agent, frame)) = resolve_current_frame_from_delivery_trace_ref(
-            current_session_id,
-            self.repos.agent_run_runtime_binding_repo.as_ref(),
-            self.repos.lifecycle_agent_repo.as_ref(),
-            self.repos.agent_frame_repo.as_ref(),
-        )
-        .await
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-        {
-            let gates = self
-                .repos
-                .lifecycle_gate_repo
-                .list_open_for_agent(frame.agent_id)
-                .await
-                .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-            for gate in gates {
-                if is_companion_child_reply_gate(&gate.gate_kind, gate.payload_json.as_ref()) {
-                    targets.push(CompanionReplyContract::new(
-                        CompanionReplyRoute::ChildDispatch,
-                        gate.correlation_id,
-                        COMPANION_PARENT_CHANNEL,
-                        vec!["parent"],
-                        ModelReplyInstruction::completion_for_current_companion()
-                            .with_reply_to(ModelReplySelector::alias("parent")),
-                    ));
-                } else if gate.gate_kind == COMPANION_PARENT_REQUEST_GATE_KIND {
-                    targets.push(CompanionReplyContract::new(
-                        CompanionReplyRoute::ParentRequestGate,
-                        gate.id.to_string(),
-                        COMPANION_CHILD_CHANNEL,
-                        vec!["child"],
-                        ModelReplyInstruction::completion_for_current_companion()
-                            .with_reply_to(ModelReplySelector::alias("child")),
-                    ));
-                }
+        let owner = self
+            .tool_context
+            .require_lifecycle_anchor("定位 companion reply target")?;
+        let gates = self
+            .repos
+            .lifecycle_gate_repo
+            .list_open_for_agent(owner.agent_id)
+            .await
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+        for gate in gates {
+            if is_companion_child_reply_gate(&gate.gate_kind, gate.payload_json.as_ref()) {
+                targets.push(CompanionReplyContract::new(
+                    CompanionReplyRoute::ChildDispatch,
+                    gate.correlation_id,
+                    COMPANION_PARENT_CHANNEL,
+                    vec!["parent"],
+                    ModelReplyInstruction::completion_for_current_companion()
+                        .with_reply_to(ModelReplySelector::alias("parent")),
+                ));
+            } else if gate.gate_kind == COMPANION_PARENT_REQUEST_GATE_KIND {
+                targets.push(CompanionReplyContract::new(
+                    CompanionReplyRoute::ParentRequestGate,
+                    gate.id.to_string(),
+                    COMPANION_CHILD_CHANNEL,
+                    vec!["child"],
+                    ModelReplyInstruction::completion_for_current_companion()
+                        .with_reply_to(ModelReplySelector::alias("child")),
+                ));
             }
         }
 

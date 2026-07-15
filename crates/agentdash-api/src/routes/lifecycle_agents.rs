@@ -2403,7 +2403,7 @@ async fn agent_run_journal_stream_route(
         .into_response())
 }
 
-fn journal_event_to_contract(
+pub(crate) fn journal_event_to_contract(
     event: AgentRunJournalEvent,
     journal_session_id: &str,
 ) -> Result<SessionEventResponse, ApiError> {
@@ -2425,15 +2425,20 @@ fn journal_event_to_contract(
             ApiError::Internal("serialized Backbone event has no typed discriminant".to_string())
         })?
         .to_string();
+    let presentation_turn_id = carrier
+        .coordinate
+        .presentation_turn_id
+        .as_ref()
+        .map(ToString::to_string);
     Ok(SessionEventResponse {
         session_id: journal_session_id.to_string(),
         event_seq: event.journal_seq,
         occurred_at_ms,
         committed_at_ms: occurred_at_ms,
         session_update_type,
-        turn_id: carrier.coordinate.source_turn_id.clone(),
+        turn_id: presentation_turn_id.clone(),
         entry_index: carrier.coordinate.source_entry_index,
-        tool_call_id: presentation_tool_call_id(&presentation.event, presentation.durability),
+        tool_call_id: presentation_tool_call_id(&presentation.event),
         notification: agentdash_agent_protocol::BackboneEnvelope {
             event: session_event,
             session_id: journal_session_id.to_string(),
@@ -2447,7 +2452,7 @@ fn journal_event_to_contract(
                 executor_id: carrier.binding_id.as_ref().map(ToString::to_string),
             },
             trace: agentdash_agent_protocol::TraceInfo {
-                turn_id: carrier.coordinate.source_turn_id.clone(),
+                turn_id: presentation_turn_id,
                 entry_index: carrier.coordinate.source_entry_index,
             },
             observed_at,
@@ -2474,23 +2479,12 @@ fn normalize_session_presentation_event(
     }))
 }
 
-fn presentation_tool_call_id(
-    event: &agentdash_agent_protocol::BackboneEvent,
-    durability: agentdash_agent_runtime_contract::PresentationDurability,
-) -> Option<String> {
+fn presentation_tool_call_id(event: &agentdash_agent_protocol::BackboneEvent) -> Option<String> {
     use agentdash_agent_protocol::BackboneEvent;
-    use agentdash_agent_runtime_contract::PresentationDurability;
-    let item = match (durability, event) {
-        (PresentationDurability::Durable, BackboneEvent::ItemStarted(notification)) => {
-            Some(&notification.item)
-        }
-        (PresentationDurability::Durable, BackboneEvent::ItemUpdated(notification))
-        | (PresentationDurability::Ephemeral, BackboneEvent::ItemUpdated(notification)) => {
-            Some(&notification.item)
-        }
-        (PresentationDurability::Durable, BackboneEvent::ItemCompleted(notification)) => {
-            Some(&notification.item)
-        }
+    let item = match event {
+        BackboneEvent::ItemStarted(notification) => Some(&notification.item),
+        BackboneEvent::ItemUpdated(notification) => Some(&notification.item),
+        BackboneEvent::ItemCompleted(notification) => Some(&notification.item),
         _ => None,
     };
     item.and_then(|item| item.tool_call_id().map(ToString::to_string))
@@ -3275,6 +3269,9 @@ mod journal_projection_tests {
                 append_idempotency_key: None,
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: Some(
+                        "turn-main-journal-1".parse().expect("presentation turn id"),
+                    ),
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: Some("main-journal-fixture".to_string()),
@@ -3303,6 +3300,11 @@ mod journal_projection_tests {
         .expect("journal projection");
         assert_eq!(response.entry_index, Some(0));
         assert_eq!(response.notification.trace.entry_index, Some(0));
+        assert_eq!(response.turn_id.as_deref(), Some("turn-main-journal-1"));
+        assert_eq!(
+            response.notification.trace.turn_id.as_deref(),
+            Some("turn-main-journal-1")
+        );
         assert_eq!(response.occurred_at_ms, 1_783_684_800_000);
         assert_eq!(response.committed_at_ms, 1_783_684_800_000);
         assert_eq!(
@@ -3409,6 +3411,7 @@ mod journal_projection_tests {
                 append_idempotency_key: None,
                 coordinate: RuntimePresentationCoordinate {
                     runtime_turn_id: None,
+                    presentation_turn_id: None,
                     runtime_item_id: None,
                     interaction_id: None,
                     source_thread_id: None,
@@ -3460,24 +3463,156 @@ mod journal_projection_tests {
         );
         let updated = agentdash_agent_protocol::BackboneEvent::ItemUpdated(
             agentdash_agent_protocol::ItemUpdatedNotification {
-                item,
+                item: item.clone(),
                 thread_id: "thread".to_string(),
                 turn_id: "turn".to_string(),
                 updated_at_ms: 2,
             },
         );
+        let completed = agentdash_agent_protocol::BackboneEvent::ItemCompleted(
+            agentdash_agent_protocol::ItemCompletedNotification {
+                item,
+                thread_id: "thread".to_string(),
+                turn_id: "turn".to_string(),
+                completed_at_ms: 3,
+            },
+        );
         assert_eq!(
-            presentation_tool_call_id(&started, PresentationDurability::Durable).as_deref(),
+            presentation_tool_call_id(&started).as_deref(),
             Some("tool-call-id")
         );
         assert_eq!(
-            presentation_tool_call_id(&started, PresentationDurability::Ephemeral),
-            None
-        );
-        assert_eq!(
-            presentation_tool_call_id(&updated, PresentationDurability::Ephemeral).as_deref(),
+            presentation_tool_call_id(&updated).as_deref(),
             Some("tool-call-id")
         );
+        assert_eq!(
+            presentation_tool_call_id(&completed).as_deref(),
+            Some("tool-call-id")
+        );
+    }
+
+    #[test]
+    fn tool_lifecycle_wrapper_preserves_main_body_and_nullable_fields() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agentdash-agent-runtime-test-support/fixtures/session-parity/browser/tool-interaction.json"
+        ))
+        .expect("Main frontend tool lifecycle fixture");
+        let protected_events = fixture["protected_events"]
+            .as_array()
+            .expect("protected tool lifecycle events");
+        let thread_id = RuntimeThreadId::new("runtime-thread").expect("thread id");
+
+        for (index, expected_body) in protected_events.iter().enumerate() {
+            let protected: agentdash_agent_protocol::BackboneEvent =
+                serde_json::from_value(expected_body.clone()).expect("typed protected event");
+            let sequence = u64::try_from(index + 1).expect("fixture sequence");
+            let record = RuntimeJournalRecord::new(
+                RuntimeCarrierMetadata {
+                    thread_id: thread_id.clone(),
+                    recorded_at_ms: 1_720_000_000_000 + u64::try_from(index).expect("timestamp"),
+                    sequence: Some(EventSequence(sequence)),
+                    transient: None,
+                    revision: RuntimeRevision(sequence),
+                    operation_id: None,
+                    binding_id: None,
+                    append_idempotency_key: None,
+                    coordinate: RuntimePresentationCoordinate {
+                        runtime_turn_id: None,
+                        presentation_turn_id: Some(
+                            "turn-fixture".parse().expect("presentation turn id"),
+                        ),
+                        runtime_item_id: None,
+                        interaction_id: None,
+                        source_thread_id: Some("main-tool-fixture".to_string()),
+                        source_turn_id: Some("driver-source-turn".to_string()),
+                        source_item_id: Some("transport-item-must-not-leak".to_string()),
+                        source_request_id: None,
+                        source_entry_index: Some(u32::try_from(index).expect("source entry index")),
+                    },
+                },
+                RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    protected,
+                )),
+            )
+            .expect("presentation record");
+            let response = journal_event_to_contract(
+                AgentRunJournalEvent {
+                    journal_seq: sequence,
+                    segment_role: agentdash_application_agentrun::agent_run::AgentRunJournalSegmentRole::CurrentDelivery,
+                    source_runtime_thread_id: thread_id.clone(),
+                    source_event_seq: Some(EventSequence(sequence)),
+                    record,
+                },
+                "agentrun:run:agent",
+            )
+            .expect("journal projection");
+
+            assert_eq!(
+                serde_json::to_value(&response.notification.event).expect("protected body"),
+                *expected_body,
+                "wrapper must not rewrite tool body or explicit null fields at index {index}"
+            );
+            assert_eq!(response.tool_call_id.as_deref(), Some("turn_001:tool_001"));
+            assert_eq!(response.turn_id.as_deref(), Some("turn-fixture"));
+            assert_eq!(
+                response.notification.trace.turn_id.as_deref(),
+                Some("turn-fixture")
+            );
+        }
+    }
+
+    #[test]
+    fn wrapper_does_not_fallback_from_missing_presentation_turn_to_source_turn() {
+        let protected = agentdash_agent_protocol::BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                key: "fixture".to_string(),
+                value: serde_json::json!({ "nullable": null }),
+            },
+        );
+        let thread_id = RuntimeThreadId::new("runtime-thread").expect("thread id");
+        let record = RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: thread_id.clone(),
+                recorded_at_ms: 1,
+                sequence: Some(EventSequence(1)),
+                transient: None,
+                revision: RuntimeRevision(1),
+                operation_id: None,
+                binding_id: None,
+                append_idempotency_key: None,
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: Some("runtime-turn".parse().expect("runtime turn id")),
+                    presentation_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some("source-thread".to_string()),
+                    source_turn_id: Some("source-turn".to_string()),
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: None,
+                },
+            },
+            RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+                PresentationDurability::Durable,
+                protected,
+            )),
+        )
+        .expect("presentation record");
+        let response = journal_event_to_contract(
+            AgentRunJournalEvent {
+                journal_seq: 1,
+                segment_role: agentdash_application_agentrun::agent_run::AgentRunJournalSegmentRole::CurrentDelivery,
+                source_runtime_thread_id: thread_id,
+                source_event_seq: Some(EventSequence(1)),
+                record,
+            },
+            "agentrun:run:agent",
+        )
+        .expect("journal projection");
+
+        assert_eq!(response.turn_id, None);
+        assert_eq!(response.notification.trace.turn_id, None);
     }
 
     #[test]

@@ -3100,11 +3100,12 @@ mod journal_projection_tests {
 
     #[test]
     fn typed_context_frame_wrapper_normalizes_to_the_main_session_boundary_exactly() {
-        let oracle: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../agentdash-agent-protocol/tests/fixtures/context_frames_main_957fa9d.json"
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agentdash-agent-protocol/tests/fixtures/context_frames_canonical_roundtrip.json"
         ))
         .unwrap();
-        for frame in oracle["frames"].as_array().unwrap() {
+        assert_eq!(fixture["fixture_kind"], "protocol_roundtrip_only");
+        for frame in fixture["frames"].as_array().unwrap() {
             let typed = agentdash_agent_protocol::BackboneEvent::Platform(
                 agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(Box::new(
                     agentdash_agent_protocol::ContextFrameChanged {

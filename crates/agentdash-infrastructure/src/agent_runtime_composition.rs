@@ -302,6 +302,8 @@ pub struct PreparedAgentRunRuntime {
     pub host_policy_profile: agentdash_agent_runtime_contract::RuntimeProfile,
     pub conformance: ConformanceEvidence,
     pub allow_instance_creation: bool,
+    pub context_delivery_target:
+        agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget,
 }
 
 #[async_trait]
@@ -367,6 +369,16 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
                 });
             }
         };
+        let connector_id = match plan.executor.trim() {
+            "PI_AGENT" => "pi-agent",
+            "CODEX" => "codex",
+            _ => unreachable!("executor was validated above"),
+        };
+        let context_delivery_target =
+            agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget {
+                connector_id: connector_id.to_string(),
+                executor: plan.executor.clone(),
+            };
         let definition = self.definitions.get(definition_id).ok_or_else(|| {
             AgentRunRuntimeSurfaceSourceError::Unavailable {
                 reason: format!("Runtime definition {definition_id} is not installed"),
@@ -459,6 +471,7 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
                 verified_at: Utc::now(),
             },
             allow_instance_creation: definition_id == NATIVE_DEFINITION_ID,
+            context_delivery_target,
         })
     }
 }
@@ -976,6 +989,7 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             bound_profile: offer.effective_profile.profile,
             surface: surface_descriptor,
             settings_revision,
+            context_delivery_target: prepared.context_delivery_target,
         };
         let publication = prepared
             .publication
@@ -1196,6 +1210,7 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             bound_profile: offer.effective_profile.profile.clone(),
             surface: old.surface.clone(),
             settings_revision: old.settings_revision,
+            context_delivery_target: old.context_delivery_target.clone(),
         };
         self.bindings
             .append_lineage(old, binding.clone(), &intent.id)
@@ -1707,6 +1722,8 @@ pub struct AgentRuntimeCompositionInput {
     pub callback_factory: AgentRuntimeCallbackFactory,
     pub application_presentation_projector:
         Arc<dyn agentdash_agent_runtime_contract::RuntimeApplicationPresentationProjector>,
+    pub managed_compaction:
+        Option<Arc<dyn crate::agent_runtime_workers::ManagedCompactionPreparationEngine>>,
     pub node_id: String,
 }
 
@@ -1789,7 +1806,7 @@ pub fn build_agent_runtime_composition(
     let provisioner: Arc<dyn AgentRunRuntimeProvisioner> =
         Arc::new(HostAgentRunRuntimeProvisioner::new(
             host.clone(),
-            host_repository_port,
+            host_repository_port.clone(),
             bindings.clone(),
             surface_store.clone(),
             input.surface_source,
@@ -1808,6 +1825,8 @@ pub fn build_agent_runtime_composition(
         runtime.clone(),
         composition_repository,
         host.clone(),
+        host_repository_port,
+        input.managed_compaction,
         Arc::new(crate::agent_runtime_workers::DiagnosticRuntimeHookEffectDispatcher),
         "agentdash-api-runtime-durable",
     ));
@@ -1834,6 +1853,17 @@ pub fn build_agent_runtime_composition(
 pub fn build_native_agent_runtime_composition(
     input: NativeAgentRuntimeCompositionInput,
 ) -> Result<NativeAgentRuntimeComposition, AgentRuntimeCompositionError> {
+    let managed_compaction = Arc::new(
+        crate::agent_runtime_workers::NativeManagedCompactionEngine::new(
+            input.provider_repository.clone(),
+            input.provider_credential_repository.clone(),
+            input.secret_codec.clone(),
+            crate::agent_runtime_workers::ManagedCompactionPolicy {
+                keep_last_n: 20,
+                reserve_tokens: 16_384,
+            },
+        ),
+    );
     let resolver: Arc<dyn NativeBridgeResolver> = Arc::new(RepositoryNativeBridgeResolver::new(
         input.provider_repository,
         input.provider_credential_repository,
@@ -1961,6 +1991,7 @@ pub fn build_native_agent_runtime_composition(
         credential_broker: input.credential_broker,
         callback_factory: input.callback_factory,
         application_presentation_projector: input.application_presentation_projector,
+        managed_compaction: Some(managed_compaction),
         node_id: input.node_id,
     })
 }
@@ -2328,6 +2359,51 @@ mod tests {
         }
     }
 
+    struct TracerManagedCompactionEngine;
+
+    #[async_trait]
+    impl crate::agent_runtime_workers::ManagedCompactionPreparationEngine
+        for TracerManagedCompactionEngine
+    {
+        async fn compact(
+            &self,
+            thread: &agentdash_agent_runtime::RuntimeThreadState,
+            surface: &agentdash_integration_api::MaterializedDriverSurface,
+            _instance: &agentdash_agent_runtime_host::AgentServiceInstance,
+            work: &agentdash_agent_runtime::ContextPreparationWorkItem,
+        ) -> Result<
+            crate::agent_runtime_workers::ManagedCompactionOutput,
+            crate::agent_runtime_workers::RuntimeDurableWorkerError,
+        > {
+            let summary = "native tracer compacted summary".to_string();
+            let mut blocks = surface.context.blocks.clone();
+            blocks.push(
+                agentdash_agent_runtime_contract::ContextBlock::CompactionSummary {
+                    summary: summary.clone(),
+                },
+            );
+            Ok(crate::agent_runtime_workers::ManagedCompactionOutput {
+                blocks,
+                source_item_ids: thread.item_order.clone(),
+                presentation: agentdash_agent_runtime::CompactionPresentationFacts {
+                    summary,
+                    tokens_before: 42,
+                    messages_compacted: 1,
+                    compaction_id: Some(work.compaction_id.to_string()),
+                    projection_version: None,
+                    strategy: Some("summary_prefix".to_string()),
+                    trigger: Some("auto".to_string()),
+                    phase: Some("standalone_compact_turn".to_string()),
+                    source_start_event_seq: None,
+                    source_end_event_seq: None,
+                    first_kept_event_seq: None,
+                    compacted_until_ref: None,
+                    timestamp_ms: Some(1_710_000_000_000),
+                },
+            })
+        }
+    }
+
     struct CodexTracerLauncher(std::path::PathBuf);
 
     impl CodexAppServerLauncher for CodexTracerLauncher {
@@ -2357,7 +2433,7 @@ mod tests {
     impl AgentRunRuntimeSurfaceSource for CodexTracerSurfaceSource {
         async fn prepare(
             &self,
-            _request: &AgentRunRuntimeProvisionRequest,
+            request: &AgentRunRuntimeProvisionRequest,
             thread_id: &RuntimeThreadId,
             _binding_id: &RuntimeBindingId,
         ) -> Result<PreparedAgentRunRuntime, AgentRunRuntimeSurfaceSourceError> {
@@ -2394,7 +2470,7 @@ mod tests {
                     },
                 },
                 publication: Arc::new(NoopSurfacePublication),
-                terminal_hook_effect_binding: None,
+                terminal_hook_effect_binding: request.terminal_hook_effect_binding.clone(),
                 surface,
                 business_surface,
                 transport_profile: profile.clone(),
@@ -2406,6 +2482,11 @@ mod tests {
                     verified_at: Utc::now(),
                 },
                 allow_instance_creation: true,
+                context_delivery_target:
+                    agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget {
+                        connector_id: "codex".to_string(),
+                        executor: "CODEX".to_string(),
+                    },
             })
         }
     }
@@ -2416,7 +2497,7 @@ mod tests {
     impl NativeAgentRunSurfaceCompiler for FixtureSurfaceCompiler {
         async fn compile(
             &self,
-            _request: &AgentRunRuntimeProvisionRequest,
+            request: &AgentRunRuntimeProvisionRequest,
             _thread_id: &RuntimeThreadId,
             _binding_id: &RuntimeBindingId,
         ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError> {
@@ -2454,7 +2535,7 @@ mod tests {
                     ],
                 },
                 publication: Arc::new(NoopSurfacePublication),
-                terminal_hook_effect_binding: None,
+                terminal_hook_effect_binding: request.terminal_hook_effect_binding.clone(),
             })
         }
     }
@@ -2633,6 +2714,8 @@ mod tests {
                     .collect(),
                 tools: Vec::new(),
                 hooks,
+                bootstrap_context: Default::default(),
+                normalized_context_surface: Default::default(),
                 projection_identity: agentdash_agent_runtime::ContextProjectionIdentity {
                     operation_id: "fixture-surface-compile".to_string(),
                     source_frame_id: "fixture-frame".to_string(),
@@ -2940,6 +3023,7 @@ mod tests {
                 hooks: Arc::new(ContinueHooks),
             }),
             application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
+            managed_compaction: Some(Arc::new(TracerManagedCompactionEngine)),
             node_id: "native-production-tracer".to_string(),
         })
         .expect("production composition");
@@ -3246,6 +3330,7 @@ mod tests {
                         ),
                     },
                     payload: known_payload,
+                    presentation: None,
                 }],
             )
             .await
@@ -3315,6 +3400,7 @@ mod tests {
                         ),
                     },
                     payload: unknown_payload,
+                    presentation: None,
                 }],
             )
             .await
@@ -3354,6 +3440,50 @@ mod tests {
         };
         assert!(context.head.is_some());
         assert_eq!(context.fidelity, ContextFidelity::PlatformExact);
+        let records = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT record FROM agent_runtime_event WHERE thread_id=$1 ORDER BY event_sequence",
+        )
+        .bind(context.thread_id.as_str())
+        .fetch_all(&pool)
+        .await
+        .expect("load compaction journal")
+        .into_iter()
+        .map(|value| {
+            serde_json::from_value::<agentdash_agent_runtime_contract::RuntimeJournalRecord>(value)
+                .expect("typed Runtime journal record")
+        })
+        .collect::<Vec<_>>();
+        let compaction_frame = records
+            .iter()
+            .filter_map(agentdash_agent_runtime_contract::RuntimeJournalRecord::as_presentation)
+            .find_map(|event| match &event.event {
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(changed),
+                ) if changed.frame.kind
+                    == agentdash_agent_protocol::ContextFrameKind::CompactionSummary =>
+                {
+                    Some(&changed.frame)
+                }
+                _ => None,
+            })
+            .expect("durable compaction summary presentation");
+        assert_eq!(
+            compaction_frame.rendered_text,
+            "## Compaction Summary\nmessages_compacted: 1\ntokens_before: 42\ntimestamp_ms: 1710000000000\ncompaction_id: native-tracer-compaction\nstrategy: summary_prefix\ntrigger: auto\nphase: standalone_compact_turn\n\n以下是之前对话的压缩摘要，用于延续工作上下文。摘要中的路径、函数名等具体信息可能已过时，请在执行前验证。\n\nnative tracer compacted summary"
+        );
+        assert!(matches!(
+            compaction_frame.sections.as_slice(),
+            [agentdash_agent_protocol::ContextFrameSection::CompactionSummary {
+                summary,
+                tokens_before: 42,
+                messages_compacted: 1,
+                projection_version: None,
+                source_start_event_seq: None,
+                source_end_event_seq: None,
+                first_kept_event_seq: None,
+                ..
+            }] if summary == "native tracer compacted summary"
+        ));
 
         let hook_run_id: HookRunId = parsed("native-tracer-crashed-hook");
         assert!(matches!(
@@ -3470,6 +3600,7 @@ rl.on('line', line => {
                 hooks: Arc::new(ContinueHooks),
             }),
             application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
+            managed_compaction: None,
             node_id: "codex-production-tracer".to_string(),
         })
         .expect("Codex production composition");

@@ -374,10 +374,90 @@ impl ManagedAgentRunRuntime {
             .iter()
             .map(|notice| notice.id.clone())
             .collect::<Vec<_>>();
+        let runtime_revision = facts
+            .runtime_snapshot
+            .as_ref()
+            .map_or(0, |snapshot| snapshot.revision);
+        let owners = facts
+            .runtime_snapshot
+            .as_ref()
+            .and_then(|runtime| runtime.snapshot.run_context.as_ref())
+            .map(|context| {
+                vec![format!(
+                    "- scope: {} project: {}",
+                    context.scope, context.project_id
+                )]
+            })
+            .unwrap_or_default();
         let mut frames = facts
             .notices
             .into_iter()
-            .filter_map(|notice| notice.context_frame)
+            .filter_map(|notice| {
+                if let Some(facts) = notice.presentation {
+                    let source = match notice.source {
+                        agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate => {
+                            agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate
+                        }
+                        agentdash_spi::hooks::RuntimeEventSource::CompanionResult => {
+                            agentdash_agent_protocol::ContextFrameSource::CompanionResult
+                        }
+                    };
+                    let facts = match facts {
+                        agentdash_spi::hooks::HookContextPresentationFacts::SystemNotice {
+                            title,
+                            summary,
+                            body,
+                        } => agentdash_agent_runtime::HookSemanticPresentationFacts::SystemNotice {
+                            title,
+                            summary,
+                            body,
+                        },
+                        agentdash_spi::hooks::HookContextPresentationFacts::AssignmentInjection {
+                            title,
+                            summary,
+                            injections,
+                        } => agentdash_agent_runtime::HookSemanticPresentationFacts::AssignmentInjection {
+                            title,
+                            summary,
+                            injections: injections
+                                .into_iter()
+                                .map(|injection| agentdash_agent_protocol::RuntimeHookInjectionEntry {
+                                    slot: injection.slot,
+                                    content: injection.content,
+                                    source: injection.source,
+                                    context_usage_kind: None,
+                                })
+                                .collect(),
+                        },
+                    };
+                    return agentdash_agent_runtime::project_hook_presentation(
+                            &agentdash_agent_runtime::ContextProjectionIdentity {
+                                operation_id: notice.id.clone(),
+                                source_frame_id: notice.id.clone(),
+                                source_frame_revision: runtime_revision,
+                                recorded_at_ms: notice.created_at_ms,
+                            },
+                            source,
+                            facts,
+                        )
+                        .ok();
+                }
+                agentdash_agent_runtime::project_system_notice(
+                    &agentdash_agent_runtime::SystemNoticePresentationFacts {
+                        id: notice.id,
+                        source: match notice.source {
+                            agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate => {
+                                agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate
+                            }
+                            agentdash_spi::hooks::RuntimeEventSource::CompanionResult => {
+                                agentdash_agent_protocol::ContextFrameSource::CompanionResult
+                            }
+                        },
+                        content: notice.content,
+                        created_at_ms: notice.created_at_ms,
+                    },
+                )
+            })
             .collect::<Vec<_>>();
         frames.extend(
             facts
@@ -385,8 +465,8 @@ impl ManagedAgentRunRuntime {
                 .into_iter()
                 .filter(|action| !action.summary.trim().is_empty() || !action.injections.is_empty())
                 .enumerate()
-                .map(|(index, action)| {
-                    agentdash_agent_runtime::ContextProjector::project_pending_action(
+                .filter_map(|(index, action)| {
+                    agentdash_agent_runtime::project_pending_action(
                         &agentdash_agent_runtime::ContextProjectionIdentity {
                             operation_id: format!(
                                 "{}:pending:{index}",
@@ -394,16 +474,30 @@ impl ManagedAgentRunRuntime {
                                     .expect("validated operation")
                             ),
                             source_frame_id: action.id.clone(),
-                            source_frame_revision: 1,
+                            source_frame_revision: if runtime_revision == 0 {
+                                binding.surface.surface_revision.0
+                            } else {
+                                runtime_revision
+                            },
                             recorded_at_ms: action.created_at_ms,
                         },
-                        &action.title,
-                        &action.summary,
-                        &action.id,
-                        &action.action_type,
-                        1,
-                        action.turn_id,
-                        action
+                        &agentdash_agent_runtime::PendingActionPresentationFacts {
+                            source: match action.source {
+                                agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate => agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
+                                agentdash_spi::hooks::RuntimeEventSource::CompanionResult => agentdash_agent_protocol::ContextFrameSource::CompanionResult,
+                            },
+                            title: action.title,
+                            summary: action.summary,
+                            action_id: action.id,
+                            action_type: action.action_type,
+                            status: match action.status {
+                                agentdash_spi::hooks::HookPendingActionStatus::Pending => "pending",
+                                agentdash_spi::hooks::HookPendingActionStatus::Resolved => "resolved",
+                            }.to_string(),
+                            runtime_revision,
+                            turn_id: action.turn_id,
+                            owners: owners.clone(),
+                            injections: action
                             .injections
                             .into_iter()
                             .map(|injection| {
@@ -421,6 +515,7 @@ impl ManagedAgentRunRuntime {
                                 }
                             })
                             .collect(),
+                        },
                     )
                 }),
         );
@@ -657,6 +752,7 @@ impl ManagedAgentRunRuntime {
         target: &AgentRunRuntimeTarget,
         client_command_id: &str,
         presentation_thread_id: &PresentationThreadId,
+        source_frame_revision: u64,
         input: AgentRunPresentationInput,
     ) -> Result<Vec<RuntimePresentationInput>, AgentRunRuntimeError> {
         use agentdash_agent_protocol::codex_app_server_protocol as codex;
@@ -668,12 +764,12 @@ impl ManagedAgentRunRuntime {
         let turn_id = input.turn_id().to_string();
         let started_at_seconds = input.started_at_seconds();
         let thread_id = presentation_thread_id.to_string();
-        let auto_resume_prompt = match &input {
+        let system_delivery = match &input {
             AgentRunPresentationInput::SystemDelivery {
-                launch_source: LaunchPresentationSource::HookAutoResume,
+                launch_source,
                 message,
                 ..
-            } => Some(message.clone()),
+            } => Some((*launch_source, message.clone())),
             _ => None,
         };
         let (first_event, source_item_id) = match input {
@@ -749,17 +845,32 @@ impl ManagedAgentRunRuntime {
                 ),
             },
         ];
-        if let Some(prompt) = auto_resume_prompt {
-            let frame = agentdash_agent_runtime::ContextProjector::project_auto_resume(
+        if let Some((launch_source, message)) = system_delivery
+            && let Some(frame) = agentdash_agent_runtime::project_system_delivery(
                 &agentdash_agent_runtime::ContextProjectionIdentity {
                     operation_id: Self::operation_identity(target, client_command_id)?,
                     source_frame_id: turn_id.clone(),
-                    source_frame_revision: 1,
+                    source_frame_revision,
                     recorded_at_ms: started_at_seconds.saturating_mul(1_000),
                 },
-                "hook",
-                &prompt,
-            );
+                &agentdash_agent_runtime::SystemDeliveryPresentationFacts {
+                    source: if matches!(
+                        launch_source,
+                        LaunchPresentationSource::CompanionDispatch
+                            | LaunchPresentationSource::CompanionParentResume
+                    ) {
+                        agentdash_agent_protocol::ContextFrameSource::CompanionResult
+                    } else {
+                        agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate
+                    },
+                    session_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    delivery_kind: launch_source.system_delivery_kind().to_string(),
+                    source_kind: launch_source.tag().to_string(),
+                    content: message,
+                },
+            )
+        {
             presentation.push(RuntimePresentationInput {
                 coordinate: coordinate(None, Some(1)),
                 event: ImmutablePresentationEvent::new(
@@ -932,6 +1043,97 @@ fn system_delivery_value(
     })
 }
 
+fn finalize_launch_context_frames(
+    presentation: &mut Vec<RuntimePresentationInput>,
+    target: &agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget,
+) {
+    use agentdash_agent_protocol::{ContextAgentConsumptionMode, ContextConnectorProfile};
+
+    let mut non_frames = Vec::with_capacity(presentation.len());
+    let mut frames = Vec::new();
+    for mut input in presentation.drain(..) {
+        if let Some(changed) = context_frame_changed_mut(&mut input) {
+            let profile_id = target.profile_id();
+            let mode =
+                launch_consumption_mode(target, changed.frame.delivery_metadata.model_channel);
+            changed.frame.delivery_metadata.connector_profile = ContextConnectorProfile {
+                profile_id: profile_id.clone(),
+                declared_consumption_modes: vec![
+                    ContextAgentConsumptionMode::Consume,
+                    ContextAgentConsumptionMode::Ignore,
+                    ContextAgentConsumptionMode::ConnectorNative,
+                    ContextAgentConsumptionMode::SystemAppend,
+                ],
+            };
+            changed.frame.delivery_metadata.agent_consumption.target = profile_id.clone();
+            changed.frame.delivery_metadata.agent_consumption.mode = mode;
+            changed.frame.delivery_metadata.agent_consumption.reason =
+                format!("{profile_id}_{}_delivery", changed.frame.kind.as_key());
+            let kind = changed.frame.kind;
+            frames.push((context_frame_order(kind), input));
+        } else {
+            non_frames.push(input);
+        }
+    }
+    frames.sort_by_key(|(order, _)| *order);
+    for (index, (_, mut input)) in frames.into_iter().enumerate() {
+        input.coordinate.source_entry_index = Some(
+            u32::try_from(index + 1).expect("turn ContextFrame presentation batch is bounded"),
+        );
+        non_frames.push(input);
+    }
+    *presentation = non_frames;
+}
+
+fn launch_consumption_mode(
+    target: &agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget,
+    model_channel: agentdash_agent_protocol::ContextModelChannel,
+) -> agentdash_agent_protocol::ContextAgentConsumptionMode {
+    use agentdash_agent_protocol::{ContextAgentConsumptionMode, ContextModelChannel};
+    if target.connector_id == "pi-agent" {
+        return ContextAgentConsumptionMode::Consume;
+    }
+    match model_channel {
+        ContextModelChannel::System | ContextModelChannel::Developer => {
+            ContextAgentConsumptionMode::SystemAppend
+        }
+        ContextModelChannel::Ignored => ContextAgentConsumptionMode::Ignore,
+        ContextModelChannel::AuditOnly => ContextAgentConsumptionMode::AuditOnly,
+        ContextModelChannel::Context | ContextModelChannel::User => {
+            ContextAgentConsumptionMode::Consume
+        }
+    }
+}
+
+fn context_frame_changed_mut(
+    input: &mut RuntimePresentationInput,
+) -> Option<&mut agentdash_agent_protocol::ContextFrameChanged> {
+    let agentdash_agent_protocol::BackboneEvent::Platform(
+        agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(changed),
+    ) = &mut input.event.event
+    else {
+        return None;
+    };
+    Some(changed)
+}
+
+const fn context_frame_order(kind: agentdash_agent_protocol::ContextFrameKind) -> u8 {
+    use agentdash_agent_protocol::ContextFrameKind;
+    match kind {
+        ContextFrameKind::CapabilityStateDelta => 0,
+        ContextFrameKind::AssignmentContext => 1,
+        ContextFrameKind::SystemDelivery => 2,
+        ContextFrameKind::Identity => 3,
+        ContextFrameKind::UserContext => 4,
+        ContextFrameKind::Environment => 5,
+        ContextFrameKind::SystemGuidelines => 6,
+        ContextFrameKind::MemoryContext => 7,
+        ContextFrameKind::SystemNotice => 8,
+        ContextFrameKind::PendingAction => 9,
+        ContextFrameKind::CompactionSummary | ContextFrameKind::AutoResume => 10,
+    }
+}
+
 #[async_trait]
 impl AgentRunRuntime for ManagedAgentRunRuntime {
     async fn inspect(
@@ -1024,6 +1226,7 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
             &command.target,
             &command.client_command_id,
             &binding.presentation_thread_id,
+            binding.surface.surface_revision.0,
             command.presentation_input.clone(),
         )?;
         self.reconcile_committed_recovery(&command.target, &binding)
@@ -1057,7 +1260,7 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
             snapshot = self.snapshot_for(&binding).await?;
         }
         let expected = snapshot.as_ref().map(|snapshot| snapshot.revision);
-        let mut acknowledged_notice_ids = Vec::new();
+        let acknowledged_notice_ids;
         if snapshot.is_none() {
             presentation.extend(
                 self.bootstrap_presentation(
@@ -1067,17 +1270,17 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
                 )
                 .await?,
             );
-        } else {
-            let (turn_start_presentation, notice_ids) = self
-                .pending_turn_start_presentation(
-                    &binding,
-                    &command.client_command_id,
-                    command.presentation_input.turn_id(),
-                )
-                .await?;
-            presentation.extend(turn_start_presentation);
-            acknowledged_notice_ids = notice_ids;
         }
+        let (turn_start_presentation, notice_ids) = self
+            .pending_turn_start_presentation(
+                &binding,
+                &command.client_command_id,
+                command.presentation_input.turn_id(),
+            )
+            .await?;
+        presentation.extend(turn_start_presentation);
+        acknowledged_notice_ids = notice_ids;
+        finalize_launch_context_frames(&mut presentation, &binding.context_delivery_target);
         let acknowledged_binding_id = binding.binding_id.clone();
         let runtime_command = match snapshot {
             None => RuntimeCommand::ThreadStart {
@@ -1336,5 +1539,65 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
                 stream_generation: query.stream_generation,
             })
             .await?)
+    }
+}
+
+#[cfg(test)]
+mod launch_delivery_tests {
+    use super::launch_consumption_mode;
+    use agentdash_agent_protocol::{ContextAgentConsumptionMode, ContextModelChannel};
+    use agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget;
+
+    #[test]
+    fn pi_agent_consumes_every_model_channel() {
+        let target = AgentRunContextDeliveryTarget {
+            connector_id: "pi-agent".to_string(),
+            executor: "PI_AGENT".to_string(),
+        };
+        for channel in [
+            ContextModelChannel::System,
+            ContextModelChannel::Developer,
+            ContextModelChannel::Context,
+            ContextModelChannel::User,
+            ContextModelChannel::AuditOnly,
+            ContextModelChannel::Ignored,
+        ] {
+            assert_eq!(
+                launch_consumption_mode(&target, channel),
+                ContextAgentConsumptionMode::Consume
+            );
+        }
+    }
+
+    #[test]
+    fn codex_maps_model_channels_to_declared_consumption() {
+        let target = AgentRunContextDeliveryTarget {
+            connector_id: "codex".to_string(),
+            executor: "CODEX".to_string(),
+        };
+        assert_eq!(
+            launch_consumption_mode(&target, ContextModelChannel::System),
+            ContextAgentConsumptionMode::SystemAppend
+        );
+        assert_eq!(
+            launch_consumption_mode(&target, ContextModelChannel::Developer),
+            ContextAgentConsumptionMode::SystemAppend
+        );
+        assert_eq!(
+            launch_consumption_mode(&target, ContextModelChannel::Ignored),
+            ContextAgentConsumptionMode::Ignore
+        );
+        assert_eq!(
+            launch_consumption_mode(&target, ContextModelChannel::AuditOnly),
+            ContextAgentConsumptionMode::AuditOnly
+        );
+        assert_eq!(
+            launch_consumption_mode(&target, ContextModelChannel::Context),
+            ContextAgentConsumptionMode::Consume
+        );
+        assert_eq!(
+            launch_consumption_mode(&target, ContextModelChannel::User),
+            ContextAgentConsumptionMode::Consume
+        );
     }
 }

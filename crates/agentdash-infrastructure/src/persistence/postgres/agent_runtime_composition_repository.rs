@@ -638,6 +638,26 @@ mod recovery_tests {
         assert!(migration.contains("presentation_plan jsonb"));
         assert_eq!(migration.matches("NOT NULL").count(), 2);
     }
+
+    #[test]
+    fn context_delivery_target_migration_rebuilds_the_complete_derived_runtime_graph() {
+        let migration =
+            include_str!("../../../migrations/0076_reset_agent_run_context_delivery_target.sql");
+        for reset in [
+            "DELETE FROM agent_run_runtime_binding_lineage",
+            "DELETE FROM agent_run_runtime_recovery_intent",
+            "DELETE FROM agent_run_runtime_thread_anchor",
+            "DELETE FROM agent_runtime_thread",
+            "DELETE FROM agent_runtime_binding",
+            "TRUNCATE TABLE agent_runtime_surface_snapshot",
+        ] {
+            assert!(migration.contains(reset), "missing Runtime reset: {reset}");
+        }
+        assert!(migration.contains("SET accepted_runtime_operation_id = NULL"));
+        assert!(migration.contains("DELETE FROM permission_grants"));
+        assert!(!migration.contains("jsonb_set"));
+        assert!(!migration.contains("context_delivery_target',"));
+    }
 }
 
 fn load_runtime_bindings(

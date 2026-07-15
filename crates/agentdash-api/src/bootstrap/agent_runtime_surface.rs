@@ -273,6 +273,46 @@ fn hook_invocation_coordinates_are_current(
             == request.source_item_id.as_ref().map(ToString::to_string)
 }
 
+fn hook_context_presentation_facts(
+    facts: agentdash_spi::hooks::HookContextPresentationFacts,
+) -> Result<agentdash_agent_runtime::ContextFrameFacts, DriverHookCallbackError> {
+    let facts = match facts {
+        agentdash_spi::hooks::HookContextPresentationFacts::SystemNotice {
+            title,
+            summary,
+            body,
+        } => agentdash_agent_runtime::HookSemanticPresentationFacts::SystemNotice {
+            title,
+            summary,
+            body,
+        },
+        agentdash_spi::hooks::HookContextPresentationFacts::AssignmentInjection {
+            title,
+            summary,
+            injections,
+        } => agentdash_agent_runtime::HookSemanticPresentationFacts::AssignmentInjection {
+            title,
+            summary,
+            injections: injections
+                .into_iter()
+                .map(
+                    |injection| agentdash_agent_protocol::RuntimeHookInjectionEntry {
+                        slot: injection.slot,
+                        content: injection.content,
+                        source: injection.source,
+                        context_usage_kind: None,
+                    },
+                )
+                .collect(),
+        },
+    };
+    agentdash_agent_runtime::compile_hook_presentation_facts(
+        agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
+        facts,
+    )
+    .map_err(|reason| DriverHookCallbackError::ProtocolViolation { reason })
+}
+
 #[async_trait]
 impl AgentRuntimeHookCallback for CanonicalAgentRuntimeHookCallback {
     async fn execute(
@@ -436,24 +476,41 @@ impl AgentRuntimeHookCallback for CanonicalAgentRuntimeHookCallback {
             .map(|(index, effect)| {
                 let effect_id = HookEffectId::new(format!("effect-{hook_run_id}-{index}"))
                     .expect("derived hook effect id");
-                let payload_digest =
-                    agentdash_agent_runtime::hook_effect_payload_digest(&effect.payload);
-                agentdash_agent_runtime::HookEffect {
+                let presentation = effect
+                    .presentation
+                    .map(hook_context_presentation_facts)
+                    .transpose()?;
+                let effect_type = if presentation.is_some() {
+                    "runtime_context_presentation".to_string()
+                } else {
+                    effect.kind
+                };
+                let payload_digest = presentation.as_ref().map_or_else(
+                    || agentdash_agent_runtime::hook_effect_payload_digest(&effect.payload),
+                    |facts| {
+                        agentdash_agent_runtime::hook_effect_payload_digest(
+                            &serde_json::to_value(facts)
+                                .expect("typed Hook presentation facts serialize"),
+                        )
+                    },
+                );
+                Ok(agentdash_agent_runtime::HookEffect {
                     effect_id,
                     hook_run_id: hook_run_id.clone(),
                     thread_id: request.thread_id.clone(),
                     idempotency_key: format!("{hook_run_id}:{index}"),
                     descriptor: agentdash_agent_runtime::HookEffectDescriptor {
-                        effect_type: effect.kind,
+                        effect_type,
                         schema_version: 1,
                         target_authority: "agentdash_hook_effect_dispatcher".to_string(),
                         retry_limit: 3,
                         payload_digest,
                     },
                     payload: effect.payload,
-                }
+                    presentation,
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, DriverHookCallbackError>>()?;
         if let Some(reason) = resolution.block_reason {
             self.runtime
                 .complete_hook(
@@ -1005,6 +1062,7 @@ impl agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextSou
         })?;
         Ok(
             agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts {
+                runtime_snapshot: Some(binding.hook_runtime.runtime_snapshot()),
                 pending_actions: binding.hook_runtime.collect_pending_actions_for_injection(),
                 notices: binding.hook_runtime.peek_turn_start_notices(),
             },
@@ -1218,11 +1276,10 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
         .map_err(|error| RuntimeSurfaceAdoptionError::Failed {
             message: error.to_string(),
         })?;
-        let presentation = context_frame_presentation(
+        let presentation = adoption_plan.adoption_presentation(
             &binding.presentation_thread_id,
             snapshot.active_presentation_turn_id.as_ref(),
             &identity,
-            adoption_plan.adoption_frames,
         );
         if let Err(error) = self
             .runtime
@@ -1267,40 +1324,6 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
                     .to_string(),
             })
     }
-}
-
-fn context_frame_presentation(
-    thread_id: &PresentationThreadId,
-    turn_id: Option<&PresentationTurnId>,
-    operation_id: &str,
-    frames: Vec<agentdash_agent_protocol::ContextFrame>,
-) -> Vec<RuntimePresentationInput> {
-    frames
-        .into_iter()
-        .enumerate()
-        .map(|(index, frame)| RuntimePresentationInput {
-            coordinate: RuntimePresentationCoordinate {
-                runtime_turn_id: None,
-                runtime_item_id: None,
-                interaction_id: None,
-                source_thread_id: Some(thread_id.to_string()),
-                source_turn_id: turn_id.map(ToString::to_string),
-                source_item_id: None,
-                source_request_id: Some(operation_id.to_string()),
-                source_entry_index: Some(
-                    u32::try_from(index).expect("surface presentation plan is bounded"),
-                ),
-            },
-            event: ImmutablePresentationEvent::new(
-                PresentationDurability::Durable,
-                agentdash_agent_protocol::BackboneEvent::Platform(
-                    agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(Box::new(
-                        agentdash_agent_protocol::ContextFrameChanged { frame },
-                    )),
-                ),
-            ),
-        })
-        .collect()
 }
 
 /// Composition adapter: binds Application source facts and callable publication handles to the
@@ -1432,15 +1455,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameSurfaceCompositionAdapter {
                 tools: direct_tools,
             });
         let recipe = business_surface.snapshot.context.recipe.clone();
-        let instructions = business_surface
-            .snapshot
-            .context
-            .instructions
-            .entries
-            .iter()
-            .map(|entry| entry.content.clone())
-            .collect::<Vec<_>>();
-        let blocks = initial_driver_context_blocks();
+        let (instructions, blocks) = materialize_driver_context(&business_surface.snapshot.context);
         let context_digest = ContextDigest::new(business_surface.snapshot.context.digest.clone())
             .map_err(|error| AgentRunRuntimeSurfaceSourceError::Invalid {
             reason: error.to_string(),
@@ -1482,10 +1497,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameSurfaceCompositionAdapter {
                 authorization_identity: request.identity.clone().or(surface.identity),
                 context: DriverContextSurface {
                     recipe,
-                    instructions: vec![DriverInstructionSet {
-                        channel: InstructionChannel::System,
-                        entries: instructions,
-                    }],
+                    instructions,
                     blocks,
                     digest: context_digest,
                     fidelity: ContextFidelity::PlatformExact,
@@ -1512,6 +1524,29 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameSurfaceCompositionAdapter {
     }
 }
 
+fn materialize_driver_context(
+    context: &agentdash_agent_runtime::ContextEnvelope,
+) -> (Vec<DriverInstructionSet>, Vec<ContextBlock>) {
+    let mut instructions_by_channel = BTreeMap::<InstructionChannel, Vec<String>>::new();
+    for entry in &context.instructions.entries {
+        instructions_by_channel
+            .entry(entry.channel)
+            .or_default()
+            .push(entry.content.clone());
+    }
+    let instructions = instructions_by_channel
+        .into_iter()
+        .map(|(channel, entries)| DriverInstructionSet { channel, entries })
+        .collect();
+    let blocks = context
+        .contributions
+        .iter()
+        .flat_map(|entry| entry.blocks.iter().cloned())
+        .collect();
+    (instructions, blocks)
+}
+
+#[cfg(test)]
 fn initial_driver_context_blocks() -> Vec<ContextBlock> {
     // AgentFrame context_slice is control-plane bundle metadata, not model input. Main delivers
     // launch instructions through the dedicated system channel and starts with no replay blocks.
@@ -1605,6 +1640,55 @@ mod tests {
             Arc::new(NoopExecutionHookProvider),
             agentdash_spi::AgentFrameHookSnapshot::default(),
         ))
+    }
+
+    #[test]
+    fn hook_semantic_notice_derives_platform_metadata() {
+        let facts = hook_context_presentation_facts(
+            agentdash_spi::hooks::HookContextPresentationFacts::SystemNotice {
+                title: "Hook Notice".to_string(),
+                summary: "continue".to_string(),
+                body: Some("继续处理".to_string()),
+            },
+        )
+        .expect("semantic notice");
+
+        assert_eq!(
+            facts.kind,
+            agentdash_agent_protocol::ContextFrameKind::SystemNotice
+        );
+        assert_eq!(
+            facts.delivery_status,
+            agentdash_agent_protocol::ContextDeliveryStatus::QueuedForTransformContext
+        );
+        assert_eq!(
+            facts.delivery_channel,
+            agentdash_agent_protocol::ContextDeliveryChannel::TurnStart
+        );
+        assert_eq!(
+            facts.message_role,
+            agentdash_agent_protocol::ContextMessageRole::User
+        );
+        assert_eq!(facts.rendered_text, "继续处理");
+    }
+
+    #[test]
+    fn hook_semantic_assignment_rejects_empty_injection() {
+        let result = hook_context_presentation_facts(
+            agentdash_spi::hooks::HookContextPresentationFacts::AssignmentInjection {
+                title: "Assignment Context".to_string(),
+                summary: "Hook injection".to_string(),
+                injections: vec![agentdash_spi::HookInjection {
+                    slot: "workflow".to_string(),
+                    content: "  ".to_string(),
+                    source: "hook:test".to_string(),
+                }],
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(DriverHookCallbackError::ProtocolViolation { .. })
+        ));
     }
 
     fn fixture_applied(binding_id: &str, revision: u64) -> AppliedNativeAgentRunSurface {
@@ -2501,6 +2585,77 @@ mod tests {
     #[test]
     fn initial_driver_context_does_not_project_frame_summary_as_user_input() {
         assert!(initial_driver_context_blocks().is_empty());
+    }
+
+    #[test]
+    fn compiled_context_materializes_driver_channels_and_typed_blocks_without_frames() {
+        let meta = |key: &str, priority| agentdash_agent_runtime::ContributionMeta {
+            key: key.to_string(),
+            source: agentdash_agent_runtime::SurfaceSourceRef {
+                layer: "test".to_string(),
+                key: "frame".to_string(),
+            },
+            priority,
+            requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+        };
+        let context = agentdash_agent_runtime::ContextEnvelope {
+            recipe: ContextRecipe {
+                revision: ContextRecipeRevision(1),
+                provenance: ContextProvenance {
+                    settings_revision: ThreadSettingsRevision(1),
+                    tool_set_revision: ToolSetRevision(1),
+                },
+                source_item_ids: Vec::new(),
+            },
+            instructions: agentdash_agent_runtime::InstructionPlan {
+                entries: vec![
+                    agentdash_agent_runtime::InstructionContribution {
+                        meta: meta("system:first", 30),
+                        channel: InstructionChannel::System,
+                        content: "identity".to_string(),
+                    },
+                    agentdash_agent_runtime::InstructionContribution {
+                        meta: meta("developer", 20),
+                        channel: InstructionChannel::Developer,
+                        content: "developer".to_string(),
+                    },
+                    agentdash_agent_runtime::InstructionContribution {
+                        meta: meta("system:second", 10),
+                        channel: InstructionChannel::System,
+                        content: "guidelines".to_string(),
+                    },
+                ],
+            },
+            contributions: vec![agentdash_agent_runtime::ContextContribution {
+                meta: meta("context:assignment", 0),
+                blocks: vec![ContextBlock::Instruction {
+                    text: "assignment".to_string(),
+                }],
+                minimum_strength: SemanticStrength::ObservedOnly,
+            }],
+            digest: "context-digest".to_string(),
+        };
+
+        let (instructions, blocks) = materialize_driver_context(&context);
+        assert_eq!(
+            instructions,
+            vec![
+                DriverInstructionSet {
+                    channel: InstructionChannel::System,
+                    entries: vec!["identity".to_string(), "guidelines".to_string()],
+                },
+                DriverInstructionSet {
+                    channel: InstructionChannel::Developer,
+                    entries: vec!["developer".to_string()],
+                },
+            ]
+        );
+        assert_eq!(
+            blocks,
+            vec![ContextBlock::Instruction {
+                text: "assignment".to_string()
+            }]
+        );
     }
 
     #[test]

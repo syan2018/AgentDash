@@ -34,6 +34,19 @@ pub struct AgentRunRuntimeForkSource {
     pub through_source_turn_id: Option<DriverTurnId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRunContextDeliveryTarget {
+    pub connector_id: String,
+    pub executor: String,
+}
+
+impl AgentRunContextDeliveryTarget {
+    #[must_use]
+    pub fn profile_id(&self) -> String {
+        format!("{}:{}", self.connector_id, self.executor)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentRunRuntimeBinding {
     pub target: AgentRunRuntimeTarget,
@@ -48,6 +61,7 @@ pub struct AgentRunRuntimeBinding {
     pub bound_profile: RuntimeProfile,
     pub surface: RuntimeSurfaceDescriptor,
     pub settings_revision: agentdash_agent_runtime_contract::ThreadSettingsRevision,
+    pub context_delivery_target: AgentRunContextDeliveryTarget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +113,7 @@ pub trait AgentRunRuntimePresentationPlanStore: Send + Sync {
 
 #[derive(Debug, Clone, Default)]
 pub struct AgentRunTurnStartContextFacts {
+    pub runtime_snapshot: Option<agentdash_spi::hooks::AgentFrameRuntimeSnapshot>,
     pub pending_actions: Vec<agentdash_spi::HookPendingAction>,
     pub notices: Vec<agentdash_spi::HookTurnStartNotice>,
 }

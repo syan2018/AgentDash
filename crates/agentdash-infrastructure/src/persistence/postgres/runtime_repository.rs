@@ -4,9 +4,9 @@ use agentdash_agent_runtime::{
     ActiveContextHead, ContextActivation, ContextActivationOutboxEntry, ContextActivationStatus,
     ContextCandidate, ContextCheckpoint, ContextHeadWrite, ContextPreparationStatus,
     ContextPreparationWorkItem, ContextStoreInvariant, EntityPhase, HookEffect, HookRun,
-    HookRunStatus, QuarantinedDriverEvent, RuntimeCommit, RuntimeHookPlanBinding,
-    RuntimeInteractionState, RuntimeItemState, RuntimeJournalBatch, RuntimeOperationRecord,
-    RuntimeOutboxEntry, RuntimeRepository, RuntimeStoreError,
+    HookRunStatus, QuarantinedDriverEvent, RUNTIME_CONTEXT_PRESENTATION_EFFECT_TYPE, RuntimeCommit,
+    RuntimeHookPlanBinding, RuntimeInteractionState, RuntimeItemState, RuntimeJournalBatch,
+    RuntimeOperationRecord, RuntimeOutboxEntry, RuntimeRepository, RuntimeStoreError,
     RuntimeTerminalApplicationEffectClaim, RuntimeTerminalApplicationEffectClaimRequest,
     RuntimeTerminalApplicationEffectOutbox, RuntimeTerminalApplicationEffectOutboxEntry,
     RuntimeThreadState, RuntimeTransientEvents, RuntimeTurnState, RuntimeUnitOfWork,
@@ -1316,7 +1316,7 @@ async fn claim_hook_effect(
 ) -> Result<Vec<RuntimeWorkClaim>, RuntimeStoreError> {
     let rows = sqlx::query(
         "WITH candidates AS (SELECT id FROM agent_runtime_hook_effect \
-         WHERE dispatched_at IS NULL AND attempt_count <= retry_limit \
+         WHERE dispatched_at IS NULL AND effect_type <> $6 AND attempt_count <= retry_limit \
            AND (claim_token IS NULL OR claim_expires_at_ms <= $1) \
          ORDER BY created_at LIMIT $5 FOR UPDATE SKIP LOCKED) \
          UPDATE agent_runtime_hook_effect q SET claim_token=$2,claim_owner=$3,claim_expires_at_ms=$4,\
@@ -1328,6 +1328,7 @@ async fn claim_hook_effect(
     .bind(owner.as_str())
     .bind(expires)
     .bind(limit)
+    .bind(RUNTIME_CONTEXT_PRESENTATION_EFFECT_TYPE)
     .fetch_all(pool)
     .await
     .map_err(sql_error)?;
@@ -2337,7 +2338,7 @@ async fn write_hook_state(
         })?;
         let encoded = encode(effect, "agent_runtime_hook_effect.record")?;
         let result = sqlx::query(
-            "INSERT INTO agent_runtime_hook_effect (id,hook_run_id,thread_id,idempotency_key,effect_type,schema_version,target_authority,retry_limit,payload_digest,record) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING",
+            "INSERT INTO agent_runtime_hook_effect (id,hook_run_id,thread_id,idempotency_key,effect_type,schema_version,target_authority,retry_limit,payload_digest,record,dispatched_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $11 THEN NULL ELSE now() END) ON CONFLICT DO NOTHING",
         )
         .bind(effect.effect_id.as_str())
         .bind(effect.hook_run_id.as_str())
@@ -2349,6 +2350,7 @@ async fn write_hook_state(
         .bind(i32::try_from(effect.descriptor.retry_limit).map_err(|_| RuntimeStoreError::Unavailable("hook effect retry limit exceeds integer".to_string()))?)
         .bind(&effect.descriptor.payload_digest)
         .bind(encoded.clone())
+        .bind(effect.requires_external_dispatch())
         .execute(&mut **tx)
         .await
         .map_err(sql_error)?;
@@ -4033,6 +4035,21 @@ mod tests {
                     digest: digest.clone(),
                     fidelity: ContextFidelity::PlatformExact,
                 },
+                presentation: Some(agentdash_agent_runtime::CompactionPresentationFacts {
+                    summary: "durable summary".to_string(),
+                    tokens_before: 100,
+                    messages_compacted: 1,
+                    compaction_id: Some(compaction_id.to_string()),
+                    projection_version: Some(1),
+                    strategy: Some("summary_prefix".to_string()),
+                    trigger: Some("manual".to_string()),
+                    phase: Some("pre_provider".to_string()),
+                    source_start_event_seq: Some(1),
+                    source_end_event_seq: Some(2),
+                    first_kept_event_seq: None,
+                    compacted_until_ref: None,
+                    timestamp_ms: Some(1_710_000_000_000),
+                }),
             })
             .await
             .expect("prepare compaction");
@@ -4276,10 +4293,105 @@ mod tests {
                         ),
                     },
                     payload: effect_payload,
+                    presentation: None,
                 }],
             )
             .await
             .expect("persist terminal and effect");
+
+        let presentation_run_id: HookRunId =
+            id(&format!("hook-run-presentation-{}", fixture.suffix));
+        let HookAdmission::Durable(presentation_run) = fixture
+            .runtime
+            .accept_hook(RuntimeHookInvocation {
+                hook_run_id: presentation_run_id.clone(),
+                thread_id: fixture.thread_id.clone(),
+                definition_id: next_plan.plan.entries[0].definition_id.clone(),
+                point: HookPoint::BeforeTurn,
+                correlation: HookCorrelation {
+                    operation_id: None,
+                    turn_id: None,
+                    item_id: None,
+                    interaction_id: None,
+                },
+                input: serde_json::json!({"turn": "presentation"}),
+            })
+            .await
+            .expect("accept presentation hook")
+        else {
+            panic!("actionful hook is durable")
+        };
+        let presentation_run = fixture
+            .runtime
+            .start_hook(&presentation_run.hook_run_id)
+            .await
+            .expect("start presentation hook");
+        let mut presentation_effect = HookEffect {
+            effect_id: id(&format!("hook-presentation-effect-{}", fixture.suffix)),
+            hook_run_id: presentation_run.hook_run_id.clone(),
+            thread_id: fixture.thread_id.clone(),
+            idempotency_key: format!("presentation:{}", fixture.suffix),
+            descriptor: HookEffectDescriptor {
+                effect_type: agentdash_agent_runtime::RUNTIME_CONTEXT_PRESENTATION_EFFECT_TYPE
+                    .to_string(),
+                schema_version: 1,
+                target_authority: "agent_runtime_context_projection".to_string(),
+                retry_limit: 0,
+                payload_digest: String::new(),
+            },
+            payload: serde_json::Value::Null,
+            presentation: Some(agentdash_agent_runtime::ContextFrameFacts {
+                kind: agentdash_agent_protocol::ContextFrameKind::SystemNotice,
+                source: agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
+                phase_node: None,
+                apply_mode: None,
+                delivery_status:
+                    agentdash_agent_protocol::ContextDeliveryStatus::QueuedForTransformContext,
+                delivery_channel: agentdash_agent_protocol::ContextDeliveryChannel::TurnStart,
+                message_role: agentdash_agent_protocol::ContextMessageRole::User,
+                rendered_text: "presentation fact".to_string(),
+                sections: vec![
+                    agentdash_agent_protocol::ContextFrameSection::SystemNotice {
+                        title: "Runtime Notice".to_string(),
+                        summary: "presentation fact".to_string(),
+                        body: Some("presentation fact".to_string()),
+                    },
+                ],
+            }),
+        };
+        presentation_effect.descriptor.payload_digest =
+            agentdash_agent_runtime::hook_effect_content_digest(&presentation_effect);
+        fixture
+            .runtime
+            .complete_hook(
+                &presentation_run_id,
+                HookCompletion {
+                    status: HookRunStatus::Blocked,
+                    decision: HookGateDecision::Block,
+                    message: Some("presentation recorded".to_string()),
+                },
+                vec![presentation_effect.clone()],
+            )
+            .await
+            .expect("persist presentation effect and terminal");
+        assert_eq!(
+            fixture
+                .store
+                .hook_effects(&presentation_run_id)
+                .await
+                .expect("load durable presentation effect"),
+            vec![presentation_effect]
+        );
+        let presentation_dispatched_at: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT dispatched_at FROM agent_runtime_hook_effect WHERE id=$1")
+                .bind(format!("hook-presentation-effect-{}", fixture.suffix))
+                .fetch_one(&fixture._database.pool)
+                .await
+                .expect("load presentation terminal dispatch state");
+        assert!(
+            presentation_dispatched_at.is_some(),
+            "runtime-owned presentation effect must not remain pending"
+        );
         fixture
             .store
             .ack(&recovery_takeover)
@@ -4353,6 +4465,7 @@ mod tests {
                         ),
                     },
                     payload: conflicting_payload,
+                    presentation: None,
                 }],
             )
             .await

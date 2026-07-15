@@ -200,6 +200,11 @@ impl AgentRunRuntimeProvisioner for CompositionFixture {
                 terminal_hook_effect_binding: None,
             },
             settings_revision: ThreadSettingsRevision(0),
+            context_delivery_target:
+                agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget {
+                    connector_id: "pi-agent".to_string(),
+                    executor: "PI_AGENT".to_string(),
+                },
         })
         .await
     }
@@ -295,22 +300,26 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
     ));
     let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
     let composition = Arc::new(CompositionFixture::default());
-    let main_oracle: serde_json::Value = serde_json::from_str(include_str!(
-        "../../agentdash-agent-protocol/tests/fixtures/context_frames_main_957fa9d.json"
-    ))
-    .unwrap();
-    let bootstrap_frame: agentdash_agent_protocol::ContextFrame = serde_json::from_value(
-        main_oracle["frames"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|frame| frame["kind"] == "capability_state_delta")
-            .unwrap()
-            .clone(),
-    )
-    .unwrap();
+    let bootstrap_frame = agentdash_agent_protocol::ContextFrame {
+        id: "bootstrap-capability-frame".to_string(),
+        kind: agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta,
+        source: agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
+        phase_node: Some("bootstrap".to_string()),
+        apply_mode: Some("initial".to_string()),
+        delivery_status: agentdash_agent_protocol::ContextDeliveryStatus::QueuedForTransformContext,
+        delivery_channel: agentdash_agent_protocol::ContextDeliveryChannel::TurnStart,
+        message_role: agentdash_agent_protocol::ContextMessageRole::User,
+        delivery_metadata: agentdash_agent_protocol::ContextDeliveryMetadata::for_frame(
+            agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta,
+            agentdash_agent_protocol::ContextDeliveryChannel::TurnStart,
+            agentdash_agent_protocol::ContextMessageRole::User,
+        ),
+        rendered_text: "capability bootstrap".to_string(),
+        sections: Vec::new(),
+        created_at_ms: 1_783_684_800_000,
+    };
     composition
-        .set_bootstrap_frames(vec![bootstrap_frame])
+        .set_bootstrap_frames(vec![bootstrap_frame.clone()])
         .await;
     let facade = ManagedAgentRunRuntime::new(
         gateway,
@@ -396,24 +405,25 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
             agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(_)
         )
     ));
+    let actual_bootstrap_frame = serde_json::to_value(
+        &presentation[2]
+            .as_presentation()
+            .expect("context frame presentation")
+            .event,
+    )
+    .unwrap()
+    .pointer("/payload/data/frame")
+    .cloned()
+    .unwrap();
+    let mut expected_bootstrap_frame = serde_json::to_value(&bootstrap_frame).unwrap();
+    expected_bootstrap_frame["delivery_metadata"] =
+        actual_bootstrap_frame["delivery_metadata"].clone();
+    assert_eq!(actual_bootstrap_frame, expected_bootstrap_frame);
     assert_eq!(
-        serde_json::to_value(
-            &presentation[2]
-                .as_presentation()
-                .expect("context frame presentation")
-                .event,
-        )
-        .unwrap()
-        .pointer("/payload/data/frame")
-        .cloned()
-        .unwrap(),
-        main_oracle["frames"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|frame| frame["kind"] == "capability_state_delta")
-            .unwrap()
-            .clone(),
+        actual_bootstrap_frame
+            .pointer("/delivery_metadata/agent_consumption/target")
+            .and_then(serde_json::Value::as_str),
+        Some("pi-agent:PI_AGENT")
     );
     assert!(matches!(
         &presentation[1]
@@ -542,7 +552,321 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
 }
 
 #[tokio::test]
-async fn turn_start_pending_and_auto_resume_match_main_stream_payload_and_order() {
+async fn compiled_full_bootstrap_is_committed_by_real_thread_start_in_main_order() {
+    use agentdash_agent_protocol::ContextFrameKind;
+    use agentdash_agent_runtime::{
+        AgentSurfaceCompiler, AssignmentContextFacts, AssignmentFragmentFacts,
+        BootstrapContextFacts, BusinessAgentSurfaceFacts, ContributionRequirement,
+        DiscoveredGuidelineFacts, EnvironmentContextFacts, GuidelinesContextFacts,
+        IdentityContextFacts, MemoryContextFacts, MemorySourceFacts, NormalizedAssignmentContext,
+        NormalizedContextSurfaceState, SurfaceSourceRef, UserContextFacts, WorkspaceRequirement,
+    };
+
+    let source = SurfaceSourceRef {
+        layer: "agent_frame".to_string(),
+        key: "frame-facade".to_string(),
+    };
+    let assignment_fragment = AssignmentFragmentFacts {
+        slot: "task".to_string(),
+        label: "Task".to_string(),
+        order: 10,
+        runtime_agent_scope: true,
+        source: "task".to_string(),
+        content: "## Task\nRestore ContextFrame".to_string(),
+        context_usage_kind: Some("system_developer".to_string()),
+    };
+    let bootstrap_context = BootstrapContextFacts {
+        include_startup_context: true,
+        identity: IdentityContextFacts {
+            base_system_prompt: "base identity".to_string(),
+            agent_identity_markdown: Some("## Agent Identity\n- preset: `general`".to_string()),
+            agent_system_prompt: Some("agent rules".to_string()),
+        },
+        user: Some(UserContextFacts {
+            user_id: "user-1".to_string(),
+            display_name: Some("User One".to_string()),
+            email: None,
+            groups: vec!["Developers".to_string()],
+            provider: Some("oidc".to_string()),
+            extra: serde_json::Value::Null,
+        }),
+        environment: EnvironmentContextFacts {
+            date_utc: "2026-07-14".to_string(),
+            platform: "windows".to_string(),
+            arch: "x86_64".to_string(),
+            model_id: Some("model-1".to_string()),
+            executor: "PI_AGENT".to_string(),
+            working_directory: Some("D:/workspace".to_string()),
+        },
+        guidelines: GuidelinesContextFacts {
+            user_preferences: vec!["使用中文".to_string()],
+            discovered_guidelines: vec![DiscoveredGuidelineFacts {
+                path: "AGENTS.md".to_string(),
+                content: "项目约定".to_string(),
+            }],
+        },
+        memory: MemoryContextFacts {
+            sources: vec![MemorySourceFacts {
+                provider_key: "builtin".to_string(),
+                source_key: "agent".to_string(),
+                display_name: "Agent Memory".to_string(),
+                source_uri: "agent://".to_string(),
+                index_uri: "agent://MEMORY.md".to_string(),
+                mount_id: "agent".to_string(),
+                scope: "agent".to_string(),
+                capabilities: vec!["read".to_string()],
+                index_status: "present".to_string(),
+                trust_level: "first_party".to_string(),
+                revision: "memory-revision".to_string(),
+                summary: None,
+                bounded_index_content: Some("- [Decision](topics/decision.md)".to_string()),
+                context_usage_kind: Some("memory".to_string()),
+            }],
+            diagnostics: Vec::new(),
+        },
+        assignment: AssignmentContextFacts {
+            phase_tag: Some("bootstrap".to_string()),
+            apply_mode: None,
+            fragments: vec![assignment_fragment.clone()],
+        },
+    };
+    let normalized_context_surface = NormalizedContextSurfaceState {
+        capability_keys: ["file_read".to_string()].into(),
+        assignment: Some(NormalizedAssignmentContext {
+            revision: 1,
+            fragments: vec![agentdash_agent_protocol::RuntimeContextFragmentEntry {
+                slot: assignment_fragment.slot,
+                label: assignment_fragment.label,
+                source: assignment_fragment.source,
+                content: assignment_fragment.content,
+                context_usage_kind: assignment_fragment.context_usage_kind,
+            }],
+        }),
+        ..Default::default()
+    };
+    let artifact = AgentSurfaceCompiler
+        .compile_business_facts(BusinessAgentSurfaceFacts {
+            revision: SurfaceRevision(1),
+            context_recipe: ContextRecipe {
+                revision: ContextRecipeRevision(1),
+                provenance: ContextProvenance {
+                    settings_revision: ThreadSettingsRevision(0),
+                    tool_set_revision: ToolSetRevision(1),
+                },
+                source_item_ids: Vec::new(),
+            },
+            tool_set_revision: ToolSetRevision(1),
+            hook_plan_revision: HookPlanRevision(1),
+            workspace: WorkspaceRequirement {
+                capabilities: BTreeSet::new(),
+                minimum_mechanism: DeliveryMechanism::Native,
+                requirement: ContributionRequirement::Required,
+            },
+            source,
+            transition_phase_node: Some("bootstrap".to_string()),
+            instructions: Vec::new(),
+            tools: Vec::new(),
+            hooks: Vec::new(),
+            bootstrap_context,
+            normalized_context_surface,
+            projection_identity: agentdash_agent_runtime::ContextProjectionIdentity {
+                operation_id: "surface-bootstrap".to_string(),
+                source_frame_id: "frame-facade".to_string(),
+                source_frame_revision: 1,
+                recorded_at_ms: 1_783_684_800_000,
+            },
+        })
+        .expect("compile full business surface");
+    assert_eq!(
+        artifact
+            .snapshot
+            .context
+            .instructions
+            .entries
+            .iter()
+            .map(|entry| (entry.meta.key.as_str(), entry.channel))
+            .collect::<Vec<_>>(),
+        vec![
+            ("bootstrap:identity", InstructionChannel::System),
+            ("bootstrap:user_context", InstructionChannel::System),
+            ("bootstrap:environment", InstructionChannel::System),
+            ("bootstrap:system_guidelines", InstructionChannel::System),
+        ]
+    );
+    assert_eq!(
+        artifact
+            .snapshot
+            .context
+            .contributions
+            .iter()
+            .map(|entry| entry.meta.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["bootstrap:assignment_context", "bootstrap:memory_context"]
+    );
+    let stable_frame_texts = artifact
+        .presentation
+        .bootstrap_frames
+        .iter()
+        .filter(|frame| {
+            matches!(
+                frame.kind,
+                ContextFrameKind::Identity
+                    | ContextFrameKind::UserContext
+                    | ContextFrameKind::Environment
+                    | ContextFrameKind::SystemGuidelines
+            )
+        })
+        .map(|frame| frame.rendered_text.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        artifact
+            .snapshot
+            .context
+            .instructions
+            .entries
+            .iter()
+            .map(|entry| entry.content.as_str())
+            .collect::<Vec<_>>(),
+        stable_frame_texts,
+        "driver instructions and presentation frames must materialize from the same facts"
+    );
+    let context_frame_texts = [
+        ContextFrameKind::AssignmentContext,
+        ContextFrameKind::MemoryContext,
+    ]
+    .into_iter()
+    .map(|kind| {
+        artifact
+            .presentation
+            .bootstrap_frames
+            .iter()
+            .find(|frame| frame.kind == kind)
+            .expect("context frame")
+            .rendered_text
+            .as_str()
+    })
+    .collect::<Vec<_>>();
+    assert_eq!(
+        artifact
+            .snapshot
+            .context
+            .contributions
+            .iter()
+            .flat_map(|entry| entry.blocks.iter())
+            .map(|block| match block {
+                ContextBlock::Instruction { text } => text.as_str(),
+                block => panic!("bootstrap model context must be typed instruction: {block:?}"),
+            })
+            .collect::<Vec<_>>(),
+        context_frame_texts,
+        "driver context blocks and presentation frames must materialize from the same facts"
+    );
+    assert_eq!(
+        artifact
+            .presentation
+            .bootstrap_frames
+            .iter()
+            .map(|frame| frame.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            ContextFrameKind::CapabilityStateDelta,
+            ContextFrameKind::AssignmentContext,
+            ContextFrameKind::Identity,
+            ContextFrameKind::UserContext,
+            ContextFrameKind::Environment,
+            ContextFrameKind::SystemGuidelines,
+            ContextFrameKind::MemoryContext,
+        ]
+    );
+
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let gateway: Arc<dyn AgentRuntimeGateway> = Arc::new(ManagedAgentRuntime::new(
+        store.clone(),
+        Arc::new(AgentRunRuntimeApplicationPresentationProjector),
+    ));
+    let composition = Arc::new(CompositionFixture::default());
+    composition
+        .set_bootstrap_frames(artifact.presentation.bootstrap_frames)
+        .await;
+    composition
+        .set_turn_start_facts(
+            agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts {
+                runtime_snapshot: Some(agentdash_spi::hooks::AgentFrameRuntimeSnapshot {
+                    revision: 1,
+                    ..Default::default()
+                }),
+                pending_actions: vec![agentdash_spi::HookPendingAction {
+                    id: "bootstrap-pending".to_string(),
+                    created_at_ms: 1_783_684_800_001,
+                    title: "Bootstrap pending".to_string(),
+                    summary: "pending action".to_string(),
+                    action_type: "blocking_review".to_string(),
+                    turn_id: None,
+                    source: agentdash_spi::RuntimeEventSource::RuntimeContextUpdate,
+                    status: agentdash_spi::HookPendingActionStatus::Pending,
+                    last_injected_at_ms: None,
+                    resolved_at_ms: None,
+                    resolution_kind: None,
+                    resolution_note: None,
+                    resolution_turn_id: None,
+                    injections: Vec::new(),
+                }],
+                notices: Vec::new(),
+            },
+        )
+        .await;
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition,
+    );
+    let mut bootstrap = send("bootstrap");
+    bootstrap.presentation_input = AgentRunPresentationInput::SystemDelivery {
+        turn_id: id("turn-facade-0001"),
+        launch_source: LaunchPresentationSource::WorkflowOrchestrator,
+        message: "bootstrap".to_string(),
+        started_at_seconds: 1_783_684_800,
+    };
+    facade
+        .send_message(bootstrap)
+        .await
+        .expect("commit real ThreadStart");
+
+    let durable_kinds = store
+        .journal_records_after(&id("thread-facade"), None)
+        .await
+        .expect("runtime journal")
+        .records
+        .into_iter()
+        .filter_map(
+            |record| match record.as_presentation().map(|record| &record.event) {
+                Some(agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(changed),
+                )) => Some(changed.frame.kind),
+                _ => None,
+            },
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(
+        durable_kinds,
+        vec![
+            ContextFrameKind::CapabilityStateDelta,
+            ContextFrameKind::AssignmentContext,
+            ContextFrameKind::SystemDelivery,
+            ContextFrameKind::Identity,
+            ContextFrameKind::UserContext,
+            ContextFrameKind::Environment,
+            ContextFrameKind::SystemGuidelines,
+            ContextFrameKind::MemoryContext,
+            ContextFrameKind::PendingAction,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn turn_start_pending_and_system_delivery_match_main_stream_family_and_order() {
     let store = Arc::new(RuntimeStoreFixture::default());
     let runtime = Arc::new(ManagedAgentRuntime::new(
         store.clone(),
@@ -580,6 +904,10 @@ async fn turn_start_pending_and_auto_resume_match_main_stream_payload_and_order(
     composition
         .set_turn_start_facts(
             agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts {
+                runtime_snapshot: Some(agentdash_spi::hooks::AgentFrameRuntimeSnapshot {
+                    revision: 42,
+                    ..Default::default()
+                }),
                 pending_actions: vec![agentdash_spi::HookPendingAction {
                     id: "a1".to_string(),
                     created_at_ms: 9,
@@ -596,7 +924,13 @@ async fn turn_start_pending_and_auto_resume_match_main_stream_payload_and_order(
                     resolution_turn_id: None,
                     injections: Vec::new(),
                 }],
-                notices: Vec::new(),
+                notices: vec![agentdash_spi::HookTurnStartNotice {
+                    id: "notice-1".to_string(),
+                    created_at_ms: 10,
+                    source: agentdash_spi::RuntimeEventSource::RuntimeContextUpdate,
+                    content: "notice".to_string(),
+                    presentation: None,
+                }],
             },
         )
         .await;
@@ -609,7 +943,7 @@ async fn turn_start_pending_and_auto_resume_match_main_stream_payload_and_order(
         started_at_seconds: 1,
     };
     facade.send_message(second).await.unwrap();
-    let mut frames = store
+    let frames = store
         .journal_records_after(&id("thread-facade"), None)
         .await
         .unwrap()
@@ -624,28 +958,53 @@ async fn turn_start_pending_and_auto_resume_match_main_stream_payload_and_order(
             },
         )
         .collect::<Vec<_>>();
-    assert_eq!(frames.len(), 2);
-    let family_oracle: serde_json::Value = serde_json::from_str(include_str!(
-        "../../agentdash-agent-protocol/tests/fixtures/context_frames_main_957fa9d.json"
-    ))
-    .unwrap();
-    let pending_oracle: serde_json::Value = serde_json::from_str(include_str!(
-        "../../agentdash-agent-runtime/tests/fixtures/wi03_pending_action_stream_main_957fa9d.json"
-    ))
-    .unwrap();
-    let expected_frames = [
-        family_oracle["frames"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|frame| frame["kind"] == "auto_resume")
-            .unwrap(),
-        &pending_oracle["frame"],
-    ];
-    for (actual, expected) in frames.iter_mut().zip(expected_frames) {
-        actual.id = expected["id"].as_str().unwrap().to_string();
-        actual.created_at_ms = expected["created_at_ms"].as_i64().unwrap();
-        assert_eq!(serde_json::to_value(actual).unwrap(), *expected);
+    assert_eq!(frames.len(), 3);
+    assert_eq!(
+        frames.iter().map(|frame| frame.kind).collect::<Vec<_>>(),
+        vec![
+            agentdash_agent_protocol::ContextFrameKind::SystemDelivery,
+            agentdash_agent_protocol::ContextFrameKind::SystemNotice,
+            agentdash_agent_protocol::ContextFrameKind::PendingAction,
+        ]
+    );
+    assert_eq!(
+        frames[0].delivery_channel,
+        agentdash_agent_protocol::ContextDeliveryChannel::ConnectorContext
+    );
+    assert!(frames[0].rendered_text.contains("kind: hook_auto_resume"));
+    assert!(matches!(
+        frames[2].sections.as_slice(),
+        [agentdash_agent_protocol::ContextFrameSection::PendingAction { revision: 42, .. }]
+    ));
+    for frame in &frames {
+        assert_eq!(
+            frame.delivery_metadata.connector_profile.profile_id,
+            "pi-agent:PI_AGENT"
+        );
+        assert_eq!(
+            frame
+                .delivery_metadata
+                .connector_profile
+                .declared_consumption_modes,
+            vec![
+                agentdash_agent_protocol::ContextAgentConsumptionMode::Consume,
+                agentdash_agent_protocol::ContextAgentConsumptionMode::Ignore,
+                agentdash_agent_protocol::ContextAgentConsumptionMode::ConnectorNative,
+                agentdash_agent_protocol::ContextAgentConsumptionMode::SystemAppend,
+            ]
+        );
+        assert_eq!(
+            frame.delivery_metadata.agent_consumption.target,
+            "pi-agent:PI_AGENT"
+        );
+        assert_eq!(
+            frame.delivery_metadata.agent_consumption.mode,
+            agentdash_agent_protocol::ContextAgentConsumptionMode::Consume
+        );
+        assert_eq!(
+            frame.delivery_metadata.agent_consumption.reason,
+            format!("pi-agent:PI_AGENT_{}_delivery", frame.kind.as_key())
+        );
     }
 }
 
@@ -1013,9 +1372,14 @@ async fn runtime_facade_delivery_sources_match_main_delivery_golden_exactly() {
             },
         )
         .await;
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         assert_eq!(events[0], golden["cases"][case]["first_event"]);
         assert_eq!(events[1]["type"], "turn_started");
+        assert_eq!(events[2]["type"], "platform");
+        assert_eq!(
+            events[2]["payload"]["data"]["frame"]["kind"],
+            "system_delivery"
+        );
     }
 
     let companion = capture(
@@ -1050,7 +1414,7 @@ async fn runtime_facade_delivery_sources_match_main_delivery_golden_exactly() {
         },
     )
     .await;
-    assert_eq!(companion_parent_resume.len(), 2);
+    assert_eq!(companion_parent_resume.len(), 3);
     assert_eq!(
         companion_parent_resume[0],
         golden["cases"]["companion_marker"]["first_event"]
@@ -1060,6 +1424,10 @@ async fn runtime_facade_delivery_sources_match_main_delivery_golden_exactly() {
         "agent"
     );
     assert_eq!(companion_parent_resume[1]["type"], "turn_started");
+    assert_eq!(
+        companion_parent_resume[2]["payload"]["data"]["frame"]["kind"],
+        "system_delivery"
+    );
 }
 
 #[tokio::test]

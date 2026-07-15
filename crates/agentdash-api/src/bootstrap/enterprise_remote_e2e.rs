@@ -456,6 +456,8 @@ fn compiled_business_surface(
             instructions: vec!["Enterprise remote Agent".to_string()],
             tools: vec![tool],
             hooks: vec![hook],
+            bootstrap_context: Default::default(),
+            normalized_context_surface: Default::default(),
             projection_identity: agentdash_agent_runtime::ContextProjectionIdentity {
                 operation_id: "enterprise-fixture-compile".to_string(),
                 source_frame_id: "enterprise-remote-frame".to_string(),
@@ -588,6 +590,11 @@ impl AgentRunRuntimeSurfaceSource for EnterpriseSurfaceSource {
                 verified_at: Utc::now(),
             },
             allow_instance_creation: false,
+            context_delivery_target:
+                agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget {
+                    connector_id: "codex".to_string(),
+                    executor: "CODEX".to_string(),
+                },
         })
     }
 }
@@ -849,6 +856,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         application_presentation_projector: Arc::new(
             agentdash_application_agentrun::agent_run::AgentRunRuntimeApplicationPresentationProjector,
         ),
+        managed_compaction: None,
         node_id: "enterprise-cloud-host".to_string(),
     })
     .expect("cloud production composition");

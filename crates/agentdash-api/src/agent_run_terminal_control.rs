@@ -581,6 +581,7 @@ mod tests {
                 effects: vec![HookEffect {
                     kind: "agent_run_control_effect".into(),
                     payload: serde_json::json!({"value": 1}),
+                    presentation: None,
                 }],
                 ..HookResolution::default()
             })

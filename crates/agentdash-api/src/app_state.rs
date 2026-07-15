@@ -22,13 +22,13 @@ use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application_agentrun::agent_run::{
-    AgentBusinessSurfaceSource, AgentRunControlEffectDeps, AgentRunControlEffectService,
-    AgentRunJournalBindingResolver, AgentRunJournalService, AgentRunJournalSource,
-    AgentRunJournalSourceSubscription, AgentRunProductDeliveryPort, AgentRunRuntime,
-    AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
-    BusinessFrameSurfaceQuery, BusinessFrameSurfaceQueryDeps, BusinessResourceSurfaceQuery,
-    BusinessResourceSurfaceQueryDeps, ManagedAgentRunRuntime, RuntimeAgentRunMailbox,
-    RuntimeMailboxTerminalConvergence,
+    AgentBusinessSurfaceContextDeps, AgentBusinessSurfaceSource, AgentRunControlEffectDeps,
+    AgentRunControlEffectService, AgentRunJournalBindingResolver, AgentRunJournalService,
+    AgentRunJournalSource, AgentRunJournalSourceSubscription, AgentRunProductDeliveryPort,
+    AgentRunRuntime, AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
+    BaseIdentitySource, BusinessFrameSurfaceQuery, BusinessFrameSurfaceQueryDeps,
+    BusinessResourceSurfaceQuery, BusinessResourceSurfaceQueryDeps, ManagedAgentRunRuntime,
+    RuntimeAgentRunMailbox, RuntimeMailboxTerminalConvergence,
 };
 use agentdash_application_hooks::AppExecutionHookProvider;
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
@@ -619,11 +619,20 @@ impl AppState {
         let tool_registry = Arc::new(
             crate::bootstrap::agent_runtime_surface::CompiledAgentRunToolRegistry::default(),
         );
+        let base_identity = BaseIdentitySource::resolve(repos.settings_repo.as_ref()).await;
         let business_surface_source = Arc::new(AgentBusinessSurfaceSource::new(
             runtime_surface_query.clone(),
             repos.agent_frame_repo.clone(),
             runtime_tool_provider,
             hook_provider.clone(),
+            AgentBusinessSurfaceContextDeps {
+                vfs_service: vfs_service.clone(),
+                extra_skill_dirs: extra_skill_dirs.clone(),
+                skill_discovery_providers: skill_discovery_providers.clone(),
+                memory_discovery_providers: memory_discovery_providers.clone(),
+                settings_repository: repos.settings_repo.clone(),
+                base_identity,
+            },
         ));
         let surface_compiler = Arc::new(
             crate::bootstrap::agent_runtime_surface::AgentFrameSurfaceCompositionAdapter::new(

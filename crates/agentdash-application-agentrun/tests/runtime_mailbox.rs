@@ -101,6 +101,11 @@ fn view(target: AgentRunRuntimeTarget, active_turn: Option<&str>) -> AgentRunRun
             terminal_hook_effect_binding: None,
         },
         settings_revision: ThreadSettingsRevision(0),
+        context_delivery_target:
+            agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget {
+                connector_id: "pi-agent".to_string(),
+                executor: "PI_AGENT".to_string(),
+            },
     };
     let mut availability = BTreeMap::new();
     availability.insert(

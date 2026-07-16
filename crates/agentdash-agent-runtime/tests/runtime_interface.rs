@@ -3263,6 +3263,80 @@ async fn ephemeral_presentation_has_live_cursor_without_durable_journal_entry() 
 }
 
 #[tokio::test]
+async fn presentation_only_driver_event_inherits_the_accepted_turn_coordinate() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("id");
+    runtime
+        .execute(command(
+            "op-2",
+            "key-2",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-coordinate"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("turn");
+    let protected: agentdash_agent_protocol::BackboneEvent =
+        serde_json::from_value(serde_json::json!({
+            "type": "reasoning_text_delta",
+            "payload": {
+                "threadId": "presentation-thread-1",
+                "turnId": "presentation-turn-coordinate",
+                "itemId": "reasoning-coordinate",
+                "delta": "thinking",
+                "contentIndex": 0
+            }
+        }))
+        .expect("typed reasoning presentation");
+    let mut source = driver_facts(vec![RuntimeJournalFact::Presentation(
+        ImmutablePresentationEvent::new(PresentationDurability::Ephemeral, protected),
+    )]);
+    source.operation_id = Some(id("op-2"));
+
+    assert_eq!(
+        runtime
+            .ingest_driver_event(source)
+            .await
+            .expect("presentation-only delta"),
+        DriverEventAdmission::Transient
+    );
+    let transient = store
+        .read_presentation(&thread_id, None, None)
+        .await
+        .into_iter()
+        .next()
+        .expect("transient presentation");
+    assert_eq!(
+        transient
+            .carrier()
+            .coordinate
+            .runtime_turn_id
+            .as_ref()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("turn-op-2")
+    );
+    assert_eq!(
+        transient
+            .carrier()
+            .coordinate
+            .presentation_turn_id
+            .as_ref()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("presentation-turn-coordinate")
+    );
+}
+
+#[tokio::test]
 async fn driver_transient_internal_summary_is_quarantined_instead_of_replayed() {
     let (store, runtime) = fixture();
     runtime.execute(start()).await.expect("thread");

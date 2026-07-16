@@ -1,4 +1,8 @@
-import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
+import type {
+  BackboneEvent,
+  AgentDashThreadItem,
+  ProviderAttemptPhase,
+} from "../../../generated/backbone-protocol";
 import type {
   SessionDisplayEntry,
   SessionEventEnvelope,
@@ -15,6 +19,7 @@ export interface SessionStreamState {
   rawEvents: SessionEventEnvelope[];
   tokenUsage: TokenUsageInfo | null;
   providerWaitingSeqs: ReadonlyMap<string, number>;
+  providerActivities: ReadonlyMap<string, ProviderActivityState>;
   lastAppliedSeq: number;
   /**
    * 最近应用的 ephemeral 事件的 ephemeral_seq（承载于 event.event_seq）。
@@ -26,6 +31,15 @@ export interface SessionStreamState {
   lastEphemeralSeq: number;
 }
 
+export interface ProviderActivityState {
+  eventSeq: number;
+  phase: ProviderAttemptPhase;
+  attempt: number;
+  maxAttempts: number;
+  willRetry: boolean;
+  message?: string;
+}
+
 export function createInitialStreamState(initialEntries: SessionDisplayEntry[]): SessionStreamState {
   const lastAppliedSeq = initialEntries.reduce((max, entry) => Math.max(max, entry.eventSeq), 0);
   return {
@@ -33,6 +47,7 @@ export function createInitialStreamState(initialEntries: SessionDisplayEntry[]):
     rawEvents: [],
     tokenUsage: null,
     providerWaitingSeqs: new Map(),
+    providerActivities: new Map(),
     lastAppliedSeq,
     lastEphemeralSeq: 0,
   };
@@ -178,26 +193,28 @@ function eventTurnId(event: SessionEventEnvelope): string | undefined {
   return event.turn_id ?? event.notification.trace.turnId ?? undefined;
 }
 
-function extractProviderAttemptStatus(event: SessionEventEnvelope): { turnId?: string; phase: string } | null {
+function extractProviderAttemptStatus(event: SessionEventEnvelope): {
+  turnId?: string;
+  phase: ProviderAttemptPhase;
+  attempt: number;
+  maxAttempts: number;
+  willRetry: boolean;
+  message?: string;
+} | null {
   const bbEvent = event.notification.event;
-  if (bbEvent.type !== "platform" || !isRecord(bbEvent.payload)) {
+  if (bbEvent.type !== "platform" || bbEvent.payload.kind !== "provider_attempt_status") {
     return null;
   }
 
-  const platform: Record<string, unknown> = bbEvent.payload;
-  const kind = readStringField(platform, "kind");
-  if (kind !== "provider_attempt_status" || !isRecord(platform.data)) {
-    return null;
-  }
-
-  const phase = readStringField(platform.data, "phase");
-  if (!phase) {
-    return null;
-  }
+  const status = bbEvent.payload.data;
 
   return {
-    turnId: readStringField(platform.data, "turn_id") ?? eventTurnId(event),
-    phase,
+    turnId: status.turn_id || eventTurnId(event),
+    phase: status.phase,
+    attempt: status.attempt,
+    maxAttempts: status.max_attempts,
+    willRetry: status.will_retry,
+    message: status.message?.trim() || undefined,
   };
 }
 
@@ -241,6 +258,37 @@ function updateProviderWaitingSeqs(
     next.set(status.turnId, event.event_seq);
   } else {
     next.delete(status.turnId);
+  }
+  return next;
+}
+
+function updateProviderActivities(
+  current: ReadonlyMap<string, ProviderActivityState>,
+  event: SessionEventEnvelope,
+): ReadonlyMap<string, ProviderActivityState> {
+  const terminalTurnId = extractTerminalTurnId(event);
+  if (terminalTurnId) {
+    if (!current.has(terminalTurnId)) return current;
+    const next = new Map(current);
+    next.delete(terminalTurnId);
+    return next;
+  }
+
+  const status = extractProviderAttemptStatus(event);
+  if (!status?.turnId) return current;
+
+  const next = new Map(current);
+  if (status.phase === "streaming" || status.phase === "succeeded") {
+    next.delete(status.turnId);
+  } else {
+    next.set(status.turnId, {
+      eventSeq: event.event_seq,
+      phase: status.phase,
+      attempt: status.attempt,
+      maxAttempts: status.maxAttempts,
+      willRetry: status.willRetry,
+      message: status.message,
+    });
   }
   return next;
 }
@@ -685,6 +733,7 @@ export function reduceStreamState(
   let rawEvents = prev.rawEvents;
   let tokenUsage = prev.tokenUsage;
   let providerWaitingSeqs = prev.providerWaitingSeqs;
+  let providerActivities = prev.providerActivities;
   let lastAppliedSeq = prev.lastAppliedSeq;
   let lastEphemeralSeq = prev.lastEphemeralSeq;
 
@@ -696,6 +745,7 @@ export function reduceStreamState(
         continue;
       }
       providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
+      providerActivities = updateProviderActivities(providerActivities, event);
       entries = applyEventToEntries(entries, event);
       lastEphemeralSeq = event.event_seq;
       continue;
@@ -707,6 +757,7 @@ export function reduceStreamState(
 
     rawEvents = [...rawEvents, event];
     providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
+    providerActivities = updateProviderActivities(providerActivities, event);
     entries = applyEventToEntries(entries, event);
     const usage = extractTokenUsageFromEvent(event.notification.event);
     if (usage) {
@@ -720,6 +771,7 @@ export function reduceStreamState(
     rawEvents,
     tokenUsage,
     providerWaitingSeqs,
+    providerActivities,
     lastAppliedSeq,
     lastEphemeralSeq,
   };
@@ -733,10 +785,19 @@ export function reduceStreamState(
  * 不触碰已累积的 entries / rawEvents / durable 游标。
  */
 export function resetEphemeralCursor(prev: SessionStreamState): SessionStreamState {
-  if (prev.lastEphemeralSeq === 0 && prev.providerWaitingSeqs.size === 0) {
+  if (
+    prev.lastEphemeralSeq === 0 &&
+    prev.providerWaitingSeqs.size === 0 &&
+    prev.providerActivities.size === 0
+  ) {
     return prev;
   }
-  return { ...prev, providerWaitingSeqs: new Map(), lastEphemeralSeq: 0 };
+  return {
+    ...prev,
+    providerWaitingSeqs: new Map(),
+    providerActivities: new Map(),
+    lastEphemeralSeq: 0,
+  };
 }
 
 export function shouldFlushStreamEventImmediately(event: SessionEventEnvelope): boolean {

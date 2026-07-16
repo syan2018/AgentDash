@@ -8,6 +8,7 @@
 import { useMemo } from "react";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import { useSessionStream } from "./useSessionStream";
+import type { ProviderActivityState } from "./sessionStreamReducer";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
@@ -705,10 +706,43 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
   };
 }
 
+function providerActivityStatus(status: ProviderActivityState): TurnActivityStatus {
+  if (status.phase === "retry_scheduled" || status.phase === "retrying") {
+    return {
+      kind: "reconnecting",
+      label: status.message ?? `正在重新连接（${status.attempt}/${status.maxAttempts}）…`,
+      phase: status.phase,
+      attempt: status.attempt,
+      maxAttempts: status.maxAttempts,
+    };
+  }
+  if (status.phase === "failed") {
+    return {
+      kind: status.willRetry ? "reconnecting" : "retry_exhausted",
+      label: status.message ?? (status.willRetry ? "连接异常，准备重试…" : "连接失败，已停止重试"),
+      phase: status.phase,
+      attempt: status.attempt,
+      maxAttempts: status.maxAttempts,
+    };
+  }
+  return {
+    kind: "connecting",
+    label: status.message ?? (
+      status.phase === "connected_waiting_first_delta"
+        ? "已连接，等待响应…"
+        : "正在连接模型…"
+    ),
+    phase: status.phase,
+    attempt: status.attempt,
+    maxAttempts: status.maxAttempts,
+  };
+}
+
 export function segmentByTurn(
   displayItems: SessionDisplayItem[],
   rawEvents: SessionEventEnvelope[],
   activeTurnId?: string | null,
+  providerActivities: ReadonlyMap<string, ProviderActivityState> = new Map(),
 ): TurnSegment[] {
   const turnMeta = new Map<string, TurnMeta>();
 
@@ -731,6 +765,13 @@ export function segmentByTurn(
       });
     }
 
+  }
+
+  for (const [turnId, status] of providerActivities) {
+    updateTurnMeta(turnMeta, turnId, status.eventSeq, {
+      status: "active",
+      activity: providerActivityStatus(status),
+    });
   }
 
   if (displayItems.length === 0) {
@@ -846,6 +887,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     rawEvents,
     historyReplayBoundarySeq,
     providerWaitingSeqs,
+    providerActivities,
     isConnected,
     isLoading,
     isReceiving,
@@ -868,8 +910,8 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
   }, [entries, providerWaitingSeqs, enableAggregation, prefs.hookVerbose]);
 
   const turnSegments = useMemo(
-    () => segmentByTurn(displayItems, rawEvents, activeTurnId),
-    [activeTurnId, displayItems, rawEvents],
+    () => segmentByTurn(displayItems, rawEvents, activeTurnId, providerActivities),
+    [activeTurnId, displayItems, providerActivities, rawEvents],
   );
 
   const streamingEntryId = useMemo(() => {

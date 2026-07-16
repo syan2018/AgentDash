@@ -614,7 +614,7 @@ describe("W11 Main frontend parity evidence", () => {
       .toEqual(fixture.expected.status_target);
   });
 
-  it("keeps the Main session UI ledger at 99 byte-identical files plus six explicit seams", () => {
+  it("keeps the Main session UI ledger at 95 byte-identical files plus ten explicit seams", () => {
     const currentRoot = resolve(repositoryRoot, "packages/app-web/src/features/session");
     const mainRoot = "D:/Projects/AgentDash-main-reference/packages/app-web/src/features/session";
     expect(existsSync(mainRoot), `Main reference is required at ${mainRoot}`).toBe(true);
@@ -622,7 +622,11 @@ describe("W11 Main frontend parity evidence", () => {
 
     const allowlistedSeams = [
       "model/companionSubagentDispatch.ts",
+      "model/sessionStreamReducer.test.ts",
       "model/sessionStreamReducer.ts",
+      "model/useSessionFeed.test.ts",
+      "model/useSessionFeed.ts",
+      "model/useSessionStream.ts",
       "ui/SessionEntry.tsx",
       "ui/ToolCallCardShell.tsx",
       "ui/bodies/CompanionSubagentDispatchCardBody.tsx",
@@ -641,6 +645,6 @@ describe("W11 Main frontend parity evidence", () => {
     expect(mainFiles).toHaveLength(105);
     expect(currentFiles).toHaveLength(105);
     expect([...differing].sort()).toEqual([...allowlistedSeams].sort());
-    expect(mainFiles.length - differing.length).toBe(99);
+    expect(mainFiles.length - differing.length).toBe(95);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { aggregateEntries, mergeThinkingIntoDisplayItems, segmentByTurn } from "./useSessionFeed";
+import type { ProviderActivityState } from "./sessionStreamReducer";
 import type {
   SessionDisplayEntry,
   AggregatedEntryGroup,
@@ -292,24 +293,11 @@ function rawTurnTerminal(
   }, turnId);
 }
 
-function rawProviderAttemptStatus(
-  eventSeq: number,
-  value: Record<string, unknown>,
+function providerActivities(
+  activity: Omit<ProviderActivityState, "eventSeq">,
   turnId = "u1",
-): SessionEventEnvelope {
-  return rawEvent(eventSeq, {
-    type: "platform",
-    payload: {
-      kind: "session_meta_update",
-      data: {
-        key: "provider_attempt_status",
-        value: {
-          turn_id: turnId,
-          ...value,
-        },
-      },
-    },
-  }, turnId);
+): ReadonlyMap<string, ProviderActivityState> {
+  return new Map([[turnId, { eventSeq: 2, ...activity }]]);
 }
 
 function mkProviderStatusEntry(id: string): SessionDisplayEntry {
@@ -853,7 +841,7 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[2] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c2", "c3"]);
   });
 
-  it("T23: provider retry status is only visible in verbose mode and does not create turn activity", () => {
+  it("T23: provider retry status remains out of the feed and creates turn activity", () => {
     const statusEntry = mkProviderStatusEntry("provider-status");
     const aggregated = aggregateEntries([statusEntry]);
     expect(aggregated).toHaveLength(0);
@@ -862,17 +850,24 @@ describe("aggregateEntries — tool burst", () => {
     expect(verboseAggregated).toHaveLength(1);
     expect((verboseAggregated[0] as SessionDisplayEntry).id).toBe("provider-status");
 
-    const segments = segmentByTurn([], [
-      rawTurnStarted(1),
-      rawProviderAttemptStatus(2, {
+    const segments = segmentByTurn(
+      [],
+      [rawTurnStarted(1)],
+      undefined,
+      providerActivities({
         phase: "retrying",
         attempt: 2,
-        max_attempts: 3,
-        will_retry: true,
+        maxAttempts: 3,
+        willRetry: true,
       }),
-    ]);
+    );
 
-    expect(segments).toHaveLength(0);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.activity).toMatchObject({
+      kind: "reconnecting",
+      attempt: 2,
+      maxAttempts: 3,
+    });
   });
 
   it("T24: active turn without provider waiting does not create turn-level thinking", () => {
@@ -933,18 +928,21 @@ describe("aggregateEntries — tool burst", () => {
     expect(segments[0]?.status).toBe("completed");
   });
 
-  it("T26: retry exhausted does not create a status-only turn segment", () => {
-    const segments = segmentByTurn([], [
-      rawTurnStarted(1),
-      rawProviderAttemptStatus(2, {
+  it("T26: retry exhausted creates a status-only turn segment", () => {
+    const segments = segmentByTurn(
+      [],
+      [rawTurnStarted(1)],
+      undefined,
+      providerActivities({
         phase: "failed",
         attempt: 3,
-        max_attempts: 3,
-        will_retry: false,
+        maxAttempts: 3,
+        willRetry: false,
       }),
-    ]);
+    );
 
-    expect(segments).toHaveLength(0);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.activity?.kind).toBe("retry_exhausted");
   });
 
   it("T27: provider waiting creates a streaming thinking card without reasoning text", () => {

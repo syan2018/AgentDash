@@ -451,9 +451,18 @@ where
         let mut records = Vec::new();
         let mut presentation_publication = Vec::new();
         let mut observed = false;
+        let inferred_runtime_turn_id = source
+            .operation_id
+            .as_ref()
+            .map(canonical_turn_id)
+            .filter(|turn_id| committed_state.turns.contains_key(turn_id));
+        let inferred_presentation_turn_id = inferred_runtime_turn_id
+            .as_ref()
+            .and_then(|turn_id| committed_state.turns.get(turn_id))
+            .map(|turn| turn.presentation_turn_id.clone());
         let mut runtime_coordinate = RuntimePresentationCoordinate {
-            runtime_turn_id: None,
-            presentation_turn_id: None,
+            runtime_turn_id: inferred_runtime_turn_id,
+            presentation_turn_id: inferred_presentation_turn_id,
             runtime_item_id: None,
             interaction_id: None,
             source_thread_id: Some(source.source_thread_id.as_str().to_string()),

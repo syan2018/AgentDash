@@ -224,7 +224,6 @@ fn preserve_session_level_metadata(
             }
         };
     }
-    preserve_field!(permission_policy);
     preserve_field!(working_directory);
     preserve_field!(connector_id);
     preserve_field!(executor);
@@ -697,7 +696,6 @@ mod tests {
         };
         let previous = SessionSnapshotMetadata {
             turn_id: Some("turn-1".into()),
-            permission_policy: Some("SUPERVISED".into()),
             working_directory: Some(".".into()),
             connector_id: Some("pi_agent".into()),
             executor: Some("local".into()),
@@ -707,7 +705,6 @@ mod tests {
         preserve_session_level_metadata(&mut snapshot, Some(&previous));
 
         let meta = snapshot.metadata.as_ref().unwrap();
-        assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));
@@ -719,7 +716,6 @@ mod tests {
         let initial_snapshot = AgentFrameHookSnapshot {
             runtime_adapter_session_id: "sess-1".into(),
             metadata: Some(SessionSnapshotMetadata {
-                permission_policy: Some("SUPERVISED".into()),
                 working_directory: Some(".".into()),
                 connector_id: Some("pi_agent".into()),
                 executor: Some("local".into()),
@@ -744,7 +740,6 @@ mod tests {
             .expect("refresh should succeed");
 
         let meta = refreshed.metadata.unwrap();
-        assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));

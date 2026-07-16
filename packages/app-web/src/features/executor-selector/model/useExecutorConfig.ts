@@ -27,7 +27,6 @@ function loadPersistedConfig(): PersistedExecutorConfig | null {
       !isOptionalString(record.providerId)
       || !isOptionalString(record.modelId)
       || !isOptionalString(record.thinkingLevel)
-      || !isOptionalString(record.permissionPolicy)
     ) {
       return null;
     }
@@ -37,7 +36,6 @@ function loadPersistedConfig(): PersistedExecutorConfig | null {
       providerId: record.providerId,
       modelId: record.modelId,
       thinkingLevel: record.thinkingLevel,
-      permissionPolicy: record.permissionPolicy,
     };
   } catch {
     return null;
@@ -93,7 +91,6 @@ function normalizeSource(
   if (typeof source.providerId === "string" && (includeEmpty || source.providerId.trim())) out.providerId = source.providerId.trim();
   if (typeof source.modelId === "string" && (includeEmpty || source.modelId.trim())) out.modelId = source.modelId.trim();
   if (typeof source.thinkingLevel === "string" && (includeEmpty || source.thinkingLevel.trim())) out.thinkingLevel = source.thinkingLevel.trim();
-  if (typeof source.permissionPolicy === "string" && (includeEmpty || source.permissionPolicy.trim())) out.permissionPolicy = source.permissionPolicy.trim();
   return out;
 }
 
@@ -132,10 +129,6 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
     const src = normalizeSource(options?.initialSource);
     return src.thinkingLevel ?? loadPersistedField("thinkingLevel");
   });
-  const [permissionPolicy, setPolicyRaw] = useState(() => {
-    const src = normalizeSource(options?.initialSource);
-    return src.permissionPolicy ?? loadPersistedField("permissionPolicy");
-  });
   const [recentEntries, setRecentEntries] = useState<RecentExecutorEntry[]>(() => loadRecentEntries());
 
   // persistedStateRef 跟踪"已持久化"的快照，仅在 effect / event handler 中访问。
@@ -145,7 +138,6 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
     providerId,
     modelId,
     thinkingLevel,
-    permissionPolicy,
   });
   // 初始 source 是否非空：仅挂载时一次性快照给 effect 使用
   const hasInitialSourceRef = useRef<boolean>(
@@ -167,7 +159,6 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
         providerId: patch.providerId ?? persistedStateRef.current.providerId,
         modelId: patch.modelId ?? persistedStateRef.current.modelId,
         thinkingLevel: patch.thinkingLevel ?? persistedStateRef.current.thinkingLevel,
-        permissionPolicy: patch.permissionPolicy ?? persistedStateRef.current.permissionPolicy,
       };
       persistedStateRef.current = next;
       persistConfig(next);
@@ -181,13 +172,11 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
       setProviderIdRaw("");
       setModelIdRaw("");
       setThinkingLevelRaw("");
-      setPolicyRaw("");
       persistPatch({
         executor: v,
         providerId: "",
         modelId: "",
         thinkingLevel: "",
-        permissionPolicy: "",
       });
     },
     [persistPatch],
@@ -219,14 +208,6 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
     [persistPatch],
   );
 
-  const setPermissionPolicy = useCallback(
-    (v: string) => {
-      setPolicyRaw(v);
-      persistPatch({ permissionPolicy: v });
-    },
-    [persistPatch],
-  );
-
   const recordUsage = useCallback(() => {
     if (!executor) return;
     const entry: RecentExecutorEntry = {
@@ -243,13 +224,11 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
     setProviderIdRaw("");
     setModelIdRaw("");
     setThinkingLevelRaw("");
-    setPolicyRaw("");
     persistedStateRef.current = {
       executor: "",
       providerId: "",
       modelId: "",
       thinkingLevel: "",
-      permissionPolicy: "",
     };
     try {
       localStorage.removeItem(STORAGE_KEY);
@@ -268,8 +247,6 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
       if (normalized.providerId !== undefined) setProviderIdRaw(normalized.providerId);
       if (normalized.modelId !== undefined) setModelIdRaw(normalized.modelId);
       if (normalized.thinkingLevel !== undefined) setThinkingLevelRaw(normalized.thinkingLevel);
-      if (normalized.permissionPolicy !== undefined) setPolicyRaw(normalized.permissionPolicy);
-
       persistPatch(normalized);
     },
     [persistPatch],
@@ -280,13 +257,11 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
     providerId,
     modelId,
     thinkingLevel,
-    permissionPolicy,
     recentEntries,
     setExecutor,
     setProviderId,
     setModelId,
     setThinkingLevel,
-    setPermissionPolicy,
     recordUsage,
     reset,
     hydrate,

@@ -180,9 +180,6 @@ pub(crate) async fn build_repositories(
 
     let agent_run_fork_graph_store = Arc::new(PostgresAgentRunForkGraphStore::new(pool.clone()));
     let agent_run_delete_store = Arc::new(PostgresAgentRunDeleteStore::new(pool.clone()));
-    let permission_grant_repo =
-        Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
-
     let repos = RepositorySet {
         project_repo: project_repo.clone(),
         canvas_repo: canvas_repo.clone(),
@@ -234,7 +231,6 @@ pub(crate) async fn build_repositories(
         routine_repo: routine_repo.clone(),
         routine_execution_repo: routine_execution_repo.clone(),
         inline_file_repo: inline_file_repo.clone(),
-        permission_grant_repo: permission_grant_repo.clone(),
         project_projection_notifications: project_projection_notifications.clone(),
     };
 

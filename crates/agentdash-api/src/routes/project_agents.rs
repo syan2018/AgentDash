@@ -74,7 +74,6 @@ mod tests {
                 model_id: Some("test-model".to_string()),
                 agent_id: None,
                 thinking_level: None,
-                permission_policy: Some("AUTO".to_string()),
             },
             effective_executor_config: None,
             preset_name: Some("preset".to_string()),
@@ -404,7 +403,6 @@ fn build_project_agent_summary(
                 .executor_config
                 .thinking_level
                 .map(thinking_level_response),
-            permission_policy: agent.executor_config.permission_policy.clone(),
         },
         effective_executor_config: Some(conversation_effective_executor_config_to_contract(
             ConversationModelConfigResolver::view_for_config(
@@ -426,7 +424,6 @@ fn conversation_effective_executor_config_to_contract(
         model_id: config.model_id,
         agent_id: config.agent_id,
         thinking_level: config.thinking_level,
-        permission_policy: config.permission_policy,
         source: match config.source {
             ConversationModelConfigSourceModel::ProjectAgentPreset => {
                 ConversationModelConfigSource::ProjectAgentPreset

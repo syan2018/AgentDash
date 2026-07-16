@@ -19,7 +19,7 @@ pub fn project_initial_surface(
     let previous = NormalizedContextSurfaceState::default();
     let delta = NormalizedContextSurfaceDelta::between(&previous, target);
     Some(
-        project_capability_surface_facts(&delta, &previous, target, "bootstrap", "initial")
+        project_capability_surface_facts(&delta, &previous, target, Some("bootstrap"), "initial")
             .unwrap_or_else(|| empty_capability_surface_facts("bootstrap", "initial")),
     )
 }
@@ -29,13 +29,14 @@ pub fn project_initial_surface(
 /// The result contains at most one capability frame followed by an independent assignment frame.
 /// The caller attaches canonical Runtime coordinates and commits the batch with `SurfaceAdopt`.
 #[must_use]
-pub fn project_live_surface_transition(
+pub fn project_live_surface_transition<'a>(
     previous: &NormalizedContextSurfaceState,
     target: &NormalizedContextSurfaceState,
     identity: &ContextProjectionIdentity,
-    phase_node: &str,
+    phase_node: impl Into<Option<&'a str>>,
     apply_mode: &str,
 ) -> Vec<ContextFrame> {
+    let phase_node = phase_node.into();
     let delta = NormalizedContextSurfaceDelta::between(previous, target);
     if delta.is_empty() {
         return Vec::new();
@@ -45,7 +46,7 @@ pub fn project_live_surface_transition(
         project_capability_surface_facts(&delta, previous, target, phase_node, apply_mode)
     {
         frames.push(ContextFrame {
-            id: format!("runtime-context-{phase_node}-{}", identity.recorded_at_ms),
+            id: format!("runtime-context-{}-capability", identity.operation_id),
             kind: facts.kind,
             source: facts.source,
             phase_node: facts.phase_node,
@@ -71,13 +72,10 @@ pub fn project_live_surface_transition(
         let delivery_channel = ContextDeliveryChannel::TurnStart;
         let message_role = ContextMessageRole::User;
         frames.push(ContextFrame {
-            id: format!(
-                "assignment-context-{phase_node}-{}",
-                identity.recorded_at_ms
-            ),
+            id: format!("runtime-context-{}-assignment", identity.operation_id),
             kind,
             source: ContextFrameSource::RuntimeContextUpdate,
-            phase_node: Some(phase_node.to_string()),
+            phase_node: phase_node.map(str::to_string),
             apply_mode: Some(apply_mode.to_string()),
             delivery_status: ContextDeliveryStatus::QueuedForTransformContext,
             delivery_channel,
@@ -106,7 +104,7 @@ fn project_capability_surface_facts(
     delta: &NormalizedContextSurfaceDelta,
     previous: &NormalizedContextSurfaceState,
     target: &NormalizedContextSurfaceState,
-    phase_node: &str,
+    phase_node: Option<&str>,
     apply_mode: &str,
 ) -> Option<ContextFrameFacts> {
     if delta.capability_dimensions_are_empty() {
@@ -129,7 +127,7 @@ fn project_capability_surface_facts(
     Some(ContextFrameFacts {
         kind: ContextFrameKind::CapabilityStateDelta,
         source: ContextFrameSource::RuntimeContextUpdate,
-        phase_node: Some(phase_node.to_string()),
+        phase_node: phase_node.map(str::to_string),
         apply_mode: Some(apply_mode.to_string()),
         delivery_status: ContextDeliveryStatus::QueuedForTransformContext,
         delivery_channel: ContextDeliveryChannel::TurnStart,

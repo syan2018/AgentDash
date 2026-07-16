@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{PresentationThreadId, RuntimeThreadId};
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface;
@@ -20,17 +20,10 @@ use agentdash_application_ports::{
         RuntimeSurfaceQueryPurpose,
     },
 };
-use agentdash_domain::permission::{
-    PermissionGrant, PermissionGrantRepository, PermissionGrantVfsOperation,
-    PermissionGrantVfsPathScope,
-};
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
 };
-use agentdash_spi::{
-    RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
-    RuntimeVfsPathPattern, Vfs,
-};
+use agentdash_spi::{RuntimeVfsAccessPolicy, Vfs};
 use async_trait::async_trait;
 
 use super::AgentFrameSurfaceExt;
@@ -43,7 +36,6 @@ pub struct BusinessFrameSurfaceQuery {
     run_repo: Arc<dyn LifecycleRunRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
-    permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 }
 
 #[derive(Clone)]
@@ -52,7 +44,6 @@ pub struct BusinessFrameSurfaceQueryDeps {
     pub run_repo: Arc<dyn LifecycleRunRepository>,
     pub agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub frame_repo: Arc<dyn AgentFrameRepository>,
-    pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 }
 
 #[derive(Clone)]
@@ -151,7 +142,6 @@ impl BusinessFrameSurfaceQuery {
             run_repo: deps.run_repo,
             agent_repo: deps.agent_repo,
             frame_repo: deps.frame_repo,
-            permission_grant_repo: deps.permission_grant_repo,
         }
     }
 
@@ -255,19 +245,39 @@ impl BusinessFrameSurfaceQuery {
                 runtime_session_id: runtime_session_id.to_string(),
                 agent_id: target.agent_id,
             })?;
-        let frame = self
-            .frame_repo
-            .get_current(agent.id)
+        let adopted_frame_id = self
+            .binding_repo
+            .load(target)
             .await
             .map_err(|error| AgentRunRuntimeSurfaceQueryError::Repository {
-                operation: "current agent frame",
+                operation: "agent run runtime binding",
                 message: error.to_string(),
             })?
-            .ok_or_else(|| AgentRunRuntimeSurfaceQueryError::MissingCurrentFrame {
-                purpose: purpose.clone(),
-                runtime_session_id: runtime_session_id.to_string(),
-                agent_id: target.agent_id,
-            })?;
+            .filter(|binding| binding.thread_id.as_str() == runtime_session_id)
+            .map(|binding| {
+                uuid::Uuid::parse_str(&binding.surface.source_frame_id).map_err(|_| {
+                    AgentRunRuntimeSurfaceQueryError::Projection {
+                        message: format!(
+                            "runtime binding surface source_frame_id is invalid: {}",
+                            binding.surface.source_frame_id
+                        ),
+                    }
+                })
+            })
+            .transpose()?;
+        let frame = match adopted_frame_id {
+            Some(frame_id) => self.frame_repo.get(frame_id).await,
+            None => self.frame_repo.get_current(agent.id).await,
+        }
+        .map_err(|error| AgentRunRuntimeSurfaceQueryError::Repository {
+            operation: "current adopted agent frame",
+            message: error.to_string(),
+        })?
+        .ok_or_else(|| AgentRunRuntimeSurfaceQueryError::MissingCurrentFrame {
+            purpose: purpose.clone(),
+            runtime_session_id: runtime_session_id.to_string(),
+            agent_id: target.agent_id,
+        })?;
         Ok((run, frame))
     }
 
@@ -340,16 +350,7 @@ impl BusinessFrameSurfaceQuery {
             }
         })?;
         let capability_state = project_capability_state_from_frame(&frame);
-        let active_grants = self
-            .permission_grant_repo
-            .list_active_by_frame(frame.id)
-            .await
-            .map_err(|error| AgentRunRuntimeSurfaceQueryError::Repository {
-                operation: "active permission grants",
-                message: error.to_string(),
-            })?;
-        let vfs_access_policy =
-            runtime_vfs_access_policy_for_grants(&vfs, runtime_session_id, &active_grants);
+        let vfs_access_policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs);
         let persisted_binding = self.binding_repo.load(target).await.map_err(|error| {
             AgentRunRuntimeSurfaceQueryError::Repository {
                 operation: "agent run runtime binding provenance",
@@ -492,66 +493,6 @@ impl BusinessFrameSurfaceQuery {
     }
 }
 
-fn runtime_vfs_access_policy_for_grants(
-    vfs: &Vfs,
-    runtime_session_id: &str,
-    active_grants: &[PermissionGrant],
-) -> RuntimeVfsAccessPolicy {
-    let mut policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(vfs);
-    let mut permission_grant_rules = Vec::new();
-    let mut permission_grant_mounts = BTreeSet::new();
-    for grant in active_grants
-        .iter()
-        .filter(|grant| grant.status.is_active())
-    {
-        for rule in &grant.requested_vfs_access {
-            if rule
-                .surface_ref
-                .as_ref()
-                .is_some_and(|surface_ref| surface_ref != runtime_session_id)
-            {
-                continue;
-            }
-            permission_grant_mounts.insert(rule.mount_id.clone());
-            permission_grant_rules.push(RuntimeVfsAccessRule {
-                mount_id: rule.mount_id.clone(),
-                path_pattern: match &rule.path_scope {
-                    PermissionGrantVfsPathScope::All => RuntimeVfsPathPattern::All,
-                    PermissionGrantVfsPathScope::Prefix(prefix) => {
-                        RuntimeVfsPathPattern::Prefix(prefix.clone())
-                    }
-                },
-                operations: rule
-                    .operations
-                    .iter()
-                    .copied()
-                    .map(runtime_vfs_operation_from_grant)
-                    .collect(),
-                source: RuntimeVfsAccessSource::PermissionGrant,
-            });
-        }
-    }
-    if !permission_grant_rules.is_empty() {
-        policy.rules.retain(|rule| {
-            rule.source != RuntimeVfsAccessSource::SystemRuntimeProjection
-                || !permission_grant_mounts.contains(&rule.mount_id)
-        });
-        policy.rules.extend(permission_grant_rules);
-    }
-    policy
-}
-
-fn runtime_vfs_operation_from_grant(operation: PermissionGrantVfsOperation) -> RuntimeVfsOperation {
-    match operation {
-        PermissionGrantVfsOperation::Read => RuntimeVfsOperation::Read,
-        PermissionGrantVfsOperation::List => RuntimeVfsOperation::List,
-        PermissionGrantVfsOperation::Search => RuntimeVfsOperation::Search,
-        PermissionGrantVfsOperation::Write => RuntimeVfsOperation::Write,
-        PermissionGrantVfsOperation::Exec => RuntimeVfsOperation::Exec,
-        PermissionGrantVfsOperation::ApplyPatch => RuntimeVfsOperation::ApplyPatch,
-    }
-}
-
 fn find_runtime_node_for_coordinate<'a>(
     nodes: &'a [agentdash_domain::workflow::RuntimeNodeState],
     node_path: &str,
@@ -618,9 +559,150 @@ fn orchestration_coordinate_from_vfs(
 
 #[cfg(test)]
 mod orchestration_evidence_tests {
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+
+    use agentdash_agent_runtime_contract::*;
+    use agentdash_application_ports::agent_run_runtime::{
+        AgentRunContextDeliveryTarget, AgentRunRuntimeBinding, AgentRunRuntimeBindingError,
+    };
+    use agentdash_domain::workflow::{
+        AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+        LifecycleRunRepository,
+    };
     use agentdash_spi::{Mount, MountCapability};
+    use agentdash_test_support::workflow::{
+        MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
+    };
+    use async_trait::async_trait;
 
     use super::*;
+
+    struct StaticBindingRepository {
+        binding: AgentRunRuntimeBinding,
+    }
+
+    #[async_trait]
+    impl AgentRunRuntimeBindingRepository for StaticBindingRepository {
+        async fn load(
+            &self,
+            target: &AgentRunRuntimeTarget,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((&self.binding.target == target).then(|| self.binding.clone()))
+        }
+
+        async fn load_by_thread_id(
+            &self,
+            thread_id: &RuntimeThreadId,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((&self.binding.thread_id == thread_id).then(|| self.binding.clone()))
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: uuid::Uuid,
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((self.binding.target.run_id == run_id)
+                .then(|| self.binding.clone())
+                .into_iter()
+                .collect())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: uuid::Uuid,
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((self.binding.target.agent_id == agent_id)
+                .then(|| self.binding.clone())
+                .into_iter()
+                .collect())
+        }
+
+        async fn insert(
+            &self,
+            binding: AgentRunRuntimeBinding,
+        ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+            Ok(binding)
+        }
+    }
+
+    fn runtime_binding(
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+        adopted_frame_id: uuid::Uuid,
+    ) -> AgentRunRuntimeBinding {
+        AgentRunRuntimeBinding {
+            target: AgentRunRuntimeTarget { run_id, agent_id },
+            presentation_thread_id: "presentation-adopted-frame".parse().expect("presentation"),
+            thread_id: "runtime-adopted-frame".parse().expect("runtime thread"),
+            binding_id: "binding-adopted-frame".parse().expect("binding"),
+            binding_epoch: BindingEpoch(1),
+            driver_generation: RuntimeDriverGeneration(1),
+            source_thread_id: "source-adopted-frame".parse().expect("source thread"),
+            profile_digest: "profile-adopted-frame".parse().expect("profile digest"),
+            profile_provenance: ProfileProvenance {
+                service_digest: "service-adopted-frame".parse().expect("service digest"),
+                transport_digest: "transport-adopted-frame".parse().expect("transport digest"),
+                host_policy_digest: "policy-adopted-frame".parse().expect("policy digest"),
+            },
+            bound_profile: RuntimeProfile {
+                reference_class: ReferenceRuntimeClass::ManagedThread,
+                input: InputProfile {
+                    modalities: BTreeSet::new(),
+                },
+                instruction: InstructionProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                tools: ToolProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                    cancellation: true,
+                },
+                workspace: WorkspaceProfile {
+                    capabilities: BTreeSet::new(),
+                    mechanism: DeliveryMechanism::Native,
+                },
+                interactions: InteractionProfile {
+                    kinds: BTreeSet::new(),
+                    durable_correlation: true,
+                },
+                lifecycle: BTreeSet::new(),
+                hooks: HookProfile {
+                    points: Vec::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                context: ContextProfile {
+                    capabilities: BTreeSet::new(),
+                    fidelity: ContextFidelity::Opaque,
+                    activation_idempotent: false,
+                },
+                telemetry_config: BTreeSet::new(),
+            },
+            surface: RuntimeSurfaceDescriptor {
+                source_frame_id: adopted_frame_id.to_string(),
+                surface_revision: SurfaceRevision(1),
+                surface_digest: "surface-adopted-frame".parse().expect("surface digest"),
+                vfs_digest: "vfs-adopted-frame".to_string(),
+                context_recipe_revision: ContextRecipeRevision(1),
+                context_digest: "context-adopted-frame".parse().expect("context digest"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                tool_set_digest: "tools-adopted-frame".to_string(),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: "hook-adopted-frame".parse().expect("hook digest"),
+                    entries: Vec::new(),
+                },
+                terminal_hook_effect_binding: None,
+            },
+            settings_revision: ThreadSettingsRevision(0),
+            context_delivery_target: AgentRunContextDeliveryTarget {
+                connector_id: "test".to_string(),
+                executor: "TEST".to_string(),
+            },
+        }
+    }
 
     #[test]
     fn workflow_coordinate_comes_from_agent_frame_lifecycle_evidence() {
@@ -678,6 +760,59 @@ mod orchestration_evidence_tests {
             orchestration_coordinate_from_vfs(&vfs, run_id),
             Err(AgentRunRuntimeSurfaceQueryError::Projection { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn active_surface_uses_binding_adopted_frame_instead_of_highest_revision() {
+        let project_id = uuid::Uuid::new_v4();
+        let run = LifecycleRun::new_plain(project_id);
+        let agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
+        let adopted = AgentFrame::new_revision(agent.id, 1, "adopted");
+        let candidate = AgentFrame::new_revision(agent.id, 2, "candidate_not_adopted");
+
+        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
+        run_repo.create(&run).await.expect("create run");
+        let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
+        agent_repo.create(&agent).await.expect("create agent");
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        frame_repo
+            .create(&adopted)
+            .await
+            .expect("create adopted frame");
+        frame_repo
+            .create(&candidate)
+            .await
+            .expect("create candidate frame");
+        assert_eq!(
+            frame_repo
+                .get_current(agent.id)
+                .await
+                .expect("load highest revision")
+                .expect("current frame")
+                .id,
+            candidate.id,
+            "fixture must prove repository current differs from runtime adoption"
+        );
+
+        let query = BusinessFrameSurfaceQuery::new(BusinessFrameSurfaceQueryDeps {
+            binding_repo: Arc::new(StaticBindingRepository {
+                binding: runtime_binding(run.id, agent.id, adopted.id),
+            }),
+            run_repo,
+            agent_repo,
+            frame_repo,
+        });
+        let view = query
+            .effective_capability(AgentRunEffectiveCapabilityRequest {
+                runtime_session_id: "runtime-adopted-frame".to_string(),
+                agent_run_id: run.id,
+                agent_id: agent.id,
+                command_key: None,
+            })
+            .await
+            .expect("effective capability");
+
+        assert_eq!(view.target.frame_id, adopted.id);
     }
 }
 
@@ -807,88 +942,6 @@ impl AgentRunEffectiveCapabilityPort for BusinessFrameSurfaceQuery {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_domain::permission::{
-        GrantScope, PermissionGrantVfsAccessRule, PolicyDecision, PolicyOutcome,
-    };
-
-    fn active_vfs_grant(frame_id: uuid::Uuid, surface_ref: Option<String>) -> PermissionGrant {
-        let mut grant = PermissionGrant::new(
-            uuid::Uuid::new_v4(),
-            None,
-            Vec::new(),
-            "allow scoped reads",
-            GrantScope::AgentFrame,
-            None,
-        )
-        .with_effect_frame(frame_id)
-        .with_requested_vfs_access(vec![PermissionGrantVfsAccessRule {
-            surface_ref,
-            mount_id: "workspace".to_string(),
-            path_scope: PermissionGrantVfsPathScope::Prefix("src".to_string()),
-            operations: vec![PermissionGrantVfsOperation::Read],
-        }])
-        .unwrap();
-        grant.submit_for_policy().unwrap();
-        grant
-            .apply_policy_decision(PolicyDecision {
-                outcome: PolicyOutcome::NeedsUserApproval,
-                matched_rules: Vec::new(),
-                reason: "manual".to_string(),
-            })
-            .unwrap();
-        grant.user_approve("user-1").unwrap();
-        grant.mark_applied().unwrap();
-        grant
-    }
-
-    fn fixture_vfs() -> Vfs {
-        Vfs {
-            mounts: vec![Mount {
-                id: "workspace".to_string(),
-                provider: "fixture".to_string(),
-                backend_id: "backend-1".to_string(),
-                root_ref: "fixture://workspace".to_string(),
-                capabilities: vec![MountCapability::Read, MountCapability::Write],
-                default_write: true,
-                display_name: "Workspace".to_string(),
-                metadata: serde_json::Value::Null,
-            }],
-            default_mount_id: Some("workspace".to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn active_frame_grant_replaces_whole_mount_policy_before_execution() {
-        let frame_id = uuid::Uuid::new_v4();
-        let grant = active_vfs_grant(frame_id, Some("thread-1".to_string()));
-        let policy = runtime_vfs_access_policy_for_grants(&fixture_vfs(), "thread-1", &[grant]);
-
-        assert!(policy.admits("workspace", "src/lib.rs", RuntimeVfsOperation::Read));
-        assert!(!policy.admits("workspace", "tests/lib.rs", RuntimeVfsOperation::Read));
-        assert!(!policy.admits("workspace", "src/lib.rs", RuntimeVfsOperation::Write));
-        assert!(policy.rules.iter().all(|rule| {
-            rule.mount_id != "workspace"
-                || rule.source != RuntimeVfsAccessSource::SystemRuntimeProjection
-        }));
-    }
-
-    #[test]
-    fn grant_for_other_surface_does_not_replace_current_surface_policy() {
-        let grant = active_vfs_grant(uuid::Uuid::new_v4(), Some("thread-other".to_string()));
-        let policy = runtime_vfs_access_policy_for_grants(&fixture_vfs(), "thread-1", &[grant]);
-
-        assert!(policy.admits("workspace", "tests/lib.rs", RuntimeVfsOperation::Read));
-        assert!(policy.admits("workspace", "src/lib.rs", RuntimeVfsOperation::Write));
-    }
-}
-
 fn effective_view(
     thread_id: &RuntimeThreadId,
     frame: &AgentFrame,
@@ -903,7 +956,6 @@ fn effective_view(
         vfs_surface: capability_state.vfs.active.clone().unwrap_or_default(),
         mcp_surface: capability_state.tool.mcp_servers.clone(),
         visible_workspace_module_refs: frame.visible_workspace_module_refs(),
-        grant_projection: Default::default(),
         capability_state,
     }
 }

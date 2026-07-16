@@ -6,8 +6,12 @@ use std::{
 use agentdash_agent_runtime_contract::*;
 use agentdash_application_agentrun::agent_run::{
     AgentBusinessSurfaceSource, AgentFrameHookRuntime, AgentFrameSurfaceExt,
+    AllowAllAgentRunPermissionFacade,
 };
 use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
+use agentdash_application_ports::agent_run_permission::{
+    AgentRunPermissionDecision, AgentRunPermissionFacade, AgentRunPermissionRequest,
+};
 use agentdash_application_ports::agent_run_surface::{
     AgentRunAdmissionRequest, AgentRunEffectiveCapabilityPort, AgentRunRuntimeSurface,
 };
@@ -744,16 +748,19 @@ fn hook_callback_error(error: impl ToString) -> DriverHookCallbackError {
 pub struct RegistryToolBrokerPolicy {
     registry: Arc<CompiledAgentRunToolRegistry>,
     capabilities: Arc<dyn AgentRunEffectiveCapabilityPort>,
+    permissions: Arc<dyn AgentRunPermissionFacade>,
 }
 
 impl RegistryToolBrokerPolicy {
     pub fn new(
         registry: Arc<CompiledAgentRunToolRegistry>,
         capabilities: Arc<dyn AgentRunEffectiveCapabilityPort>,
+        permissions: Arc<dyn AgentRunPermissionFacade>,
     ) -> Self {
         Self {
             registry,
             capabilities,
+            permissions,
         }
     }
 
@@ -852,28 +859,41 @@ impl agentdash_agent_runtime::ToolBrokerPolicyPort for RegistryToolBrokerPolicy 
         let binding = self.binding(invocation).await?;
         let revision = surface_policy_revision(&binding);
         let decision = self
-            .capabilities
-            .admit_tool(AgentRunAdmissionRequest::tool(
-                binding.runtime_session_id,
-                tool.capability_key.clone(),
-                tool.runtime_name.clone(),
-                None,
-            ))
+            .permissions
+            .authorize(AgentRunPermissionRequest {
+                run_id: binding.run_id,
+                agent_id: binding.agent_id,
+                runtime_session_id: binding.runtime_session_id,
+                turn_id: invocation.coordinates.turn_id.to_string(),
+                item_id: invocation.coordinates.item_id.to_string(),
+                capability_key: tool.capability_key.clone(),
+                tool_name: tool.runtime_name.clone(),
+            })
             .await
             .map_err(|error| {
                 agentdash_agent_runtime::ToolBrokerError::Execution(error.to_string())
             })?;
-        Ok(if decision.allowed {
-            agentdash_agent_runtime::ToolPermissionDecision::Allowed(
-                agentdash_agent_runtime::ToolPolicyCheck { revision },
-            )
-        } else {
-            agentdash_agent_runtime::ToolPermissionDecision::Denied {
-                reason: decision
-                    .reason
-                    .unwrap_or_else(|| "AgentFrame permission denied the tool".to_string()),
+        match decision {
+            AgentRunPermissionDecision::Allowed => {
+                Ok(agentdash_agent_runtime::ToolPermissionDecision::Allowed(
+                    agentdash_agent_runtime::ToolPolicyCheck { revision },
+                ))
             }
-        })
+            AgentRunPermissionDecision::Denied { reason } => {
+                Ok(agentdash_agent_runtime::ToolPermissionDecision::Denied { reason })
+            }
+            AgentRunPermissionDecision::PendingApproval {
+                interaction_id,
+                reason,
+            } => Ok(
+                agentdash_agent_runtime::ToolPermissionDecision::ApprovalRequired {
+                    interaction_id: RuntimeInteractionId::new(interaction_id).map_err(|error| {
+                        agentdash_agent_runtime::ToolBrokerError::Execution(error.to_string())
+                    })?,
+                    reason,
+                },
+            ),
+        }
     }
 
     async fn authorize_vfs(
@@ -1115,6 +1135,7 @@ impl PostgresAgentRunToolBrokerResolver {
             policy: Arc::new(RegistryToolBrokerPolicy::new(
                 registry.clone(),
                 capabilities,
+                Arc::new(AllowAllAgentRunPermissionFacade),
             )),
             registry,
         }
@@ -1382,7 +1403,6 @@ fn compiled_binding_matches(
         && existing.executor.model_id == binding.executor.model_id
         && existing.executor.agent_id == binding.executor.agent_id
         && existing.executor.thinking_level == binding.executor.thinking_level
-        && existing.executor.permission_policy == binding.executor.permission_policy
         && existing.executor.system_prompt == binding.executor.system_prompt
         && existing.tool_names == binding.tool_names
         && existing.hook_runtime.session_id() == binding.hook_runtime.session_id()
@@ -1796,10 +1816,7 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
         let adoption_plan = agentdash_agent_runtime::RuntimeSurfacePresentationPlan::for_adoption(
             &previous_business_surface.snapshot,
             &plan.business_surface,
-        )
-        .map_err(|error| RuntimeSurfaceAdoptionError::Failed {
-            message: error.to_string(),
-        })?;
+        );
         let presentation = adoption_plan.adoption_presentation(
             &binding.presentation_thread_id,
             snapshot.active_presentation_turn_id.as_ref(),
@@ -3371,7 +3388,11 @@ mod tests {
             arguments: serde_json::json!({"path":"secret.txt"}),
             timeout_ms: 1_000,
         };
-        let policy = RegistryToolBrokerPolicy::new(registry, Arc::new(UnusedCapabilityPort));
+        let policy = RegistryToolBrokerPolicy::new(
+            registry,
+            Arc::new(UnusedCapabilityPort),
+            Arc::new(AllowAllAgentRunPermissionFacade),
+        );
 
         let decision = agentdash_agent_runtime::ToolBrokerPolicyPort::authorize_vfs(
             &policy,
@@ -3830,7 +3851,7 @@ mod tests {
     #[test]
     fn tool_broker_hook_remains_in_runtime_plan_but_not_driver_admission() {
         let requirement = AgentFrameHookRequirement {
-            definition_id: HookDefinitionId::new("workflow.supervised_tool_gate").unwrap(),
+            definition_id: HookDefinitionId::new("workflow.tool_approval").unwrap(),
             requirement: HookRequirement {
                 point: HookPoint::BeforeTool,
                 actions: BTreeSet::from([HookAction::RequestApproval]),

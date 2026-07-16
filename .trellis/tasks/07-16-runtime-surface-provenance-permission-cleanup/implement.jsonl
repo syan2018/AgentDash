@@ -7,3 +7,4 @@
 {"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "未来 Grant 归属运行中的 LifecycleRun typed document，并由既有聚合仓储持久化。"}
 {"file": ".trellis/spec/backend/permission/architecture.md", "reason": "理解并替换当前 PermissionGrant 独立聚合设计，最终更新为 AgentRun allow-all 验证门面。"}
 {"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "删除 PermissionGrant VFS contribution 时保持 VFS 独立访问语义与执行顺序。"}
+{"file": ".trellis/tasks/07-16-runtime-surface-provenance-permission-cleanup/research/dispatch-guard.md", "reason": "限制实现者只执行明确切片，禁止为未来 Grant 或邻近架构自行扩张范围。"}

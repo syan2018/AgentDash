@@ -139,22 +139,21 @@ project_live_surface_transition(
 
 ### 4.3 写入与采用顺序
 
-当前 Canvas 路径先 `frame_repo.create`，再调用 adoption。目标顺序是：
+当前 Canvas 路径先 `frame_repo.create`，再调用 adoption。首先应修复并验证所有已知 deterministic adoption 前置错误；只有测试证明失败 revision 会被后续查询当成 active current 时，才引入独立 adopted pointer。目标不变量是：
 
-1. 从 current adopted frame 构造 next frame candidate；
-2. 在 candidate 对产品可见前完成 HookPlan、Business Surface、normalized delta 与 presentation plan 的确定性 preflight；
-3. 持久化 candidate artifact；
-4. durable accept canonical `SurfaceAdopt` operation；
-5. Runtime accept 后，AgentRun current surface read model 指向新的 adopted frame；
-6. Driver apply failure由既有 operation recovery 收敛。
+1. 从当前 AgentRun surface 构造 next frame；
+2. 能前移的 HookPlan、Business Surface、normalized delta 与 presentation plan 确定性校验在持久化前完成；
+3. durable accept canonical `SurfaceAdopt` operation；
+4. Runtime accept 后，新 frame 才能作为 active surface 被消费；
+5. Driver apply failure由既有 operation recovery 收敛。
 
 关键区分：
 
 - deterministic compile failure：发生在公开 current 之前；
 - durable accept 后的 Driver failure：保留 accepted operation 并恢复，不能回滚 canonical fact；
-- candidate frame 可以作为诊断 artifact 存在，但不能因“最高 revision”自动成为 active current。
+- 未采用 frame 不能因“最高 revision”自动成为 active current。
 
-如果现有 read model 直接把最高 AgentFrame revision 当 current，应改为 canonical Runtime 已采用的 `source_frame_id/revision`。
+是否需要独立 candidate/adopted read model 由失败注入测试决定；不为尚未出现的并发模型预建第二套状态机。
 
 ## 5. 当前 AgentRun 权限门面
 

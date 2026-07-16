@@ -530,7 +530,6 @@ fn agent_template_preset_config(
         model_id: config.model_id,
         agent_id: config.agent_id,
         thinking_level: config.thinking_level,
-        permission_policy: config.permission_policy,
         system_prompt: config.system_prompt,
         display_name,
         description,

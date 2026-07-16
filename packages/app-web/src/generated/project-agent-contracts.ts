@@ -7,9 +7,7 @@ import type { UserInput } from "./backbone-protocol";
 
 export type AgentRunModelSelectionRequest = { provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, };
 
-export type AgentRunRuntimeOptionsRequest = { permission_policy?: string, };
-
-export type ConversationEffectiveExecutorConfigView = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: string, permission_policy?: string, source: ConversationModelConfigSource, };
+export type ConversationEffectiveExecutorConfigView = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: string, source: ConversationModelConfigSource, };
 
 export type ConversationModelConfigSource = "project_agent_preset" | "frame_execution_profile" | "user_override" | "executor_discovery_default" | "unspecified";
 
@@ -29,7 +27,7 @@ export type ExecutionProfileDto = { id: string, name: string, available: boolean
 
 export type ExecutionProfileModelDto = { id: string, name: string, provider_id: string, reasoning: boolean, supports_image: boolean, context_window: number, blocked: boolean, discovered: boolean, source: string, };
 
-export type ExecutionProfileModelSelectorDto = { providers: Array<ExecutionProfileProviderDto>, models: Array<ExecutionProfileModelDto>, default_model?: string, agents: Array<ExecutionProfileAgentDto>, permissions: Array<string>, };
+export type ExecutionProfileModelSelectorDto = { providers: Array<ExecutionProfileProviderDto>, models: Array<ExecutionProfileModelDto>, default_model?: string, agents: Array<ExecutionProfileAgentDto>, };
 
 export type ExecutionProfileOptionsDto = { model_selector: ExecutionProfileModelSelectorDto, slash_commands: Array<ExecutionProfileSlashCommandDto>, loading_models: boolean, loading_agents: boolean, loading_slash_commands: boolean, error?: string, };
 
@@ -39,7 +37,7 @@ export type ExecutionProfileSlashCommandDto = { name: string, description?: stri
 
 export type ProjectAgent = { id: string, project_id: string, name: string, agent_type: string, config: JsonValue, default_lifecycle_key?: string, knowledge_enabled: boolean, created_at: string, updated_at: string, };
 
-export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, permission_policy?: string, };
+export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, };
 
 export type ProjectAgentRunStartResult = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, initial_message: AgentRunMessageCommandResponse, effective_executor_config?: ConversationEffectiveExecutorConfigView, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
 

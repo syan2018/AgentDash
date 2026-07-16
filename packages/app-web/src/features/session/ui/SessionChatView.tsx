@@ -190,7 +190,6 @@ export function SessionChatView({
         source.providerId ?? "",
         source.modelId ?? "",
         source.thinkingLevel ?? "",
-        source.permissionPolicy ?? "",
       ].join(":");
     }
     return resolvedHint ? `draft:${resolvedHint}` : null;
@@ -245,21 +244,18 @@ export function SessionChatView({
       model_id: execConfig.modelId.trim() || undefined,
       // 将 camelCase 的 thinkingLevel 转为 snake_case 发给后端
       thinking_level: (execConfig.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
-      permission_policy: (execConfig.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
     };
   }, [
     execConfig.executor,
     execConfig.providerId,
     execConfig.modelId,
     execConfig.thinkingLevel,
-    execConfig.permissionPolicy,
   ]);
 
   const emitExplicitExecutorOverride = useCallback((config: {
     providerId: string;
     modelId: string;
     thinkingLevel: string;
-    permissionPolicy: string;
   }) => {
     const executor = execConfig.executor.trim();
     if (!executor) {
@@ -271,7 +267,6 @@ export function SessionChatView({
       provider_id: config.providerId.trim() || undefined,
       model_id: config.modelId.trim() || undefined,
       thinking_level: (config.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
-      permission_policy: (config.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
     });
   }, [execConfig.executor, setExecutorConfigOverride]);
 

@@ -7,3 +7,4 @@
 {"file": ".trellis/spec/backend/permission/architecture.md", "reason": "检查 PermissionGrant、permission_policy 与 Surface/VFS/Hook 横向耦合是否完整清理。"}
 {"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "检查删除 Grant contribution 后 VFS policy、mount/path/operation 约束未被放宽。"}
 {"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "检查前端 PermissionGrant 卡片、permission_policy 编辑入口和断裂 API 调用已删除且未破坏 Lifecycle UI。"}
+{"file": ".trellis/tasks/07-16-runtime-surface-provenance-permission-cleanup/research/dispatch-guard.md", "reason": "检查实现是否严格遵守派发范围，并识别无失败测试支撑的过度实现。"}

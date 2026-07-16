@@ -69,7 +69,6 @@ pub struct ExecutionProfileModelSelectorDto {
     #[ts(optional)]
     pub default_model: Option<String>,
     pub agents: Vec<ExecutionProfileAgentDto>,
-    pub permissions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -117,9 +116,6 @@ pub struct ProjectAgentExecutor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub thinking_level: Option<ThinkingLevel>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub permission_policy: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -152,14 +148,6 @@ pub struct AgentRunModelSelectionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub thinking_level: Option<ThinkingLevel>,
-}
-
-#[derive(Debug, Clone, Deserialize, TS)]
-#[serde(deny_unknown_fields)]
-pub struct AgentRunRuntimeOptionsRequest {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub permission_policy: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

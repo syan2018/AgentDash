@@ -232,7 +232,6 @@ impl AgentRunRuntimeSurfaceUpdateService {
             mcp_surface: capability_state.tool.mcp_servers.clone(),
             capability_state,
             visible_workspace_module_refs: frame.visible_workspace_module_refs(),
-            grant_projection: Default::default(),
         })
     }
 
@@ -783,7 +782,7 @@ mod tests {
                 mount_id: "workspace".to_string(),
                 path_pattern: RuntimeVfsPathPattern::Prefix("docs".to_string()),
                 operations: BTreeSet::from([RuntimeVfsOperation::Read]),
-                source: RuntimeVfsAccessSource::PermissionGrant,
+                source: RuntimeVfsAccessSource::ProjectPreset,
             }],
         };
         let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);

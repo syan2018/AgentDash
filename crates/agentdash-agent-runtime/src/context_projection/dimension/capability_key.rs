@@ -8,14 +8,15 @@ use crate::context_projection::surface_state::{
 pub(super) fn project(
     delta: &NormalizedContextSurfaceDelta,
     target: &NormalizedContextSurfaceState,
-    phase_node: &str,
+    phase_node: Option<&str>,
 ) -> Option<ProjectedSurfaceDimension> {
     if delta.capability_keys.is_empty() {
         return None;
     }
     let effective = target.capability_keys.iter().cloned().collect::<Vec<_>>();
-    let mut sections = vec![format!(
-        "## Capability State Update — Step Transition: {phase_node}"
+    let mut sections = vec![super::surface_update_heading(
+        "Capability State Update",
+        phase_node,
     )];
     if !delta.capability_keys.added.is_empty() {
         let mut block = vec!["### Added Capabilities".to_string()];

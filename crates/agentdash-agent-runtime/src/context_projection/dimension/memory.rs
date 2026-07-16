@@ -11,7 +11,7 @@ pub(super) fn project(
     delta: &NormalizedContextSurfaceDelta,
     previous: &NormalizedContextSurfaceState,
     target: &NormalizedContextSurfaceState,
-    phase_node: &str,
+    phase_node: Option<&str>,
 ) -> Option<ProjectedSurfaceDimension> {
     if delta.memory_sources.is_empty() {
         return None;
@@ -49,8 +49,9 @@ pub(super) fn project(
         .iter()
         .map(|key| target_or_fallback(key))
         .collect::<Vec<_>>();
-    let mut lines = vec![format!(
-        "## Memory Inventory Delta — Step Transition: {phase_node}"
+    let mut lines = vec![super::surface_update_heading(
+        "Memory Inventory Delta",
+        phase_node,
     )];
     append_memory_lines(&mut lines, "Added Memory Sources", &added, "已加入");
     append_memory_lines(&mut lines, "Removed Memory Sources", &removed, "已移除");

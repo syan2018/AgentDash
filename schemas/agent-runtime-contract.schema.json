@@ -11568,7 +11568,7 @@
           "type": "object",
           "properties": {
             "params": {
-              "$ref": "#/$defs/PermissionsRequestApprovalParams"
+              "$ref": "#/$defs/RuntimePermissionApprovalRequest"
             },
             "kind": {
               "type": "string",
@@ -11626,6 +11626,95 @@
           "required": [
             "kind",
             "params"
+          ]
+        }
+      ]
+    },
+    "RuntimePermissionApprovalRequest": {
+      "type": "object",
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/RuntimePermissionApprovalTarget"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startedAtMs": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "required": [
+        "itemId",
+        "target",
+        "startedAtMs"
+      ]
+    },
+    "RuntimePermissionApprovalTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "capability_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tool_name": {
+              "type": "string"
+            },
+            "arguments": true,
+            "details": true,
+            "kind": {
+              "type": "string",
+              "const": "tool_invocation"
+            }
+          },
+          "required": [
+            "kind",
+            "tool_name",
+            "arguments"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hook_run_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "hook"
+            }
+          },
+          "required": [
+            "kind",
+            "hook_run_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cwd": {
+              "type": "string"
+            },
+            "permissions": true,
+            "kind": {
+              "type": "string",
+              "const": "workspace_permissions"
+            }
+          },
+          "required": [
+            "kind",
+            "cwd",
+            "permissions"
           ]
         }
       ]

@@ -654,7 +654,6 @@ mod recovery_tests {
             assert!(migration.contains(reset), "missing Runtime reset: {reset}");
         }
         assert!(migration.contains("SET accepted_runtime_operation_id = NULL"));
-        assert!(migration.contains("DELETE FROM permission_grants"));
         assert!(!migration.contains("jsonb_set"));
         assert!(!migration.contains("context_delivery_target',"));
     }

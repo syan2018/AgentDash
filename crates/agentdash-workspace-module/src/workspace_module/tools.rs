@@ -1095,7 +1095,6 @@ mod tests {
         AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
         AgentRunRuntimeTarget,
     };
-    use agentdash_application_ports::agent_run_surface::AgentRunGrantProjection;
     use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
     use agentdash_application_runtime_gateway::{
         RuntimeActionKey, RuntimeInvocationError, RuntimeInvocationRequest,
@@ -1665,7 +1664,6 @@ mod tests {
             mcp_surface: Vec::new(),
             capability_state,
             visible_workspace_module_refs: runtime_refs,
-            grant_projection: AgentRunGrantProjection::default(),
         }
     }
 

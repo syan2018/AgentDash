@@ -5,7 +5,7 @@ use crate::context_projection::surface_state::NormalizedContextSurfaceDelta;
 
 pub(super) fn project(
     delta: &NormalizedContextSurfaceDelta,
-    phase_node: &str,
+    phase_node: Option<&str>,
 ) -> Option<ProjectedSurfaceDimension> {
     if delta.vfs.mounts.added.is_empty()
         && delta.vfs.mounts.removed.is_empty()
@@ -13,7 +13,7 @@ pub(super) fn project(
     {
         return None;
     }
-    let mut lines = vec![format!("## VFS Changes — Step Transition: {phase_node}")];
+    let mut lines = vec![super::surface_update_heading("VFS Changes", phase_node)];
     if !delta.vfs.mounts.added.is_empty() {
         lines.push("- Added VFS mounts:".to_string());
         lines.extend(

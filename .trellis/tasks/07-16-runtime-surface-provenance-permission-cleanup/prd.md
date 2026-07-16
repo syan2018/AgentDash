@@ -79,7 +79,7 @@
 
 - R1：`workflow transition phase` 只作为可选 presentation metadata，不能参与 Surface adoption 的 identity、CAS、digest、幂等或合法性前置校验。
 - R2：Canvas、VFS、MCP、Skill、Workspace Module 等非 Workflow surface delta 在没有 phase provenance 时可以生成稳定 ContextFrame 并完成 adoption。
-- R3：确定性 compile/presentation preflight 必须发生在新 AgentFrame 被公开为 current 之前；失败不得留下可被产品查询误认为 active 的 revision。
+- R3：能前移的确定性 compile/presentation preflight 必须发生在持久化前；失败不得留下可被产品查询误认为 active 的 revision。是否需要独立 adopted pointer 由失败注入测试决定。
 - R4：Workflow transition 仍可携带 node path，用于 ContextFrame 展示与审计，但缺失不构成 Runtime 错误。
 - R5：删除当前独立 PermissionGrant domain/application/infrastructure/API/contracts/frontend 实现及 `permission_grants` 表。
 - R6：删除 PermissionGrant 对 Capability、VFS、Business Surface、AgentFrame、ContextFrame 和 Runtime Surface update 的 contribution。
@@ -99,6 +99,7 @@
 ## Acceptance Criteria
 
 - [ ] Canvas 创建、展示、复制、数据绑定等 live surface update 在没有 Workflow node path 时完成 canonical adoption。
+- [ ] 真实 AgentRun 中 Agent 可以创建 Canvas、写入或绘制内容、更新数据并展示；该流程不会因 Surface adoption 中断，并可继续当前执行与后续对话。
 - [ ] Workflow transition 的 node path 仍进入 presentation metadata；无 node path 使用通用 Runtime Surface Update 表达。
 - [ ] `MissingTransitionPhase` 与对应错误文本从生产代码删除。
 - [ ] presentation/Business Surface 的确定性错误不会让未采用 AgentFrame 成为 current active surface。

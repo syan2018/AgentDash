@@ -3886,12 +3886,15 @@ mod journal_projection_tests {
                 "shared-item",
                 "echo first",
             );
-        let second = agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_permission_approval(
-            "thread-1",
-            "turn-1",
-            "shared-item",
-            "permission".to_string(),
-        );
+        let second =
+            agentdash_agent_runtime_contract::RuntimeInteractionRequest::tool_permission_approval(
+                "shared-item",
+                Some("shell".to_string()),
+                "shell_exec".to_string(),
+                serde_json::json!({"command": "echo second"}),
+                None,
+                "permission".to_string(),
+            );
         assert!(matches!(
             exact_pending_approval_interaction_id(
                 [

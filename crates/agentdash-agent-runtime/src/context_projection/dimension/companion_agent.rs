@@ -8,7 +8,7 @@ use crate::context_projection::surface_state::{
 pub(super) fn project(
     delta: &NormalizedContextSurfaceDelta,
     target: &NormalizedContextSurfaceState,
-    phase_node: &str,
+    phase_node: Option<&str>,
 ) -> Option<ProjectedSurfaceDimension> {
     let collaboration_enabled = target.capability_keys.contains("collaboration");
     let collaboration_changed = delta
@@ -43,8 +43,9 @@ pub(super) fn project(
         .collect::<Vec<_>>();
     let effective = ordered_effective_agents(target);
 
-    let mut lines = vec![format!(
-        "## Companion Agent Roster Delta — Step Transition: {phase_node}"
+    let mut lines = vec![super::surface_update_heading(
+        "Companion Agent Roster Delta",
+        phase_node,
     )];
     append_agent_lines(&mut lines, "Added Companion Agents", &added, "已加入");
     append_key_lines(

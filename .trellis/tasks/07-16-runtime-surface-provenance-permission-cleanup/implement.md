@@ -64,16 +64,16 @@ rg -n "temporary_permission_approval|CommandApproval|FileChangeApproval|Permissi
 - `crates/agentdash-agent-runtime/src/surface.rs`
 - `crates/agentdash-application-agentrun/src/agent_run/context_sources.rs`
 
-### A2. deterministic preflight 前移
+### A2. deterministic preflight 与 adopted 语义验证
 
 - 审查 Canvas 与通用 Runtime Surface update 在 `frame_repo.create` 前能够得到的全部 compile inputs。
-- 在新 Frame 对 current read model 可见前完成：
+- 能前移的校验在新 Frame 持久化前完成：
   - hook plan validation；
   - Business Surface compile；
   - normalized delta；
   - presentation plan compile。
-- 持久化 candidate 后再提交 canonical `SurfaceAdopt`。
-- current surface query 必须读取 Runtime 已采用的 source frame，不以最高 revision 代替 adopted state。
+- 增加 adoption 失败注入测试，验证未采用 revision 不会被后续产品查询当作 active surface。
+- 仅当测试证明当前 `get_current` 语义违反该不变量时，才引入 adopted pointer 或调整 read model；不预建 candidate 状态机。
 - durable accept 后 Driver apply failure继续进入既有 recovery。
 
 重点文件：
@@ -96,6 +96,7 @@ cargo test -p agentdash-application-agentrun runtime_surface_update
 必须覆盖：
 
 - Canvas create/expose/present/bind-data 无 phase 成功；
+- 真实 AgentRun 中由 Agent 发起 Canvas 创建、内容写入/绘制、数据更新与展示，并在 adoption 后继续执行及下一轮对话；
 - Workflow phase metadata 保留；
 - replay identity 稳定；
 - compile failure 不推进 current；
@@ -342,9 +343,31 @@ Cargo 被 rust-analyzer 占锁时遵循项目说明等待，不终止并行 IDE/
 
 ## 10. 风险与实施顺序
 
-- Surface current/adopted 语义风险最高，先补测试再调整写入顺序。
+- Surface current/adopted 语义先以失败注入测试判定，避免在已知 phase 回归之外扩张状态模型。
 - AgentRun permission facade 应先落地，再删除旧 Tool Broker/Driver permission paths，避免出现无判定入口的中间状态。
 - RuntimeInteraction approval contract 先 canonicalize，再删除 vendor DTO 与 temporary helper。
 - Grant 删除顺序采用 consumer → wiring → implementation → migration，保证每一步编译错误都指向待清理依赖。
 - `permission_policy` 横跨生成 contracts 与前端，删除后立即运行 codegen/typecheck。
 - 本任务不通过提前实现 LifecycleRun Grant 来“验证未来设计”；未来实现另建任务。
+
+## 11. 当前实施结果
+
+已完成：
+
+- Workflow phase 降级为可选 presentation metadata，no-phase live surface adoption 使用稳定 identity。
+- Runtime binding 的 `source_frame_id` 成为 active surface 读取依据；仓储中更高 revision 的未采用 candidate 不会被当作 current。
+- 独立 PermissionGrant 聚合、表、仓储、API、前端、Surface/VFS/Capability contribution 与 `permission_policy` 传播链已删除。
+- Tool Broker 只通过 AgentRun permission facade 判定执行权限；当前 production facade 固定允许。
+- Permission approval 使用 AgentDash-owned target union，分别表达工具调用、Hook 与工作区权限请求，不再伪造 cwd、空 permissions 或零时间。
+- Canvas 自动化链路覆盖创建并暴露、通过 Canvas VFS provider 写入 SVG/TSX、持久化到同一 Canvas、发布 `canvas://` presentation URI。
+- Managed Runtime 生产装配测试覆盖工具执行后回到最终 assistant，并支持后续 cold rebind。
+
+待产品环境手工确认：
+
+- 在可用浏览器执行入口和登录态下，通过真实 UI 会话观察 Canvas preview 渲染。本会话缺少浏览器 skill 要求的执行入口，因此未将该项伪装为已完成。
+
+质量门说明：
+
+- contracts、frontend typecheck、migration guard、AgentRun/Runtime/Hook/Workspace Module/Native/Codex 定向测试通过。
+- `cargo check --workspace --all-targets` 被未修改的 `agentdash-agent-runtime-test-support/src/tests.rs` 旧 fixture 缺少 `DriverCommandEnvelope.operation_id/presentation_turn_id` 阻断。
+- `test-support:guard` 被未修改的 `MemoryControlEffectStore` 与 `FakeGraphStore` 既有命名债务阻断；本任务不跨范围改动。

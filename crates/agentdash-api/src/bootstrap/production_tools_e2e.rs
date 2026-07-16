@@ -485,7 +485,6 @@ async fn real_agent_frame_task_and_workspace_tools_continue_to_final_assistant()
             run_repo: repos.lifecycle_run_repo.clone(),
             agent_repo: repos.lifecycle_agent_repo.clone(),
             frame_repo: repos.agent_frame_repo.clone(),
-            permission_grant_repo: repos.permission_grant_repo.clone(),
         },
     ));
     let business_surface_source = Arc::new(AgentBusinessSurfaceSource::new(

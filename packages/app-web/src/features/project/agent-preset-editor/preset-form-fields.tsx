@@ -7,7 +7,7 @@ import {
   parseCapabilityPath,
 } from "../../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../../executor-selector";
-import type { ModelInfo, PermissionPolicy } from "../../executor-selector";
+import type { ModelInfo } from "../../executor-selector";
 import { CapabilityPicker } from "./capability-picker";
 import { KnowledgeSection } from "./knowledge-section";
 import { McpPresetPicker } from "./mcp-preset-picker";
@@ -114,7 +114,6 @@ export function PresetFormFields({
 
   const showThinkingSelector = !selectedModel || selectedModel.reasoning === true;
   const agents = modelSelector?.agents ?? [];
-  const permissions = modelSelector?.permissions ?? [];
 
   const handleAgentTypeChange = (newType: string) => {
     patchForm({
@@ -333,32 +332,6 @@ export function PresetFormFields({
             )}
           </div>
         )}
-        <div>
-          <label className="agentdash-form-label">权限策略</label>
-          <select
-            value={form.permission_policy}
-            onChange={(e) => patchForm({ permission_policy: e.target.value })}
-            className="agentdash-form-select"
-          >
-            <option value="">默认</option>
-            {permissions.length > 0
-              ? permissions.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))
-              : (
-                <>
-                  <option value="AUTO">AUTO</option>
-                  <option value="SUPERVISED">SUPERVISED</option>
-                  <option value="PLAN">PLAN</option>
-                </>
-              )
-            }
-            {form.permission_policy && permissions.length > 0 &&
-              !permissions.includes(form.permission_policy as PermissionPolicy) && (
-              <option value={form.permission_policy}>{form.permission_policy} (当前值)</option>
-            )}
-          </select>
-        </div>
       </div>
     </div>
   );

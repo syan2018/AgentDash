@@ -183,11 +183,6 @@ pub async fn stream_execution_profile_options(
             models,
             default_model,
             agents: Vec::new(),
-            permissions: vec![
-                "AUTO".to_string(),
-                "SUPERVISED".to_string(),
-                "PLAN".to_string(),
-            ],
         },
         slash_commands: Vec::new(),
         loading_models: false,

@@ -530,9 +530,6 @@ fn effective_execution_profile_override(
     requested.model_id = requested.model_id.or_else(|| current.model_id.clone());
     requested.agent_id = requested.agent_id.or_else(|| current.agent_id.clone());
     requested.thinking_level = requested.thinking_level.or(current.thinking_level);
-    requested.permission_policy = requested
-        .permission_policy
-        .or_else(|| current.permission_policy.clone());
     requested.system_prompt = requested
         .system_prompt
         .or_else(|| current.system_prompt.clone());

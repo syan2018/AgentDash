@@ -47,7 +47,6 @@ export function toExecutorConfigSource(
   if (defaults.provider_id) source.providerId = defaults.provider_id;
   if (defaults.model_id) source.modelId = defaults.model_id;
   if (defaults.thinking_level) source.thinkingLevel = defaults.thinking_level;
-  if (defaults.permission_policy) source.permissionPolicy = defaults.permission_policy;
   return Object.keys(source).length === 0 ? null : source;
 }
 

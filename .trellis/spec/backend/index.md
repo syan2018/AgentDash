@@ -39,4 +39,4 @@
 | vfs | [VFS Architecture](./vfs/architecture.md) | [vfs access](./vfs/vfs-access.md), [materialization](./vfs/vfs-materialization.md) |
 | hooks | [Hooks Architecture](./hooks/architecture.md) | [execution hook runtime](./hooks/execution-hook-runtime.md), [hook script engine](./hooks/hook-script-engine.md) |
 | capability | [Capability Architecture](./capability/architecture.md) | [tool pipeline](./capability/tool-capability-pipeline.md), [dimension pipeline](./capability/capability-dimension-pipeline.md), [LLM model config](./capability/llm-model-config.md), [integration api](./capability/integration-api.md) |
-| permission | [Permission Architecture](./permission/architecture.md) | [grant lifecycle](./permission/grant-lifecycle.md), [policy engine](./permission/policy-engine.md) |
+| permission | [Permission Architecture](./permission/architecture.md) | AgentRun facade、RuntimeInteraction 与未来 LifecycleRun-scoped Grant |

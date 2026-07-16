@@ -120,7 +120,6 @@ mod tests {
 
     use super::*;
     use crate::canvas::build_canvas;
-    use agentdash_application_ports::agent_run_surface::AgentRunGrantProjection;
     use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
 
     #[derive(Default)]
@@ -364,7 +363,6 @@ mod tests {
             mcp_surface: Vec::new(),
             capability_state: state,
             visible_workspace_module_refs: runtime_refs,
-            grant_projection: AgentRunGrantProjection::default(),
         }
     }
 

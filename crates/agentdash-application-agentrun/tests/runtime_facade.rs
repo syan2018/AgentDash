@@ -493,7 +493,6 @@ async fn current_frame_profile_coordinator_noops_for_an_equivalent_partial_overr
                 model_id: Some("gpt-5.5".to_string()),
                 agent_id: None,
                 thinking_level: Some(agentdash_domain::common::ThinkingLevel::Minimal),
-                permission_policy: None,
                 system_prompt: None,
             }),
         })

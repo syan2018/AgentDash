@@ -85,7 +85,6 @@ export interface TaskSessionExecutorSummary {
   agent_id?: string | null;
   /** 推理级别（替代旧的 reasoning_id） */
   thinking_level?: ThinkingLevel | null;
-  permission_policy?: string | null;
   preset_name?: string | null;
   source: string;
   resolution_error?: string | null;

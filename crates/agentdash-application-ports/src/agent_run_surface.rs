@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use agentdash_agent_runtime_contract::PresentationThreadId;
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
@@ -230,11 +230,6 @@ impl AgentRunEffectiveCapabilityRequest {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AgentRunGrantProjection {
-    pub admitted_tools: BTreeMap<String, BTreeSet<String>>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunEffectiveCapabilityView {
     pub target: AgentFrameRuntimeTarget,
@@ -243,7 +238,6 @@ pub struct AgentRunEffectiveCapabilityView {
     pub vfs_surface: Vfs,
     pub mcp_surface: Vec<RuntimeMcpServer>,
     pub visible_workspace_module_refs: Vec<String>,
-    pub grant_projection: AgentRunGrantProjection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

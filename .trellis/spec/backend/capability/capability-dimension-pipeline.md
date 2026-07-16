@@ -14,7 +14,7 @@ Capability 维度管线把能力系统收束为稳定主干和可注册维度模
 | Projection | dimension-specific projection | connector、UI、model context 消费的闭包后输出 |
 | Dimension module | `CapabilityDimensionModule` | 一个能力维度的 declaration/effect validation、typed decode、replay、projection normalize 单元 |
 | Accumulation policy | `AccumulationPolicy` | 维度声明其更新积累规则：`Replace` / `Accumulate` / `Ephemeral` |
-| Artifact source | `CapabilityArtifactSource` | 来源标识：`preset` / `workflow` / `permission_grant` |
+| Artifact source | `CapabilityArtifactSource` | 来源标识，例如 `preset` / `workflow` / `project` |
 
 Record envelope:
 

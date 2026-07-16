@@ -106,7 +106,6 @@ impl RuntimeVfsPathPattern {
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeVfsAccessSource {
     ProjectPreset,
-    PermissionGrant,
     SystemRuntimeProjection,
 }
 

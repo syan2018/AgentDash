@@ -36,7 +36,6 @@ use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::llm_provider::{LlmProviderCredentialRepository, LlmProviderRepository};
 use agentdash_domain::mcp_preset::McpPresetRepository;
-use agentdash_domain::permission::PermissionGrantRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::project_vfs_mount::ProjectVfsMountRepository;
 use agentdash_domain::routine::{RoutineExecutionRepository, RoutineRepository};
@@ -116,7 +115,6 @@ pub struct RepositorySet {
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,
-    pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
     pub project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 }
 

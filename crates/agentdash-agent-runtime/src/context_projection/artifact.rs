@@ -20,7 +20,7 @@ impl RuntimeSurfacePresentationPlan {
     pub fn for_adoption(
         previous: &crate::AgentSurfaceSnapshot,
         target: &crate::CompiledBusinessAgentSurface,
-    ) -> Result<Self, RuntimeSurfacePresentationPlanError> {
+    ) -> Self {
         let delta = super::NormalizedContextSurfaceDelta::between(
             &previous.normalized_context_surface,
             &target.snapshot.normalized_context_surface,
@@ -28,11 +28,6 @@ impl RuntimeSurfacePresentationPlan {
         let adoption_frames = if delta.is_empty() {
             Vec::new()
         } else {
-            let phase_node = target
-                .presentation
-                .transition_phase_node
-                .as_deref()
-                .ok_or(RuntimeSurfacePresentationPlanError::MissingTransitionPhase)?;
             let recorded_at_ms = target
                 .presentation
                 .bootstrap_frames
@@ -51,19 +46,19 @@ impl RuntimeSurfacePresentationPlan {
                     source_frame_revision: target.presentation.source_frame_revision,
                     recorded_at_ms,
                 },
-                phase_node,
+                target.presentation.transition_phase_node.as_deref(),
                 "live",
             )
         };
         let digest = presentation_digest(&adoption_frames);
-        Ok(Self {
+        Self {
             digest,
             source_frame_id: target.presentation.source_frame_id.clone(),
             source_frame_revision: target.presentation.source_frame_revision,
             transition_phase_node: target.presentation.transition_phase_node.clone(),
             bootstrap_frames: Vec::new(),
             adoption_frames,
-        })
+        }
     }
 
     /// Materializes the adoption half of this compiled plan into canonical Runtime presentation.
@@ -108,18 +103,12 @@ impl RuntimeSurfacePresentationPlan {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum RuntimeSurfacePresentationPlanError {
-    #[error("changed surface adoption requires workflow transition phase provenance")]
-    MissingTransitionPhase,
-}
-
 pub(super) fn render_tool_schema_delta(
-    phase_node: &str,
+    phase_node: Option<&str>,
     tools: &[agentdash_agent_protocol::RuntimeToolSchemaEntry],
 ) -> String {
     let mut sections = vec![
-        format!("## Tool Schema Delta — Step Transition: {phase_node}"),
+        super::dimension::surface_update_heading("Tool Schema Delta", phase_node),
         "以下只列出本次 capability state delta 真正新增给 Agent 的工具 schema；provider 的完整工具集合以实际 tool list 为准。"
             .to_string(),
         "### Added / Restored Tool Schemas".to_string(),

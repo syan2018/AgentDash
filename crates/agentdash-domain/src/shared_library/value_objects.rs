@@ -304,8 +304,6 @@ pub struct AgentTemplateConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capability_directives: Vec<ToolCapabilityDirective>,
@@ -405,9 +403,6 @@ pub struct ProjectAgentConfigOverride {
     pub override_thinking_level: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
-    pub override_permission_policy: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
     pub override_system_prompt: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,

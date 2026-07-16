@@ -343,7 +343,6 @@ fn effective_executor_config_to_contract(
         model_id: config.model_id,
         agent_id: config.agent_id,
         thinking_level: config.thinking_level,
-        permission_policy: config.permission_policy,
         source: match config.source {
             app_agent_run::ConversationModelConfigSourceModel::ProjectAgentPreset => {
                 ConversationModelConfigSource::ProjectAgentPreset

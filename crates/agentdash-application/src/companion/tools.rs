@@ -1933,8 +1933,8 @@ impl CompanionRequestTool {
         }
     }
 
-    /// target=platform：平台 broker 入口。授权类请求必须接入 PermissionGrantService
-    /// 与 capability runtime broker 后才能处理，不能降级成人类 companion request。
+    /// target=platform：平台 broker 入口。运行中能力配置变更必须由 AgentRun
+    /// 统一处理，不能降级成人类 companion request。
     async fn execute_platform_request(
         &self,
         _wait: bool,
@@ -2718,7 +2718,7 @@ fn companion_response_payload_schema(_: &mut schemars::SchemaGenerator) -> schem
 
 fn platform_capability_grant_missing_broker_error() -> AgentToolError {
     AgentToolError::ExecutionFailed(
-        "target=platform payload.type=`capability_grant_request` 暂不支持：缺少 platform permission grant broker，当前 companion context 无法提供 PermissionGrantService::request 所需的 agent_auto_grantable / lifecycle_requestable policy inputs，也没有 live runtime capability update handoff。参见 ARCH-010 完成 broker 闭环后再启用。"
+        "target=platform payload.type=`capability_grant_request` 暂不支持：运行中能力配置变更尚未接入 AgentRun 统一入口；动态工具审批继续由 RuntimeInteraction 承载。"
             .to_string(),
     )
 }
@@ -3525,11 +3525,8 @@ mod companion_tests {
         match error {
             agentdash_spi::AgentToolError::ExecutionFailed(message) => {
                 assert!(message.contains("capability_grant_request"));
-                assert!(message.contains("platform permission grant broker"));
-                assert!(message.contains("PermissionGrantService::request"));
-                assert!(message.contains("agent_auto_grantable"));
-                assert!(message.contains("lifecycle_requestable"));
-                assert!(message.contains("ARCH-010"));
+                assert!(message.contains("AgentRun"));
+                assert!(message.contains("RuntimeInteraction"));
             }
             other => panic!("expected ExecutionFailed, got {other:?}"),
         }

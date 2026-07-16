@@ -422,11 +422,17 @@ impl SourceCoordinateMap {
                 }
             }
             "item/permissions/requestApproval" => {
-                agentdash_agent_runtime_contract::RuntimeInteractionRequest::PermissionApproval {
-                    params: strict_interaction_params::<codex::PermissionsRequestApprovalParams, _>(
-                        request.params.clone(),
-                    )?,
-                }
+                let params: codex::PermissionsRequestApprovalParams =
+                    serde_json::from_value(request.params.clone())
+                        .map_err(|error| MappingError::InvalidItemPayload(error.to_string()))?;
+                agentdash_agent_runtime_contract::RuntimeInteractionRequest::workspace_permission_approval(
+                    params.item_id,
+                    params.cwd.display().to_string(),
+                    serde_json::to_value(params.permissions)
+                        .map_err(|error| MappingError::InvalidItemPayload(error.to_string()))?,
+                    params.reason,
+                    params.started_at_ms,
+                )
             }
             "item/tool/requestUserInput" => {
                 agentdash_agent_runtime_contract::RuntimeInteractionRequest::UserInputRequest {

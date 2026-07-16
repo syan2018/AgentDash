@@ -1,5 +1,4 @@
 import { api } from "../api/client";
-import type { PermissionPolicy } from "../features/executor-selector/model/types";
 import type { ProjectAgentExecutor } from "../generated/project-agent-contracts";
 import type { CompanionGateRespondResponse } from "../generated/companion-contracts";
 import {
@@ -9,8 +8,6 @@ import {
 } from "./agentRunRuntime";
 
 export type ExecutorProfile = string;
-
-export type { PermissionPolicy };
 
 export type ExecutorConfig = ProjectAgentExecutor;
 

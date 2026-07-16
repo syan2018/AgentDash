@@ -55,12 +55,6 @@ pub enum RuntimeSurfaceUpdateRequest {
         canvas_mount_id: String,
         reason: CanvasVisibilityReason,
     },
-    PermissionGrantApplied {
-        grant_id: Uuid,
-    },
-    PermissionGrantRevoked {
-        grant_id: Uuid,
-    },
     McpPresetChanged {
         preset_key: String,
     },
@@ -88,9 +82,6 @@ impl RuntimeSurfaceUpdateRequest {
             Self::CanvasBindingChanged { .. } | Self::CanvasVisibilityRequested { .. } => {
                 RuntimeSurfaceKind::Canvas
             }
-            Self::PermissionGrantApplied { .. } | Self::PermissionGrantRevoked { .. } => {
-                RuntimeSurfaceKind::Permission
-            }
             Self::McpPresetChanged { .. } => RuntimeSurfaceKind::Mcp,
             Self::ProjectVfsMountChanged { .. } => RuntimeSurfaceKind::Vfs,
             Self::WorkspaceModuleVisibilityChanged { .. } => RuntimeSurfaceKind::WorkspaceModule,
@@ -110,7 +101,6 @@ pub enum CanvasVisibilityReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeSurfaceKind {
     Canvas,
-    Permission,
     Mcp,
     Vfs,
     WorkspaceModule,

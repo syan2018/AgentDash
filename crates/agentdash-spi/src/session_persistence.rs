@@ -125,12 +125,6 @@ impl CapabilityArtifactSource {
         }
     }
 
-    pub fn permission_grant() -> Self {
-        Self {
-            kind: "permission_grant".to_string(),
-        }
-    }
-
     pub fn preset() -> Self {
         Self {
             kind: "preset".to_string(),

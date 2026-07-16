@@ -183,6 +183,7 @@ impl ToolBrokerRuntimeJournal for RecordingJournal {
     async fn request_tool_approval(
         &self,
         _invocation: &ToolBrokerInvocation,
+        _tool: &ToolContribution,
         _interaction_id: &RuntimeInteractionId,
         _reason: &str,
     ) -> Result<(), ToolBrokerError> {

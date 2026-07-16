@@ -22,12 +22,10 @@ describe("ExecutorSelector", () => {
         providerId=""
         modelId=""
         thinkingLevel=""
-        permissionPolicy=""
         onExecutorChange={vi.fn()}
         onProviderIdChange={vi.fn()}
         onModelIdChange={vi.fn()}
         onThinkingLevelChange={vi.fn()}
-        onPermissionPolicyChange={vi.fn()}
         onReset={vi.fn()}
         onRefetch={vi.fn()}
         defaultExpanded
@@ -55,12 +53,10 @@ describe("ExecutorSelector", () => {
         providerId=""
         modelId=""
         thinkingLevel=""
-        permissionPolicy=""
         onExecutorChange={vi.fn()}
         onProviderIdChange={vi.fn()}
         onModelIdChange={vi.fn()}
         onThinkingLevelChange={vi.fn()}
-        onPermissionPolicyChange={vi.fn()}
         onReset={vi.fn()}
         onRefetch={vi.fn()}
         defaultExpanded

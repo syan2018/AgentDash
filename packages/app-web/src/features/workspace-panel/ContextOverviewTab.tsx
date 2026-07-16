@@ -474,7 +474,6 @@ function AgentSummaryCard({
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
             {executor.preset_name && <span>预设：{executor.preset_name}</span>}
             {executor.model_id && <span>model：{executor.model_id}</span>}
-            {executor.permission_policy && <span>权限：{executor.permission_policy}</span>}
           </div>
           {executor.resolution_error && (
             <p className="mt-2 text-[11px] text-destructive">{executor.resolution_error}</p>

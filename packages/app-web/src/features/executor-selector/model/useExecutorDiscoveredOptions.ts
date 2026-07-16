@@ -16,7 +16,6 @@ const INITIAL_STATE: ExecutorDiscoveryStreamState = {
       models: [],
       default_model: undefined,
       agents: [],
-      permissions: [],
     },
     slash_commands: [],
     loading_models: true,

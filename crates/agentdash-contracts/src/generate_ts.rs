@@ -137,12 +137,6 @@ use agentdash_contracts::mcp_preset::{
     McpPresetResponse, McpProbeTargetDto, ProbeMcpPresetRequest, ProbeMcpPresetResponse,
     UpdateMcpPresetRequest,
 };
-use agentdash_contracts::permission::{
-    ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
-    PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PermissionGrantVfsAccessRuleDto,
-    PermissionGrantVfsOperationDto, PermissionGrantVfsPathScopeDto, PolicyDecisionDto,
-    PolicyOutcomeDto, ScopeEscalationIntentDto,
-};
 use agentdash_contracts::project::{
     AgentPreset, DeletedProjectSubjectGrantResponse, ProjectAccessSummaryResponse, ProjectConfig,
     ProjectControlPlaneProjectionChanged, ProjectDetailResponse, ProjectEventStreamEnvelope,
@@ -151,11 +145,11 @@ use agentdash_contracts::project::{
     SchedulingConfig,
 };
 use agentdash_contracts::project_agent::{
-    AgentRunModelSelectionRequest, AgentRunRuntimeOptionsRequest, CreateProjectAgentRequest,
-    CreateProjectAgentRunRequest, ExecutionProfileAgentDto, ExecutionProfileDiscoveryResponse,
-    ExecutionProfileDto, ExecutionProfileModelDto, ExecutionProfileModelSelectorDto,
-    ExecutionProfileOptionsDto, ExecutionProfileProviderDto, ExecutionProfileSlashCommandDto,
-    ProjectAgent, ProjectAgentExecutor, ProjectAgentRunStartResult, ProjectAgentSummary,
+    AgentRunModelSelectionRequest, CreateProjectAgentRequest, CreateProjectAgentRunRequest,
+    ExecutionProfileAgentDto, ExecutionProfileDiscoveryResponse, ExecutionProfileDto,
+    ExecutionProfileModelDto, ExecutionProfileModelSelectorDto, ExecutionProfileOptionsDto,
+    ExecutionProfileProviderDto, ExecutionProfileSlashCommandDto, ProjectAgent,
+    ProjectAgentExecutor, ProjectAgentRunStartResult, ProjectAgentSummary,
     UpdateProjectAgentRequest,
 };
 use agentdash_contracts::routine::{
@@ -379,7 +373,6 @@ fn main() {
             export_all::<ExecutionProfileOptionsDto>(dir);
             export_all::<ProjectAgentSummary>(dir);
             export_all::<AgentRunModelSelectionRequest>(dir);
-            export_all::<AgentRunRuntimeOptionsRequest>(dir);
             export_all::<CreateProjectAgentRunRequest>(dir);
             export_all::<ProjectAgentRunStartResult>(dir);
             export_all::<CreateProjectAgentRequest>(dir);
@@ -687,27 +680,6 @@ fn main() {
             export_all::<CodexOAuthFlowStatusDto>(dir);
             export_all::<StartCodexOAuthResponse>(dir);
             export_all::<CodexOAuthStatusResponse>(dir);
-        },
-    );
-
-    // --- permission-contracts.ts ---
-    emit_domain(
-        &generated_dir,
-        "permission-contracts.ts",
-        &mut upstream,
-        check,
-        |dir| {
-            export_all::<PermissionGrantScopeDto>(dir);
-            export_all::<PermissionGrantStatusDto>(dir);
-            export_all::<PermissionGrantStatusGroupDto>(dir);
-            export_all::<PolicyOutcomeDto>(dir);
-            export_all::<PolicyDecisionDto>(dir);
-            export_all::<ScopeEscalationIntentDto>(dir);
-            export_all::<PermissionGrantVfsOperationDto>(dir);
-            export_all::<PermissionGrantVfsPathScopeDto>(dir);
-            export_all::<PermissionGrantVfsAccessRuleDto>(dir);
-            export_all::<ListPermissionGrantsQuery>(dir);
-            export_all::<PermissionGrantResponse>(dir);
         },
     );
 

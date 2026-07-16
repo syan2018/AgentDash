@@ -571,13 +571,6 @@ pub struct WorkflowContribution {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PermissionContribution {
-    pub meta: ContributionMeta,
-    pub capability_paths: BTreeSet<String>,
-    pub policy_key: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookDefinition {
     pub meta: ContributionMeta,
     pub definition_id: HookDefinitionId,
@@ -618,7 +611,6 @@ pub enum CapabilityContribution {
     Mcp(McpContribution),
     Skill(SkillContribution),
     Workflow(WorkflowContribution),
-    Permission(PermissionContribution),
     Hook(HookDefinition),
 }
 
@@ -631,7 +623,6 @@ impl CapabilityContribution {
             Self::Mcp(value) => &value.meta,
             Self::Skill(value) => &value.meta,
             Self::Workflow(value) => &value.meta,
-            Self::Permission(value) => &value.meta,
             Self::Hook(value) => &value.meta,
         }
     }
@@ -688,7 +679,6 @@ pub struct AgentSurfaceSnapshot {
     pub hook_plan: HookPlanSnapshot,
     pub skills: Vec<SkillContribution>,
     pub workflows: Vec<WorkflowContribution>,
-    pub permissions: Vec<PermissionContribution>,
     #[serde(default)]
     pub normalized_context_surface: NormalizedContextSurfaceState,
 }
@@ -947,7 +937,6 @@ impl AgentSurfaceCompiler {
         let mut mcp_servers = Vec::new();
         let mut skills = Vec::new();
         let mut workflows = Vec::new();
-        let mut permissions = Vec::new();
         let mut hooks = Vec::new();
         let mut hook_by_id = BTreeMap::<HookDefinitionId, HookDefinition>::new();
         for contribution in contributions {
@@ -958,7 +947,6 @@ impl AgentSurfaceCompiler {
                 CapabilityContribution::Mcp(value) => mcp_servers.push(value),
                 CapabilityContribution::Skill(value) => skills.push(value),
                 CapabilityContribution::Workflow(value) => workflows.push(value),
-                CapabilityContribution::Permission(value) => permissions.push(value),
                 CapabilityContribution::Hook(value) => match hook_by_id.get(&value.definition_id) {
                     Some(existing) if existing != &value => {
                         return Err(SurfaceCompileError::ConflictingHookDefinition {
@@ -1037,7 +1025,6 @@ impl AgentSurfaceCompiler {
             &hook_plan,
             &skills,
             &workflows,
-            &permissions,
             &input.normalized_context_surface,
         ))?;
         let surface_digest = SurfaceDigest::new(surface_digest_value)
@@ -1052,7 +1039,6 @@ impl AgentSurfaceCompiler {
             hook_plan,
             skills,
             workflows,
-            permissions,
             normalized_context_surface: input.normalized_context_surface,
         })
     }
@@ -1264,15 +1250,6 @@ impl AgentSurfaceSnapshot {
             route: SurfaceDeliveryRoute::HostPolicy,
             strength: SemanticStrength::ExactDurableBoundary,
         }));
-        bound.extend(
-            self.permissions
-                .iter()
-                .map(|value| BoundSurfaceContribution {
-                    key: value.meta.key.clone(),
-                    route: SurfaceDeliveryRoute::HostPolicy,
-                    strength: SemanticStrength::ExactSynchronous,
-                }),
-        );
         bound.sort_by(|left, right| left.key.cmp(&right.key));
         let hook_plan = self.hook_plan.bind_runtime_plan(thread_id, hook_routes)?;
         let digest = SurfaceDigest::new(digest_json(&(&self.digest, &bound, &hook_plan))?)
@@ -1430,19 +1407,6 @@ fn validate_contribution(contribution: &CapabilityContribution) -> Result<(), Su
             Err(SurfaceCompileError::EmptyField {
                 key: meta.key.clone(),
                 field: "workflow_key",
-            })
-        }
-        CapabilityContribution::Permission(value)
-            if value.policy_key.trim().is_empty()
-                || value.capability_paths.is_empty()
-                || value
-                    .capability_paths
-                    .iter()
-                    .any(|path| path.trim().is_empty()) =>
-        {
-            Err(SurfaceCompileError::EmptyField {
-                key: meta.key.clone(),
-                field: "policy_key or capability_paths",
             })
         }
         CapabilityContribution::Hook(value) if value.actions.is_empty() => {

@@ -27,7 +27,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "llm_providers",
     "llm_provider_user_credentials",
     "mcp_presets",
-    "permission_grants",
     "project_agents",
     "project_backend_access",
     "project_extension_installations",

@@ -114,14 +114,6 @@ impl AgentRunDeleteStore for PostgresAgentRunDeleteStore {
 
         if !runtime_thread_ids.is_empty() {
             sqlx::query(
-                "DELETE FROM permission_grants WHERE source_runtime_operation_id IN \
-                 (SELECT id FROM agent_runtime_operation WHERE thread_id=ANY($1))",
-            )
-            .bind(&runtime_thread_ids)
-            .execute(&mut *tx)
-            .await
-            .map_err(persistence)?;
-            sqlx::query(
                 "UPDATE agent_runtime_thread SET active_checkpoint_id=NULL WHERE id=ANY($1)",
             )
             .bind(&runtime_thread_ids)

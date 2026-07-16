@@ -31,7 +31,7 @@ Agent 运转只需要三个业务参数：
 ## AgentConfig 关键字段
 
 定义在 `agentdash-domain/src/common/agent_config.rs`：
-`executor`、`provider_id`、`model_id`、`agent_id`、`thinking_level`、`permission_policy`、`system_prompt`、`system_prompt_mode`
+`executor`、`provider_id`、`model_id`、`agent_id`、`thinking_level`、`system_prompt`、`system_prompt_mode`
 
 能力配置由 `AgentPresetConfig.capability_directives` 表达。
 

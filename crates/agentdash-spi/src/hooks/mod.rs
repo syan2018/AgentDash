@@ -121,8 +121,6 @@ pub struct SessionSnapshotMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connector_id: Option<String>,

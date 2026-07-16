@@ -28,8 +28,6 @@ export interface UseExecutorDiscoveryResult {
 
 // ===================== discovered-options =====================
 
-export type PermissionPolicy = "AUTO" | "SUPERVISED" | "PLAN";
-
 export type ModelProvider = ExecutionProfileProviderDto;
 
 export type ModelInfo = ExecutionProfileModelDto;
@@ -41,7 +39,6 @@ export interface ModelSelectorConfig {
   models: ModelInfo[];
   default_model?: string | null;
   agents: AgentInfo[];
-  permissions: PermissionPolicy[];
 }
 
 export type ExecutorDiscoveredOptions = ExecutionProfileOptionsDto;
@@ -68,7 +65,6 @@ export interface PersistedExecutorConfig {
   modelId?: string;
   /** 推理级别，替代旧的 reasoningId 字段（v2 格式） */
   thinkingLevel?: string;
-  permissionPolicy?: string;
 }
 
 /** 最近使用记录 */
@@ -89,13 +85,11 @@ export interface UseExecutorConfigResult {
   modelId: string;
   /** 推理级别，替代旧的 reasoningId 字段 */
   thinkingLevel: string;
-  permissionPolicy: string;
   recentEntries: RecentExecutorEntry[];
   setExecutor: (executor: string) => void;
   setProviderId: (providerId: string) => void;
   setModelId: (modelId: string) => void;
   setThinkingLevel: (thinkingLevel: string) => void;
-  setPermissionPolicy: (policy: string) => void;
   recordUsage: () => void;
   reset: () => void;
   /**

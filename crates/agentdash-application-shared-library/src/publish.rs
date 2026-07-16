@@ -372,7 +372,6 @@ async fn publish_agent_payload(
         model_id: merged.model_id,
         agent_id: merged.agent_id,
         thinking_level: merged.thinking_level,
-        permission_policy: merged.permission_policy,
         system_prompt: merged.system_prompt,
         capability_directives: merged.capability_directives.unwrap_or_default(),
         mcp_slots: vec![],

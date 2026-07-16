@@ -4,6 +4,7 @@ pub mod agent_run_control_effect;
 pub mod agent_run_delete;
 pub mod agent_run_fork;
 pub mod agent_run_message_submission;
+pub mod agent_run_permission;
 pub mod agent_run_runtime;
 pub mod agent_run_surface;
 pub mod backend_transport;

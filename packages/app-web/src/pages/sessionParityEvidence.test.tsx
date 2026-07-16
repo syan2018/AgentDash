@@ -614,19 +614,23 @@ describe("W11 Main frontend parity evidence", () => {
       .toEqual(fixture.expected.status_target);
   });
 
-  it("keeps the Main session UI ledger at 95 byte-identical files plus ten explicit seams", () => {
+  it("keeps the Main session UI ledger at 91 byte-identical files plus fourteen explicit seams", () => {
     const currentRoot = resolve(repositoryRoot, "packages/app-web/src/features/session");
     const mainRoot = "D:/Projects/AgentDash-main-reference/packages/app-web/src/features/session";
     expect(existsSync(mainRoot), `Main reference is required at ${mainRoot}`).toBe(true);
     if (!existsSync(mainRoot)) throw new Error(`Main reference is required at ${mainRoot}`);
 
     const allowlistedSeams = [
+      "model/companionRequestViewModel.ts",
       "model/companionSubagentDispatch.ts",
       "model/sessionStreamReducer.test.ts",
       "model/sessionStreamReducer.ts",
       "model/useSessionFeed.test.ts",
       "model/useSessionFeed.ts",
       "model/useSessionStream.ts",
+      "ui/SessionChatView.tsx",
+      "ui/SessionChatViewModel.ts",
+      "ui/SessionChatViewParts.tsx",
       "ui/SessionEntry.tsx",
       "ui/ToolCallCardShell.tsx",
       "ui/bodies/CompanionSubagentDispatchCardBody.tsx",
@@ -645,6 +649,6 @@ describe("W11 Main frontend parity evidence", () => {
     expect(mainFiles).toHaveLength(105);
     expect(currentFiles).toHaveLength(105);
     expect([...differing].sort()).toEqual([...allowlistedSeams].sort());
-    expect(mainFiles.length - differing.length).toBe(95);
+    expect(mainFiles.length - differing.length).toBe(91);
   });
 });

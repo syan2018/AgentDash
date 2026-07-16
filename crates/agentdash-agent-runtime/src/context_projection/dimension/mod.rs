@@ -21,7 +21,7 @@ pub(super) fn project_all(
     delta: &NormalizedContextSurfaceDelta,
     previous: &NormalizedContextSurfaceState,
     target: &NormalizedContextSurfaceState,
-    phase_node: &str,
+    phase_node: Option<&str>,
 ) -> Vec<ProjectedSurfaceDimension> {
     [
         capability_key::project(delta, target, phase_node),
@@ -36,4 +36,11 @@ pub(super) fn project_all(
     .into_iter()
     .flatten()
     .collect()
+}
+
+pub(super) fn surface_update_heading(title: &str, phase_node: Option<&str>) -> String {
+    match phase_node {
+        Some(phase_node) => format!("## {title} — Step Transition: {phase_node}"),
+        None => format!("## {title} — Runtime Surface Update"),
+    }
 }

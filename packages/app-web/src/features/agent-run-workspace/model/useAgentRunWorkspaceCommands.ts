@@ -186,7 +186,6 @@ function executorConfigToJsonValue(config: ExecutorConfig | undefined): JsonValu
     model_id: config.model_id,
     agent_id: config.agent_id,
     thinking_level: config.thinking_level,
-    permission_policy: config.permission_policy,
   };
 }
 

@@ -5,7 +5,7 @@ use crate::context_projection::surface_state::NormalizedContextSurfaceDelta;
 
 pub(super) fn project(
     delta: &NormalizedContextSurfaceDelta,
-    phase_node: &str,
+    phase_node: Option<&str>,
 ) -> Option<ProjectedSurfaceDimension> {
     let blocked = &delta.excluded_tool_paths.added;
     let unblocked = &delta.excluded_tool_paths.removed;
@@ -18,8 +18,9 @@ pub(super) fn project(
     {
         return None;
     }
-    let mut lines = vec![format!(
-        "## Tool Path Changes — Step Transition: {phase_node}"
+    let mut lines = vec![super::surface_update_heading(
+        "Tool Path Changes",
+        phase_node,
     )];
     append_path_lines(&mut lines, "Blocked tool paths", blocked, "不再暴露");
     append_path_lines(&mut lines, "Unblocked tool paths", unblocked, "重新暴露");

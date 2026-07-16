@@ -47,8 +47,6 @@ pub struct AgentConfigRelay {
     pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
 }
 
 // ── command.cancel ──

@@ -11,6 +11,7 @@ pub mod frame;
 mod journal;
 pub(crate) mod lifecycle_read_model_facade;
 mod message_submission;
+mod permission;
 mod presentation_read_model;
 mod product_command;
 mod project_agent_context;
@@ -66,6 +67,7 @@ pub use message_submission::{
     ProjectAgentRunStartReceiptPort, ProjectAgentRunStartReceiptRequest, SubmitAgentRunMessage,
     project_product_delivery_results, replay_agent_run_message_submission,
 };
+pub use permission::AllowAllAgentRunPermissionFacade;
 pub use runtime_application_presentation::AgentRunRuntimeApplicationPresentationProjector;
 pub use runtime_facade::{
     AcceptAgentRunMessage, AgentRunCommandGuard, AgentRunMessageAcceptedDelivery,

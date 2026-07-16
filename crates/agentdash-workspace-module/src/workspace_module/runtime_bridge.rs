@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
-use agentdash_application_ports::agent_run_surface::{
-    AgentRunEffectiveCapabilityView, AgentRunGrantProjection,
-};
+use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
 use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
 use agentdash_application_runtime_gateway::{
     ExtensionInvocationWorkspaceContext, RuntimeGateway, resolve_extension_invocation_workspace,
@@ -200,7 +198,6 @@ pub fn effective_capability_view_from_context(
             .unwrap_or_default(),
         mcp_surface: context.session.mcp_servers.clone(),
         visible_workspace_module_refs: owner.visible_workspace_module_refs.clone(),
-        grant_projection: AgentRunGrantProjection::default(),
     })
 }
 
@@ -390,7 +387,7 @@ mod tests {
                 mount_id: "main".to_string(),
                 path_pattern: RuntimeVfsPathPattern::Prefix("docs".to_string()),
                 operations: BTreeSet::from([RuntimeVfsOperation::Read]),
-                source: RuntimeVfsAccessSource::PermissionGrant,
+                source: RuntimeVfsAccessSource::ProjectPreset,
             }],
         }
     }

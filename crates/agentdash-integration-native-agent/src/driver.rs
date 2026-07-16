@@ -1810,8 +1810,10 @@ impl NativeEventMapper {
             | AgentEvent::ContextCompactionFailed { .. } => {}
             AgentEvent::ToolExecutionPendingApproval {
                 tool_call_id,
+                tool_name,
+                args,
                 reason,
-                ..
+                details,
             } => {
                 let runtime_item_id: RuntimeItemId = parsed_id(tool_call_id.clone())?;
                 let source_item_id: DriverItemId = parsed_id(tool_call_id.clone())?;
@@ -1821,9 +1823,13 @@ impl NativeEventMapper {
                         turn_id: self.runtime_turn_id.clone(),
                         item_id: Some(runtime_item_id.clone()),
                         interaction_id: parsed_id(tool_call_id)?,
-                        request: agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_permission_approval(
-                            "native-thread", self.runtime_turn_id.as_str(),
-                            runtime_item_id.as_str(), reason,
+                        request: agentdash_agent_runtime_contract::RuntimeInteractionRequest::tool_permission_approval(
+                            runtime_item_id.as_str(),
+                            None,
+                            tool_name,
+                            args,
+                            details,
+                            reason,
                         ),
                     },
                 ));

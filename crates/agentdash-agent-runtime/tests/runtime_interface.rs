@@ -718,7 +718,7 @@ fn surface_adoption_plan() -> RuntimeSurfacePresentationPlan {
     };
     let previous = compile(1, previous_state);
     let target = compile(2, target_state);
-    RuntimeSurfacePresentationPlan::for_adoption(&previous.snapshot, &target).unwrap()
+    RuntimeSurfacePresentationPlan::for_adoption(&previous.snapshot, &target)
 }
 
 fn terminal_effect_binding() -> RuntimeTerminalHookEffectBinding {

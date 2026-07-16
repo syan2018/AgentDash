@@ -18,7 +18,6 @@ pub mod llm_providers;
 pub mod marketplace;
 pub mod mcp_presets;
 pub mod me;
-pub mod permission_grants;
 pub mod project_agents;
 pub mod project_extensions;
 pub mod project_vfs_mounts;
@@ -77,7 +76,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(identity_directory::router())
         .merge(projects::router())
         .merge(project_vfs_mounts::router())
-        .merge(permission_grants::router())
         .merge(llm_providers::router())
         .merge(project_agents::router())
         .merge(routines::router())

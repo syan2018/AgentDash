@@ -99,11 +99,38 @@ pub enum RuntimeInteractionKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimePermissionApprovalRequest {
+    pub item_id: String,
+    pub target: RuntimePermissionApprovalTarget,
+    pub reason: Option<String>,
+    pub started_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuntimePermissionApprovalTarget {
+    ToolInvocation {
+        capability_key: Option<String>,
+        tool_name: String,
+        arguments: serde_json::Value,
+        details: Option<serde_json::Value>,
+    },
+    Hook {
+        hook_run_id: String,
+    },
+    WorkspacePermissions {
+        cwd: String,
+        permissions: serde_json::Value,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeInteractionRequest {
     CommandApproval { params: Box<agentdash_agent_protocol::generated::codex_v2::command_execution_request_approval_params::CommandExecutionRequestApprovalParams> },
     FileChangeApproval { params: Box<agentdash_agent_protocol::generated::codex_v2::file_change_request_approval_params::FileChangeRequestApprovalParams> },
-    PermissionApproval { params: Box<agentdash_agent_protocol::generated::codex_v2::permissions_request_approval_params::PermissionsRequestApprovalParams> },
+    PermissionApproval { params: Box<RuntimePermissionApprovalRequest> },
     UserInputRequest { params: Box<agentdash_agent_protocol::generated::codex_v2::tool_request_user_input_params::ToolRequestUserInputParams> },
     McpElicitation { params: Box<agentdash_agent_protocol::generated::codex_v2::mcp_server_elicitation_request_params::McpServerElicitationRequestParams> },
     DynamicToolExecution { params: Box<agentdash_agent_protocol::generated::codex_v2::dynamic_tool_call_params::DynamicToolCallParams> },
@@ -121,24 +148,54 @@ impl RuntimeInteractionRequest {
         }
     }
 
-    pub fn temporary_permission_approval(
-        thread_id: &str,
-        turn_id: &str,
+    pub fn tool_permission_approval(
         item_id: &str,
+        capability_key: Option<String>,
+        tool_name: String,
+        arguments: serde_json::Value,
+        details: Option<serde_json::Value>,
         reason: String,
     ) -> Self {
-        let cwd = std::env::current_dir()
-            .expect("runtime cwd")
-            .to_string_lossy()
-            .into_owned();
         Self::PermissionApproval {
-            params: Box::new(
-                serde_json::from_value(serde_json::json!({
-                    "cwd": cwd, "itemId": item_id, "permissions": {}, "reason": reason,
-                    "startedAtMs": 0, "threadId": thread_id, "turnId": turn_id
-                }))
-                .expect("temporary owned permission approval"),
-            ),
+            params: Box::new(RuntimePermissionApprovalRequest {
+                item_id: item_id.to_string(),
+                target: RuntimePermissionApprovalTarget::ToolInvocation {
+                    capability_key,
+                    tool_name,
+                    arguments,
+                    details,
+                },
+                reason: Some(reason),
+                started_at_ms: current_epoch_millis(),
+            }),
+        }
+    }
+
+    pub fn hook_approval(item_id: &str, hook_run_id: String, reason: String) -> Self {
+        Self::PermissionApproval {
+            params: Box::new(RuntimePermissionApprovalRequest {
+                item_id: item_id.to_string(),
+                target: RuntimePermissionApprovalTarget::Hook { hook_run_id },
+                reason: Some(reason),
+                started_at_ms: current_epoch_millis(),
+            }),
+        }
+    }
+
+    pub fn workspace_permission_approval(
+        item_id: String,
+        cwd: String,
+        permissions: serde_json::Value,
+        reason: Option<String>,
+        started_at_ms: i64,
+    ) -> Self {
+        Self::PermissionApproval {
+            params: Box::new(RuntimePermissionApprovalRequest {
+                item_id,
+                target: RuntimePermissionApprovalTarget::WorkspacePermissions { cwd, permissions },
+                reason,
+                started_at_ms,
+            }),
         }
     }
 
@@ -184,6 +241,14 @@ impl RuntimeInteractionRequest {
             ),
         }
     }
+}
+
+fn current_epoch_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(i64::MAX, |duration| {
+            i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

@@ -256,6 +256,7 @@ pub trait ToolBrokerRuntimeJournal: Send + Sync {
     async fn request_tool_approval(
         &self,
         invocation: &ToolBrokerInvocation,
+        tool: &ToolContribution,
         interaction_id: &RuntimeInteractionId,
         reason: &str,
     ) -> Result<(), ToolBrokerError>;
@@ -451,6 +452,7 @@ where
     async fn request_tool_approval(
         &self,
         invocation: &ToolBrokerInvocation,
+        tool: &ToolContribution,
         interaction_id: &RuntimeInteractionId,
         reason: &str,
     ) -> Result<(), ToolBrokerError> {
@@ -461,10 +463,15 @@ where
                 return Ok(());
             }
             let expected = thread.revision;
-            let request = agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_permission_approval(
-            thread.thread_id.as_str(), invocation.coordinates.turn_id.as_str(),
-            invocation.coordinates.item_id.as_str(), reason.to_string(),
-        );
+            let request =
+                agentdash_agent_runtime_contract::RuntimeInteractionRequest::tool_permission_approval(
+                    invocation.coordinates.item_id.as_str(),
+                    Some(tool.capability_key.clone()),
+                    invocation.tool_name.clone(),
+                    invocation.arguments.clone(),
+                    None,
+                    reason.to_string(),
+                );
             let events = thread
                 .append_events([RuntimeEvent::InteractionRequested {
                     turn_id: invocation.coordinates.turn_id.clone(),
@@ -1107,7 +1114,7 @@ impl PlatformToolBroker {
                         return Err(ToolBrokerError::IdempotencyConflict);
                     }
                     self.journal
-                        .request_tool_approval(&invocation, &interaction_id, &reason)
+                        .request_tool_approval(&invocation, tool, &interaction_id, &reason)
                         .await?;
                     if existing.status == ToolBrokerCallStatus::Accepted {
                         self.repository
@@ -1148,7 +1155,7 @@ impl PlatformToolBroker {
                     return Err(ToolBrokerError::IdempotencyConflict);
                 }
                 self.journal
-                    .request_tool_approval(&invocation, &interaction_id, &reason)
+                    .request_tool_approval(&invocation, tool, &interaction_id, &reason)
                     .await?;
                 if existing.status == ToolBrokerCallStatus::Accepted {
                     self.repository

@@ -3,7 +3,7 @@
   "name": "runtime-surface-provenance-permission-cleanup",
   "title": "清理 Runtime Surface 来源模型并收敛 Permission 架构",
   "description": "修复非 Workflow Runtime Surface adoption 的 provenance 回归，清理独立 PermissionGrant 与 permission_policy 过度实现，保留 AgentRun 唯一权限验证入口并规划未来 LifecycleRun-scoped Grant。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -12,7 +12,7 @@
   "assignee": "cursor-agent",
   "createdAt": "2026-07-16",
   "completedAt": null,
-  "branch": null,
+  "branch": "codex/agent-runtime-architecture-convergence",
   "base_branch": "codex/agent-runtime-architecture-convergence",
   "worktree_path": null,
   "commit": null,
@@ -21,9 +21,9 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "用户要求规划、实施与检查全程使用 Codex 主会话内联完成，不派发 subagent。",
+  "notes": "主会话已完成架构清理、自动化验证与代码提交准备。唯一未执行项是在具备浏览器执行入口和登录态时进行真实 UI Canvas preview 手工验收；当前代码级 Canvas create -> VFS write -> present 与 Managed Runtime continuation 均已通过。",
   "meta": {
-    "execution_mode": "inline",
+    "execution_mode": "coordinated",
     "grant_owner": "lifecycle_run",
     "grant_exposure": "agent_run_only"
   }

@@ -571,8 +571,7 @@ fn compiler_derives_tool_catalog_and_presentation_from_one_input_revision() {
     assert_eq!(artifact.snapshot.tools.tools, vec![tool]);
     assert_eq!(artifact.presentation.source_frame_revision, 7);
     assert_eq!(artifact.presentation.bootstrap_frames[0].created_at_ms, 7);
-    let empty =
-        RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &artifact).unwrap();
+    let empty = RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &artifact);
     assert!(empty.adoption_frames.is_empty());
     let mut target = artifact.clone();
     target.snapshot.revision = SurfaceRevision(8);
@@ -597,8 +596,7 @@ fn compiler_derives_tool_catalog_and_presentation_from_one_input_revision() {
                 context_usage_kind: Some("system_tools".to_string()),
             },
         );
-    let adoption =
-        RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &target).unwrap();
+    let adoption = RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &target);
     assert_eq!(adoption.adoption_frames.len(), 1);
     let added_tools = adoption.adoption_frames[0]
         .sections
@@ -610,7 +608,24 @@ fn compiler_derives_tool_catalog_and_presentation_from_one_input_revision() {
         .expect("newly exposed capability must include its tool schema");
     assert_eq!(added_tools[0].description, "Apply a workspace patch");
     target.presentation.transition_phase_node = None;
-    assert!(RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &target).is_err());
+    let adoption_without_phase =
+        RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &target);
+    let replay_without_phase =
+        RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &target);
+    assert_eq!(adoption_without_phase.adoption_frames.len(), 1);
+    assert_eq!(
+        adoption_without_phase, replay_without_phase,
+        "the same source frame revision must replay the exact presentation plan"
+    );
+    assert_eq!(
+        adoption_without_phase.adoption_frames[0].phase_node, None,
+        "non-Workflow surface changes must not invent Workflow provenance"
+    );
+    assert!(
+        adoption_without_phase.adoption_frames[0]
+            .rendered_text
+            .contains("Runtime Surface Update")
+    );
 }
 
 #[test]
@@ -892,7 +907,7 @@ fn hook_plan_binds_one_compatible_runtime_route() {
             names: ["shell_exec".to_string()].into(),
         },
         handler: HookHandler::Builtin {
-            key: "supervised_tool_gate".to_string(),
+            key: "tool_approval".to_string(),
         },
     })]);
 

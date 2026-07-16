@@ -10,7 +10,7 @@ use crate::context_projection::surface_state::{
 pub(super) fn project(
     delta: &NormalizedContextSurfaceDelta,
     target: &NormalizedContextSurfaceState,
-    phase_node: &str,
+    phase_node: Option<&str>,
 ) -> Option<ProjectedSurfaceDimension> {
     let added_capabilities = delta
         .capability_keys

@@ -885,9 +885,6 @@ pub struct ConversationEffectiveExecutorConfigView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub thinking_level: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub permission_policy: Option<String>,
     pub source: ConversationModelConfigSource,
 }
 

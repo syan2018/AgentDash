@@ -1634,30 +1634,33 @@ mod tests {
     use agentdash_application_ports::agent_run_runtime::{
         AgentRunRuntimeBindingError, AgentRunRuntimeTarget,
     };
-    use agentdash_application_ports::agent_run_surface::AgentRunGrantProjection;
     use agentdash_application_ports::extension_runtime::{
         ExtensionChannelInvokeRequest, ExtensionChannelInvokeResponse,
         ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelTransport,
     };
     use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
     use agentdash_application_vfs::tools::{RuntimeVfsState, SharedRuntimeVfs};
+    use agentdash_application_vfs::{MountOperationContext, MountProvider};
     use agentdash_contracts::workspace_module::{
         WorkspaceModuleStatus, WorkspaceModuleStatusKind, WorkspaceModuleSummary,
     };
     use agentdash_domain::DomainError;
     use agentdash_domain::canvas::{Canvas, CanvasRepository};
     use agentdash_domain::common::Vfs;
-    use agentdash_domain::project::ProjectAuthorizationContext;
+    use agentdash_domain::project::{Project, ProjectAuthorizationContext, ProjectRepository};
     use agentdash_domain::shared_library::{
         ProjectExtensionInstallation, ProjectExtensionInstallationRepository,
     };
     use agentdash_spi::{
         CapabilityState, RuntimeVfsAccessPolicy, ToolCluster, WorkspaceModuleDimension,
     };
+    use agentdash_test_support::workspace_module::MemoryProjectRepository;
     use async_trait::async_trait;
 
     use super::*;
-    use crate::canvas::build_canvas;
+    use crate::canvas::{
+        CanvasFsMountProvider, CanvasMountAccess, build_canvas, build_canvas_mount,
+    };
     use crate::workspace_module::runtime_bridge::{
         SharedWorkspaceModulePresentationAppendHandle, WorkspaceModuleAgentRunBridge,
         WorkspaceModulePresentationAppendPort,
@@ -1793,7 +1796,6 @@ mod tests {
             mcp_surface: Vec::new(),
             capability_state: state,
             visible_workspace_module_refs: Vec::new(),
-            grant_projection: AgentRunGrantProjection::default(),
         }
     }
 
@@ -2360,6 +2362,119 @@ mod tests {
         assert_eq!(control.title, "Dashboard A");
         assert!(control.payload.is_some());
         assert!(control.diagnostics.is_none());
+    }
+
+    #[tokio::test]
+    async fn agent_canvas_flow_creates_writes_and_presents_current_source() {
+        let project = Project::new("Canvas flow".to_string(), "test".to_string());
+        let project_id = project.id;
+        let project_repo = Arc::new(MemoryProjectRepository::default());
+        project_repo.create(&project).await.expect("create project");
+        let project_repo: Arc<dyn ProjectRepository> = project_repo;
+        let installation_repo: Arc<dyn ProjectExtensionInstallationRepository> =
+            Arc::new(EmptyInstallationRepo);
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
+        let canvas_repo_port: Arc<dyn CanvasRepository> = canvas_repo.clone();
+        let current_user =
+            ProjectAuthorizationContext::new("agent-user".to_string(), Vec::new(), true);
+        let visibility_source = WorkspaceModuleVisibilitySource::default()
+            .with_current_user(Some(current_user.clone()))
+            .with_effective_view(effective_view());
+        let operation_runtime_source = WorkspaceModuleOperationRuntimeSource::default();
+        let runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository> =
+            Arc::new(StaticAgentRunRuntimeBindingRepo {
+                binding: runtime_binding("session-canvas-flow", Uuid::new_v4(), Uuid::new_v4()),
+            });
+        let shared_vfs = SharedRuntimeVfs::new(Vfs::default());
+        let bridge_handle = SharedWorkspaceModuleAgentRunBridgeHandle::default();
+        bridge_handle
+            .set(Arc::new(CapturingAgentRunBridge::default()))
+            .await;
+        let presentation_append = Arc::new(CapturingPresentationAppend::default());
+        let presentation_append_handle = SharedWorkspaceModulePresentationAppendHandle::default();
+        presentation_append_handle
+            .set(presentation_append.clone())
+            .await;
+        let runtime_context = WorkspaceModuleRuntimeContext::new(project_id, "session-canvas-flow")
+            .with_vfs(shared_vfs)
+            .with_current_user(Some(current_user))
+            .with_agent_run_bridge(Some(bridge_handle))
+            .with_presentation_append(presentation_append_handle, "tool-call-canvas-flow");
+
+        let created = WorkspaceModuleAgentSurface::execute(
+            WorkspaceModuleAgentSurfaceCommand::Operate(WorkspaceModuleOperateCommand {
+                project_repo: &project_repo,
+                canvas_repo: &canvas_repo_port,
+                project_id,
+                runtime_context: &runtime_context,
+                operation: "canvas.create".to_string(),
+                input: serde_json::json!({
+                    "canvas_mount_id": "cvs-agent-sketch",
+                    "title": "Agent Sketch",
+                    "description": "created by the Agent"
+                }),
+            }),
+        )
+        .await
+        .expect("create and expose canvas");
+        assert!(matches!(
+            created,
+            WorkspaceModuleOperationOutcome::CanvasOperated { .. }
+        ));
+
+        let canvas = canvas_repo
+            .get_by_mount_id(project_id, "cvs-agent-sketch")
+            .await
+            .expect("load canvas")
+            .expect("created canvas");
+        let mount = build_canvas_mount(&canvas, CanvasMountAccess::writable());
+        let provider = CanvasFsMountProvider::new(canvas_repo_port.clone());
+        provider
+            .write_text(
+                &mount,
+                "src/main.tsx",
+                "export default function Sketch(){return <svg><circle cx=\"40\" cy=\"40\" r=\"24\" /></svg>}",
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("write canvas source through VFS provider");
+        let written = canvas_repo
+            .get_by_mount_id(project_id, "cvs-agent-sketch")
+            .await
+            .expect("reload written canvas")
+            .expect("written canvas");
+        assert!(
+            written
+                .files
+                .iter()
+                .any(|file| { file.path == "src/main.tsx" && file.content.contains("<circle") })
+        );
+
+        let presented = WorkspaceModuleAgentSurface::execute(
+            WorkspaceModuleAgentSurfaceCommand::Present(WorkspaceModulePresentCommand {
+                installation_repo: &installation_repo,
+                canvas_repo: &canvas_repo_port,
+                runtime_binding_repo: &runtime_binding_repo,
+                project_id,
+                turn_id: "turn-canvas-flow",
+                visibility_source: &visibility_source,
+                operation_runtime_source: &operation_runtime_source,
+                runtime_context: &runtime_context,
+                module_id: "canvas:cvs-agent-sketch".to_string(),
+                view_key: "preview".to_string(),
+                payload: None,
+            }),
+        )
+        .await
+        .expect("present current canvas");
+        let WorkspaceModuleOperationOutcome::Presented { presentation } = presented else {
+            panic!("expected presented canvas");
+        };
+        assert_eq!(presentation.presentation_uri, "canvas://cvs-agent-sketch");
+        assert_eq!(
+            presentation_append.requests.lock().expect("append").len(),
+            1
+        );
     }
 
     #[tokio::test]

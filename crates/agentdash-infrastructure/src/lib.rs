@@ -41,7 +41,6 @@ pub use persistence::postgres::PostgresLifecycleSubjectAssociationRepository;
 pub use persistence::postgres::PostgresLlmProviderCredentialRepository;
 pub use persistence::postgres::PostgresLlmProviderRepository;
 pub use persistence::postgres::PostgresMcpPresetRepository;
-pub use persistence::postgres::PostgresPermissionGrantRepository;
 pub use persistence::postgres::PostgresProjectAgentRepository;
 pub use persistence::postgres::PostgresProjectBackendAccessRepository;
 pub use persistence::postgres::PostgresProjectExtensionInstallationRepository;

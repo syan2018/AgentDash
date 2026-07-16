@@ -546,9 +546,13 @@ where
             .clone()
             .ok_or(HookRuntimeError::InvalidCorrelation)?;
         let expected = thread.revision;
-        let request = agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_permission_approval(
-            thread.thread_id.as_str(), turn_id.as_str(),
-            run.correlation.item_id.as_ref().map_or("hook", |item| item.as_str()), prompt,
+        let request = agentdash_agent_runtime_contract::RuntimeInteractionRequest::hook_approval(
+            run.correlation
+                .item_id
+                .as_ref()
+                .map_or("hook", |item| item.as_str()),
+            hook_run_id.to_string(),
+            prompt,
         );
         let events = thread.append_events([
             agentdash_agent_runtime_contract::RuntimeEvent::InteractionRequested {

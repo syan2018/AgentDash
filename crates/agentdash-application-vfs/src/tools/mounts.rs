@@ -159,7 +159,7 @@ mod tests {
                 mount_id: "main".to_string(),
                 path_pattern: RuntimeVfsPathPattern::All,
                 operations: BTreeSet::from([RuntimeVfsOperation::Read]),
-                source: RuntimeVfsAccessSource::PermissionGrant,
+                source: RuntimeVfsAccessSource::ProjectPreset,
             }],
         };
         let tool = MountsListTool::new(
@@ -197,7 +197,7 @@ mod tests {
                 mount_id: "main".to_string(),
                 path_pattern: RuntimeVfsPathPattern::Prefix("docs".to_string()),
                 operations: BTreeSet::from([RuntimeVfsOperation::Read]),
-                source: RuntimeVfsAccessSource::PermissionGrant,
+                source: RuntimeVfsAccessSource::ProjectPreset,
             }],
         };
         let tool = MountsListTool::new(

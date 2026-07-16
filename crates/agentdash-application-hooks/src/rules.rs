@@ -489,52 +489,6 @@ mod tests {
     }
 
     #[test]
-    fn before_tool_supervised_policy_requests_approval() {
-        let snapshot = snapshot_with_supervised_policy();
-        let mut resolution = HookResolution::default();
-        let query = HookEvaluationQuery {
-            session_id: snapshot.runtime_adapter_session_id.clone(),
-            trigger: HookTrigger::BeforeTool,
-            turn_id: Some("turn-approval-1".to_string()),
-            tool_name: Some("shell_exec".to_string()),
-            tool_call_id: Some("call-shell-approval".to_string()),
-            subagent_type: None,
-            snapshot: None,
-            payload: Some(serde_json::json!({
-                "args": {
-                    "cwd": ".",
-                    "command": "cargo test"
-                }
-            })),
-            token_stats: None,
-        };
-        let query = HookRuleEvaluationQuery::from_session_query(query);
-
-        let engine = test_script_engine();
-        apply_hook_rules(
-            HookEvaluationContext {
-                snapshot: &snapshot,
-                query: &query,
-            },
-            &mut resolution,
-            &engine,
-        );
-
-        assert_eq!(
-            resolution
-                .approval_request
-                .as_ref()
-                .map(|request| request.reason.as_str()),
-            Some("当前会话使用 SUPERVISED 权限策略，执行 `shell_exec` 前需要用户审批。")
-        );
-        assert!(
-            resolution
-                .matched_rule_keys
-                .contains(&"global_builtin:supervised:ask_tool_approval".to_string())
-        );
-    }
-
-    #[test]
     fn before_subagent_dispatch_inherits_runtime_context() {
         use agentdash_domain::workflow::{
             EffectiveSessionContract, WorkflowHookRuleSpec, WorkflowHookTrigger,

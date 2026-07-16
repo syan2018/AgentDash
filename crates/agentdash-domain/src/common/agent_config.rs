@@ -48,8 +48,6 @@ pub struct AgentPresetConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
@@ -104,7 +102,6 @@ impl AgentPresetConfig {
             model_id,
             agent_id,
             thinking_level,
-            permission_policy,
             system_prompt,
             display_name,
             description,
@@ -131,7 +128,6 @@ impl AgentPresetConfig {
             model_id: self.model_id.clone(),
             agent_id: self.agent_id.clone(),
             thinking_level: self.thinking_level,
-            permission_policy: self.permission_policy.clone(),
             system_prompt: self.system_prompt.clone(),
         }
     }
@@ -225,7 +221,6 @@ struct AgentPresetConfigWire {
     model_id: Option<String>,
     agent_id: Option<String>,
     thinking_level: Option<ThinkingLevel>,
-    permission_policy: Option<String>,
     system_prompt: Option<String>,
     display_name: Option<String>,
     description: Option<String>,
@@ -251,7 +246,6 @@ impl<'de> Deserialize<'de> for AgentPresetConfig {
             model_id: wire.model_id,
             agent_id: wire.agent_id,
             thinking_level: wire.thinking_level,
-            permission_policy: wire.permission_policy,
             system_prompt: wire.system_prompt,
             display_name: wire.display_name,
             description: wire.description,
@@ -295,8 +289,6 @@ pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
 }
 
@@ -310,7 +302,6 @@ impl AgentConfig {
             model_id: None,
             agent_id: None,
             thinking_level: None,
-            permission_policy: None,
             system_prompt: None,
         }
     }

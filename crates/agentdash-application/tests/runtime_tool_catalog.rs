@@ -263,7 +263,6 @@ fn repository_set(pool: sqlx::PgPool) -> RepositorySet {
         routine_repo: Arc::new(PostgresRoutineRepository::new(pool.clone())),
         routine_execution_repo: Arc::new(PostgresRoutineExecutionRepository::new(pool.clone())),
         inline_file_repo,
-        permission_grant_repo: Arc::new(PostgresPermissionGrantRepository::new(pool)),
         project_projection_notifications: None,
     }
 }

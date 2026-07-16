@@ -73,12 +73,6 @@ pub enum RuntimeSurfaceUpdateRequest {
         canvas_mount_id: String,
         reason: CanvasVisibilityReason,
     },
-    PermissionGrantApplied {
-        grant_id: Uuid,
-    },
-    PermissionGrantRevoked {
-        grant_id: Uuid,
-    },
     McpPresetChanged {
         preset_key: String,
     },
@@ -106,9 +100,6 @@ impl RuntimeSurfaceUpdateRequest {
             Self::CanvasBindingChanged { .. } | Self::CanvasVisibilityRequested { .. } => {
                 RuntimeSurfaceKind::Canvas
             }
-            Self::PermissionGrantApplied { .. } | Self::PermissionGrantRevoked { .. } => {
-                RuntimeSurfaceKind::Permission
-            }
             Self::McpPresetChanged { .. } => RuntimeSurfaceKind::Mcp,
             Self::ProjectVfsMountChanged { .. } => RuntimeSurfaceKind::Vfs,
             Self::WorkspaceModuleVisibilityChanged { .. } => RuntimeSurfaceKind::WorkspaceModule,
@@ -128,7 +119,6 @@ pub enum CanvasVisibilityReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeSurfaceKind {
     Canvas,
-    Permission,
     Mcp,
     Vfs,
     WorkspaceModule,
@@ -566,18 +556,6 @@ mod tests {
     }
 
     #[test]
-    fn runtime_update_requests_are_surface_kind_only() {
-        let request = RuntimeSurfaceUpdateRequest::PermissionGrantApplied {
-            grant_id: Uuid::new_v4(),
-        };
-        assert_eq!(request.surface_kind(), RuntimeSurfaceKind::Permission);
-        assert_eq!(
-            AgentRunFrameSurfaceCommand::Update(request).write_role(),
-            AgentFrameWriteRole::RuntimeSurfaceUpdate
-        );
-    }
-
-    #[test]
     fn projection_context_exposes_runtime_update_target_and_identity() {
         let agent_id = Uuid::new_v4();
         let frame = AgentFrame::new_revision(agent_id, 7, "test");
@@ -633,12 +611,7 @@ mod tests {
                 && boundary.primitive == AgentFrameWritePrimitive::PersistedRevisionAdoption
         }));
 
-        let forbidden_prefixes = [
-            "canvas::",
-            "workspace_module::",
-            "permission::",
-            "agentdash-api::",
-        ];
+        let forbidden_prefixes = ["canvas::", "workspace_module::", "agentdash-api::"];
         for boundary in boundaries {
             assert!(
                 !forbidden_prefixes
@@ -669,8 +642,6 @@ mod tests {
             "crates/agentdash-workspace-module/src/canvas/management.rs",
             "crates/agentdash-workspace-module/src/canvas/visibility.rs",
             "crates/agentdash-application/src/canvas/promotion.rs",
-            "crates/agentdash-application/src/permission/service.rs",
-            "crates/agentdash-api/src/routes/permission_grants.rs",
         ] {
             let source = read_workspace_file(path);
             assert!(
@@ -687,8 +658,6 @@ mod tests {
             "crates/agentdash-workspace-module/src/canvas/management.rs",
             "crates/agentdash-workspace-module/src/canvas/visibility.rs",
             "crates/agentdash-application/src/canvas/promotion.rs",
-            "crates/agentdash-application/src/permission/service.rs",
-            "crates/agentdash-api/src/routes/permission_grants.rs",
         ] {
             let source = read_workspace_file(path);
             assert!(

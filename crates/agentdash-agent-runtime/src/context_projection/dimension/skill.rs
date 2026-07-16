@@ -8,7 +8,7 @@ use crate::context_projection::surface_state::{
 pub(super) fn project(
     delta: &NormalizedContextSurfaceDelta,
     target: &NormalizedContextSurfaceState,
-    phase_node: &str,
+    phase_node: Option<&str>,
 ) -> Option<ProjectedSurfaceDimension> {
     if delta.skills.is_empty() {
         return None;
@@ -39,7 +39,7 @@ pub(super) fn project(
         .map(|key| lookup(key))
         .collect::<Vec<_>>();
 
-    let mut lines = vec![format!("## Skill Delta — Step Transition: {phase_node}")];
+    let mut lines = vec![super::surface_update_heading("Skill Delta", phase_node)];
     render_grouped_skill_lines(
         &mut lines,
         "Added Skills",

@@ -1,0 +1,30 @@
+{
+  "id": "runtime-surface-provenance-permission-cleanup",
+  "name": "runtime-surface-provenance-permission-cleanup",
+  "title": "清理 Runtime Surface 来源模型并收敛 Permission 架构",
+  "description": "修复非 Workflow Runtime Surface adoption 的 provenance 回归，清理独立 PermissionGrant 与 permission_policy 过度实现，保留 AgentRun 唯一权限验证入口并规划未来 LifecycleRun-scoped Grant。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-07-16",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/agent-runtime-architecture-convergence",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "用户要求规划、实施与检查全程使用 Codex 主会话内联完成，不派发 subagent。",
+  "meta": {
+    "execution_mode": "inline",
+    "grant_owner": "lifecycle_run",
+    "grant_exposure": "agent_run_only"
+  }
+}

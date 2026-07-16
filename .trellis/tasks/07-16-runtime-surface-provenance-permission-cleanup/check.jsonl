@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "检查所有权限读写是否都收敛到 AgentRun，且没有 Runtime/Integration/LifecycleRunRepository 直连。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "检查无 Workflow phase 的 Surface adoption、ContextFrame identity 与 replay 是否正确。"}
+{"file": ".trellis/spec/backend/agent-runtime-surface-tool-broker.md", "reason": "检查 Tool Broker 校验顺序、单一 permission facade 与 Capability/VFS 独立性。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "检查 RuntimeInteraction approval 未被误删，durable resolve/recovery 语义仍成立。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "检查 candidate/adopted 边界、数据库 migration 与 Runtime recovery。"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "检查没有提前实现 LifecycleRun Grant，也没有恢复独立 Grant 表或 repository。"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "检查 PermissionGrant、permission_policy 与 Surface/VFS/Hook 横向耦合是否完整清理。"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "检查删除 Grant contribution 后 VFS policy、mount/path/operation 约束未被放宽。"}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "检查前端 PermissionGrant 卡片、permission_policy 编辑入口和断裂 API 调用已删除且未破坏 Lifecycle UI。"}

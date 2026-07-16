@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "权限验证与未来 Grant 必须只通过 AgentRun 产品门面暴露，禁止低层直连 LifecycleRun 仓储。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "修正 Surface adoption provenance 与 ContextFrame projection 时遵守 canonical context、identity 和 replay 约束。"}
+{"file": ".trellis/spec/backend/agent-runtime-surface-tool-broker.md", "reason": "收敛 Tool Broker permission seam、调用顺序以及 Capability/VFS/Grant 边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "保留 RuntimeInteraction 动态审批 primitive，并维持 durable lifecycle、幂等与恢复语义。"}
+{"file": ".trellis/spec/backend/agent-runtime-codex-adapter.md", "reason": "将 Codex approval DTO 收敛为 AgentDash-owned canonical request，避免 vendor schema 泄漏。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "处理 Surface candidate/adopted 发布顺序、operation acceptance 和 recovery 时遵守持久化不变量。"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "未来 Grant 归属运行中的 LifecycleRun typed document，并由既有聚合仓储持久化。"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "理解并替换当前 PermissionGrant 独立聚合设计，最终更新为 AgentRun allow-all 验证门面。"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "删除 PermissionGrant VFS contribution 时保持 VFS 独立访问语义与执行顺序。"}

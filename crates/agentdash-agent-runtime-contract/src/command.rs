@@ -43,19 +43,11 @@ pub struct OperationMeta {
     pub actor: RuntimeActor,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeInput {
-    Text {
-        text: String,
-    },
-    Image {
-        mime_type: String,
-        data_url: String,
-    },
-    FileReference {
-        uri: String,
-        media_type: Option<String>,
+    UserInput {
+        block: agentdash_agent_protocol::UserInputBlock,
     },
     Structured {
         schema: String,
@@ -63,7 +55,38 @@ pub enum RuntimeInput {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+impl RuntimeInput {
+    pub fn user_input(block: agentdash_agent_protocol::UserInputBlock) -> Self {
+        Self::UserInput { block }
+    }
+
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::user_input(agentdash_agent_protocol::text_user_input_block(text))
+    }
+
+    pub fn modality(&self) -> crate::InputModality {
+        match self {
+            Self::UserInput { block } => match block {
+                agentdash_agent_protocol::UserInputBlock::Text { .. } => crate::InputModality::Text,
+                agentdash_agent_protocol::UserInputBlock::Image { .. } => {
+                    crate::InputModality::Image
+                }
+                agentdash_agent_protocol::UserInputBlock::LocalImage { .. } => {
+                    crate::InputModality::LocalImage
+                }
+                agentdash_agent_protocol::UserInputBlock::Skill { .. } => {
+                    crate::InputModality::Skill
+                }
+                agentdash_agent_protocol::UserInputBlock::Mention { .. } => {
+                    crate::InputModality::Mention
+                }
+            },
+            Self::Structured { .. } => crate::InputModality::Structured,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InteractionResponse {
     Approved,
@@ -92,7 +115,7 @@ pub enum RuntimeCommandKind {
     SurfaceAdopt,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeCommand {
     ThreadStart {
@@ -240,8 +263,63 @@ pub struct RuntimeEventSubscription {
 mod tests {
     use std::str::FromStr;
 
-    use super::RuntimeCommand;
-    use crate::{PresentationTurnId, RuntimeThreadId};
+    use super::{RuntimeCommand, RuntimeInput};
+    use crate::{InputModality, PresentationTurnId, RuntimeThreadId};
+
+    #[test]
+    fn runtime_user_input_round_trip_preserves_the_complete_codex_shape() {
+        let fixtures = [
+            (
+                serde_json::json!({
+                    "type": "text",
+                    "text": "ask @agent",
+                    "text_elements": [{
+                        "byteRange": { "start": 4, "end": 10 },
+                        "placeholder": null
+                    }]
+                }),
+                InputModality::Text,
+            ),
+            (
+                serde_json::json!({ "type": "image", "url": "https://example.test/absent.png" }),
+                InputModality::Image,
+            ),
+            (
+                serde_json::json!({ "type": "image", "detail": null, "url": "https://example.test/null.png" }),
+                InputModality::Image,
+            ),
+            (
+                serde_json::json!({ "type": "image", "detail": "low", "url": "https://example.test/low.png" }),
+                InputModality::Image,
+            ),
+            (
+                serde_json::json!({ "type": "localImage", "detail": "original", "path": "C:/workspace/image.png" }),
+                InputModality::LocalImage,
+            ),
+            (
+                serde_json::json!({ "type": "skill", "name": "review", "path": "C:/skills/review/SKILL.md" }),
+                InputModality::Skill,
+            ),
+            (
+                serde_json::json!({ "type": "mention", "name": "main.rs", "path": "C:/workspace/src/main.rs" }),
+                InputModality::Mention,
+            ),
+        ];
+
+        for (block_json, modality) in fixtures {
+            let block = serde_json::from_value(block_json.clone()).expect("Codex UserInput");
+            let runtime_input = RuntimeInput::user_input(block);
+            assert_eq!(runtime_input.modality(), modality);
+
+            let wire = serde_json::to_value(&runtime_input).expect("serialize RuntimeInput");
+            assert_eq!(wire["kind"], "user_input");
+            assert_eq!(wire["block"], block_json);
+
+            let decoded: RuntimeInput =
+                serde_json::from_value(wire).expect("deserialize RuntimeInput");
+            assert_eq!(decoded, runtime_input);
+        }
+    }
 
     #[test]
     fn turn_start_preserves_non_empty_presentation_turn_identity() {

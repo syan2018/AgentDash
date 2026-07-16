@@ -578,28 +578,24 @@ fn project_durable_compaction_tail(
 fn compaction_input_message(
     input: &[agentdash_agent_runtime_contract::RuntimeInput],
 ) -> AgentMessage {
-    AgentMessage::user_parts(
-        input
-            .iter()
-            .map(|input| match input {
-                agentdash_agent_runtime_contract::RuntimeInput::Text { text } => {
-                    ContentPart::text(text.clone())
-                }
-                agentdash_agent_runtime_contract::RuntimeInput::Image {
-                    data_url,
-                    mime_type,
-                } => ContentPart::image(mime_type.clone(), data_url.clone()),
-                agentdash_agent_runtime_contract::RuntimeInput::FileReference { uri, .. } => {
-                    ContentPart::text(uri.clone())
-                }
-                agentdash_agent_runtime_contract::RuntimeInput::Structured { schema, value } => {
-                    ContentPart::text(
-                        serde_json::json!({"schema":schema,"value":value}).to_string(),
-                    )
-                }
-            })
-            .collect(),
-    )
+    let mut parts = Vec::new();
+    for input in input {
+        match input {
+            agentdash_agent_runtime_contract::RuntimeInput::UserInput { block } => {
+                parts.extend(
+                    agentdash_agent_protocol::user_input_blocks_to_content_parts(
+                        std::slice::from_ref(block),
+                    ),
+                );
+            }
+            agentdash_agent_runtime_contract::RuntimeInput::Structured { schema, value } => {
+                parts.push(ContentPart::text(
+                    serde_json::json!({"schema":schema,"value":value}).to_string(),
+                ));
+            }
+        }
+    }
+    AgentMessage::user_parts(parts)
 }
 
 fn presentation_source_item_id(event: &BackboneEvent) -> Option<&str> {

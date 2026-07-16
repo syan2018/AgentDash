@@ -1,30 +1,64 @@
-use agentdash_agent_protocol::{AgentDashThreadItem, codex_app_server_protocol as codex};
+use agentdash_agent_protocol::{
+    AgentDashThreadItem, UserInputBlock, codex_app_server_protocol as codex,
+    user_input_blocks_to_content_parts,
+};
 use agentdash_agent_runtime_contract::{
     ContextBlock, DriverError, RuntimeInput, RuntimeItemContent,
 };
 use agentdash_agent_types::{AgentMessage, ContentPart};
 
 pub(crate) fn inputs_to_message(input: Vec<RuntimeInput>) -> Result<AgentMessage, DriverError> {
-    Ok(AgentMessage::user_parts(
-        input
-            .into_iter()
-            .map(|input| {
-                Ok(match input {
-                    RuntimeInput::Text { text } => ContentPart::text(text),
-                    RuntimeInput::Image {
-                        mime_type,
-                        data_url,
-                    } => ContentPart::image(mime_type, data_url),
-                    RuntimeInput::FileReference { .. } | RuntimeInput::Structured { .. } => {
-                        return Err(DriverError::Unsupported {
-                            reason: "native Agent Core accepts text and image input only"
-                                .to_string(),
-                        });
-                    }
-                })
-            })
-            .collect::<Result<Vec<_>, DriverError>>()?,
-    ))
+    validate_inputs(&input)?;
+    let mut user_input = Vec::with_capacity(input.len());
+    for input in input {
+        match input {
+            RuntimeInput::UserInput { block }
+                if matches!(
+                    block,
+                    UserInputBlock::Text { .. } | UserInputBlock::Image { .. }
+                ) =>
+            {
+                user_input.push(block);
+            }
+            RuntimeInput::UserInput { .. } | RuntimeInput::Structured { .. } => {
+                return Err(DriverError::Unsupported {
+                    reason: "native Agent Core accepts Codex text and image input only".to_string(),
+                });
+            }
+        }
+    }
+    let parts = user_input_blocks_to_content_parts(&user_input);
+    if parts.is_empty() {
+        return Err(DriverError::Rejected {
+            reason: "native Agent Core input has no deliverable content".to_string(),
+        });
+    }
+    Ok(AgentMessage::user_parts(parts))
+}
+
+pub(crate) fn validate_inputs(input: &[RuntimeInput]) -> Result<(), DriverError> {
+    let mut has_deliverable_content = false;
+    for input in input {
+        match input {
+            RuntimeInput::UserInput {
+                block: UserInputBlock::Text { text, .. },
+            } => has_deliverable_content |= !text.trim().is_empty(),
+            RuntimeInput::UserInput {
+                block: UserInputBlock::Image { .. },
+            } => has_deliverable_content = true,
+            RuntimeInput::UserInput { .. } | RuntimeInput::Structured { .. } => {
+                return Err(DriverError::Unsupported {
+                    reason: "native Agent Core accepts Codex text and image input only".to_string(),
+                });
+            }
+        }
+    }
+    if !has_deliverable_content {
+        return Err(DriverError::Rejected {
+            reason: "native Agent Core input has no deliverable content".to_string(),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn context_blocks_to_messages(
@@ -49,24 +83,13 @@ fn context_block_to_message(block: &ContextBlock) -> Result<Option<AgentMessage>
         }
         ContextBlock::RuntimeItem { content } => match content.item() {
             AgentDashThreadItem::Codex(codex::ThreadItem::UserMessage { content, .. }) => {
-                let mut parts = Vec::with_capacity(content.len());
-                for part in content {
-                    parts.push(match part {
-                        codex::UserInput::Text { text, .. } => ContentPart::text(text.clone()),
-                        codex::UserInput::Image { url, .. } => {
-                            ContentPart::image("image/*", url.clone())
-                        }
-                        codex::UserInput::LocalImage { .. }
-                        | codex::UserInput::Skill { .. }
-                        | codex::UserInput::Mention { .. } => {
-                            return Err(DriverError::Unsupported {
-                                reason: "native context replay cannot flatten local image, skill, or mention input"
-                                    .to_string(),
-                            });
-                        }
-                    });
-                }
-                Some(AgentMessage::user_parts(parts))
+                Some(inputs_to_message(
+                    content
+                        .iter()
+                        .cloned()
+                        .map(RuntimeInput::user_input)
+                        .collect(),
+                )?)
             }
             AgentDashThreadItem::Codex(codex::ThreadItem::AgentMessage { text, .. }) => {
                 Some(AgentMessage::assistant(text))
@@ -179,10 +202,18 @@ mod tests {
     #[test]
     fn native_input_mapping_rejects_unowned_modalities_without_flattening() {
         for input in [
-            RuntimeInput::FileReference {
-                uri: "workspace://notes.md".to_string(),
-                media_type: Some("text/markdown".to_string()),
-            },
+            RuntimeInput::user_input(UserInputBlock::LocalImage {
+                detail: None,
+                path: "C:/workspace/image.png".to_string(),
+            }),
+            RuntimeInput::user_input(UserInputBlock::Skill {
+                name: "review".to_string(),
+                path: "C:/skills/review/SKILL.md".to_string(),
+            }),
+            RuntimeInput::user_input(UserInputBlock::Mention {
+                name: "notes.md".to_string(),
+                path: "C:/workspace/notes.md".to_string(),
+            }),
             RuntimeInput::Structured {
                 schema: "example".to_string(),
                 value: serde_json::json!({"value": 1}),
@@ -193,6 +224,14 @@ mod tests {
                 Err(DriverError::Unsupported { .. })
             ));
         }
+    }
+
+    #[test]
+    fn native_input_mapping_rejects_whitespace_only_content() {
+        assert!(matches!(
+            inputs_to_message(vec![RuntimeInput::text(" \r\n\t ")]),
+            Err(DriverError::Rejected { .. })
+        ));
     }
 
     #[test]

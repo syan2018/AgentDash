@@ -105,7 +105,7 @@ pub enum InputModality {
     Text,
     Image,
     Audio,
-    FileReference,
+    LocalImage,
     Resource,
     Skill,
     Mention,

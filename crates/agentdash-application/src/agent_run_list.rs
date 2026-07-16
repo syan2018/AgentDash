@@ -379,8 +379,9 @@ mod tests {
         OperationReceipt, RuntimeContextView, RuntimeEventStream, RuntimePresentationAppendReceipt,
     };
     use agentdash_application_agentrun::agent_run::{
-        AgentRunRuntimeError, AgentRunRuntimeView, ForkAgentRunRuntime, GuardedAgentRunCommand,
-        ReadAgentRunEvents, ResolveAgentRunInteraction, SendAgentRunMessage, SteerAgentRunTurn,
+        AcceptAgentRunMessage, AgentRunMessageAdmission, AgentRunRuntimeError, AgentRunRuntimeView,
+        ForkAgentRunRuntime, GuardedAgentRunCommand, ReadAgentRunEvents,
+        ResolveAgentRunInteraction, SendAgentRunMessage, SteerAgentRunTurn,
     };
     use agentdash_domain::workflow::AgentSource;
     use agentdash_test_support::workflow::{
@@ -423,6 +424,13 @@ mod tests {
             &self,
             _: SendAgentRunMessage,
         ) -> Result<OperationReceipt, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::BindingNotFound)
+        }
+
+        async fn accept_message(
+            &self,
+            _: AcceptAgentRunMessage,
+        ) -> Result<AgentRunMessageAdmission, AgentRunRuntimeError> {
             Err(AgentRunRuntimeError::BindingNotFound)
         }
 

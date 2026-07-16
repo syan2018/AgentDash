@@ -970,11 +970,8 @@ async fn deliver_companion_mailbox_message(
                 ),
                 launch_source: agentdash_application_agentrun::agent_run::LaunchPresentationSource::CompanionParentResume,
                 submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                started_at_seconds: chrono::Utc::now().timestamp(),
             },
-            input: vec![RuntimeInput::Text {
-                text: input.input_text,
-            }],
+            input: vec![RuntimeInput::text(input.input_text)],
             actor: RuntimeActor::System {
                 component: format!("companion:{}", input.payload_kind),
             },
@@ -1526,11 +1523,8 @@ impl CompanionRequestTool {
                     .with_route("sub"),
                     launch_source: agentdash_application_agentrun::agent_run::LaunchPresentationSource::CompanionDispatch,
                     submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                    started_at_seconds: chrono::Utc::now().timestamp(),
                 },
-                input: vec![RuntimeInput::Text {
-                    text: dispatch_result.launch_source.dispatch_prompt.clone(),
-                }],
+                input: vec![RuntimeInput::text(dispatch_result.launch_source.dispatch_prompt.clone())],
                 actor: RuntimeActor::Agent {
                     name: parent_agent_id.to_string(),
                 },

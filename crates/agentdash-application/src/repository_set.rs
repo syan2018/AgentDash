@@ -10,6 +10,7 @@ use agentdash_application_lifecycle::{
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_ports::agent_run_delete::AgentRunDeleteStore;
 use agentdash_application_ports::agent_run_fork::AgentRunForkGraphStore;
+use agentdash_application_ports::agent_run_message_submission::AgentRunMessageSubmissionStore;
 use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBindingRepository, AgentRunRuntimeProvisioner,
 };
@@ -103,6 +104,7 @@ pub struct RepositorySet {
     pub agent_run_fork_graph_store: Arc<dyn AgentRunForkGraphStore>,
     pub agent_run_delete_store: Arc<dyn AgentRunDeleteStore>,
     pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
+    pub agent_run_message_submission_store: Arc<dyn AgentRunMessageSubmissionStore>,
     pub agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     pub agent_run_runtime_provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
     pub workflow_agent_run_delivery:

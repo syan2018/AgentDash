@@ -36,6 +36,19 @@ DriverCommandEnvelope {
 }
 ```
 
+```rust
+async fn process_responses_stream(
+    response: reqwest::Response,
+    read_error_context: &str,
+    tx: &mpsc::Sender<StreamChunk>,
+) -> Result<(), BridgeError>;
+
+enum ResponsesEventDisposition {
+    Continue,
+    Completed,
+}
+```
+
 Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver只解析真实Native bridge；生产composition显式构造Integration，不使用全局静态connector。
 
 ## 3. Contracts
@@ -43,7 +56,7 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - Native service通过与Codex/企业service相同的Integration contribution/factory进入Host。Application/router不按Pi或Native类型分支，service descriptor与conformance是能力事实源。
 - Native service instance使用schema-validated `provider`、`model`与显式`credential_scope`。`credential_scope`只能是平台凭据或带非空`user_id`的账户凭据；缺失scope不得解释为平台回退。instance只保存凭据查找坐标，API key/OAuth token仍由repository/secret codec在driver激活时短暂解析。
 - Bind intent显式区分Start、Resume与Fork。Resume必须保留source thread；Fork必须导入请求指定的checkpoint并验证checkpoint ID/context digest，不能选择任意最新context。
-- Native descriptor只声明实际原生支持的输入与能力。当前Text/Image可进入本地Core；FileReference/Structured不得文本拍平冒充支持，必须在request lock、status event、prompt或任何side effect前typed Unsupported。
+- Native descriptor只声明实际原生支持的输入与能力。Runtime输入仍使用与Codex app-server同构的完整`UserInputBlock`；当前仅Text/Image可在adapter边界翻译进入本地Core。LocalImage/Skill/Mention/Structured不得文本拍平冒充支持，必须在request lock、status event、prompt或任何side effect前typed Unsupported。空数组与纯空白Text必须在同一边界typed Rejected，不能启动一个没有canonical content的Agent turn。
 - Surface materialization返回真实surface/tool-set/hook plan revision与digest。ToolSetReplace receipt必须携带`DriverToolSetApplyReceipt`；其他命令为None。Host只依据ack开放required dispatch gate。
 - Platform tools通过WP03 Direct Callback Broker；Native driver不接收`DynAgentTool`、application delegate、credential或VFS runtime object。Approval使用canonical Interaction。
 - Native tool callback通过Platform Tool Broker执行并提交canonical internal lifecycle；Native Agent Core vendor stream按binding的effective `VendorStream` route发布唯一session-visible ItemStarted/update/terminal。Broker不为同一调用再发布presentation。只有effective route明确为`ToolBroker`时，Native mapper抑制vendor presentation并由Broker投影展示。
@@ -60,6 +73,8 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - Clean Agent Core只拥有provider-neutral inference/stream/tool loop。它不依赖Application、Domain、Codex/Backbone/vendor DTO、AgentDash lifecycle prompt、runtime compaction policy或repository。
 - Provider-specific DTO放在protocol/adapter；`ThinkingLevel`是provider-neutral Core type。Core不公开RuntimeCompactionDelegate，也不执行pre-provider/compact-only/manual AgentDash policy。
 - API旧Pi生产构造入口在Native阶段删除。Provider registry从legacy Pi源码抽离、Pi物理删除与runtime-session dead compaction SPI删除随WP08唯一cutover完成，不保留双轨或fallback。
+- Responses bridge以协议事件定义推理轮次终态。完整解析`response.completed`并归约usage后立即发送唯一`StreamChunk::Done`并停止读取transport；HTTP EOF只证明传输结束，不能替代协议terminal。
+- 命名的`response.*`/`error`事件必须是合法JSON。协议terminal之前的decoder/read错误保留原Provider分类；没有`response.completed`的EOF形成retryable `stream_disconnected`。无名keepalive/`[DONE]`仅作为transport sentinel忽略。
 
 ## 4. Validation & Error Matrix
 
@@ -68,7 +83,8 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 | Start/Resume/Fork缺少或错用source coordinate | typed bind error，无session side effect |
 | user credential scope缺失或user_id为空 | typed configuration error，不尝试平台全局凭据 |
 | Fork broker返回非请求checkpoint/digest | reject，不激活context |
-| FileReference/Structured输入 | side effect前Unsupported |
+| LocalImage/Skill/Mention/Structured输入 | side effect前Unsupported，不改变标准Runtime输入事实 |
+| 空数组或纯空白Text输入 | side effect前Rejected，不进入Agent loop |
 | surface/tool/hook applied digest不匹配 | Host gate保持未应用/失败 |
 | duplicate ToolSetReplace | 返回相同revision/digest receipt，不重复替换 |
 | compaction activation重复 | exact idempotent receipt |
@@ -86,6 +102,10 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 | 失败后steer/interrupt旧turn | Rejected |
 | stale binding/generation | fence，不发送Core command/event |
 | Core依赖domain/vendor/application | dependency/spec gate失败 |
+| `response.completed`后transport保持连接或继续报错 | 已归约消息立即且仅一次`Done`；不再轮询body |
+| transport在协议terminal前EOF | retryable Provider error，code=`stream_disconnected` |
+| 命名Responses事件包含非法JSON | fatal Provider error，code=`response_decode_error` |
+| 合法`response.failed`/`error` | 保留Provider返回的失败消息与分类，不形成`Done` |
 
 ## 5. Good / Base / Bad Cases
 
@@ -95,19 +115,22 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 
 **Bad case:** Adapter把Structured序列化成普通文本却在profile声明Structured Native，或把`DriverTurnId`直接作为`RuntimeTurnId`发给Tool/Hook callback。这会产生虚假能力或第二Turn identity，必须拒绝。
 
+**Provider terminal case:** `response.completed`到达后即使HTTP/2 body仍开放，Agent Core也取得完整assistant/tool-call/usage并继续tool loop或结束Turn；没有协议terminal的断流保持可诊断失败。
+
 ## 6. Tests Required
 
 - Native behavior覆盖contribution/factory、truthful descriptor、Start/Resume/Fork、exact checkpoint/digest、Turn/steer/interrupt/settings/idempotency。
 - 覆盖surface/tool/hook applied receipts、hot ToolSetReplace、Direct Callback、approval Interaction与typed inspect。
 - Direct Callback测试必须让source/runtime/presentation item ID不同，并覆盖ApplyPatch、shell control及重复调用经Broker执行且不发生idempotency conflict；`VendorStream`组合场景断言Broker internal与Native presentation各自恰好一次。
 - 覆盖managed compaction exact activation、wrong digest/checkpoint、duplicate replay和digest选择不依赖map ordering。
-- 覆盖unsupported modality在任何副作用前拒绝，以及mapper/sink/task error的active fence清理。
+- 覆盖标准Text/Image映射、空数组/纯空白拒绝、LocalImage/Skill/Mention/Structured在任何副作用前Unsupported，以及mapper/sink/task error的active fence清理。
 - 覆盖Provider retry/status只有ephemeral presentation，以及`Terminalized`在至少一次成功emit后停止pump、零fallback `BindingLost`。
 - Runtime interface覆盖matching Driver `TurnStarted`只得到`Observed`且revision不变；Native工具轮次覆盖Tool/Hook使用canonical Turn、terminal后task error不触发同request重派。
 - recovery测试从真实durable journal重建完整user/assistant/tool-call/tool-result transcript，并覆盖compaction边界后的tail replay、typed shell/fs/MCP item与readable ID水位。
 - Contract/Wire/TestSupport/Host conformance与generated TS/schema check必须通过。
 - Agent Core dependency tree与source scan必须证明无Application/Domain/Codex/Backbone/repository依赖；Core/Native strict clippy与tests通过。
 - WP08必须验证provider registry抽离后legacy Pi与dead runtime-session compaction SPI物理删除、生产Host composition使用Native Integration。
+- Responses bridge测试覆盖terminal后transport挂起、terminal后decoder error、terminal前EOF/read error、命名非法JSON、合法`response.failed`，并断言content/reasoning/tool calls/usage与`Done` exactly-once。
 
 ## 7. Wrong vs Correct
 
@@ -142,4 +165,15 @@ tool_callback.invoke(DriverToolInvocation {
     source_turn_id,
     ..
 }).await?;
+```
+
+```rust
+// Wrong: transport lifetime delays the logical Agent message terminal.
+while let Some(chunk) = response.chunk().await? { reduce(chunk); }
+tx.send(StreamChunk::Done(state.into_response())).await?;
+
+// Correct: the provider protocol terminal ends logical production immediately.
+if reduce(event)? == ResponsesEventDisposition::Completed {
+    return send_responses_done(state, tx).await;
+}
 ```

@@ -24,6 +24,7 @@ pub use persistence::postgres::PostgresAgentRunDeleteStore;
 pub use persistence::postgres::PostgresAgentRunForkGraphStore;
 pub use persistence::postgres::PostgresAgentRunLineageRepository;
 pub use persistence::postgres::PostgresAgentRunMailboxRepository;
+pub use persistence::postgres::PostgresAgentRunMessageSubmissionStore;
 pub use persistence::postgres::PostgresAgentRuntimeCompositionRepository;
 pub use persistence::postgres::PostgresAgentRuntimeContextBroker;
 pub use persistence::postgres::PostgresAgentRuntimeHostRepository;

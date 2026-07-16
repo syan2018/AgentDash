@@ -4823,9 +4823,9 @@ mod tests {
                         "presentation-turn-after-adopt-{}",
                         fixture.suffix
                     )),
-                    input: vec![RuntimeInput::Text {
-                        text: "must wait for adopted driver surface".to_string(),
-                    }],
+                    input: vec![RuntimeInput::text(
+                        "must wait for adopted driver surface".to_string(),
+                    )],
                 },
             })
             .await

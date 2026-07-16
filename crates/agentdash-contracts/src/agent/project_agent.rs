@@ -162,7 +162,7 @@ pub struct AgentRunRuntimeOptionsRequest {
     pub permission_policy: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct CreateProjectAgentRunRequest {
     /// canonical 用户输入，与 steer / lifecycle message 同形。
     pub input: Vec<codex::UserInput>,

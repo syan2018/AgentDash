@@ -154,6 +154,17 @@
 - 目标是per-thread mutation coordinator：各producer提交typed intent，从durable base执行纯归约；进程内keyed serialization降低冲突，数据库CAS提供跨实例权威。内部CAS loser只有在具备producer幂等identity时才有界reload/reapply，不得盲重放或把普通竞争升级为binding lost。
 - 保留canonical Runtime、Host binding/generation、Operation/outbox与Tool/Hook/Context durable事实；删除不产生恢复或审计收益的presentation internal镜像，不恢复旧Connector/RuntimeSession第二事实源。
 
+### R15. Provider 协议终态与 Mailbox 投递重规划
+
+**问题 ARD-014：可见回复不终结，Promote 后 presentation turn 必然错配**
+
+- 现象：Agent 已输出完整回复后 Runtime 仍长期保持 active；此时将排队消息“立即发送”会失败为 `AgentRun active presentation turn changed`。
+- 已确认 Provider 根因：Responses bridge 收到协议终态 `response.completed` 时只更新 usage，仍等待 HTTP body EOF 才发送 `StreamChunk::Done`。真实复现中可见 transient 文本完成后又等待约 154 秒，最终 body decoder 断流才生成失败终态，导致 UI 可见完成与 canonical Message/Turn terminal 分裂。
+- 已确认 Mailbox 根因：普通 active-turn submit 预先保存未来 launch 的 presentation input；Promote route 随后只把 delivery/barrier/drain 改成 steer，不重规划 payload，形成 `SteerActiveTurn + future PresentationTurnId` 的不可能状态。即使修正该确定性错配，inspect、claim与facade execute之间的终态竞争仍会使冻结的旧 presentation identity 失败或永久悬空。
+- Provider bridge必须以供应商协议的明确 terminal event结束本次逻辑流；收到`response.completed`后完成当前SSE event归约、发送唯一`Done`并停止读取，后续transport EOF或decoder状态不得改写已完成的响应。
+- Mailbox只拥有输入草稿、投递策略、顺序、barrier、幂等与claim lifecycle，不生成或持久化canonical Runtime/Presentation identity。AgentRun Runtime facade在带当前snapshot guard的command admission内为start生成稳定identity，或为steer绑定当前active presentation turn。
+- Promote必须通过Mailbox application owner修改投递意图，不由API直接拼repository字段。active turn在inspect与execute之间变化时，facade返回typed stale admission；Mailbox保留同一draft重新观察并规划start/steer，不重用旧presentation坐标，也不把合法竞争标记为永久失败。
+
 ## Acceptance Criteria
 
 - [x] ARD-001 已在 `pnpm dev` 启动的真实产品路径复现并记录第一个断点位置。
@@ -191,6 +202,9 @@
 - [ ] ARD-013 建立完整Runtime mutation producer矩阵，并将command/driver/tool/hook/context/surface收束到per-thread coordinator或明确的可重试work边界。
 - [ ] ARD-013 解耦EventSequence、aggregate revision与surface/context/binding专用precondition，覆盖无关presentation推进时的内部更新稳定性。
 - [ ] ARD-013 为跨实例driver event引入可持久去重的producer identity后，验证CAS loser可安全reload/reapply且不会重复terminal。
+- [ ] ARD-014 Responses bridge在`response.completed`后立即形成唯一canonical MessageEnd/TurnTerminal，且不等待HTTP EOF或被后续decoder错误覆写。
+- [ ] ARD-014 Mailbox draft与delivery policy保持正交；Promote和终态竞争下的消息只会steer当前turn或在idle后start下一turn，不产生stale presentation失败或永久悬空。
+- [ ] ARD-014 通过application/provider定向竞态测试和真实`pnpm dev`连续两轮输入验证可见回复、canonical终态与mailbox继续消费一致。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -215,6 +229,7 @@
 | ARD-011 | verified | major | typed owner与terminal registry成为production VFS构造期必需依赖；真实start→read及跨轮retained read通过 |
 | ARD-012 | fixed | blocker | Provider status仅保留ephemeral presentation；violation从committed base原子terminalize并停止全部pump，outbox以canonical二次读取决定ack；待真实Provider产品链复验 |
 | ARD-013 | diagnosed | major | canonical Runtime带来placement/recovery收益，但mutation owner与revision职责未收束，Context/Hook及跨实例CAS仍存在结构性竞争面 |
+| ARD-014 | diagnosed | blocker | Responses等待HTTP EOF导致可见回复与canonical终态分裂；Promote跨层改policy却保留预生成presentation坐标，立即发送确定性失败 |
 
 ## Verification Record
 

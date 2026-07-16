@@ -1050,9 +1050,7 @@ async fn thread_start_presentation_identity_matches_input_presence() {
     let RuntimeCommand::ThreadStart { input, .. } = &mut missing.command else {
         unreachable!()
     };
-    *input = vec![RuntimeInput::Text {
-        text: "hello".to_string(),
-    }];
+    *input = vec![RuntimeInput::text("hello".to_string())];
     assert!(matches!(
         runtime.execute(missing).await,
         Err(RuntimeExecuteError::InvalidCommand { .. })
@@ -1812,9 +1810,7 @@ async fn thread_start_with_initial_input_owns_the_canonical_turn() {
         unreachable!("fixture is ThreadStart");
     };
     *presentation_turn_id = Some(id("presentation-turn-thread-start-input"));
-    input.push(RuntimeInput::Text {
-        text: "hello".to_string(),
-    });
+    input.push(RuntimeInput::text("hello".to_string()));
 
     let thread_id = runtime
         .execute(start)

@@ -260,6 +260,11 @@ pub const AGENT_FRAME_WRITE_BOUNDARIES: &[AgentFrameWriteBoundary] = &[
         role: AgentFrameWriteRole::RuntimeSurfaceUpdate,
         primitive: AgentFrameWritePrimitive::PersistedRevisionAdoption,
     },
+    AgentFrameWriteBoundary {
+        owner: "agent_run::runtime_facade::CurrentAgentFrameExecutionProfileCoordinator",
+        role: AgentFrameWriteRole::RuntimeSurfaceUpdate,
+        primitive: AgentFrameWritePrimitive::AgentFrameBuilder,
+    },
 ];
 
 pub fn agent_frame_write_boundaries() -> &'static [AgentFrameWriteBoundary] {

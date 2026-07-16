@@ -83,9 +83,7 @@ async fn later_turn_is_admitted_without_moving_the_frozen_compaction_source_boun
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
                 presentation_turn_id: id("presentation-turn-after-admission"),
-                input: vec![RuntimeInput::Text {
-                    text: "post-admission prompt".to_string(),
-                }],
+                input: vec![RuntimeInput::text("post-admission prompt".to_string())],
             },
         ))
         .await

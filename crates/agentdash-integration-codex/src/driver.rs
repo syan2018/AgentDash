@@ -2177,7 +2177,10 @@ fn interaction_result(
                         reason: format!("Codex user-input question id `{id}` is duplicated"),
                     });
                 }
-                let agentdash_agent_runtime_contract::RuntimeInput::Text { text } = answer else {
+                let agentdash_agent_runtime_contract::RuntimeInput::UserInput {
+                    block: agentdash_agent_protocol::UserInputBlock::Text { text, .. },
+                } = answer
+                else {
                     return Err(DriverError::Rejected {
                         reason: format!("Codex user-input answer for question `{id}` must be text"),
                     });
@@ -2260,7 +2263,9 @@ pub(crate) fn codex_runtime_profile() -> RuntimeProfile {
             modalities: BTreeSet::from([
                 InputModality::Text,
                 InputModality::Image,
-                InputModality::FileReference,
+                InputModality::LocalImage,
+                InputModality::Skill,
+                InputModality::Mention,
                 InputModality::Structured,
             ]),
         },
@@ -2516,6 +2521,17 @@ mod tests {
     fn profile_is_truthful_about_opaque_compaction_and_thread_start_updates() {
         let profile = codex_runtime_profile();
         assert_eq!(profile.reference_class, ReferenceRuntimeClass::Interactive);
+        assert_eq!(
+            profile.input.modalities,
+            BTreeSet::from([
+                InputModality::Text,
+                InputModality::Image,
+                InputModality::LocalImage,
+                InputModality::Skill,
+                InputModality::Mention,
+                InputModality::Structured,
+            ])
+        );
         assert_eq!(profile.context.fidelity, ContextFidelity::Opaque);
         assert!(
             !profile
@@ -2640,9 +2656,9 @@ mod tests {
         let response = interaction_result(
             &pending,
             &agentdash_agent_runtime_contract::InteractionResponse::UserInput {
-                input: vec![agentdash_agent_runtime_contract::RuntimeInput::Text {
-                    text: "AgentDash".into(),
-                }],
+                input: vec![agentdash_agent_runtime_contract::RuntimeInput::text(
+                    "AgentDash",
+                )],
             },
         )
         .unwrap();
@@ -2659,10 +2675,12 @@ mod tests {
             interaction_result(
                 &pending,
                 &agentdash_agent_runtime_contract::InteractionResponse::UserInput {
-                    input: vec![agentdash_agent_runtime_contract::RuntimeInput::Image {
-                        mime_type: "image/png".into(),
-                        data_url: "data:image/png;base64,AA==".into(),
-                    }]
+                    input: vec![agentdash_agent_runtime_contract::RuntimeInput::user_input(
+                        agentdash_agent_protocol::UserInputBlock::Image {
+                            detail: None,
+                            url: "data:image/png;base64,AA==".into(),
+                        },
+                    )],
                 }
             )
             .is_err()

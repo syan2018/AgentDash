@@ -23,7 +23,7 @@ pub trait RuntimeSurfaceReferenceValidator: Send + Sync {
     ) -> Result<(), String>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeOutboxEntry {
     pub operation_id: RuntimeOperationId,
     pub thread_id: RuntimeThreadId,

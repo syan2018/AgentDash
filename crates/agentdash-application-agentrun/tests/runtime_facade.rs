@@ -1,16 +1,73 @@
-use std::{collections::BTreeSet, str::FromStr, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+};
 
 use agentdash_agent_runtime::{ManagedAgentRuntime, RuntimeRepository, RuntimeStoreFixture};
 use agentdash_agent_runtime_contract::*;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunCommandGuard, AgentRunPresentationInput, AgentRunRuntime,
-    AgentRunRuntimeApplicationPresentationProjector, AgentRunRuntimeError, GuardedAgentRunCommand,
-    LaunchPresentationSource, ManagedAgentRunRuntime, SendAgentRunMessage, SteerAgentRunTurn,
+    AcceptAgentRunMessage, AgentRunMessageAcceptedDelivery, AgentRunMessageAdmission,
+    AgentRunMessageDeliveryPreference, AgentRunPresentationDraft, AgentRunRuntime,
+    AgentRunRuntimeApplicationPresentationProjector, AgentRunRuntimeError,
+    CoordinateExecutionProfileRequest, CurrentAgentFrameExecutionProfileCoordinator,
+    ExecutionProfileCoordination, ExecutionProfileCoordinationError, ExecutionProfileCoordinator,
+    LaunchPresentationSource, ManagedAgentRunRuntime, SendAgentRunMessage,
 };
 use agentdash_application_ports::agent_run_runtime::*;
+use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
+use agentdash_domain::{DomainError, common::AgentConfig};
 use async_trait::async_trait;
-use tokio::sync::Mutex;
+use tokio::sync::{Barrier, Mutex};
 use uuid::Uuid;
+
+#[derive(Default)]
+struct RecordingExecutionProfileCoordinator {
+    requests: Mutex<Vec<CoordinateExecutionProfileRequest>>,
+}
+
+struct CurrentFrameRepository {
+    frame: Mutex<AgentFrame>,
+}
+
+#[async_trait]
+impl AgentFrameRepository for CurrentFrameRepository {
+    async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
+        *self.frame.lock().await = frame.clone();
+        Ok(())
+    }
+
+    async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+        let frame = self.frame.lock().await;
+        Ok((frame.id == frame_id).then(|| frame.clone()))
+    }
+
+    async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+        let frame = self.frame.lock().await;
+        Ok((frame.agent_id == agent_id).then(|| frame.clone()))
+    }
+
+    async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
+        let frame = self.frame.lock().await;
+        Ok((frame.agent_id == agent_id)
+            .then(|| vec![frame.clone()])
+            .unwrap_or_default())
+    }
+}
+
+#[async_trait]
+impl ExecutionProfileCoordinator for RecordingExecutionProfileCoordinator {
+    async fn coordinate_started_turn(
+        &self,
+        request: CoordinateExecutionProfileRequest,
+    ) -> Result<ExecutionProfileCoordination, ExecutionProfileCoordinationError> {
+        self.requests.lock().await.push(request);
+        Ok(ExecutionProfileCoordination::Unchanged)
+    }
+}
 
 fn id<T: FromStr>(value: &str) -> T
 where
@@ -70,6 +127,7 @@ struct CompositionFixture {
     bootstrap_frames: Mutex<Vec<agentdash_agent_protocol::ContextFrame>>,
     turn_start_facts:
         Mutex<agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts>,
+    fail_turn_start_ack: Mutex<bool>,
 }
 
 impl CompositionFixture {
@@ -86,6 +144,10 @@ impl CompositionFixture {
         facts: agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts,
     ) {
         *self.turn_start_facts.lock().await = facts;
+    }
+
+    async fn fail_turn_start_ack(&self) {
+        *self.fail_turn_start_ack.lock().await = true;
     }
 }
 
@@ -251,12 +313,83 @@ impl agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextSou
         _binding_id: &RuntimeBindingId,
         notice_ids: &[String],
     ) -> Result<(), AgentRunRuntimeBindingError> {
+        if *self.fail_turn_start_ack.lock().await {
+            return Err(AgentRunRuntimeBindingError::Unavailable {
+                reason: "fixture turn-start acknowledgement failed".to_string(),
+                retryable: true,
+            });
+        }
         self.turn_start_facts
             .lock()
             .await
             .notices
             .retain(|notice| !notice_ids.contains(&notice.id));
         Ok(())
+    }
+}
+
+struct OperationPrecheckBarrierGateway {
+    inner: Arc<dyn AgentRuntimeGateway>,
+    barrier: Barrier,
+    enabled: AtomicBool,
+    missing_operation_prechecks: AtomicUsize,
+}
+
+impl OperationPrecheckBarrierGateway {
+    fn new(inner: Arc<dyn AgentRuntimeGateway>) -> Self {
+        Self {
+            inner,
+            barrier: Barrier::new(2),
+            enabled: AtomicBool::new(false),
+            missing_operation_prechecks: AtomicUsize::new(0),
+        }
+    }
+
+    fn enable(&self) {
+        self.enabled.store(true, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl AgentRuntimeGateway for OperationPrecheckBarrierGateway {
+    async fn append_presentation(
+        &self,
+        request: RuntimePresentationAppendRequest,
+    ) -> Result<RuntimePresentationAppendReceipt, RuntimePresentationAppendError> {
+        self.inner.append_presentation(request).await
+    }
+
+    async fn execute(
+        &self,
+        command: RuntimeCommandEnvelope,
+    ) -> Result<OperationReceipt, RuntimeExecuteError> {
+        self.inner.execute(command).await
+    }
+
+    async fn snapshot(
+        &self,
+        query: RuntimeSnapshotQuery,
+    ) -> Result<RuntimeSnapshotResult, RuntimeSnapshotError> {
+        let operation_query = matches!(&query, RuntimeSnapshotQuery::Operation { .. });
+        let result = self.inner.snapshot(query).await;
+        if self.enabled.load(Ordering::SeqCst)
+            && operation_query
+            && matches!(&result, Err(RuntimeSnapshotError::NotFound))
+            && self
+                .missing_operation_prechecks
+                .fetch_add(1, Ordering::SeqCst)
+                < 2
+        {
+            self.barrier.wait().await;
+        }
+        result
+    }
+
+    async fn events(
+        &self,
+        subscription: RuntimeEventSubscription,
+    ) -> Result<Box<dyn RuntimeEventStream>, RuntimeSubscribeError> {
+        self.inner.events(subscription).await
     }
 }
 
@@ -271,24 +404,426 @@ fn send(text: &str) -> SendAgentRunMessage {
     SendAgentRunMessage {
         target: target(),
         presentation_thread_id: id("presentation-facade"),
-        presentation_input: AgentRunPresentationInput::UserSubmission {
-            turn_id: id("turn-facade-0001"),
-            item_id: id("turn-facade-0001:user-input:0"),
+        presentation: AgentRunPresentationDraft {
             content: agentdash_agent_protocol::text_user_input_blocks(text),
             source: agentdash_agent_protocol::UserInputSource::core_composer(),
+            launch_source: LaunchPresentationSource::HttpPrompt,
             submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-            started_at_seconds: 1_783_684_800,
         },
         client_command_id: "client-command-1".to_string(),
-        input: vec![RuntimeInput::Text {
-            text: text.to_string(),
-        }],
+        input: vec![RuntimeInput::text(text.to_string())],
         actor: RuntimeActor::User {
             subject: "subject-1".to_string(),
         },
         identity: None,
         backend_selection: None,
     }
+}
+
+fn event_presentation_turn_id(event: &serde_json::Value) -> &str {
+    event
+        .pointer("/payload/turnId")
+        .or_else(|| event.pointer("/payload/data/value/turn_id"))
+        .and_then(serde_json::Value::as_str)
+        .expect("presentation event carries its turn identity")
+}
+
+fn rewrite_golden_admission_identity(
+    value: &serde_json::Value,
+    symbolic_turn_id: &str,
+    actual_turn_id: &str,
+) -> serde_json::Value {
+    let mut rewritten = serde_json::from_str::<serde_json::Value>(
+        &value.to_string().replace(symbolic_turn_id, actual_turn_id),
+    )
+    .expect("rewrite symbolic golden turn identity");
+    if rewritten.get("type").and_then(serde_json::Value::as_str) == Some("turn_started") {
+        let started_at = actual_turn_id
+            .strip_prefix('t')
+            .and_then(|millis| millis.parse::<i64>().ok())
+            .expect("admission turn uses t<millis> identity")
+            .div_euclid(1_000);
+        rewritten["payload"]["turn"]["startedAt"] = serde_json::json!(started_at);
+    }
+    rewritten
+}
+
+fn accept_message(command: SendAgentRunMessage) -> AcceptAgentRunMessage {
+    AcceptAgentRunMessage {
+        target: command.target,
+        presentation_thread_id: command.presentation_thread_id,
+        presentation: command.presentation,
+        client_command_id: command.client_command_id,
+        input: command.input,
+        actor: command.actor,
+        identity: command.identity,
+        execution_profile_override: None,
+        backend_selection: command.backend_selection,
+        delivery_preference: AgentRunMessageDeliveryPreference::StartWhenIdle,
+    }
+}
+
+#[tokio::test]
+async fn current_frame_profile_coordinator_noops_for_an_equivalent_partial_override() {
+    let agent_id = Uuid::new_v4();
+    let mut frame = AgentFrame::new_revision(agent_id, 3, "test");
+    let mut current = AgentConfig::new("PI_AGENT");
+    current.provider_id = Some("provider-current".to_string());
+    current.model_id = Some("gpt-5.5".to_string());
+    current.agent_id = Some("general".to_string());
+    current.thinking_level = Some(agentdash_domain::common::ThinkingLevel::Minimal);
+    current.system_prompt = Some("persisted frame instructions".to_string());
+    frame.execution_profile_json = Some(serde_json::to_value(&current).expect("profile"));
+    let frames = Arc::new(CurrentFrameRepository {
+        frame: Mutex::new(frame),
+    });
+    let coordinator = CurrentAgentFrameExecutionProfileCoordinator::new(frames);
+    let target = AgentRunRuntimeTarget {
+        run_id: Uuid::new_v4(),
+        agent_id,
+    };
+
+    let same = coordinator
+        .coordinate_started_turn(CoordinateExecutionProfileRequest {
+            target: target.clone(),
+            binding: None,
+            execution_profile_override: Some(AgentConfig {
+                executor: "pi_agent".to_string(),
+                provider_id: None,
+                model_id: Some("gpt-5.5".to_string()),
+                agent_id: None,
+                thinking_level: Some(agentdash_domain::common::ThinkingLevel::Minimal),
+                permission_policy: None,
+                system_prompt: None,
+            }),
+        })
+        .await
+        .expect("omitted persisted fields must inherit the current effective profile");
+    assert_eq!(same, ExecutionProfileCoordination::Unchanged);
+
+    let applied = coordinator
+        .coordinate_started_turn(CoordinateExecutionProfileRequest {
+            target: target.clone(),
+            binding: None,
+            execution_profile_override: Some(AgentConfig::new("codex")),
+        })
+        .await
+        .expect("unbound run can apply the profile before provisioning");
+    assert!(matches!(
+        applied,
+        ExecutionProfileCoordination::FrameRevisionApplied { .. }
+    ));
+
+    let composition = CompositionFixture::default();
+    let binding = composition
+        .provision(&AgentRunRuntimeProvisionRequest {
+            target: target.clone(),
+            presentation_thread_id: id("profile-coordinator-thread"),
+            identity: None,
+            backend_selection: None,
+            fork: None,
+            terminal_hook_effect_binding: None,
+        })
+        .await
+        .expect("binding fixture");
+    let error = coordinator
+        .coordinate_started_turn(CoordinateExecutionProfileRequest {
+            target,
+            binding: Some(binding),
+            execution_profile_override: Some(AgentConfig::new("PI_AGENT")),
+        })
+        .await
+        .expect_err("bound run requires planned service rebind");
+    assert!(matches!(
+        error,
+        ExecutionProfileCoordinationError::RebindUnsupported { .. }
+    ));
+}
+
+#[tokio::test]
+async fn started_override_is_coordinated_once_after_stable_replay_precheck() {
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let gateway: Arc<dyn AgentRuntimeGateway> = Arc::new(ManagedAgentRuntime::new(
+        store,
+        Arc::new(AgentRunRuntimeApplicationPresentationProjector),
+    ));
+    let composition = Arc::new(CompositionFixture::default());
+    let coordinator = Arc::new(RecordingExecutionProfileCoordinator::default());
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition,
+    )
+    .with_execution_profile_coordinator(coordinator.clone());
+    let mut command = accept_message(send("profile-override"));
+    command.execution_profile_override = Some(agentdash_spi::AgentConfig::new("PI_AGENT"));
+
+    let first = facade
+        .accept_message(command.clone())
+        .await
+        .expect("first start");
+    assert!(matches!(
+        first,
+        AgentRunMessageAdmission::Accepted {
+            delivery: AgentRunMessageAcceptedDelivery::Started,
+            ..
+        }
+    ));
+    assert_eq!(coordinator.requests.lock().await.len(), 1);
+
+    let replay = facade.accept_message(command).await.expect("stable replay");
+    assert!(matches!(
+        replay,
+        AgentRunMessageAdmission::Accepted {
+            delivery: AgentRunMessageAcceptedDelivery::Started,
+            ..
+        }
+    ));
+    assert_eq!(
+        coordinator.requests.lock().await.len(),
+        1,
+        "stable operation replay must not reapply execution profile"
+    );
+}
+
+#[tokio::test]
+async fn steer_ignores_execution_profile_override() {
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let gateway: Arc<dyn AgentRuntimeGateway> = Arc::new(ManagedAgentRuntime::new(
+        store,
+        Arc::new(AgentRunRuntimeApplicationPresentationProjector),
+    ));
+    let composition = Arc::new(CompositionFixture::default());
+    let coordinator = Arc::new(RecordingExecutionProfileCoordinator::default());
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition,
+    )
+    .with_execution_profile_coordinator(coordinator.clone());
+    facade
+        .accept_message(accept_message(send("establish active turn")))
+        .await
+        .expect("start active turn");
+    coordinator.requests.lock().await.clear();
+
+    let mut steer = accept_message(send("steer with ignored override"));
+    steer.client_command_id = "steer-profile-override".to_string();
+    steer.delivery_preference = AgentRunMessageDeliveryPreference::PreferSteer;
+    steer.execution_profile_override = Some(agentdash_spi::AgentConfig::new("OTHER"));
+    let admission = facade.accept_message(steer).await.expect("steer");
+
+    assert!(matches!(
+        admission,
+        AgentRunMessageAdmission::Accepted {
+            delivery: AgentRunMessageAcceptedDelivery::Steered,
+            ..
+        }
+    ));
+    assert!(
+        coordinator.requests.lock().await.is_empty(),
+        "steering must not mutate or validate the run execution profile"
+    );
+}
+
+#[tokio::test]
+async fn message_admission_generates_launch_time_when_consumed_and_replays_it_exactly() {
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let gateway: Arc<dyn AgentRuntimeGateway> = Arc::new(ManagedAgentRuntime::new(
+        store.clone(),
+        Arc::new(AgentRunRuntimeApplicationPresentationProjector),
+    ));
+    let composition = Arc::new(CompositionFixture::default());
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition,
+    );
+    let command = accept_message(send("consume-time"));
+    let consume_not_before = chrono::Utc::now().timestamp_millis();
+
+    let first = facade
+        .accept_message(command.clone())
+        .await
+        .expect("first admission");
+    let AgentRunMessageAdmission::Accepted { receipt, delivery } = first else {
+        panic!("idle message must start")
+    };
+    assert_eq!(delivery, AgentRunMessageAcceptedDelivery::Started);
+    assert!(!receipt.duplicate);
+    let first_records = store
+        .journal_records_after(&id("thread-facade"), None)
+        .await
+        .expect("presentation journal")
+        .records;
+    let first_turn_id = first_records
+        .iter()
+        .find_map(|record| record.carrier().coordinate.presentation_turn_id.clone())
+        .expect("admission presentation turn");
+    let admitted_at = first_turn_id
+        .as_str()
+        .strip_prefix('t')
+        .and_then(|millis| millis.parse::<i64>().ok())
+        .expect("launch identity uses admission millis");
+    assert!(admitted_at >= consume_not_before);
+
+    let mut replay_command = command;
+    replay_command.delivery_preference = AgentRunMessageDeliveryPreference::PreferSteer;
+    let replay = facade
+        .accept_message(replay_command)
+        .await
+        .expect("reconciliation replays before applying the current delivery policy");
+    let AgentRunMessageAdmission::Accepted { receipt, delivery } = replay else {
+        panic!("existing operation must replay")
+    };
+    assert_eq!(
+        delivery,
+        AgentRunMessageAcceptedDelivery::Started,
+        "Promote/claim policy changes cannot turn an accepted start into a new steer"
+    );
+    assert!(receipt.duplicate);
+    let replay_records = store
+        .journal_records_after(&id("thread-facade"), None)
+        .await
+        .expect("presentation journal")
+        .records;
+    assert_eq!(replay_records.len(), first_records.len());
+    assert_eq!(
+        replay_records.iter().find_map(|record| record
+            .carrier()
+            .coordinate
+            .presentation_turn_id
+            .clone()),
+        Some(first_turn_id)
+    );
+}
+
+#[tokio::test]
+async fn accepted_message_is_not_reversed_when_turn_start_context_acknowledgement_fails() {
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let gateway: Arc<dyn AgentRuntimeGateway> = Arc::new(ManagedAgentRuntime::new(
+        store.clone(),
+        Arc::new(AgentRunRuntimeApplicationPresentationProjector),
+    ));
+    let composition = Arc::new(CompositionFixture::default());
+    composition
+        .set_turn_start_facts(
+            agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts {
+                runtime_snapshot: None,
+                pending_actions: Vec::new(),
+                notices: vec![agentdash_spi::HookTurnStartNotice {
+                    id: "ack-failure-notice".to_string(),
+                    created_at_ms: 42,
+                    source: agentdash_spi::RuntimeEventSource::RuntimeContextUpdate,
+                    content: "retry acknowledgement".to_string(),
+                    presentation: None,
+                }],
+            },
+        )
+        .await;
+    composition.fail_turn_start_ack().await;
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition,
+    );
+    let command = accept_message(send("ack-failure"));
+
+    let first = facade
+        .accept_message(command.clone())
+        .await
+        .expect("durable acceptance wins over acknowledgement failure");
+    let AgentRunMessageAdmission::Accepted { receipt, .. } = first else {
+        panic!("idle message must be accepted")
+    };
+    assert!(!receipt.duplicate);
+    let record_count = store
+        .journal_records_after(&id("thread-facade"), None)
+        .await
+        .expect("presentation journal")
+        .records
+        .len();
+
+    let replay = facade
+        .accept_message(command)
+        .await
+        .expect("accepted operation remains replayable");
+    let AgentRunMessageAdmission::Accepted { receipt, .. } = replay else {
+        panic!("accepted operation must replay")
+    };
+    assert!(receipt.duplicate);
+    assert_eq!(
+        store
+            .journal_records_after(&id("thread-facade"), None)
+            .await
+            .expect("presentation journal")
+            .records
+            .len(),
+        record_count
+    );
+}
+
+#[tokio::test]
+async fn concurrent_message_attempts_reconcile_after_both_miss_the_operation_precheck() {
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let runtime: Arc<dyn AgentRuntimeGateway> = Arc::new(ManagedAgentRuntime::new(
+        store.clone(),
+        Arc::new(AgentRunRuntimeApplicationPresentationProjector),
+    ));
+    let gateway = Arc::new(OperationPrecheckBarrierGateway::new(runtime));
+    let composition = Arc::new(CompositionFixture::default());
+    let facade = Arc::new(ManagedAgentRunRuntime::new(
+        gateway.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition,
+    ));
+    facade
+        .accept_message(accept_message(send("establish active turn")))
+        .await
+        .expect("initial turn");
+    gateway.enable();
+    let mut command = accept_message(send("lease race steer"));
+    command.client_command_id = "mailbox-race-message".to_string();
+    command.delivery_preference = AgentRunMessageDeliveryPreference::PreferSteer;
+
+    let (left, right) = tokio::join!(
+        facade.accept_message(command.clone()),
+        facade.accept_message(command)
+    );
+    let accepted = [left.unwrap(), right.unwrap()]
+        .into_iter()
+        .map(|admission| match admission {
+            AgentRunMessageAdmission::Accepted { receipt, delivery } => {
+                assert_eq!(delivery, AgentRunMessageAcceptedDelivery::Steered);
+                receipt
+            }
+            AgentRunMessageAdmission::Deferred => panic!("active preferred steer must be accepted"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accepted[0].operation_id, accepted[1].operation_id);
+    assert_ne!(accepted[0].duplicate, accepted[1].duplicate);
+    assert_eq!(
+        store
+            .journal_records_after(&id("thread-facade"), None)
+            .await
+            .expect("presentation journal")
+            .records
+            .into_iter()
+            .filter(|record| record.as_presentation().is_some())
+            .count(),
+        3,
+        "the lease race must persist one steer presentation"
+    );
 }
 
 #[tokio::test]
@@ -368,7 +903,17 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
             .as_deref(),
         Some("client-command-1")
     );
-    let source_turn_id = "turn-facade-0001".to_string();
+    let source_turn_id = presentation[0]
+        .carrier()
+        .coordinate
+        .source_turn_id
+        .clone()
+        .expect("admission presentation turn");
+    let source_started_at = source_turn_id
+        .strip_prefix('t')
+        .and_then(|millis| millis.parse::<i64>().ok())
+        .expect("admission presentation turn uses t<millis>")
+        .div_euclid(1_000);
     for record in &presentation {
         assert_eq!(
             record.carrier().coordinate.source_thread_id.as_deref(),
@@ -487,7 +1032,7 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
                         "itemsView": "notLoaded",
                         "status": "inProgress",
                         "error": null,
-                        "startedAt": 1_783_684_800,
+                        "startedAt": source_started_at,
                         "completedAt": null,
                         "durationMs": null
                     }
@@ -525,13 +1070,7 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
     );
 
     let mut presentation_conflict = send("hello");
-    let AgentRunPresentationInput::UserSubmission {
-        started_at_seconds, ..
-    } = &mut presentation_conflict.presentation_input
-    else {
-        unreachable!()
-    };
-    *started_at_seconds += 1;
+    presentation_conflict.presentation.source.actor = "another-user".to_string();
     let conflict = facade
         .send_message(presentation_conflict)
         .await
@@ -823,12 +1362,7 @@ async fn compiled_full_bootstrap_is_committed_by_real_thread_start_in_main_order
         composition,
     );
     let mut bootstrap = send("bootstrap");
-    bootstrap.presentation_input = AgentRunPresentationInput::SystemDelivery {
-        turn_id: id("turn-facade-0001"),
-        launch_source: LaunchPresentationSource::WorkflowOrchestrator,
-        message: "bootstrap".to_string(),
-        started_at_seconds: 1_783_684_800,
-    };
+    bootstrap.presentation.launch_source = LaunchPresentationSource::WorkflowOrchestrator;
     facade
         .send_message(bootstrap)
         .await
@@ -937,12 +1471,7 @@ async fn turn_start_pending_and_system_delivery_match_main_stream_family_and_ord
         .await;
     let mut second = send("continue");
     second.client_command_id = "client-command-2".to_string();
-    second.presentation_input = AgentRunPresentationInput::SystemDelivery {
-        turn_id: id("turn-facade-0002"),
-        launch_source: LaunchPresentationSource::HookAutoResume,
-        message: "continue".to_string(),
-        started_at_seconds: 1,
-    };
+    second.presentation.launch_source = LaunchPresentationSource::HookAutoResume;
     facade.send_message(second).await.unwrap();
     let frames = store
         .journal_records_after(&id("thread-facade"), None)
@@ -1035,14 +1564,6 @@ async fn runtime_facade_prompt_matches_main_user_submit_golden_exactly() {
     );
     let mut command = send("hello");
     command.presentation_thread_id = id("session-main-0001");
-    command.presentation_input = AgentRunPresentationInput::UserSubmission {
-        turn_id: id("turn-main-0001"),
-        item_id: id("turn-main-0001:user-input:0"),
-        content: agentdash_agent_protocol::text_user_input_blocks("hello"),
-        source: agentdash_agent_protocol::UserInputSource::core_composer(),
-        submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-        started_at_seconds: 1_783_684_800,
-    };
 
     facade
         .send_message(command)
@@ -1062,11 +1583,18 @@ async fn runtime_facade_prompt_matches_main_user_submit_golden_exactly() {
             })
         })
         .collect::<Vec<_>>();
+    let actual_turn_id = event_presentation_turn_id(&current[0]);
     let main = golden["frames"]
         .as_array()
         .expect("golden frames")
         .iter()
-        .map(|frame| frame["notification"]["event"].clone())
+        .map(|frame| {
+            rewrite_golden_admission_identity(
+                &frame["notification"]["event"],
+                "turn-main-0001",
+                actual_turn_id,
+            )
+        })
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -1102,14 +1630,6 @@ async fn runtime_facade_steer_matches_main_input_steer_golden_exactly() {
     );
     let mut initial = send("hello");
     initial.presentation_thread_id = id("session-main-0001");
-    initial.presentation_input = AgentRunPresentationInput::UserSubmission {
-        turn_id: id("turn-main-0001"),
-        item_id: id("turn-main-0001:user-input:0"),
-        content: agentdash_agent_protocol::text_user_input_blocks("hello"),
-        source: agentdash_agent_protocol::UserInputSource::core_composer(),
-        submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-        started_at_seconds: 1_783_684_800,
-    };
     let accepted_start = facade
         .send_message(initial)
         .await
@@ -1120,42 +1640,42 @@ async fn runtime_facade_steer_matches_main_input_steer_golden_exactly() {
         .expect("inspect active turn")
         .snapshot
         .expect("runtime snapshot");
-    assert_eq!(
-        snapshot.active_presentation_turn_id,
-        Some(id("turn-main-0001"))
-    );
+    let active_presentation_turn_id = snapshot
+        .active_presentation_turn_id
+        .clone()
+        .expect("active presentation turn");
 
-    let steer = SteerAgentRunTurn {
-        command: GuardedAgentRunCommand {
-            target: target(),
-            client_command_id: "client-steer-1".to_string(),
-            guard: AgentRunCommandGuard {
-                thread_id: snapshot.thread_id.clone(),
-                expected_revision: snapshot.revision,
-                expected_active_turn_id: snapshot.active_turn_id.clone(),
-            },
-            actor: RuntimeActor::User {
-                subject: "subject-1".to_string(),
-            },
-        },
-        presentation_input: AgentRunPresentationInput::UserSubmission {
-            turn_id: id("turn-main-0001"),
-            item_id: id(
-                "turn-main-0001:mailbox_steering:scheduler:33333333-3333-3333-3333-333333333333:44444444-4444-4444-4444-444444444444",
-            ),
+    let steer = AcceptAgentRunMessage {
+        target: target(),
+        presentation_thread_id: id("session-main-0001"),
+        presentation: AgentRunPresentationDraft {
             content: agentdash_agent_protocol::text_user_input_blocks("steer now"),
             source: agentdash_agent_protocol::UserInputSource::core_composer(),
-            submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Steer,
-            started_at_seconds: 1_783_684_800,
+            launch_source: LaunchPresentationSource::LifecycleAgentUserMessage,
+            submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
         },
-        input: vec![RuntimeInput::Text {
-            text: "steer now".to_string(),
-        }],
+        input: vec![RuntimeInput::text("steer now".to_string())],
+        client_command_id: "mailbox-33333333-3333-3333-3333-333333333333".to_string(),
+        actor: RuntimeActor::User {
+            subject: "subject-1".to_string(),
+        },
+        identity: None,
+        execution_profile_override: None,
+        backend_selection: None,
+        delivery_preference: AgentRunMessageDeliveryPreference::PreferSteer,
     };
     let accepted = facade
-        .steer_active_turn(steer.clone())
+        .accept_message(steer.clone())
         .await
         .expect("steer active turn");
+    let AgentRunMessageAdmission::Accepted {
+        receipt: accepted,
+        delivery,
+    } = accepted
+    else {
+        panic!("active preferred steering must be accepted")
+    };
+    assert_eq!(delivery, AgentRunMessageAcceptedDelivery::Steered);
     let current = store
         .journal_records_after(&id("thread-facade"), None)
         .await
@@ -1193,21 +1713,25 @@ async fn runtime_facade_steer_matches_main_input_steer_golden_exactly() {
         .await
         .expect("terminalize active turn");
     let replayed = facade
-        .steer_active_turn(steer.clone())
+        .accept_message(steer.clone())
         .await
         .expect("replay after terminal");
+    let AgentRunMessageAdmission::Accepted {
+        receipt: replayed,
+        delivery,
+    } = replayed
+    else {
+        panic!("existing operation must replay after terminal")
+    };
+    assert_eq!(delivery, AgentRunMessageAcceptedDelivery::Steered);
     assert!(replayed.duplicate);
     assert_eq!(replayed.operation_id, accepted.operation_id);
 
     let mut conflicting = steer;
-    let AgentRunPresentationInput::UserSubmission { item_id, .. } =
-        &mut conflicting.presentation_input
-    else {
-        unreachable!()
-    };
-    *item_id = id("turn-main-0001:conflicting-steer-item");
+    conflicting.presentation.content =
+        agentdash_agent_protocol::text_user_input_blocks("conflicting steer");
     assert!(matches!(
-        facade.steer_active_turn(conflicting).await,
+        facade.accept_message(conflicting).await,
         Err(AgentRunRuntimeError::ClientCommandConflict)
     ));
 
@@ -1220,7 +1744,20 @@ async fn runtime_facade_steer_matches_main_input_steer_golden_exactly() {
         .as_array()
         .expect("golden frames")
         .iter()
-        .map(|frame| frame["notification"]["event"].clone())
+        .map(|frame| {
+            let item_nonce = current[2]
+                .pointer("/payload/itemId")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|item_id| item_id.rsplit(':').next())
+                .expect("steer item carries a dynamic nonce");
+            serde_json::from_str::<serde_json::Value>(
+                &frame["notification"]["event"]
+                    .to_string()
+                    .replace("turn-main-0001", active_presentation_turn_id.as_str())
+                    .replace("44444444-4444-4444-4444-444444444444", item_nonce),
+            )
+            .expect("rewrite symbolic golden identities")
+        })
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -1253,31 +1790,24 @@ async fn runtime_facade_modalities_match_main_input_modalities_golden_exactly() 
     );
     let mut command = send("modalities");
     command.presentation_thread_id = id("session-modalities-0001");
-    command.presentation_input = AgentRunPresentationInput::UserSubmission {
-        turn_id: id("turn-modalities-0001"),
-        item_id: id("turn-modalities-0001:user-input:0"),
-        content: vec![
-            codex::UserInput::Image {
-                detail: Some(None),
-                url: "data:image/png;base64,AQID".to_string(),
-            },
-            codex::UserInput::LocalImage {
-                detail: None,
-                path: "D:/workspace/reference.png".to_string(),
-            },
-            codex::UserInput::Skill {
-                name: "review".to_string(),
-                path: "D:/workspace/.agents/skills/review/SKILL.md".to_string(),
-            },
-            codex::UserInput::Mention {
-                name: "requirements".to_string(),
-                path: "D:/workspace/docs/requirements.md".to_string(),
-            },
-        ],
-        source: agentdash_agent_protocol::UserInputSource::core_composer(),
-        submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-        started_at_seconds: 1_783_684_800,
-    };
+    command.presentation.content = vec![
+        codex::UserInput::Image {
+            detail: Some(None),
+            url: "data:image/png;base64,AQID".to_string(),
+        },
+        codex::UserInput::LocalImage {
+            detail: None,
+            path: "D:/workspace/reference.png".to_string(),
+        },
+        codex::UserInput::Skill {
+            name: "review".to_string(),
+            path: "D:/workspace/.agents/skills/review/SKILL.md".to_string(),
+        },
+        codex::UserInput::Mention {
+            name: "requirements".to_string(),
+            path: "D:/workspace/docs/requirements.md".to_string(),
+        },
+    ];
     facade
         .send_message(command)
         .await
@@ -1296,12 +1826,17 @@ async fn runtime_facade_modalities_match_main_input_modalities_golden_exactly() 
             })
         })
         .collect::<Vec<_>>();
+    let actual_turn_id = event_presentation_turn_id(&current[0]);
     assert_eq!(
         current,
         golden["protected_events"]
             .as_array()
             .expect("protected events")
-            .clone(),
+            .iter()
+            .map(|event| {
+                rewrite_golden_admission_identity(event, "turn-modalities-0001", actual_turn_id)
+            })
+            .collect::<Vec<_>>(),
         "image/localImage nullable detail and skill/mention payloads must remain byte-semantic"
     );
 }
@@ -1310,7 +1845,7 @@ async fn runtime_facade_modalities_match_main_input_modalities_golden_exactly() 
 async fn runtime_facade_delivery_sources_match_main_delivery_golden_exactly() {
     async fn capture(
         presentation_thread_id: &str,
-        presentation_input: AgentRunPresentationInput,
+        presentation: AgentRunPresentationDraft,
     ) -> Vec<serde_json::Value> {
         let store = Arc::new(RuntimeStoreFixture::default());
         let gateway: Arc<dyn AgentRuntimeGateway> = Arc::new(ManagedAgentRuntime::new(
@@ -1327,7 +1862,7 @@ async fn runtime_facade_delivery_sources_match_main_delivery_golden_exactly() {
         );
         let mut command = send("delivery");
         command.presentation_thread_id = id(presentation_thread_id);
-        command.presentation_input = presentation_input;
+        command.presentation = presentation;
         facade
             .send_message(command)
             .await
@@ -1366,16 +1901,25 @@ async fn runtime_facade_delivery_sources_match_main_delivery_golden_exactly() {
         };
         let events = capture(
             thread_id,
-            AgentRunPresentationInput::SystemDelivery {
-                turn_id: id(turn_id),
+            AgentRunPresentationDraft {
+                content: agentdash_agent_protocol::text_user_input_blocks(message),
+                source: agentdash_agent_protocol::UserInputSource::new(
+                    "runtime",
+                    "system_delivery",
+                    "system",
+                ),
                 launch_source,
-                message: message.into(),
-                started_at_seconds: 1_783_684_800,
+                submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
             },
         )
         .await;
         assert_eq!(events.len(), 3);
-        assert_eq!(events[0], golden["cases"][case]["first_event"]);
+        let expected_first = rewrite_golden_admission_identity(
+            &golden["cases"][case]["first_event"],
+            turn_id,
+            event_presentation_turn_id(&events[0]),
+        );
+        assert_eq!(events[0], expected_first);
         assert_eq!(events[1]["type"], "turn_started");
         assert_eq!(events[2]["type"], "platform");
         assert_eq!(
@@ -1386,9 +1930,7 @@ async fn runtime_facade_delivery_sources_match_main_delivery_golden_exactly() {
 
     let companion = capture(
         "session-companion-0001",
-        AgentRunPresentationInput::UserSubmission {
-            turn_id: id("turn-companion-0001"),
-            item_id: id("turn-companion-0001:user-input:0"),
+        AgentRunPresentationDraft {
             content: agentdash_agent_protocol::text_user_input_blocks("companion dispatch"),
             source: agentdash_agent_protocol::UserInputSource::new(
                 "companion",
@@ -1396,31 +1938,43 @@ async fn runtime_facade_delivery_sources_match_main_delivery_golden_exactly() {
                 "agent",
             )
             .with_route("sub"),
+            launch_source: LaunchPresentationSource::CompanionDispatch,
             submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-            started_at_seconds: 1_783_684_800,
         },
     )
     .await;
     assert_eq!(companion.len(), 2);
-    assert_eq!(companion[0], golden["cases"]["companion"]["first_event"]);
+    let expected_companion = rewrite_golden_admission_identity(
+        &golden["cases"]["companion"]["first_event"],
+        "turn-companion-0001",
+        event_presentation_turn_id(&companion[0]),
+    );
+    assert_eq!(companion[0], expected_companion);
     assert_eq!(companion[1]["type"], "turn_started");
 
     let companion_parent_resume = capture(
         "session-companion-marker-0001",
-        AgentRunPresentationInput::SystemDelivery {
-            turn_id: id("turn-companion-marker-0001"),
+        AgentRunPresentationDraft {
+            content: agentdash_agent_protocol::text_user_input_blocks(
+                "<subagent_notification>{\"status\":\"completed\"}</subagent_notification>",
+            ),
+            source: agentdash_agent_protocol::UserInputSource::new(
+                "companion",
+                "parent_resume",
+                "agent",
+            ),
             launch_source: LaunchPresentationSource::CompanionParentResume,
-            message: "<subagent_notification>{\"status\":\"completed\"}</subagent_notification>"
-                .into(),
-            started_at_seconds: 1_783_684_800,
+            submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
         },
     )
     .await;
     assert_eq!(companion_parent_resume.len(), 3);
-    assert_eq!(
-        companion_parent_resume[0],
-        golden["cases"]["companion_marker"]["first_event"]
+    let expected_marker = rewrite_golden_admission_identity(
+        &golden["cases"]["companion_marker"]["first_event"],
+        "turn-companion-marker-0001",
+        event_presentation_turn_id(&companion_parent_resume[0]),
     );
+    assert_eq!(companion_parent_resume[0], expected_marker);
     assert_eq!(
         companion_parent_resume[0]["payload"]["data"]["value"]["source"]["actor"],
         "agent"

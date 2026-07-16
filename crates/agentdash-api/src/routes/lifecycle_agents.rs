@@ -15,14 +15,18 @@ use agentdash_application::agent_run_list::{
 };
 use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunCommandGuard, AgentRunDeleteCommand, AgentRunDeleteCommandService,
-    AgentRunForkCommandService, AgentRunForkGraph, AgentRunForkRuntimePort, AgentRunJournalEvent,
-    AgentRunJournalLiveEvent, AgentRunJournalQuery, AgentRunPresentationDraft,
-    AgentRunProductCommandService, AgentRunRuntimeError, AgentRunRuntimeView,
-    EnqueueRuntimeMailboxMessage, ForkAgentRunRuntime, GuardedAgentRunCommand, ReadAgentRunEvents,
-    ResolveAgentRunInteraction, RuntimeAgentRunMailbox, RuntimeMailboxError,
-    RuntimeMailboxSubmitOutcome,
+    AgentRunAcceptedProductResultKind, AgentRunBackendSelectionSemantic, AgentRunCommandGuard,
+    AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunForkCommandService,
+    AgentRunForkGraph, AgentRunForkRuntimePort, AgentRunJournalEvent, AgentRunJournalLiveEvent,
+    AgentRunJournalQuery, AgentRunMessageProductResultProjector, AgentRunMessageReservationService,
+    AgentRunMessageSemanticRequest, AgentRunMessageSubmissionResult,
+    AgentRunMessageSubmissionService, AgentRunPresentationDraft, AgentRunProductCommandService,
+    AgentRunRuntimeError, AgentRunRuntimeView, EnqueueRuntimeMailboxMessage,
+    FnAgentRunMessageProductResultProjector, ForkAgentRunRuntime, GuardedAgentRunCommand,
+    ReadAgentRunEvents, ResolveAgentRunInteraction, RuntimeAgentRunMailbox, RuntimeMailboxError,
+    SubmitAgentRunMessage, project_product_delivery_results, replay_agent_run_message_submission,
 };
+use agentdash_application_ports::agent_run_message_submission::AgentRunMessageSubmissionReservation;
 use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeTarget,
 };
@@ -34,9 +38,10 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunForkSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
     AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
     AgentRunMessageCommandResponse, AgentRunToolCallApprovalResponse,
-    AgentRunToolCallRejectionResponse, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
-    MailboxMessageOrigin, MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity,
-    MailboxStateView, SteeringStopEffect,
+    AgentRunToolCallRejectionResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
+    ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
+    MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
+    SteeringStopEffect,
 };
 use agentdash_contracts::session::{
     SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
@@ -84,6 +89,20 @@ struct AgentRunContext {
 
 struct AgentRunDeliveryRuntimeContext {
     presentation_thread_id: PresentationThreadId,
+}
+
+fn agent_run_backend_selection_semantic(
+    selection: &BackendSelectionRequestDto,
+) -> AgentRunBackendSelectionSemantic {
+    AgentRunBackendSelectionSemantic {
+        mode: match selection.mode {
+            BackendSelectionModeDto::Explicit => "explicit",
+            BackendSelectionModeDto::AutoIdle => "auto_idle",
+            BackendSelectionModeDto::WorkspaceBinding => "workspace_binding",
+        }
+        .to_string(),
+        backend_id: selection.backend_id.clone(),
+    }
 }
 
 struct ApiAgentRunForkRuntimePort<'a> {
@@ -465,8 +484,8 @@ pub(crate) fn mailbox_message_contract(
             | domain::MailboxMessageStatus::Blocked
     );
     let can_promote = can_delete
-        && message.delivery == domain::MailboxDelivery::LaunchOrContinueTurn
-        && message.last_error.as_deref() != Some(domain::MAILBOX_DELIVERY_RESULT_UNKNOWN);
+        && message.origin == domain::MailboxMessageOrigin::User
+        && message.delivery == domain::MailboxDelivery::LaunchOrContinueTurn;
     let can_reorder = can_delete
         && message.origin == domain::MailboxMessageOrigin::User
         && message.delivery == domain::MailboxDelivery::LaunchOrContinueTurn;
@@ -539,24 +558,7 @@ pub(crate) fn mailbox_message_contract(
         preview: message.preview.clone(),
         has_images: message.has_images,
         attempt_count: message.attempt_count,
-        accepted_refs: if message.accepted_agent_run_turn_id.is_some()
-            || message.accepted_protocol_turn_id.is_some()
-        {
-            Some(AgentRunMessageAcceptedRefs {
-                run_ref: LifecycleRunRefDto {
-                    run_id: message.run_id.to_string(),
-                },
-                agent_ref: AgentRunRefDto {
-                    run_id: message.run_id.to_string(),
-                    agent_id: message.agent_id.to_string(),
-                },
-                frame_ref: None,
-                agent_run_turn_id: message.accepted_agent_run_turn_id.clone(),
-                protocol_turn_id: message.accepted_protocol_turn_id.clone(),
-            })
-        } else {
-            None
-        },
+        accepted_refs: None,
         last_error: message.last_error.clone(),
         created_at: message.created_at.to_rfc3339(),
         updated_at: message.updated_at.to_rfc3339(),
@@ -565,6 +567,37 @@ pub(crate) fn mailbox_message_contract(
         can_reorder,
         can_recall,
     }
+}
+
+fn composer_submission_response(
+    submission: AgentRunMessageSubmissionResult,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    let mut response: AgentRunMessageCommandResponse =
+        serde_json::from_value(submission.result_json)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+    response.command_receipt.duplicate = submission.duplicate;
+    response.command_receipt.message = submission.error_message;
+    Ok(Json(response))
+}
+
+async fn reject_unattached_composer_reservation(
+    reservation_service: &AgentRunMessageReservationService,
+    receipt_id: Uuid,
+    rejection: ApiError,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    if reservation_service.abandon(receipt_id).await? {
+        return Err(rejection);
+    }
+
+    let receipt = reservation_service
+        .load_receipt(receipt_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::Conflict(format!(
+                "AgentRun message reservation {receipt_id} changed while reconciling rejection; retry the canonical command"
+            ))
+        })?;
+    composer_submission_response(replay_agent_run_message_submission(receipt, true)?)
 }
 
 pub async fn submit_agent_run_composer_input(
@@ -622,25 +655,124 @@ pub async fn submit_agent_run_composer_input(
         )
         .await;
     }
-    validate_agent_run_product_command(
-        state.as_ref(),
-        &context,
-        &current_user,
-        &req.command,
-        ConversationCommandKind::SubmitMessage,
-    )
-    .await?;
     let target = agent_run_runtime_target(&context);
+    let semantic_request = AgentRunMessageSemanticRequest {
+        target: target.clone(),
+        input: req.input.clone(),
+        executor_config: req.executor_config.clone(),
+        backend_selection: req
+            .backend_selection
+            .as_ref()
+            .map(agent_run_backend_selection_semantic),
+        delivery_intent: req.delivery_intent.clone(),
+    };
+    let reservation_service = AgentRunMessageReservationService::new(
+        state.repos.agent_run_message_submission_store.clone(),
+    );
+    let reservation = reservation_service
+        .reserve_agent_run_message(
+            AgentRunCommandKind::MessageSubmit,
+            req.client_command_id.clone(),
+            &semantic_request,
+        )
+        .await?;
+    let (reserved_receipt_id, validate_new_command, unattached_reservation) = match reservation {
+        AgentRunMessageSubmissionReservation::Replay { receipt } => {
+            return composer_submission_response(replay_agent_run_message_submission(
+                receipt, true,
+            )?);
+        }
+        AgentRunMessageSubmissionReservation::Created { receipt_id } => (receipt_id, true, true),
+        AgentRunMessageSubmissionReservation::ReconcileRequired { receipt } => {
+            let unattached = receipt.mailbox_message_id.is_none();
+            (receipt.id, unattached, unattached)
+        }
+    };
+    if validate_new_command {
+        if let Err(error) = validate_agent_run_product_command(
+            state.as_ref(),
+            &context,
+            &current_user,
+            &req.command,
+            ConversationCommandKind::SubmitMessage,
+        )
+        .await
+        {
+            if unattached_reservation {
+                return reject_unattached_composer_reservation(
+                    &reservation_service,
+                    reserved_receipt_id,
+                    error,
+                )
+                .await;
+            }
+            return Err(error);
+        }
+    }
+    let runtime_input = match runtime_input_from_codex(req.input.clone()) {
+        Ok(input) => input,
+        Err(error) => {
+            if unattached_reservation {
+                return reject_unattached_composer_reservation(
+                    &reservation_service,
+                    reserved_receipt_id,
+                    error,
+                )
+                .await;
+            }
+            return Err(error);
+        }
+    };
+    let backend_selection = match req
+        .backend_selection
+        .as_ref()
+        .map(super::project_agents::backend_selection_input)
+        .transpose()
+    {
+        Ok(selection) => selection,
+        Err(error) => {
+            if unattached_reservation {
+                return reject_unattached_composer_reservation(
+                    &reservation_service,
+                    reserved_receipt_id,
+                    error,
+                )
+                .await;
+            }
+            return Err(error);
+        }
+    };
+    let executor_config = match req
+        .executor_config
+        .clone()
+        .map(serde_json::from_value::<agentdash_spi::AgentConfig>)
+        .transpose()
+    {
+        Ok(config) => config,
+        Err(error) => {
+            let rejection = ApiError::BadRequest(format!("executor_config 格式错误: {error}"));
+            if unattached_reservation {
+                return reject_unattached_composer_reservation(
+                    &reservation_service,
+                    reserved_receipt_id,
+                    rejection,
+                )
+                .await;
+            }
+            return Err(rejection);
+        }
+    };
     let presentation = AgentRunPresentationDraft {
         content: req.input.clone(),
         source: agentdash_agent_protocol::UserInputSource::core_composer(),
         launch_source: agentdash_application_agentrun::agent_run::LaunchPresentationSource::LifecycleAgentUserMessage,
         submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-        started_at_seconds: Utc::now().timestamp(),
     };
-    let runtime_input = runtime_input_from_codex(req.input)?;
-    let outcome = runtime_agent_run_mailbox(state.as_ref())
-        .submit(EnqueueRuntimeMailboxMessage {
+    let runtime_mailbox = runtime_agent_run_mailbox(state.as_ref());
+    let projector = agent_run_message_result_projector(req.client_command_id.clone(), None, None);
+    let acceptance_results = project_product_delivery_results(projector.as_ref())?;
+    let mailbox_message = runtime_mailbox
+        .prepare_message(EnqueueRuntimeMailboxMessage {
             target: target.clone(),
             presentation_thread_id: context.presentation_thread_id.clone().ok_or_else(|| {
                 ApiError::Conflict(format!(
@@ -656,38 +788,26 @@ pub async fn submit_agent_run_composer_input(
             origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User,
             source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
             delivery_intent: req.delivery_intent,
-            executor_config: req.executor_config,
-            backend_selection: req
-                .backend_selection
-                .as_ref()
-                .map(super::project_agents::backend_selection_input)
-                .transpose()?,
+            executor_config,
+            backend_selection,
         })
-        .await
         .map_err(runtime_mailbox_error)?;
-    let response = match outcome {
-        RuntimeMailboxSubmitOutcome::Queued { message } => {
-            spawn_runtime_mailbox_watcher(state.clone(), target);
-            agent_run_message_command_response(
-                req.client_command_id,
-                AgentRunMessageCommandOutcome::Queued,
-                None,
-                Some(message),
-            )
-        }
-        RuntimeMailboxSubmitOutcome::Dispatched {
-            receipt, steered, ..
-        } => agent_run_message_command_response(
-            req.client_command_id,
-            if steered {
-                AgentRunMessageCommandOutcome::Steered
-            } else {
-                AgentRunMessageCommandOutcome::Launched
-            },
-            Some(receipt),
-            None,
-        ),
-    };
+    let submission = AgentRunMessageSubmissionService::new(
+        state.repos.agent_run_message_submission_store.clone(),
+        Arc::new(runtime_mailbox),
+        projector,
+    )
+    .submit_message(
+        SubmitAgentRunMessage {
+            client_command_id: req.client_command_id,
+            mailbox_message,
+            acceptance_results,
+            reserved_receipt_id: Some(reserved_receipt_id),
+        },
+        &semantic_request,
+    )
+    .await?;
+    let Json(response) = composer_submission_response(submission)?;
     diag!(Debug, Subsystem::Api,
 
         run_id = %context.run.id,
@@ -727,6 +847,71 @@ fn agent_run_message_command_response(
         accepted_refs: None,
         fork: None,
     }
+}
+
+fn agent_run_message_result_projector(
+    client_command_id: String,
+    accepted_refs: Option<AgentRunMessageAcceptedRefs>,
+    fork: Option<AgentRunForkOutcomeView>,
+) -> Arc<dyn AgentRunMessageProductResultProjector> {
+    let accepted_command_id = client_command_id.clone();
+    let accepted_refs_for_delivery = accepted_refs.clone();
+    let fork_for_delivery = fork.clone();
+    let accepted = Arc::new(move |kind: AgentRunAcceptedProductResultKind| {
+        let outcome = match kind {
+            AgentRunAcceptedProductResultKind::Started => AgentRunMessageCommandOutcome::Launched,
+            AgentRunAcceptedProductResultKind::Steered => AgentRunMessageCommandOutcome::Steered,
+        };
+        let mut response =
+            agent_run_message_command_response(accepted_command_id.clone(), outcome, None, None);
+        response.accepted_refs = accepted_refs_for_delivery.clone();
+        response.fork = fork_for_delivery.clone();
+        serde_json::to_value(response).map_err(|error| {
+            agentdash_application_agentrun::WorkflowApplicationError::Internal(error.to_string())
+        })
+    });
+
+    let queued_command_id = client_command_id.clone();
+    let accepted_refs_for_queue = accepted_refs.clone();
+    let fork_for_queue = fork.clone();
+    let queued = Arc::new(
+        move |message: &agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage| {
+            let mut response = agent_run_message_command_response(
+                queued_command_id.clone(),
+                AgentRunMessageCommandOutcome::Queued,
+                None,
+                Some(message.clone()),
+            );
+            response.accepted_refs = accepted_refs_for_queue.clone();
+            response.fork = fork_for_queue.clone();
+            serde_json::to_value(response).map_err(|error| {
+                agentdash_application_agentrun::WorkflowApplicationError::Internal(
+                    error.to_string(),
+                )
+            })
+        },
+    );
+
+    let failed_command_id = client_command_id;
+    let accepted_refs_for_failure = accepted_refs;
+    let fork_for_failure = fork;
+    let failed = Arc::new(move || {
+        let mut response = agent_run_message_command_response(
+            failed_command_id.clone(),
+            AgentRunMessageCommandOutcome::Failed,
+            None,
+            None,
+        );
+        response.accepted_refs = accepted_refs_for_failure.clone();
+        response.fork = fork_for_failure.clone();
+        serde_json::to_value(response).map_err(|error| {
+            agentdash_application_agentrun::WorkflowApplicationError::Internal(error.to_string())
+        })
+    });
+
+    Arc::new(FnAgentRunMessageProductResultProjector::new(
+        accepted, queued, failed,
+    ))
 }
 
 fn mailbox_control_response(
@@ -1194,16 +1379,37 @@ async fn fork_submit_agent_run(
     )
     .await?;
     let target = agent_run_runtime_target(&child);
+    let semantic_request = AgentRunMessageSemanticRequest {
+        target: target.clone(),
+        input: body.input.clone(),
+        executor_config: body.executor_config.clone(),
+        backend_selection: body
+            .backend_selection
+            .as_ref()
+            .map(agent_run_backend_selection_semantic),
+        delivery_intent: None,
+    };
+    let backend_selection = body
+        .backend_selection
+        .as_ref()
+        .map(super::project_agents::backend_selection_input)
+        .transpose()?;
+    let executor_config = body
+        .executor_config
+        .clone()
+        .map(serde_json::from_value::<agentdash_spi::AgentConfig>)
+        .transpose()
+        .map_err(|error| ApiError::BadRequest(format!("executor_config 格式错误: {error}")))?;
     let presentation = AgentRunPresentationDraft {
         content: body.input.clone(),
         source: agentdash_agent_protocol::UserInputSource::core_composer(),
         launch_source: agentdash_application_agentrun::agent_run::LaunchPresentationSource::LifecycleAgentUserMessage,
         submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-        started_at_seconds: Utc::now().timestamp(),
     };
     let runtime_input = runtime_input_from_codex(body.input)?;
-    let outcome = runtime_agent_run_mailbox(state.as_ref())
-        .submit(EnqueueRuntimeMailboxMessage {
+    let runtime_mailbox = runtime_agent_run_mailbox(state.as_ref());
+    let mailbox_message = runtime_mailbox
+        .prepare_message(EnqueueRuntimeMailboxMessage {
             target: target.clone(),
             presentation_thread_id: child.presentation_thread_id.clone().ok_or_else(|| {
                 ApiError::Conflict("forked AgentRun 缺少 delivery runtime".to_string())
@@ -1216,14 +1422,9 @@ async fn fork_submit_agent_run(
             origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User,
             source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
             delivery_intent: None,
-            executor_config: body.executor_config,
-            backend_selection: body
-                .backend_selection
-                .as_ref()
-                .map(super::project_agents::backend_selection_input)
-                .transpose()?,
+            executor_config,
+            backend_selection,
         })
-        .await
         .map_err(runtime_mailbox_error)?;
     let fork_outcome = AgentRunForkOutcomeView {
         outcome: fork.outcome,
@@ -1232,27 +1433,32 @@ async fn fork_submit_agent_run(
         lineage: fork.lineage,
         redirect: fork.redirect,
     };
-    let mut response = match outcome {
-        RuntimeMailboxSubmitOutcome::Queued { message } => {
-            spawn_runtime_mailbox_watcher(state, target);
-            agent_run_message_command_response(
-                body.client_command_id,
-                AgentRunMessageCommandOutcome::Queued,
-                None,
-                Some(message),
-            )
-        }
-        RuntimeMailboxSubmitOutcome::Dispatched { receipt, .. } => {
-            agent_run_message_command_response(
-                body.client_command_id,
-                AgentRunMessageCommandOutcome::Launched,
-                Some(receipt),
-                None,
-            )
-        }
-    };
-    response.accepted_refs = Some(fork.child_refs);
-    response.fork = Some(fork_outcome);
+    let projector = agent_run_message_result_projector(
+        body.client_command_id.clone(),
+        Some(fork.child_refs),
+        Some(fork_outcome),
+    );
+    let acceptance_results = project_product_delivery_results(projector.as_ref())?;
+    let submission = AgentRunMessageSubmissionService::new(
+        state.repos.agent_run_message_submission_store.clone(),
+        Arc::new(runtime_mailbox),
+        projector,
+    )
+    .submit_fork_message(
+        SubmitAgentRunMessage {
+            client_command_id: body.client_command_id,
+            mailbox_message,
+            acceptance_results,
+            reserved_receipt_id: None,
+        },
+        &semantic_request,
+    )
+    .await?;
+    let mut response: AgentRunMessageCommandResponse =
+        serde_json::from_value(submission.result_json)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+    response.command_receipt.duplicate = submission.duplicate;
+    response.command_receipt.message = submission.error_message;
     Ok(Json(response))
 }
 
@@ -1419,43 +1625,19 @@ async fn promote_agent_run_mailbox_message(
     if claim.duplicate {
         return Ok(Json(replay_mailbox_response(&claim)?));
     }
+    let target = agent_run_runtime_target(&context);
     let promoted = product_command_step(
         &command_service,
         claim.receipt_id,
         async {
-            let message = state
-                .repos
-                .agent_run_mailbox_repo
-                .get_message(message_id)
-                .await?
-                .ok_or_else(|| ApiError::NotFound("mailbox message 不存在".to_string()))?;
-            ensure_mailbox_message_target(&context, &message)?;
-            if message.last_error.as_deref()
-                == Some(agentdash_domain::agent_run_mailbox::MAILBOX_DELIVERY_RESULT_UNKNOWN)
-            {
-                return Err(ApiError::Conflict(
-                    "mailbox message delivery result is unknown and cannot be promoted".to_string(),
-                ));
-            }
-            Ok(state
-                .repos
-                .agent_run_mailbox_repo
-                .update_message_policy(
-                    message_id,
-                    agentdash_domain::agent_run_mailbox::MailboxDelivery::SteerActiveTurn {
-                        stop_effect: agentdash_domain::agent_run_mailbox::SteeringStopEffect::None,
-                    },
-                    agentdash_domain::agent_run_mailbox::ConsumptionBarrier::AgentLoopTurnBoundary,
-                    agentdash_domain::agent_run_mailbox::MailboxDrainMode::All,
-                    100,
-                )
-                .await?)
+            runtime_agent_run_mailbox(state.as_ref())
+                .promote(&target, message_id)
+                .await
+                .map_err(runtime_mailbox_error)
         }
         .await,
     )
     .await?;
-    let target = agent_run_runtime_target(&context);
-    spawn_runtime_mailbox_watcher(state.clone(), target);
     let mut response = mailbox_control_response(
         body.client_command_id,
         AgentRunMessageCommandOutcome::Queued,
@@ -1611,8 +1793,6 @@ async fn resume_agent_run_mailbox(
             .map_err(ApiError::from),
     )
     .await?;
-    let target = agent_run_runtime_target(&context);
-    spawn_runtime_mailbox_watcher(state.clone(), target);
     let mut response = mailbox_control_response(
         body.client_command_id,
         AgentRunMessageCommandOutcome::Resumed,
@@ -2814,50 +2994,12 @@ fn agent_run_runtime_target(context: &AgentRunContext) -> AgentRunRuntimeTarget 
     }
 }
 
-fn runtime_agent_run_mailbox(state: &AppState) -> RuntimeAgentRunMailbox {
+pub(crate) fn runtime_agent_run_mailbox(state: &AppState) -> RuntimeAgentRunMailbox {
     RuntimeAgentRunMailbox::new(
         state.repos.agent_run_mailbox_repo.clone(),
         state.services.agent_run_runtime.clone(),
+        state.repos.agent_run_message_submission_store.clone(),
     )
-}
-
-fn spawn_runtime_mailbox_watcher(state: Arc<AppState>, target: AgentRunRuntimeTarget) {
-    tokio::spawn(async move {
-        let Ok(mut events) = state
-            .services
-            .agent_run_runtime
-            .read_events(ReadAgentRunEvents {
-                target: target.clone(),
-                after: None,
-                include_transient: false,
-                transient_after: None,
-                stream_generation: None,
-            })
-            .await
-        else {
-            return;
-        };
-        while let Some(event) = events.next().await {
-            let Ok(event) = event else {
-                return;
-            };
-            if !matches!(
-                event.event,
-                agentdash_agent_runtime_contract::RuntimeEvent::TurnTerminal { .. }
-                    | agentdash_agent_runtime_contract::RuntimeEvent::InteractionTerminal { .. }
-                    | agentdash_agent_runtime_contract::RuntimeEvent::ThreadStatusChanged { .. }
-            ) {
-                continue;
-            }
-            match runtime_agent_run_mailbox(state.as_ref())
-                .recover_and_drain_once(&target)
-                .await
-            {
-                Ok(Some(_)) | Err(_) => return,
-                Ok(None) => {}
-            }
-        }
-    });
 }
 
 fn runtime_actor(current_user: &agentdash_integration_api::AuthIdentity) -> RuntimeActor {
@@ -2994,46 +3136,23 @@ fn guarded_agent_run_command_from_view(
 pub(crate) fn runtime_input_from_codex(
     input: Vec<codex::UserInput>,
 ) -> Result<Vec<RuntimeInput>, ApiError> {
-    let input = input
-        .into_iter()
-        .filter_map(|item| match item {
-            codex::UserInput::Text { text, .. } => {
-                let text = text.trim().to_string();
-                (!text.is_empty()).then_some(RuntimeInput::Text { text })
-            }
-            codex::UserInput::Image { url, .. } => Some(RuntimeInput::Image {
-                mime_type: runtime_image_mime_type(&url),
-                data_url: url,
-            }),
-            codex::UserInput::LocalImage { path, .. } => Some(RuntimeInput::FileReference {
-                uri: path,
-                media_type: Some("image".to_string()),
-            }),
-            codex::UserInput::Skill { name, path } => Some(RuntimeInput::FileReference {
-                uri: path,
-                media_type: Some(format!("application/x-agent-skill; name={name}")),
-            }),
-            codex::UserInput::Mention { name, path } => Some(RuntimeInput::FileReference {
-                uri: path,
-                media_type: Some(format!("application/x-agent-mention; name={name}")),
-            }),
-        })
-        .collect::<Vec<_>>();
-    if input.is_empty() {
+    let has_deliverable_content = input.iter().any(|item| match item {
+        codex::UserInput::Text { text, .. } => !text.trim().is_empty(),
+        codex::UserInput::Image { .. }
+        | codex::UserInput::LocalImage { .. }
+        | codex::UserInput::Skill { .. }
+        | codex::UserInput::Mention { .. } => true,
+    });
+    if !has_deliverable_content {
         return Err(ApiError::BadRequest(
             "input 中没有可投递到 Agent Runtime 的内容".to_string(),
         ));
     }
+    let input = input
+        .into_iter()
+        .map(RuntimeInput::user_input)
+        .collect::<Vec<_>>();
     Ok(input)
-}
-
-fn runtime_image_mime_type(url: &str) -> String {
-    url.strip_prefix("data:")
-        .and_then(|value| value.split_once([',', ';']))
-        .map(|(mime_type, _)| mime_type.trim())
-        .filter(|mime_type| !mime_type.is_empty())
-        .unwrap_or("application/octet-stream")
-        .to_string()
 }
 
 pub(crate) fn agent_run_runtime_error(error: AgentRunRuntimeError) -> ApiError {
@@ -3059,6 +3178,19 @@ pub(crate) fn agent_run_runtime_error(error: AgentRunRuntimeError) -> ApiError {
                 ApiError::Internal("AgentRun runtime binding 持久化失败".to_string())
             }
         },
+        AgentRunRuntimeError::ExecutionProfile(error) => {
+            let message = error.to_string();
+            match error {
+                agentdash_application_agentrun::agent_run::ExecutionProfileCoordinationError::RebindUnsupported { .. }
+                | agentdash_application_agentrun::agent_run::ExecutionProfileCoordinationError::CurrentFrameUnavailable { .. }
+                | agentdash_application_agentrun::agent_run::ExecutionProfileCoordinationError::CurrentProfileUnavailable => {
+                    ApiError::Conflict(message)
+                }
+                agentdash_application_agentrun::agent_run::ExecutionProfileCoordinationError::Persistence(_) => {
+                    ApiError::Internal(message)
+                }
+            }
+        }
         AgentRunRuntimeError::Execute(error) => match error {
             Execute::Unsupported { .. }
             | Execute::InvalidCommand { .. }
@@ -3099,7 +3231,6 @@ pub(crate) fn agent_run_runtime_error(error: AgentRunRuntimeError) -> ApiError {
         },
         AgentRunRuntimeError::StaleThread
         | AgentRunRuntimeError::StaleActiveTurn
-        | AgentRunRuntimeError::StalePresentationTurn
         | AgentRunRuntimeError::ClientCommandConflict => ApiError::Conflict(error.to_string()),
         AgentRunRuntimeError::UnexpectedSnapshot => {
             ApiError::Internal("Agent Runtime 返回了非预期 snapshot 类型".to_string())
@@ -3111,11 +3242,12 @@ pub(crate) fn agent_run_runtime_error(error: AgentRunRuntimeError) -> ApiError {
     }
 }
 
-fn runtime_mailbox_error(error: RuntimeMailboxError) -> ApiError {
+pub(crate) fn runtime_mailbox_error(error: RuntimeMailboxError) -> ApiError {
     match error {
         RuntimeMailboxError::Runtime(error) => agent_run_runtime_error(error),
         RuntimeMailboxError::InvalidPayload(message) => ApiError::Internal(message),
         RuntimeMailboxError::Persistence(error) => ApiError::from(error),
+        RuntimeMailboxError::DeliveryFailed(message) => ApiError::Conflict(message),
     }
 }
 
@@ -3132,6 +3264,96 @@ mod journal_projection_tests {
         normalize_current_presentation_event, normalize_main_ndjson_frame,
         normalize_main_session_event,
     };
+
+    #[test]
+    fn codex_user_input_conversion_preserves_every_standard_field() {
+        let expected = vec![
+            serde_json::json!({
+                "type": "text",
+                "text": "ask @agent",
+                "text_elements": [{
+                    "byteRange": { "start": 4, "end": 10 },
+                    "placeholder": null
+                }]
+            }),
+            serde_json::json!({ "type": "image", "url": "https://example.test/absent.png" }),
+            serde_json::json!({ "type": "image", "detail": null, "url": "https://example.test/null.png" }),
+            serde_json::json!({ "type": "image", "detail": "high", "url": "https://example.test/high.png" }),
+            serde_json::json!({ "type": "localImage", "detail": null, "path": "C:/workspace/image.png" }),
+            serde_json::json!({ "type": "skill", "name": "review", "path": "C:/skills/review/SKILL.md" }),
+            serde_json::json!({ "type": "mention", "name": "main.rs", "path": "C:/workspace/src/main.rs" }),
+        ];
+        let input = expected
+            .iter()
+            .cloned()
+            .map(|value| serde_json::from_value(value).expect("generated Codex UserInput"))
+            .collect();
+
+        let runtime = runtime_input_from_codex(input).expect("Runtime input");
+
+        assert_eq!(runtime.len(), expected.len());
+        for (runtime, expected) in runtime.iter().zip(expected) {
+            let RuntimeInput::UserInput { block } = runtime else {
+                panic!("standard Codex input must stay a standard Runtime user input");
+            };
+            assert_eq!(
+                serde_json::to_value(block).expect("serialize input"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn codex_user_input_conversion_rejects_empty_or_whitespace_only_content() {
+        assert!(matches!(
+            runtime_input_from_codex(Vec::new()),
+            Err(ApiError::BadRequest(_))
+        ));
+        assert!(matches!(
+            runtime_input_from_codex(vec![codex::UserInput::Text {
+                text: " \r\n\t ".to_string(),
+                text_elements: Vec::new(),
+            }]),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn codex_user_input_conversion_keeps_whitespace_blocks_when_an_image_is_deliverable() {
+        let expected = vec![
+            serde_json::json!({
+                "type": "text",
+                "text": " \n ",
+                "text_elements": [{
+                    "byteRange": { "start": 0, "end": 1 },
+                    "placeholder": "space"
+                }]
+            }),
+            serde_json::json!({
+                "type": "image",
+                "detail": null,
+                "url": "data:image/png;base64,AA=="
+            }),
+        ];
+        let input = expected
+            .iter()
+            .cloned()
+            .map(|value| serde_json::from_value(value).expect("generated Codex UserInput"))
+            .collect();
+
+        let runtime = runtime_input_from_codex(input).expect("image makes input deliverable");
+
+        assert_eq!(runtime.len(), expected.len());
+        for (runtime, expected) in runtime.iter().zip(expected) {
+            let RuntimeInput::UserInput { block } = runtime else {
+                panic!("standard Codex input must remain typed");
+            };
+            assert_eq!(
+                serde_json::to_value(block).expect("serialize input"),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn typed_context_frame_wrapper_normalizes_to_the_main_session_boundary_exactly() {
@@ -3755,4 +3977,652 @@ async fn delivery_runtime_session_for_agent_run(
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
+}
+
+#[cfg(test)]
+mod composer_submission_http_tests {
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        str::FromStr,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    use agentdash_agent_runtime_contract::*;
+    use agentdash_application_agentrun::agent_run::*;
+    use agentdash_application_ports::agent_run_runtime::{
+        AgentRunContextDeliveryTarget, AgentRunRuntimeBinding, AgentRunRuntimeBindingError,
+        AgentRunRuntimeBindingRepository, AgentRunRuntimeTarget,
+    };
+    use agentdash_domain::{
+        project::Project,
+        workflow::{AgentFrame, AgentSource, LifecycleAgent, LifecycleRun},
+    };
+    use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
+    use agentdash_spi::{AgentConfig, AuthIdentity, AuthMode};
+    use async_trait::async_trait;
+    use axum::{Extension, Router};
+    use serde_json::{Value, json};
+    use tokio::sync::Mutex;
+    use uuid::Uuid;
+
+    use crate::{app_state::AppState, auth::RequestIdentity};
+
+    fn id<T: FromStr>(value: &str) -> T
+    where
+        T::Err: std::fmt::Debug,
+    {
+        value.parse().expect("valid test runtime id")
+    }
+
+    fn runtime_profile() -> RuntimeProfile {
+        RuntimeProfile {
+            reference_class: ReferenceRuntimeClass::ManagedThread,
+            input: InputProfile {
+                modalities: [InputModality::Text].into(),
+            },
+            instruction: InstructionProfile {
+                channels: BTreeSet::new(),
+                configuration_boundary: ConfigurationBoundary::Binding,
+            },
+            tools: ToolProfile {
+                channels: BTreeSet::new(),
+                configuration_boundary: ConfigurationBoundary::Binding,
+                cancellation: true,
+            },
+            workspace: WorkspaceProfile {
+                capabilities: BTreeSet::new(),
+                mechanism: DeliveryMechanism::Native,
+            },
+            interactions: InteractionProfile {
+                kinds: BTreeSet::new(),
+                durable_correlation: true,
+            },
+            lifecycle: [
+                LifecycleCapability::ThreadStart,
+                LifecycleCapability::TurnStart,
+                LifecycleCapability::TurnSteer,
+            ]
+            .into(),
+            hooks: HookProfile {
+                points: Vec::new(),
+                configuration_boundary: ConfigurationBoundary::Binding,
+            },
+            context: ContextProfile {
+                capabilities: BTreeSet::new(),
+                fidelity: ContextFidelity::Opaque,
+                activation_idempotent: false,
+            },
+            telemetry_config: BTreeSet::new(),
+        }
+    }
+
+    fn binding(target: AgentRunRuntimeTarget, source_frame_id: Uuid) -> AgentRunRuntimeBinding {
+        let profile = runtime_profile();
+        let suffix = target.agent_id.simple().to_string();
+        AgentRunRuntimeBinding {
+            target,
+            presentation_thread_id: id(&format!("presentation-http-{suffix}")),
+            thread_id: id(&format!("thread-http-{suffix}")),
+            binding_id: id(&format!("binding-http-{suffix}")),
+            binding_epoch: BindingEpoch(1),
+            driver_generation: RuntimeDriverGeneration(1),
+            source_thread_id: id(&format!("source-http-{suffix}")),
+            profile_digest: id(&format!("profile-http-{suffix}")),
+            profile_provenance: ProfileProvenance {
+                service_digest: id(&format!("service-http-{suffix}")),
+                transport_digest: id(&format!("transport-http-{suffix}")),
+                host_policy_digest: id(&format!("host-http-{suffix}")),
+            },
+            bound_profile: profile,
+            surface: RuntimeSurfaceDescriptor {
+                source_frame_id: source_frame_id.to_string(),
+                surface_revision: SurfaceRevision(1),
+                surface_digest: id(&format!("surface-http-{suffix}")),
+                vfs_digest: "vfs-http-replay".to_string(),
+                context_recipe_revision: ContextRecipeRevision(1),
+                context_digest: id(&format!("context-http-{suffix}")),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                tool_set_digest: "tools-http-replay".to_string(),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: id(&format!("hooks-http-{suffix}")),
+                    entries: Vec::new(),
+                },
+                terminal_hook_effect_binding: None,
+            },
+            settings_revision: ThreadSettingsRevision(0),
+            context_delivery_target: AgentRunContextDeliveryTarget {
+                connector_id: "pi-agent".to_string(),
+                executor: "PI_AGENT".to_string(),
+            },
+        }
+    }
+
+    fn runtime_view(binding: AgentRunRuntimeBinding) -> AgentRunRuntimeView {
+        let mut availability = BTreeMap::new();
+        availability.insert(
+            RuntimeCommandKind::TurnStart,
+            CommandAvailability::Available,
+        );
+        availability.insert(
+            RuntimeCommandKind::TurnSteer,
+            CommandAvailability::Unavailable {
+                unmet: Vec::new(),
+                reason: "no active turn".to_string(),
+            },
+        );
+        AgentRunRuntimeView {
+            target: binding.target.clone(),
+            binding: Some(binding.clone()),
+            snapshot: Some(RuntimeSnapshot {
+                thread_id: binding.thread_id.clone(),
+                revision: RuntimeRevision(4),
+                latest_event_sequence: EventSequence(4),
+                captured_at_ms: 1_783_684_800_000,
+                status: RuntimeThreadStatus::Active,
+                active_turn_id: None,
+                active_presentation_turn_id: None,
+                binding_id: binding.binding_id.clone(),
+                binding_epoch: binding.binding_epoch,
+                profile_digest: binding.profile_digest.clone(),
+                bound_profile: binding.bound_profile.clone(),
+                active_checkpoint_id: None,
+                context_revision: ContextRevision(0),
+                settings_revision: binding.settings_revision,
+                tool_set_revision: binding.surface.tool_set_revision,
+                surface: binding.surface.clone(),
+                pending_interactions: Vec::new(),
+                pending_interaction_details: Vec::new(),
+                command_availability: availability,
+                transcript: Vec::new(),
+                transcript_fidelity: ContextFidelity::Opaque,
+            }),
+            binding_epoch: Some(binding.binding_epoch),
+            recovery: runtime_facade::AgentRunRuntimeRecoverySummary::Active,
+        }
+    }
+
+    struct HttpReplayRuntime {
+        view: Mutex<AgentRunRuntimeView>,
+        accept_calls: AtomicUsize,
+    }
+
+    struct HttpBindingRepository {
+        binding: AgentRunRuntimeBinding,
+    }
+
+    #[async_trait]
+    impl AgentRunRuntimeBindingRepository for HttpBindingRepository {
+        async fn load(
+            &self,
+            target: &AgentRunRuntimeTarget,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((self.binding.target == *target).then(|| self.binding.clone()))
+        }
+
+        async fn load_by_thread_id(
+            &self,
+            thread_id: &RuntimeThreadId,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((self.binding.thread_id == *thread_id).then(|| self.binding.clone()))
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((self.binding.target.run_id == run_id)
+                .then(|| self.binding.clone())
+                .into_iter()
+                .collect())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((self.binding.target.agent_id == agent_id)
+                .then(|| self.binding.clone())
+                .into_iter()
+                .collect())
+        }
+
+        async fn insert(
+            &self,
+            binding: AgentRunRuntimeBinding,
+        ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+            if binding == self.binding {
+                Ok(binding)
+            } else {
+                Err(AgentRunRuntimeBindingError::Conflict)
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AgentRunRuntime for HttpReplayRuntime {
+        async fn inspect(
+            &self,
+            _target: AgentRunRuntimeTarget,
+        ) -> Result<AgentRunRuntimeView, AgentRunRuntimeError> {
+            Ok(self.view.lock().await.clone())
+        }
+
+        async fn accept_message(
+            &self,
+            _command: AcceptAgentRunMessage,
+        ) -> Result<AgentRunMessageAdmission, AgentRunRuntimeError> {
+            let call = self.accept_calls.fetch_add(1, Ordering::SeqCst);
+            if call != 0 {
+                return Err(AgentRunRuntimeError::ClientCommandConflict);
+            }
+            Ok(AgentRunMessageAdmission::Deferred)
+        }
+
+        async fn send_message(
+            &self,
+            _command: SendAgentRunMessage,
+        ) -> Result<OperationReceipt, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::ClientCommandConflict)
+        }
+
+        async fn fork_runtime(
+            &self,
+            _command: ForkAgentRunRuntime,
+        ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::BindingNotFound)
+        }
+
+        async fn compact_context(
+            &self,
+            _command: GuardedAgentRunCommand,
+        ) -> Result<OperationReceipt, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::BindingNotFound)
+        }
+
+        async fn steer_active_turn(
+            &self,
+            _command: SteerAgentRunTurn,
+        ) -> Result<OperationReceipt, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::ClientCommandConflict)
+        }
+
+        async fn interrupt_active_turn(
+            &self,
+            _command: GuardedAgentRunCommand,
+        ) -> Result<OperationReceipt, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::BindingNotFound)
+        }
+
+        async fn resolve_interaction(
+            &self,
+            _command: ResolveAgentRunInteraction,
+        ) -> Result<OperationReceipt, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::BindingNotFound)
+        }
+
+        async fn read_context(
+            &self,
+            _target: AgentRunRuntimeTarget,
+        ) -> Result<RuntimeContextView, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::BindingNotFound)
+        }
+
+        async fn read_events(
+            &self,
+            _query: ReadAgentRunEvents,
+        ) -> Result<Box<dyn RuntimeEventStream>, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::BindingNotFound)
+        }
+
+        async fn append_presentation(
+            &self,
+            _command: AppendAgentRunPresentation,
+        ) -> Result<RuntimePresentationAppendReceipt, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::BindingNotFound)
+        }
+    }
+
+    struct HttpFixture {
+        base_url: String,
+        run_id: Uuid,
+        agent_id: Uuid,
+        runtime: Arc<HttpReplayRuntime>,
+        submission_store: Arc<
+            dyn agentdash_application_ports::agent_run_message_submission::AgentRunMessageSubmissionStore,
+        >,
+        server: tokio::task::JoinHandle<()>,
+        _postgres: PostgresRuntime,
+    }
+
+    impl Drop for HttpFixture {
+        fn drop(&mut self) {
+            self.server.abort();
+        }
+    }
+
+    async fn http_fixture() -> HttpFixture {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/composer-submission-http-tests")
+            .join(Uuid::new_v4().simple().to_string());
+        let postgres = PostgresRuntime::resolve_embedded_at_data_root(
+            "composer-submission-http-tests",
+            8,
+            root,
+        )
+        .await
+        .expect("embedded PostgreSQL");
+        agentdash_infrastructure::migration::run_postgres_migrations(&postgres.pool)
+            .await
+            .expect("migrations");
+
+        let mut state = AppState::new(postgres.pool.clone())
+            .await
+            .expect("application state");
+        let user_id = "composer-http-user";
+        let project = Project::new_with_creator(
+            "Composer HTTP replay".to_string(),
+            String::new(),
+            user_id.to_string(),
+        );
+        state
+            .repos
+            .project_repo
+            .create(&project)
+            .await
+            .expect("project");
+        let run = LifecycleRun::new_plain_for_user(project.id, user_id);
+        state
+            .repos
+            .lifecycle_run_repo
+            .create(&run)
+            .await
+            .expect("run");
+        let agent = LifecycleAgent::new_root_for_user(
+            run.id,
+            project.id,
+            AgentSource::ProjectAgent,
+            user_id,
+        );
+        state
+            .repos
+            .lifecycle_agent_repo
+            .create(&agent)
+            .await
+            .expect("agent");
+        let mut frame = AgentFrame::new_initial(agent.id);
+        let mut executor = AgentConfig::new("PI_AGENT");
+        executor.provider_id = Some("provider-http".to_string());
+        executor.model_id = Some("model-http".to_string());
+        frame.execution_profile_json = Some(serde_json::to_value(executor).expect("profile"));
+        state
+            .repos
+            .agent_frame_repo
+            .create(&frame)
+            .await
+            .expect("frame");
+
+        let target = AgentRunRuntimeTarget {
+            run_id: run.id,
+            agent_id: agent.id,
+        };
+        let binding = binding(target, frame.id);
+        let runtime = Arc::new(HttpReplayRuntime {
+            view: Mutex::new(runtime_view(binding.clone())),
+            accept_calls: AtomicUsize::new(0),
+        });
+        let binding_repository = Arc::new(HttpBindingRepository { binding });
+        let state_mut = Arc::get_mut(&mut state).expect("test owns application state");
+        state_mut.services.agent_run_runtime = runtime.clone();
+        state_mut.repos.agent_run_runtime_binding_repo = binding_repository;
+        let submission_store = state_mut.repos.agent_run_message_submission_store.clone();
+
+        let identity = AuthIdentity {
+            auth_mode: AuthMode::Personal,
+            user_id: user_id.to_string(),
+            subject: user_id.to_string(),
+            display_name: Some("Composer HTTP User".to_string()),
+            email: None,
+            avatar_url: None,
+            groups: Vec::new(),
+            is_admin: true,
+            provider: Some("test".to_string()),
+            extra: Value::Null,
+        };
+        let app = Router::new()
+            .nest("/api", super::router().with_state(state))
+            .layer(Extension(RequestIdentity(identity)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("HTTP listener");
+        let address = listener.local_addr().expect("HTTP address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("HTTP server");
+        });
+        HttpFixture {
+            base_url: format!("http://{address}/api"),
+            run_id: run.id,
+            agent_id: agent.id,
+            runtime,
+            submission_store,
+            server,
+            _postgres: postgres,
+        }
+    }
+
+    async fn fresh_submit_command(client: &reqwest::Client, fixture: &HttpFixture) -> Value {
+        let response = client
+            .get(format!(
+                "{}/agent-runs/{}/agents/{}/workspace",
+                fixture.base_url, fixture.run_id, fixture.agent_id
+            ))
+            .send()
+            .await
+            .expect("workspace request");
+        let status = response.status();
+        let response_body = response.text().await.expect("workspace response body");
+        assert_eq!(status, reqwest::StatusCode::OK, "{response_body}");
+        let workspace: Value = serde_json::from_str(&response_body).expect("workspace response");
+        let command = workspace["conversation"]["commands"]["commands"]
+            .as_array()
+            .expect("conversation commands")
+            .iter()
+            .find(|command| command["kind"] == "submit_message")
+            .cloned()
+            .expect("submit command");
+        json!({
+            "command_id": command["command_id"],
+            "command_kind": command["kind"],
+            "stale_guard": command["stale_guard"],
+        })
+    }
+
+    fn composer_body(
+        client_command_id: &str,
+        command: Value,
+        text: &str,
+        executor_config: Option<Value>,
+    ) -> Value {
+        json!({
+            "input": agentdash_agent_protocol::text_user_input_blocks(text),
+            "client_command_id": client_command_id,
+            "command": command,
+            "executor_config": executor_config,
+        })
+    }
+
+    async fn submit(
+        client: &reqwest::Client,
+        fixture: &HttpFixture,
+        body: Value,
+    ) -> (reqwest::StatusCode, Value) {
+        let response = client
+            .post(format!(
+                "{}/agent-runs/{}/agents/{}/composer-submit",
+                fixture.base_url, fixture.run_id, fixture.agent_id
+            ))
+            .json(&body)
+            .send()
+            .await
+            .expect("composer request");
+        let status = response.status();
+        let response_body = response.text().await.expect("composer response body");
+        let body = serde_json::from_str(&response_body)
+            .unwrap_or_else(|error| panic!("composer response {status}: {error}: {response_body}"));
+        (status, body)
+    }
+
+    fn without_duplicate(mut value: Value) -> Value {
+        value["command_receipt"]["duplicate"] = Value::Bool(false);
+        value
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn composer_http_replays_exact_product_result_before_mutable_guard_validation() {
+        let fixture = http_fixture().await;
+        let client = reqwest::Client::new();
+        let old_command = fresh_submit_command(&client, &fixture).await;
+        let original_body = composer_body(
+            "composer-exact-replay",
+            old_command.clone(),
+            "hello exact replay",
+            None,
+        );
+
+        let (first_status, first) = submit(&client, &fixture, original_body.clone()).await;
+        assert_eq!(first_status, reqwest::StatusCode::OK, "{first}");
+        assert_eq!(first["outcome"], "queued");
+        assert_eq!(first["command_receipt"]["duplicate"], false);
+        assert_eq!(fixture.runtime.accept_calls.load(Ordering::SeqCst), 1);
+
+        let mut stale_guard_body = original_body.clone();
+        stale_guard_body["command"]["stale_guard"]["snapshot_id"] =
+            Value::String("stale-http-replay-snapshot".to_string());
+        let (old_guard_status, old_guard_replay) =
+            submit(&client, &fixture, stale_guard_body).await;
+        assert_eq!(old_guard_status, first_status);
+        assert_eq!(old_guard_replay["command_receipt"]["duplicate"], true);
+        assert_eq!(
+            without_duplicate(old_guard_replay),
+            without_duplicate(first.clone()),
+            "old mutable guard retry must replay the frozen product response"
+        );
+
+        let refreshed_command = fresh_submit_command(&client, &fixture).await;
+        let refreshed_body = composer_body(
+            "composer-exact-replay",
+            refreshed_command.clone(),
+            "hello exact replay",
+            None,
+        );
+        let (refreshed_status, refreshed_replay) = submit(&client, &fixture, refreshed_body).await;
+        assert_eq!(refreshed_status, first_status);
+        assert_eq!(refreshed_replay["command_receipt"]["duplicate"], true);
+        assert_eq!(
+            without_duplicate(refreshed_replay),
+            without_duplicate(first.clone()),
+            "refreshing a mutable guard cannot change product replay identity"
+        );
+        assert_eq!(fixture.runtime.accept_calls.load(Ordering::SeqCst), 1);
+
+        let changed_input = composer_body(
+            "composer-exact-replay",
+            refreshed_command.clone(),
+            "different semantic input",
+            None,
+        );
+        let (conflict_status, _) = submit(&client, &fixture, changed_input).await;
+        assert_eq!(conflict_status, reqwest::StatusCode::CONFLICT);
+        assert_eq!(fixture.runtime.accept_calls.load(Ordering::SeqCst), 1);
+
+        let conversion_fixture = http_fixture().await;
+        let conversion_command = fresh_submit_command(&client, &conversion_fixture).await;
+        let invalid_conversion = composer_body(
+            "composer-conversion-abandon",
+            conversion_command.clone(),
+            "conversion retry",
+            Some(json!({ "executor": 42 })),
+        );
+        let (invalid_status, _) = submit(&client, &conversion_fixture, invalid_conversion).await;
+        assert_eq!(invalid_status, reqwest::StatusCode::BAD_REQUEST);
+
+        let corrected_conversion = composer_body(
+            "composer-conversion-abandon",
+            conversion_command,
+            "conversion retry",
+            None,
+        );
+        let (corrected_status, corrected) =
+            submit(&client, &conversion_fixture, corrected_conversion).await;
+        assert_eq!(corrected_status, reqwest::StatusCode::OK);
+        assert_eq!(corrected["outcome"], "queued");
+        assert_eq!(corrected["command_receipt"]["duplicate"], false);
+        assert_eq!(
+            conversion_fixture
+                .runtime
+                .accept_calls
+                .load(Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn composer_http_releases_interrupted_unattached_reservation_before_stale_rejection() {
+        let fixture = http_fixture().await;
+        let client = reqwest::Client::new();
+        let stale_command = fresh_submit_command(&client, &fixture).await;
+        let input = agentdash_agent_protocol::text_user_input_blocks("resume interrupted submit");
+        let semantic_request = AgentRunMessageSemanticRequest {
+            target: AgentRunRuntimeTarget {
+                run_id: fixture.run_id,
+                agent_id: fixture.agent_id,
+            },
+            input: input.clone(),
+            executor_config: None,
+            backend_selection: None,
+            delivery_intent: None,
+        };
+        let reservation_service =
+            AgentRunMessageReservationService::new(fixture.submission_store.clone());
+        assert!(matches!(
+            reservation_service
+                .reserve_agent_run_message(
+                    agentdash_domain::workflow::AgentRunCommandKind::MessageSubmit,
+                    "composer-interrupted-reservation".to_string(),
+                    &semantic_request,
+                )
+                .await
+                .expect("simulate process interruption after reserve"),
+            agentdash_application_ports::agent_run_message_submission::AgentRunMessageSubmissionReservation::Created { .. }
+        ));
+
+        let mut stale_body = json!({
+            "input": input,
+            "client_command_id": "composer-interrupted-reservation",
+            "command": stale_command,
+            "executor_config": null,
+        });
+        stale_body["command"]["stale_guard"]["snapshot_id"] =
+            Value::String("stale-interrupted-reservation".to_string());
+        let (stale_status, _) = submit(&client, &fixture, stale_body).await;
+        assert_eq!(stale_status, reqwest::StatusCode::CONFLICT);
+        assert_eq!(fixture.runtime.accept_calls.load(Ordering::SeqCst), 0);
+
+        let refreshed_command = fresh_submit_command(&client, &fixture).await;
+        let corrected_body = composer_body(
+            "composer-interrupted-reservation",
+            refreshed_command,
+            "resume interrupted submit",
+            None,
+        );
+        let (corrected_status, corrected) = submit(&client, &fixture, corrected_body).await;
+        assert_eq!(corrected_status, reqwest::StatusCode::OK);
+        assert_eq!(corrected["outcome"], "queued");
+        assert_eq!(corrected["command_receipt"]["duplicate"], false);
+        assert_eq!(fixture.runtime.accept_calls.load(Ordering::SeqCst), 1);
+    }
 }

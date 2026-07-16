@@ -100,3 +100,25 @@ Native Provider retry已经由Backbone `PlatformEvent::ProviderAttemptStatus`形
 - **D Test Coverage Gap**：adapter mapper与Runtime transition单测分别通过，但缺少`producer -> admission -> pump -> PostgreSQL UoW`组合回归，未覆盖valid prefix后接invalid suffix。
 
 预防机制已经落到三处：kernel/persistence/adapter code-spec固定committed base与terminalized边界；cross-layer guide要求枚举producer和全部consumer；真实PostgreSQL回归证明末阶段失败全回滚、canonical终态同事务落地和fabricated terminalized不吞active outbox。更广的多producer CAS与revision职责问题由ARD-013继续收束。
+
+## 15. Provider terminal 与 Mailbox/Runtime admission 边界
+
+Responses SSE的逻辑完成由协议terminal event定义，不由HTTP连接生命周期定义。`response.completed`被完整解析后，bridge立刻把已归约的content、tool calls和usage封装为唯一`StreamChunk::Done`并结束producer；transport EOF只用于没有协议终态的异常检测。这样`MessageEnd → AgentEnd → Runtime TurnTerminal`跟随Provider事实，而不是连接池或HTTP/2 body何时关闭。
+
+消息提交分为四个owner。`AgentRunMessageSubmissionService`拥有产品`client_command_id`、canonical request digest、exact response replay和“本次请求只能关联本次mailbox message”的归属；PostgreSQL Submission UoW在同一事务创建Pending product receipt、identity-free mailbox draft和两者关联。Mailbox Queue只拥有delivery/barrier/priority/order、claim lease、status与retention；Delivery Coordinator读取fresh Runtime view、claim并调用统一Runtime ingress；Runtime facade唯一拥有canonical Operation、presentation identity、admission time和accepted duplicate replay。
+
+Mailbox draft只保存UserInputBlock/source/launch语义和隐藏Runtime input，不保存`AgentRunPresentationInput`、admission timestamp或任何turn/item/revision。新Operation被真正接纳时，Runtime facade生成main等价的`t<millis>` launch identity，或绑定当前active presentation turn并生成mailbox steer item；accepted Operation已经存在时直接读取durable command/presentation并严格校验draft、Runtime input、actor和target，不重新生成动态事实。这样排队延迟不会伪造成已启动时间，崩溃恢复也不会因terminal竞争把原Steer误重规划成新的Start。
+
+Promote是Mailbox策略变更，必须经由application owner原子修改policy字段且不隐式Resume。普通stale admission释放claim并保留原draft重新规划；claim lease过期形成typed reconciliation work，优先交Runtime ingress判断稳定Operation是否已经接纳。Repository不通过`delivery_result_unknown`猜测外部副作用。成功接纳只保存Runtime operation ID与真实Started/Steered状态，用户visible payload和隐藏delivery draft按retention policy同一结算清理；execution profile override只作为typed hidden delivery intent存在，不成为Mailbox列；真实turn/presentation identity只从Runtime read model/eventstream读取。
+
+产品幂等identity只由target、input、execution profile/backend选择和delivery intent等稳定业务语义组成，不包含snapshot/stale guard。API完成鉴权与target ownership后先通过Submission owner查询或认领receipt：settled receipt直接exact replay，只有新认领命令才执行mutable guard和delivery转换；无副作用拒绝会条件释放未attach的Pending reservation。因此Runtime状态变化不会让相同HTTP retry在到达receipt前被stale guard误杀，也不会要求客户端用刷新后的guard制造另一个digest。
+
+Execution profile切换不由Mailbox解释。隐藏draft把typed override交给Managed Runtime；stable Operation replay先返回，active turn判定其次，Steered完全忽略override。只有最终选择Started时，`ExecutionProfileCoordinator`读取current AgentFrame并负责Frame revision、service reconfiguration与Runtime realignment。尚未建立binding时，不同profile先形成完整carry-forward的新AgentFrame revision再provision；已有binding且profile相同保持no-op。已有binding的不同profile需要planned service rebind，而现有Provisioner/SurfaceAdopt没有该能力，因此返回typed unsupported，不能把surface-only adoption伪装成service切换。
+
+ProjectAgent start仍需恢复具名application orchestrator，使receipt、Lifecycle graph、initial mailbox、accepted refs和失败cleanup处于同一产品owner。纯input/config/backend/subject转换必须在reservation与launch前完成；launch后的失败不能只靠API catch终态化receipt而遗留orphan graph。
+
+`ProjectAgentRunStartService`只持有产品级initial submission port：ProjectAgent解析、Lifecycle launch与产品projection留在start owner，标准UserInput到Mailbox delivery draft的编译和receipt-message原子attach留在Message Submission owner。attach结果使用`Unattached | Attached | Unknown`显式表达；只有确定未attach且graph没有可见execution event时清理整份run/agent/frame。初始输入与accepted result分别只有一份canonical source，不能同时传递presentation/runtime input或projector/frozen variants两套可分叉数据。
+
+Runtime输入直接承载AgentDash-owned Codex app-server标准`UserInputBlock`，而不是另一套Text/Image/FileReference镜像。Codex adapter原样序列化Text、Image、LocalImage、Skill与Mention，包括nullable detail和text_elements；Structured走typed additional context。Native adapter仍只支持Text/Image，并在side effect前明确拒绝其它标准variant和Structured。API独立验证至少存在一个非空白Text或任意非Text块，但不trim、过滤或重写已接纳的标准块。
+
+API只负责鉴权和DTO映射，不为每个queued请求从`after=None`订阅Runtime历史事件。canonical terminal后的drain由`RuntimeMailboxTerminalConvergence`触发，进程/租约恢复由pending recovery worker负责。Product receipt第一次返回Queued后保持exact Queued replay，即使后台后来消费了该message；调度器推进旧高优先级message时也不能把旧Operation receipt返回给当前提交。

@@ -434,9 +434,7 @@ fn fixture_surface() -> MaterializedDriverSurface {
                 entries: vec!["system".to_string()],
             }],
             blocks: vec![ContextBlock::Input {
-                input: vec![RuntimeInput::Text {
-                    text: "restored".to_string(),
-                }],
+                input: vec![RuntimeInput::text("restored".to_string())],
             }],
             digest: id("sha256:context-0"),
             fidelity: ContextFidelity::PlatformExact,
@@ -733,9 +731,7 @@ async fn native_cold_start_replays_durable_tool_history_without_duplicating_curr
                 presentation_turn_id: Some(id("native-turn-request-restore")),
                 command: thread_start(
                     "native-turn-request-restore",
-                    vec![RuntimeInput::Text {
-                        text: "current prompt".to_string(),
-                    }],
+                    vec![RuntimeInput::text("current prompt".to_string())],
                 ),
             },
             sink.clone(),
@@ -906,9 +902,7 @@ async fn native_cold_start_replays_post_admission_tail_once_after_active_compact
                 presentation_turn_id: Some(id("presentation-turn-current")),
                 command: thread_start(
                     "presentation-turn-current",
-                    vec![RuntimeInput::Text {
-                        text: "current prompt".to_string(),
-                    }],
+                    vec![RuntimeInput::text("current prompt".to_string())],
                 ),
             },
             sink.clone(),
@@ -1013,9 +1007,7 @@ async fn native_turn_interrupt_emits_one_interrupted_terminal_without_losing_bin
                 presentation_turn_id: Some(id("presentation-turn-interrupt-running")),
                 command: thread_start(
                     "presentation-turn-interrupt-running",
-                    vec![RuntimeInput::Text {
-                        text: "wait".to_string(),
-                    }],
+                    vec![RuntimeInput::text("wait".to_string())],
                 ),
             },
             sink.clone(),
@@ -1100,9 +1092,7 @@ async fn native_terminal_observer_can_dispatch_the_next_turn_without_waiting() {
             command: RuntimeCommand::TurnStart {
                 thread_id: id("runtime-thread-1"),
                 presentation_turn_id: id("presentation-turn-terminal-next"),
-                input: vec![RuntimeInput::Text {
-                    text: "second".to_string(),
-                }],
+                input: vec![RuntimeInput::text("second".to_string())],
             },
         })),
         next_sink: next_sink.clone(),
@@ -1121,9 +1111,7 @@ async fn native_terminal_observer_can_dispatch_the_next_turn_without_waiting() {
                 presentation_turn_id: Some(id("presentation-turn-terminal-first")),
                 command: thread_start(
                     "presentation-turn-terminal-first",
-                    vec![RuntimeInput::Text {
-                        text: "first".to_string(),
-                    }],
+                    vec![RuntimeInput::text("first".to_string())],
                 ),
             },
             first_sink,
@@ -1164,9 +1152,7 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
                 presentation_turn_id: Some(id("native-turn-request-turn-1")),
                 command: thread_start(
                     "native-turn-request-turn-1",
-                    vec![RuntimeInput::Text {
-                        text: "hello".to_string(),
-                    }],
+                    vec![RuntimeInput::text("hello".to_string())],
                 ),
             },
             sink.clone(),
@@ -1505,9 +1491,7 @@ async fn failed_event_delivery_clears_the_active_turn_fence() {
                 presentation_turn_id: Some(id("native-turn-request-turn-fail")),
                 command: thread_start(
                     "native-turn-request-turn-fail",
-                    vec![RuntimeInput::Text {
-                        text: "hello".to_string(),
-                    }],
+                    vec![RuntimeInput::text("hello".to_string())],
                 ),
             },
             Arc::new(FailingSink),
@@ -1552,9 +1536,7 @@ async fn failed_event_delivery_aborts_agent_core_before_the_next_turn() {
         presentation_turn_id: Some(id("native-turn-request-turn-stream-fail")),
         command: thread_start(
             "native-turn-request-turn-stream-fail",
-            vec![RuntimeInput::Text {
-                text: "first".to_string(),
-            }],
+            vec![RuntimeInput::text("first".to_string())],
         ),
     };
     let accepted = driver
@@ -1584,9 +1566,7 @@ async fn failed_event_delivery_aborts_agent_core_before_the_next_turn() {
         command: RuntimeCommand::TurnStart {
             thread_id: id("runtime-thread-1"),
             presentation_turn_id: id("native-turn-request-turn-after-stream-fail"),
-            input: vec![RuntimeInput::Text {
-                text: "second".to_string(),
-            }],
+            input: vec![RuntimeInput::text("second".to_string())],
         },
     };
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
@@ -1622,9 +1602,7 @@ async fn managed_runtime_terminalization_stops_event_pump_without_binding_lost_f
                 presentation_turn_id: Some(id("presentation-turn-runtime-terminalized")),
                 command: thread_start(
                     "presentation-turn-runtime-terminalized",
-                    vec![RuntimeInput::Text {
-                        text: "stop after canonical terminal".into(),
-                    }],
+                    vec![RuntimeInput::text("stop after canonical terminal")],
                 ),
             },
             sink.clone(),
@@ -1665,30 +1643,64 @@ async fn native_descriptor_does_not_claim_prompt_flattened_input_modalities() {
         [InputModality::Text, InputModality::Image].into()
     );
 
-    let sink = Arc::new(Sink::default());
-    let error = driver
-        .dispatch(
-            DriverCommandEnvelope {
-                request_id: id("request-structured-input"),
-                operation_id: id("operation-structured-input"),
-                presentation_thread_id: id("presentation-thread-1"),
-                binding_id: id("binding-1"),
-                generation: RuntimeDriverGeneration(4),
-                source_thread_id: binding.source_thread_id,
-                runtime_turn_id: Some(id("turn-request-structured-input")),
-                presentation_turn_id: Some(id("native-turn-request-structured-input")),
-                command: thread_start(
-                    "native-turn-request-structured-input",
-                    vec![RuntimeInput::Structured {
-                        schema: "example".to_string(),
-                        value: json!({"value": 1}),
-                    }],
-                ),
+    let unsupported = [
+        ("blank-text", RuntimeInput::text(" \r\n\t ")),
+        (
+            "local-image",
+            RuntimeInput::user_input(agentdash_agent_protocol::UserInputBlock::LocalImage {
+                detail: Some(None),
+                path: "C:/workspace/image.png".to_string(),
+            }),
+        ),
+        (
+            "skill",
+            RuntimeInput::user_input(agentdash_agent_protocol::UserInputBlock::Skill {
+                name: "review".to_string(),
+                path: "C:/skills/review/SKILL.md".to_string(),
+            }),
+        ),
+        (
+            "mention",
+            RuntimeInput::user_input(agentdash_agent_protocol::UserInputBlock::Mention {
+                name: "main.rs".to_string(),
+                path: "C:/workspace/src/main.rs".to_string(),
+            }),
+        ),
+        (
+            "structured",
+            RuntimeInput::Structured {
+                schema: "example".to_string(),
+                value: json!({"value": 1}),
             },
-            sink.clone(),
-        )
-        .await
-        .expect_err("prompt flattening is not a native structured-input guarantee");
-    assert!(matches!(error, DriverError::Unsupported { .. }));
-    assert!(sink.0.lock().await.is_empty());
+        ),
+    ];
+    for (kind, input) in unsupported {
+        let sink = Arc::new(Sink::default());
+        let error = driver
+            .dispatch(
+                DriverCommandEnvelope {
+                    request_id: id(&format!("request-{kind}-input")),
+                    operation_id: id(&format!("operation-{kind}-input")),
+                    presentation_thread_id: id("presentation-thread-1"),
+                    binding_id: id("binding-1"),
+                    generation: RuntimeDriverGeneration(4),
+                    source_thread_id: binding.source_thread_id.clone(),
+                    runtime_turn_id: Some(id(&format!("turn-request-{kind}-input"))),
+                    presentation_turn_id: Some(id(&format!("native-turn-request-{kind}-input"))),
+                    command: thread_start(
+                        &format!("native-turn-request-{kind}-input"),
+                        vec![input],
+                    ),
+                },
+                sink.clone(),
+            )
+            .await
+            .expect_err("unsupported native input must be rejected before dispatch side effects");
+        if kind == "blank-text" {
+            assert!(matches!(error, DriverError::Rejected { .. }), "{kind}");
+        } else {
+            assert!(matches!(error, DriverError::Unsupported { .. }), "{kind}");
+        }
+        assert!(sink.0.lock().await.is_empty(), "{kind}");
+    }
 }

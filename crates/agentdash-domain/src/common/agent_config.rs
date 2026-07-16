@@ -283,7 +283,7 @@ pub struct ProjectVfsMountExposureGrant {
 ///
 /// 只包含执行器运行所需的参数（executor / model / prompt 等），
 /// 不包含 capability / companion / MCP 等配置（由 `AgentPresetConfig` 承载）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub executor: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

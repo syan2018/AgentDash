@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeGateway, ContextCompactionId, ContextCompactionTrigger, EventSequence,
-    IdempotencyKey, ImmutablePresentationEvent, InteractionResponse, OperationMeta,
+    AgentRuntimeGateway, CommandAvailability, ContextCompactionId, ContextCompactionTrigger,
+    EventSequence, IdempotencyKey, ImmutablePresentationEvent, InteractionResponse, OperationMeta,
     OperationReceipt, PresentationDurability, PresentationThreadId, RuntimeActor, RuntimeCommand,
-    RuntimeCommandEnvelope, RuntimeEventStream, RuntimeExecuteError, RuntimeInput,
-    RuntimeInteractionId, RuntimeOperationId, RuntimePresentationCoordinate,
+    RuntimeCommandEnvelope, RuntimeCommandKind, RuntimeEventStream, RuntimeExecuteError,
+    RuntimeInput, RuntimeInteractionId, RuntimeOperationId, RuntimePresentationCoordinate,
     RuntimePresentationInput, RuntimeSnapshot, RuntimeSnapshotError, RuntimeSnapshotQuery,
     RuntimeSnapshotResult, RuntimeSubscribeError, RuntimeThreadId, RuntimeThreadStatus,
     RuntimeTurnId,
@@ -17,8 +17,12 @@ use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeTarget, AgentRunTurnStartContextSource,
 };
 use agentdash_application_ports::launch::BackendSelectionInput;
-use agentdash_spi::AuthIdentity;
+use agentdash_application_ports::request_digest::canonical_request_digest;
+use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_domain::workflow::AgentFrameRepository;
+use agentdash_spi::{AgentConfig, AuthIdentity};
 use async_trait::async_trait;
+use chrono::Utc;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,12 +54,63 @@ pub struct AgentRunCommandGuard {
 pub struct SendAgentRunMessage {
     pub target: AgentRunRuntimeTarget,
     pub presentation_thread_id: PresentationThreadId,
-    pub presentation_input: AgentRunPresentationInput,
+    pub presentation: AgentRunPresentationDraft,
     pub client_command_id: String,
     pub input: Vec<RuntimeInput>,
     pub actor: RuntimeActor,
     pub identity: Option<AuthIdentity>,
     pub backend_selection: Option<BackendSelectionInput>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunMessageDeliveryPreference {
+    StartWhenIdle,
+    PreferSteer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRunMessageAcceptedDelivery {
+    Started,
+    Steered,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AcceptAgentRunMessage {
+    pub target: AgentRunRuntimeTarget,
+    pub presentation_thread_id: PresentationThreadId,
+    pub presentation: AgentRunPresentationDraft,
+    pub client_command_id: String,
+    pub input: Vec<RuntimeInput>,
+    pub actor: RuntimeActor,
+    pub identity: Option<AuthIdentity>,
+    pub execution_profile_override: Option<AgentConfig>,
+    pub backend_selection: Option<BackendSelectionInput>,
+    pub delivery_preference: AgentRunMessageDeliveryPreference,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentRunMessageAdmission {
+    Accepted {
+        receipt: OperationReceipt,
+        delivery: AgentRunMessageAcceptedDelivery,
+    },
+    Deferred,
+}
+
+pub fn agent_run_message_request_digest(
+    command: &AcceptAgentRunMessage,
+) -> Result<String, AgentRunRuntimeError> {
+    canonical_request_digest(&serde_json::json!({
+        "target": &command.target,
+        "presentation_thread_id": &command.presentation_thread_id,
+        "presentation": &command.presentation,
+        "input": &command.input,
+        "actor": &command.actor,
+        "execution_profile_override": &command.execution_profile_override,
+        "backend_selection": &command.backend_selection,
+    }))
+    .map_err(|_| AgentRunRuntimeError::InvalidPresentationInput)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,7 +125,7 @@ pub struct ForkAgentRunRuntime {
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AgentRunPresentationInput {
+enum AgentRunPresentationInput {
     UserSubmission {
         turn_id: agentdash_agent_runtime_contract::PresentationTurnId,
         item_id: agentdash_agent_runtime_contract::PresentationItemId,
@@ -181,7 +236,6 @@ pub struct AgentRunPresentationDraft {
     pub source: agentdash_agent_protocol::UserInputSource,
     pub launch_source: LaunchPresentationSource,
     pub submission_kind: agentdash_agent_protocol::UserInputSubmissionKind,
-    pub started_at_seconds: i64,
 }
 
 impl AgentRunPresentationDraft {
@@ -201,7 +255,7 @@ pub struct GuardedAgentRunCommand {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SteerAgentRunTurn {
     pub command: GuardedAgentRunCommand,
-    pub presentation_input: AgentRunPresentationInput,
+    pub presentation: AgentRunPresentationDraft,
     pub input: Vec<RuntimeInput>,
 }
 
@@ -235,6 +289,8 @@ pub enum AgentRunRuntimeError {
     BindingNotFound,
     #[error("AgentRun runtime binding failed: {0}")]
     Binding(#[from] AgentRunRuntimeBindingError),
+    #[error("AgentRun execution profile coordination failed: {0}")]
+    ExecutionProfile(#[from] ExecutionProfileCoordinationError),
     #[error("AgentRun runtime command failed: {0}")]
     Execute(#[from] RuntimeExecuteError),
     #[error("AgentRun runtime snapshot failed: {0}")]
@@ -247,8 +303,6 @@ pub enum AgentRunRuntimeError {
     StaleThread,
     #[error("AgentRun active turn changed")]
     StaleActiveTurn,
-    #[error("AgentRun active presentation turn changed")]
-    StalePresentationTurn,
     #[error("AgentRun presentation input does not match the command")]
     InvalidPresentationInput,
     #[error("AgentRun runtime returned an unexpected snapshot result")]
@@ -270,6 +324,11 @@ pub trait AgentRunRuntime: Send + Sync {
         &self,
         command: SendAgentRunMessage,
     ) -> Result<OperationReceipt, AgentRunRuntimeError>;
+
+    async fn accept_message(
+        &self,
+        command: AcceptAgentRunMessage,
+    ) -> Result<AgentRunMessageAdmission, AgentRunRuntimeError>;
 
     async fn fork_runtime(
         &self,
@@ -340,6 +399,149 @@ pub struct ManagedAgentRunRuntime {
     provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
     presentation_plans: Arc<dyn AgentRunRuntimePresentationPlanStore>,
     turn_start_context: Arc<dyn AgentRunTurnStartContextSource>,
+    execution_profile_coordinator: Arc<dyn ExecutionProfileCoordinator>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CoordinateExecutionProfileRequest {
+    pub target: AgentRunRuntimeTarget,
+    pub binding: Option<AgentRunRuntimeBinding>,
+    pub execution_profile_override: Option<AgentConfig>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionProfileCoordination {
+    Unchanged,
+    FrameRevisionApplied { frame_id: uuid::Uuid },
+}
+
+#[derive(Debug, Error)]
+pub enum ExecutionProfileCoordinationError {
+    #[error("AgentRun current AgentFrame is unavailable for agent {agent_id}")]
+    CurrentFrameUnavailable { agent_id: uuid::Uuid },
+    #[error("AgentRun current AgentFrame has no typed execution profile")]
+    CurrentProfileUnavailable,
+    #[error(
+        "changing execution profile on an existing AgentRun requires planned service rebind: current={current_executor}, requested={requested_executor}"
+    )]
+    RebindUnsupported {
+        current_executor: String,
+        requested_executor: String,
+    },
+    #[error("AgentRun execution profile coordination failed: {0}")]
+    Persistence(String),
+}
+
+#[async_trait]
+pub trait ExecutionProfileCoordinator: Send + Sync {
+    async fn coordinate_started_turn(
+        &self,
+        request: CoordinateExecutionProfileRequest,
+    ) -> Result<ExecutionProfileCoordination, ExecutionProfileCoordinationError>;
+}
+
+#[derive(Default)]
+struct RejectingExecutionProfileCoordinator;
+
+#[async_trait]
+impl ExecutionProfileCoordinator for RejectingExecutionProfileCoordinator {
+    async fn coordinate_started_turn(
+        &self,
+        request: CoordinateExecutionProfileRequest,
+    ) -> Result<ExecutionProfileCoordination, ExecutionProfileCoordinationError> {
+        match request.execution_profile_override {
+            None => Ok(ExecutionProfileCoordination::Unchanged),
+            Some(requested) => Err(ExecutionProfileCoordinationError::RebindUnsupported {
+                current_executor: "unavailable".to_string(),
+                requested_executor: requested.executor,
+            }),
+        }
+    }
+}
+
+pub struct CurrentAgentFrameExecutionProfileCoordinator {
+    frames: Arc<dyn AgentFrameRepository>,
+}
+
+impl CurrentAgentFrameExecutionProfileCoordinator {
+    pub fn new(frames: Arc<dyn AgentFrameRepository>) -> Self {
+        Self { frames }
+    }
+}
+
+#[async_trait]
+impl ExecutionProfileCoordinator for CurrentAgentFrameExecutionProfileCoordinator {
+    async fn coordinate_started_turn(
+        &self,
+        request: CoordinateExecutionProfileRequest,
+    ) -> Result<ExecutionProfileCoordination, ExecutionProfileCoordinationError> {
+        let Some(requested) = request.execution_profile_override else {
+            return Ok(ExecutionProfileCoordination::Unchanged);
+        };
+        let frame = self
+            .frames
+            .get_current(request.target.agent_id)
+            .await
+            .map_err(|error| ExecutionProfileCoordinationError::Persistence(error.to_string()))?
+            .ok_or(ExecutionProfileCoordinationError::CurrentFrameUnavailable {
+                agent_id: request.target.agent_id,
+            })?;
+        let current = super::frame::surface::AgentFrameSurfaceExt::typed_execution_profile(&frame)
+            .ok_or(ExecutionProfileCoordinationError::CurrentProfileUnavailable)?;
+        let requested = effective_execution_profile_override(&current, requested);
+        if current == requested {
+            return Ok(ExecutionProfileCoordination::Unchanged);
+        }
+        if request.binding.is_none() {
+            let frame = super::frame::AgentFrameBuilder::new(request.target.agent_id)
+                .with_execution_profile(&requested)
+                .with_created_by(
+                    "agent_run_execution_profile_override",
+                    Some(frame.id.to_string()),
+                )
+                .build(self.frames.as_ref())
+                .await
+                .map_err(|error| {
+                    ExecutionProfileCoordinationError::Persistence(error.to_string())
+                })?;
+            return Ok(ExecutionProfileCoordination::FrameRevisionApplied { frame_id: frame.id });
+        }
+        Err(ExecutionProfileCoordinationError::RebindUnsupported {
+            current_executor: current.executor,
+            requested_executor: requested.executor,
+        })
+    }
+}
+
+fn effective_execution_profile_override(
+    current: &AgentConfig,
+    mut requested: AgentConfig,
+) -> AgentConfig {
+    if requested
+        .executor
+        .trim()
+        .eq_ignore_ascii_case(current.executor.trim())
+    {
+        requested.executor = current.executor.clone();
+    }
+    requested.provider_id = requested
+        .provider_id
+        .or_else(|| current.provider_id.clone());
+    requested.model_id = requested.model_id.or_else(|| current.model_id.clone());
+    requested.agent_id = requested.agent_id.or_else(|| current.agent_id.clone());
+    requested.thinking_level = requested.thinking_level.or(current.thinking_level);
+    requested.permission_policy = requested
+        .permission_policy
+        .or_else(|| current.permission_policy.clone());
+    requested.system_prompt = requested
+        .system_prompt
+        .or_else(|| current.system_prompt.clone());
+    requested
+}
+
+struct AgentRunMessageExecution {
+    admission: AgentRunMessageAdmission,
+    authoritative_context_frame_ids: BTreeSet<String>,
 }
 
 impl ManagedAgentRunRuntime {
@@ -356,7 +558,16 @@ impl ManagedAgentRunRuntime {
             provisioner,
             presentation_plans,
             turn_start_context,
+            execution_profile_coordinator: Arc::new(RejectingExecutionProfileCoordinator),
         }
+    }
+
+    pub fn with_execution_profile_coordinator(
+        mut self,
+        coordinator: Arc<dyn ExecutionProfileCoordinator>,
+    ) -> Self {
+        self.execution_profile_coordinator = coordinator;
+        self
     }
 
     async fn pending_turn_start_presentation(
@@ -629,6 +840,230 @@ impl ManagedAgentRunRuntime {
         ))
     }
 
+    fn message_idempotency_key(
+        command: &AcceptAgentRunMessage,
+    ) -> Result<IdempotencyKey, AgentRunRuntimeError> {
+        let identity = Self::operation_identity(&command.target, &command.client_command_id)?;
+        let digest = agent_run_message_request_digest(command)?;
+        IdempotencyKey::new(format!("{identity}:message:{digest}"))
+            .map_err(|_| AgentRunRuntimeError::InvalidPresentationInput)
+    }
+
+    async fn replay_existing_message(
+        &self,
+        command: &AcceptAgentRunMessage,
+        expected_idempotency_key: &IdempotencyKey,
+    ) -> Result<Option<AgentRunMessageExecution>, AgentRunRuntimeError> {
+        let operation_id = RuntimeOperationId::new(Self::operation_identity(
+            &command.target,
+            &command.client_command_id,
+        )?)
+        .expect("non-empty AgentRun operation identity");
+        let operation = match self
+            .gateway
+            .snapshot(RuntimeSnapshotQuery::Operation { operation_id })
+            .await
+        {
+            Ok(RuntimeSnapshotResult::Operation { operation }) => operation,
+            Err(RuntimeSnapshotError::NotFound) => return Ok(None),
+            Ok(_) => return Err(AgentRunRuntimeError::UnexpectedSnapshot),
+            Err(error) => return Err(error.into()),
+        };
+        if &operation.idempotency_key != expected_idempotency_key {
+            return Err(AgentRunRuntimeError::ClientCommandConflict);
+        }
+        let delivery = match &operation.command {
+            RuntimeCommand::ThreadStart { input, .. } | RuntimeCommand::TurnStart { input, .. }
+                if input == &command.input =>
+            {
+                AgentRunMessageAcceptedDelivery::Started
+            }
+            RuntimeCommand::TurnSteer { input, .. } if input == &command.input => {
+                AgentRunMessageAcceptedDelivery::Steered
+            }
+            _ => return Err(AgentRunRuntimeError::ClientCommandConflict),
+        };
+        let authoritative_context_frame_ids = turn_start_context_frame_ids(&operation.presentation);
+        let receipt = self
+            .gateway
+            .execute(RuntimeCommandEnvelope {
+                presentation: operation.presentation,
+                meta: OperationMeta {
+                    operation_id: operation.operation_id,
+                    idempotency_key: operation.idempotency_key,
+                    expected_thread_revision: None,
+                    actor: operation.actor,
+                },
+                command: operation.command,
+            })
+            .await?;
+        Ok(Some(AgentRunMessageExecution {
+            admission: AgentRunMessageAdmission::Accepted { receipt, delivery },
+            authoritative_context_frame_ids,
+        }))
+    }
+
+    async fn execute_message_admission(
+        &self,
+        command: &AcceptAgentRunMessage,
+        idempotency_key: &IdempotencyKey,
+        envelope: RuntimeCommandEnvelope,
+        accepted_delivery: AgentRunMessageAcceptedDelivery,
+    ) -> Result<AgentRunMessageExecution, AgentRunRuntimeError> {
+        let authoritative_context_frame_ids = turn_start_context_frame_ids(&envelope.presentation);
+        match self.gateway.execute(envelope).await {
+            Ok(receipt) => Ok(AgentRunMessageExecution {
+                admission: AgentRunMessageAdmission::Accepted {
+                    receipt,
+                    delivery: accepted_delivery,
+                },
+                authoritative_context_frame_ids,
+            }),
+            Err(error @ RuntimeExecuteError::OperationConflict { .. }) => {
+                if let Some(execution) = self
+                    .replay_existing_message(command, idempotency_key)
+                    .await?
+                {
+                    return Ok(execution);
+                }
+                Err(error.into())
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    async fn acknowledge_authoritative_turn_start_context(
+        &self,
+        target: &AgentRunRuntimeTarget,
+        authoritative_context_frame_ids: &BTreeSet<String>,
+    ) {
+        if authoritative_context_frame_ids.is_empty() {
+            return;
+        }
+        let binding = match self.bindings.load(target).await {
+            Ok(Some(binding)) => binding,
+            Ok(None) => return,
+            Err(error) => {
+                diag!(Warn, Subsystem::AgentRun,
+                    run_id = %target.run_id,
+                    agent_id = %target.agent_id,
+                    error = %error,
+                    "Runtime message was accepted before its turn-start context binding could be reloaded"
+                );
+                return;
+            }
+        };
+        let facts = match self
+            .turn_start_context
+            .take_turn_start_context(&binding.binding_id)
+            .await
+        {
+            Ok(facts) => facts,
+            Err(error) => {
+                diag!(Warn, Subsystem::AgentRun,
+                    run_id = %target.run_id,
+                    agent_id = %target.agent_id,
+                    binding_id = %binding.binding_id,
+                    error = %error,
+                    "Runtime message was accepted before turn-start context acknowledgement could be reconciled"
+                );
+                return;
+            }
+        };
+        let notice_ids = facts
+            .notices
+            .into_iter()
+            .map(|notice| notice.id)
+            .filter(|notice_id| authoritative_context_frame_ids.contains(notice_id))
+            .collect::<Vec<_>>();
+        if notice_ids.is_empty() {
+            return;
+        }
+        if let Err(error) = self
+            .turn_start_context
+            .acknowledge_turn_start_context(&binding.binding_id, &notice_ids)
+            .await
+        {
+            diag!(Warn, Subsystem::AgentRun,
+                run_id = %target.run_id,
+                agent_id = %target.agent_id,
+                binding_id = %binding.binding_id,
+                notice_count = notice_ids.len(),
+                error = %error,
+                "Runtime message was durably accepted before turn-start context acknowledgement failed"
+            );
+        }
+    }
+
+    fn launch_presentation_input(
+        draft: AgentRunPresentationDraft,
+        started_at_millis: i64,
+    ) -> Result<AgentRunPresentationInput, AgentRunRuntimeError> {
+        let started_at_seconds = started_at_millis.div_euclid(1_000);
+        let turn_id = agentdash_agent_runtime_contract::PresentationTurnId::new(format!(
+            "t{}",
+            started_at_millis
+        ))
+        .map_err(|_| AgentRunRuntimeError::InvalidPresentationInput)?;
+        if draft.emits_user_submission() {
+            let item_id = agentdash_agent_runtime_contract::PresentationItemId::new(format!(
+                "{turn_id}:user-input:0"
+            ))
+            .map_err(|_| AgentRunRuntimeError::InvalidPresentationInput)?;
+            return Ok(AgentRunPresentationInput::UserSubmission {
+                turn_id,
+                item_id,
+                content: draft.content,
+                source: draft.source,
+                submission_kind: draft.submission_kind,
+                started_at_seconds,
+            });
+        }
+        let message = draft
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                agentdash_agent_protocol::UserInputBlock::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(AgentRunPresentationInput::SystemDelivery {
+            turn_id,
+            launch_source: draft.launch_source,
+            message,
+            started_at_seconds,
+        })
+    }
+
+    fn steer_presentation_input(
+        presentation_turn_id: agentdash_agent_runtime_contract::PresentationTurnId,
+        client_command_id: &str,
+        draft: AgentRunPresentationDraft,
+        started_at_millis: i64,
+        item_nonce: &str,
+    ) -> Result<AgentRunPresentationInput, AgentRunRuntimeError> {
+        if !draft.emits_user_submission() {
+            return Err(AgentRunRuntimeError::InvalidPresentationInput);
+        }
+        let started_at_seconds = started_at_millis.div_euclid(1_000);
+        let delivery_identity = client_command_id
+            .strip_prefix("mailbox-")
+            .unwrap_or(client_command_id);
+        let item_id = agentdash_agent_runtime_contract::PresentationItemId::new(format!(
+            "{presentation_turn_id}:mailbox_steering:scheduler:{delivery_identity}:{item_nonce}"
+        ))
+        .map_err(|_| AgentRunRuntimeError::InvalidPresentationInput)?;
+        Ok(AgentRunPresentationInput::UserSubmission {
+            turn_id: presentation_turn_id,
+            item_id,
+            content: draft.content,
+            source: draft.source,
+            submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Steer,
+            started_at_seconds,
+        })
+    }
+
     async fn replay_existing<F>(
         &self,
         target: &AgentRunRuntimeTarget,
@@ -674,6 +1109,76 @@ impl ManagedAgentRunRuntime {
             Ok(_) => Err(AgentRunRuntimeError::UnexpectedSnapshot),
             Err(error) => Err(error.into()),
         }
+    }
+
+    async fn replay_existing_steer(
+        &self,
+        binding: &AgentRunRuntimeBinding,
+        command: &SteerAgentRunTurn,
+    ) -> Result<Option<OperationReceipt>, AgentRunRuntimeError> {
+        let operation_id = RuntimeOperationId::new(Self::operation_identity(
+            &command.command.target,
+            &command.command.client_command_id,
+        )?)
+        .expect("non-empty AgentRun operation identity");
+        let operation = match self
+            .gateway
+            .snapshot(RuntimeSnapshotQuery::Operation { operation_id })
+            .await
+        {
+            Ok(RuntimeSnapshotResult::Operation { operation }) => operation,
+            Err(RuntimeSnapshotError::NotFound) => return Ok(None),
+            Ok(_) => return Err(AgentRunRuntimeError::UnexpectedSnapshot),
+            Err(error) => return Err(error.into()),
+        };
+        let presentation_turn_id = operation
+            .presentation
+            .iter()
+            .find_map(|input| input.coordinate.presentation_turn_id.clone())
+            .ok_or(AgentRunRuntimeError::ClientCommandConflict)?;
+        let presentation_input = Self::steer_presentation_input(
+            presentation_turn_id,
+            &command.command.client_command_id,
+            command.presentation.clone(),
+            0,
+            command
+                .command
+                .client_command_id
+                .strip_prefix("mailbox-")
+                .unwrap_or(&command.command.client_command_id),
+        )?;
+        let presentation = Self::user_steer_presentation(
+            &command.command.client_command_id,
+            &binding.presentation_thread_id,
+            presentation_input,
+        )?;
+        if operation.actor != command.command.actor
+            || !operation.presentation.starts_with(&presentation)
+            || !matches!(
+                &operation.command,
+                RuntimeCommand::TurnSteer {
+                    thread_id,
+                    input,
+                    ..
+                } if thread_id == &binding.thread_id && input == &command.input
+            )
+        {
+            return Err(AgentRunRuntimeError::ClientCommandConflict);
+        }
+        Ok(Some(
+            self.gateway
+                .execute(RuntimeCommandEnvelope {
+                    presentation: operation.presentation,
+                    meta: OperationMeta {
+                        operation_id: operation.operation_id,
+                        idempotency_key: operation.idempotency_key,
+                        expected_thread_revision: None,
+                        actor: operation.actor,
+                    },
+                    command: operation.command,
+                })
+                .await?,
+        ))
     }
 
     async fn binding(
@@ -1019,6 +1524,253 @@ impl ManagedAgentRunRuntime {
             )?)
             .await?)
     }
+
+    async fn accept_message_inner(
+        &self,
+        command: AcceptAgentRunMessage,
+    ) -> Result<AgentRunMessageAdmission, AgentRunRuntimeError> {
+        let replay_command = command.clone();
+        let idempotency_key = Self::message_idempotency_key(&command)?;
+        if let Some(execution) = self
+            .replay_existing_message(&command, &idempotency_key)
+            .await?
+        {
+            if matches!(
+                &execution.admission,
+                AgentRunMessageAdmission::Accepted {
+                    delivery: AgentRunMessageAcceptedDelivery::Started,
+                    ..
+                }
+            ) {
+                self.acknowledge_authoritative_turn_start_context(
+                    &command.target,
+                    &execution.authoritative_context_frame_ids,
+                )
+                .await;
+            }
+            return Ok(execution.admission);
+        }
+
+        let existing_binding = self.bindings.load(&command.target).await?;
+        let binding_existed = existing_binding.is_some();
+        if existing_binding.is_none() {
+            self.execution_profile_coordinator
+                .coordinate_started_turn(CoordinateExecutionProfileRequest {
+                    target: command.target.clone(),
+                    binding: None,
+                    execution_profile_override: command.execution_profile_override.clone(),
+                })
+                .await?;
+        }
+        let mut binding = match existing_binding {
+            Some(binding) => binding,
+            None => {
+                self.provisioner
+                    .provision(&AgentRunRuntimeProvisionRequest {
+                        target: command.target.clone(),
+                        presentation_thread_id: command.presentation_thread_id.clone(),
+                        identity: command.identity.clone(),
+                        backend_selection: command.backend_selection.clone(),
+                        fork: None,
+                        terminal_hook_effect_binding: None,
+                    })
+                    .await?
+            }
+        };
+        if binding.presentation_thread_id != command.presentation_thread_id {
+            return Err(AgentRunRuntimeError::StaleThread);
+        }
+        self.reconcile_committed_recovery(&command.target, &binding)
+            .await?;
+        let mut snapshot = self.snapshot_for(&binding).await?;
+        if snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.status == RuntimeThreadStatus::Lost)
+        {
+            let revision = snapshot.as_ref().expect("lost snapshot exists").revision;
+            binding = self.provisioner.recover(&binding, revision).await?;
+            snapshot = self.snapshot_for(&binding).await?;
+        }
+
+        if let Some(active) = snapshot
+            .as_ref()
+            .filter(|snapshot| snapshot.active_turn_id.is_some())
+        {
+            let can_steer = command.delivery_preference
+                == AgentRunMessageDeliveryPreference::PreferSteer
+                && command.presentation.emits_user_submission()
+                && active.active_presentation_turn_id.is_some()
+                && matches!(
+                    active
+                        .command_availability
+                        .get(&RuntimeCommandKind::TurnSteer),
+                    Some(CommandAvailability::Available)
+                );
+            if !can_steer {
+                return Ok(AgentRunMessageAdmission::Deferred);
+            }
+            let presentation_turn_id = active
+                .active_presentation_turn_id
+                .clone()
+                .expect("steer availability requires a presentation turn");
+            let presentation_input = Self::steer_presentation_input(
+                presentation_turn_id,
+                &command.client_command_id,
+                command.presentation,
+                Utc::now().timestamp_millis(),
+                &uuid::Uuid::new_v4().to_string(),
+            )?;
+            let presentation = Self::user_steer_presentation(
+                &command.client_command_id,
+                &binding.presentation_thread_id,
+                presentation_input,
+            )?;
+            let mut envelope = Self::envelope(
+                &command.target,
+                &command.client_command_id,
+                Some(active.revision),
+                command.actor,
+                RuntimeCommand::TurnSteer {
+                    thread_id: binding.thread_id,
+                    expected_turn_id: active
+                        .active_turn_id
+                        .clone()
+                        .expect("active snapshot has a turn"),
+                    input: command.input,
+                },
+            )?;
+            envelope.meta.idempotency_key = idempotency_key;
+            envelope.presentation = presentation;
+            let execution_idempotency_key = envelope.meta.idempotency_key.clone();
+            let execution = self
+                .execute_message_admission(
+                    &replay_command,
+                    &execution_idempotency_key,
+                    envelope,
+                    AgentRunMessageAcceptedDelivery::Steered,
+                )
+                .await?;
+            return Ok(execution.admission);
+        }
+
+        if snapshot.as_ref().is_some_and(|snapshot| {
+            !matches!(
+                snapshot
+                    .command_availability
+                    .get(&RuntimeCommandKind::TurnStart),
+                Some(CommandAvailability::Available)
+            )
+        }) {
+            return Ok(AgentRunMessageAdmission::Deferred);
+        }
+
+        if binding_existed {
+            self.execution_profile_coordinator
+                .coordinate_started_turn(CoordinateExecutionProfileRequest {
+                    target: command.target.clone(),
+                    binding: Some(binding.clone()),
+                    execution_profile_override: command.execution_profile_override.clone(),
+                })
+                .await?;
+            binding = self
+                .bindings
+                .load(&command.target)
+                .await?
+                .ok_or(AgentRunRuntimeError::BindingNotFound)?;
+            if binding.presentation_thread_id != command.presentation_thread_id {
+                return Err(AgentRunRuntimeError::StaleThread);
+            }
+            snapshot = self.snapshot_for(&binding).await?;
+            if snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.active_turn_id.is_some())
+                || snapshot.as_ref().is_some_and(|snapshot| {
+                    !matches!(
+                        snapshot
+                            .command_availability
+                            .get(&RuntimeCommandKind::TurnStart),
+                        Some(CommandAvailability::Available)
+                    )
+                })
+            {
+                return Ok(AgentRunMessageAdmission::Deferred);
+            }
+        }
+
+        let presentation_input =
+            Self::launch_presentation_input(command.presentation, Utc::now().timestamp_millis())?;
+        let mut presentation = Self::submission_presentation(
+            &command.target,
+            &command.client_command_id,
+            &binding.presentation_thread_id,
+            binding.surface.surface_revision.0,
+            presentation_input.clone(),
+        )?;
+        let expected = snapshot.as_ref().map(|snapshot| snapshot.revision);
+        if snapshot.is_none() {
+            presentation.extend(
+                self.bootstrap_presentation(
+                    &binding,
+                    &command.client_command_id,
+                    presentation_input.turn_id(),
+                )
+                .await?,
+            );
+        }
+        let (turn_start_presentation, _notice_ids) = self
+            .pending_turn_start_presentation(
+                &binding,
+                &command.client_command_id,
+                presentation_input.turn_id(),
+            )
+            .await?;
+        presentation.extend(turn_start_presentation);
+        finalize_launch_context_frames(&mut presentation, &binding.context_delivery_target);
+        let runtime_command = match snapshot {
+            None => RuntimeCommand::ThreadStart {
+                thread_id: binding.thread_id.clone(),
+                presentation_thread_id: binding.presentation_thread_id.clone(),
+                presentation_turn_id: Some(presentation_input.turn_id().clone()),
+                binding_id: binding.binding_id.clone(),
+                driver_generation: binding.driver_generation,
+                source_thread_id: binding.source_thread_id.clone(),
+                profile_digest: binding.profile_digest.clone(),
+                bound_profile: Box::new(binding.bound_profile.clone()),
+                input: command.input,
+                surface: Box::new(binding.surface),
+                settings_revision: binding.settings_revision,
+            },
+            Some(_) => RuntimeCommand::TurnStart {
+                thread_id: binding.thread_id,
+                presentation_turn_id: presentation_input.turn_id().clone(),
+                input: command.input,
+            },
+        };
+        let mut envelope = Self::envelope(
+            &command.target,
+            &command.client_command_id,
+            expected,
+            command.actor,
+            runtime_command,
+        )?;
+        envelope.meta.idempotency_key = idempotency_key;
+        envelope.presentation = presentation;
+        let execution_idempotency_key = envelope.meta.idempotency_key.clone();
+        let execution = self
+            .execute_message_admission(
+                &replay_command,
+                &execution_idempotency_key,
+                envelope,
+                AgentRunMessageAcceptedDelivery::Started,
+            )
+            .await?;
+        self.acknowledge_authoritative_turn_start_context(
+            &replay_command.target,
+            &execution.authoritative_context_frame_ids,
+        )
+        .await;
+        Ok(execution.admission)
+    }
 }
 
 fn bounded_system_delivery_summary(message: &str) -> String {
@@ -1127,6 +1879,21 @@ fn context_frame_changed_mut(
     Some(changed)
 }
 
+fn turn_start_context_frame_ids(presentation: &[RuntimePresentationInput]) -> BTreeSet<String> {
+    presentation
+        .iter()
+        .filter_map(|input| {
+            let agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(changed),
+            ) = &input.event.event
+            else {
+                return None;
+            };
+            Some(changed.frame.id.clone())
+        })
+        .collect()
+}
+
 const fn context_frame_order(kind: agentdash_agent_protocol::ContextFrameKind) -> u8 {
     use agentdash_agent_protocol::ContextFrameKind;
     match kind {
@@ -1213,118 +1980,31 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
         &self,
         command: SendAgentRunMessage,
     ) -> Result<OperationReceipt, AgentRunRuntimeError> {
-        Self::operation_identity(&command.target, &command.client_command_id)?;
-        let mut binding = match self.bindings.load(&command.target).await? {
-            Some(binding) => binding,
-            None => {
-                self.provisioner
-                    .provision(&AgentRunRuntimeProvisionRequest {
-                        target: command.target.clone(),
-                        presentation_thread_id: command.presentation_thread_id.clone(),
-                        identity: command.identity.clone(),
-                        backend_selection: command.backend_selection.clone(),
-                        fork: None,
-                        terminal_hook_effect_binding: None,
-                    })
-                    .await?
-            }
-        };
-        if binding.presentation_thread_id != command.presentation_thread_id {
-            return Err(AgentRunRuntimeError::StaleThread);
-        }
-        let mut presentation = Self::submission_presentation(
-            &command.target,
-            &command.client_command_id,
-            &binding.presentation_thread_id,
-            binding.surface.surface_revision.0,
-            command.presentation_input.clone(),
-        )?;
-        self.reconcile_committed_recovery(&command.target, &binding)
-            .await?;
-        if let Some(receipt) = self
-            .replay_existing(
-                &command.target,
-                &command.client_command_id,
-                &command.actor,
-                &presentation,
-                |existing| {
-                    matches!(
-                        existing,
-                        RuntimeCommand::ThreadStart { thread_id, input, .. }
-                            | RuntimeCommand::TurnStart { thread_id, input, .. }
-                            if thread_id == &binding.thread_id && input == &command.input
-                    )
-                },
-            )
+        match self
+            .accept_message_inner(AcceptAgentRunMessage {
+                target: command.target,
+                presentation_thread_id: command.presentation_thread_id,
+                presentation: command.presentation,
+                client_command_id: command.client_command_id,
+                input: command.input,
+                actor: command.actor,
+                identity: command.identity,
+                execution_profile_override: None,
+                backend_selection: command.backend_selection,
+                delivery_preference: AgentRunMessageDeliveryPreference::StartWhenIdle,
+            })
             .await?
         {
-            return Ok(receipt);
+            AgentRunMessageAdmission::Accepted { receipt, .. } => Ok(receipt),
+            AgentRunMessageAdmission::Deferred => Err(AgentRunRuntimeError::StaleActiveTurn),
         }
-        let mut snapshot = self.snapshot_for(&binding).await?;
-        if snapshot
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.status == RuntimeThreadStatus::Lost)
-        {
-            let revision = snapshot.as_ref().expect("lost snapshot exists").revision;
-            binding = self.provisioner.recover(&binding, revision).await?;
-            snapshot = self.snapshot_for(&binding).await?;
-        }
-        let expected = snapshot.as_ref().map(|snapshot| snapshot.revision);
-        let acknowledged_notice_ids;
-        if snapshot.is_none() {
-            presentation.extend(
-                self.bootstrap_presentation(
-                    &binding,
-                    &command.client_command_id,
-                    command.presentation_input.turn_id(),
-                )
-                .await?,
-            );
-        }
-        let (turn_start_presentation, notice_ids) = self
-            .pending_turn_start_presentation(
-                &binding,
-                &command.client_command_id,
-                command.presentation_input.turn_id(),
-            )
-            .await?;
-        presentation.extend(turn_start_presentation);
-        acknowledged_notice_ids = notice_ids;
-        finalize_launch_context_frames(&mut presentation, &binding.context_delivery_target);
-        let acknowledged_binding_id = binding.binding_id.clone();
-        let runtime_command = match snapshot {
-            None => RuntimeCommand::ThreadStart {
-                thread_id: binding.thread_id.clone(),
-                presentation_thread_id: binding.presentation_thread_id.clone(),
-                presentation_turn_id: Some(command.presentation_input.turn_id().clone()),
-                binding_id: binding.binding_id.clone(),
-                driver_generation: binding.driver_generation,
-                source_thread_id: binding.source_thread_id.clone(),
-                profile_digest: binding.profile_digest.clone(),
-                bound_profile: Box::new(binding.bound_profile.clone()),
-                input: command.input,
-                surface: Box::new(binding.surface),
-                settings_revision: binding.settings_revision,
-            },
-            Some(_) => RuntimeCommand::TurnStart {
-                thread_id: binding.thread_id,
-                presentation_turn_id: command.presentation_input.turn_id().clone(),
-                input: command.input,
-            },
-        };
-        let mut envelope = Self::envelope(
-            &command.target,
-            &command.client_command_id,
-            expected,
-            command.actor,
-            runtime_command,
-        )?;
-        envelope.presentation = presentation;
-        let receipt = self.gateway.execute(envelope).await?;
-        self.turn_start_context
-            .acknowledge_turn_start_context(&acknowledged_binding_id, &acknowledged_notice_ids)
-            .await?;
-        Ok(receipt)
+    }
+
+    async fn accept_message(
+        &self,
+        command: AcceptAgentRunMessage,
+    ) -> Result<AgentRunMessageAdmission, AgentRunRuntimeError> {
+        self.accept_message_inner(command).await
     }
 
     async fn compact_context(
@@ -1365,44 +2045,35 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
         command: SteerAgentRunTurn,
     ) -> Result<OperationReceipt, AgentRunRuntimeError> {
         let binding = self.coordinate_binding(&command.command).await?;
-        let presentation = Self::user_steer_presentation(
-            &command.command.client_command_id,
-            &binding.presentation_thread_id,
-            command.presentation_input.clone(),
-        )?;
-        if let Some(receipt) = self
-            .replay_existing(
-                &command.command.target,
-                &command.command.client_command_id,
-                &command.command.actor,
-                &presentation,
-                |existing| {
-                    matches!(
-                        existing,
-                        RuntimeCommand::TurnSteer {
-                            thread_id,
-                            expected_turn_id,
-                            input,
-                        } if thread_id == &command.command.guard.thread_id
-                            && Some(expected_turn_id) == command.command.guard.expected_active_turn_id.as_ref()
-                            && input == &command.input
-                    )
-                },
-            )
-            .await?
-        {
+        if let Some(receipt) = self.replay_existing_steer(&binding, &command).await? {
             return Ok(receipt);
         }
-        let binding = self.guarded_binding(&command.command).await?;
         let snapshot = self
             .snapshot_for(&binding)
             .await?
             .ok_or(AgentRunRuntimeError::BindingNotFound)?;
-        if snapshot.active_presentation_turn_id.as_ref()
-            != Some(command.presentation_input.turn_id())
-        {
-            return Err(AgentRunRuntimeError::StalePresentationTurn);
+        if snapshot.active_turn_id != command.command.guard.expected_active_turn_id {
+            return Err(AgentRunRuntimeError::StaleActiveTurn);
         }
+        let presentation_turn_id = snapshot
+            .active_presentation_turn_id
+            .ok_or(AgentRunRuntimeError::StaleActiveTurn)?;
+        let presentation_input = Self::steer_presentation_input(
+            presentation_turn_id,
+            &command.command.client_command_id,
+            command.presentation,
+            Utc::now().timestamp_millis(),
+            command
+                .command
+                .client_command_id
+                .strip_prefix("mailbox-")
+                .unwrap_or(&command.command.client_command_id),
+        )?;
+        let presentation = Self::user_steer_presentation(
+            &command.command.client_command_id,
+            &binding.presentation_thread_id,
+            presentation_input,
+        )?;
         let turn_id = command
             .command
             .guard

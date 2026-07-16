@@ -174,9 +174,9 @@ impl AgentNodeLauncher {
                     "workflow:{}:{}#{}",
                     coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
                 ),
-                input: vec![agentdash_agent_runtime_contract::RuntimeInput::Text {
-                    text: delivery_message.clone(),
-                }],
+                input: vec![agentdash_agent_runtime_contract::RuntimeInput::text(
+                    delivery_message.clone(),
+                )],
                 presentation_content: agentdash_agent_protocol::text_user_input_blocks(
                     delivery_message,
                 ),

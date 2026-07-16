@@ -738,13 +738,20 @@ impl AppState {
         runtime_provisioner_handle
             .set(runtime_composition.provisioner.clone())
             .map_err(|_| anyhow::anyhow!("AgentRun runtime provisioner 重复绑定"))?;
-        let agent_run_runtime: Arc<dyn AgentRunRuntime> = Arc::new(ManagedAgentRunRuntime::new(
-            runtime_composition.gateway.clone(),
-            runtime_composition.bindings.clone(),
-            runtime_composition.provisioner.clone(),
-            runtime_composition.presentation_plans.clone(),
-            tool_registry.clone(),
-        ));
+        let agent_run_runtime: Arc<dyn AgentRunRuntime> = Arc::new(
+            ManagedAgentRunRuntime::new(
+                runtime_composition.gateway.clone(),
+                runtime_composition.bindings.clone(),
+                runtime_composition.provisioner.clone(),
+                runtime_composition.presentation_plans.clone(),
+                tool_registry.clone(),
+            )
+            .with_execution_profile_coordinator(Arc::new(
+                agentdash_application_agentrun::agent_run::CurrentAgentFrameExecutionProfileCoordinator::new(
+                    repos.agent_frame_repo.clone(),
+                ),
+            )),
+        );
         let agent_run_journal = Arc::new(AgentRunJournalService::new(
             repos.agent_run_lineage_repo.clone(),
             Arc::new(CanonicalAgentRunJournalBindingResolver {
@@ -768,6 +775,7 @@ impl AppState {
         let runtime_mailbox_worker = Arc::new(RuntimeAgentRunMailbox::new(
             repos.agent_run_mailbox_repo.clone(),
             agent_run_runtime.clone(),
+            repos.agent_run_message_submission_store.clone(),
         ));
         repos
             .workflow_agent_run_delivery

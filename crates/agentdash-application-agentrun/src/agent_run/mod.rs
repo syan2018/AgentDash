@@ -10,9 +10,11 @@ mod fork_command;
 pub mod frame;
 mod journal;
 pub(crate) mod lifecycle_read_model_facade;
+mod message_submission;
 mod presentation_read_model;
 mod product_command;
 mod project_agent_context;
+mod project_agent_start;
 mod runtime_application_presentation;
 pub mod runtime_capability;
 pub mod runtime_capability_projection;
@@ -52,13 +54,29 @@ pub use delivery_runtime_selection::{
     DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionPolicy,
     DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
 };
+pub use message_submission::{
+    AgentRunAcceptedProductResultKind, AgentRunBackendSelectionSemantic,
+    AgentRunMessageDeliveryAttempt, AgentRunMessageDeliveryCoordinator,
+    AgentRunMessageProductResultProjector, AgentRunMessageReservationService,
+    AgentRunMessageSemanticRequest, AgentRunMessageSubmissionFailure,
+    AgentRunMessageSubmissionOwnership, AgentRunMessageSubmissionResult,
+    AgentRunMessageSubmissionService, AgentRunProductDeliveryResults,
+    FnAgentRunMessageProductResultProjector, ProjectAgentInitialMessageSubmission,
+    ProjectAgentInitialMessageSubmissionPort, ProjectAgentInitialMessageSubmissionService,
+    ProjectAgentRunStartReceiptPort, ProjectAgentRunStartReceiptRequest, SubmitAgentRunMessage,
+    project_product_delivery_results, replay_agent_run_message_submission,
+};
 pub use runtime_application_presentation::AgentRunRuntimeApplicationPresentationProjector;
 pub use runtime_facade::{
-    AgentRunCommandGuard, AgentRunPresentationDraft, AgentRunPresentationInput, AgentRunRuntime,
-    AgentRunRuntimeError, AgentRunRuntimeRecoverySummary, AgentRunRuntimeView,
-    AppendAgentRunPresentation, ForkAgentRunRuntime, GuardedAgentRunCommand,
-    LaunchPresentationSource, ManagedAgentRunRuntime, ReadAgentRunEvents,
+    AcceptAgentRunMessage, AgentRunCommandGuard, AgentRunMessageAcceptedDelivery,
+    AgentRunMessageAdmission, AgentRunMessageDeliveryPreference, AgentRunPresentationDraft,
+    AgentRunRuntime, AgentRunRuntimeError, AgentRunRuntimeRecoverySummary, AgentRunRuntimeView,
+    AppendAgentRunPresentation, CoordinateExecutionProfileRequest,
+    CurrentAgentFrameExecutionProfileCoordinator, ExecutionProfileCoordination,
+    ExecutionProfileCoordinationError, ExecutionProfileCoordinator, ForkAgentRunRuntime,
+    GuardedAgentRunCommand, LaunchPresentationSource, ManagedAgentRunRuntime, ReadAgentRunEvents,
     ResolveAgentRunInteraction, SendAgentRunMessage, SteerAgentRunTurn,
+    agent_run_message_request_digest,
 };
 pub use runtime_mailbox::{
     AgentRunProductDelivery, AgentRunProductDeliveryPort, DeliverAgentRunProductInput,
@@ -136,6 +154,11 @@ pub use product_command::{AgentRunProductCommandClaim, AgentRunProductCommandSer
 pub use project_agent_context::{
     PROJECT_AGENT_BINDING_LABEL_PREFIX, ResolvedProjectAgentContext, build_project_agent_context,
     resolve_project_workspace,
+};
+pub use project_agent_start::{
+    ProjectAgentExecutionProfilePolicy, ProjectAgentRunStartCommand, ProjectAgentRunStartDeps,
+    ProjectAgentRunStartProductProjectionPort, ProjectAgentRunStartProjectionContext,
+    ProjectAgentRunStartService,
 };
 pub use runtime_capability::{
     CapabilityDimensionModule, CapabilityDimensionRegistry, CapabilityStateDelta,

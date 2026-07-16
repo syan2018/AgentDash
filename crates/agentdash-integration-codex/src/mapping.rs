@@ -1050,9 +1050,8 @@ pub(crate) fn map_input(
     let mut additional = serde_json::Map::new();
     for (index, block) in input.iter().enumerate() {
         match block {
-            RuntimeInput::Text { text } => native.push(serde_json::json!({ "type": "text", "text": text, "textElements": [] })),
-            RuntimeInput::Image { data_url, .. } => native.push(serde_json::json!({ "type": "image", "url": data_url })),
-            RuntimeInput::FileReference { uri, media_type } => native.push(serde_json::json!({ "type": "mention", "name": media_type.as_deref().unwrap_or("resource"), "path": uri })),
+            RuntimeInput::UserInput { block } => native
+                .push(serde_json::to_value(block).expect("generated Codex UserInput serializes")),
             RuntimeInput::Structured { schema, value } => {
                 additional.insert(format!("agentdash.structured.{index}"), serde_json::json!({
                     "value": serde_json::to_string(&serde_json::json!({ "schema": schema, "value": value })).expect("JSON value serializes"),
@@ -1379,18 +1378,63 @@ mod tests {
     use crate::rpc::RpcServerNotification;
 
     #[test]
-    fn structured_and_image_input_are_not_flattened_into_prompt_text() {
+    fn standard_user_input_is_projected_to_exact_codex_json() {
+        let expected = vec![
+            serde_json::json!({
+                "type": "text",
+                "text": "ask @agent",
+                "text_elements": [{
+                    "byteRange": { "start": 4, "end": 10 },
+                    "placeholder": null
+                }]
+            }),
+            serde_json::json!({ "type": "image", "url": "https://example.test/absent.png" }),
+            serde_json::json!({ "type": "image", "detail": null, "url": "https://example.test/null.png" }),
+            serde_json::json!({ "type": "image", "detail": "original", "url": "https://example.test/original.png" }),
+            serde_json::json!({ "type": "localImage", "detail": null, "path": "C:/workspace/local.png" }),
+            serde_json::json!({ "type": "skill", "name": "review", "path": "C:/skills/review/SKILL.md" }),
+            serde_json::json!({ "type": "mention", "name": "main.rs", "path": "C:/workspace/src/main.rs" }),
+        ];
+        let runtime = expected
+            .iter()
+            .cloned()
+            .map(|value| {
+                RuntimeInput::user_input(
+                    serde_json::from_value(value).expect("generated Codex UserInput"),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let (input, additional) = map_input(&runtime);
+
+        assert_eq!(input, expected);
+        assert!(additional.is_none());
+    }
+
+    #[test]
+    fn structured_input_uses_typed_additional_context_without_changing_user_input() {
         let (input, additional) = map_input(&[
-            RuntimeInput::Image {
-                mime_type: "image/png".to_string(),
-                data_url: "data:image/png;base64,AA==".to_string(),
-            },
+            RuntimeInput::user_input(
+                serde_json::from_value(serde_json::json!({
+                    "type": "image",
+                    "detail": "high",
+                    "url": "data:image/png;base64,AA=="
+                }))
+                .expect("generated Codex image input"),
+            ),
             RuntimeInput::Structured {
                 schema: "answer.v1".to_string(),
                 value: serde_json::json!({"choice": 2}),
             },
         ]);
-        assert_eq!(input[0]["type"], "image");
+        assert_eq!(
+            input,
+            vec![serde_json::json!({
+                "type": "image",
+                "detail": "high",
+                "url": "data:image/png;base64,AA=="
+            })]
+        );
         let structured = &additional.expect("structured context")["agentdash.structured.1"];
         assert_eq!(structured["kind"], "application");
         assert!(

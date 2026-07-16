@@ -120,3 +120,18 @@
 - [ ] 将presentation transient完全留在live publication；EventSequence只做journal cursor，aggregate revision与surface/context/binding专用revision各自承担明确职责。
 - [ ] 为driver source event建立可持久去重identity，并覆盖双Runtime实例共享PostgreSQL时的CAS reload/reapply、terminal exact-once和column/projection/journal一致性。
 - [ ] 对照main-reference运行前端eventstream payload等价矩阵，并验证新架构的placement/rebind/outbox/recovery收益未因收束而退化。
+
+## ARD-014
+
+- [ ] 让Responses stream parser显式识别协议terminal；`response.completed`归约usage后立即发送唯一`Done`并结束读取，覆盖terminal后transport挂起/decoder失败的回归。
+- [ ] 将Mailbox stored command中的预生成presentation input替换为typed presentation draft；移除Mailbox对canonical PresentationTurn/Item identity的生成职责。
+- [ ] 由AgentRun Runtime facade在start/steer command admission内基于同一canonical snapshot生成或绑定presentation identity，并保持client command幂等。
+- [ ] 将mailbox Promote从API直接repository更新迁入Mailbox application owner；policy变更不触碰draft，claim按当前Runtime状态选择start或steer。
+- [ ] 覆盖Promote active steer、terminal-before-claim转next start、inspect/execute stale后重规划、无永久failed/queued悬空，以及eventstream payload不变。
+- [ ] 运行Provider、Agent、AgentRun application/API/PostgreSQL定向测试与相关fmt/check；最后用真实`pnpm dev`连续提交和Promote验证可见回复立即terminal且下一消息继续消费。
+- [x] 将Message Submission receipt/UoW从Mailbox queue拆出，并让Mailbox仅依赖窄delivery settlement port；attached receipt与mailbox settlement保持同事务。
+- [x] 以稳定semantic digest在mutable stale guard前reserve/replay composer submission；新命令校验失败条件释放未attach reservation。
+- [x] 将typed execution profile override放入隐藏delivery draft并纳入Runtime digest；Steered忽略，Started由Managed Runtime内`ExecutionProfileCoordinator`处理。
+- [ ] 引入planned service rebind能力，使不同current Frame execution profile可以原子创建revision、重配service instance并重新对齐binding/snapshot；在此之前保持typed unsupported。
+- [ ] 恢复`ProjectAgentRunStartService`具名application owner，覆盖post-launch失败无orphan、duplicate不重复launch以及首次/duplicate错误结果一致。
+- [ ] 以AgentDash-owned Codex标准`UserInputBlock`替换Runtime自定义Text/Image/FileReference镜像，覆盖nullable detail、text_elements、LocalImage/Skill/Mention保真、空白拒绝与Native typed unsupported。

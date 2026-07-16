@@ -41,6 +41,43 @@ pub async fn ProjectAgentRunListQuery::list(
 ) -> Result<ProjectAgentRunListPage, ApplicationError>;
 ```
 
+```rust
+pub struct AgentRunPresentationDraft {
+    pub content: Vec<UserInputBlock>,
+    pub source: UserInputSource,
+    pub launch_source: LaunchPresentationSource,
+    pub submission_kind: UserInputSubmissionKind,
+}
+
+pub trait AgentRunMessageSubmissionStore {
+    async fn accept_message(
+        &self,
+        command: AcceptAgentRunMessageSubmission,
+    ) -> Result<AcceptAgentRunMessageSubmissionResult, DomainError>;
+
+    async fn complete_submission(
+        &self,
+        completion: CompleteAgentRunMessageSubmission,
+    ) -> Result<AgentRunCommandReceipt, DomainError>;
+}
+
+pub async fn RuntimeAgentRunMailbox::promote(
+    &self,
+    target: &AgentRunRuntimeTarget,
+    message_id: Uuid,
+) -> Result<AgentRunMailboxMessage, RuntimeMailboxError>;
+
+pub trait AgentRunMailboxRepository {
+    async fn promote_message(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        id: Uuid,
+        priority: i32,
+    ) -> Result<AgentRunMailboxMessage, DomainError>;
+}
+```
+
 ```text
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/context
@@ -57,6 +94,8 @@ Migration `0066_agent_frame_hook_plan.sql` adds nullable `agent_frames.hook_plan
 Migration `0077_agent_run_product_command_receipts.sql` restores product-command idempotency after the RuntimeSession cutover as a new product-owned table. It references canonical `runtime_thread_id + runtime_operation_id` and does not restore retired RuntimeSession/AgentRunTurn/ProtocolTurn columns.
 
 Migration `0078_rebind_safe_runtime_outbox_coordinates.sql` persists each Runtime outbox entry's immutable `binding_id + binding_epoch + driver_generation`. Historical dispatch fences reference `agent_runtime_binding`, while `thread_id` independently retains thread ownership, so `ThreadRebind` can advance the thread without rewriting old outbox coordinates.
+
+Migration `0079_reconcile_agent_run_mailbox_delivery.sql` removes the retired AgentRun/protocol turn reference columns and executor/backend second facts from mailbox rows, adds the typed lease-reconciliation fact and stable delivery digest, and links each product receipt to at most one exact mailbox message.
 
 ## 3. Contracts
 
@@ -79,6 +118,16 @@ Migration `0078_rebind_safe_runtime_outbox_coordinates.sql` persists each Runtim
 - Runtime outbox rows retain the binding epoch/generation accepted with the command. Rebinding the thread never cascades or rewrites those historical fencing coordinates.
 - Runtime Turn/Item/Interaction projections update stable entity rows in place. A normal Runtime UoW must not delete and recreate entity rows because ToolBroker calls, interactions and other durable side-effect records reference those identities across concurrent driver commits.
 - Context compaction is a Managed Runtime operation: candidate preparation, remote activation, active-head convergence and recovery share one operation identity.
+- Mailbox persistence owns delivery intent, barrier, priority, claim lease and an immutable typed input draft. The draft records authored content/source semantics but contains no admission timestamp, canonical `PresentationTurnId`, `PresentationItemId`, active Runtime turn or expected Runtime revision.
+- Runtime facade admission is the presentation identity owner. A new launch generates its `t<millis>` / `:user-input:0` identity and start time at actual admission; steer admission binds the current active presentation turn and creates the historical mailbox item shape with a fresh dynamic suffix. Accepted duplicate/recovery reads the durable Runtime Operation instead of regenerating presentation.
+- Promote is a typed mailbox policy transition through the application owner. The repository performs owner, origin, delivery and claim-state validation in one conditional update; API routes do not assemble mailbox persistence fields.
+- `AgentRunMessageSubmissionService` owns product request digest, exact response replay and current-message result association. Its PostgreSQL UoW atomically creates the pending product receipt, identity-free mailbox row and receipt-to-message link; a queue scheduler may advance another row but cannot complete the current product receipt with that row's Operation.
+- Product request/delivery digest只覆盖稳定业务语义，不包含mailbox UUID、Runtime operation/presentation动态identity、claim/snapshot guard或`AuthIdentity`展示字段。相同client command在用户展示资料刷新、Runtime状态变化和网络重试后仍命中同一receipt/message；真正改变输入、target、actor、execution profile、backend或delivery intent时返回typed conflict。
+- `ProjectAgentRunStartService`拥有ProjectAgent解析、Lifecycle graph launch、产品结果projection与失败清理，但只能向Message Submission提交产品级initial-message intent。Mailbox origin/source/delivery/barrier、草稿编译、message identity和receipt-message attach判断属于Submission owner；attach失败必须返回typed `Unattached | Attached | Unknown`，只有确定`Unattached`且graph尚无可见execution event时才能删除整份draft run/agent/frame并固化失败receipt。
+- ProjectAgent initial input只有一份canonical `Vec<UserInputBlock>`；Message Submission owner从该输入同时生成presentation draft与Runtime `UserInput`，并从唯一product projector生成frozen Started/Steered/Failed结果，避免双数据源分叉。
+- Delivery coordination owns fresh availability inspection and mailbox claim. It calls one Runtime `accept_message` ingress; the ingress first reconciles a stable existing Operation and otherwise chooses start/steer from one canonical snapshot.
+- Expired consuming leases become typed reconciliation work. Reconciliation bypasses ordinary availability only to ask Runtime admission whether the stable Operation already exists; if not, the draft returns to ordinary policy planning. Repository recovery never guesses whether a Runtime side effect happened.
+- User visible recall payload uses protocol `UserInputBlock` shape. Hidden Runtime input/delivery command remains separate and is atomically removed with user payload after successful acceptance when retention is disabled.
 
 ## 4. Validation & Error Matrix
 
@@ -105,14 +154,24 @@ Migration `0078_rebind_safe_runtime_outbox_coordinates.sql` persists each Runtim
 | Tool Broker Hook requirement被投影到Driver admission | contract test失败；Driver surface必须只包含Driver execution sites |
 | migration runs on an empty database | new schema created, old tables/columns absent |
 | migration readiness observes old execution state | readiness fails with explicit diagnostic |
+| stored mailbox payload contains canonical turn/item identity | contract failure; persistence accepts only the typed draft and product target |
+| Promote target has wrong run/agent owner | typed not-found; no row changes |
+| Promote target is non-user, terminal, consuming or delivery-result-unknown | typed conflict; claim/policy remains unchanged |
+| active turn terminates between mailbox inspect and command admission | claim returns to queued planning state; next attempt launches from the same draft |
+| accepted client command is replayed with different draft/input/actor | typed client-command conflict; original operation remains authoritative |
+| duplicate product client ID has a different canonical request digest | typed request-digest conflict; no second receipt/message/operation |
+| scheduler dispatches another mailbox row while handling submit | current submit result remains queued; the other row's receipt is not attached |
+| Runtime accepts but mailbox settlement crashes | lease recovery claims reconciliation work; facade returns the durable Operation receipt without a second presentation or side effect |
+| queued user message is recalled | return the original `UserInputBlock[]`; RuntimeInput remains private |
+| queued message waits before launch | visible start time and `t<millis>` come from admission, not enqueue time |
 
 ## 5. Good / Base / Bad Cases
 
-**Good:** composer input is durably accepted by the AgentRun mailbox, provisioned through a generic Runtime offer, dispatched over RuntimeWire to a Local Host, and observed through canonical snapshot/events. Compaction and interaction resolution reuse the same facade and operation journal. Project列表由application query返回最小product DTO，活跃线程只有存在`active_turn_id`时才展示为执行中。
+**Good:** composer input is durably accepted by the AgentRun mailbox as an identity-free draft, provisioned through a generic Runtime offer, admitted by the facade with canonical presentation identity, dispatched over RuntimeWire to a Local Host, and observed through canonical snapshot/events. Compaction and interaction resolution reuse the same facade and operation journal. Project列表由application query返回最小product DTO，活跃线程只有存在`active_turn_id`时才展示为执行中。
 
-**Base:** retrying the same client command returns a duplicate receipt; reconnecting a healthy service creates a new placement generation without replaying an operation already terminalized as `Lost`.
+**Base:** retrying the same client command returns its first persisted product result; a promoted user draft steers when the turn is still active and starts the next turn when terminal convergence wins before Runtime acceptance; reconnecting a healthy service creates a new placement generation without replaying an operation already terminalized as `Lost`.
 
-**Bad:** enabling submit/cancel from a top-level product status, branching on `Pi`/`Codex` in API composition, injecting a terminal Backbone event into the canonical snapshot，或复用退役workspace shell为列表制造`delivery_status`，都会创建第二事实源。
+**Bad:** enabling submit/cancel from a top-level product status, branching on `Pi`/`Codex` in API composition, injecting a terminal Backbone event into the canonical snapshot，由API/Mailbox预生成active presentation坐标，或复用退役workspace shell为列表制造`delivery_status`，都会创建第二事实源。
 
 ## 6. Tests Required
 
@@ -127,6 +186,12 @@ Migration `0078_rebind_safe_runtime_outbox_coordinates.sql` persists each Runtim
 - Contract generation, frontend typecheck/tests, workspace checks, Runtime crate tests and migration guard are required before completion.
 - Product query tests覆盖current Frame execution profile到`model_config`的resolved/model-required投影；前端state测试覆盖workspace/runtime两路独立失败与refresh保留。
 - Project列表测试覆盖run activity keyset cursor、canonical lineage递归/cycle/orphan下每个Agent恰好一次、无binding与Runtime summary；service/UI测试覆盖URL encoding及`thread_status + active_turn_id + lifecycle_status`展示映射。
+- Mailbox tests serialize the stored command and assert that no presentation turn/item identity is present; active Promote must steer, terminal-before-claim must launch the next turn, and stale admission must requeue the unchanged draft then replan successfully.
+- PostgreSQL tests assert Promote's conditional update cannot take a consuming claim, non-user row, terminal row, unknown delivery result or another AgentRun's message.
+- Facade parity fixtures compare launch/steer event payload families, content, source, submission kind and historical ID shape with `main-reference`, normalizing only dynamic identities.
+- Submission UoW tests cover zero partial state on receipt/mailbox failure, same-digest concurrent acceptance, different-digest conflict, queued exact replay and conditional completion that cannot overwrite an accepted result.
+- Recovery tests cover accepted-before-mailbox-settlement for started and steered Operations, including terminal/Lost thread state, and assert one Runtime Operation/presentation sequence.
+- Recall/retention tests assert queued text/image payload round-trips in protocol shape and successful user acceptance clears visible and hidden drafts atomically while retained system/workflow payload remains.
 
 ## 7. Wrong vs Correct
 
@@ -136,6 +201,15 @@ let can_cancel = agent_run.status == AgentRunStatus::Running;
 
 // Correct: the canonical Runtime snapshot owns command admission.
 let can_cancel = runtime_view.command_availability.supports(RuntimeCommandKind::Interrupt);
+```
+
+```rust
+// Wrong: queue policy freezes an identity that may be stale before delivery.
+stored.presentation_turn_id = inspected.active_presentation_turn_id;
+
+// Correct: the queue retains an identity- and time-free draft; facade admission binds identity.
+let draft = stored.presentation;
+runtime.accept_message(AcceptAgentRunMessage { presentation: draft, .. }).await?;
 ```
 
 ```rust

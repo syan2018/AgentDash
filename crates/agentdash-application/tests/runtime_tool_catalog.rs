@@ -254,6 +254,9 @@ fn repository_set(pool: sqlx::PgPool) -> RepositorySet {
         agent_run_command_receipt_repo: Arc::new(PostgresAgentRunCommandReceiptRepository::new(
             pool.clone(),
         )),
+        agent_run_message_submission_store: Arc::new(
+            agentdash_infrastructure::PostgresAgentRunMessageSubmissionStore::new(pool.clone()),
+        ),
         agent_frame_construction: frame_construction,
         workflow_agent_frame_materialization: workflow_materialization,
         project_agent_lifecycle_launch: project_launch,

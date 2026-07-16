@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::common::error::DomainError;
 
-pub const MAILBOX_DELIVERY_RESULT_UNKNOWN: &str = "delivery_result_unknown";
+pub const MAILBOX_CLAIM_LEASE_EXPIRED_RECONCILIATION: &str = "claim_lease_expired_reconciliation";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MailboxMessageOrigin {
@@ -359,14 +359,13 @@ pub struct AgentRunMailboxMessage {
     pub priority: i32,
     pub order_key: i64,
     pub source_dedup_key: Option<String>,
+    pub delivery_request_digest: String,
     pub accepted_runtime_operation_id: Option<String>,
-    pub accepted_agent_run_turn_id: Option<String>,
-    pub accepted_protocol_turn_id: Option<String>,
+    pub reconcile_required: bool,
     pub claim_token: Option<Uuid>,
     pub claimed_at: Option<DateTime<Utc>>,
     pub claim_expires_at: Option<DateTime<Utc>>,
     pub payload_json: Option<Value>,
-    pub executor_config_json: Option<Value>,
     pub launch_planning_input: Option<Value>,
     pub preview: String,
     pub has_images: bool,
@@ -381,8 +380,7 @@ pub struct AgentRunMailboxMessage {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewAgentRunMailboxMessage {
-    /// Preallocated durable identity. Producers that embed the mailbox id in a persisted
-    /// presentation coordinate allocate it once before the first insert.
+    /// Preallocated durable identity used by idempotent producers and Runtime admission.
     pub id: Option<Uuid>,
     pub run_id: Uuid,
     pub agent_id: Uuid,
@@ -393,12 +391,18 @@ pub struct NewAgentRunMailboxMessage {
     pub drain_mode: MailboxDrainMode,
     pub priority: i32,
     pub source_dedup_key: Option<String>,
+    pub delivery_request_digest: String,
     pub payload_json: Option<Value>,
-    pub executor_config_json: Option<Value>,
     pub launch_planning_input: Option<Value>,
     pub preview: String,
     pub has_images: bool,
     pub retain_payload: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentRunMailboxCreateOutcome {
+    Created(AgentRunMailboxMessage),
+    Existing(AgentRunMailboxMessage),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -408,7 +412,6 @@ pub struct AgentRunMailboxState {
     pub paused: bool,
     pub pause_reason: Option<String>,
     pub pause_message: Option<String>,
-    pub backend_selection_preference: Option<Value>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -437,7 +440,7 @@ pub trait AgentRunMailboxRepository: Send + Sync {
     async fn create_message_idempotent(
         &self,
         message: NewAgentRunMailboxMessage,
-    ) -> Result<AgentRunMailboxMessage, DomainError>;
+    ) -> Result<AgentRunMailboxCreateOutcome, DomainError>;
 
     async fn get_message(&self, id: Uuid) -> Result<Option<AgentRunMailboxMessage>, DomainError>;
 
@@ -452,6 +455,21 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         request: AgentRunMailboxClaimRequest,
     ) -> Result<Vec<AgentRunMailboxMessage>, DomainError>;
 
+    async fn claim_reconciliation(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        claim_token: Uuid,
+        claim_expires_at: DateTime<Utc>,
+    ) -> Result<Option<AgentRunMailboxMessage>, DomainError>;
+
+    async fn release_reconciliation_claim(
+        &self,
+        id: Uuid,
+        claim_token: Uuid,
+        last_error: String,
+    ) -> Result<AgentRunMailboxMessage, DomainError>;
+
     async fn recover_expired_consuming(&self, now: DateTime<Utc>) -> Result<u64, DomainError>;
 
     async fn mark_message_status(
@@ -462,33 +480,11 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         last_error: Option<String>,
     ) -> Result<AgentRunMailboxMessage, DomainError>;
 
-    async fn mark_runtime_operation_accepted(
+    async fn promote_message(
         &self,
+        run_id: Uuid,
+        agent_id: Uuid,
         id: Uuid,
-        claim_token: Uuid,
-        operation_id: String,
-        agent_run_turn_id: Option<String>,
-        protocol_turn_id: Option<String>,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        let _ = (
-            id,
-            claim_token,
-            operation_id,
-            agent_run_turn_id,
-            protocol_turn_id,
-        );
-        Err(DomainError::InvalidConfig(
-            "mailbox repository does not implement canonical runtime operation receipts"
-                .to_string(),
-        ))
-    }
-
-    async fn update_message_policy(
-        &self,
-        id: Uuid,
-        delivery: MailboxDelivery,
-        barrier: ConsumptionBarrier,
-        drain_mode: MailboxDrainMode,
         priority: i32,
     ) -> Result<AgentRunMailboxMessage, DomainError>;
 
@@ -516,13 +512,6 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         run_id: Uuid,
         agent_id: Uuid,
     ) -> Result<Option<AgentRunMailboxState>, DomainError>;
-
-    async fn set_backend_selection_preference(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-        preference: Value,
-    ) -> Result<AgentRunMailboxState, DomainError>;
 
     /// Move a message after the anchor (or to the front if `after_id` is None).
     /// Returns the updated message with new order_key.

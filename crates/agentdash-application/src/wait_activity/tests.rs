@@ -9,8 +9,8 @@ use agentdash_application_ports::agent_run_runtime::{
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::agent_run_mailbox::{
-    AgentRunMailboxMessage, AgentRunMailboxRepository, ConsumptionBarrier, MailboxDelivery,
-    MailboxDrainMode, MailboxMessageStatus, NewAgentRunMailboxMessage,
+    AgentRunMailboxCreateOutcome, AgentRunMailboxMessage, AgentRunMailboxRepository,
+    MailboxMessageStatus, NewAgentRunMailboxMessage,
 };
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, GateWaitPolicyEnvelope, LifecycleAgent,
@@ -20,7 +20,7 @@ use agentdash_spi::ExecutionContext;
 use agentdash_spi::connector::RuntimeToolProvider;
 use async_trait::async_trait;
 use chrono::Utc;
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -1117,7 +1117,7 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
     async fn create_message_idempotent(
         &self,
         _message: NewAgentRunMailboxMessage,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
+    ) -> Result<AgentRunMailboxCreateOutcome, DomainError> {
         Err(DomainError::InvalidConfig("noop".to_string()))
     }
 
@@ -1140,6 +1140,25 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         Ok(Vec::new())
     }
 
+    async fn claim_reconciliation(
+        &self,
+        _run_id: Uuid,
+        _agent_id: Uuid,
+        _claim_token: Uuid,
+        _claim_expires_at: chrono::DateTime<Utc>,
+    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
+        Ok(None)
+    }
+
+    async fn release_reconciliation_claim(
+        &self,
+        _id: Uuid,
+        _claim_token: Uuid,
+        _last_error: String,
+    ) -> Result<AgentRunMailboxMessage, DomainError> {
+        Err(DomainError::InvalidConfig("noop".to_string()))
+    }
+
     async fn recover_expired_consuming(
         &self,
         _now: chrono::DateTime<Utc>,
@@ -1157,12 +1176,11 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         Err(DomainError::InvalidConfig("noop".to_string()))
     }
 
-    async fn update_message_policy(
+    async fn promote_message(
         &self,
+        _run_id: Uuid,
+        _agent_id: Uuid,
         _id: Uuid,
-        _delivery: MailboxDelivery,
-        _barrier: ConsumptionBarrier,
-        _drain_mode: MailboxDrainMode,
         _priority: i32,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
         Err(DomainError::InvalidConfig("noop".to_string()))
@@ -1204,15 +1222,6 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
     ) -> Result<Option<agentdash_domain::agent_run_mailbox::AgentRunMailboxState>, DomainError>
     {
         Ok(None)
-    }
-
-    async fn set_backend_selection_preference(
-        &self,
-        _run_id: Uuid,
-        _agent_id: Uuid,
-        _preference: Value,
-    ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
-        Err(DomainError::InvalidConfig("noop".to_string()))
     }
 
     async fn move_message_after(

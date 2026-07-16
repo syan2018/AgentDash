@@ -35,7 +35,7 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 - Bind intent映射为`thread/start|resume|fork`；dispatch映射turn start/steer/interrupt与Interaction response；inspect映射thread/read。Source thread/turn/item/request coordinates与generation必须完整保留。
 - RPC accepted不等于canonical terminal。`turn/interrupt`成功只表示请求被接受，最终Interrupted/Failed/Completed由notification映射。EOF使active turn与pending interactions exactly-once进入Lost。
 - Item terminal按Codex item status映射Completed/Failed/Cancelled并保留error，不得无条件报告Completed。
-- Structured input进入typed additional context，Image保持image，FileReference保持file reference；system/developer/additional-context instruction分通道映射。禁止把结构化或多模态内容拍平成prompt。
+- Runtime以AgentDash-owned、与Codex app-server同构的`UserInputBlock`作为标准用户输入事实；Codex adapter直接序列化完整标准块，不重建第二种text/image/file DTO。`Text.text_elements`、`Image/LocalImage.detail`的缺省与显式`null`、`Skill`和`Mention`的name/path必须保持原始wire语义。`Structured`进入typed additional context；system/developer/additional-context instruction分通道映射。禁止把结构化或多模态内容拍平成prompt。
 - Workspace roots合并service config与platform materialized surface，必须为合法绝对路径。声明Workspace Write时thread config必须显式使用对应sandbox保证。
 - Start/Resume/Fork都必须携带model/provider/cwd/base+developer instructions/workspace roots/hook config/approval/sandbox。若vendor某方法不支持dynamic tools，surface tools非空时typed Unsupported，不能虚报applied revision。
 - Dynamic tools使用`dynamicTools`和`item/tool/call`进入WP03 Host Tool callback，保留binding/generation/thread/turn/item/tool-set revision与image output。未实现tool cancellation时profile不得声明。
@@ -59,7 +59,7 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 | ThreadItem有效但当前Runtime family尚未承载 | `UnsupportedItemFamily`，不文本化 |
 | binding A/B并发dispatch | 独立session锁，不互相串行或串事件 |
 | Resume/Fork surface含vendor不支持的dynamic tools | typed Unsupported，不虚报ack |
-| structured/image/file input | 保持typed vendor字段，无文本拍平 |
+| Text/Image/LocalImage/Skill/Mention/Structured input | 标准UserInput字段逐项保真；Structured独立进入typed additional context，无文本拍平 |
 | item status failed/cancelled | canonical Failed/Cancelled并保留message |
 | interrupt RPC成功但未收到terminal | 仍active，等待真实notification |
 | 不同MCP elicitation request坐标 | 不同Interaction ID |
@@ -86,7 +86,7 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 - Contribution/version/profile测试覆盖真实0.144.1方法与未支持能力不声明。
 - 多binding process/session测试覆盖锁隔离、persistent stdout pump、Arc sink、EOF Lost与request idempotency。
 - Mapping覆盖start/resume/fork、turn/item全部terminal、source coordinates、typed inspect与error message。
-- Input/context测试覆盖structured/image/file、instruction channels、workspace roots、sandbox与Resume/Fork完整参数。
+- Input/context测试覆盖`text_elements`、image/local-image detail的absent/null/enum、Skill/Mention、Structured、instruction channels、workspace roots、sandbox与Resume/Fork完整参数。
 - Dynamic tool测试覆盖Broker coordinates、image output、denied/completed/interaction-required和unsupported cancellation。
 - production tracer覆盖dynamic tool -> active SurfaceAdopt/ContextFrame -> 同ID tool terminal -> final assistant -> idle full rebind，并断言全程single presentation producer。
 - terminal sink failure测试覆盖BindingLost成功与失败两种路径，验证已提交terminal不会重复、未提交terminal仍可重试。

@@ -4,10 +4,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use agentdash_domain::agent_run_mailbox::{
-    AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
-    AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
-    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity,
-    NewAgentRunMailboxMessage,
+    AgentRunMailboxClaimRequest, AgentRunMailboxCreateOutcome, AgentRunMailboxMessage,
+    AgentRunMailboxRepository, AgentRunMailboxState, ConsumptionBarrier,
+    MAILBOX_CLAIM_LEASE_EXPIRED_RECONCILIATION, MailboxDelivery, MailboxDrainMode,
+    MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity, NewAgentRunMailboxMessage,
 };
 use agentdash_domain::common::error::DomainError;
 
@@ -51,18 +51,6 @@ impl PostgresAgentRunMailboxRepository {
         .transpose()
     }
 
-    async fn next_order_key(&self, run_id: Uuid, agent_id: Uuid) -> Result<i64, DomainError> {
-        let current: Option<i64> = sqlx::query_scalar(
-            "SELECT MAX(order_key) FROM agent_run_mailbox_messages WHERE run_id=$1 AND agent_id=$2",
-        )
-        .bind(run_id.to_string())
-        .bind(agent_id.to_string())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?;
-        Ok(current.unwrap_or(0) + 1)
-    }
-
     async fn rebalance_order_keys(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -98,10 +86,9 @@ impl PostgresAgentRunMailboxRepository {
     }
 }
 
-const MAILBOX_COLS: &str = "id,run_id,agent_id,origin,source_namespace,source_kind,source_ref,source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,accepted_runtime_operation_id,accepted_agent_run_turn_id,accepted_protocol_turn_id,claim_token,claimed_at,claim_expires_at,payload_json,executor_config_json,launch_planning_input,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
-const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.origin,m.source_namespace,m.source_kind,m.source_ref,m.source_correlation_ref,m.source_actor,m.source_route,m.source_display_label_key,m.source_metadata,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.accepted_runtime_operation_id,m.accepted_agent_run_turn_id,m.accepted_protocol_turn_id,m.claim_token,m.claimed_at,m.claim_expires_at,m.payload_json,m.executor_config_json,m.launch_planning_input,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
-const STATE_COLS: &str =
-    "run_id,agent_id,paused,pause_reason,pause_message,backend_selection_preference,updated_at";
+pub(super) const MAILBOX_COLS: &str = "id,run_id,agent_id,origin,source_namespace,source_kind,source_ref,source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,delivery_request_digest,accepted_runtime_operation_id,reconcile_required,claim_token,claimed_at,claim_expires_at,payload_json,launch_planning_input,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
+const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.origin,m.source_namespace,m.source_kind,m.source_ref,m.source_correlation_ref,m.source_actor,m.source_route,m.source_display_label_key,m.source_metadata,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.delivery_request_digest,m.accepted_runtime_operation_id,m.reconcile_required,m.claim_token,m.claimed_at,m.claim_expires_at,m.payload_json,m.launch_planning_input,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
+const STATE_COLS: &str = "run_id,agent_id,paused,pause_reason,pause_message,updated_at";
 
 #[async_trait::async_trait]
 impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
@@ -129,20 +116,32 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
     ) -> Result<AgentRunMailboxMessage, DomainError> {
         let id = message.id.unwrap_or_else(Uuid::new_v4);
         let now = Utc::now();
-        let order_key = self
-            .next_order_key(message.run_id, message.agent_id)
-            .await?;
         let source_metadata = to_optional_jsonb(
             message.source.metadata.as_ref(),
             "agent_run_mailbox_messages.source_metadata",
         )?;
-        sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        let target_lock = format!("{}:{}", message.run_id, message.agent_id);
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(target_lock)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?;
+        let order_key: Option<i64> = sqlx::query_scalar(
+            "SELECT MAX(order_key) FROM agent_run_mailbox_messages WHERE run_id=$1 AND agent_id=$2",
+        )
+        .bind(message.run_id.to_string())
+        .bind(message.agent_id.to_string())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?;
+        let row = sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
             "INSERT INTO agent_run_mailbox_messages \
              (id,run_id,agent_id,origin,source_namespace,source_kind,source_ref,\
               source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,\
               delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,\
-              payload_json,executor_config_json,launch_planning_input,\
-              preview,has_images,retain_payload,created_at,updated_at) \
+               delivery_request_digest,payload_json,launch_planning_input,\
+               preview,has_images,retain_payload,created_at,updated_at) \
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28) \
              RETURNING {MAILBOX_COLS}"
         ))
@@ -164,35 +163,37 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         .bind(message.drain_mode.as_str())
         .bind(MailboxMessageStatus::Queued.as_str())
         .bind(message.priority)
-        .bind(order_key)
+        .bind(order_key.unwrap_or(0) + 1)
         .bind(message.source_dedup_key)
+        .bind(message.delivery_request_digest)
         .bind(message.payload_json)
-        .bind(message.executor_config_json)
         .bind(message.launch_planning_input)
         .bind(message.preview)
         .bind(message.has_images)
         .bind(message.retain_payload)
         .bind(now)
         .bind(now)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?
-        .try_into()
+        .try_into()?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(row)
     }
 
     async fn create_message_idempotent(
         &self,
         message: NewAgentRunMailboxMessage,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
+    ) -> Result<AgentRunMailboxCreateOutcome, DomainError> {
         if let Some(source_dedup_key) = message.source_dedup_key.as_deref()
             && let Some(existing) = self
                 .find_by_source_dedup(message.run_id, message.agent_id, source_dedup_key)
                 .await?
         {
-            return Ok(existing);
+            return validate_existing_delivery_digest(&message, existing);
         }
         match self.create_message(message.clone()).await {
-            Ok(created) => Ok(created),
+            Ok(created) => Ok(AgentRunMailboxCreateOutcome::Created(created)),
             Err(error) => {
                 if let DomainError::Conflict { .. } = error
                     && let Some(source_dedup_key) = message.source_dedup_key.as_deref()
@@ -200,7 +201,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
                         .find_by_source_dedup(message.run_id, message.agent_id, source_dedup_key)
                         .await?
                 {
-                    return Ok(existing);
+                    return validate_existing_delivery_digest(&message, existing);
                 }
                 Err(error)
             }
@@ -257,6 +258,11 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
                  SELECT id FROM agent_run_mailbox_messages \
                  WHERE run_id=$1 AND agent_id=$2 \
                    AND status = ANY (ARRAY['accepted','queued','ready_to_consume']) \
+                   AND reconcile_required=false \
+                   AND NOT EXISTS (\
+                       SELECT 1 FROM agent_run_mailbox_states state \
+                       WHERE state.run_id=$1 AND state.agent_id=$2 AND state.paused=true\
+                   ) \
                    AND barrier = ANY($3) \
                    AND ($4::text IS NULL OR drain_mode=$4) \
                  ORDER BY priority DESC, order_key ASC \
@@ -283,15 +289,83 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         rows.into_iter().map(TryInto::try_into).collect()
     }
 
+    async fn claim_reconciliation(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        claim_token: Uuid,
+        claim_expires_at: DateTime<Utc>,
+    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
+        let now = Utc::now();
+        sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
+            "WITH picked AS (\
+                 SELECT id FROM agent_run_mailbox_messages \
+                 WHERE run_id=$1 AND agent_id=$2 \
+                   AND status='queued' AND reconcile_required=true \
+                   AND NOT EXISTS (\
+                       SELECT 1 FROM agent_run_mailbox_states state \
+                       WHERE state.run_id=$1 AND state.agent_id=$2 AND state.paused=true\
+                   ) \
+                 ORDER BY priority DESC, order_key ASC \
+                 LIMIT 1 FOR UPDATE SKIP LOCKED\
+             ) \
+             UPDATE agent_run_mailbox_messages m SET \
+                 status=$3,claim_token=$4,claimed_at=$5,claim_expires_at=$6,\
+                 attempt_count=attempt_count+1,updated_at=$5 \
+             FROM picked WHERE m.id=picked.id RETURNING {MAILBOX_COLS_M}"
+        ))
+        .bind(run_id.to_string())
+        .bind(agent_id.to_string())
+        .bind(MailboxMessageStatus::Consuming.as_str())
+        .bind(claim_token.to_string())
+        .bind(now)
+        .bind(claim_expires_at)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?
+        .map(TryInto::try_into)
+        .transpose()
+    }
+
+    async fn release_reconciliation_claim(
+        &self,
+        id: Uuid,
+        claim_token: Uuid,
+        last_error: String,
+    ) -> Result<AgentRunMailboxMessage, DomainError> {
+        let now = Utc::now();
+        sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
+            "UPDATE agent_run_mailbox_messages SET \
+             status='queued',claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL,\
+             last_error=$1,updated_at=$2 \
+             WHERE id=$3 AND claim_token=$4 AND status='consuming' \
+               AND reconcile_required=true RETURNING {MAILBOX_COLS}"
+        ))
+        .bind(last_error)
+        .bind(now)
+        .bind(id.to_string())
+        .bind(claim_token.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?
+        .ok_or_else(|| DomainError::Conflict {
+            entity: "agent_run_mailbox_message",
+            constraint: "reconciliation_claim",
+            message: "mailbox reconciliation claim is no longer owned".to_string(),
+        })?
+        .try_into()
+    }
+
     async fn recover_expired_consuming(&self, now: DateTime<Utc>) -> Result<u64, DomainError> {
         let result = sqlx::query(
             "UPDATE agent_run_mailbox_messages SET status=$1,\
+             reconcile_required=true,\
              claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL,\
              last_error=$2,updated_at=$3 \
              WHERE status=$4 AND claim_expires_at IS NOT NULL AND claim_expires_at < $3",
         )
-        .bind(MailboxMessageStatus::Blocked.as_str())
-        .bind(MAILBOX_DELIVERY_RESULT_UNKNOWN)
+        .bind(MailboxMessageStatus::Queued.as_str())
+        .bind(MAILBOX_CLAIM_LEASE_EXPIRED_RECONCILIATION)
         .bind(now)
         .bind(MailboxMessageStatus::Consuming.as_str())
         .execute(&self.pool)
@@ -310,7 +384,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         let now = Utc::now();
         sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
             "UPDATE agent_run_mailbox_messages SET \
-             status=$1,last_error=$2,\
+             status=$1,last_error=$2,reconcile_required=false,\
              claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL,\
              consumed_at=CASE WHEN $1 = ANY (ARRAY['dispatched','steered','failed','deleted']) THEN COALESCE(consumed_at,$3) ELSE consumed_at END,\
              updated_at=$3 \
@@ -332,73 +406,62 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         .try_into()
     }
 
-    async fn mark_runtime_operation_accepted(
+    async fn promote_message(
         &self,
+        run_id: Uuid,
+        agent_id: Uuid,
         id: Uuid,
-        claim_token: Uuid,
-        operation_id: String,
-        agent_run_turn_id: Option<String>,
-        protocol_turn_id: Option<String>,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        let now = Utc::now();
-        sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
-            "UPDATE agent_run_mailbox_messages SET \
-             status=$1,accepted_runtime_operation_id=$2,accepted_agent_run_turn_id=$3,\
-             accepted_protocol_turn_id=$4,last_error=NULL,\
-             claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL,\
-             consumed_at=COALESCE(consumed_at,$5),updated_at=$5 \
-             WHERE id=$6 AND claim_token=$7 RETURNING {MAILBOX_COLS}"
-        ))
-        .bind(MailboxMessageStatus::Dispatched.as_str())
-        .bind(operation_id)
-        .bind(agent_run_turn_id)
-        .bind(protocol_turn_id)
-        .bind(now)
-        .bind(id.to_string())
-        .bind(claim_token.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?
-        .ok_or_else(|| DomainError::Conflict {
-            entity: "agent_run_mailbox_message",
-            constraint: "runtime_operation_claim",
-            message: "mailbox claim no longer owns runtime operation acceptance".to_string(),
-        })?
-        .try_into()
-    }
-
-    async fn update_message_policy(
-        &self,
-        id: Uuid,
-        delivery: MailboxDelivery,
-        barrier: ConsumptionBarrier,
-        drain_mode: MailboxDrainMode,
         priority: i32,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
-        sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
+        let delivery = MailboxDelivery::SteerActiveTurn {
+            stop_effect: agentdash_domain::agent_run_mailbox::SteeringStopEffect::None,
+        };
+        let updated = sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
             "UPDATE agent_run_mailbox_messages SET \
              delivery=$1,delivery_json=$2,barrier=$3,drain_mode=$4,priority=$5,\
-             status=$6,claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL,last_error=NULL,\
-             updated_at=$7 \
-             WHERE id=$8 AND status NOT IN ('dispatched','steered','deleted') \
+             updated_at=$6 \
+             WHERE id=$7 AND run_id=$8 AND agent_id=$9 \
+               AND delivery='launch_or_continue_turn' \
+               AND origin='user' \
+               AND status = ANY (ARRAY['accepted','queued','ready_to_consume','paused','blocked']) \
+               AND reconcile_required=false \
              RETURNING {MAILBOX_COLS}"
         ))
         .bind(delivery.kind())
         .bind(delivery.to_json())
-        .bind(barrier.as_str())
-        .bind(drain_mode.as_str())
+        .bind(ConsumptionBarrier::AgentLoopTurnBoundary.as_str())
+        .bind(MailboxDrainMode::All.as_str())
         .bind(priority)
-        .bind(MailboxMessageStatus::Queued.as_str())
         .bind(Utc::now())
         .bind(id.to_string())
+        .bind(run_id.to_string())
+        .bind(agent_id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?
-        .ok_or_else(|| DomainError::NotFound {
+        .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?;
+        if let Some(updated) = updated {
+            return updated.try_into();
+        }
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM agent_run_mailbox_messages WHERE id=$1 AND run_id=$2 AND agent_id=$3)",
+        )
+        .bind(id.to_string())
+        .bind(run_id.to_string())
+        .bind(agent_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?;
+        if !exists {
+            return Err(DomainError::NotFound {
+                entity: "agent_run_mailbox_message",
+                id: id.to_string(),
+            });
+        }
+        Err(DomainError::Conflict {
             entity: "agent_run_mailbox_message",
-            id: id.to_string(),
-        })?
-        .try_into()
+            constraint: "promotable_state",
+            message: "mailbox message is not promotable".to_string(),
+        })
     }
 
     async fn delete_message(
@@ -423,7 +486,8 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
 
     async fn cleanup_user_payload(&self, id: Uuid) -> Result<(), DomainError> {
         sqlx::query(
-            "UPDATE agent_run_mailbox_messages SET payload_json=NULL,executor_config_json=NULL,updated_at=$1 \
+            "UPDATE agent_run_mailbox_messages SET payload_json=NULL,\
+             launch_planning_input=NULL,updated_at=$1 \
              WHERE id=$2 AND origin=$3 AND retain_payload=false",
         )
         .bind(Utc::now())
@@ -536,32 +600,6 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         .map_err(|error| sql_err_for("agent_run_mailbox_states", error))?
         .map(TryInto::try_into)
         .transpose()
-    }
-
-    async fn set_backend_selection_preference(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-        preference: Value,
-    ) -> Result<AgentRunMailboxState, DomainError> {
-        let now = Utc::now();
-        sqlx::query_as::<_, AgentRunMailboxStateRow>(&format!(
-            "INSERT INTO agent_run_mailbox_states \
-             (run_id,agent_id,paused,pause_reason,pause_message,backend_selection_preference,updated_at) \
-             VALUES ($1,$2,false,NULL,NULL,$3,$4) \
-             ON CONFLICT (run_id,agent_id) DO UPDATE SET \
-               backend_selection_preference=EXCLUDED.backend_selection_preference,\
-               updated_at=EXCLUDED.updated_at \
-             RETURNING {STATE_COLS}"
-        ))
-        .bind(run_id.to_string())
-        .bind(agent_id.to_string())
-        .bind(preference)
-        .bind(now)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|error| sql_err_for("agent_run_mailbox_states", error))?
-        .try_into()
     }
 
     async fn move_message_after(
@@ -691,7 +729,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
 }
 
 #[derive(sqlx::FromRow)]
-struct AgentRunMailboxMessageRow {
+pub(super) struct AgentRunMailboxMessageRow {
     id: String,
     run_id: String,
     agent_id: String,
@@ -712,14 +750,13 @@ struct AgentRunMailboxMessageRow {
     priority: i32,
     order_key: i64,
     source_dedup_key: Option<String>,
+    delivery_request_digest: String,
     accepted_runtime_operation_id: Option<String>,
-    accepted_agent_run_turn_id: Option<String>,
-    accepted_protocol_turn_id: Option<String>,
+    reconcile_required: bool,
     claim_token: Option<String>,
     claimed_at: Option<DateTime<Utc>>,
     claim_expires_at: Option<DateTime<Utc>>,
     payload_json: Option<Value>,
-    executor_config_json: Option<Value>,
     launch_planning_input: Option<Value>,
     preview: String,
     has_images: bool,
@@ -758,9 +795,9 @@ impl TryFrom<AgentRunMailboxMessageRow> for AgentRunMailboxMessage {
             priority: row.priority,
             order_key: row.order_key,
             source_dedup_key: row.source_dedup_key,
+            delivery_request_digest: row.delivery_request_digest,
             accepted_runtime_operation_id: row.accepted_runtime_operation_id,
-            accepted_agent_run_turn_id: row.accepted_agent_run_turn_id,
-            accepted_protocol_turn_id: row.accepted_protocol_turn_id,
+            reconcile_required: row.reconcile_required,
             claim_token: row
                 .claim_token
                 .as_deref()
@@ -769,7 +806,6 @@ impl TryFrom<AgentRunMailboxMessageRow> for AgentRunMailboxMessage {
             claimed_at: row.claimed_at,
             claim_expires_at: row.claim_expires_at,
             payload_json: row.payload_json,
-            executor_config_json: row.executor_config_json,
             launch_planning_input: row.launch_planning_input,
             preview: row.preview,
             has_images: row.has_images,
@@ -791,7 +827,6 @@ struct AgentRunMailboxStateRow {
     paused: bool,
     pause_reason: Option<String>,
     pause_message: Option<String>,
-    backend_selection_preference: Option<Value>,
     updated_at: DateTime<Utc>,
 }
 
@@ -805,10 +840,24 @@ impl TryFrom<AgentRunMailboxStateRow> for AgentRunMailboxState {
             paused: row.paused,
             pause_reason: row.pause_reason,
             pause_message: row.pause_message,
-            backend_selection_preference: row.backend_selection_preference,
             updated_at: row.updated_at,
         })
     }
+}
+
+fn validate_existing_delivery_digest(
+    requested: &NewAgentRunMailboxMessage,
+    existing: AgentRunMailboxMessage,
+) -> Result<AgentRunMailboxCreateOutcome, DomainError> {
+    if existing.delivery_request_digest != requested.delivery_request_digest {
+        return Err(DomainError::Conflict {
+            entity: "agent_run_mailbox_message",
+            constraint: "source_dedup_request_digest",
+            message: "mailbox source_dedup_key is already bound to a different delivery request"
+                .to_string(),
+        });
+    }
+    Ok(AgentRunMailboxCreateOutcome::Existing(existing))
 }
 
 fn parse_uuid(raw: &str, entity: &'static str) -> Result<Uuid, DomainError> {
@@ -898,8 +947,8 @@ mod tests {
             drain_mode: MailboxDrainMode::One,
             priority: 0,
             source_dedup_key: Some("canonical-mailbox-message".to_string()),
+            delivery_request_digest: "sha256:mailbox-test".to_string(),
             payload_json: Some(json!([{"type":"text","text":"hello"}])),
-            executor_config_json: None,
             launch_planning_input: Some(json!({"command":"send"})),
             preview: "hello".to_string(),
             has_images: false,
@@ -922,6 +971,23 @@ mod tests {
             .create_message_idempotent(message(run_id, agent_id))
             .await
             .expect("create");
+        let AgentRunMailboxCreateOutcome::Created(created) = created else {
+            panic!("first mailbox create must be new");
+        };
+        let replay = repo
+            .create_message_idempotent(message(run_id, agent_id))
+            .await
+            .expect("same delivery request replays");
+        let AgentRunMailboxCreateOutcome::Existing(replayed) = replay else {
+            panic!("same source dedup request must return existing mailbox row");
+        };
+        assert_eq!(replayed.id, created.id);
+        let mut conflicting = message(run_id, agent_id);
+        conflicting.delivery_request_digest = "sha256:different-mailbox-test".to_string();
+        assert!(matches!(
+            repo.create_message_idempotent(conflicting).await,
+            Err(DomainError::Conflict { .. })
+        ));
         assert_eq!(
             repo.list_pending_targets()
                 .await
@@ -955,127 +1021,240 @@ mod tests {
             .await
             .expect("load")
             .expect("exists");
-        assert_eq!(recovered.status, MailboxMessageStatus::Blocked);
+        assert_eq!(recovered.status, MailboxMessageStatus::Queued);
+        assert!(recovered.reconcile_required);
+        assert_eq!(
+            recovered.last_error.as_deref(),
+            Some(MAILBOX_CLAIM_LEASE_EXPIRED_RECONCILIATION)
+        );
         assert!(recovered.accepted_runtime_operation_id.is_none());
+        assert!(
+            repo.claim_next(AgentRunMailboxClaimRequest {
+                run_id,
+                agent_id,
+                barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
+                drain_mode: Some(MailboxDrainMode::One),
+                limit: 1,
+                claim_token: Uuid::new_v4(),
+                claim_expires_at: Utc::now() + chrono::Duration::minutes(1),
+            })
+            .await
+            .expect("ordinary claim excludes reconciliation")
+            .is_empty()
+        );
+        let reconciliation = repo
+            .claim_reconciliation(
+                run_id,
+                agent_id,
+                Uuid::new_v4(),
+                Utc::now() + chrono::Duration::minutes(1),
+            )
+            .await
+            .expect("claim reconciliation")
+            .expect("reconciliation row");
+        assert_eq!(reconciliation.id, created.id);
+        assert_eq!(reconciliation.status, MailboxMessageStatus::Consuming);
+        assert!(reconciliation.reconcile_required);
     }
 
     #[tokio::test]
-    async fn accepted_turn_refs_migration_supports_clean_and_existing_schema_upgrade() {
+    async fn promote_is_atomic_and_rejects_consuming_or_reconciliation_state() {
         let (pool, _runtime) = test_pool().await;
-        for column in ["accepted_agent_run_turn_id", "accepted_protocol_turn_id"] {
-            let present: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_run_mailbox_messages' AND column_name=$1)",
-            )
-            .bind(column)
-            .fetch_one(&pool)
-            .await
-            .expect("read clean mailbox accepted ref column");
-            assert!(present, "missing clean migration column {column}");
-        }
-
-        sqlx::query(
-            "ALTER TABLE agent_run_mailbox_messages DROP COLUMN accepted_agent_run_turn_id, DROP COLUMN accepted_protocol_turn_id",
-        )
-        .execute(&pool)
-        .await
-        .expect("restore pre-0072 mailbox schema");
-        sqlx::query("DELETE FROM _sqlx_migrations WHERE version=72")
-            .execute(&pool)
-            .await
-            .expect("rewind 0072 migration marker");
-        crate::migration::run_postgres_migrations(&pool)
-            .await
-            .expect("upgrade pre-0072 mailbox schema");
-
         let repo = PostgresAgentRunMailboxRepository::new(pool.clone());
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         insert_agent_run(&pool, run_id, agent_id).await;
-        let created = repo
-            .create_message(message(run_id, agent_id))
+
+        let mut promotable = message(run_id, agent_id);
+        promotable.source_dedup_key = Some("promote-allowed".to_string());
+        let promotable = repo
+            .create_message(promotable)
             .await
-            .expect("create mailbox message after upgrade");
-        let claim_token = Uuid::new_v4();
+            .expect("create promotable message");
+        let promoted = repo
+            .promote_message(run_id, agent_id, promotable.id, 100)
+            .await
+            .expect("promote queued user message");
+        assert!(matches!(
+            promoted.delivery,
+            MailboxDelivery::SteerActiveTurn { .. }
+        ));
+        assert_eq!(promoted.barrier, ConsumptionBarrier::AgentLoopTurnBoundary);
+        assert_eq!(promoted.drain_mode, MailboxDrainMode::All);
+        assert_eq!(promoted.status, MailboxMessageStatus::Queued);
+
+        let mut paused = message(run_id, agent_id);
+        paused.source_dedup_key = Some("promote-paused".to_string());
+        let paused = repo
+            .create_message(paused)
+            .await
+            .expect("create paused message");
+        repo.pause_state(run_id, agent_id, "manual pause".to_string(), None)
+            .await
+            .expect("pause mailbox");
+        let paused_promoted = repo
+            .promote_message(run_id, agent_id, paused.id, 100)
+            .await
+            .expect("promote only changes paused message policy");
+        assert_eq!(paused_promoted.status, MailboxMessageStatus::Paused);
+        assert_eq!(paused_promoted.last_error.as_deref(), Some("manual pause"));
+        assert!(
+            repo.claim_next(AgentRunMailboxClaimRequest {
+                run_id,
+                agent_id,
+                barriers: vec![ConsumptionBarrier::AgentLoopTurnBoundary],
+                drain_mode: None,
+                limit: 10,
+                claim_token: Uuid::new_v4(),
+                claim_expires_at: Utc::now() + chrono::Duration::minutes(1),
+            })
+            .await
+            .expect("paused claim query")
+            .is_empty(),
+            "Promote must not resume paused mailbox messages"
+        );
+        repo.resume_state(run_id, agent_id)
+            .await
+            .expect("resume mailbox");
+        let resumed = repo
+            .claim_next(AgentRunMailboxClaimRequest {
+                run_id,
+                agent_id,
+                barriers: vec![ConsumptionBarrier::AgentLoopTurnBoundary],
+                drain_mode: None,
+                limit: 10,
+                claim_token: Uuid::new_v4(),
+                claim_expires_at: Utc::now() + chrono::Duration::minutes(1),
+            })
+            .await
+            .expect("claim resumed promoted messages");
+        assert!(resumed.iter().any(|message| message.id == paused.id));
+
+        let mut consuming = message(run_id, agent_id);
+        consuming.source_dedup_key = Some("promote-consuming".to_string());
+        let consuming = repo
+            .create_message(consuming)
+            .await
+            .expect("create consuming message");
         repo.claim_next(AgentRunMailboxClaimRequest {
             run_id,
             agent_id,
             barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
             drain_mode: Some(MailboxDrainMode::One),
             limit: 1,
-            claim_token,
+            claim_token: Uuid::new_v4(),
             claim_expires_at: Utc::now() + chrono::Duration::minutes(1),
         })
         .await
-        .expect("claim mailbox message");
-        seed_runtime_operation(&pool, "operation-1").await;
-        let accepted = repo
-            .mark_runtime_operation_accepted(
-                created.id,
-                claim_token,
-                "operation-1".to_string(),
-                Some("agent-run-turn-1".to_string()),
-                Some("protocol-turn-1".to_string()),
-            )
+        .expect("claim consuming message");
+        assert!(matches!(
+            repo.promote_message(run_id, agent_id, consuming.id, 100)
+                .await,
+            Err(DomainError::Conflict { .. })
+        ));
+        let consuming_after = repo
+            .get_message(consuming.id)
             .await
-            .expect("persist accepted refs");
-        assert_eq!(
-            accepted.accepted_agent_run_turn_id.as_deref(),
-            Some("agent-run-turn-1")
-        );
-        assert_eq!(
-            accepted.accepted_protocol_turn_id.as_deref(),
-            Some("protocol-turn-1")
-        );
+            .expect("read consuming")
+            .expect("consuming remains");
+        assert_eq!(consuming_after.status, MailboxMessageStatus::Consuming);
+        assert!(consuming_after.claim_token.is_some());
+
+        let reconciliation_run_id = Uuid::new_v4();
+        let reconciliation_agent_id = Uuid::new_v4();
+        insert_agent_run(&pool, reconciliation_run_id, reconciliation_agent_id).await;
+        let mut reconciliation = message(reconciliation_run_id, reconciliation_agent_id);
+        reconciliation.source_dedup_key = Some("promote-reconciliation".to_string());
+        let reconciliation = repo
+            .create_message(reconciliation)
+            .await
+            .expect("create reconciliation message");
+        repo.claim_next(AgentRunMailboxClaimRequest {
+            run_id: reconciliation_run_id,
+            agent_id: reconciliation_agent_id,
+            barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
+            drain_mode: Some(MailboxDrainMode::One),
+            limit: 1,
+            claim_token: Uuid::new_v4(),
+            claim_expires_at: Utc::now() - chrono::Duration::seconds(1),
+        })
+        .await
+        .expect("claim reconciliation message");
+        repo.recover_expired_consuming(Utc::now())
+            .await
+            .expect("recover reconciliation message");
+        assert!(matches!(
+            repo.promote_message(
+                reconciliation_run_id,
+                reconciliation_agent_id,
+                reconciliation.id,
+                100
+            )
+            .await,
+            Err(DomainError::Conflict { .. })
+        ));
     }
 
-    async fn seed_runtime_operation(pool: &PgPool, operation_id: &str) {
-        let suffix = Uuid::new_v4().simple().to_string();
-        let binding_id = format!("binding-{suffix}");
-        let source_thread_id = format!("source-{suffix}");
-        let thread_id = format!("runtime-{suffix}");
-        sqlx::query(
-            "INSERT INTO agent_runtime_binding (id,driver_generation,profile_digest) VALUES ($1,1,$2)",
+    #[tokio::test]
+    async fn reconciliation_migration_has_one_canonical_schema_shape() {
+        let (pool, _runtime) = test_pool().await;
+        for column in [
+            "accepted_agent_run_turn_id",
+            "accepted_protocol_turn_id",
+            "executor_config_json",
+        ] {
+            let present: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_run_mailbox_messages' AND column_name=$1)",
+            )
+            .bind(column)
+            .fetch_one(&pool)
+            .await
+            .expect("read removed mailbox accepted ref column");
+            assert!(
+                !present,
+                "obsolete mailbox projection column remains: {column}"
+            );
+        }
+        let reconcile_required: (String, String) = sqlx::query_as(
+            "SELECT data_type,is_nullable FROM information_schema.columns \
+             WHERE table_name='agent_run_mailbox_messages' AND column_name='reconcile_required'",
         )
-        .bind(&binding_id)
-        .bind(format!("profile-{suffix}"))
-        .execute(pool)
+        .fetch_one(&pool)
         .await
-        .expect("seed runtime binding");
-        sqlx::query(
-            "INSERT INTO agent_runtime_source_coordinate (binding_id,source_thread_id,thread_id) VALUES ($1,$2,$3)",
+        .expect("read reconcile_required column");
+        assert_eq!(
+            reconcile_required,
+            ("boolean".to_string(), "NO".to_string())
+        );
+        let delivery_request_digest: (String, String) = sqlx::query_as(
+            "SELECT data_type,is_nullable FROM information_schema.columns \
+             WHERE table_name='agent_run_mailbox_messages' AND column_name='delivery_request_digest'",
         )
-        .bind(&binding_id)
-        .bind(&source_thread_id)
-        .bind(&thread_id)
-        .execute(pool)
+        .fetch_one(&pool)
         .await
-        .expect("seed runtime source coordinate");
-        sqlx::query(
-            "INSERT INTO agent_runtime_thread \
-             (id,revision,next_event_sequence,next_operation_sequence,status,active_turn_id,binding_id,driver_generation,source_thread_id,profile_digest,active_checkpoint_id,context_revision,settings_revision,tool_set_revision,projection) \
-             VALUES ($1,0,0,2,'active',NULL,$2,1,$3,$4,NULL,0,0,0,$5)",
+        .expect("read delivery_request_digest column");
+        assert_eq!(
+            delivery_request_digest,
+            ("text".to_string(), "NO".to_string())
+        );
+
+        let acceptance_results_type: String = sqlx::query_scalar(
+            "SELECT data_type FROM information_schema.columns \
+             WHERE table_name='agent_run_product_command_receipts' AND column_name='acceptance_results_json'",
         )
-        .bind(&thread_id)
-        .bind(&binding_id)
-        .bind(&source_thread_id)
-        .bind(format!("profile-{suffix}"))
-        .bind(json!({}))
-        .execute(pool)
+        .fetch_one(&pool)
         .await
-        .expect("seed runtime thread");
-        sqlx::query(
-            "INSERT INTO agent_runtime_operation \
-             (id,thread_id,operation_sequence,idempotency_key,accepted_revision,status,actor,command,terminal,record) \
-             VALUES ($1,$2,1,$3,0,'active',$4,$5,NULL,$6)",
+        .expect("read acceptance_results_json column");
+        assert_eq!(acceptance_results_type, "jsonb");
+        let mailbox_receipt_index: String = sqlx::query_scalar(
+            "SELECT indexdef FROM pg_indexes \
+             WHERE tablename='agent_run_product_command_receipts' \
+               AND indexname='agent_run_product_command_receipts_mailbox_uidx'",
         )
-        .bind(operation_id)
-        .bind(&thread_id)
-        .bind(format!("key-{suffix}"))
-        .bind(json!({"kind":"system","component":"mailbox-migration-test"}))
-        .bind(json!({"kind":"turn_start","thread_id":thread_id,"input":[]}))
-        .bind(json!({}))
-        .execute(pool)
+        .fetch_one(&pool)
         .await
-        .expect("seed canonical runtime operation");
+        .expect("read receipt mailbox unique index");
+        assert!(mailbox_receipt_index.starts_with("CREATE UNIQUE INDEX"));
+        assert!(mailbox_receipt_index.contains("mailbox_message_id"));
     }
 }

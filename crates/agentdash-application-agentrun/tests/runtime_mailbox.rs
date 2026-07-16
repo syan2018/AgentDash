@@ -11,9 +11,12 @@ use agentdash_application_ports::workflow_agent_run_delivery::{
     WorkflowAgentRunDeliveryCommand, WorkflowAgentRunDeliveryPort,
 };
 use agentdash_domain::agent_run_mailbox::{
-    AgentRunMailboxRepository, MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity,
+    AgentRunMailboxClaimRequest, AgentRunMailboxRepository, ConsumptionBarrier, MailboxDelivery,
+    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity,
 };
-use agentdash_test_support::workflow::MemoryAgentRunMailboxRepository;
+use agentdash_test_support::workflow::{
+    MemoryAgentRunMailboxRepository, MemoryAgentRunMessageSubmissionStore,
+};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -23,6 +26,17 @@ where
     T::Err: std::fmt::Debug,
 {
     value.parse().expect("valid runtime id")
+}
+
+fn runtime_mailbox(
+    repository: Arc<MemoryAgentRunMailboxRepository>,
+    runtime: Arc<dyn AgentRunRuntime>,
+) -> RuntimeAgentRunMailbox {
+    RuntimeAgentRunMailbox::new(
+        repository.clone(),
+        runtime,
+        Arc::new(MemoryAgentRunMessageSubmissionStore::new(repository)),
+    )
 }
 
 fn profile() -> RuntimeProfile {
@@ -177,12 +191,62 @@ fn view(target: AgentRunRuntimeTarget, active_turn: Option<&str>) -> AgentRunRun
     }
 }
 
+fn enqueue_user_message(
+    target: AgentRunRuntimeTarget,
+    client_command_id: &str,
+    text: &str,
+) -> EnqueueRuntimeMailboxMessage {
+    EnqueueRuntimeMailboxMessage {
+        target,
+        presentation_thread_id: id("presentation-mailbox"),
+        presentation: AgentRunPresentationDraft {
+            content: agentdash_agent_protocol::text_user_input_blocks(text),
+            source: agentdash_agent_protocol::UserInputSource::core_composer(),
+            launch_source: LaunchPresentationSource::LifecycleAgentUserMessage,
+            submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+        },
+        client_command_id: client_command_id.to_string(),
+        input: vec![RuntimeInput::text(text.to_string())],
+        actor: RuntimeActor::User {
+            subject: "user-1".into(),
+        },
+        identity: None,
+        origin: MailboxMessageOrigin::User,
+        source: MailboxSourceIdentity::composer(),
+        delivery_intent: None,
+        executor_config: None,
+        backend_selection: None,
+    }
+}
+
+fn identity(display_name: &str) -> agentdash_spi::AuthIdentity {
+    agentdash_spi::AuthIdentity {
+        auth_mode: agentdash_spi::AuthMode::Personal,
+        user_id: "user-1".to_string(),
+        subject: "user-1".to_string(),
+        display_name: Some(display_name.to_string()),
+        email: None,
+        avatar_url: None,
+        groups: Vec::new(),
+        is_admin: false,
+        provider: Some("test".to_string()),
+        extra: serde_json::Value::Null,
+    }
+}
+
 struct FakeRuntime {
     view: Mutex<AgentRunRuntimeView>,
     sends: Mutex<usize>,
     sent_commands: Mutex<Vec<SendAgentRunMessage>>,
     steers: Mutex<usize>,
     steered_commands: Mutex<Vec<SteerAgentRunTurn>>,
+    fail_next_steer_stale: Mutex<bool>,
+    accept_failure: Mutex<Option<FakeAcceptFailure>>,
+}
+
+enum FakeAcceptFailure {
+    SnapshotUnavailable,
+    PersistenceRetryable,
 }
 
 #[async_trait]
@@ -204,14 +268,110 @@ impl AgentRunRuntime for FakeRuntime {
         &self,
         command: SendAgentRunMessage,
     ) -> Result<OperationReceipt, AgentRunRuntimeError> {
+        let mut sent_commands = self.sent_commands.lock().await;
+        if let Some(existing) = sent_commands
+            .iter()
+            .find(|existing| existing.client_command_id == command.client_command_id)
+        {
+            if existing != &command {
+                return Err(AgentRunRuntimeError::ClientCommandConflict);
+            }
+            return Ok(OperationReceipt {
+                operation_id: id(&format!("operation-{}", command.client_command_id)),
+                operation_sequence: OperationSequence(1),
+                thread_id: Some(id("thread-mailbox")),
+                accepted_revision: RuntimeRevision(4),
+                duplicate: true,
+            });
+        }
         *self.sends.lock().await += 1;
-        self.sent_commands.lock().await.push(command.clone());
+        sent_commands.push(command.clone());
         Ok(OperationReceipt {
             operation_id: id(&format!("operation-{}", command.client_command_id)),
             operation_sequence: OperationSequence(1),
             thread_id: Some(id("thread-mailbox")),
             accepted_revision: RuntimeRevision(4),
             duplicate: false,
+        })
+    }
+    async fn accept_message(
+        &self,
+        command: AcceptAgentRunMessage,
+    ) -> Result<AgentRunMessageAdmission, AgentRunRuntimeError> {
+        if let Some(failure) = self.accept_failure.lock().await.take() {
+            return Err(match failure {
+                FakeAcceptFailure::SnapshotUnavailable => {
+                    AgentRunRuntimeError::Snapshot(RuntimeSnapshotError::Unavailable {
+                        reason: "transient snapshot outage".to_string(),
+                    })
+                }
+                FakeAcceptFailure::PersistenceRetryable => {
+                    AgentRunRuntimeError::Execute(RuntimeExecuteError::Persistence {
+                        reason: "transient operation persistence outage".to_string(),
+                        retryable: true,
+                    })
+                }
+            });
+        }
+        let view = self.view.lock().await.clone();
+        let Some(snapshot) = view.snapshot else {
+            let receipt = self
+                .send_message(SendAgentRunMessage {
+                    target: command.target,
+                    presentation_thread_id: command.presentation_thread_id,
+                    presentation: command.presentation,
+                    client_command_id: command.client_command_id,
+                    input: command.input,
+                    actor: command.actor,
+                    identity: command.identity,
+                    backend_selection: command.backend_selection,
+                })
+                .await?;
+            return Ok(AgentRunMessageAdmission::Accepted {
+                receipt,
+                delivery: AgentRunMessageAcceptedDelivery::Started,
+            });
+        };
+        if snapshot.active_turn_id.is_some() {
+            if command.delivery_preference != AgentRunMessageDeliveryPreference::PreferSteer {
+                return Ok(AgentRunMessageAdmission::Deferred);
+            }
+            let receipt = self
+                .steer_active_turn(SteerAgentRunTurn {
+                    command: GuardedAgentRunCommand {
+                        target: command.target,
+                        client_command_id: command.client_command_id,
+                        guard: AgentRunCommandGuard {
+                            thread_id: snapshot.thread_id,
+                            expected_revision: snapshot.revision,
+                            expected_active_turn_id: snapshot.active_turn_id,
+                        },
+                        actor: command.actor,
+                    },
+                    presentation: command.presentation,
+                    input: command.input,
+                })
+                .await?;
+            return Ok(AgentRunMessageAdmission::Accepted {
+                receipt,
+                delivery: AgentRunMessageAcceptedDelivery::Steered,
+            });
+        }
+        let receipt = self
+            .send_message(SendAgentRunMessage {
+                target: command.target,
+                presentation_thread_id: command.presentation_thread_id,
+                presentation: command.presentation,
+                client_command_id: command.client_command_id,
+                input: command.input,
+                actor: command.actor,
+                identity: command.identity,
+                backend_selection: command.backend_selection,
+            })
+            .await?;
+        Ok(AgentRunMessageAdmission::Accepted {
+            receipt,
+            delivery: AgentRunMessageAcceptedDelivery::Started,
         })
     }
     async fn fork_runtime(
@@ -230,8 +390,30 @@ impl AgentRunRuntime for FakeRuntime {
         &self,
         command: SteerAgentRunTurn,
     ) -> Result<OperationReceipt, AgentRunRuntimeError> {
+        let mut steered_commands = self.steered_commands.lock().await;
+        if let Some(existing) = steered_commands.iter().find(|existing| {
+            existing.command.client_command_id == command.command.client_command_id
+        }) {
+            if existing != &command {
+                return Err(AgentRunRuntimeError::ClientCommandConflict);
+            }
+            return Ok(OperationReceipt {
+                operation_id: id(&format!("operation-{}", command.command.client_command_id)),
+                operation_sequence: OperationSequence(2),
+                thread_id: Some(id("thread-mailbox")),
+                accepted_revision: RuntimeRevision(4),
+                duplicate: true,
+            });
+        }
         *self.steers.lock().await += 1;
-        self.steered_commands.lock().await.push(command.clone());
+        steered_commands.push(command.clone());
+        let mut fail_next = self.fail_next_steer_stale.lock().await;
+        if *fail_next {
+            *fail_next = false;
+            let target = command.command.target.clone();
+            *self.view.lock().await = view(target, None);
+            return Err(AgentRunRuntimeError::StaleActiveTurn);
+        }
         Ok(OperationReceipt {
             operation_id: id(&format!("operation-{}", command.command.client_command_id)),
             operation_sequence: OperationSequence(1),
@@ -280,8 +462,10 @@ async fn queued_message_delivers_once_after_canonical_turn_terminal_and_survives
         sent_commands: Mutex::new(Vec::new()),
         steers: Mutex::new(0),
         steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
     });
-    let scheduler = RuntimeAgentRunMailbox::new(repository.clone(), runtime.clone());
+    let scheduler = runtime_mailbox(repository.clone(), runtime.clone());
 
     let enqueue = EnqueueRuntimeMailboxMessage {
         target: target.clone(),
@@ -291,16 +475,13 @@ async fn queued_message_delivers_once_after_canonical_turn_terminal_and_survives
             source: agentdash_agent_protocol::UserInputSource::core_composer(),
             launch_source: LaunchPresentationSource::LifecycleAgentUserMessage,
             submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-            started_at_seconds: 1_783_684_800,
         },
         client_command_id: "composer-1".into(),
-        input: vec![RuntimeInput::Text {
-            text: "queued".into(),
-        }],
+        input: vec![RuntimeInput::text("queued")],
         actor: RuntimeActor::User {
             subject: "user-1".into(),
         },
-        identity: None,
+        identity: Some(identity("Before profile refresh")),
         origin: MailboxMessageOrigin::User,
         source: MailboxSourceIdentity::composer(),
         delivery_intent: None,
@@ -318,30 +499,59 @@ async fn queued_message_delivers_once_after_canonical_turn_terminal_and_survives
     let RuntimeMailboxSubmitOutcome::Queued { message } = &outcome else {
         unreachable!()
     };
-    let persisted_presentation_input: AgentRunPresentationInput = serde_json::from_value(
+    let persisted_presentation: AgentRunPresentationDraft = serde_json::from_value(
         message
             .launch_planning_input
             .as_ref()
-            .expect("stored runtime mailbox command")["presentation_input"]
+            .expect("stored runtime mailbox command")["presentation"]
             .clone(),
     )
-    .expect("stored presentation input");
+    .expect("stored presentation draft");
+    let stored = message
+        .launch_planning_input
+        .as_ref()
+        .expect("stored runtime mailbox command");
+    assert!(stored.pointer("/presentation/turn_id").is_none());
+    assert!(stored.pointer("/presentation/item_id").is_none());
+    let mut retry_after_profile_refresh = enqueue;
+    retry_after_profile_refresh
+        .identity
+        .as_mut()
+        .expect("test identity")
+        .display_name = Some("After profile refresh".to_string());
     let duplicate = scheduler
-        .submit(enqueue)
+        .submit(retry_after_profile_refresh)
         .await
         .expect("duplicate enqueue succeeds");
     let RuntimeMailboxSubmitOutcome::Queued { message: duplicate } = duplicate else {
         panic!("duplicate remains queued while the turn is active")
     };
     assert_eq!(
-        duplicate.launch_planning_input, message.launch_planning_input,
-        "duplicate acceptance must retain the first persisted presentation identity"
+        duplicate.id, message.id,
+        "independent prepare/submit retries must reuse the first mailbox row"
     );
+    assert_eq!(
+        duplicate.launch_planning_input, message.launch_planning_input,
+        "duplicate acceptance must retain the first persisted presentation draft"
+    );
+    let different_draft = scheduler
+        .submit(enqueue_user_message(
+            target.clone(),
+            "composer-1",
+            "different queued draft",
+        ))
+        .await;
+    assert!(matches!(
+        different_draft,
+        Err(RuntimeMailboxError::Persistence(
+            agentdash_domain::DomainError::Conflict { .. }
+        ))
+    ));
     assert_eq!(*runtime.sends.lock().await, 0);
 
     *runtime.view.lock().await = view(target.clone(), None);
     drop(scheduler);
-    let restarted = RuntimeAgentRunMailbox::new(repository.clone(), runtime.clone());
+    let restarted = runtime_mailbox(repository.clone(), runtime.clone());
     assert_eq!(
         restarted
             .recover_pending_once()
@@ -356,28 +566,13 @@ async fn queued_message_delivers_once_after_canonical_turn_terminal_and_survives
         sent_commands[0].presentation_thread_id.as_str(),
         "presentation-mailbox"
     );
-    let AgentRunPresentationInput::UserSubmission {
-        turn_id,
-        item_id,
-        content,
-        ..
-    } = &sent_commands[0].presentation_input
-    else {
-        panic!("user mailbox delivery must stay a user submission")
-    };
     assert_eq!(
-        content,
-        &agentdash_agent_protocol::text_user_input_blocks("queued")
+        sent_commands[0].presentation.content,
+        agentdash_agent_protocol::text_user_input_blocks("queued")
     );
-    assert!(
-        turn_id.as_str().strip_prefix('t').is_some_and(
-            |millis| !millis.is_empty() && millis.chars().all(|ch| ch.is_ascii_digit())
-        )
-    );
-    assert_eq!(item_id.as_str(), format!("{turn_id}:user-input:0"));
     assert_eq!(
-        sent_commands[0].presentation_input, persisted_presentation_input,
-        "restart delivery must reuse the presentation identity persisted at first acceptance"
+        sent_commands[0].presentation, persisted_presentation,
+        "restart delivery must reuse the typed draft persisted at first acceptance"
     );
     drop(sent_commands);
     let dispatched = repository
@@ -401,7 +596,7 @@ async fn queued_message_delivers_once_after_canonical_turn_terminal_and_survives
 }
 
 #[tokio::test]
-async fn active_turn_steer_is_persisted_before_delivery_and_reuses_presentation_identity() {
+async fn active_turn_steer_lets_runtime_own_identity_and_clears_user_draft_after_acceptance() {
     let target = AgentRunRuntimeTarget {
         run_id: Uuid::new_v4(),
         agent_id: Uuid::new_v4(),
@@ -413,8 +608,10 @@ async fn active_turn_steer_is_persisted_before_delivery_and_reuses_presentation_
         sent_commands: Mutex::new(Vec::new()),
         steers: Mutex::new(0),
         steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
     });
-    let scheduler = RuntimeAgentRunMailbox::new(repository.clone(), runtime.clone());
+    let scheduler = runtime_mailbox(repository.clone(), runtime.clone());
 
     let outcome = scheduler
         .submit(EnqueueRuntimeMailboxMessage {
@@ -425,12 +622,9 @@ async fn active_turn_steer_is_persisted_before_delivery_and_reuses_presentation_
                 source: agentdash_agent_protocol::UserInputSource::core_composer(),
                 launch_source: LaunchPresentationSource::LifecycleAgentUserMessage,
                 submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                started_at_seconds: 1_783_684_800,
             },
             client_command_id: "composer-steer-1".into(),
-            input: vec![RuntimeInput::Text {
-                text: "steer now".into(),
-            }],
+            input: vec![RuntimeInput::text("steer now")],
             actor: RuntimeActor::User {
                 subject: "user-1".into(),
             },
@@ -459,33 +653,262 @@ async fn active_turn_steer_is_persisted_before_delivery_and_reuses_presentation_
         .await;
     assert_eq!(persisted.len(), 1);
     assert_eq!(persisted[0].id, message_id);
-    let stored_item_id = persisted[0]
-        .launch_planning_input
-        .as_ref()
-        .and_then(|value| value.pointer("/presentation_input/item_id"))
-        .and_then(serde_json::Value::as_str)
-        .expect("presentation item id is persisted before delivery");
-    assert!(stored_item_id.starts_with(&format!(
-        "presentation-turn-active:mailbox_steering:scheduler:{message_id}:"
-    )));
+    assert!(persisted[0].launch_planning_input.is_none());
+    assert!(persisted[0].payload_json.is_none());
 
     let commands = runtime.steered_commands.lock().await;
     assert_eq!(commands.len(), 1);
-    let AgentRunPresentationInput::UserSubmission {
-        turn_id,
-        item_id,
-        submission_kind,
-        ..
-    } = &commands[0].presentation_input
-    else {
-        panic!("steer must stay a user submission")
-    };
-    assert_eq!(turn_id.as_str(), "presentation-turn-active");
-    assert_eq!(item_id.as_str(), stored_item_id);
     assert_eq!(
-        *submission_kind,
-        agentdash_agent_protocol::UserInputSubmissionKind::Steer
+        commands[0].presentation.submission_kind,
+        agentdash_agent_protocol::UserInputSubmissionKind::Prompt
     );
+    assert_eq!(
+        commands[0].presentation.content,
+        agentdash_agent_protocol::text_user_input_blocks("steer now")
+    );
+}
+
+#[tokio::test]
+async fn promote_claims_active_turn_as_steer_without_rewriting_the_draft() {
+    let target = AgentRunRuntimeTarget {
+        run_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
+    };
+    let repository = Arc::new(MemoryAgentRunMailboxRepository::default());
+    let runtime = Arc::new(FakeRuntime {
+        view: Mutex::new(view(target.clone(), Some("turn-active"))),
+        sends: Mutex::new(0),
+        sent_commands: Mutex::new(Vec::new()),
+        steers: Mutex::new(0),
+        steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
+    });
+    let mailbox = runtime_mailbox(repository.clone(), runtime.clone());
+    let RuntimeMailboxSubmitOutcome::Queued { message } = mailbox
+        .submit(enqueue_user_message(
+            target.clone(),
+            "promote-active",
+            "now",
+        ))
+        .await
+        .expect("active turn queues ordinary delivery")
+    else {
+        panic!("ordinary active-turn delivery must queue")
+    };
+    let original_draft = message.launch_planning_input.clone();
+    let promoted = mailbox
+        .promote(&target, message.id)
+        .await
+        .expect("queued user message promotes atomically");
+    assert_eq!(promoted.launch_planning_input, original_draft);
+
+    let (_, _, steered) = mailbox
+        .drain_once(&target)
+        .await
+        .expect("active promote drains")
+        .expect("promoted message is claimable");
+    assert!(steered);
+    assert_eq!(*runtime.steers.lock().await, 1);
+    assert_eq!(*runtime.sends.lock().await, 0);
+}
+
+#[tokio::test]
+async fn promote_rejects_non_user_delivery_before_it_can_enter_active_steer_claiming() {
+    let target = AgentRunRuntimeTarget {
+        run_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
+    };
+    let repository = Arc::new(MemoryAgentRunMailboxRepository::default());
+    let runtime = Arc::new(FakeRuntime {
+        view: Mutex::new(view(target.clone(), Some("turn-active"))),
+        sends: Mutex::new(0),
+        sent_commands: Mutex::new(Vec::new()),
+        steers: Mutex::new(0),
+        steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
+    });
+    let mailbox = runtime_mailbox(repository, runtime);
+    let mut command = enqueue_user_message(target.clone(), "system-promote", "system");
+    command.origin = MailboxMessageOrigin::System;
+    command.presentation.launch_source = LaunchPresentationSource::SystemDelivery;
+    let RuntimeMailboxSubmitOutcome::Queued { message } = mailbox
+        .submit(command)
+        .await
+        .expect("system delivery queues behind active turn")
+    else {
+        panic!("system delivery must queue")
+    };
+    assert!(matches!(
+        mailbox.promote(&target, message.id).await,
+        Err(RuntimeMailboxError::Persistence(
+            agentdash_domain::DomainError::Conflict { .. }
+        ))
+    ));
+}
+
+#[tokio::test]
+async fn promote_changes_paused_message_policy_without_resuming_delivery() {
+    let target = AgentRunRuntimeTarget {
+        run_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
+    };
+    let repository = Arc::new(MemoryAgentRunMailboxRepository::default());
+    let runtime = Arc::new(FakeRuntime {
+        view: Mutex::new(view(target.clone(), Some("turn-active"))),
+        sends: Mutex::new(0),
+        sent_commands: Mutex::new(Vec::new()),
+        steers: Mutex::new(0),
+        steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
+    });
+    let mailbox = runtime_mailbox(repository.clone(), runtime.clone());
+    let RuntimeMailboxSubmitOutcome::Queued { message } = mailbox
+        .submit(enqueue_user_message(
+            target.clone(),
+            "paused-promote",
+            "later",
+        ))
+        .await
+        .expect("message queues")
+    else {
+        panic!("message must queue")
+    };
+    repository
+        .mark_message_status(
+            message.id,
+            None,
+            MailboxMessageStatus::Paused,
+            Some("manual pause".to_string()),
+        )
+        .await
+        .expect("pause message");
+    let promoted = mailbox
+        .promote(&target, message.id)
+        .await
+        .expect("paused policy may be promoted");
+    assert_eq!(promoted.status, MailboxMessageStatus::Paused);
+    assert_eq!(promoted.last_error.as_deref(), Some("manual pause"));
+    assert!(matches!(
+        promoted.delivery,
+        agentdash_domain::agent_run_mailbox::MailboxDelivery::SteerActiveTurn { .. }
+    ));
+    assert!(
+        mailbox
+            .drain_once(&target)
+            .await
+            .expect("paused drain inspection succeeds")
+            .is_none()
+    );
+    assert_eq!(*runtime.sends.lock().await, 0);
+    assert_eq!(*runtime.steers.lock().await, 0);
+}
+
+#[tokio::test]
+async fn promoted_message_starts_the_next_turn_when_terminal_precedes_claim() {
+    let target = AgentRunRuntimeTarget {
+        run_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
+    };
+    let repository = Arc::new(MemoryAgentRunMailboxRepository::default());
+    let runtime = Arc::new(FakeRuntime {
+        view: Mutex::new(view(target.clone(), Some("turn-active"))),
+        sends: Mutex::new(0),
+        sent_commands: Mutex::new(Vec::new()),
+        steers: Mutex::new(0),
+        steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
+    });
+    let mailbox = runtime_mailbox(repository, runtime.clone());
+    let RuntimeMailboxSubmitOutcome::Queued { message } = mailbox
+        .submit(enqueue_user_message(
+            target.clone(),
+            "promote-terminal",
+            "next",
+        ))
+        .await
+        .expect("message queues")
+    else {
+        panic!("message must queue")
+    };
+    mailbox
+        .promote(&target, message.id)
+        .await
+        .expect("message promotes");
+    *runtime.view.lock().await = view(target.clone(), None);
+
+    let (_, _, steered) = mailbox
+        .drain_once(&target)
+        .await
+        .expect("idle drain succeeds")
+        .expect("promoted AgentLoop message remains claimable when idle");
+    assert!(!steered);
+    assert_eq!(*runtime.sends.lock().await, 1);
+    assert_eq!(*runtime.steers.lock().await, 0);
+}
+
+#[tokio::test]
+async fn stale_steer_attempt_requeues_and_replans_as_next_turn_start() {
+    let target = AgentRunRuntimeTarget {
+        run_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
+    };
+    let repository = Arc::new(MemoryAgentRunMailboxRepository::default());
+    let runtime = Arc::new(FakeRuntime {
+        view: Mutex::new(view(target.clone(), Some("turn-active"))),
+        sends: Mutex::new(0),
+        sent_commands: Mutex::new(Vec::new()),
+        steers: Mutex::new(0),
+        steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(true),
+        accept_failure: Mutex::new(None),
+    });
+    let mailbox = runtime_mailbox(repository.clone(), runtime.clone());
+    let RuntimeMailboxSubmitOutcome::Queued { message } = mailbox
+        .submit(enqueue_user_message(target.clone(), "promote-race", "race"))
+        .await
+        .expect("message queues")
+    else {
+        panic!("message must queue")
+    };
+    mailbox
+        .promote(&target, message.id)
+        .await
+        .expect("message promotes");
+
+    assert!(
+        mailbox
+            .drain_once(&target)
+            .await
+            .expect("stale attempt is a replan signal")
+            .is_none()
+    );
+    let queued = repository
+        .get_message(message.id)
+        .await
+        .expect("repository read")
+        .expect("message remains");
+    assert_eq!(queued.status, MailboxMessageStatus::Queued);
+    assert!(queued.claim_token.is_none());
+
+    let (_, _, steered) = mailbox
+        .drain_once(&target)
+        .await
+        .expect("replanned attempt succeeds")
+        .expect("same draft remains deliverable");
+    assert!(!steered);
+    assert_eq!(*runtime.steers.lock().await, 1);
+    assert_eq!(*runtime.sends.lock().await, 1);
+    let delivered = repository
+        .get_message(message.id)
+        .await
+        .expect("repository read")
+        .expect("message remains");
+    assert_eq!(delivered.status, MailboxMessageStatus::Dispatched);
+    assert_eq!(delivered.attempt_count, 2);
 }
 
 #[tokio::test]
@@ -512,8 +935,10 @@ async fn launch_presentation_shape_depends_only_on_typed_source() {
             sent_commands: Mutex::new(Vec::new()),
             steers: Mutex::new(0),
             steered_commands: Mutex::new(Vec::new()),
+            fail_next_steer_stale: Mutex::new(false),
+            accept_failure: Mutex::new(None),
         });
-        let scheduler = RuntimeAgentRunMailbox::new(repository, runtime.clone());
+        let scheduler = runtime_mailbox(repository, runtime.clone());
 
         scheduler
             .submit(EnqueueRuntimeMailboxMessage {
@@ -532,12 +957,9 @@ async fn launch_presentation_shape_depends_only_on_typed_source() {
                     ),
                     launch_source,
                     submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                    started_at_seconds: 1_783_684_800,
                 },
                 client_command_id: format!("typed-source-{source_kind}"),
-                input: vec![RuntimeInput::Text {
-                    text: marker.into(),
-                }],
+                input: vec![RuntimeInput::text(marker)],
                 actor: if expected_user_submission {
                     RuntimeActor::User {
                         subject: "user-1".into(),
@@ -565,13 +987,296 @@ async fn launch_presentation_shape_depends_only_on_typed_source() {
         assert_eq!(commands.len(), 1);
         assert_eq!(
             matches!(
-                commands[0].presentation_input,
-                AgentRunPresentationInput::UserSubmission { .. }
+                commands[0].presentation.launch_source,
+                LaunchPresentationSource::HttpPrompt
+                    | LaunchPresentationSource::LifecycleAgentUserMessage
+                    | LaunchPresentationSource::CompanionDispatch
+                    | LaunchPresentationSource::LocalRelayPrompt
             ),
             expected_user_submission,
             "message text must not override the typed launch source"
         );
     }
+}
+
+#[tokio::test]
+async fn explicit_steer_policy_survives_idle_to_active_admission_race() {
+    let target = AgentRunRuntimeTarget {
+        run_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
+    };
+    let repository = Arc::new(MemoryAgentRunMailboxRepository::default());
+    let runtime = Arc::new(FakeRuntime {
+        view: Mutex::new(view(target.clone(), None)),
+        sends: Mutex::new(0),
+        sent_commands: Mutex::new(Vec::new()),
+        steers: Mutex::new(0),
+        steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
+    });
+    let mailbox = runtime_mailbox(repository.clone(), runtime.clone());
+    let mut command = enqueue_user_message(target.clone(), "idle-active-steer", "keep policy");
+    command.delivery_intent = Some("steer".to_string());
+    let execution_profile_override = agentdash_spi::AgentConfig::new("PI_AGENT");
+    command.executor_config = Some(execution_profile_override.clone());
+    let visible_content = command.presentation.content.clone();
+    let draft = mailbox
+        .prepare_message(command)
+        .expect("prepare mailbox draft");
+    assert!(matches!(
+        draft.delivery,
+        MailboxDelivery::SteerActiveTurn { .. }
+    ));
+    assert_eq!(draft.barrier, ConsumptionBarrier::AgentLoopTurnBoundary);
+    assert_eq!(draft.drain_mode, MailboxDrainMode::All);
+    assert_eq!(
+        draft.payload_json,
+        Some(serde_json::to_value(visible_content).expect("visible presentation payload"))
+    );
+    assert!(!draft.retain_payload);
+    let expected_profile = serde_json::to_value(execution_profile_override).expect("typed profile");
+    assert_eq!(
+        draft
+            .launch_planning_input
+            .as_ref()
+            .and_then(|value| value.get("execution_profile_override")),
+        Some(&expected_profile)
+    );
+    repository
+        .create_message(draft)
+        .await
+        .expect("persist steer draft");
+
+    *runtime.view.lock().await = view(target.clone(), Some("turn-became-active"));
+    let (_, _, steered) = mailbox
+        .drain_once(&target)
+        .await
+        .expect("deliver after active transition")
+        .expect("claimed explicit steer");
+    assert!(steered);
+    assert_eq!(*runtime.steers.lock().await, 1);
+    assert_eq!(*runtime.sends.lock().await, 0);
+}
+
+#[tokio::test]
+async fn retryable_reconciliation_errors_preserve_semantic_reconcile_flag() {
+    let target = AgentRunRuntimeTarget {
+        run_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
+    };
+    let repository = Arc::new(MemoryAgentRunMailboxRepository::default());
+    let runtime = Arc::new(FakeRuntime {
+        view: Mutex::new(view(target.clone(), None)),
+        sends: Mutex::new(0),
+        sent_commands: Mutex::new(Vec::new()),
+        steers: Mutex::new(0),
+        steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
+    });
+    let mailbox = runtime_mailbox(repository.clone(), runtime.clone());
+    let draft = mailbox
+        .prepare_message(enqueue_user_message(
+            target.clone(),
+            "reconcile-retry",
+            "reconcile me",
+        ))
+        .expect("prepare mailbox draft");
+    let message = repository
+        .create_message(draft)
+        .await
+        .expect("persist mailbox draft");
+    repository
+        .claim_next(AgentRunMailboxClaimRequest {
+            run_id: target.run_id,
+            agent_id: target.agent_id,
+            barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
+            drain_mode: Some(MailboxDrainMode::One),
+            limit: 1,
+            claim_token: Uuid::new_v4(),
+            claim_expires_at: chrono::Utc::now() - chrono::Duration::seconds(1),
+        })
+        .await
+        .expect("claim before simulated scheduler loss");
+    repository
+        .recover_expired_consuming(chrono::Utc::now())
+        .await
+        .expect("recover expired claim");
+
+    *runtime.accept_failure.lock().await = Some(FakeAcceptFailure::SnapshotUnavailable);
+    assert!(
+        mailbox
+            .drain_once(&target)
+            .await
+            .expect("snapshot outage is retryable")
+            .is_none()
+    );
+    let after_snapshot = repository
+        .get_message(message.id)
+        .await
+        .expect("load mailbox message")
+        .expect("message exists");
+    assert_eq!(after_snapshot.status, MailboxMessageStatus::Queued);
+    assert!(after_snapshot.reconcile_required);
+
+    *runtime.accept_failure.lock().await = Some(FakeAcceptFailure::PersistenceRetryable);
+    assert!(
+        mailbox
+            .drain_once(&target)
+            .await
+            .expect("persistence outage is retryable")
+            .is_none()
+    );
+    let after_persistence = repository
+        .get_message(message.id)
+        .await
+        .expect("load mailbox message")
+        .expect("message exists");
+    assert_eq!(after_persistence.status, MailboxMessageStatus::Queued);
+    assert!(after_persistence.reconcile_required);
+}
+
+#[tokio::test]
+async fn direct_producer_duplicate_replays_terminal_delivery_and_rejects_changed_draft() {
+    for (case, active_turn, prefer_steer, expected_status) in [
+        ("started", None, false, MailboxMessageStatus::Dispatched),
+        (
+            "steered",
+            Some("turn-active"),
+            true,
+            MailboxMessageStatus::Steered,
+        ),
+    ] {
+        let target = AgentRunRuntimeTarget {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+        };
+        let repository = Arc::new(MemoryAgentRunMailboxRepository::default());
+        let runtime = Arc::new(FakeRuntime {
+            view: Mutex::new(view(target.clone(), active_turn)),
+            sends: Mutex::new(0),
+            sent_commands: Mutex::new(Vec::new()),
+            steers: Mutex::new(0),
+            steered_commands: Mutex::new(Vec::new()),
+            fail_next_steer_stale: Mutex::new(false),
+            accept_failure: Mutex::new(None),
+        });
+        let mailbox = runtime_mailbox(repository.clone(), runtime.clone());
+        let mut command = enqueue_user_message(
+            target.clone(),
+            &format!("terminal-duplicate-{case}"),
+            "same request",
+        );
+        if prefer_steer {
+            command.delivery_intent = Some("steer".to_string());
+        }
+
+        let RuntimeMailboxSubmitOutcome::Dispatched {
+            message: first_message,
+            receipt: first_receipt,
+            ..
+        } = mailbox
+            .submit(command.clone())
+            .await
+            .expect("first delivery")
+        else {
+            panic!("first delivery must settle");
+        };
+        assert_eq!(first_message.status, expected_status);
+        assert!(!first_receipt.duplicate);
+        assert!(first_message.launch_planning_input.is_none());
+
+        let RuntimeMailboxSubmitOutcome::Dispatched {
+            message: replayed_message,
+            receipt: replayed_receipt,
+            ..
+        } = mailbox
+            .submit(command.clone())
+            .await
+            .expect("same semantic request replays")
+        else {
+            panic!("terminal duplicate must replay accepted delivery");
+        };
+        assert_eq!(replayed_message.id, first_message.id);
+        assert_eq!(replayed_message.status, expected_status);
+        assert_eq!(replayed_receipt.operation_id, first_receipt.operation_id);
+        assert_eq!(
+            replayed_message.accepted_runtime_operation_id.as_deref(),
+            Some(replayed_receipt.operation_id.as_str())
+        );
+        assert!(replayed_receipt.duplicate);
+        assert_eq!(
+            *runtime.sends.lock().await + *runtime.steers.lock().await,
+            1,
+            "duplicate must not create a second Runtime operation"
+        );
+
+        let mut conflicting = command;
+        conflicting.presentation.content =
+            agentdash_agent_protocol::text_user_input_blocks("changed request");
+        conflicting.input = vec![RuntimeInput::text("changed request".to_string())];
+        assert!(matches!(
+            mailbox.submit(conflicting).await,
+            Err(RuntimeMailboxError::Persistence(
+                agentdash_domain::DomainError::Conflict { .. }
+            ))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn paused_target_keeps_new_message_queued_until_resume() {
+    let target = AgentRunRuntimeTarget {
+        run_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
+    };
+    let repository = Arc::new(MemoryAgentRunMailboxRepository::default());
+    let runtime = Arc::new(FakeRuntime {
+        view: Mutex::new(view(target.clone(), None)),
+        sends: Mutex::new(0),
+        sent_commands: Mutex::new(Vec::new()),
+        steers: Mutex::new(0),
+        steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
+    });
+    let mailbox = runtime_mailbox(repository.clone(), runtime.clone());
+    repository
+        .pause_state(
+            target.run_id,
+            target.agent_id,
+            "manual pause".to_string(),
+            None,
+        )
+        .await
+        .expect("pause target");
+    let RuntimeMailboxSubmitOutcome::Queued { message } = mailbox
+        .submit(enqueue_user_message(
+            target.clone(),
+            "pause-new-message",
+            "wait for resume",
+        ))
+        .await
+        .expect("paused submission remains durable")
+    else {
+        panic!("paused target must not dispatch a newly admitted message");
+    };
+    assert_eq!(*runtime.sends.lock().await, 0);
+    assert_eq!(message.status, MailboxMessageStatus::Queued);
+
+    repository
+        .resume_state(target.run_id, target.agent_id)
+        .await
+        .expect("resume target");
+    assert!(
+        mailbox
+            .drain_once(&target)
+            .await
+            .expect("drain after resume")
+            .is_some()
+    );
+    assert_eq!(*runtime.sends.lock().await, 1);
 }
 
 #[tokio::test]
@@ -587,8 +1292,10 @@ async fn product_delivery_port_uses_product_coordinates_and_canonical_operation_
         sent_commands: Mutex::new(Vec::new()),
         steers: Mutex::new(0),
         steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
     });
-    let delivery = RuntimeAgentRunMailbox::new(repository, runtime.clone());
+    let delivery = runtime_mailbox(repository, runtime.clone());
 
     let result = AgentRunProductDeliveryPort::deliver(
         &delivery,
@@ -603,11 +1310,8 @@ async fn product_delivery_port_uses_product_coordinates_and_canonical_operation_
                 ),
                 launch_source: LaunchPresentationSource::RoutineExecutor,
                 submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                started_at_seconds: 1_783_684_800,
             },
-            input: vec![RuntimeInput::Text {
-                text: "routine wake".into(),
-            }],
+            input: vec![RuntimeInput::text("routine wake")],
             actor: RuntimeActor::System {
                 component: "routine:test".into(),
             },
@@ -624,22 +1328,14 @@ async fn product_delivery_port_uses_product_coordinates_and_canonical_operation_
     assert!(result.operation_receipt.is_some());
     assert_eq!(*runtime.sends.lock().await, 1);
     let sent_commands = runtime.sent_commands.lock().await;
-    let AgentRunPresentationInput::SystemDelivery {
-        turn_id,
-        launch_source,
-        message,
-        ..
-    } = &sent_commands[0].presentation_input
-    else {
-        panic!("routine mailbox delivery must be a system projection")
-    };
-    assert!(
-        turn_id.as_str().strip_prefix('t').is_some_and(
-            |millis| !millis.is_empty() && millis.chars().all(|ch| ch.is_ascii_digit())
-        )
+    assert_eq!(
+        sent_commands[0].presentation.launch_source,
+        LaunchPresentationSource::RoutineExecutor
     );
-    assert_eq!(*launch_source, LaunchPresentationSource::RoutineExecutor);
-    assert_eq!(message, "routine wake");
+    assert_eq!(
+        sent_commands[0].presentation.content,
+        agentdash_agent_protocol::text_user_input_blocks("routine wake")
+    );
 }
 
 #[tokio::test]
@@ -655,8 +1351,10 @@ async fn workflow_delivery_port_enters_the_real_runtime_mailbox_as_system_delive
         sent_commands: Mutex::new(Vec::new()),
         steers: Mutex::new(0),
         steered_commands: Mutex::new(Vec::new()),
+        fail_next_steer_stale: Mutex::new(false),
+        accept_failure: Mutex::new(None),
     });
-    let delivery = RuntimeAgentRunMailbox::new(repository.clone(), runtime.clone());
+    let delivery = runtime_mailbox(repository.clone(), runtime.clone());
     let orchestration_id = Uuid::new_v4();
 
     let receipt = WorkflowAgentRunDeliveryPort::deliver(
@@ -665,9 +1363,7 @@ async fn workflow_delivery_port_enters_the_real_runtime_mailbox_as_system_delive
             target: target.clone(),
             presentation_thread_id: id("presentation-workflow-delivery"),
             client_command_id: "workflow-node-1-attempt-1".into(),
-            input: vec![RuntimeInput::Text {
-                text: "workflow continue".into(),
-            }],
+            input: vec![RuntimeInput::text("workflow continue")],
             presentation_content: agentdash_agent_protocol::text_user_input_blocks(
                 "workflow continue",
             ),
@@ -699,23 +1395,16 @@ async fn workflow_delivery_port_enters_the_real_runtime_mailbox_as_system_delive
     );
 
     let sent_commands = runtime.sent_commands.lock().await;
-    let AgentRunPresentationInput::SystemDelivery {
-        launch_source,
-        message,
-        ..
-    } = &sent_commands[0].presentation_input
-    else {
-        panic!("workflow mailbox delivery must be a system projection")
-    };
     assert_eq!(
-        *launch_source,
+        sent_commands[0].presentation.launch_source,
         LaunchPresentationSource::WorkflowOrchestrator
     );
-    assert_eq!(message, "workflow continue");
+    assert_eq!(
+        sent_commands[0].presentation.content,
+        agentdash_agent_protocol::text_user_input_blocks("workflow continue")
+    );
     assert_eq!(
         sent_commands[0].input,
-        vec![RuntimeInput::Text {
-            text: "workflow continue".into(),
-        }]
+        vec![RuntimeInput::text("workflow continue")]
     );
 }

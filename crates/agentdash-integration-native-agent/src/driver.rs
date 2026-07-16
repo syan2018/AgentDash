@@ -25,7 +25,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     context::{NativeBindingContext, NativeToolCallContext},
     hook::{NativeHookDelegate, supported_hook},
-    mapping::{context_blocks_to_messages, inputs_to_message, message_content},
+    mapping::{context_blocks_to_messages, inputs_to_message, message_content, validate_inputs},
     presentation::{
         ChunkEmitState, NativeSessionItemIdentity, NativeToolPresentationRoute,
         StreamMapperEventState, StreamMapperRuntimeContext, ToolCallEmitState,
@@ -921,17 +921,8 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                 reason: "native interaction response kind is not declared".to_string(),
             });
         }
-        if command_inputs(&envelope.command).is_some_and(|inputs| {
-            inputs.iter().any(|input| {
-                matches!(
-                    input,
-                    RuntimeInput::FileReference { .. } | RuntimeInput::Structured { .. }
-                )
-            })
-        }) {
-            return Err(DriverError::Unsupported {
-                reason: "native Agent Core accepts text and image input only".to_string(),
-            });
+        if let Some(inputs) = command_inputs(&envelope.command) {
+            validate_inputs(inputs)?;
         }
         let request_lock = {
             let mut locks = self.request_locks.lock().await;

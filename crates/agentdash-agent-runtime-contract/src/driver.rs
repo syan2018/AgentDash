@@ -73,7 +73,7 @@ pub struct DriverHookApplyStatus {
     pub artifact_digest: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverCommandEnvelope {
     pub request_id: DriverRequestId,

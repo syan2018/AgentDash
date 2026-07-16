@@ -251,16 +251,13 @@ impl RuntimeItemContent {
     }
 
     pub fn user_message(id: impl Into<String>, input: Vec<crate::RuntimeInput>) -> Self {
-        let content = input.into_iter().map(|input| match input {
-            crate::RuntimeInput::Text { text } => serde_json::json!({"type":"text", "text":text}),
-            crate::RuntimeInput::Image { data_url, .. } => serde_json::json!({"type":"image", "url":data_url}),
-            crate::RuntimeInput::FileReference { uri, media_type } => serde_json::json!({
-                "type":"mention", "name":media_type.unwrap_or_else(|| "resource".to_string()), "path":uri
-            }),
-            crate::RuntimeInput::Structured { schema, value } => serde_json::json!({
-                "type":"text", "text": serde_json::json!({"schema":schema,"value":value}).to_string()
-            }),
-        }).collect::<Vec<_>>();
+        let content = input
+            .into_iter()
+            .filter_map(|input| match input {
+                crate::RuntimeInput::UserInput { block } => Some(block),
+                crate::RuntimeInput::Structured { .. } => None,
+            })
+            .collect::<Vec<_>>();
         Self::codex_json(
             serde_json::json!({"type":"userMessage", "id":id.into(), "content":content}),
         )
@@ -828,6 +825,50 @@ impl RuntimeEventEnvelope {
 #[cfg(test)]
 mod presentation_tests {
     use super::*;
+
+    #[test]
+    fn runtime_user_item_preserves_standard_blocks_and_keeps_structured_context_hidden() {
+        let expected = vec![
+            serde_json::json!({
+                "type": "text",
+                "text": "ask @agent",
+                "text_elements": [{
+                    "byteRange": { "start": 4, "end": 10 },
+                    "placeholder": null
+                }]
+            }),
+            serde_json::json!({ "type": "image", "detail": null, "url": "https://example.test/image.png" }),
+            serde_json::json!({ "type": "localImage", "path": "C:/workspace/image.png" }),
+            serde_json::json!({ "type": "skill", "name": "review", "path": "C:/skills/review/SKILL.md" }),
+            serde_json::json!({ "type": "mention", "name": "main.rs", "path": "C:/workspace/src/main.rs" }),
+        ];
+        let mut input = expected
+            .iter()
+            .cloned()
+            .map(|value| {
+                crate::RuntimeInput::user_input(
+                    serde_json::from_value(value).expect("generated Codex UserInput"),
+                )
+            })
+            .collect::<Vec<_>>();
+        input.push(crate::RuntimeInput::Structured {
+            schema: "agentdash.context.v1".to_string(),
+            value: serde_json::json!({ "hidden": true }),
+        });
+
+        let item = RuntimeItemContent::user_message("user-item", input);
+
+        let agentdash_agent_protocol::AgentDashThreadItem::Codex(
+            agentdash_agent_protocol::CodexThreadItem::UserMessage { content, .. },
+        ) = item.item()
+        else {
+            panic!("expected a typed Codex user message");
+        };
+        assert_eq!(
+            serde_json::to_value(content).expect("serialize user content"),
+            serde_json::Value::Array(expected)
+        );
+    }
 
     fn presentation_event(durability: PresentationDurability) -> ImmutablePresentationEvent {
         let event = serde_json::from_value(serde_json::json!({

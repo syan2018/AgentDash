@@ -443,9 +443,7 @@ async fn unsupported_command_has_no_side_effect() {
         command: RuntimeCommand::TurnStart {
             thread_id: id("thread-1"),
             presentation_turn_id: id("presentation-turn-1"),
-            input: vec![RuntimeInput::Text {
-                text: "hello".to_string(),
-            }],
+            input: vec![RuntimeInput::text("hello".to_string())],
         },
     };
     assert_unsupported_before_side_effect(&driver, command)

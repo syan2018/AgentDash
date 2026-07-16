@@ -3141,9 +3141,7 @@ mod tests {
                     entries: vec!["You are the production Native Agent.".to_string()],
                 }],
                 blocks: vec![ContextBlock::Input {
-                    input: vec![RuntimeInput::Text {
-                        text: "durable initial context".to_string(),
-                    }],
+                    input: vec![RuntimeInput::text("durable initial context".to_string())],
                 }],
                 digest: parsed("sha256:production-native-context"),
                 fidelity: ContextFidelity::PlatformExact,
@@ -3669,9 +3667,7 @@ mod tests {
                 source_thread_id: binding.source_thread_id.clone(),
                 profile_digest: binding.profile_digest.clone(),
                 bound_profile: Box::new(binding.bound_profile.clone()),
-                input: vec![RuntimeInput::Text {
-                    text: "hello native tracer".to_string(),
-                }],
+                input: vec![RuntimeInput::text("hello native tracer".to_string())],
                 surface: Box::new(binding.surface.clone()),
                 settings_revision: binding.settings_revision,
             },
@@ -4421,9 +4417,7 @@ rl.on('line', line => {
                 source_thread_id: binding.source_thread_id.clone(),
                 profile_digest: binding.profile_digest.clone(),
                 bound_profile: Box::new(binding.bound_profile.clone()),
-                input: vec![RuntimeInput::Text {
-                    text: "hello codex tracer".to_string(),
-                }],
+                input: vec![RuntimeInput::text("hello codex tracer".to_string())],
                 surface: Box::new(binding.surface.clone()),
                 settings_revision: binding.settings_revision,
             },

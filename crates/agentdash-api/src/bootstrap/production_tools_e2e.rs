@@ -28,10 +28,10 @@ use agentdash_application::{
 };
 use agentdash_application_agentrun::agent_run::{
     AgentBusinessSurfaceContextDeps, AgentBusinessSurfaceSource, AgentRunPresentationDraft,
-    AgentRunPresentationInput, AgentRunRuntime, AgentRunTerminalRegistry, BaseIdentitySource,
-    BusinessFrameSurfaceQuery, BusinessFrameSurfaceQueryDeps, EnqueueRuntimeMailboxMessage,
-    LaunchPresentationSource, ManagedAgentRunRuntime, RuntimeAgentRunMailbox,
-    RuntimeMailboxSubmitOutcome, SendAgentRunMessage,
+    AgentRunRuntime, AgentRunTerminalRegistry, BaseIdentitySource, BusinessFrameSurfaceQuery,
+    BusinessFrameSurfaceQueryDeps, EnqueueRuntimeMailboxMessage, LaunchPresentationSource,
+    ManagedAgentRunRuntime, RuntimeAgentRunMailbox, RuntimeMailboxSubmitOutcome,
+    SendAgentRunMessage,
 };
 use agentdash_application_lifecycle::lifecycle::tools::SharedSessionToolServicesHandle as LifecycleSessionToolServicesHandle;
 use agentdash_application_ports::{
@@ -568,9 +568,15 @@ async fn real_agent_frame_task_and_workspace_tools_continue_to_final_assistant()
         composition.presentation_plans.clone(),
         tool_registry.clone(),
     ));
+    let mailbox_repository = Arc::new(MemoryAgentRunMailboxRepository::default());
     let mailbox = RuntimeAgentRunMailbox::new(
-        Arc::new(MemoryAgentRunMailboxRepository::default()),
+        mailbox_repository.clone(),
         runtime.clone(),
+        Arc::new(
+            agentdash_test_support::workflow::MemoryAgentRunMessageSubmissionStore::new(
+                mailbox_repository,
+            ),
+        ),
     );
     let presentation_thread_id =
         PresentationThreadId::new("production-tools-presentation").unwrap();
@@ -585,12 +591,11 @@ async fn real_agent_frame_task_and_workspace_tools_continue_to_final_assistant()
                 source: agentdash_agent_protocol::UserInputSource::core_composer(),
                 launch_source: LaunchPresentationSource::HttpPrompt,
                 submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                started_at_seconds: Utc::now().timestamp(),
             },
             client_command_id: "production-tools-first-message".to_string(),
-            input: vec![RuntimeInput::Text {
-                text: "exercise every production tool provider and continue".to_string(),
-            }],
+            input: vec![RuntimeInput::text(
+                "exercise every production tool provider and continue".to_string(),
+            )],
             actor: RuntimeActor::User {
                 subject: "production-tools-e2e".to_string(),
             },
@@ -890,22 +895,18 @@ async fn real_agent_frame_task_and_workspace_tools_continue_to_final_assistant()
         .send_message(SendAgentRunMessage {
             target: target.clone(),
             presentation_thread_id: presentation_thread_id.clone(),
-            presentation_input: AgentRunPresentationInput::UserSubmission {
-                turn_id: PresentationTurnId::new("production-tools-recovery-turn")
-                    .expect("recovery presentation turn id"),
-                item_id: PresentationItemId::new("production-tools-recovery-turn:user-input:0")
-                    .expect("recovery presentation item id"),
+            presentation: AgentRunPresentationDraft {
                 content: agentdash_agent_protocol::text_user_input_blocks(
                     "read task after Native cold rebind",
                 ),
                 source: agentdash_agent_protocol::UserInputSource::core_composer(),
+                launch_source: LaunchPresentationSource::HttpPrompt,
                 submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                started_at_seconds: Utc::now().timestamp(),
             },
             client_command_id: "production-tools-after-native-cold-rebind".to_string(),
-            input: vec![RuntimeInput::Text {
-                text: "read task after Native cold rebind".to_string(),
-            }],
+            input: vec![RuntimeInput::text(
+                "read task after Native cold rebind".to_string(),
+            )],
             actor: RuntimeActor::User {
                 subject: "production-tools-e2e".to_string(),
             },

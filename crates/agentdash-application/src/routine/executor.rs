@@ -359,11 +359,8 @@ impl RoutineExecutor {
                     ),
                     launch_source: agentdash_application_agentrun::agent_run::LaunchPresentationSource::RoutineExecutor,
                     submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                    started_at_seconds: chrono::Utc::now().timestamp(),
                 },
-                input: vec![RuntimeInput::Text {
-                    text: prompt.to_string(),
-                }],
+                input: vec![RuntimeInput::text(prompt.to_string())],
                 actor: RuntimeActor::System {
                     component: format!("routine:{}", routine.id),
                 },

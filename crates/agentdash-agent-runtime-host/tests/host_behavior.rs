@@ -40,6 +40,7 @@ impl RuntimeApplicationPresentationProjector for TestTerminalPresentationProject
         Ok(vec![RuntimePresentationInput {
             coordinate: RuntimePresentationCoordinate {
                 runtime_turn_id: Some(context.runtime_turn_id.clone()),
+                presentation_turn_id: Some(context.presentation_turn_id.clone()),
                 runtime_item_id: None,
                 interaction_id: None,
                 source_thread_id: Some(context.presentation_thread_id.to_string()),
@@ -162,6 +163,7 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
         DriverEventEnvelope {
             binding_id: binding.id.clone(),
             generation: binding.driver_generation,
+            operation_id: Some(id("runtime-coordinate")),
             source_thread_id: source_thread_id.clone(),
             source_turn_id: Some(id("source-turn-coordinate")),
             source_item_id: Some(id("source-item-collision")),
@@ -179,6 +181,7 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
         DriverEventEnvelope {
             binding_id: binding.id.clone(),
             generation: binding.driver_generation,
+            operation_id: Some(id("runtime-coordinate")),
             source_thread_id: source_thread_id.clone(),
             source_turn_id: Some(id("source-turn-coordinate")),
             source_item_id: Some(id("source-item-collision")),
@@ -206,11 +209,13 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
     let command = RouteDriverCommand {
         envelope: DriverCommandEnvelope {
             request_id: id("request-coordinate-health"),
+            operation_id: id("runtime-coordinate"),
             presentation_thread_id: id("presentation-coordinate-health"),
             binding_id: binding.id.clone(),
             generation: binding.driver_generation,
             source_thread_id,
             runtime_turn_id: Some(id("turn-coordinate-health")),
+            presentation_turn_id: Some(id("presentation-turn-coordinate-health")),
             command: RuntimeCommand::TurnStart {
                 thread_id: binding.thread_id.clone(),
                 presentation_turn_id: id("presentation-turn-coordinate-health"),
@@ -561,6 +566,7 @@ impl AgentRuntimeDriver for TestDriver {
         sink.emit(DriverEventEnvelope {
             binding_id: command.binding_id.clone(),
             generation: command.generation,
+            operation_id: Some(command.operation_id.clone()),
             source_thread_id: command.source_thread_id.clone(),
             source_turn_id: None,
             source_item_id: None,
@@ -576,6 +582,7 @@ impl AgentRuntimeDriver for TestDriver {
         for mut event in self.extra_events.lock().await.clone() {
             event.binding_id = command.binding_id.clone();
             event.generation = command.generation;
+            event.operation_id = Some(command.operation_id.clone());
             event.source_thread_id = command.source_thread_id.clone();
             sink.emit(event).await?;
         }
@@ -1025,11 +1032,13 @@ async fn required_hook_must_be_acknowledged_before_dispatch() {
         .expect("lease");
     let envelope = DriverCommandEnvelope {
         request_id: id("request-1"),
+        operation_id: id("operation-1"),
         presentation_thread_id: id("presentation-thread-1"),
         binding_id: binding.id.clone(),
         generation: binding.driver_generation,
         source_thread_id: binding.source_thread_id.clone().expect("source"),
         runtime_turn_id: Some(id("turn-1")),
+        presentation_turn_id: Some(id("presentation-turn-1")),
         command: RuntimeCommand::TurnStart {
             thread_id: binding.thread_id.clone(),
             presentation_turn_id: id("presentation-turn-1"),
@@ -1146,11 +1155,13 @@ async fn event_sink_does_not_confuse_dispatch_lease_takeover_with_driver_replace
             RouteDriverCommand {
                 envelope: DriverCommandEnvelope {
                     request_id: id("request-event-fence"),
+                    operation_id: id("operation-event-fence"),
                     presentation_thread_id: id("presentation-event-fence"),
                     binding_id: dispatch_binding_id,
                     generation,
                     source_thread_id: binding.source_thread_id.expect("source"),
                     runtime_turn_id: Some(id("turn-event-fence")),
+                    presentation_turn_id: Some(id("presentation-turn-event-fence")),
                     command: RuntimeCommand::TurnStart {
                         thread_id: binding.thread_id,
                         presentation_turn_id: id("presentation-turn-event-fence"),
@@ -1212,11 +1223,13 @@ async fn persistent_event_sink_accepts_notifications_after_dispatch_lease_releas
             RouteDriverCommand {
                 envelope: DriverCommandEnvelope {
                     request_id: id("request-persistent-event"),
+                    operation_id: id("operation-persistent-event"),
                     presentation_thread_id: id("presentation-persistent-event"),
                     binding_id: binding.id.clone(),
                     generation: binding.driver_generation,
                     source_thread_id: source_thread_id.clone(),
                     runtime_turn_id: Some(id("turn-persistent-event")),
+                    presentation_turn_id: Some(id("presentation-turn-persistent-event")),
                     command: RuntimeCommand::TurnStart {
                         thread_id: binding.thread_id.clone(),
                         presentation_turn_id: id("presentation-turn-persistent-event"),
@@ -1247,6 +1260,7 @@ async fn persistent_event_sink_accepts_notifications_after_dispatch_lease_releas
         .emit(DriverEventEnvelope {
             binding_id: binding.id,
             generation: binding.driver_generation,
+            operation_id: None,
             source_thread_id,
             source_turn_id: None,
             source_item_id: None,
@@ -1290,11 +1304,13 @@ async fn rebind_fences_the_previous_persistent_event_sink() {
             RouteDriverCommand {
                 envelope: DriverCommandEnvelope {
                     request_id: id("request-before-rebind"),
+                    operation_id: id("operation-before-rebind"),
                     presentation_thread_id: id("presentation-before-rebind"),
                     binding_id: binding.id.clone(),
                     generation: binding.driver_generation,
                     source_thread_id: source_thread_id.clone(),
                     runtime_turn_id: Some(id("turn-before-rebind")),
+                    presentation_turn_id: Some(id("presentation-turn-before-rebind")),
                     command: RuntimeCommand::TurnStart {
                         thread_id: binding.thread_id.clone(),
                         presentation_turn_id: id("presentation-turn-before-rebind"),
@@ -1345,6 +1361,7 @@ async fn rebind_fences_the_previous_persistent_event_sink() {
             .emit(DriverEventEnvelope {
                 binding_id: binding.id,
                 generation: binding.driver_generation,
+                operation_id: None,
                 source_thread_id,
                 source_turn_id: None,
                 source_item_id: None,
@@ -1396,11 +1413,13 @@ async fn binding_loss_atomically_invalidates_lease_and_fences_late_event() {
             RouteDriverCommand {
                 envelope: DriverCommandEnvelope {
                     request_id: id("request-loss-event-fence"),
+                    operation_id: id("operation-loss-event-fence"),
                     presentation_thread_id: id("presentation-loss-event-fence"),
                     binding_id: binding.id,
                     generation,
                     source_thread_id: binding.source_thread_id.expect("source"),
                     runtime_turn_id: Some(id("turn-loss-event-fence")),
+                    presentation_turn_id: Some(id("presentation-turn-loss-event-fence")),
                     command: RuntimeCommand::TurnStart {
                         thread_id: binding.thread_id,
                         presentation_turn_id: id("presentation-turn-loss-event-fence"),
@@ -1801,11 +1820,13 @@ async fn old_binding_recovers_from_activation_snapshot_after_instance_config_upd
             RouteDriverCommand {
                 envelope: DriverCommandEnvelope {
                     request_id: id("request-snapshot"),
+                    operation_id: id("operation-snapshot"),
                     presentation_thread_id: id("presentation-snapshot"),
                     binding_id: binding.id,
                     generation: binding.driver_generation,
                     source_thread_id: binding.source_thread_id.expect("source"),
                     runtime_turn_id: Some(id("turn-snapshot")),
+                    presentation_turn_id: Some(id("presentation-turn-snapshot")),
                     command: RuntimeCommand::TurnStart {
                         thread_id: binding.thread_id,
                         presentation_turn_id: id("presentation-turn-snapshot"),

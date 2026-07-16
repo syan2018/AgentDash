@@ -1,10 +1,18 @@
+use std::sync::Arc;
+
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
+use agentdash_application_ports::agent_run_message_submission::{
+    AgentRunAcceptedDeliveryKind, AgentRunMailboxAcceptedSettlement,
+    AgentRunMailboxAcceptedSettlementResult, AgentRunMailboxDeliverySettlementPort,
+    AgentRunMailboxDeliverySettlementResult, AgentRunMailboxFailedSettlement,
+};
 use agentdash_domain::DomainError;
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::agent_run_mailbox::{
-    AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
-    AgentRunMailboxState, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
-    MailboxMessageStatus, NewAgentRunMailboxMessage,
+    AgentRunMailboxClaimRequest, AgentRunMailboxCreateOutcome, AgentRunMailboxMessage,
+    AgentRunMailboxRepository, AgentRunMailboxState, ConsumptionBarrier,
+    MAILBOX_CLAIM_LEASE_EXPIRED_RECONCILIATION, MailboxDelivery, MailboxDrainMode,
+    MailboxMessageOrigin, MailboxMessageStatus, NewAgentRunMailboxMessage, SteeringStopEffect,
 };
 use agentdash_domain::backend::{
     ProjectBackendAccess, ProjectBackendAccessRepository, ProjectBackendAccessStatus,
@@ -796,6 +804,101 @@ impl MemoryAgentRunMailboxRepository {
     }
 }
 
+pub struct MemoryAgentRunMessageSubmissionStore {
+    mailbox: Arc<MemoryAgentRunMailboxRepository>,
+}
+
+impl MemoryAgentRunMessageSubmissionStore {
+    pub fn new(mailbox: Arc<MemoryAgentRunMailboxRepository>) -> Self {
+        Self { mailbox }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentRunMailboxDeliverySettlementPort for MemoryAgentRunMessageSubmissionStore {
+    async fn settle_delivery_failed(
+        &self,
+        failure: AgentRunMailboxFailedSettlement,
+    ) -> Result<AgentRunMailboxDeliverySettlementResult, DomainError> {
+        let now = Utc::now();
+        let mut messages = self.mailbox.messages.lock().await;
+        let message = messages
+            .iter_mut()
+            .find(|message| {
+                message.id == failure.mailbox_message_id
+                    && message.claim_token == Some(failure.claim_token)
+                    && message.status == MailboxMessageStatus::Consuming
+            })
+            .ok_or_else(|| DomainError::Conflict {
+                entity: "agent_run_mailbox_message",
+                constraint: "delivery_failure_claim",
+                message: "mailbox claim no longer owns delivery failure settlement".to_string(),
+            })?;
+        message.status = MailboxMessageStatus::Failed;
+        message.reconcile_required = false;
+        message.last_error = Some(failure.error_message);
+        message.claim_token = None;
+        message.claimed_at = None;
+        message.claim_expires_at = None;
+        message.consumed_at.get_or_insert(now);
+        message.updated_at = now;
+        if message.origin == MailboxMessageOrigin::User && !message.retain_payload {
+            message.payload_json = None;
+            message.launch_planning_input = None;
+        }
+        Ok(AgentRunMailboxDeliverySettlementResult {
+            message: message.clone(),
+        })
+    }
+
+    async fn settle_delivery_accepted(
+        &self,
+        settlement: AgentRunMailboxAcceptedSettlement,
+    ) -> Result<AgentRunMailboxAcceptedSettlementResult, DomainError> {
+        let operation_id = settlement
+            .accepted_refs
+            .runtime_operation_id
+            .ok_or_else(|| {
+                DomainError::InvalidConfig(
+                    "accepted mailbox settlement requires runtime_operation_id".to_string(),
+                )
+            })?;
+        let now = Utc::now();
+        let mut messages = self.mailbox.messages.lock().await;
+        let message = messages
+            .iter_mut()
+            .find(|message| {
+                message.id == settlement.mailbox_message_id
+                    && message.claim_token == Some(settlement.claim_token)
+                    && message.status == MailboxMessageStatus::Consuming
+            })
+            .ok_or_else(|| DomainError::Conflict {
+                entity: "agent_run_mailbox_message",
+                constraint: "runtime_operation_claim",
+                message: "mailbox claim no longer owns runtime operation acceptance".to_string(),
+            })?;
+        message.status = match settlement.delivery_kind {
+            AgentRunAcceptedDeliveryKind::Started => MailboxMessageStatus::Dispatched,
+            AgentRunAcceptedDeliveryKind::Steered => MailboxMessageStatus::Steered,
+        };
+        message.accepted_runtime_operation_id = Some(operation_id);
+        message.reconcile_required = false;
+        message.last_error = None;
+        message.claim_token = None;
+        message.claimed_at = None;
+        message.claim_expires_at = None;
+        message.consumed_at.get_or_insert(now);
+        message.updated_at = now;
+        if message.origin == MailboxMessageOrigin::User && !message.retain_payload {
+            message.payload_json = None;
+            message.launch_planning_input = None;
+        }
+        Ok(AgentRunMailboxAcceptedSettlementResult {
+            message: message.clone(),
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
     async fn list_pending_targets(&self) -> Result<Vec<(Uuid, Uuid)>, DomainError> {
@@ -832,7 +935,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
     async fn create_message_idempotent(
         &self,
         message: NewAgentRunMailboxMessage,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
+    ) -> Result<AgentRunMailboxCreateOutcome, DomainError> {
         if let Some(dedup_key) = message.source_dedup_key.as_deref()
             && let Some(existing) = self.messages.lock().await.iter().find(|existing| {
                 existing.run_id == message.run_id
@@ -840,9 +943,20 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
                     && existing.source_dedup_key.as_deref() == Some(dedup_key)
             })
         {
-            return Ok(existing.clone());
+            if existing.delivery_request_digest != message.delivery_request_digest {
+                return Err(DomainError::Conflict {
+                    entity: "agent_run_mailbox_message",
+                    constraint: "source_dedup_request_digest",
+                    message:
+                        "mailbox source_dedup_key is already bound to a different delivery request"
+                            .to_string(),
+                });
+            }
+            return Ok(AgentRunMailboxCreateOutcome::Existing(existing.clone()));
         }
-        self.create_message(message).await
+        self.create_message(message)
+            .await
+            .map(AgentRunMailboxCreateOutcome::Created)
     }
 
     async fn get_message(&self, id: Uuid) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
@@ -874,6 +988,11 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         &self,
         request: AgentRunMailboxClaimRequest,
     ) -> Result<Vec<AgentRunMailboxMessage>, DomainError> {
+        if self.states.lock().await.iter().any(|state| {
+            state.run_id == request.run_id && state.agent_id == request.agent_id && state.paused
+        }) {
+            return Ok(Vec::new());
+        }
         let mut messages = self.messages.lock().await;
         let mut claimed = Vec::new();
         for message in messages.iter_mut() {
@@ -886,6 +1005,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
                 || request
                     .drain_mode
                     .is_some_and(|mode| mode != message.drain_mode)
+                || message.reconcile_required
                 || !matches!(
                     message.status,
                     MailboxMessageStatus::Queued | MailboxMessageStatus::ReadyToConsume
@@ -895,6 +1015,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             }
             message.status = MailboxMessageStatus::Consuming;
             message.claim_token = Some(request.claim_token);
+            message.claimed_at = Some(Utc::now());
             message.claim_expires_at = Some(request.claim_expires_at);
             message.attempt_count += 1;
             claimed.push(message.clone());
@@ -902,11 +1023,96 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         Ok(claimed)
     }
 
+    async fn claim_reconciliation(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        claim_token: Uuid,
+        claim_expires_at: chrono::DateTime<Utc>,
+    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
+        if self
+            .states
+            .lock()
+            .await
+            .iter()
+            .any(|state| state.run_id == run_id && state.agent_id == agent_id && state.paused)
+        {
+            return Ok(None);
+        }
+        let now = Utc::now();
+        let mut messages = self.messages.lock().await;
+        let Some(message) = messages
+            .iter_mut()
+            .filter(|message| {
+                message.run_id == run_id
+                    && message.agent_id == agent_id
+                    && message.status == MailboxMessageStatus::Queued
+                    && message.reconcile_required
+            })
+            .max_by_key(|message| (message.priority, -message.order_key))
+        else {
+            return Ok(None);
+        };
+        message.status = MailboxMessageStatus::Consuming;
+        message.claim_token = Some(claim_token);
+        message.claimed_at = Some(now);
+        message.claim_expires_at = Some(claim_expires_at);
+        message.attempt_count += 1;
+        message.updated_at = now;
+        Ok(Some(message.clone()))
+    }
+
+    async fn release_reconciliation_claim(
+        &self,
+        id: Uuid,
+        claim_token: Uuid,
+        last_error: String,
+    ) -> Result<AgentRunMailboxMessage, DomainError> {
+        let mut messages = self.messages.lock().await;
+        let message = messages
+            .iter_mut()
+            .find(|message| {
+                message.id == id
+                    && message.claim_token == Some(claim_token)
+                    && message.status == MailboxMessageStatus::Consuming
+                    && message.reconcile_required
+            })
+            .ok_or_else(|| DomainError::Conflict {
+                entity: "agent_run_mailbox_message",
+                constraint: "reconciliation_claim",
+                message: "mailbox reconciliation claim is no longer owned".to_string(),
+            })?;
+        message.status = MailboxMessageStatus::Queued;
+        message.claim_token = None;
+        message.claimed_at = None;
+        message.claim_expires_at = None;
+        message.last_error = Some(last_error);
+        message.updated_at = Utc::now();
+        Ok(message.clone())
+    }
+
     async fn recover_expired_consuming(
         &self,
-        _now: chrono::DateTime<Utc>,
+        now: chrono::DateTime<Utc>,
     ) -> Result<u64, DomainError> {
-        Ok(0)
+        let mut messages = self.messages.lock().await;
+        let mut recovered = 0;
+        for message in messages.iter_mut().filter(|message| {
+            message.status == MailboxMessageStatus::Consuming
+                && message
+                    .claim_expires_at
+                    .is_some_and(|expires_at| expires_at < now)
+        }) {
+            message.status = MailboxMessageStatus::Queued;
+            message.reconcile_required = true;
+            message.claim_token = None;
+            message.claimed_at = None;
+            message.claim_expires_at = None;
+            message.last_error = Some(MAILBOX_CLAIM_LEASE_EXPIRED_RECONCILIATION.to_string());
+            message.updated_at = now;
+            recovered += 1;
+        }
+        Ok(recovered)
     }
 
     async fn mark_message_status(
@@ -933,60 +1139,64 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         }
         message.status = status;
         message.last_error = last_error;
+        message.reconcile_required = false;
         message.claim_token = None;
+        message.claimed_at = None;
         message.claim_expires_at = None;
-        message.consumed_at = Some(Utc::now());
-        message.updated_at = Utc::now();
+        let now = Utc::now();
+        if matches!(
+            status,
+            MailboxMessageStatus::Dispatched
+                | MailboxMessageStatus::Steered
+                | MailboxMessageStatus::Failed
+                | MailboxMessageStatus::Deleted
+        ) {
+            message.consumed_at.get_or_insert(now);
+        }
+        message.updated_at = now;
         Ok(message.clone())
     }
 
-    async fn mark_runtime_operation_accepted(
+    async fn promote_message(
         &self,
+        run_id: Uuid,
+        agent_id: Uuid,
         id: Uuid,
-        claim_token: Uuid,
-        operation_id: String,
-        agent_run_turn_id: Option<String>,
-        protocol_turn_id: Option<String>,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        let mut messages = self.messages.lock().await;
-        let message = messages
-            .iter_mut()
-            .find(|message| message.id == id && message.claim_token == Some(claim_token))
-            .ok_or_else(|| DomainError::Conflict {
-                entity: "agent_run_mailbox_message",
-                constraint: "runtime_operation_claim",
-                message: "claim token mismatch".to_string(),
-            })?;
-        message.status = MailboxMessageStatus::Dispatched;
-        message.accepted_runtime_operation_id = Some(operation_id);
-        message.accepted_agent_run_turn_id = agent_run_turn_id;
-        message.accepted_protocol_turn_id = protocol_turn_id;
-        message.claim_token = None;
-        message.claim_expires_at = None;
-        message.consumed_at = Some(Utc::now());
-        message.updated_at = Utc::now();
-        Ok(message.clone())
-    }
-
-    async fn update_message_policy(
-        &self,
-        id: Uuid,
-        delivery: MailboxDelivery,
-        barrier: ConsumptionBarrier,
-        drain_mode: MailboxDrainMode,
         priority: i32,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
         let mut messages = self.messages.lock().await;
         let message = messages
             .iter_mut()
-            .find(|message| message.id == id)
+            .find(|message| {
+                message.id == id && message.run_id == run_id && message.agent_id == agent_id
+            })
             .ok_or_else(|| DomainError::NotFound {
                 entity: "agent_run_mailbox_message",
                 id: id.to_string(),
             })?;
-        message.delivery = delivery;
-        message.barrier = barrier;
-        message.drain_mode = drain_mode;
+        if message.origin != MailboxMessageOrigin::User
+            || message.delivery != MailboxDelivery::LaunchOrContinueTurn
+            || !matches!(
+                message.status,
+                MailboxMessageStatus::Accepted
+                    | MailboxMessageStatus::Queued
+                    | MailboxMessageStatus::ReadyToConsume
+                    | MailboxMessageStatus::Paused
+                    | MailboxMessageStatus::Blocked
+            )
+            || message.reconcile_required
+        {
+            return Err(DomainError::Conflict {
+                entity: "agent_run_mailbox_message",
+                constraint: "promotable_state",
+                message: "mailbox message is not promotable".to_string(),
+            });
+        }
+        message.delivery = MailboxDelivery::SteerActiveTurn {
+            stop_effect: SteeringStopEffect::None,
+        };
+        message.barrier = ConsumptionBarrier::AgentLoopTurnBoundary;
+        message.drain_mode = MailboxDrainMode::All;
         message.priority = priority;
         message.updated_at = Utc::now();
         Ok(message.clone())
@@ -1015,6 +1225,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             .find(|message| message.id == id)
         {
             message.payload_json = None;
+            message.launch_planning_input = None;
         }
         Ok(())
     }
@@ -1032,7 +1243,6 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             paused: true,
             pause_reason: Some(reason),
             pause_message: message,
-            backend_selection_preference: None,
             updated_at: Utc::now(),
         };
         self.upsert_state(state.clone()).await;
@@ -1050,7 +1260,6 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             paused: false,
             pause_reason: None,
             pause_message: None,
-            backend_selection_preference: None,
             updated_at: Utc::now(),
         };
         self.upsert_state(state.clone()).await;
@@ -1069,30 +1278,6 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             .iter()
             .find(|state| state.run_id == run_id && state.agent_id == agent_id)
             .cloned())
-    }
-
-    async fn set_backend_selection_preference(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-        preference: serde_json::Value,
-    ) -> Result<AgentRunMailboxState, DomainError> {
-        let mut state = self
-            .get_state(run_id, agent_id)
-            .await?
-            .unwrap_or(AgentRunMailboxState {
-                run_id,
-                agent_id,
-                paused: false,
-                pause_reason: None,
-                pause_message: None,
-                backend_selection_preference: None,
-                updated_at: Utc::now(),
-            });
-        state.backend_selection_preference = Some(preference);
-        state.updated_at = Utc::now();
-        self.upsert_state(state.clone()).await;
-        Ok(state)
     }
 
     async fn move_message_after(
@@ -1140,14 +1325,13 @@ fn mailbox_message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailb
         priority: message.priority,
         order_key: now.timestamp_micros(),
         source_dedup_key: message.source_dedup_key,
+        delivery_request_digest: message.delivery_request_digest,
         accepted_runtime_operation_id: None,
-        accepted_agent_run_turn_id: None,
-        accepted_protocol_turn_id: None,
+        reconcile_required: false,
         claim_token: None,
         claimed_at: None,
         claim_expires_at: None,
         payload_json: message.payload_json,
-        executor_config_json: message.executor_config_json,
         launch_planning_input: message.launch_planning_input,
         preview: message.preview,
         has_images: message.has_images,

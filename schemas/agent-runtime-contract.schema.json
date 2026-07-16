@@ -9395,7 +9395,7 @@
         "text",
         "image",
         "audio",
-        "file_reference",
+        "local_image",
         "resource",
         "skill",
         "mention",
@@ -9716,59 +9716,17 @@
         {
           "type": "object",
           "properties": {
-            "text": {
-              "type": "string"
+            "block": {
+              "$ref": "#/$defs/UserInput"
             },
             "kind": {
               "type": "string",
-              "const": "text"
+              "const": "user_input"
             }
           },
           "required": [
             "kind",
-            "text"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "mime_type": {
-              "type": "string"
-            },
-            "data_url": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "image"
-            }
-          },
-          "required": [
-            "kind",
-            "mime_type",
-            "data_url"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "uri": {
-              "type": "string"
-            },
-            "media_type": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "kind": {
-              "type": "string",
-              "const": "file_reference"
-            }
-          },
-          "required": [
-            "kind",
-            "uri"
+            "block"
           ]
         },
         {

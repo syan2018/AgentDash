@@ -1,3 +1,4 @@
+use agentdash_application_ports::request_digest::canonical_request_digest;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
     AgentRunAcceptedRefs, AgentRunCommandKind, AgentRunCommandReceiptRepository,
@@ -5,7 +6,6 @@ use agentdash_domain::workflow::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::WorkflowApplicationError;
@@ -35,9 +35,8 @@ impl<'a> AgentRunProductCommandService<'a> {
         client_command_id: String,
         request: &T,
     ) -> Result<AgentRunProductCommandClaim, WorkflowApplicationError> {
-        let payload = serde_json::to_vec(request)
+        let digest = canonical_request_digest(request)
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
-        let digest = format!("{:x}", Sha256::digest(payload));
         let claim = self
             .receipts
             .claim(NewAgentRunCommandReceipt {

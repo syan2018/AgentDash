@@ -1060,9 +1060,15 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         composition.presentation_plans.clone(),
         tool_registry.clone(),
     ));
+    let mailbox_repository = Arc::new(MemoryAgentRunMailboxRepository::default());
     let mailbox = RuntimeAgentRunMailbox::new(
-        Arc::new(MemoryAgentRunMailboxRepository::default()),
+        mailbox_repository.clone(),
         runtime.clone(),
+        Arc::new(
+            agentdash_test_support::workflow::MemoryAgentRunMessageSubmissionStore::new(
+                mailbox_repository,
+            ),
+        ),
     );
     let initial_started_at_seconds = Utc::now().timestamp();
     let submitted = tokio::time::timeout(
@@ -1078,12 +1084,11 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                 launch_source:
                     agentdash_application_agentrun::agent_run::LaunchPresentationSource::HttpPrompt,
                 submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                started_at_seconds: initial_started_at_seconds,
             },
             client_command_id: "enterprise-first-message".to_string(),
-            input: vec![RuntimeInput::Text {
-                text: "run through enterprise remote".to_string(),
-            }],
+            input: vec![RuntimeInput::text(
+                "run through enterprise remote".to_string(),
+            )],
             actor: RuntimeActor::User {
                 subject: "enterprise-user".to_string(),
             },
@@ -1098,22 +1103,22 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
     .await
     .expect("mailbox submit timeout")
     .expect("mailbox submit");
-    let (receipt, mailbox_message_id, initial_presentation_input) = match &submitted {
+    let (receipt, mailbox_message_id, initial_presentation) = match &submitted {
         RuntimeMailboxSubmitOutcome::Dispatched {
             receipt, message, ..
         } => (
             receipt,
             message.id,
             serde_json::from_value::<
-                agentdash_application_agentrun::agent_run::AgentRunPresentationInput,
+                agentdash_application_agentrun::agent_run::AgentRunPresentationDraft,
             >(
                 message
                     .launch_planning_input
                     .as_ref()
-                    .expect("mailbox command payload")["presentation_input"]
+                    .expect("mailbox command payload")["presentation"]
                     .clone(),
             )
-            .expect("persisted mailbox presentation input"),
+            .expect("persisted mailbox presentation draft"),
         ),
         RuntimeMailboxSubmitOutcome::Queued { .. } => panic!("idle mailbox must dispatch"),
     };
@@ -1612,11 +1617,11 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
             agentdash_application_agentrun::agent_run::SendAgentRunMessage {
                 target: target.clone(),
                 presentation_thread_id: presentation_thread_id.clone(),
-                presentation_input: initial_presentation_input,
+                presentation: initial_presentation,
                 client_command_id: format!("mailbox-{mailbox_message_id}"),
-                input: vec![RuntimeInput::Text {
-                    text: "run through enterprise remote".to_string(),
-                }],
+                input: vec![RuntimeInput::text(
+                    "run through enterprise remote".to_string(),
+                )],
                 actor: RuntimeActor::User {
                     subject: "enterprise-user".to_string(),
                 },
@@ -1649,12 +1654,9 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                 launch_source:
                     agentdash_application_agentrun::agent_run::LaunchPresentationSource::HttpPrompt,
                 submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                started_at_seconds: follow_up_started_at_seconds,
             },
             client_command_id: "enterprise-follow-up-after-compaction".to_string(),
-            input: vec![RuntimeInput::Text {
-                text: "continue after compaction".to_string(),
-            }],
+            input: vec![RuntimeInput::text("continue after compaction".to_string())],
             actor: RuntimeActor::User {
                 subject: "enterprise-user".to_string(),
             },
@@ -1861,12 +1863,11 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                 launch_source:
                     agentdash_application_agentrun::agent_run::LaunchPresentationSource::HttpPrompt,
                 submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                started_at_seconds: recovery_started_at_seconds,
             },
             client_command_id: "enterprise-follow-up-after-binding-recovery".to_string(),
-            input: vec![RuntimeInput::Text {
-                text: "continue after binding recovery".to_string(),
-            }],
+            input: vec![RuntimeInput::text(
+                "continue after binding recovery".to_string(),
+            )],
             actor: RuntimeActor::User {
                 subject: "enterprise-user".to_string(),
             },
@@ -2043,21 +2044,17 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
             agentdash_application_agentrun::agent_run::SendAgentRunMessage {
                 target: target.clone(),
                 presentation_thread_id: presentation_thread_id.clone(),
-                presentation_input:
-                    agentdash_application_agentrun::agent_run::AgentRunPresentationInput::UserSubmission {
-                        turn_id: agentdash_agent_runtime_contract::PresentationTurnId::new("enterprise-disconnect-turn").expect("disconnect presentation turn id"),
-                        item_id: agentdash_agent_runtime_contract::PresentationItemId::new("enterprise-disconnect-turn:user-input:0").expect("disconnect presentation item id"),
+                presentation:
+                    agentdash_application_agentrun::agent_run::AgentRunPresentationDraft {
                         content: agentdash_agent_protocol::text_user_input_blocks(
                             "block until RuntimeWire disconnect",
                         ),
                         source: agentdash_agent_protocol::UserInputSource::core_composer(),
+                        launch_source: agentdash_application_agentrun::agent_run::LaunchPresentationSource::HttpPrompt,
                         submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                        started_at_seconds: disconnect_started_at_seconds,
                     },
                 client_command_id: "enterprise-disconnect-active-turn".to_string(),
-                input: vec![RuntimeInput::Text {
-                    text: "block until RuntimeWire disconnect".to_string(),
-                }],
+                input: vec![RuntimeInput::text("block until RuntimeWire disconnect".to_string())],
                 actor: RuntimeActor::User {
                     subject: "enterprise-user".to_string(),
                 },
@@ -2247,21 +2244,17 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
             agentdash_application_agentrun::agent_run::SendAgentRunMessage {
                 target,
                 presentation_thread_id,
-                presentation_input:
-                    agentdash_application_agentrun::agent_run::AgentRunPresentationInput::UserSubmission {
-                        turn_id: agentdash_agent_runtime_contract::PresentationTurnId::new("enterprise-disconnect-turn").expect("disconnect presentation turn id"),
-                        item_id: agentdash_agent_runtime_contract::PresentationItemId::new("enterprise-disconnect-turn:user-input:0").expect("disconnect presentation item id"),
+                presentation:
+                    agentdash_application_agentrun::agent_run::AgentRunPresentationDraft {
                         content: agentdash_agent_protocol::text_user_input_blocks(
                             "block until RuntimeWire disconnect",
                         ),
                         source: agentdash_agent_protocol::UserInputSource::core_composer(),
+                        launch_source: agentdash_application_agentrun::agent_run::LaunchPresentationSource::HttpPrompt,
                         submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                        started_at_seconds: disconnect_started_at_seconds,
                     },
                 client_command_id: "enterprise-disconnect-active-turn".to_string(),
-                input: vec![RuntimeInput::Text {
-                    text: "block until RuntimeWire disconnect".to_string(),
-                }],
+                input: vec![RuntimeInput::text("block until RuntimeWire disconnect".to_string())],
                 actor: RuntimeActor::User {
                     subject: "enterprise-user".to_string(),
                 },

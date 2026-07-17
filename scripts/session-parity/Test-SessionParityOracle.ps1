@@ -47,7 +47,10 @@ function Get-NormalizedFileSha256 {
 }
 
 $manifest = Get-Content -Raw -LiteralPath $ManifestPath | ConvertFrom-Json
-$referencePath = [System.IO.Path]::GetFullPath([string]$manifest.reference_path)
+$workspaceRoot = Invoke-Git -Repository $PSScriptRoot -Arguments @('rev-parse', '--show-toplevel')
+$referencePath = [System.IO.Path]::GetFullPath(
+    (Join-Path $workspaceRoot ([string]$manifest.reference_path))
+)
 if (-not (Test-Path -LiteralPath $referencePath -PathType Container)) {
     throw "Main oracle path does not exist: $referencePath"
 }
@@ -62,7 +65,6 @@ if ($referenceStatus) {
     throw "Main oracle is not read-only clean:`n$referenceStatus"
 }
 
-$workspaceRoot = Invoke-Git -Repository $PSScriptRoot -Arguments @('rev-parse', '--show-toplevel')
 foreach ($source in $manifest.source_files) {
     $sourcePath = Join-Path $workspaceRoot ([string]$source.path)
     if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {

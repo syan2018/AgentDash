@@ -1,11 +1,11 @@
 {
-  "reference_path": "D:\\Projects\\AgentDash-main-reference",
+  "reference_path": "../AgentDash-main-reference",
   "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
   "task_start_commit": "c1961d521e6feaae000314368abc5f4097722dbd",
   "harness_files": [
     {
       "path": "crates/agentdash-agent-runtime-test-support/src/session_parity.rs",
-      "sha256": "07e01921cfcbdf62125eb4fd033998e72cfcfeb989403dd5ef17f761f8e6dc64"
+      "sha256": "180b008ba2efa2eb9888d31d524513b9de4c6fadfac6691220b3ca745381d026"
     },
     {
       "path": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/user-submit.json",
@@ -29,7 +29,7 @@
     },
     {
       "path": "scripts/session-parity/Test-SessionParityOracle.ps1",
-      "sha256": "9dc6e018334c1ddb2780bf5385747d90d451e137aecb88b6f0b8875505354cc7"
+      "sha256": "1a4df9c447b9ca8487f4954a7900cdb5513a8529424b9a27b838efed43169ac2"
     },
     {
       "path": "scripts/session-parity/Test-PinnedMainJournalReplay.ps1",
@@ -61,7 +61,7 @@
     },
     {
       "path": "scripts/session-parity/pinned-journal-capture/src/main.rs",
-      "sha256": "e19ea2f02a54996c3c54c380b4c6fe8d774814ac5c4f090f854d495223b07381"
+      "sha256": "24637bc0566b5fa83f24bd6b1ca2e70bc27ab81bcf9064c69bbca0f42465a270"
     },
     {
       "path": "scripts/session-parity/pinned-lifecycle-vfs-capture/.cargo/config.toml",
@@ -91,11 +91,11 @@
     },
     {
       "path": "crates/agentdash-agent-protocol/src/backbone/platform.rs",
-      "sha256": "28271383cd127633579ac26e75062131550a1328f28961e5c2e43a18dfa119ba"
+      "sha256": "f9df1ca57a42977d7d220c06b0e915778809e657c02e94075b6c2fef9d0dba5e"
     },
     {
       "path": "crates/agentdash-agent-runtime-contract/src/event.rs",
-      "sha256": "b71a186530b6a052f5e9b6f3618c655faeb00f6e7baa7c93015a87b876965d78"
+      "sha256": "9b0ca40bdb3f6904a43a6f7291c1018a75e05e17cc26bbeb2fbce3b9a7cc1c9c"
     },
     {
       "path": "crates/agentdash-application-agentrun/src/agent_run/runtime_session_boundary.rs",
@@ -103,7 +103,7 @@
     },
     {
       "path": "crates/agentdash-application-agentrun/src/agent_run/journal.rs",
-      "sha256": "e4358d28b76a5a7d48a84b8680ef76ceb0d2e505d1b8313734b2e837670d4281"
+      "sha256": "2f10d67c32fc3e8c9fb9210ae072b6aee1cb27138a0ddb5713ffc9ebeb271d87"
     },
     {
       "path": "packages/app-web/src/features/session/model/types.ts",
@@ -111,11 +111,11 @@
     },
     {
       "path": "crates/agentdash-integration-codex/src/driver.rs",
-      "sha256": "ffb983bd82c434d702a1256547dd907932cb6310bae8d10d9c7e49fb4cb785c0"
+      "sha256": "3b3bb67ec8b8c67504f59708615197bf8327b1525ad53e96e26d812315d3154f"
     },
     {
       "path": "crates/agentdash-infrastructure/src/persistence/postgres/runtime_repository.rs",
-      "sha256": "bf40fb1b07f30b1504980a571451dbf3b88cca210e42a00a1c2b51aa002cf306"
+      "sha256": "bc098bde4a36431dec0cfd789475b413f0ae25fdcb5ff626cfb008db6b338356"
     },
     {
       "path": "crates/agentdash-infrastructure/migrations/0074_reset_runtime_presentation_contract.sql",

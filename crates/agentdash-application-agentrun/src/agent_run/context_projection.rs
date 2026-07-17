@@ -1188,7 +1188,7 @@ mod tests {
         };
         let actual = serde_json::json!({
             "oracle": {
-                "repository": "D:/Projects/AgentDash-main-reference",
+                "repository": "AgentDash-main-reference",
                 "commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
                 "sources": [
                     "crates/agentdash-application-runtime-session/src/session/transcript_restore.rs",

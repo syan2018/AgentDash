@@ -1,6 +1,6 @@
 {
   "provenance": {
-    "repository": "D:/Projects/AgentDash-main-reference",
+    "repository": "AgentDash-main-reference",
     "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
     "builder": "crates/agentdash-application-runtime-session/src/session/pending_action_context_frame.rs",
     "messages": "crates/agentdash-application-runtime-session/src/session/hook_messages.rs",

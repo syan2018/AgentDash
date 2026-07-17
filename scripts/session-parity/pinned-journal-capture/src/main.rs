@@ -24,7 +24,10 @@ mod agent_run {
     }
 
     pub mod journal {
-        include!("D:/Projects/AgentDash-main-reference/crates/agentdash-application-agentrun/src/agent_run/journal.rs");
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../AgentDash-main-reference/crates/agentdash-application-agentrun/src/agent_run/journal.rs"
+        ));
 
         struct FixtureLineage;
 

@@ -1,6 +1,6 @@
 {
   "provenance": {
-    "repository": "D:/Projects/AgentDash-main-reference",
+    "repository": "AgentDash-main-reference",
     "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
     "source": "crates/agentdash-application-runtime-session/src/session/dimension/tool_schema.rs",
     "functions": ["format_parameter_summary", "collect_schema_fields", "schema_description", "schema_type_summary", "enum_values_summary"]

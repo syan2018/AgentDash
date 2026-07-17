@@ -1,6 +1,7 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, RuntimeVfsOperation,
@@ -28,34 +29,42 @@ const SHELL_EXEC_RESULT_OUTPUT_MAX_BYTES: usize = 1024 * 1024;
 // shell_exec
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellTerminalOwner {
+    pub run_id: uuid::Uuid,
+    pub agent_id: uuid::Uuid,
+    pub runtime_thread_id: RuntimeThreadId,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShellTerminalRegistration {
-    pub session_id: String,
+    pub owner: ShellTerminalOwner,
     pub terminal_id: String,
     pub mount_id: String,
     pub backend_id: String,
     pub cwd: String,
     pub capability: String,
-    /// AgentRun scope identity — provided when the tool executes within an AgentRun context.
-    pub run_id: Option<String>,
-    /// AgentRun scope identity — provided when the tool executes within an AgentRun context.
-    pub agent_id: Option<String>,
+}
+
+pub struct ShellTerminalOutputSnapshot<'a> {
+    pub terminal_id: &'a str,
+    pub state: &'a str,
+    pub exit_code: Option<i32>,
+    pub stdout: &'a str,
+    pub stderr: &'a str,
+    pub pty: &'a str,
+    pub next_seq: Option<u64>,
+    pub truncated: bool,
+    pub omitted_bytes: usize,
+    /// `Some` means the output came from a cursor-based control read and contains incremental
+    /// chunks. `None` means stdout/stderr/pty are a complete snapshot (the start response).
+    pub chunks: Option<&'a [crate::ShellSessionOutputChunk]>,
 }
 
 pub trait ShellTerminalRegistry: Send + Sync {
     fn register_shell_terminal(&self, registration: ShellTerminalRegistration);
     fn resolve_shell_terminal(&self, terminal_id: &str) -> Option<ShellTerminalRegistration>;
-    fn record_shell_terminal_output_snapshot(
-        &self,
-        _terminal_id: &str,
-        _stdout: &str,
-        _stderr: &str,
-        _pty: &str,
-        _next_seq: Option<u64>,
-        _truncated: bool,
-        _omitted_bytes: usize,
-    ) {
-    }
+    fn record_shell_terminal_output_snapshot(&self, snapshot: ShellTerminalOutputSnapshot<'_>);
     fn remove_shell_terminal(&self, terminal_id: &str);
 }
 
@@ -66,6 +75,7 @@ pub struct ShellExecTool {
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
     terminal_registry: Option<Arc<dyn ShellTerminalRegistry>>,
     materialization: Option<Arc<VfsMaterializationService>>,
+    terminal_owner: Option<ShellTerminalOwner>,
     session_id: String,
     turn_id: Option<String>,
     overlay: Option<Arc<InlineContentOverlay>>,
@@ -80,6 +90,7 @@ impl ShellExecTool {
             shell_output_registry: None,
             terminal_registry: None,
             materialization: None,
+            terminal_owner: None,
             session_id: "session".to_string(),
             turn_id: None,
             overlay: None,
@@ -98,6 +109,11 @@ impl ShellExecTool {
 
     pub fn with_terminal_registry(mut self, registry: Arc<dyn ShellTerminalRegistry>) -> Self {
         self.terminal_registry = Some(registry);
+        self
+    }
+
+    pub fn with_terminal_owner(mut self, owner: ShellTerminalOwner) -> Self {
+        self.terminal_owner = Some(owner);
         self
     }
 
@@ -122,6 +138,24 @@ impl ShellExecTool {
         self
     }
 
+    fn record_shell_session_snapshot(&self, terminal_id: &str, snapshot: &ShellSessionSnapshot) {
+        let (stdout, stderr, pty) = shell_session_output_streams(&snapshot.chunks);
+        if let Some(registry) = &self.terminal_registry {
+            registry.record_shell_terminal_output_snapshot(ShellTerminalOutputSnapshot {
+                terminal_id,
+                state: &snapshot.state,
+                exit_code: snapshot.exit_code,
+                stdout: &stdout,
+                stderr: &stderr,
+                pty: &pty,
+                next_seq: Some(snapshot.next_seq),
+                truncated: snapshot.truncated,
+                omitted_bytes: snapshot.omitted_bytes,
+                chunks: Some(&snapshot.chunks),
+            });
+        }
+    }
+
     async fn execute_control_operation(
         &self,
         params: &ShellExecParams,
@@ -138,6 +172,16 @@ impl ShellExecTool {
                     "shell_exec 未找到可续接终端: {terminal_id}"
                 ))
             })?;
+        let owner = self.terminal_owner.as_ref().ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "shell_exec continuation missing canonical AgentRun owner".to_string(),
+            )
+        })?;
+        if &registration.owner != owner {
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "shell_exec terminal {terminal_id} does not belong to the current AgentRun"
+            )));
+        }
 
         match params.operation {
             ShellExecOperation::Read => {
@@ -156,6 +200,7 @@ impl ShellExecTool {
                     )
                     .await
                     .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+                self.record_shell_session_snapshot(&terminal_id, &snapshot);
                 Ok(shell_session_snapshot_result(
                     "read",
                     &terminal_id,
@@ -181,6 +226,7 @@ impl ShellExecTool {
                     )
                     .await
                     .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+                self.record_shell_session_snapshot(&terminal_id, &write.snapshot);
                 Ok(shell_session_snapshot_result(
                     "write",
                     &terminal_id,
@@ -208,6 +254,7 @@ impl ShellExecTool {
                     )
                     .await
                     .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+                self.record_shell_session_snapshot(&terminal_id, &snapshot);
                 Ok(shell_session_snapshot_result(
                     "status",
                     &terminal_id,
@@ -360,6 +407,12 @@ impl AgentTool for ShellExecTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<ShellExecParams>()
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::Command)
+    }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_shell_exec_lifecycle".to_string())
+    }
     async fn execute(
         &self,
         _tool_call_id: &str,
@@ -392,6 +445,23 @@ impl AgentTool for ShellExecTool {
             )
             .execute(&command)
             .await;
+            let aggregated_output = if result.stderr.is_empty() {
+                result.stdout.clone()
+            } else if result.stdout.is_empty() {
+                result.stderr.clone()
+            } else {
+                format!("[stdout]\n{}\n\n[stderr]\n{}", result.stdout, result.stderr)
+            };
+            let mut details = result.details.clone();
+            if let Some(object) = details.as_object_mut() {
+                object.insert("original_command".to_string(), serde_json::json!(command));
+                object.insert("cwd".to_string(), serde_json::json!(result.cwd));
+                object.insert("exit_code".to_string(), serde_json::json!(result.exit_code));
+                object.insert(
+                    "aggregated_output".to_string(),
+                    serde_json::json!(aggregated_output),
+                );
+            }
             return Ok(AgentToolResult {
                 content: vec![ContentPart::text(platform_shell_result_text(
                     &command,
@@ -404,7 +474,7 @@ impl AgentTool for ShellExecTool {
                     &result.stderr,
                 ))],
                 is_error: result.exit_code != 0,
-                details: Some(result.details),
+                details: Some(details),
             });
         }
         let cwd_param = params
@@ -517,23 +587,29 @@ impl AgentTool for ShellExecTool {
             None
         };
 
+        let registry = self.terminal_registry.as_ref().ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "shell_exec start missing terminal continuation registry".to_string(),
+            )
+        })?;
+        let owner = self.terminal_owner.clone().ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "shell_exec start missing canonical AgentRun owner".to_string(),
+            )
+        })?;
         let terminal_id = agentdash_relay::RelayMessage::new_id("term");
-        if let Some(registry) = &self.terminal_registry {
-            registry.register_shell_terminal(ShellTerminalRegistration {
-                session_id: self.session_id.clone(),
-                terminal_id: terminal_id.clone(),
-                mount_id: target.mount_id.clone(),
-                backend_id: exec_mount.backend_id.clone(),
-                cwd: display_cwd.clone(),
-                capability: if params.tty {
-                    "interactive".to_string()
-                } else {
-                    "read_only_output".to_string()
-                },
-                run_id: None,
-                agent_id: None,
-            });
-        }
+        registry.register_shell_terminal(ShellTerminalRegistration {
+            owner,
+            terminal_id: terminal_id.clone(),
+            mount_id: target.mount_id.clone(),
+            backend_id: exec_mount.backend_id.clone(),
+            cwd: display_cwd.clone(),
+            capability: if params.tty {
+                "interactive".to_string()
+            } else {
+                "read_only_output".to_string()
+            },
+        });
 
         let result = match self
             .service
@@ -558,9 +634,7 @@ impl AgentTool for ShellExecTool {
         {
             Ok(result) => result,
             Err(error) => {
-                if let Some(registry) = &self.terminal_registry {
-                    registry.remove_shell_terminal(&terminal_id);
-                }
+                registry.remove_shell_terminal(&terminal_id);
                 return Err(AgentToolError::ExecutionFailed(error.to_string()));
             }
         };
@@ -592,15 +666,18 @@ impl AgentTool for ShellExecTool {
             .omitted_bytes
             .saturating_add(extra_truncation.omitted_bytes);
         if let Some(registry) = &self.terminal_registry {
-            registry.record_shell_terminal_output_snapshot(
-                &terminal_id,
-                &result.stdout,
-                &result.stderr,
-                &result.pty,
-                result.next_seq,
-                result_truncated,
-                result_omitted_bytes,
-            );
+            registry.record_shell_terminal_output_snapshot(ShellTerminalOutputSnapshot {
+                terminal_id: &terminal_id,
+                state: &result.state,
+                exit_code: result.exit_code,
+                stdout: &result.stdout,
+                stderr: &result.stderr,
+                pty: &result.pty,
+                next_seq: result.next_seq,
+                truncated: result_truncated,
+                omitted_bytes: result_omitted_bytes,
+                chunks: None,
+            });
         }
         Ok(AgentToolResult {
             content: vec![ContentPart::text(shell_exec_result_text(
@@ -622,6 +699,8 @@ impl AgentTool for ShellExecTool {
                 &rewritten_command,
                 &rewrite_output.rewrites,
                 &result,
+                &display_cwd,
+                &merged,
                 result_truncated,
                 result_omitted_bytes,
             ),
@@ -742,7 +821,7 @@ fn shell_session_snapshot_result(
         ));
     }
     if !merged.is_empty() {
-        lines.push(merged);
+        lines.push(merged.clone());
     }
     AgentToolResult {
         content: vec![ContentPart::text(lines.join("\n"))],
@@ -753,6 +832,7 @@ fn shell_session_snapshot_result(
             "terminal_id": terminal_id,
             "cwd": cwd,
             "state": snapshot.state.as_str(),
+            "aggregated_output": merged,
             "exit_code": snapshot.exit_code,
             "next_seq": snapshot.next_seq,
             "truncated": truncated,
@@ -781,6 +861,22 @@ fn merge_shell_session_chunks(chunks: &[crate::ShellSessionOutputChunk]) -> Stri
     } else {
         format!("[stdout]\n{stdout}\n\n[stderr]\n{stderr}")
     }
+}
+
+fn shell_session_output_streams(
+    chunks: &[crate::ShellSessionOutputChunk],
+) -> (String, String, String) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut pty = Vec::new();
+    for chunk in chunks {
+        match chunk.stream.as_str() {
+            "stderr" => stderr.push(chunk.data.as_str()),
+            "pty" => pty.push(chunk.data.as_str()),
+            _ => stdout.push(chunk.data.as_str()),
+        }
+    }
+    (stdout.concat(), stderr.concat(), pty.concat())
 }
 
 fn shell_session_terminate_text(
@@ -888,28 +984,26 @@ fn shell_exec_result_details(
     rewritten_command: &str,
     rewrites: &[MaterializationRewrite],
     result: &crate::ExecResult,
+    cwd: &str,
+    aggregated_output: &str,
     truncated: bool,
     omitted_bytes: usize,
 ) -> Option<serde_json::Value> {
-    (!rewrites.is_empty()
-        || result.terminal_id.is_some()
-        || truncated
-        || omitted_bytes > 0)
-        .then(|| {
-        serde_json::json!({
-            "type": "shell_exec",
-            "operation": "start",
-            "original_command": original_command,
-            "executed_command": rewritten_command,
-            "state": result.state.as_str(),
-            "exit_code": result.exit_code,
-            "terminal_id": result.terminal_id.as_deref(),
-            "next_seq": result.next_seq,
-            "truncated": truncated,
-            "omitted_bytes": omitted_bytes,
-            "rewrite": (!rewrites.is_empty()).then(|| vfs_uri_rewrite_details(original_command, rewritten_command, rewrites)),
-        })
-    })
+    Some(serde_json::json!({
+        "type": "shell_exec",
+        "operation": "start",
+        "original_command": original_command,
+        "executed_command": rewritten_command,
+        "state": result.state.as_str(),
+        "exit_code": result.exit_code,
+        "cwd": cwd,
+        "aggregated_output": aggregated_output,
+        "terminal_id": result.terminal_id.as_deref(),
+        "next_seq": result.next_seq,
+        "truncated": truncated,
+        "omitted_bytes": omitted_bytes,
+        "rewrite": (!rewrites.is_empty()).then(|| vfs_uri_rewrite_details(original_command, rewritten_command, rewrites)),
+    }))
 }
 
 fn unresolved_vfs_uri_message(command: &str, vfs: &agentdash_spi::Vfs) -> Option<String> {
@@ -953,8 +1047,186 @@ fn unresolved_reserved_vfs_uris(command: &str) -> Vec<String> {
 #[cfg(test)]
 mod shell_exec_rewrite_tests {
     use super::*;
-    use crate::MountProviderRegistryBuilder;
+    use crate::{
+        ListOptions, ListResult, MountError, MountOperationContext, MountProvider,
+        MountProviderRegistryBuilder, ReadResult, SearchQuery, SearchResult,
+        ShellSessionOutputChunk, ShellSessionWriteResult,
+    };
     use agentdash_spi::{Mount, Vfs};
+    use std::sync::Mutex;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct CapturedTerminalSnapshot {
+        state: String,
+        stdout: String,
+        stderr: String,
+        pty: String,
+        next_seq: Option<u64>,
+    }
+
+    #[derive(Default)]
+    struct RecordingShellTerminalRegistry {
+        registration: Mutex<Option<ShellTerminalRegistration>>,
+        snapshots: Mutex<Vec<CapturedTerminalSnapshot>>,
+    }
+
+    impl ShellTerminalRegistry for RecordingShellTerminalRegistry {
+        fn register_shell_terminal(&self, registration: ShellTerminalRegistration) {
+            *self.registration.lock().expect("registration lock") = Some(registration);
+        }
+
+        fn resolve_shell_terminal(&self, terminal_id: &str) -> Option<ShellTerminalRegistration> {
+            self.registration
+                .lock()
+                .expect("registration lock")
+                .as_ref()
+                .filter(|registration| registration.terminal_id == terminal_id)
+                .cloned()
+        }
+
+        fn record_shell_terminal_output_snapshot(&self, snapshot: ShellTerminalOutputSnapshot<'_>) {
+            self.snapshots
+                .lock()
+                .expect("snapshot lock")
+                .push(CapturedTerminalSnapshot {
+                    state: snapshot.state.to_string(),
+                    stdout: snapshot.stdout.to_string(),
+                    stderr: snapshot.stderr.to_string(),
+                    pty: snapshot.pty.to_string(),
+                    next_seq: snapshot.next_seq,
+                });
+        }
+
+        fn remove_shell_terminal(&self, terminal_id: &str) {
+            let mut registration = self.registration.lock().expect("registration lock");
+            if registration
+                .as_ref()
+                .is_some_and(|registration| registration.terminal_id == terminal_id)
+            {
+                *registration = None;
+            }
+        }
+    }
+
+    struct ShellLifecycleProvider;
+
+    #[async_trait::async_trait]
+    impl MountProvider for ShellLifecycleProvider {
+        fn provider_id(&self) -> &str {
+            "shell_lifecycle"
+        }
+
+        fn supported_capabilities(&self) -> Vec<&str> {
+            vec!["read", "list", "exec"]
+        }
+
+        async fn read_text(
+            &self,
+            _mount: &Mount,
+            _path: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            Err(MountError::NotSupported(
+                "shell lifecycle fixture".to_string(),
+            ))
+        }
+
+        async fn write_text(
+            &self,
+            _mount: &Mount,
+            _path: &str,
+            _content: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            Err(MountError::NotSupported(
+                "shell lifecycle fixture".to_string(),
+            ))
+        }
+
+        async fn list(
+            &self,
+            _mount: &Mount,
+            _options: &ListOptions,
+            _ctx: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            Ok(ListResult {
+                entries: Vec::new(),
+            })
+        }
+
+        async fn search_text(
+            &self,
+            _mount: &Mount,
+            _query: &SearchQuery,
+            _ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            Ok(SearchResult::default())
+        }
+
+        async fn exec(
+            &self,
+            _mount: &Mount,
+            request: &ExecRequest,
+            _ctx: &MountOperationContext,
+        ) -> Result<crate::ExecResult, MountError> {
+            Ok(crate::ExecResult {
+                state: "running".to_string(),
+                exit_code: None,
+                stdout: "started\n".to_string(),
+                stderr: String::new(),
+                pty: String::new(),
+                session_id: request.terminal_id.clone(),
+                terminal_id: request.terminal_id.clone(),
+                next_seq: Some(1),
+                truncated: false,
+                omitted_bytes: 0,
+            })
+        }
+
+        async fn shell_session_read(
+            &self,
+            _mount: &Mount,
+            _request: &ShellSessionReadRequest,
+            _ctx: &MountOperationContext,
+        ) -> Result<ShellSessionSnapshot, MountError> {
+            Ok(ShellSessionSnapshot {
+                state: "completed".to_string(),
+                exit_code: Some(0),
+                chunks: vec![ShellSessionOutputChunk {
+                    seq: 2,
+                    stream: "stdout".to_string(),
+                    data: "retained completion\n".to_string(),
+                }],
+                next_seq: 3,
+                truncated: false,
+                omitted_bytes: 0,
+            })
+        }
+
+        async fn shell_session_write(
+            &self,
+            _mount: &Mount,
+            _request: &ShellSessionWriteRequest,
+            _ctx: &MountOperationContext,
+        ) -> Result<ShellSessionWriteResult, MountError> {
+            Ok(ShellSessionWriteResult {
+                accepted: true,
+                stdin_closed: false,
+                snapshot: ShellSessionSnapshot {
+                    state: "running".to_string(),
+                    exit_code: None,
+                    chunks: vec![ShellSessionOutputChunk {
+                        seq: 1,
+                        stream: "pty".to_string(),
+                        data: "input accepted\n".to_string(),
+                    }],
+                    next_seq: 2,
+                    truncated: false,
+                    omitted_bytes: 0,
+                },
+            })
+        }
+    }
 
     fn test_shell_tool() -> ShellExecTool {
         let vfs = Vfs {
@@ -982,6 +1254,13 @@ mod shell_exec_rewrite_tests {
             ))),
             SharedRuntimeVfs::new(vfs),
         )
+        .with_terminal_owner(ShellTerminalOwner {
+            run_id: uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").expect("run id"),
+            agent_id: uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222")
+                .expect("agent id"),
+            runtime_thread_id: "runtime-thread-shell".parse().expect("runtime thread"),
+        })
+        .with_terminal_registry(Arc::new(RecordingShellTerminalRegistry::default()))
     }
 
     fn rewrite() -> MaterializationRewrite {
@@ -1110,6 +1389,11 @@ mod shell_exec_rewrite_tests {
         assert!(!result.is_error);
         let text = result.content[0].extract_text().expect("text content");
         assert!(text.contains("cwd: platform://"));
+        let details = result.details.expect("platform shell protocol details");
+        assert_eq!(details["original_command"], "pwd");
+        assert_eq!(details["cwd"], "platform://");
+        assert_eq!(details["exit_code"], 0);
+        assert!(details["aggregated_output"].as_str().is_some());
     }
 
     #[tokio::test]
@@ -1142,12 +1426,151 @@ mod shell_exec_rewrite_tests {
         assert!(error.to_string().contains("mount_id://relative/path"));
     }
 
-    #[test]
-    fn shell_exec_result_details_are_absent_without_rewrite() {
-        assert!(
-            shell_exec_result_details("echo ok", "echo ok", &[], &exec_result_fixture(), false, 0)
-                .is_none()
+    #[tokio::test]
+    async fn shell_exec_running_handle_continues_and_projects_retained_output() {
+        let owner = ShellTerminalOwner {
+            run_id: uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").expect("run id"),
+            agent_id: uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222")
+                .expect("agent id"),
+            runtime_thread_id: "runtime-thread-shell".parse().expect("runtime thread"),
+        };
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_string(),
+                provider: "shell_lifecycle".to_string(),
+                backend_id: "backend-local".to_string(),
+                root_ref: "D:\\workspace".to_string(),
+                capabilities: vec![agentdash_spi::MountCapability::Exec],
+                default_write: true,
+                display_name: "main".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let service = Arc::new(VfsService::new(Arc::new(
+            MountProviderRegistryBuilder::new()
+                .register(Arc::new(ShellLifecycleProvider))
+                .build(),
+        )));
+        let registry = Arc::new(RecordingShellTerminalRegistry::default());
+        let shared_vfs = SharedRuntimeVfs::new(vfs);
+        let tool = ShellExecTool::new(service.clone(), shared_vfs.clone())
+            .with_terminal_owner(owner.clone())
+            .with_terminal_registry(registry.clone());
+
+        let started = tool
+            .execute(
+                "call-start",
+                serde_json::json!({
+                    "operation": "start",
+                    "cwd": "main://",
+                    "command": "long-running"
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("start shell");
+        let terminal_id = started
+            .details
+            .as_ref()
+            .and_then(|details| details["terminal_id"].as_str())
+            .expect("terminal id")
+            .to_string();
+        let registration = registry
+            .registration
+            .lock()
+            .expect("registration lock")
+            .clone()
+            .expect("registration");
+        assert_eq!(registration.owner, owner);
+        assert_eq!(registration.terminal_id, terminal_id);
+
+        tool.execute(
+            "call-write",
+            serde_json::json!({
+                "operation": "write",
+                "terminal_id": terminal_id,
+                "data": "continue\n"
+            }),
+            CancellationToken::new(),
+            None,
+        )
+        .await
+        .expect("write continued shell");
+        let completed = tool
+            .execute(
+                "call-read",
+                serde_json::json!({
+                    "operation": "read",
+                    "terminal_id": terminal_id,
+                    "after_seq": 1
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("read retained completed output");
+
+        assert_eq!(completed.details.as_ref().unwrap()["state"], "completed");
+        assert_eq!(
+            completed.details.as_ref().unwrap()["aggregated_output"],
+            "retained completion\n"
         );
+        let snapshots = registry.snapshots.lock().expect("snapshot lock");
+        assert_eq!(snapshots.len(), 3, "start/write/read all project snapshots");
+        assert_eq!(snapshots[0].state, "running");
+        assert_eq!(snapshots[1].pty, "input accepted\n");
+        assert_eq!(snapshots[2].stdout, "retained completion\n");
+        assert_eq!(snapshots[2].next_seq, Some(3));
+        drop(snapshots);
+
+        let other_owner_tool = ShellExecTool::new(service, shared_vfs)
+            .with_terminal_owner(ShellTerminalOwner {
+                run_id: uuid::Uuid::parse_str("33333333-3333-3333-3333-333333333333")
+                    .expect("other run id"),
+                agent_id: owner.agent_id,
+                runtime_thread_id: owner.runtime_thread_id,
+            })
+            .with_terminal_registry(registry);
+        let error = other_owner_tool
+            .execute(
+                "call-cross-owner-read",
+                serde_json::json!({
+                    "operation": "read",
+                    "terminal_id": terminal_id,
+                    "after_seq": 1
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect_err("cross-owner continuation must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("does not belong to the current AgentRun")
+        );
+    }
+
+    #[test]
+    fn shell_exec_result_details_preserve_plain_terminal_fields() {
+        let plain = shell_exec_result_details(
+            "echo ok",
+            "echo ok",
+            &[],
+            &exec_result_fixture(),
+            "main://",
+            "ok",
+            false,
+            0,
+        )
+        .expect("plain command details");
+        assert_eq!(plain["cwd"], "main://");
+        assert_eq!(plain["aggregated_output"], "ok");
 
         let rewrites = vec![rewrite()];
         let details = shell_exec_result_details(
@@ -1155,6 +1578,8 @@ mod shell_exec_rewrite_tests {
             "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao",
             &rewrites,
             &exec_result_fixture(),
+            "main://",
+            "ok",
             false,
             0,
         )
@@ -1174,6 +1599,8 @@ mod shell_exec_rewrite_tests {
             "echo lots",
             &[],
             &exec_result_fixture(),
+            "main://",
+            "lots",
             true,
             1234,
         )

@@ -6,8 +6,7 @@ use async_trait::async_trait;
 
 use super::service::{WaitActivityDeps, WaitActivityService};
 use super::tool::WaitTool;
-use super::types::WaitToolContext;
-use crate::runtime_tools::provider::runtime_session_id_from_context;
+use super::types::{WaitActivityOwnerScope, WaitToolContext};
 
 #[derive(Clone)]
 pub struct WaitRuntimeToolProvider {
@@ -32,17 +31,26 @@ impl RuntimeToolProvider for WaitRuntimeToolProvider {
         &self,
         context: &ExecutionContext,
     ) -> Result<Vec<DynAgentTool>, ConnectorError> {
-        let delivery_runtime_session_id = context
+        let owner = context
             .turn
-            .hook_runtime
+            .platform_tool_execution
             .as_ref()
-            .map(|runtime| runtime.session_id().to_string())
-            .or_else(|| Some(runtime_session_id_from_context(context)));
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "缺少 Platform Tool typed owner context，无法构建 wait scope".to_string(),
+                )
+            })?;
+        let runtime_thread_id = Some(owner.runtime_thread_id.clone());
         Ok(vec![Arc::new(WaitTool::new(
             self.service.clone(),
             WaitToolContext {
-                delivery_runtime_session_id,
+                runtime_thread_id,
                 turn_id: context.session.turn_id.clone(),
+                owner: Some(WaitActivityOwnerScope {
+                    run_id: owner.run_id,
+                    agent_id: owner.agent_id,
+                    frame_id: owner.current_surface_frame_id,
+                }),
             },
         ))])
     }

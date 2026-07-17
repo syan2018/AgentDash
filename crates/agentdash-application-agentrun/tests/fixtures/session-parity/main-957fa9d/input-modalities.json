@@ -1,0 +1,74 @@
+{
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "scenario": "input_image_local_image_skill_mention",
+    "capture_method": "fixed_main_contract_golden",
+    "source_producers": [
+      {
+        "path": "crates/agentdash-application-runtime-session/src/session/hub_support.rs",
+        "sha256": "0e451535a2d02f9185db5e75e9b7cca0dbf87e3a58ba18c9ba0358079adacd76"
+      },
+      {
+        "path": "crates/agentdash-application-runtime-session/src/session/launch/commit.rs",
+        "sha256": "dfc4e70d3d33ca7c79202b6181608776febb996eff5ada7375f3d9678f239f95"
+      }
+    ],
+    "clock": "2026-07-10T12:00:00Z",
+    "session_id": "session-modalities-0001",
+    "turn_id": "turn-modalities-0001"
+  },
+  "protected_events": [
+    {
+      "type": "user_input_submitted",
+      "payload": {
+        "threadId": "session-modalities-0001",
+        "turnId": "turn-modalities-0001",
+        "itemId": "turn-modalities-0001:user-input:0",
+        "submissionKind": "prompt",
+        "source": {
+          "namespace": "core",
+          "kind": "composer",
+          "actor": "user",
+          "displayLabelKey": "mailbox.source.core.composer"
+        },
+        "content": [
+          {
+            "type": "image",
+            "detail": null,
+            "url": "data:image/png;base64,AQID"
+          },
+          {
+            "type": "localImage",
+            "path": "D:/workspace/reference.png"
+          },
+          {
+            "type": "skill",
+            "name": "review",
+            "path": "D:/workspace/.agents/skills/review/SKILL.md"
+          },
+          {
+            "type": "mention",
+            "name": "requirements",
+            "path": "D:/workspace/docs/requirements.md"
+          }
+        ]
+      }
+    },
+    {
+      "type": "turn_started",
+      "payload": {
+        "threadId": "session-modalities-0001",
+        "turn": {
+          "id": "turn-modalities-0001",
+          "items": [],
+          "itemsView": "notLoaded",
+          "status": "inProgress",
+          "error": null,
+          "startedAt": 1783684800,
+          "completedAt": null,
+          "durationMs": null
+        }
+      }
+    }
+  ]
+}

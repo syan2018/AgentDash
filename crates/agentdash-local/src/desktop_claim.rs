@@ -13,6 +13,8 @@ use crate::runtime::LocalRuntimeConfig;
 const DESKTOP_ENSURE_PATH: &str = "/api/local-runtime/ensure";
 const DEFAULT_CAPABILITY_SLOT: &str = "default";
 const DESKTOP_REGISTRATION_SOURCE: &str = "desktop_access_token";
+const DESKTOP_ENSURE_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const DESKTOP_ENSURE_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -252,32 +254,49 @@ async fn post_desktop_local_runtime_claim(
     access_token: &str,
     payload: &DesktopEnsureLocalRuntimePayload,
 ) -> Result<DesktopEnsureLocalRuntimeResponse, DesktopClaimError> {
+    post_desktop_local_runtime_claim_with_timeouts(
+        server_url,
+        access_token,
+        payload,
+        DESKTOP_ENSURE_CONNECT_TIMEOUT,
+        DESKTOP_ENSURE_REQUEST_TIMEOUT,
+    )
+    .await
+}
+
+async fn post_desktop_local_runtime_claim_with_timeouts(
+    server_url: &str,
+    access_token: &str,
+    payload: &DesktopEnsureLocalRuntimePayload,
+    connect_timeout: Duration,
+    request_timeout: Duration,
+) -> Result<DesktopEnsureLocalRuntimeResponse, DesktopClaimError> {
     let endpoint = format!("{server_url}{DESKTOP_ENSURE_PATH}");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
+        .build()
+        .map_err(|error| DesktopClaimError::Fatal {
+            code: "desktop_claim_client_invalid".to_string(),
+            message: redact_secret(&error.to_string()),
+        })?;
     let mut request = client.post(&endpoint);
     let access_token = access_token.trim();
     if !access_token.is_empty() {
         request = request.bearer_auth(access_token);
     }
 
-    let response =
-        request
-            .json(payload)
-            .send()
-            .await
-            .map_err(|error| DesktopClaimError::Retryable {
-                code: "desktop_claim_unavailable".to_string(),
-                message: redact_secret(&error.to_string()),
-            })?;
+    let response = request
+        .json(payload)
+        .send()
+        .await
+        .map_err(desktop_claim_transport_error)?;
 
     let status = response.status();
     let body = response
         .text()
         .await
-        .map_err(|error| DesktopClaimError::Retryable {
-            code: "desktop_claim_response_read_failed".to_string(),
-            message: redact_secret(&error.to_string()),
-        })?;
+        .map_err(desktop_claim_response_read_error)?;
 
     if !status.is_success() {
         return Err(desktop_claim_error_from_http(status, &body));
@@ -289,6 +308,30 @@ async fn post_desktop_local_runtime_claim(
             message: redact_secret(&error.to_string()),
         }
     })
+}
+
+fn desktop_claim_transport_error(error: reqwest::Error) -> DesktopClaimError {
+    DesktopClaimError::Retryable {
+        code: if error.is_timeout() {
+            "desktop_claim_timeout"
+        } else {
+            "desktop_claim_unavailable"
+        }
+        .to_string(),
+        message: redact_secret(&error.to_string()),
+    }
+}
+
+fn desktop_claim_response_read_error(error: reqwest::Error) -> DesktopClaimError {
+    DesktopClaimError::Retryable {
+        code: if error.is_timeout() {
+            "desktop_claim_timeout"
+        } else {
+            "desktop_claim_response_read_failed"
+        }
+        .to_string(),
+        message: redact_secret(&error.to_string()),
+    }
 }
 
 pub fn desktop_claim_error_from_http(status: StatusCode, body: &str) -> DesktopClaimError {
@@ -355,6 +398,9 @@ fn local_hostname() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     use super::*;
 
@@ -482,5 +528,69 @@ mod tests {
 
         assert!(error.is_retryable());
         assert_eq!(error.code(), "desktop_claim_server_error");
+    }
+
+    #[tokio::test]
+    async fn hanging_ensure_request_times_out_as_retryable_claim_error() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should have an address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("request should connect");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        });
+
+        let error = post_desktop_local_runtime_claim_with_timeouts(
+            &format!("http://{address}"),
+            "user-access-token",
+            &desktop_ensure_payload_from_request(&start_request()),
+            Duration::from_millis(100),
+            Duration::from_millis(100),
+        )
+        .await
+        .expect_err("hanging response should reach the request deadline");
+
+        assert!(error.is_retryable());
+        assert_eq!(error.code(), "desktop_claim_timeout");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn hanging_ensure_response_body_uses_the_same_typed_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should have an address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("request should connect");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer).await;
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{")
+                .await
+                .expect("response headers should write");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        });
+
+        let error = post_desktop_local_runtime_claim_with_timeouts(
+            &format!("http://{address}"),
+            "user-access-token",
+            &desktop_ensure_payload_from_request(&start_request()),
+            Duration::from_millis(100),
+            Duration::from_millis(100),
+        )
+        .await
+        .expect_err("hanging response body should reach the request deadline");
+
+        assert!(error.is_retryable());
+        assert_eq!(error.code(), "desktop_claim_timeout");
+        server.abort();
     }
 }

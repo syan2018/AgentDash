@@ -85,14 +85,16 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
                 )
             })?;
             tools.push(Arc::new(CompanionRequestTool::new(
-                self.repos.project_agent_repo.clone(),
-                self.repos.clone(),
-                self.session_services_handle.clone(),
-                companion_tool_context.clone(),
-                flow.companion.agents.clone(),
-                wait_service,
-                self.model_preflight.clone(),
-                self.workflow_script_preflight.clone(),
+                super::tools::CompanionRequestToolDeps {
+                    project_agent_repo: self.repos.project_agent_repo.clone(),
+                    repos: self.repos.clone(),
+                    session_services_handle: self.session_services_handle.clone(),
+                    tool_context: companion_tool_context.clone(),
+                    companion_agents: flow.companion.agents.clone(),
+                    wait_service,
+                    model_preflight: self.model_preflight.clone(),
+                    workflow_script_preflight: self.workflow_script_preflight.clone(),
+                },
             )));
         }
         if flow.is_capability_tool_enabled(

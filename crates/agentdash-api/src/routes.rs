@@ -1,12 +1,11 @@
-mod agent_run_mailbox_contracts;
+mod agent_run_workspace;
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
 pub mod canvases;
 pub mod companion_gates;
 pub mod diagnostics;
-pub mod discovered_options;
-pub mod discovery;
+pub mod execution_profiles;
 pub mod extension_package_artifacts;
 pub mod extension_runtime;
 pub mod file_picker;
@@ -19,7 +18,6 @@ pub mod llm_providers;
 pub mod marketplace;
 pub mod mcp_presets;
 pub mod me;
-pub mod permission_grants;
 pub mod project_agents;
 pub mod project_extensions;
 pub mod project_vfs_mounts;
@@ -78,7 +76,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(identity_directory::router())
         .merge(projects::router())
         .merge(project_vfs_mounts::router())
-        .merge(permission_grants::router())
         .merge(llm_providers::router())
         .merge(project_agents::router())
         .merge(routines::router())
@@ -108,8 +105,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(vfs_surfaces::router())
         .merge(terminals::router())
         .merge(file_picker::router())
-        .merge(discovery::router())
-        .merge(discovered_options::router())
+        .merge(execution_profiles::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::authenticate_request,

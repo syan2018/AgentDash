@@ -530,7 +530,6 @@ fn agent_template_preset_config(
         model_id: config.model_id,
         agent_id: config.agent_id,
         thinking_level: config.thinking_level,
-        permission_policy: config.permission_policy,
         system_prompt: config.system_prompt,
         display_name,
         description,
@@ -1010,6 +1009,12 @@ async fn upsert_skill_asset(
         .get_by_project_and_key(skill.project_id, &skill.key)
         .await?
     {
+        if existing.is_builtin_seed() {
+            return Err(DomainError::InvalidConfig(format!(
+                "Project SkillAsset `{}` 由平台 builtin catalog 管理",
+                skill.key
+            )));
+        }
         if !overwrite {
             return Err(DomainError::InvalidConfig(format!(
                 "Project SkillAsset key 已存在: {}",

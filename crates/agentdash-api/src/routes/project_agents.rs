@@ -1,30 +1,28 @@
 #![allow(clippy::items_after_test_module)]
 
-use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
-use agentdash_application::runtime_session_agent_run_bridge::{
-    agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
-    agent_run_session_launch,
-};
 use agentdash_application_agentrun::agent_run::{
-    AgentRunAdmissionService, ConversationEffectiveExecutorConfigModel,
-    ConversationModelConfigResolver, ConversationModelConfigSourceModel,
-    ProjectAgentRunStartCommand, ProjectAgentRunStartRepos, ProjectAgentRunStartService,
+    AgentRunAcceptedProductResultKind, AgentRunMessageProductResultProjector,
+    ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
+    ConversationModelConfigSourceModel, FnAgentRunMessageProductResultProjector,
     ResolvedProjectAgentContext, build_project_agent_context,
 };
+use agentdash_application_ports::launch::{BackendSelectionInput, BackendSelectionInputMode};
 use agentdash_domain::{
     agent::ProjectAgent, common::AgentPresetConfig, inline_file::InlineFileOwnerKind,
-    project::Project, workflow::SubjectRef,
+    project::Project,
 };
-use agentdash_spi::AgentConfig;
 use axum::{
     Json,
     extract::{Path, State},
 };
 use uuid::Uuid;
 
-use agentdash_contracts::agent_run_mailbox::AgentRunAcceptedRefs;
+use agentdash_contracts::agent_run_mailbox::{
+    AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandOutcome,
+    AgentRunMessageCommandResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
+};
 use agentdash_contracts::common_response::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent as ProjectAgentResponse,
@@ -35,19 +33,34 @@ use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunRefDto, ConversationEffectiveExecutorConfigView,
     ConversationModelConfigSource, LifecycleRunRefDto, SubjectRefDto,
 };
+use agentdash_domain::workflow::SubjectRef;
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
-    routes::agent_run_mailbox_contracts::{
-        agent_run_message_command_response, backend_selection_input, command_receipt_view,
-    },
     rpc::ApiError,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_run_contract_accepts_executor_config() {
+        let result = serde_json::from_value::<CreateProjectAgentRunRequest>(serde_json::json!({
+            "input": [],
+            "client_command_id": "cmd-1",
+            "executor_config": {
+                "executor": "CODEX"
+            }
+        }));
+
+        let request = result.expect("executor_config remains accepted");
+        assert_eq!(
+            request.executor_config,
+            Some(serde_json::json!({ "executor": "CODEX" }))
+        );
+    }
 
     #[test]
     fn project_agent_summary_response_serializes_as_snake_case() {
@@ -61,7 +74,6 @@ mod tests {
                 model_id: Some("test-model".to_string()),
                 agent_id: None,
                 thinking_level: None,
-                permission_policy: Some("AUTO".to_string()),
             },
             effective_executor_config: None,
             preset_name: Some("preset".to_string()),
@@ -116,6 +128,231 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         )
 }
 
+pub async fn create_project_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, project_agent_id)): Path<(String, String)>,
+    Json(req): Json<CreateProjectAgentRunRequest>,
+) -> Result<Json<ProjectAgentRunStartResult>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let project_agent_id = parse_project_agent_id(&project_agent_id)?;
+    let executor_config_override = req
+        .executor_config
+        .clone()
+        .map(serde_json::from_value::<agentdash_spi::AgentConfig>)
+        .transpose()
+        .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
+    let backend_selection = req
+        .backend_selection
+        .as_ref()
+        .map(backend_selection_input)
+        .transpose()?;
+    let subject_ref = req
+        .subject_ref
+        .map(|subject| {
+            let id = Uuid::parse_str(&subject.id)
+                .map_err(|_| ApiError::BadRequest("subject_ref.id 无效".to_string()))?;
+            Ok::<SubjectRef, ApiError>(SubjectRef::new(subject.kind, id))
+        })
+        .transpose()?;
+    let runtime_mailbox = super::lifecycle_agents::runtime_agent_run_mailbox(state.as_ref());
+    let profile_state = state.clone();
+    let execution_profiles: Arc<
+        dyn agentdash_application_agentrun::agent_run::ProjectAgentExecutionProfilePolicy,
+    > = Arc::new(move |profile_id: &str| {
+        crate::routes::execution_profiles::is_known_execution_profile(
+            profile_state.as_ref(),
+            profile_id,
+        )
+    });
+    let projection_project = project.clone();
+    let projection: Arc<
+        dyn agentdash_application_agentrun::agent_run::ProjectAgentRunStartProductProjectionPort,
+    > = Arc::new(
+        move |context: agentdash_application_agentrun::agent_run::ProjectAgentRunStartProjectionContext| {
+            Ok(project_agent_run_start_result_projector(
+                project_agent_run_start_base_result(&projection_project, context),
+            ))
+        },
+    );
+    let service = agentdash_application_agentrun::agent_run::ProjectAgentRunStartService::new(
+        agentdash_application_agentrun::agent_run::ProjectAgentRunStartDeps {
+            project_agents: state.repos.project_agent_repo.clone(),
+            lifecycle_runs: state.repos.lifecycle_run_repo.clone(),
+            frames: state.repos.agent_frame_repo.clone(),
+            lifecycle_launch: state.repos.project_agent_lifecycle_launch.clone(),
+            receipts: Arc::new(
+                agentdash_application_agentrun::agent_run::AgentRunMessageReservationService::new(
+                    state.repos.agent_run_message_submission_store.clone(),
+                ),
+            ),
+            initial_submission: Arc::new(
+                agentdash_application_agentrun::agent_run::ProjectAgentInitialMessageSubmissionService::new(
+                    state.repos.agent_run_message_submission_store.clone(),
+                    runtime_mailbox,
+                ),
+            ),
+            execution_profiles,
+            projection,
+        },
+    );
+    let submission = service
+        .start_run(
+            agentdash_application_agentrun::agent_run::ProjectAgentRunStartCommand {
+                project_id,
+                project_agent_id,
+                input: req.input,
+                client_command_id: req.client_command_id,
+                executor_config: executor_config_override,
+                backend_selection,
+                subject_ref,
+                identity: Some(current_user),
+            },
+        )
+        .await?;
+    let mut response: ProjectAgentRunStartResult =
+        serde_json::from_value(submission.result_json)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+    response.command_receipt.duplicate = submission.duplicate;
+    response.initial_message.command_receipt.duplicate = submission.duplicate;
+    response.command_receipt.message = submission.error_message.clone();
+    response.initial_message.command_receipt.message = submission.error_message;
+    Ok(Json(response))
+}
+
+pub(crate) fn backend_selection_input(
+    selection: &BackendSelectionRequestDto,
+) -> Result<BackendSelectionInput, ApiError> {
+    let mode = match selection.mode {
+        BackendSelectionModeDto::Explicit => BackendSelectionInputMode::Explicit,
+        BackendSelectionModeDto::AutoIdle => BackendSelectionInputMode::AutoIdle,
+        BackendSelectionModeDto::WorkspaceBinding => BackendSelectionInputMode::WorkspaceBinding,
+    };
+    let backend_id = selection
+        .backend_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if mode == BackendSelectionInputMode::Explicit && backend_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "explicit backend selection requires backend_id".to_string(),
+        ));
+    }
+    Ok(BackendSelectionInput { mode, backend_id })
+}
+
+fn project_agent_run_start_base_result(
+    project: &Project,
+    context: agentdash_application_agentrun::agent_run::ProjectAgentRunStartProjectionContext,
+) -> ProjectAgentRunStartResult {
+    let runtime_refs = &context.dispatch.runtime_refs;
+    let receipt = AgentRunCommandReceipt {
+        client_command_id: context.client_command_id,
+        status: "accepted".to_string(),
+        duplicate: false,
+        message: None,
+    };
+    let run_ref = LifecycleRunRefDto {
+        run_id: runtime_refs.run_ref.to_string(),
+    };
+    let agent_ref = AgentRunRefDto {
+        run_id: runtime_refs.run_ref.to_string(),
+        agent_id: runtime_refs.agent_ref.to_string(),
+    };
+    let frame_ref = AgentFrameRefDto {
+        agent_id: runtime_refs.agent_ref.to_string(),
+        frame_id: runtime_refs.frame_ref.to_string(),
+        revision: Some(context.frame_revision),
+    };
+    ProjectAgentRunStartResult {
+        command_receipt: receipt.clone(),
+        accepted_refs: AgentRunAcceptedRefs {
+            run_ref: run_ref.clone(),
+            agent_ref: agent_ref.clone(),
+            frame_ref: Some(frame_ref.clone()),
+            turn_id: None,
+        },
+        initial_message: AgentRunMessageCommandResponse {
+            command_receipt: receipt,
+            outcome: AgentRunMessageCommandOutcome::Launched,
+            mailbox_message: None,
+            accepted_refs: None,
+            fork: None,
+        },
+        effective_executor_config: Some(conversation_effective_executor_config_to_contract(
+            context.effective_executor_config,
+        )),
+        agent: build_project_agent_summary(project, &context.project_agent_context),
+        run_ref,
+        agent_ref,
+        frame_ref,
+        subject_ref: Some(SubjectRefDto {
+            kind: context.subject_ref.kind,
+            id: context.subject_ref.id.to_string(),
+        }),
+    }
+}
+
+fn project_agent_run_start_result_projector(
+    base: ProjectAgentRunStartResult,
+) -> Arc<dyn AgentRunMessageProductResultProjector> {
+    let accepted_base = base.clone();
+    let accepted = Arc::new(move |kind: AgentRunAcceptedProductResultKind| {
+        let mut result = accepted_base.clone();
+        result.command_receipt.status = "accepted".to_string();
+        result.initial_message.command_receipt.status = "accepted".to_string();
+        result.initial_message.outcome = match kind {
+            AgentRunAcceptedProductResultKind::Started => AgentRunMessageCommandOutcome::Launched,
+            AgentRunAcceptedProductResultKind::Steered => AgentRunMessageCommandOutcome::Steered,
+        };
+        result.initial_message.mailbox_message = None;
+        serde_json::to_value(result).map_err(|error| {
+            agentdash_application_agentrun::WorkflowApplicationError::Internal(error.to_string())
+        })
+    });
+
+    let queued_base = base.clone();
+    let queued = Arc::new(
+        move |message: &agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage| {
+            let mut result = queued_base.clone();
+            result.command_receipt.status = "queued".to_string();
+            result.initial_message.command_receipt.status = "queued".to_string();
+            result.initial_message.outcome = AgentRunMessageCommandOutcome::Queued;
+            result.initial_message.mailbox_message = Some(
+                super::lifecycle_agents::mailbox_message_contract(message.clone()),
+            );
+            serde_json::to_value(result).map_err(|error| {
+                agentdash_application_agentrun::WorkflowApplicationError::Internal(
+                    error.to_string(),
+                )
+            })
+        },
+    );
+
+    let failed = Arc::new(move || {
+        let mut result = base.clone();
+        result.command_receipt.status = "failed".to_string();
+        result.initial_message.command_receipt.status = "failed".to_string();
+        result.initial_message.outcome = AgentRunMessageCommandOutcome::Failed;
+        result.initial_message.mailbox_message = None;
+        serde_json::to_value(result).map_err(|error| {
+            agentdash_application_agentrun::WorkflowApplicationError::Internal(error.to_string())
+        })
+    });
+
+    Arc::new(FnAgentRunMessageProductResultProjector::new(
+        accepted, queued, failed,
+    ))
+}
+
 pub async fn list_project_agents(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -149,164 +386,6 @@ pub async fn list_project_agents(
     Ok(Json(response))
 }
 
-pub async fn create_project_agent_run(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((project_id, agent_key)): Path<(String, String)>,
-    Json(req): Json<CreateProjectAgentRunRequest>,
-) -> Result<Json<ProjectAgentRunStartResult>, ApiError> {
-    diag!(Info, Subsystem::Api,
-
-        project_id = %project_id,
-        agent_key = %agent_key,
-        input_blocks = req.input.len(),
-        has_executor_config = req.executor_config.is_some(),
-        "ProjectAgent run start API entered"
-    );
-    if req.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    let project_id = parse_project_id(&project_id)?;
-    let project = load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let project_agent_id = parse_project_agent_id(&agent_key)?;
-    let executor_config = req
-        .executor_config
-        .map(serde_json::from_value::<AgentConfig>)
-        .transpose()
-        .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
-    diag!(Info, Subsystem::Api,
-
-        project_id = %project_id,
-        project_agent_id = %project_agent_id,
-        "ProjectAgent run start request parsed"
-    );
-
-    let repos = project_agent_run_start_repos(state.as_ref());
-    let session_core = agent_run_session_core(state.services.session_core.clone());
-    let service = ProjectAgentRunStartService::new(
-        repos,
-        &session_core,
-        session_core.clone(),
-        agent_run_session_control(state.services.session_control.clone()),
-        agent_run_session_eventing(state.services.session_eventing.clone()),
-        agent_run_session_launch(state.services.session_launch.clone()),
-    );
-    let admission = AgentRunAdmissionService::for_project_agent_start(service);
-    diag!(Info, Subsystem::Api,
-
-        project_id = %project_id,
-        project_agent_id = %project_agent_id,
-        "ProjectAgent run admission dispatching"
-    );
-    let dispatch = admission
-        .admit_project_agent_start(ProjectAgentRunStartCommand {
-            project_id,
-            project_agent_id,
-            input: req.input,
-            client_command_id: req.client_command_id,
-            executor_config,
-            backend_selection: backend_selection_input(req.backend_selection),
-            subject_ref: parse_subject_ref(req.subject_ref)?,
-            identity: Some(current_user.clone()),
-        })
-        .await
-        .map_err(ApiError::from)?;
-    diag!(Info, Subsystem::Api,
-
-        project_id = %project_id,
-        project_agent_id = %project_agent_id,
-        run_id = %dispatch.run_id,
-        agent_id = %dispatch.agent_id,
-        runtime_session_id = %dispatch.runtime_session_id,
-        initial_outcome = ?dispatch.initial_message.outcome,
-        "ProjectAgent run admission returned"
-    );
-
-    let agent_context = build_project_agent_context(&dispatch.project_agent)
-        .await
-        .map_err(ApiError::Internal)?;
-    let summary = build_project_agent_summary(&project, &agent_context);
-    let effective_executor_config = Some(dispatch.effective_executor_config.clone());
-
-    diag!(Info, Subsystem::Api,
-
-        run_id = %dispatch.run_id,
-        agent_id = %dispatch.agent_id,
-        runtime_session_id = %dispatch.runtime_session_id,
-        "ProjectAgent run start API building response"
-    );
-    Ok(Json(ProjectAgentRunStartResult {
-        command_receipt: command_receipt_view(dispatch.command_receipt),
-        accepted_refs: AgentRunAcceptedRefs {
-            run_ref: LifecycleRunRefDto {
-                run_id: dispatch.run_id.to_string(),
-            },
-            agent_ref: AgentRunRefDto {
-                run_id: dispatch.run_id.to_string(),
-                agent_id: dispatch.agent_id.to_string(),
-            },
-            frame_ref: Some(AgentFrameRefDto {
-                agent_id: dispatch.agent_id.to_string(),
-                frame_id: dispatch.frame_id.to_string(),
-                revision: Some(dispatch.frame_revision),
-            }),
-            turn_id: if dispatch.turn_id.is_empty() {
-                None
-            } else {
-                Some(dispatch.turn_id.clone())
-            },
-        },
-        initial_message: agent_run_message_command_response(dispatch.initial_message),
-        effective_executor_config,
-        agent: summary,
-        run_ref: LifecycleRunRefDto {
-            run_id: dispatch.run_id.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: dispatch.run_id.to_string(),
-            agent_id: dispatch.agent_id.to_string(),
-        },
-        frame_ref: AgentFrameRefDto {
-            agent_id: dispatch.agent_id.to_string(),
-            frame_id: dispatch.frame_id.to_string(),
-            revision: Some(dispatch.frame_revision),
-        },
-        subject_ref: dispatch.subject_ref.as_ref().map(|subject| SubjectRefDto {
-            kind: subject.kind.clone(),
-            id: subject.id.to_string(),
-        }),
-    }))
-}
-
-fn project_agent_run_start_repos(state: &AppState) -> ProjectAgentRunStartRepos<'_> {
-    ProjectAgentRunStartRepos {
-        project_agent_repo: state.repos.project_agent_repo.as_ref(),
-        lifecycle_run_repo: state.repos.lifecycle_run_repo.as_ref(),
-        workflow_graph_repo: state.repos.workflow_graph_repo.as_ref(),
-        lifecycle_agent_repo: state.repos.lifecycle_agent_repo.as_ref(),
-        agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
-        lifecycle_subject_association_repo: state.repos.lifecycle_subject_association_repo.as_ref(),
-        lifecycle_gate_repo: state.repos.lifecycle_gate_repo.as_ref(),
-        agent_lineage_repo: state.repos.agent_lineage_repo.as_ref(),
-        execution_anchor_repo: state.repos.execution_anchor_repo.as_ref(),
-        delivery_binding_repo: state.repos.agent_run_delivery_binding_repo.as_ref(),
-        project_backend_access_repo: state.repos.project_backend_access_repo.as_ref(),
-        command_receipt_repo: state.repos.agent_run_command_receipt_repo.as_ref(),
-        mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
-        runtime_session_creator: state.repos.runtime_session_creator.as_ref(),
-        agent_frame_construction: state.repos.agent_frame_construction.as_ref(),
-        project_agent_lifecycle_launch: state.repos.project_agent_lifecycle_launch.as_ref(),
-    }
-}
-
 fn build_project_agent_summary(
     _project: &Project,
     agent: &ResolvedProjectAgentContext,
@@ -324,7 +403,6 @@ fn build_project_agent_summary(
                 .executor_config
                 .thinking_level
                 .map(thinking_level_response),
-            permission_policy: agent.executor_config.permission_policy.clone(),
         },
         effective_executor_config: Some(conversation_effective_executor_config_to_contract(
             ConversationModelConfigResolver::view_for_config(
@@ -346,7 +424,6 @@ fn conversation_effective_executor_config_to_contract(
         model_id: config.model_id,
         agent_id: config.agent_id,
         thinking_level: config.thinking_level,
-        permission_policy: config.permission_policy,
         source: match config.source {
             ConversationModelConfigSourceModel::ProjectAgentPreset => {
                 ConversationModelConfigSource::ProjectAgentPreset
@@ -388,17 +465,6 @@ fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
 fn parse_project_agent_id(project_agent_id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(project_agent_id)
         .map_err(|_| ApiError::BadRequest(format!("无效的 project_agent_id: {project_agent_id}")))
-}
-
-fn parse_subject_ref(subject_ref: Option<SubjectRefDto>) -> Result<Option<SubjectRef>, ApiError> {
-    subject_ref
-        .map(|subject| {
-            let id = Uuid::parse_str(&subject.id).map_err(|_| {
-                ApiError::BadRequest(format!("无效的 subject_ref.id: {}", subject.id))
-            })?;
-            Ok(SubjectRef::new(subject.kind, id))
-        })
-        .transpose()
 }
 
 // ─── Project Agent API ───
@@ -477,6 +543,11 @@ pub async fn create_project_agent(
     if agent_type.is_empty() {
         return Err(ApiError::BadRequest("agent_type 不能为空".into()));
     }
+    if !crate::routes::execution_profiles::is_known_execution_profile(&state, &agent_type) {
+        return Err(ApiError::BadRequest(format!(
+            "未知 execution profile: {agent_type}"
+        )));
+    }
     if state
         .repos
         .project_agent_repo
@@ -546,6 +617,11 @@ pub async fn update_project_agent(
         let trimmed = agent_type.trim().to_string();
         if trimmed.is_empty() {
             return Err(ApiError::BadRequest("agent_type 不能为空".into()));
+        }
+        if !crate::routes::execution_profiles::is_known_execution_profile(&state, &trimmed) {
+            return Err(ApiError::BadRequest(format!(
+                "未知 execution profile: {trimmed}"
+            )));
         }
         agent.agent_type = trimmed;
     }

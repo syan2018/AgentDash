@@ -1,13 +1,8 @@
-use std::collections::BTreeSet;
-
-use uuid::Uuid;
-
-use agentdash_domain::DomainError;
-use agentdash_domain::canvas::{Canvas, CanvasRepository, CanvasScope, canvas_access_projection};
+use agentdash_domain::canvas::{Canvas, CanvasScope, canvas_access_projection};
 use agentdash_domain::project::{ProjectAuthorization, ProjectAuthorizationContext};
-use agentdash_spi::{AuthIdentity, Vfs};
+use agentdash_spi::AuthIdentity;
 
-use crate::canvas::{CanvasMountAccess, append_canvas_mount};
+use crate::canvas::CanvasMountAccess;
 
 pub fn canvas_runtime_mount_access(
     canvas: &Canvas,
@@ -38,39 +33,6 @@ pub fn canvas_runtime_mount_access(
         return None;
     }
     Some(CanvasMountAccess::from(access))
-}
-
-/// 根据会话显式声明的 canvas mount_id 列表，重建 VFS 中的可见 canvas 投影。
-///
-/// 注意：默认不注入任何 canvas。只有会话里记录过的 mount_id 才会被投影。
-pub async fn project_visible_canvas_mounts(
-    canvas_repo: &dyn CanvasRepository,
-    project_id: Uuid,
-    vfs: &mut Vfs,
-    visible_mount_ids: &[String],
-    identity: Option<&AuthIdentity>,
-) -> Result<(), DomainError> {
-    let selected = visible_mount_ids
-        .iter()
-        .map(|item| item.trim())
-        .filter(|item| !item.is_empty())
-        .map(ToString::to_string)
-        .collect::<BTreeSet<_>>();
-    if selected.is_empty() {
-        return Ok(());
-    }
-
-    let canvases = canvas_repo.list_by_project(project_id).await?;
-    let visible = canvases
-        .into_iter()
-        .filter(|canvas| selected.contains(canvas.mount_id.as_str()))
-        .collect::<Vec<_>>();
-    for canvas in visible {
-        if let Some(access) = canvas_runtime_mount_access(&canvas, identity) {
-            append_canvas_mount(vfs, &canvas, access);
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

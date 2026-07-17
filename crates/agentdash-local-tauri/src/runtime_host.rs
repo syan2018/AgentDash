@@ -139,10 +139,18 @@ pub(crate) fn initialize_desktop_runner_host(state: DesktopState) {
             return;
         }
 
-        state
-            .runtime
-            .mark_waiting_for_auth("profile 已允许自动启动，等待 Web bridge 提供当前 access token")
-            .await;
+        if let Err(error) =
+            start_runtime_from_request(&state, RuntimeStartRequest::from(profile), true).await
+        {
+            let context = DiagnosticErrorContext::new("desktop.runtime.initialize", "auto_start");
+            diag_error!(
+                Warn,
+                Subsystem::Infra,
+                context = &context,
+                error = &error,
+                "桌面本机 runtime 自动启动未完成"
+            );
+        }
     });
 }
 

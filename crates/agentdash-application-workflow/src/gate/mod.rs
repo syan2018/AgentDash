@@ -12,7 +12,7 @@ pub use commands::{
 pub use gate_wait_policy::{
     GateProducerTerminalConvergenceOutcome, GateProducerTerminalConvergenceOutcomeKind,
     GateProducerTerminalConvergenceResult, GateProducerTerminalConvergenceService,
-    GateProducerTerminalEvent,
+    GateProducerTerminalEvent, ProducerLastMessageEvidence, RuntimeTerminalDiagnostic,
 };
 pub use outcome::{
     CompanionChildResultDeliveryIntent, CompanionHumanResponseDeliveryIntent,

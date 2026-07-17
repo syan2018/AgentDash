@@ -8,18 +8,19 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import { StatusDot, type StatusDotTone } from "@agentdash/ui";
-import type { AgentRunWorkspaceListEntry } from "../../types";
+import type { AgentRunListEntryView } from "../../types";
 import { useAgentRunListState } from "../../features/agent/agent-run-list-state-store";
 import {
   AGENT_RUN_DELIVERY_STATUS_LABEL,
-  normalizeAgentRunDeliveryStatus,
+  agentRunListPresentationStatus,
   type AgentRunDeliveryStatus,
 } from "../../features/agent/agent-run-delivery-status";
 
-/** 基于 delivery 执行状态的视觉映射 */
+/** AgentRun list presentation status 的视觉映射。 */
 const EXECUTION_STATUS_TONE: Record<AgentRunDeliveryStatus, StatusDotTone> = {
   idle: "muted",
   running: "success",
+  suspended: "warning",
   cancelling: "warning",
   completed: "info",
   failed: "danger",
@@ -58,13 +59,17 @@ interface LifecycleShortcutListProps {
   projectId: string | null;
 }
 
-function shortcutEntryFromAgentRun(entry: AgentRunWorkspaceListEntry): AgentRunShortcutEntry {
+function shortcutEntryFromAgentRun(entry: AgentRunListEntryView): AgentRunShortcutEntry {
   return {
     runId: entry.run_ref.run_id,
     agentId: entry.agent_ref.agent_id,
-    workspaceTitle: entry.shell.display_title.trim() || "AgentRun 加载中...",
-    executionStatus: normalizeAgentRunDeliveryStatus(entry.shell.delivery_status),
-    updatedAt: entry.shell.last_activity_at,
+    workspaceTitle: entry.title.trim() || "AgentRun 加载中...",
+    executionStatus: agentRunListPresentationStatus(
+      entry.runtime?.thread_status,
+      entry.runtime?.active_turn_id,
+      entry.lifecycle_status,
+    ),
+    updatedAt: entry.last_activity_at,
     subagentCount: entry.subagent_count ?? 0,
   };
 }

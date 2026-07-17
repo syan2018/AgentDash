@@ -143,7 +143,7 @@ function extractTextFromItem(item: AgentDashThreadItem): string | null {
   return null;
 }
 
-function extractText(items: ContentItems | null): string | null {
+function extractText(items: ContentItems | null | undefined): string | null {
   if (!items || items.length === 0) return null;
   const parts: string[] = [];
   for (const item of items) {

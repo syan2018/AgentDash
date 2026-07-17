@@ -43,7 +43,7 @@ pub fn build_routine_execution_intent(
         agent_policy,
         context_policy: ContextPolicy::Isolated,
         capability_policy: CapabilityPolicy::Baseline,
-        runtime_policy: RuntimePolicy::CreateRuntimeSession,
+        runtime_policy: RuntimePolicy::ProvisionRuntimeThread,
     }
 }
 

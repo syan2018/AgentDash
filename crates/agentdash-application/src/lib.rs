@@ -1,9 +1,10 @@
 pub mod agent_run {
     pub use agentdash_application_agentrun::agent_run::*;
 }
+pub mod agent_run_list;
+mod agent_run_projection;
 pub mod auth;
 pub mod backend;
-pub mod backend_execution_placement;
 pub mod canvas;
 pub mod capability;
 pub mod channel;
@@ -20,16 +21,12 @@ pub mod lifecycle {
 pub mod llm_provider;
 pub mod mcp_preset;
 pub mod mcp_relay_adapter;
-pub mod permission;
 pub mod platform_config;
 pub mod project;
-pub mod reconcile;
-pub mod relay_connector;
 pub mod repository_set;
 pub mod routine;
 pub mod runtime;
 pub mod runtime_bridge;
-pub mod runtime_session_agent_run_bridge;
 pub mod runtime_tools;
 pub mod scheduling;
 pub mod session;
@@ -50,4 +47,3 @@ pub mod workspace;
 
 pub use error::ApplicationError;
 pub use task::lock as task_lock;
-pub use task::view_projector as task_view_projector;

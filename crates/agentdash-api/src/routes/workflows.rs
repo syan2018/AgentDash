@@ -59,7 +59,6 @@ use crate::dto::{
     ValidateWorkflowGraphRequest, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
-use agentdash_application_runtime_session::session::context::normalize_string;
 
 pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
@@ -1062,7 +1061,11 @@ fn workflow_graph_ref_from_start_request(
     req: &StartWorkflowRunRequest,
 ) -> Result<WorkflowGraphRef, ApiError> {
     let lifecycle_id = parse_optional_uuid(req.lifecycle_id.as_deref(), "lifecycle_id")?;
-    let lifecycle_key = req.lifecycle_key.clone().and_then(normalize_string);
+    let lifecycle_key = req
+        .lifecycle_key
+        .clone()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     match (lifecycle_id, lifecycle_key) {
         (Some(_), Some(_)) => Err(ApiError::BadRequest(
             "lifecycle_id 与 lifecycle_key 只能提供一个".to_string(),

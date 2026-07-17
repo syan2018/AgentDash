@@ -19,7 +19,6 @@ agentdash-contracts = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-application-runtime-gateway = { workspace = true }
-agentdash-application-runtime-session = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-application-agentrun = { workspace = true }
 agentdash-application-lifecycle = { workspace = true }
@@ -28,10 +27,17 @@ agentdash-application-hooks = { workspace = true }
 agentdash-application-shared-library = { workspace = true }
 agentdash-application = { workspace = true }
 agentdash-infrastructure = { workspace = true }
-agentdash-executor = { workspace = true, features = ["pi-agent"] }
+agentdash-executor = { workspace = true }
+agentdash-llm-provider = { workspace = true }
 agentdash-mcp = { workspace = true }
 agentdash-relay = { workspace = true }
 agentdash-integration-api = { workspace = true }
+agentdash-agent-runtime-host = { workspace = true }
+agentdash-agent-runtime = { workspace = true }
+agentdash-agent-runtime-contract = { workspace = true }
+agentdash-agent-runtime-wire = { workspace = true }
+agentdash-integration-native-agent = { workspace = true }
+agentdash-integration-remote-runtime = { workspace = true }
 agentdash-first-party-integrations = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -70,4 +76,7 @@ regex.workspace = true
 postgresql_embedded = { workspace = true }
 
 [dev-dependencies]
+agentdash-agent-runtime-test-support = { workspace = true }
+agentdash-agent-types = { workspace = true }
 agentdash-test-support = { workspace = true }
+agentdash-local = { workspace = true }

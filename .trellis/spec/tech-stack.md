@@ -48,7 +48,7 @@
 - **前端↔云端**：REST（业务 CRUD）+ NDJSON（实时推送），会话流用 `fetch + ReadableStream`
 - **增量恢复**：Project 流和会话流统一使用 `x-stream-since-id`
 - **云端↔本机**：WebSocket（本机主动连接），JSON over WebSocket
-- **内部事件流**：Backbone Protocol，所有 connector 输出统一映射
+- **Agent执行协议**：Agent Runtime Contract + RuntimeWire；Backbone只承载产品/资源presentation事件
 - **对外能力**：MCP
 - **DTO 格式**：JSON / NDJSON，统一 `snake_case`
 

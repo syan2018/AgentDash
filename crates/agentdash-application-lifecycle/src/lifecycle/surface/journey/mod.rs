@@ -16,20 +16,18 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef};
-use crate::lifecycle::{
-    SessionToolResultCache, SessionToolResultCacheRead as LocalSessionToolResultCacheRead,
-    SessionToolResultCacheStatus, SessionToolResultCacheStatusKind,
-};
-use agentdash_spi::{PersistedSessionEvent, SessionCompactionStore, SessionMetaStore};
+use agentdash_spi::PersistedSessionEvent;
 use async_trait::async_trait;
 
 pub mod session_items;
 
 pub use session_items::{
+    SessionCompactionArchive, SessionCompactionArchiveStatus, SessionItemContent,
     SessionItemProjection, SessionItemSummary, SessionItemView, SessionLargeBodyStatus,
-    SessionToolResultMetadata, filter_session_items, item_file_name, item_summary_for_view,
-    render_item_content, session_item_projections, session_summary_archives,
-    summary_archive_markdown, tool_result_metadata_for_projection,
+    SessionSummaryArchiveEntry, SessionToolResultBodyProjection, SessionToolResultMetadata,
+    filter_session_items, item_file_name, item_summary_for_view, render_item_content,
+    session_item_projections, session_summary_archives, summary_archive_markdown,
+    tool_result_body_for_projection, tool_result_metadata_for_projection,
     tool_result_metadata_for_projection_with_status,
 };
 
@@ -58,10 +56,8 @@ impl std::error::Error for LifecycleJourneyError {}
 
 pub struct LifecycleJourneyProjection {
     inline_file_repo: Arc<dyn InlineFileRepository>,
-    session_meta_store: Arc<dyn SessionMetaStore>,
-    session_compaction_store: Arc<dyn SessionCompactionStore>,
-    tool_result_cache: Arc<dyn SessionToolResultCacheReader>,
     agent_run_journal_reader: Arc<dyn AgentRunJournalReader>,
+    agent_run_compaction_archive_reader: Arc<dyn AgentRunCompactionArchiveReader>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,86 +94,25 @@ pub trait AgentRunJournalReader: Send + Sync {
     ) -> JourneyResult<AgentRunJournalProjection>;
 }
 
-struct MissingAgentRunJournalReader;
-
 #[async_trait]
-impl AgentRunJournalReader for MissingAgentRunJournalReader {
-    async fn visible_journal(
+pub trait AgentRunCompactionArchiveReader: Send + Sync {
+    async fn list_archives(
         &self,
-        _reference: AgentRunJournalRef,
-    ) -> JourneyResult<AgentRunJournalProjection> {
-        Err(LifecycleJourneyError::OperationFailed(
-            "LifecycleJourneyProjection 缺少 AgentRun journal reader".to_string(),
-        ))
-    }
-}
-
-pub trait SessionToolResultCacheReader: Send + Sync {
-    fn read_text(&self, session_id: &str, item_id: &str) -> SessionToolResultCacheReadResult;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionToolResultCacheReadResult {
-    Available {
-        text: String,
-        stored_bytes: usize,
-        original_bytes: usize,
-    },
-    Unavailable(SessionToolResultCacheStatus),
-}
-
-impl SessionToolResultCacheReader for SessionToolResultCache {
-    fn read_text(&self, session_id: &str, item_id: &str) -> SessionToolResultCacheReadResult {
-        match SessionToolResultCache::read_text(self, session_id, item_id) {
-            LocalSessionToolResultCacheRead::Available { metadata, text } => {
-                SessionToolResultCacheReadResult::Available {
-                    text,
-                    stored_bytes: metadata.stored_bytes,
-                    original_bytes: metadata.original_bytes,
-                }
-            }
-            LocalSessionToolResultCacheRead::Unavailable(status) => {
-                SessionToolResultCacheReadResult::Unavailable(status)
-            }
-        }
-    }
+        reference: AgentRunJournalRef,
+    ) -> JourneyResult<Vec<SessionCompactionArchive>>;
 }
 
 impl LifecycleJourneyProjection {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         inline_file_repo: Arc<dyn InlineFileRepository>,
-        session_meta_store: Arc<dyn SessionMetaStore>,
-        session_compaction_store: Arc<dyn SessionCompactionStore>,
-    ) -> Self {
-        Self::new_with_tool_result_cache(
-            inline_file_repo,
-            session_meta_store,
-            session_compaction_store,
-            SessionToolResultCache::new(),
-            Arc::new(MissingAgentRunJournalReader),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_tool_result_cache(
-        inline_file_repo: Arc<dyn InlineFileRepository>,
-        session_meta_store: Arc<dyn SessionMetaStore>,
-        session_compaction_store: Arc<dyn SessionCompactionStore>,
-        tool_result_cache: Arc<dyn SessionToolResultCacheReader>,
         agent_run_journal_reader: Arc<dyn AgentRunJournalReader>,
+        agent_run_compaction_archive_reader: Arc<dyn AgentRunCompactionArchiveReader>,
     ) -> Self {
         Self {
             inline_file_repo,
-            session_meta_store,
-            session_compaction_store,
-            tool_result_cache,
             agent_run_journal_reader,
+            agent_run_compaction_archive_reader,
         }
-    }
-
-    pub fn session_compaction_store(&self) -> &dyn SessionCompactionStore {
-        self.session_compaction_store.as_ref()
     }
 
     pub async fn journal_projection(
@@ -196,6 +131,15 @@ impl LifecycleJourneyProjection {
         Ok(self.journal_projection(source).await?.events)
     }
 
+    pub async fn compaction_archives(
+        &self,
+        source: &AgentRunJournalRef,
+    ) -> JourneyResult<Vec<SessionCompactionArchive>> {
+        self.agent_run_compaction_archive_reader
+            .list_archives(source.clone())
+            .await
+    }
+
     pub async fn read_session_projection(
         &self,
         source: &AgentRunJournalRef,
@@ -205,27 +149,26 @@ impl LifecycleJourneyProjection {
         match rest {
             ["meta"] => {
                 let journal = self.journal_projection(source).await?;
-                let runtime_session_id = journal.delivery_runtime_session_id.as_str();
-                let meta = self
-                    .session_meta_store
-                    .get_session_meta(runtime_session_id)
-                    .await
-                    .map_err(|e| {
-                        LifecycleJourneyError::OperationFailed(format!(
-                            "读取 session meta 失败: {e}"
-                        ))
-                    })?
-                    .ok_or_else(|| {
-                        LifecycleJourneyError::NotFound(format!(
-                            "session 不存在: {runtime_session_id}"
-                        ))
-                    })?;
+                let first = journal.events.first();
+                let last = journal.events.last();
+                let status = last
+                    .and_then(|event| match &event.notification.event {
+                        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                            key,
+                            value,
+                        }) if key == "turn_terminal" => value
+                            .get("terminal_type")
+                            .and_then(serde_json::Value::as_str),
+                        _ => None,
+                    })
+                    .unwrap_or("running");
                 let meta_json = serde_json::json!({
                     "session_id": projection_session_id,
-                    "status": meta.last_delivery_status,
-                    "last_event_seq": meta.last_event_seq,
-                    "created_at": meta.created_at,
-                    "updated_at": meta.updated_at,
+                    "delivery_runtime_session_id": journal.delivery_runtime_session_id,
+                    "status": status,
+                    "last_event_seq": last.map(|event| event.event_seq).unwrap_or_default(),
+                    "created_at_ms": first.map(|event| event.occurred_at_ms),
+                    "updated_at_ms": last.map(|event| event.occurred_at_ms),
                 });
                 to_json_pretty(&meta_json)
             }
@@ -268,16 +211,8 @@ impl LifecycleJourneyProjection {
                 self.read_item_file(source, SessionItemView::Writes, rest)
                     .await
             }
-            ["summaries"] => {
-                let journal = self.journal_projection(source).await?;
-                self.read_compaction_summary_index(&journal.delivery_runtime_session_id)
-                    .await
-            }
-            ["summaries", rest @ ..] => {
-                let journal = self.journal_projection(source).await?;
-                self.read_compaction_summary(&journal.delivery_runtime_session_id, rest)
-                    .await
-            }
+            ["summaries"] => self.read_compaction_summary_index(source).await,
+            ["summaries", rest @ ..] => self.read_compaction_summary(source, rest).await,
             ["turns"] => {
                 let events = self.journal_events(source).await?;
                 let summaries = group_events_into_turn_summaries(&events);
@@ -340,11 +275,10 @@ impl LifecycleJourneyProjection {
         let metadata = filter_session_items(&projections, SessionItemView::Tools)
             .iter()
             .filter_map(|projection| {
-                let item_id = projection.summary.item_id.as_str();
                 tool_result_metadata_for_projection_with_status(
                     &projection_session_id,
                     projection,
-                    self.tool_result_body_status(&journal.delivery_runtime_session_id, item_id),
+                    tool_result_body_status(projection),
                 )
             })
             .collect::<Vec<_>>();
@@ -362,11 +296,10 @@ impl LifecycleJourneyProjection {
         let metadata = filter_session_items(&projections, SessionItemView::Tools)
             .iter()
             .filter_map(|projection| {
-                let item_id = projection.summary.item_id.as_str();
                 tool_result_metadata_for_projection_with_status(
                     &projection_session_id,
                     projection,
-                    self.tool_result_body_status(&journal.delivery_runtime_session_id, item_id),
+                    tool_result_body_status(projection),
                 )
             })
             .filter(|entry| entry.turn_alias == turn_alias)
@@ -394,7 +327,7 @@ impl LifecycleJourneyProjection {
                 tool_result_metadata_for_projection_with_status(
                     &projection_session_id,
                     projection,
-                    self.tool_result_body_status(&journal.delivery_runtime_session_id, item_id),
+                    tool_result_body_status(projection),
                 )
             })
             .ok_or_else(|| {
@@ -410,39 +343,17 @@ impl LifecycleJourneyProjection {
     ) -> JourneyResult<String> {
         let journal = self.journal_projection(source).await?;
         let projections = session_item_projections(&journal.events);
-        let exists = filter_session_items(&projections, SessionItemView::Tools)
+        let tool_projections = filter_session_items(&projections, SessionItemView::Tools);
+        let projection = tool_projections
             .iter()
-            .any(|projection| projection.summary.item_id == item_id);
-        if !exists {
-            return Err(LifecycleJourneyError::NotFound(format!(
-                "tool result 不存在: {item_id}"
-            )));
-        }
-        match self
-            .tool_result_cache
-            .read_text(&journal.delivery_runtime_session_id, item_id)
-        {
-            SessionToolResultCacheReadResult::Available { text, .. } => Ok(text),
-            SessionToolResultCacheReadResult::Unavailable(status) => Ok(status.message),
-        }
-    }
-
-    fn tool_result_body_status(&self, session_id: &str, item_id: &str) -> SessionLargeBodyStatus {
-        match self.tool_result_cache.read_text(session_id, item_id) {
-            SessionToolResultCacheReadResult::Available {
-                stored_bytes,
-                original_bytes,
-                ..
-            } => SessionLargeBodyStatus {
-                status: "available".to_string(),
-                message: format!(
-                    "result body is available from the current session cache ({} bytes stored, {} original bytes).",
-                    stored_bytes, original_bytes
-                ),
-            },
-            SessionToolResultCacheReadResult::Unavailable(status) => {
-                tool_result_cache_status(status)
-            }
+            .find(|projection| projection.summary.item_id == item_id)
+            .ok_or_else(|| {
+                LifecycleJourneyError::NotFound(format!("tool result 不存在: {item_id}"))
+            })?;
+        match tool_result_body_for_projection(projection) {
+            SessionToolResultBodyProjection::Available { text }
+            | SessionToolResultBodyProjection::Truncated { text, .. } => Ok(text),
+            SessionToolResultBodyProjection::Unavailable { status } => Ok(status.message),
         }
     }
 
@@ -570,23 +481,32 @@ impl LifecycleJourneyProjection {
         render_item_content(&projection, view)
     }
 
-    pub async fn read_compaction_summary_index(&self, session_id: &str) -> JourneyResult<String> {
-        let entries = session_summary_archives(self.session_compaction_store.as_ref(), session_id)
-            .await?
-            .into_iter()
-            .map(|(entry, _)| entry)
-            .collect::<Vec<_>>();
+    pub async fn read_compaction_summary_index(
+        &self,
+        source: &AgentRunJournalRef,
+    ) -> JourneyResult<String> {
+        let entries = session_summary_archives(
+            self.agent_run_compaction_archive_reader
+                .list_archives(source.clone())
+                .await?,
+        )
+        .into_iter()
+        .map(|(entry, _)| entry)
+        .collect::<Vec<_>>();
         to_json_pretty(&entries)
     }
 
     pub async fn read_compaction_summary(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
         rest: &[&str],
     ) -> JourneyResult<String> {
         let name = join_rest(rest)?;
-        let entries =
-            session_summary_archives(self.session_compaction_store.as_ref(), session_id).await?;
+        let entries = session_summary_archives(
+            self.agent_run_compaction_archive_reader
+                .list_archives(source.clone())
+                .await?,
+        );
         let (_, compaction) = entries
             .into_iter()
             .find(|(entry, _)| {
@@ -1135,14 +1055,33 @@ fn previous_char_boundary(value: &str, max_bytes: usize) -> usize {
     boundary
 }
 
-fn tool_result_cache_status(status: SessionToolResultCacheStatus) -> SessionLargeBodyStatus {
-    let status_name = match status.status {
-        SessionToolResultCacheStatusKind::Missing => "cache_miss",
-        SessionToolResultCacheStatusKind::Expired => "expired",
-    };
-    SessionLargeBodyStatus {
-        status: status_name.to_string(),
-        message: status.message,
+fn tool_result_body_status(projection: &SessionItemProjection) -> SessionLargeBodyStatus {
+    match tool_result_body_for_projection(projection) {
+        SessionToolResultBodyProjection::Available { text } => SessionLargeBodyStatus {
+            status: "available".to_string(),
+            message: format!(
+                "result body is available from the current session cache ({} bytes stored, {} original bytes).",
+                text.len(),
+                text.len()
+            ),
+        },
+        SessionToolResultBodyProjection::Truncated { text, truncation } => {
+            let original_bytes = truncation
+                .get("originalBytes")
+                .or_else(|| truncation.get("original_bytes"))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|bytes| usize::try_from(bytes).ok())
+                .unwrap_or(text.len());
+            SessionLargeBodyStatus {
+                status: "available".to_string(),
+                message: format!(
+                    "result body is available from the current session cache ({} bytes stored, {} original bytes).",
+                    text.len(),
+                    original_bytes
+                ),
+            }
+        }
+        SessionToolResultBodyProjection::Unavailable { status } => status,
     }
 }
 

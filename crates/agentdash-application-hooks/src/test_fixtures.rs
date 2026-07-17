@@ -77,14 +77,3 @@ pub fn snapshot_with_workflow_ports(
         ..AgentFrameHookSnapshot::default()
     }
 }
-
-pub fn snapshot_with_supervised_policy() -> AgentFrameHookSnapshot {
-    AgentFrameHookSnapshot {
-        runtime_adapter_session_id: "sess-supervised".to_string(),
-        metadata: Some(SessionSnapshotMetadata {
-            permission_policy: Some("SUPERVISED".to_string()),
-            ..Default::default()
-        }),
-        ..AgentFrameHookSnapshot::default()
-    }
-}

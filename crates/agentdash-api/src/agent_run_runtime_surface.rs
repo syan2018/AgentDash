@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use agentdash_application_agentrun::agent_run::{
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
+use agentdash_application_ports::agent_run_surface::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceWithBackend,
-    AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError, DeliveryRuntimeSelectionError,
-    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
-    RuntimeSurfaceQueryPurpose, terminal_launch_target_from_current_surface,
+    AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError, RuntimeSurfaceQueryPurpose,
 };
+use agentdash_application_vfs::PROVIDER_RELAY_FS;
 use agentdash_integration_api::AuthIdentity;
 use agentdash_spi::{RuntimeBackendAnchor, Vfs};
 use uuid::Uuid;
@@ -50,7 +50,6 @@ pub(crate) async fn resolve_current_runtime_surface_for_api(
     session_id: &str,
     purpose: RuntimeSurfaceQueryPurpose,
 ) -> Result<ApiCurrentRuntimeSurface, ApiError> {
-    ensure_runtime_session_exists(state, session_id).await?;
     let surface = state
         .services
         .runtime_surface_query
@@ -113,28 +112,33 @@ pub(crate) async fn resolve_current_runtime_surface_with_backend_for_agent_run_f
         )));
     }
 
-    let selection = DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
-        lifecycle_runs: state.repos.lifecycle_run_repo.as_ref(),
-        lifecycle_agents: state.repos.lifecycle_agent_repo.as_ref(),
-        agent_frames: state.repos.agent_frame_repo.as_ref(),
-        execution_anchors: state.repos.execution_anchor_repo.as_ref(),
-        delivery_bindings: state.repos.agent_run_delivery_binding_repo.as_ref(),
-    })
-    .select_current_delivery(run.id, agent.id)
-    .await
-    .map_err(delivery_runtime_selection_error_to_api)?;
-    ensure_runtime_session_exists(state, &selection.runtime_session_id).await?;
+    let binding = state
+        .repos
+        .agent_run_runtime_binding_repo
+        .load(&AgentRunRuntimeTarget {
+            run_id: run.id,
+            agent_id: agent.id,
+        })
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "AgentRun Runtime binding 不存在: run={}, agent={}",
+                run.id, agent.id
+            ))
+        })?;
+    let runtime_thread_id = binding.thread_id.to_string();
     let runtime_surface = state
         .services
         .runtime_surface_query
-        .current_runtime_surface_with_backend(&selection.runtime_session_id, purpose)
+        .current_runtime_surface_with_backend(&runtime_thread_id, purpose)
         .await
         .map_err(runtime_surface_query_error_to_api)?;
     let surface = ApiCurrentRuntimeSurfaceWithBackend::from(runtime_surface);
     ensure_current_runtime_surface_project_matches(&surface.surface, run.project_id, subject)?;
     Ok(ApiAgentRunCurrentRuntimeSurfaceWithBackend {
         project_id: run.project_id,
-        runtime_session_id: selection.runtime_session_id,
+        runtime_session_id: runtime_thread_id,
         surface: surface.surface,
         runtime_backend_anchor: surface.runtime_backend_anchor,
     })
@@ -162,7 +166,6 @@ pub(crate) async fn resolve_terminal_launch_target_for_runtime_session(
     state: &Arc<AppState>,
     session_id: &str,
 ) -> Result<ApiTerminalLaunchTarget, ApiError> {
-    ensure_runtime_session_exists(state, session_id).await?;
     let runtime_surface = state
         .services
         .runtime_surface_query
@@ -178,32 +181,66 @@ pub(crate) async fn resolve_terminal_launch_target_for_runtime_session(
     Ok(ApiTerminalLaunchTarget { project_id, target })
 }
 
-async fn ensure_runtime_session_exists(
-    state: &Arc<AppState>,
-    session_id: &str,
-) -> Result<(), ApiError> {
-    state
-        .services
-        .session_core
-        .get_session_meta(session_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("runtime trace {session_id} 不存在")))?;
-    Ok(())
-}
-
 fn terminal_launch_target_error_to_api(error: AgentRunTerminalLaunchTargetError) -> ApiError {
     ApiError::BadRequest(error.to_string())
 }
 
-fn runtime_surface_query_error_to_api(error: AgentRunRuntimeSurfaceQueryError) -> ApiError {
-    if let Some(anchor_error) = error.as_runtime_backend_anchor_error() {
-        return ApiError::Conflict(anchor_error.to_string());
+fn terminal_launch_target_from_current_surface(
+    surface: &AgentRunRuntimeSurfaceWithBackend,
+) -> Result<AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError> {
+    let backend_anchor = &surface.runtime_backend_anchor;
+    let mount = if let Some(root_ref) = backend_anchor
+        .root_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|root_ref| !root_ref.is_empty())
+    {
+        surface
+            .surface
+            .vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.root_ref.trim() == root_ref)
+            .ok_or_else(|| AgentRunTerminalLaunchTargetError::MissingAnchorMount {
+                root_ref: root_ref.to_string(),
+            })?
+    } else {
+        surface
+            .surface
+            .vfs
+            .default_mount()
+            .ok_or(AgentRunTerminalLaunchTargetError::MissingMount)?
+    };
+    if mount.provider != PROVIDER_RELAY_FS {
+        return Err(
+            AgentRunTerminalLaunchTargetError::UnsupportedMountProvider {
+                mount_id: mount.id.clone(),
+                provider: mount.provider.clone(),
+            },
+        );
     }
+    let backend_id = backend_anchor.backend_id();
+    if backend_id.is_empty() {
+        return Err(AgentRunTerminalLaunchTargetError::MissingBackendId);
+    }
+    let mount_root_ref = mount.root_ref.trim();
+    if mount_root_ref.is_empty() {
+        return Err(AgentRunTerminalLaunchTargetError::MissingMountRootRef {
+            mount_id: mount.id.clone(),
+        });
+    }
+    Ok(AgentRunTerminalLaunchTarget {
+        backend_id: backend_id.to_string(),
+        mount_root_ref: mount_root_ref.to_string(),
+    })
+}
+
+fn runtime_surface_query_error_to_api(error: AgentRunRuntimeSurfaceQueryError) -> ApiError {
     match error {
         AgentRunRuntimeSurfaceQueryError::MissingAnchor {
             runtime_session_id, ..
         } => ApiError::NotFound(format!(
-            "runtime trace 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
+            "runtime trace 缺少 AgentRun Runtime binding: {runtime_session_id}"
         )),
         AgentRunRuntimeSurfaceQueryError::MissingLifecycleRun { run_id, .. } => {
             ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}"))
@@ -216,30 +253,12 @@ fn runtime_surface_query_error_to_api(error: AgentRunRuntimeSurfaceQueryError) -
                 "lifecycle_agent {agent_id} 没有可用 current runtime surface"
             ))
         }
-        AgentRunRuntimeSurfaceQueryError::AnchorControlPlaneMismatch { .. }
-        | AgentRunRuntimeSurfaceQueryError::MissingSurfaceClosure { .. } => {
-            ApiError::Conflict(error.to_string())
-        }
         AgentRunRuntimeSurfaceQueryError::Repository { message, .. } => ApiError::Internal(message),
-        AgentRunRuntimeSurfaceQueryError::MissingRuntimeBackendAnchor { .. }
-        | AgentRunRuntimeSurfaceQueryError::BackendAnchorDerivation { .. } => {
+        AgentRunRuntimeSurfaceQueryError::MissingSurfaceClosure { .. }
+        | AgentRunRuntimeSurfaceQueryError::RuntimeBackendAnchor { .. }
+        | AgentRunRuntimeSurfaceQueryError::Projection { .. } => {
             ApiError::Conflict(error.to_string())
         }
-    }
-}
-
-fn delivery_runtime_selection_error_to_api(error: DeliveryRuntimeSelectionError) -> ApiError {
-    match error {
-        DeliveryRuntimeSelectionError::RunNotFound { .. }
-        | DeliveryRuntimeSelectionError::AgentNotFound { .. }
-        | DeliveryRuntimeSelectionError::CurrentFrameMissing { .. }
-        | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
-        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
-        | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
-            ApiError::NotFound(error.to_string())
-        }
-        DeliveryRuntimeSelectionError::Repository(source) => ApiError::from(source),
-        other => ApiError::Conflict(other.to_string()),
     }
 }
 

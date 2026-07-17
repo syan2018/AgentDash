@@ -160,6 +160,12 @@ where
         input: UpdateSkillAssetInput,
     ) -> Result<SkillAsset, SkillAssetApplicationError> {
         let mut asset = self.get(id).await?;
+        if asset.is_builtin_seed() {
+            return Err(SkillAssetApplicationError::Conflict(format!(
+                "builtin_seed SkillAsset 由平台 catalog 管理，不能直接更新: {}",
+                asset.key
+            )));
+        }
         if let Some(key) = input.key {
             let key = validate_skill_key(&key)?;
             if key != asset.key {
@@ -194,11 +200,18 @@ where
     }
 
     pub async fn delete(&self, id: Uuid) -> Result<(), SkillAssetApplicationError> {
+        let asset = self.get(id).await?;
+        if asset.is_builtin_seed() {
+            return Err(SkillAssetApplicationError::Conflict(format!(
+                "builtin_seed SkillAsset 由平台 catalog 管理，不能直接删除: {}",
+                asset.key
+            )));
+        }
         self.repo.delete(id).await?;
         Ok(())
     }
 
-    pub async fn bootstrap_builtins(
+    pub async fn provision_project_builtins(
         &self,
         project_id: Uuid,
         builtin_key: Option<&str>,
@@ -242,35 +255,6 @@ where
         Ok(created_or_existing)
     }
 
-    pub async fn reset_from_builtin(
-        &self,
-        id: Uuid,
-    ) -> Result<SkillAsset, SkillAssetApplicationError> {
-        let mut asset = self.get(id).await?;
-        let builtin_key = asset
-            .source
-            .builtin_key()
-            .map(ToString::to_string)
-            .ok_or_else(|| {
-                SkillAssetApplicationError::BadRequest(
-                    "只有 builtin_seed Skill 可以 reset".to_string(),
-                )
-            })?;
-        let template = get_builtin_skill_asset_template(&builtin_key).ok_or_else(|| {
-            SkillAssetApplicationError::NotFound(format!("内嵌 Skill 模板不存在: {builtin_key}"))
-        })?;
-        let (description, disable_model_invocation, files) =
-            files_from_embedded_bundle(asset.id, template.bundle)?;
-        asset.key = template.bundle.name.to_string();
-        asset.display_name = template.display_name.to_string();
-        asset.description = description;
-        asset.disable_model_invocation = disable_model_invocation;
-        asset.files = files;
-        asset.touch();
-        self.repo.update(&asset).await?;
-        Ok(asset)
-    }
-
     pub async fn import_uploaded_files(
         &self,
         project_id: Uuid,
@@ -289,6 +273,11 @@ where
             let description = meta.description;
             let disable_model_invocation = meta.disable_model_invocation;
             if let Some(mut existing) = self.repo.get_by_project_and_key(project_id, &key).await? {
+                if existing.is_builtin_seed() {
+                    return Err(SkillAssetApplicationError::Conflict(format!(
+                        "builtin_seed SkillAsset 由平台 catalog 管理，上传内容不能覆盖: {key}"
+                    )));
+                }
                 existing.display_name = key.clone();
                 existing.description = description.clone();
                 existing.disable_model_invocation = disable_model_invocation;
@@ -1139,20 +1128,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn builtin_bootstrap_syncs_embedded_template() {
+    async fn project_builtin_provisioning_is_complete_idempotent_and_managed() {
         let repo = MemorySkillAssetRepository::default();
         let service = SkillAssetService::new(&repo);
         let project_id = Uuid::new_v4();
 
         let first = service
-            .bootstrap_builtins(project_id, Some("canvas-system"))
+            .provision_project_builtins(project_id, None)
             .await
-            .expect("bootstrap");
-        assert_eq!(first.len(), 1);
-        let asset = first[0].clone();
+            .expect("provision");
+        assert_eq!(first.len(), list_builtin_skill_asset_templates().len());
+        let asset = first
+            .iter()
+            .find(|asset| asset.key == "canvas-system")
+            .expect("canvas-system")
+            .clone();
 
         let edited_description = "用户编辑后的描述";
-        let edited = service
+        let update = service
             .update(
                 asset.id,
                 UpdateSkillAssetInput {
@@ -1161,27 +1154,55 @@ mod tests {
                     ..Default::default()
                 },
             )
-            .await
-            .expect("edit builtin seed");
-        assert_eq!(edited.description, edited_description);
+            .await;
+        assert!(matches!(
+            update,
+            Err(SkillAssetApplicationError::Conflict(message))
+                if message.contains("builtin_seed")
+        ));
+        let delete = service.delete(asset.id).await;
+        assert!(matches!(
+            delete,
+            Err(SkillAssetApplicationError::Conflict(message))
+                if message.contains("builtin_seed")
+        ));
+        let upload = service
+            .import_uploaded_files(
+                project_id,
+                asset
+                    .files
+                    .iter()
+                    .map(|file| SkillAssetFileInput {
+                        path: file.path.clone(),
+                        content: file.content.clone(),
+                    })
+                    .collect(),
+            )
+            .await;
+        assert!(matches!(
+            upload,
+            Err(SkillAssetApplicationError::Conflict(message))
+                if message.contains("上传内容不能覆盖")
+        ));
 
         let second = service
-            .bootstrap_builtins(project_id, Some("canvas-system"))
+            .provision_project_builtins(project_id, None)
             .await
-            .expect("bootstrap again");
-        assert_ne!(second[0].description, edited_description);
-        assert!(second[0].files.iter().any(|file| file.path == "SKILL.md"));
-
-        let reset = service
-            .reset_from_builtin(asset.id)
-            .await
-            .expect("reset builtin seed");
-        assert_ne!(reset.description, edited_description);
-        assert!(reset.files.iter().any(|file| file.path == "SKILL.md"));
+            .expect("provision again");
+        assert_eq!(second.len(), first.len());
+        assert_eq!(
+            second.iter().map(|asset| asset.id).collect::<BTreeSet<_>>(),
+            first.iter().map(|asset| asset.id).collect::<BTreeSet<_>>()
+        );
+        assert!(
+            second
+                .iter()
+                .all(|asset| asset.files.iter().any(|file| file.path == "SKILL.md"))
+        );
     }
 
     #[tokio::test]
-    async fn builtin_bootstrap_converges_same_key_user_snapshot() {
+    async fn project_builtin_provisioning_converges_same_key_user_snapshot() {
         let repo = MemorySkillAssetRepository::default();
         let service = SkillAssetService::new(&repo);
         let project_id = Uuid::new_v4();
@@ -1201,9 +1222,9 @@ mod tests {
         repo.create(&snapshot).await.expect("create snapshot");
 
         let synced = service
-            .bootstrap_builtins(project_id, Some("companion-system"))
+            .provision_project_builtins(project_id, Some("companion-system"))
             .await
-            .expect("bootstrap");
+            .expect("provision");
 
         assert_eq!(synced.len(), 1);
         assert_eq!(synced[0].id, snapshot_id);

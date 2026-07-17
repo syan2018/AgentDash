@@ -1,7 +1,7 @@
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
     LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociation,
-    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
+    LifecycleSubjectAssociationRepository,
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::hooks::SubjectRunContext;
@@ -12,7 +12,7 @@ use crate::lifecycle::WorkflowApplicationError;
 pub struct SubjectRunContextResolver<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
-    execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    runtime_binding_repo: &'a dyn AgentRunRuntimeBindingRepository,
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     story_repo: &'a dyn StoryRepository,
 }
@@ -21,46 +21,48 @@ impl<'a> SubjectRunContextResolver<'a> {
     pub fn new(
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
         lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
-        execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+        runtime_binding_repo: &'a dyn AgentRunRuntimeBindingRepository,
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         story_repo: &'a dyn StoryRepository,
     ) -> Self {
         Self {
             lifecycle_run_repo,
             lifecycle_subject_association_repo,
-            execution_anchor_repo,
+            runtime_binding_repo,
             lifecycle_agent_repo,
             story_repo,
         }
     }
 
-    /// Message stream trace → RuntimeSessionExecutionAnchor → LifecycleAgent → LifecycleRun → SubjectAssociations → context
+    /// Message stream trace → canonical runtime binding → LifecycleAgent → LifecycleRun → SubjectAssociations → context
     pub async fn resolve_from_message_stream_trace(
         &self,
         session_id: &str,
     ) -> Result<Option<SubjectRunContext>, WorkflowApplicationError> {
-        let Some(anchor) = self
-            .execution_anchor_repo
-            .find_by_session(session_id)
+        let thread_id = RuntimeThreadId::new(session_id)
+            .map_err(|error| WorkflowApplicationError::Conflict(error.to_string()))?;
+        let Some(binding) = self
+            .runtime_binding_repo
+            .load_by_thread_id(&thread_id)
             .await
-            .map_err(WorkflowApplicationError::from)?
+            .map_err(|error| WorkflowApplicationError::Conflict(error.to_string()))?
         else {
             return Ok(None);
         };
         let Some(agent) = self
             .lifecycle_agent_repo
-            .get(anchor.agent_id)
+            .get(binding.target.agent_id)
             .await
             .map_err(WorkflowApplicationError::from)?
         else {
             return Ok(None);
         };
-        if agent.run_id != anchor.run_id {
+        if agent.run_id != binding.target.run_id {
             return Ok(None);
         }
         let Some(run) = self
             .lifecycle_run_repo
-            .get_by_id(anchor.run_id)
+            .get_by_id(binding.target.run_id)
             .await
             .map_err(WorkflowApplicationError::from)?
         else {
@@ -230,3 +232,5 @@ async fn story_context(
         scope: CapabilityScope::Story,
     })
 }
+use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;

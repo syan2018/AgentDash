@@ -9,9 +9,19 @@ agentdash-domain = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
+agentdash-agent = { workspace = true }
+agentdash-agent-types = { workspace = true }
+agentdash-agent-runtime = { workspace = true }
+agentdash-agent-runtime-host = { workspace = true }
+agentdash-integration-api = { workspace = true }
+agentdash-integration-native-agent = { workspace = true }
+agentdash-integration-remote-runtime = { workspace = true }
+agentdash-llm-provider = { workspace = true }
+agentdash-agent-runtime-contract = { workspace = true }
 agentdash-process = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
 agentdash-diagnostics = { workspace = true }
@@ -19,6 +29,7 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
 postgresql_embedded = { workspace = true }
@@ -31,3 +42,5 @@ tera = "1"
 
 [dev-dependencies]
 dotenvy = "0.15"
+agentdash-integration-codex = { workspace = true }
+futures = { workspace = true }

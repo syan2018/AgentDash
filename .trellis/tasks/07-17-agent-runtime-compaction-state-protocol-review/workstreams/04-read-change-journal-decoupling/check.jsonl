@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查Session read/fork所有权。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "检查outbox是投影交付而非第二事实源。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查snapshot/change cursor和ordering。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "检查Journal删除后所有关键Agent能力仍成立。"}

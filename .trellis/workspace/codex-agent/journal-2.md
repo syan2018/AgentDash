@@ -331,3 +331,111 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 64: Agent Runtime 架构收敛与生产切换
+
+**Date**: 2026-07-11
+**Task**: Agent Runtime 架构收敛与生产切换
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+完成 Runtime Contract/Wire、Managed Runtime、上下文压缩、PostgreSQL 恢复、Business Agent Surface、Integration Driver Host、Native/Codex/Enterprise Remote 与 Relay RuntimeWire 的分阶段落地；将 AgentRun/API/UI/Companion/Routine 全量切换到 canonical runtime facade，删除旧 RuntimeSession/AgentConnector/RelayPrompt/Backbone 多事实源，完成 0065 数据库 cutover、bindings/specs 收敛以及 workspace 全量 Rust、contracts、migration、frontend 测试和 pnpm dev 验收。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1330a8560` | (see git log) |
+| `b43d2be53` | (see git log) |
+| `63dbd623b` | (see git log) |
+| `0806457db` | (see git log) |
+| `ef4bdec6f` | (see git log) |
+| `b47164bc5` | (see git log) |
+| `e934c287e` | (see git log) |
+| `af21f9d7c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 65: 收敛内嵌 Skill 资产与 Workspace Module 展示闭环
+
+**Date**: 2026-07-17
+**Task**: 收敛内嵌 Skill 资产与 Workspace Module 展示闭环
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+将 embedded Skill catalog 收敛为 Project provision 资产与只读 lifecycle projection；修复持久化 Workspace Module presentation 在 hydration、面板初始化与 workspace tab store 之间丢失的问题；创建仓库同级 Main reference 并恢复 parity oracle。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a3a064035` | (see git log) |
+| `8e22afb81` | (see git log) |
+| `4d56eb3a2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 66: 统一 Managed Agent 会话名称事件与 AgentRun 标题投影
+
+**Date**: 2026-07-17
+**Task**: 统一 Managed Agent 会话名称事件与 AgentRun 标题投影
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+将会话自动总结标题收敛到 Codex App Server 标准 ThreadNameUpdated 事件：Native 与 Codex 统一产出，Agent Runtime journal 和 durable projection 统一持久化，AgentRun list/workspace/lineage 统一解析并由前端实时失效刷新；补齐 0082 migration、跨层测试与 Trellis 可执行规格。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4dabce3fb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

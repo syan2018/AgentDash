@@ -1,0 +1,14 @@
+{"file":".trellis/spec/backend/index.md","reason":"[W2-W8 CHECK] 后端quality check入口"}
+{"file":".trellis/spec/cross-layer/index.md","reason":"[W0-W11 CHECK] 跨层quality check入口"}
+{"file":".trellis/spec/frontend/index.md","reason":"[W9,W10 CHECK] 前端quality check入口"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"[W0,W11 CHECK] 检查当前边界与待迁移条款已记账，不能覆盖main/PRD parity oracle"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"[W0,W8-W11 CHECK] 检查API/feed/control待迁移条款及最终wrapper边界"}
+{"file":".trellis/spec/backend/agent-runtime-persistence.md","reason":"[W2,W3,W8 CHECK] payload不可变、replay、cursor与migration"}
+{"file":".trellis/spec/backend/diagnostics-guidelines.md","reason":"[W4-W8 CHECK] unsupported/protocol error必须显式诊断而非静默过滤"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"[W3-W8 CHECK] typed failure、transaction与API error边界"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"[W9,W10 CHECK] 原组件图、交互与视觉行为"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"[W9-W11 CHECK] frontend test/typecheck/lint与回归门"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"[W0,W1,W9-W11 CHECK] generated union/nullable要求及待迁移的Runtime-only command authority条款"}
+{"file":".trellis/tasks/07-12-canonical-runtime-session-presentation-convergence/research/main-current-restoration-baseline.md","reason":"[ALL CHECK] 独立复核失败模式、owner账本和禁止项"}
+{"file":".trellis/tasks/07-12-canonical-runtime-session-presentation-convergence/research/protocol-codegen-toolchain.md","reason":"[W1,W4 CHECK] 独立复核codegen、overlay与strict transcode"}
+{"file":".trellis/tasks/07-12-canonical-runtime-session-presentation-convergence/research/connector-tool-projection-inventory.md","reason":"[W4-W7 CHECK] 动态driver/tool/application inventory覆盖率"}

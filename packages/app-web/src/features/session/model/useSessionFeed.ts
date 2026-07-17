@@ -344,6 +344,23 @@ function createThinkingGroup(state: TurnThinkingState): AggregatedThinkingGroup 
   };
 }
 
+function createFollowUpWaitingGroup(state: TurnThinkingState): AggregatedThinkingGroup | null {
+  if (state.waitingSeq == null || !state.hasAgentMessage) {
+    return null;
+  }
+
+  const groupKey = `thinking:${state.turnId}:waiting:${state.waitingSeq}`;
+  return {
+    type: "aggregated_thinking",
+    entries: [],
+    id: groupKey,
+    groupKey,
+    turnId: state.turnId,
+    eventSeq: state.waitingSeq,
+    isStreamingThinking: true,
+  };
+}
+
 function mergeThinkingIntoDisplayItems(
   displayItems: SessionDisplayItem[],
   providerWaitingSeqs: ReadonlyMap<string, number>,
@@ -399,15 +416,27 @@ function mergeThinkingIntoDisplayItems(
   const thinkingGroups = new Map<number, AggregatedThinkingGroup[]>();
   for (const state of thinkingStates.values()) {
     const group = createThinkingGroup(state);
-    if (!group) continue;
-    const insertionIndex = group.isStreamingThinking
-      ? state.liveInsertionIndex ?? nonThinkingItems.length
-      : state.reasoningInsertionIndex ?? nonThinkingItems.length;
-    const groups = thinkingGroups.get(insertionIndex);
-    if (groups) {
-      groups.push(group);
-    } else {
-      thinkingGroups.set(insertionIndex, [group]);
+    if (group) {
+      const insertionIndex = group.isStreamingThinking
+        ? state.liveInsertionIndex ?? nonThinkingItems.length
+        : state.reasoningInsertionIndex ?? nonThinkingItems.length;
+      const groups = thinkingGroups.get(insertionIndex);
+      if (groups) {
+        groups.push(group);
+      } else {
+        thinkingGroups.set(insertionIndex, [group]);
+      }
+    }
+
+    const followUpWaitingGroup = createFollowUpWaitingGroup(state);
+    if (followUpWaitingGroup) {
+      const liveInsertionIndex = state.liveInsertionIndex ?? nonThinkingItems.length;
+      const liveGroups = thinkingGroups.get(liveInsertionIndex);
+      if (liveGroups) {
+        liveGroups.push(followUpWaitingGroup);
+      } else {
+        thinkingGroups.set(liveInsertionIndex, [followUpWaitingGroup]);
+      }
     }
   }
 

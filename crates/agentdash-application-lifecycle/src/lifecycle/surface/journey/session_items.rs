@@ -2,16 +2,13 @@ use std::collections::BTreeMap;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent};
-use agentdash_spi::{
-    PersistedSessionEvent, SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord,
-    SessionCompactionStatus, SessionCompactionStore,
-};
-use serde::Serialize;
+use agentdash_spi::PersistedSessionEvent;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::lifecycle::{lifecycle_path_for_tool_result, readable_aliases_from_item_id};
 
-use super::{JourneyResult, LifecycleJourneyError, to_json_pretty};
+use super::{JourneyResult, to_json_pretty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionItemView {
@@ -54,11 +51,18 @@ pub struct SessionToolResultMetadata {
     pub truncation: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionLargeBodyStatus {
     pub status: String,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionToolResultBodyProjection {
+    Available { text: String },
+    Truncated { text: String, truncation: Value },
+    Unavailable { status: SessionLargeBodyStatus },
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +92,26 @@ pub enum SessionItemContent {
     Event,
 }
 
+pub fn tool_result_body_for_projection(
+    projection: &SessionItemProjection,
+) -> SessionToolResultBodyProjection {
+    let SessionItemContent::Tool { item } = &projection.content else {
+        return SessionToolResultBodyProjection::Unavailable {
+            status: unavailable_tool_result_status(&projection.summary.item_id),
+        };
+    };
+    let item_value = serde_json::to_value(item).ok();
+    let Some(text) = tool_result_body(item) else {
+        return SessionToolResultBodyProjection::Unavailable {
+            status: unavailable_tool_result_status(&projection.summary.item_id),
+        };
+    };
+    match item_value.as_ref().and_then(find_truncation_metadata) {
+        Some(truncation) => SessionToolResultBodyProjection::Truncated { text, truncation },
+        None => SessionToolResultBodyProjection::Available { text },
+    }
+}
+
 pub fn tool_result_metadata_for_projection(
     session_id: &str,
     projection: &SessionItemProjection,
@@ -95,7 +119,7 @@ pub fn tool_result_metadata_for_projection(
     tool_result_metadata_for_projection_with_status(
         session_id,
         projection,
-        cache_miss_status("result body"),
+        unavailable_tool_result_status(&projection.summary.item_id),
     )
 }
 
@@ -137,14 +161,6 @@ pub fn tool_result_metadata_for_projection_with_status(
     })
 }
 
-pub fn tool_result_cache_miss_text(session_id: &str, item_id: &str) -> String {
-    let (turn_alias, body_alias) = readable_aliases_from_item_id(item_id);
-    let lifecycle_path = lifecycle_path_for_tool_result(&turn_alias, &body_alias);
-    format!(
-        "[tool result cache missing]\nsession_id: {session_id}\nitem_id: {item_id}\nlifecycle_path: {lifecycle_path}\nThe original tool result body is not available from the session cache."
-    )
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionSummaryArchiveEntry {
     pub item_index: usize,
@@ -153,35 +169,43 @@ pub struct SessionSummaryArchiveEntry {
     pub projection_version: u64,
     pub source_start_event_seq: Option<u64>,
     pub source_end_event_seq: Option<u64>,
-    pub completed_event_seq: Option<u64>,
-    pub status: SessionCompactionStatus,
+    pub completed_event_seq: u64,
+    pub status: SessionCompactionArchiveStatus,
     pub preview: String,
 }
 
-pub async fn session_summary_archives(
-    compaction_store: &dyn SessionCompactionStore,
-    session_id: &str,
-) -> JourneyResult<Vec<(SessionSummaryArchiveEntry, SessionCompactionRecord)>> {
-    let mut compactions = compaction_store
-        .list_compactions(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
-        .await
-        .map_err(|error| {
-            LifecycleJourneyError::OperationFailed(format!(
-                "读取 compaction summaries 失败: {error}"
-            ))
-        })?;
-    compactions.sort_by_key(|record| {
-        (
-            record.completed_event_seq.unwrap_or(record.start_event_seq),
-            record.projection_version,
-        )
-    });
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionCompactionArchiveStatus {
+    ProjectionCommitted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionCompactionArchive {
+    pub id: String,
+    pub lifecycle_item_id: String,
+    pub projection_version: u64,
+    pub completed_event_seq: u64,
+    pub source_start_event_seq: Option<u64>,
+    pub source_end_event_seq: Option<u64>,
+    pub summary: String,
+    pub trigger: Option<String>,
+    pub phase: Option<String>,
+    pub strategy: Option<String>,
+    pub token_stats_json: Value,
+    pub diagnostics_json: Value,
+    pub turn_id: Option<String>,
+    pub entry_index: Option<u32>,
+    pub status: SessionCompactionArchiveStatus,
+}
+
+pub fn session_summary_archives(
+    mut compactions: Vec<SessionCompactionArchive>,
+) -> Vec<(SessionSummaryArchiveEntry, SessionCompactionArchive)> {
+    compactions.sort_by_key(|record| (record.completed_event_seq, record.projection_version));
 
     let mut entries = Vec::new();
     for (idx, compaction) in compactions.into_iter().enumerate() {
-        if compaction.status != SessionCompactionStatus::ProjectionCommitted {
-            continue;
-        }
         let preview = preview_text(&compaction.summary);
         let compacted_until = compaction
             .source_end_event_seq
@@ -208,10 +232,10 @@ pub async fn session_summary_archives(
             compaction,
         ));
     }
-    Ok(entries)
+    entries
 }
 
-pub fn summary_archive_markdown(compaction: &SessionCompactionRecord) -> String {
+pub fn summary_archive_markdown(compaction: &SessionCompactionArchive) -> String {
     let metadata = json!({
         "compaction_id": compaction.id,
         "projection_version": compaction.projection_version,
@@ -655,25 +679,33 @@ fn thread_item_name(item: &AgentDashThreadItem) -> String {
 
 fn thread_item_target(item: &AgentDashThreadItem) -> String {
     match item {
-        AgentDashThreadItem::Codex(item) => match item {
-            codex::ThreadItem::DynamicToolCall { arguments, .. } => value_target(arguments),
-            codex::ThreadItem::McpToolCall { arguments, .. } => value_target(arguments),
-            codex::ThreadItem::CommandExecution { command, cwd, .. } => {
-                format!("{} {}", cwd.to_string_lossy(), command)
+        AgentDashThreadItem::Codex(item) => {
+            let item_id = AgentDashThreadItem::Codex(item.clone()).id().to_string();
+            match item {
+                codex::ThreadItem::DynamicToolCall { arguments, .. } => value_target(arguments),
+                codex::ThreadItem::McpToolCall { arguments, .. } => value_target(arguments),
+                codex::ThreadItem::CommandExecution { command, cwd, .. } => {
+                    format!("{cwd} {command}")
+                }
+                codex::ThreadItem::FileChange { changes, .. } => changes
+                    .iter()
+                    .map(|change| change.path.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_"),
+                codex::ThreadItem::ContextCompaction { id } => id.clone(),
+                _ => item_id,
             }
-            codex::ThreadItem::FileChange { changes, .. } => changes
-                .iter()
-                .map(|change| change.path.to_string())
-                .collect::<Vec<_>>()
-                .join("_"),
-            codex::ThreadItem::ContextCompaction { id } => id.clone(),
-            _ => item.id().to_string(),
-        },
+        }
         AgentDashThreadItem::AgentDash(item) => match item {
             AgentDashNativeThreadItem::ShellExec { command, cwd, .. } => cwd
                 .as_ref()
                 .map(|cwd| format!("{cwd} {command}"))
                 .unwrap_or_else(|| command.clone()),
+            AgentDashNativeThreadItem::TerminalControl {
+                operation,
+                terminal_id,
+                ..
+            } => format!("{operation} {terminal_id}"),
             AgentDashNativeThreadItem::FsRead { path, .. } => path.clone(),
             AgentDashNativeThreadItem::FsGrep { pattern, path, .. } => path
                 .as_ref()
@@ -703,12 +735,17 @@ fn tool_result_preview(item: &AgentDashThreadItem) -> Option<String> {
             content_items, ..
         }) => content_items
             .as_ref()
+            .and_then(Option::as_deref)
             .and_then(|items| content_items_preview(items)),
         AgentDashThreadItem::Codex(codex::ThreadItem::CommandExecution {
             aggregated_output,
             ..
-        }) => aggregated_output.clone(),
+        }) => aggregated_output.clone().flatten(),
         AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ShellExec {
+            aggregated_output,
+            ..
+        })
+        | AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::TerminalControl {
             aggregated_output,
             ..
         }) => aggregated_output.clone(),
@@ -717,6 +754,97 @@ fn tool_result_preview(item: &AgentDashThreadItem) -> Option<String> {
             .and_then(|items| content_items_preview(items)),
         _ => None,
     }
+}
+
+fn tool_result_body(item: &AgentDashThreadItem) -> Option<String> {
+    match item {
+        AgentDashThreadItem::Codex(codex::ThreadItem::CommandExecution {
+            aggregated_output,
+            ..
+        }) => aggregated_output.as_ref().and_then(Option::as_ref).cloned(),
+        AgentDashThreadItem::Codex(codex::ThreadItem::DynamicToolCall {
+            content_items, ..
+        }) => content_items
+            .as_ref()
+            .and_then(Option::as_ref)
+            .and_then(|items| content_items_body(items)),
+        AgentDashThreadItem::Codex(codex::ThreadItem::McpToolCall { result, error, .. }) => result
+            .as_ref()
+            .and_then(Option::as_ref)
+            .and_then(mcp_tool_result_body)
+            .or_else(|| {
+                error
+                    .as_ref()
+                    .and_then(Option::as_ref)
+                    .map(|error| error.message.clone())
+            }),
+        AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ShellExec {
+            aggregated_output,
+            ..
+        })
+        | AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::TerminalControl {
+            aggregated_output,
+            ..
+        }) => aggregated_output.clone(),
+        AgentDashThreadItem::AgentDash(item) => item
+            .content_items()
+            .and_then(|items| content_items_body(items)),
+        _ => None,
+    }
+}
+
+fn content_items_body(items: &[codex::DynamicToolCallOutputContentItem]) -> Option<String> {
+    if items.iter().all(|item| {
+        matches!(
+            item,
+            codex::DynamicToolCallOutputContentItem::InputText { .. }
+        )
+    }) {
+        return Some(
+            items
+                .iter()
+                .map(|item| match item {
+                    codex::DynamicToolCallOutputContentItem::InputText { text } => text.as_str(),
+                    codex::DynamicToolCallOutputContentItem::InputImage { .. } => unreachable!(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+    serde_json::to_string_pretty(items).ok()
+}
+
+fn mcp_tool_result_body(result: &codex::McpToolCallResult) -> Option<String> {
+    let text_content = result
+        .content
+        .iter()
+        .map(|content| {
+            let object = content.as_object()?;
+            (object.get("type")?.as_str()? == "text")
+                .then(|| object.get("text").and_then(Value::as_str))
+                .flatten()
+        })
+        .collect::<Option<Vec<_>>>();
+    if result.meta.is_none()
+        && result.structured_content.is_none()
+        && let Some(text_content) = text_content
+    {
+        return Some(text_content.join("\n"));
+    }
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct McpToolResultBody<'a> {
+        content: &'a [Value],
+        structured_content: &'a Option<Value>,
+        #[serde(rename = "_meta")]
+        meta: &'a Option<Value>,
+    }
+    serde_json::to_string_pretty(&McpToolResultBody {
+        content: &result.content,
+        structured_content: &result.structured_content,
+        meta: &result.meta,
+    })
+    .ok()
 }
 
 fn content_items_preview(items: &[codex::DynamicToolCallOutputContentItem]) -> Option<String> {
@@ -763,10 +891,14 @@ fn find_truncation_metadata(value: &Value) -> Option<Value> {
     }
 }
 
-pub fn cache_miss_status(label: &str) -> SessionLargeBodyStatus {
+pub fn unavailable_tool_result_status(item_id: &str) -> SessionLargeBodyStatus {
+    let (turn_alias, body_alias) = readable_aliases_from_item_id(item_id);
+    let lifecycle_path = lifecycle_path_for_tool_result(&turn_alias, &body_alias);
     SessionLargeBodyStatus {
         status: "cache_miss".to_string(),
-        message: format!("{label} is not available from the current session cache."),
+        message: format!(
+            "[tool result cache missing]\nlifecycle_path: {lifecycle_path}\nitem_id: {item_id}\nThe original tool result is not available from the session cache."
+        ),
     }
 }
 
@@ -794,7 +926,8 @@ fn is_successful_item(item: &AgentDashThreadItem) -> bool {
             codex::ThreadItem::DynamicToolCall {
                 status, success, ..
             } => {
-                matches!(status, codex::DynamicToolCallStatus::Completed) && success.unwrap_or(true)
+                matches!(status, codex::DynamicToolCallStatus::Completed)
+                    && success.as_ref().copied().flatten().unwrap_or(true)
             }
             codex::ThreadItem::McpToolCall { status, error, .. } => {
                 matches!(status, codex::McpToolCallStatus::Completed) && error.is_none()
@@ -803,7 +936,7 @@ fn is_successful_item(item: &AgentDashThreadItem) -> bool {
                 status, exit_code, ..
             } => {
                 matches!(status, codex::CommandExecutionStatus::Completed)
-                    && exit_code.unwrap_or(0) == 0
+                    && exit_code.as_ref().copied().flatten().unwrap_or(0) == 0
             }
             codex::ThreadItem::FileChange { status, .. } => {
                 matches!(status, codex::PatchApplyStatus::Completed)
@@ -1003,5 +1136,235 @@ mod tests {
             SessionItemContent::Message { text, .. } => assert_eq!(text, "FULL FINAL"),
             other => panic!("expected agent message content, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn terminal_control_projects_explicit_target_status_and_result() {
+        let item = AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::TerminalControl {
+            id: "turn-1:0:terminal".to_string(),
+            operation: "write".to_string(),
+            terminal_id: "terminal-7".to_string(),
+            arguments: serde_json::json!({"terminalId": "terminal-7", "input": "pwd\n"}),
+            input: Some("pwd\n".to_string()),
+            cols: None,
+            rows: None,
+            state: Some("running".to_string()),
+            aggregated_output: Some("D:\\workspace\r\n".to_string()),
+            exit_code: None,
+            status: codex::DynamicToolCallStatus::Completed,
+            success: Some(true),
+        });
+
+        assert_eq!(thread_item_name(&item), "terminal_control");
+        assert_eq!(thread_item_target(&item), "write terminal-7");
+        assert_eq!(
+            tool_result_preview(&item).as_deref(),
+            Some("D:\\workspace\r\n")
+        );
+        assert!(is_successful_item(&item));
+
+        let projections = session_item_projections(&[item_completed_event(1, item)]);
+        let projection = projections.first().expect("terminal control projection");
+        assert_eq!(projection.summary.item_kind, "tool");
+        assert_eq!(projection.summary.status.as_deref(), Some("completed"));
+        assert_eq!(
+            item_file_name(projection, SessionItemView::Tools),
+            "0001__turn-1_0_terminal__terminal_control__write_terminal-7.json"
+        );
+    }
+
+    #[test]
+    fn terminal_thread_items_are_the_authority_for_tool_result_bodies() {
+        let command = AgentDashThreadItem::Codex(codex::ThreadItem::CommandExecution {
+            id: "command-1".to_string(),
+            command: "pwd".to_string(),
+            cwd: "D:\\workspace".to_string().into(),
+            process_id: None,
+            status: codex::CommandExecutionStatus::Completed,
+            command_actions: Vec::new(),
+            aggregated_output: Some(Some("D:\\workspace\r\n".to_string())),
+            exit_code: Some(Some(0)),
+            duration_ms: Some(Some(12)),
+            source: codex::CommandExecutionSource::Agent,
+        });
+        let dynamic = AgentDashThreadItem::Codex(codex::ThreadItem::DynamicToolCall {
+            id: "dynamic-1".to_string(),
+            tool: "fs_read".to_string(),
+            namespace: None,
+            arguments: json!({"path": "README.md"}),
+            status: codex::DynamicToolCallStatus::Completed,
+            content_items: Some(Some(vec![
+                codex::DynamicToolCallOutputContentItem::InputText {
+                    text: "line one".to_string(),
+                },
+                codex::DynamicToolCallOutputContentItem::InputText {
+                    text: "line two".to_string(),
+                },
+            ])),
+            success: Some(Some(true)),
+            duration_ms: None,
+        });
+
+        let projections = session_item_projections(&[
+            item_completed_event(1, command),
+            item_completed_event(2, dynamic),
+        ]);
+        assert_eq!(
+            tool_result_body_for_projection(&projections[0]),
+            SessionToolResultBodyProjection::Available {
+                text: "D:\\workspace\r\n".to_string(),
+            }
+        );
+        assert_eq!(
+            tool_result_body_for_projection(&projections[1]),
+            SessionToolResultBodyProjection::Available {
+                text: "line one\nline two".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn native_shell_and_fs_terminal_items_expose_explicit_result_bodies() {
+        let shell = AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ShellExec {
+            id: "shell-1".to_string(),
+            command: "pwd".to_string(),
+            cwd: Some("D:\\workspace".to_string()),
+            execution_mode: agentdash_agent_protocol::ShellExecExecutionMode::Platform,
+            arguments: json!({"command": "pwd"}),
+            status: codex::DynamicToolCallStatus::Completed,
+            aggregated_output: Some("D:\\workspace\r\n".to_string()),
+            exit_code: Some(0),
+            success: Some(true),
+        });
+        let fs_read = AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::FsRead {
+            id: "fs-1".to_string(),
+            path: "README.md".to_string(),
+            offset: None,
+            limit: None,
+            arguments: json!({"path": "README.md"}),
+            status: codex::DynamicToolCallStatus::Completed,
+            content_items: Some(vec![
+                codex::DynamicToolCallOutputContentItem::InputText {
+                    text: "first".to_string(),
+                },
+                codex::DynamicToolCallOutputContentItem::InputText {
+                    text: "second".to_string(),
+                },
+            ]),
+            success: Some(true),
+        });
+        let projections = session_item_projections(&[
+            item_completed_event(1, shell),
+            item_completed_event(2, fs_read),
+        ]);
+
+        assert_eq!(
+            tool_result_body_for_projection(&projections[0]),
+            SessionToolResultBodyProjection::Available {
+                text: "D:\\workspace\r\n".to_string(),
+            }
+        );
+        assert_eq!(
+            tool_result_body_for_projection(&projections[1]),
+            SessionToolResultBodyProjection::Available {
+                text: "first\nsecond".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_null_tool_result_body_remains_unavailable() {
+        let command = AgentDashThreadItem::Codex(codex::ThreadItem::CommandExecution {
+            id: "command-null".to_string(),
+            command: "pwd".to_string(),
+            cwd: "D:\\workspace".to_string().into(),
+            process_id: None,
+            status: codex::CommandExecutionStatus::Completed,
+            command_actions: Vec::new(),
+            aggregated_output: Some(None),
+            exit_code: Some(Some(0)),
+            duration_ms: None,
+            source: codex::CommandExecutionSource::Agent,
+        });
+        let projections = session_item_projections(&[item_completed_event(1, command)]);
+
+        assert_eq!(
+            tool_result_body_for_projection(&projections[0]),
+            SessionToolResultBodyProjection::Unavailable {
+                status: unavailable_tool_result_status("command-null"),
+            }
+        );
+    }
+
+    #[test]
+    fn mcp_result_preserves_structure_and_reports_explicit_truncation() {
+        let item: AgentDashThreadItem = serde_json::from_value(json!({
+            "type": "mcpToolCall",
+            "id": "mcp-1",
+            "server": "files",
+            "tool": "read",
+            "arguments": {"path": "large.log"},
+            "status": "completed",
+            "result": {
+                "content": [{"type": "text", "text": "partial body"}],
+                "_meta": {
+                    "truncation": {"policy": "head_tail", "originalBytes": 9000}
+                },
+                "structuredContent": {"rows": 10}
+            }
+        }))
+        .expect("mcp terminal item");
+        let projections = session_item_projections(&[item_completed_event(1, item)]);
+
+        match tool_result_body_for_projection(&projections[0]) {
+            SessionToolResultBodyProjection::Truncated { text, truncation } => {
+                assert!(text.contains("partial body"));
+                assert!(text.contains("structuredContent"));
+                assert_eq!(truncation["policy"], "head_tail");
+                assert_eq!(truncation["originalBytes"], 9000);
+            }
+            other => panic!("expected truncated MCP result body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn canonical_compaction_archive_preserves_main_summary_path_and_markdown() {
+        let archive = SessionCompactionArchive {
+            id: "compact-1".to_string(),
+            lifecycle_item_id: "item-compact-1".to_string(),
+            projection_version: 2,
+            completed_event_seq: 9,
+            source_start_event_seq: Some(1),
+            source_end_event_seq: Some(8),
+            summary: "Earlier conversation summary".to_string(),
+            trigger: Some("auto".to_string()),
+            phase: Some("pre_provider".to_string()),
+            strategy: Some("summary_prefix".to_string()),
+            token_stats_json: serde_json::json!({
+                "messages_compacted": 3,
+                "tokens_before": 100
+            }),
+            diagnostics_json: Value::Null,
+            turn_id: Some("turn-1".to_string()),
+            entry_index: Some(4),
+            status: SessionCompactionArchiveStatus::ProjectionCommitted,
+        };
+
+        let entries = session_summary_archives(vec![archive.clone()]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].0.path,
+            "session/summaries/0001__compact-1__until_8.md"
+        );
+        assert_eq!(entries[0].0.completed_event_seq, 9);
+        assert_eq!(entries[0].0.preview, "Earlier_conversation_summary");
+
+        let markdown = summary_archive_markdown(&archive);
+        assert!(markdown.starts_with("# Context Compaction compact-1\n\n```json\n"));
+        assert!(markdown.contains("\"status\": \"projection_committed\""));
+        assert!(markdown.contains("\"source_start_event_seq\": 1"));
+        assert!(markdown.contains("\"source_end_event_seq\": 8"));
+        assert!(markdown.contains("\"completed_event_seq\": 9"));
+        assert!(markdown.ends_with("```\n\nEarlier conversation summary"));
     }
 }

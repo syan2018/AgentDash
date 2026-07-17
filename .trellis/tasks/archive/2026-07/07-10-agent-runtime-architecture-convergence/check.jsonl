@@ -1,0 +1,13 @@
+{"file":".trellis/spec/backend/architecture.md","reason":"复核最终module ownership与依赖方向"}
+{"file":".trellis/spec/backend/capability/integration-api.md","reason":"复核Integration taxonomy与Agent service扩展点"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"复核Application/AgentRun与Managed Runtime边界"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"复核统一AgentRun facade、context/compaction事实源、CAS与恢复"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"复核Hook因果点、failure policy、trace/effect与mailbox边界"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"复核migration、事务、索引与一致性"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"复核Runtime Wire与product event事实源分离"}
+{"file":".trellis/spec/cross-layer/deployment-runtime.md","reason":"复核Relay仅为placement transport"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/codex-app-server-l4-vocabulary.md","reason":"核对Codex adapter未过度声明context/compaction"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"核对Hook业务authority与分站执行ownership"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/codex-hook-projection.md","reason":"核对Codex Hook capability未被event/steer或trust hash夸大"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/acp-event-projection.md","reason":"核对ACP未进入driver/binding/Relay且首期无实现"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/external-agent-feature-integration-matrix.md","reason":"核对profile/availability与真实callable channel一致"}

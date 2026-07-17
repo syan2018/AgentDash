@@ -1192,3 +1192,220 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Status
 
 [OK] **Implementation complete; ready to archive**
+
+
+## Session 25: AgentRun Runtime主链路统一收束
+
+**Date**: 2026-07-12
+**Task**: AgentRun Runtime主链路统一收束
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+完成immutable HookPlan、AgentRun cutover route ledger与canonical Turn lifecycle收束；真实产品验证首轮、连续轮次和工具失败后follow-up，ARD-006/008标记verified，ARD-007保持reported。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bc127a7fb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 26: ARD-009 Desktop Runtime领取与Backend在线收束
+
+**Date**: 2026-07-12
+**Task**: ARD-009 Desktop Runtime领取与Backend在线收束
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+定位已应用migration 66被改写导致agentdash-local退出；恢复immutable历史并新增0067，补credential claim超时与relay registered完成判定，真实pnpm dev验证目标Backend online。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `42c7c33b2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 27: Local Runtime无数据库与按需恢复收束
+
+**Date**: 2026-07-12
+**Task**: Local Runtime无数据库与按需恢复收束
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+移除Local PostgreSQL Host状态，增加Host incarnation、稳定RuntimeThread binding epochs、durable recovery intent、Runtime Wire断连屏障与BindingLost围栏；真实migration和定向质量门通过，enterprise E2E暴露的tool-continuation回归留给父任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e91238c98` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 28: 恢复会话协议与产品行为
+
+**Date**: 2026-07-14
+**Task**: 恢复会话协议与产品行为
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+以 Main 957fa9d 为严格行为判定器，恢复 Codex/Native/Remote/Tool/AgentRun/session stream 与原前端会话表现；Codex 对齐 0.144.1，完成数据库展示契约迁移、全链路等价门和边界规范固化。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5ae96bc53` | (see git log) |
+| `990c539a9` | (see git log) |
+| `b616815e0` | (see git log) |
+| `a0f011868` | (see git log) |
+| `63cd2e53c` | (see git log) |
+| `2de644a25` | (see git log) |
+| `92e0236c0` | (see git log) |
+| `6238a31ff` | (see git log) |
+| `e1b17e3b5` | (see git log) |
+| `6d742ffcc` | (see git log) |
+| `91ab428a8` | (see git log) |
+| `55b7a19ae` | (see git log) |
+| `2b55695b1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 29: 收束 Agent Runtime ContextFrame 与工具终态链路
+
+**Date**: 2026-07-15
+**Task**: 收束 Agent Runtime ContextFrame 与工具终态链路
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+按 main-reference 恢复全部 ContextFrame production producer 与原 Session eventstream 行为；补齐 product receipt、重启 callable registry、InProcess rebind、immutable outbox、managed compaction，并修复 Runtime 实体删插导致 ToolBroker 行级联丢失和工具调用卡死。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7c3cf7e2f` | (see git log) |
+| `14cccde83` | (see git log) |
+| `8889bb3e3` | (see git log) |
+| `1b3a8a8f3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 30: 恢复 Session 与工具链 main 等价行为
+
+**Date**: 2026-07-15
+**Task**: 恢复 Session 与工具链 main 等价行为
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+以 pinned main-reference、真实 PostgreSQL production composition 与现有前端 reducer 为共同 oracle，恢复 Native/Codex/Remote 单一事件链、六类工具 typed context、完整 transcript/cold rebind、lost/rewind 与 ContextFrame，并建立跨层组合门禁。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `764b50137` | (see git log) |
+| `50e813ed8` | (see git log) |
+| `32df86aaa` | (see git log) |
+| `5e3b3252f` | (see git log) |
+| `1963f4c37` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

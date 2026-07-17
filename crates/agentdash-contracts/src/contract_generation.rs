@@ -202,10 +202,8 @@ function isControlPlaneProjectionChanged(value: unknown): boolean {
   if (!(isOptionalString(value.frame_id) || value.frame_id === null)) return false;
   if (!(isOptionalString(value.gate_id) || value.gate_id === null)) return false;
   if (!(isOptionalString(value.mailbox_message_id) || value.mailbox_message_id === null)) return false;
-  if (!(isOptionalString(value.delivery_runtime_session_id) || value.delivery_runtime_session_id === null)) return false;
-  return value.workspace_module_presentation === undefined ||
-    value.workspace_module_presentation === null ||
-    isRecord(value.workspace_module_presentation);
+  return isOptionalString(value.delivery_runtime_session_id) ||
+    value.delivery_runtime_session_id === null;
 }
 "#,
     );
@@ -225,170 +223,169 @@ function isControlPlaneProjectionChanged(value: unknown): boolean {
 }
 
 fn ndjson_validator_specs() -> Vec<NdjsonEnvelopeValidatorSpec> {
-    vec![
-        NdjsonEnvelopeValidatorSpec {
-            envelope_type: "ProjectEventStreamEnvelope",
-            parse_function: "parseGeneratedProjectEventStreamEnvelope",
-            validate_function: "isGeneratedProjectEventStreamEnvelope",
-            branches: vec![
-                NdjsonEnvelopeBranchSpec {
-                    type_literal: "Connected",
-                    type_alias: "GeneratedProjectEventStreamConnectedEnvelope",
-                    guard_function: "isGeneratedProjectEventStreamConnectedEnvelope",
-                    failure_function: "readGeneratedProjectEventStreamConnectedFailure",
-                    fields: vec![
-                        field(&["data"], FieldValidationRule::Object, "object"),
-                        field(
-                            &["data", "last_event_id"],
-                            FieldValidationRule::FiniteNumber,
-                            "finite number",
-                        ),
-                    ],
-                },
-                NdjsonEnvelopeBranchSpec {
-                    type_literal: "StateChanged",
-                    type_alias: "GeneratedProjectEventStreamStateChangedEnvelope",
-                    guard_function: "isGeneratedProjectEventStreamStateChangedEnvelope",
-                    failure_function: "readGeneratedProjectEventStreamStateChangedFailure",
-                    fields: vec![
-                        field(&["data"], FieldValidationRule::Object, "object"),
-                        field(
-                            &["data", "id"],
-                            FieldValidationRule::FiniteNumber,
-                            "finite number",
-                        ),
-                        field(
-                            &["data", "project_id"],
-                            FieldValidationRule::NonEmptyString,
-                            "non-empty string",
-                        ),
-                        field(
-                            &["data", "entity_id"],
-                            FieldValidationRule::NonEmptyString,
-                            "non-empty string",
-                        ),
-                        field(
-                            &["data", "kind"],
-                            FieldValidationRule::NonEmptyString,
-                            "non-empty string",
-                        ),
-                        field(
-                            &["data", "payload"],
-                            FieldValidationRule::JsonObject,
-                            "JSON object",
-                        ),
-                        field(
-                            &["data", "backend_id"],
-                            FieldValidationRule::NullableString,
-                            "string or null",
-                        ),
-                        field(
-                            &["data", "created_at"],
-                            FieldValidationRule::NonEmptyString,
-                            "non-empty string",
-                        ),
-                    ],
-                },
-                NdjsonEnvelopeBranchSpec {
-                    type_literal: "ControlPlaneProjectionChanged",
-                    type_alias: "GeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope",
-                    guard_function: "isGeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope",
-                    failure_function: "readGeneratedProjectEventStreamControlPlaneProjectionChangedFailure",
-                    fields: vec![
-                        field(&["data"], FieldValidationRule::Object, "object"),
-                        field(
-                            &["data", "project_id"],
-                            FieldValidationRule::NonEmptyString,
-                            "non-empty string",
-                        ),
-                        field(
-                            &["data", "change"],
-                            FieldValidationRule::ControlPlaneProjectionChanged,
-                            "ControlPlaneProjectionChanged",
-                        ),
-                    ],
-                },
-                NdjsonEnvelopeBranchSpec {
-                    type_literal: "BackendRuntimeChanged",
-                    type_alias: "GeneratedProjectEventStreamBackendRuntimeChangedEnvelope",
-                    guard_function: "isGeneratedProjectEventStreamBackendRuntimeChangedEnvelope",
-                    failure_function: "readGeneratedProjectEventStreamBackendRuntimeChangedFailure",
-                    fields: vec![
-                        field(&["data"], FieldValidationRule::Object, "object"),
-                        field(
-                            &["data", "backend_id"],
-                            FieldValidationRule::NonEmptyString,
-                            "non-empty string",
-                        ),
-                    ],
-                },
-                NdjsonEnvelopeBranchSpec {
-                    type_literal: "Heartbeat",
-                    type_alias: "GeneratedProjectEventStreamHeartbeatEnvelope",
-                    guard_function: "isGeneratedProjectEventStreamHeartbeatEnvelope",
-                    failure_function: "readGeneratedProjectEventStreamHeartbeatFailure",
-                    fields: vec![
-                        field(&["data"], FieldValidationRule::Object, "object"),
-                        field(
-                            &["data", "timestamp"],
-                            FieldValidationRule::FiniteNumber,
-                            "finite number",
-                        ),
-                    ],
-                },
-            ],
-        },
-        NdjsonEnvelopeValidatorSpec {
-            envelope_type: "SessionNdjsonEnvelope",
-            parse_function: "parseGeneratedSessionNdjsonEnvelope",
-            validate_function: "isGeneratedSessionNdjsonEnvelope",
-            branches: vec![
-                NdjsonEnvelopeBranchSpec {
-                    type_literal: "connected",
-                    type_alias: "GeneratedSessionNdjsonConnectedEnvelope",
-                    guard_function: "isGeneratedSessionNdjsonConnectedEnvelope",
-                    failure_function: "readGeneratedSessionNdjsonConnectedFailure",
-                    fields: vec![
-                        field(
-                            &["last_event_id"],
-                            FieldValidationRule::FiniteNumber,
-                            "finite number",
-                        ),
-                        field(
-                            &["ephemeral_epoch"],
-                            FieldValidationRule::FiniteNumber,
-                            "finite number",
-                        ),
-                    ],
-                },
-                NdjsonEnvelopeBranchSpec {
-                    type_literal: "event",
-                    type_alias: "GeneratedSessionNdjsonEventEnvelope",
-                    guard_function: "isGeneratedSessionNdjsonEventEnvelope",
-                    failure_function: "readGeneratedSessionNdjsonEventFailure",
-                    fields: session_event_fields(),
-                },
-                NdjsonEnvelopeBranchSpec {
-                    type_literal: "ephemeral_event",
-                    type_alias: "GeneratedSessionNdjsonEphemeralEventEnvelope",
-                    guard_function: "isGeneratedSessionNdjsonEphemeralEventEnvelope",
-                    failure_function: "readGeneratedSessionNdjsonEphemeralEventFailure",
-                    fields: session_event_fields(),
-                },
-                NdjsonEnvelopeBranchSpec {
-                    type_literal: "heartbeat",
-                    type_alias: "GeneratedSessionNdjsonHeartbeatEnvelope",
-                    guard_function: "isGeneratedSessionNdjsonHeartbeatEnvelope",
-                    failure_function: "readGeneratedSessionNdjsonHeartbeatFailure",
-                    fields: vec![field(
-                        &["timestamp"],
+    let mut specs = vec![NdjsonEnvelopeValidatorSpec {
+        envelope_type: "ProjectEventStreamEnvelope",
+        parse_function: "parseGeneratedProjectEventStreamEnvelope",
+        validate_function: "isGeneratedProjectEventStreamEnvelope",
+        branches: vec![
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "Connected",
+                type_alias: "GeneratedProjectEventStreamConnectedEnvelope",
+                guard_function: "isGeneratedProjectEventStreamConnectedEnvelope",
+                failure_function: "readGeneratedProjectEventStreamConnectedFailure",
+                fields: vec![
+                    field(&["data"], FieldValidationRule::Object, "object"),
+                    field(
+                        &["data", "last_event_id"],
                         FieldValidationRule::FiniteNumber,
                         "finite number",
-                    )],
-                },
-            ],
-        },
-    ]
+                    ),
+                ],
+            },
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "StateChanged",
+                type_alias: "GeneratedProjectEventStreamStateChangedEnvelope",
+                guard_function: "isGeneratedProjectEventStreamStateChangedEnvelope",
+                failure_function: "readGeneratedProjectEventStreamStateChangedFailure",
+                fields: vec![
+                    field(&["data"], FieldValidationRule::Object, "object"),
+                    field(
+                        &["data", "id"],
+                        FieldValidationRule::FiniteNumber,
+                        "finite number",
+                    ),
+                    field(
+                        &["data", "project_id"],
+                        FieldValidationRule::NonEmptyString,
+                        "non-empty string",
+                    ),
+                    field(
+                        &["data", "entity_id"],
+                        FieldValidationRule::NonEmptyString,
+                        "non-empty string",
+                    ),
+                    field(
+                        &["data", "kind"],
+                        FieldValidationRule::NonEmptyString,
+                        "non-empty string",
+                    ),
+                    field(
+                        &["data", "payload"],
+                        FieldValidationRule::JsonObject,
+                        "JSON object",
+                    ),
+                    field(
+                        &["data", "backend_id"],
+                        FieldValidationRule::NullableString,
+                        "string or null",
+                    ),
+                    field(
+                        &["data", "created_at"],
+                        FieldValidationRule::NonEmptyString,
+                        "non-empty string",
+                    ),
+                ],
+            },
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "ControlPlaneProjectionChanged",
+                type_alias: "GeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope",
+                guard_function: "isGeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope",
+                failure_function: "readGeneratedProjectEventStreamControlPlaneProjectionChangedFailure",
+                fields: vec![
+                    field(&["data"], FieldValidationRule::Object, "object"),
+                    field(
+                        &["data", "project_id"],
+                        FieldValidationRule::NonEmptyString,
+                        "non-empty string",
+                    ),
+                    field(
+                        &["data", "change"],
+                        FieldValidationRule::ControlPlaneProjectionChanged,
+                        "ControlPlaneProjectionChanged",
+                    ),
+                ],
+            },
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "BackendRuntimeChanged",
+                type_alias: "GeneratedProjectEventStreamBackendRuntimeChangedEnvelope",
+                guard_function: "isGeneratedProjectEventStreamBackendRuntimeChangedEnvelope",
+                failure_function: "readGeneratedProjectEventStreamBackendRuntimeChangedFailure",
+                fields: vec![
+                    field(&["data"], FieldValidationRule::Object, "object"),
+                    field(
+                        &["data", "backend_id"],
+                        FieldValidationRule::NonEmptyString,
+                        "non-empty string",
+                    ),
+                ],
+            },
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "Heartbeat",
+                type_alias: "GeneratedProjectEventStreamHeartbeatEnvelope",
+                guard_function: "isGeneratedProjectEventStreamHeartbeatEnvelope",
+                failure_function: "readGeneratedProjectEventStreamHeartbeatFailure",
+                fields: vec![
+                    field(&["data"], FieldValidationRule::Object, "object"),
+                    field(
+                        &["data", "timestamp"],
+                        FieldValidationRule::FiniteNumber,
+                        "finite number",
+                    ),
+                ],
+            },
+        ],
+    }];
+    specs.push(NdjsonEnvelopeValidatorSpec {
+        envelope_type: "SessionNdjsonEnvelope",
+        parse_function: "parseGeneratedSessionNdjsonEnvelope",
+        validate_function: "isGeneratedSessionNdjsonEnvelope",
+        branches: vec![
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "connected",
+                type_alias: "GeneratedSessionNdjsonConnectedEnvelope",
+                guard_function: "isGeneratedSessionNdjsonConnectedEnvelope",
+                failure_function: "readGeneratedSessionNdjsonConnectedFailure",
+                fields: vec![
+                    field(
+                        &["last_event_id"],
+                        FieldValidationRule::FiniteNumber,
+                        "finite number",
+                    ),
+                    field(
+                        &["ephemeral_epoch"],
+                        FieldValidationRule::FiniteNumber,
+                        "finite number",
+                    ),
+                ],
+            },
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "event",
+                type_alias: "GeneratedSessionNdjsonEventEnvelope",
+                guard_function: "isGeneratedSessionNdjsonEventEnvelope",
+                failure_function: "readGeneratedSessionNdjsonEventFailure",
+                fields: session_event_fields(),
+            },
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "ephemeral_event",
+                type_alias: "GeneratedSessionNdjsonEphemeralEventEnvelope",
+                guard_function: "isGeneratedSessionNdjsonEphemeralEventEnvelope",
+                failure_function: "readGeneratedSessionNdjsonEphemeralEventFailure",
+                fields: session_event_fields(),
+            },
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "heartbeat",
+                type_alias: "GeneratedSessionNdjsonHeartbeatEnvelope",
+                guard_function: "isGeneratedSessionNdjsonHeartbeatEnvelope",
+                failure_function: "readGeneratedSessionNdjsonHeartbeatFailure",
+                fields: vec![field(
+                    &["timestamp"],
+                    FieldValidationRule::FiniteNumber,
+                    "finite number",
+                )],
+            },
+        ],
+    });
+    specs
 }
 
 fn session_event_fields() -> Vec<FieldValidationSpec> {
@@ -580,6 +577,11 @@ pub fn render_domain_file(
     upstream: &BTreeMap<String, String>,
 ) -> GeneratedTsFile {
     declarations.remove(JSON_VALUE_TYPE_NAME);
+    for declaration in declarations.values_mut() {
+        while declaration.contains(" | null | null") {
+            *declaration = declaration.replace(" | null | null", " | null");
+        }
+    }
 
     let mut stripped = Vec::new();
     for (type_name, source) in upstream {
@@ -807,6 +809,43 @@ mod tests {
         assert!(rendered.contents.contains(
             "export type GeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope = Extract<ProjectEventStreamEnvelope, { type: \"ControlPlaneProjectionChanged\" }>;"
         ));
+    }
+
+    #[test]
+    fn session_ndjson_validator_matches_generated_envelope_shape() {
+        let rendered = render_ndjson_stream_validators();
+
+        for branch in ["connected", "event", "ephemeral_event", "heartbeat"] {
+            assert!(
+                rendered
+                    .contents
+                    .contains(&format!("case \"{branch}\": {{")),
+                "missing Session NDJSON branch {branch}"
+            );
+        }
+        assert!(rendered.contents.contains(
+            "export type GeneratedSessionNdjsonEventEnvelope = Extract<SessionNdjsonEnvelope, { type: \"event\" }>;"
+        ));
+        assert!(
+            rendered
+                .contents
+                .contains("isOptionalString(value.turn_id)")
+        );
+        assert!(
+            rendered
+                .contents
+                .contains("isOptionalFiniteNumber(value.entry_index)")
+        );
+        assert!(
+            rendered
+                .contents
+                .contains("isOptionalString(value.tool_call_id)")
+        );
+        assert!(
+            rendered
+                .contents
+                .contains("isBackboneEnvelope(value.notification)")
+        );
     }
 
     #[test]

@@ -1,18 +1,19 @@
-use agentdash_domain::DomainError;
-use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository,
-    DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRunRepository,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+use agentdash_application_ports::agent_run_runtime::{
+    AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository, AgentRunRuntimeTarget,
 };
-use chrono::{DateTime, Utc};
-use uuid::Uuid;
-
-use crate::agent_run::AgentRunExecutionState;
-use crate::error::ApplicationError;
 use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 use agentdash_application_ports::lifecycle_surface_projection::{
     MessageStreamProjectionRef, MessageStreamTraceKind,
 };
+use agentdash_domain::DomainError;
+use agentdash_domain::workflow::{
+    AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRunRepository,
+};
+use chrono::{DateTime, TimeZone, Utc};
+use uuid::Uuid;
+
+use crate::agent_run::{AgentRunExecutionState, AgentRunRuntime, AgentRunRuntimeError};
+use crate::error::ApplicationError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryRuntimeSelectionPolicy {
@@ -29,26 +30,16 @@ pub struct DeliveryRuntimeSelection {
     pub orchestration_id: Option<Uuid>,
     pub node_path: Option<String>,
     pub node_attempt: Option<u32>,
-    pub status: DeliveryBindingStatus,
-    pub active_turn_id: Option<String>,
-    pub last_turn_id: Option<String>,
-    pub terminal_state: Option<String>,
-    pub terminal_message: Option<String>,
     pub observed_at: DateTime<Utc>,
     pub address: AgentRunRuntimeAddress,
     pub message_stream: MessageStreamProjectionRef,
-    pub anchor: RuntimeSessionExecutionAnchor,
+    pub thread_name: Option<String>,
+    execution_state: AgentRunExecutionState,
 }
 
 impl DeliveryRuntimeSelection {
     pub fn execution_state(&self) -> AgentRunExecutionState {
-        AgentRunExecutionState::from_delivery_parts(
-            self.status,
-            self.active_turn_id.clone(),
-            self.last_turn_id.clone(),
-            self.terminal_state.clone(),
-            self.terminal_message.clone(),
-        )
+        self.execution_state.clone()
     }
 }
 
@@ -66,40 +57,20 @@ pub enum DeliveryRuntimeSelectionError {
     },
     #[error("AgentRun {run_id}/LifecycleAgent {agent_id} 缺少 current delivery binding")]
     CurrentDeliveryMissing { run_id: Uuid, agent_id: Uuid },
-    #[error("RuntimeSessionExecutionAnchor {runtime_session_id} 不存在")]
-    AnchorMissing { runtime_session_id: String },
-    #[error(
-        "RuntimeSessionExecutionAnchor {runtime_session_id} 指向 run {actual_run_id}/agent {actual_agent_id}/launch frame {actual_launch_frame_id}，不匹配期望 run {expected_run_id}/agent {expected_agent_id}/launch frame {expected_launch_frame_id}"
-    )]
-    AnchorMismatch {
-        runtime_session_id: String,
-        expected_run_id: Uuid,
-        expected_agent_id: Uuid,
-        expected_launch_frame_id: Uuid,
-        actual_run_id: Uuid,
-        actual_agent_id: Uuid,
-        actual_launch_frame_id: Uuid,
-    },
-    #[error(
-        "RuntimeSessionExecutionAnchor {runtime_session_id} 的 orchestration/node 坐标不匹配 current delivery binding"
-    )]
-    AnchorNodeMismatch {
-        runtime_session_id: String,
-        expected_orchestration_id: Option<Uuid>,
-        expected_node_path: Option<String>,
-        expected_node_attempt: Option<u32>,
-        actual_orchestration_id: Option<Uuid>,
-        actual_node_path: Option<String>,
-        actual_node_attempt: Option<u32>,
-    },
     #[error("LifecycleAgent {agent_id} 缺少当前 AgentFrame revision")]
     CurrentFrameMissing { agent_id: Uuid },
     #[error("AgentFrame {frame_id} 不存在")]
     CurrentFrameNotFound { frame_id: Uuid },
-    #[error("Launch AgentFrame {frame_id} 不存在")]
+    #[error("Runtime surface source_frame_id `{source_frame_id}` 不是合法 UUID")]
+    InvalidSourceFrameId { source_frame_id: String },
+    #[error("Runtime surface source AgentFrame {frame_id} 不存在")]
     LaunchFrameNotFound { frame_id: Uuid },
-    #[error("Subject {kind}/{id} 不存在")]
-    SubjectNotFound { kind: String, id: Uuid },
+    #[error("terminal AgentRun runtime 缺少可展示的 turn identity")]
+    TerminalTurnMissing,
+    #[error("AgentRun runtime binding repository failed: {0}")]
+    RuntimeBinding(#[from] AgentRunRuntimeBindingError),
+    #[error("AgentRun runtime inspection failed: {0}")]
+    Runtime(#[from] AgentRunRuntimeError),
     #[error(transparent)]
     Repository(#[from] DomainError),
 }
@@ -110,8 +81,7 @@ impl From<DeliveryRuntimeSelectionError> for ApplicationError {
             DeliveryRuntimeSelectionError::RunNotFound { .. }
             | DeliveryRuntimeSelectionError::AgentNotFound { .. }
             | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
-            | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
-            | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
+            | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. } => {
                 ApplicationError::NotFound(error.to_string())
             }
             DeliveryRuntimeSelectionError::Repository(source) => ApplicationError::from(source),
@@ -125,17 +95,20 @@ pub struct DeliveryRuntimeSelectionRepositories<'a> {
     pub lifecycle_runs: &'a dyn LifecycleRunRepository,
     pub lifecycle_agents: &'a dyn LifecycleAgentRepository,
     pub agent_frames: &'a dyn AgentFrameRepository,
-    pub execution_anchors: &'a dyn RuntimeSessionExecutionAnchorRepository,
-    pub delivery_bindings: &'a dyn AgentRunDeliveryBindingRepository,
+    pub runtime_bindings: &'a dyn AgentRunRuntimeBindingRepository,
 }
 
 pub struct DeliveryRuntimeSelectionService<'a> {
     repos: DeliveryRuntimeSelectionRepositories<'a>,
+    runtime: &'a dyn AgentRunRuntime,
 }
 
 impl<'a> DeliveryRuntimeSelectionService<'a> {
-    pub fn new(repos: DeliveryRuntimeSelectionRepositories<'a>) -> Self {
-        Self { repos }
+    pub fn new(
+        repos: DeliveryRuntimeSelectionRepositories<'a>,
+        runtime: &'a dyn AgentRunRuntime,
+    ) -> Self {
+        Self { repos, runtime }
     }
 
     pub async fn select(
@@ -154,67 +127,12 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
         run_id: Uuid,
         agent_id: Uuid,
     ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
-        self.ensure_run(run_id).await?;
-        let agent = self.load_agent_for_run(run_id, agent_id).await?;
-        let binding = self
+        let run = self
             .repos
-            .delivery_bindings
-            .get_current(run_id, agent_id)
-            .await?
-            .ok_or(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { run_id, agent_id })?;
-        let expected_anchor = self
-            .repos
-            .execution_anchors
-            .find_by_session(&binding.runtime_session_id)
-            .await?
-            .ok_or_else(|| DeliveryRuntimeSelectionError::AnchorMissing {
-                runtime_session_id: binding.runtime_session_id.clone(),
-            })?;
-        validate_anchor_matches(
-            &expected_anchor,
-            run_id,
-            agent_id,
-            binding.launch_frame_id,
-            binding.orchestration_id,
-            binding.node_path.as_deref(),
-            binding.node_attempt,
-        )?;
-        let current_frame = self
-            .repos
-            .agent_frames
-            .get_current(agent.id)
-            .await?
-            .ok_or(DeliveryRuntimeSelectionError::CurrentFrameMissing { agent_id: agent.id })?;
-        let anchor = expected_anchor;
-        if current_frame.agent_id != agent_id {
-            return Err(DeliveryRuntimeSelectionError::CurrentFrameNotFound {
-                frame_id: current_frame.id,
-            });
-        }
-        if anchor.agent_id != agent_id {
-            return Err(DeliveryRuntimeSelectionError::AnchorMissing {
-                runtime_session_id: binding.runtime_session_id.clone(),
-            });
-        }
-
-        self.selection_from_anchor(agent, current_frame.id, anchor, binding)
-            .await
-    }
-
-    async fn ensure_run(&self, run_id: Uuid) -> Result<(), DeliveryRuntimeSelectionError> {
-        self.repos
             .lifecycle_runs
             .get_by_id(run_id)
             .await?
             .ok_or(DeliveryRuntimeSelectionError::RunNotFound { run_id })?;
-        Ok(())
-    }
-
-    async fn load_agent_for_run(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-    ) -> Result<LifecycleAgent, DeliveryRuntimeSelectionError> {
         let agent = self
             .repos
             .lifecycle_agents
@@ -228,426 +146,257 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
                 actual_run_id: agent.run_id,
             });
         }
-        Ok(agent)
-    }
-
-    async fn selection_from_anchor(
-        &self,
-        agent: LifecycleAgent,
-        current_frame_id: Uuid,
-        anchor: RuntimeSessionExecutionAnchor,
-        binding: AgentRunDeliveryBinding,
-    ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
-        self.repos.agent_frames.get(current_frame_id).await?.ok_or(
-            DeliveryRuntimeSelectionError::CurrentFrameNotFound {
-                frame_id: current_frame_id,
+        let target = AgentRunRuntimeTarget { run_id, agent_id };
+        let binding =
+            self.repos.runtime_bindings.load(&target).await?.ok_or(
+                DeliveryRuntimeSelectionError::CurrentDeliveryMissing { run_id, agent_id },
+            )?;
+        let current_frame = self
+            .repos
+            .agent_frames
+            .get_latest(agent_id)
+            .await?
+            .ok_or(DeliveryRuntimeSelectionError::CurrentFrameMissing { agent_id })?;
+        if current_frame.agent_id != agent_id {
+            return Err(DeliveryRuntimeSelectionError::CurrentFrameNotFound {
+                frame_id: current_frame.id,
+            });
+        }
+        let launch_frame_id = parse_source_frame_id(&binding.surface.source_frame_id)?;
+        let launch_frame = self.repos.agent_frames.get(launch_frame_id).await?.ok_or(
+            DeliveryRuntimeSelectionError::LaunchFrameNotFound {
+                frame_id: launch_frame_id,
             },
         )?;
-        self.repos
-            .agent_frames
-            .get(anchor.launch_frame_id)
-            .await?
-            .ok_or(DeliveryRuntimeSelectionError::LaunchFrameNotFound {
-                frame_id: anchor.launch_frame_id,
-            })?;
-
+        if launch_frame.agent_id != agent_id {
+            return Err(DeliveryRuntimeSelectionError::LaunchFrameNotFound {
+                frame_id: launch_frame_id,
+            });
+        }
+        let runtime = self.runtime.inspect(target).await?;
+        let (execution_state, observed_at) = runtime_state(&agent, runtime.snapshot.as_ref())?;
+        let thread_name = runtime
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.thread_name.clone());
+        let runtime_session_id = binding.presentation_thread_id.to_string();
+        let orchestration_coordinate =
+            find_orchestration_coordinate(&run.orchestrations, &runtime_session_id);
         Ok(DeliveryRuntimeSelection {
-            run_id: anchor.run_id,
-            agent_id: anchor.agent_id,
-            current_frame_id,
-            launch_frame_id: anchor.launch_frame_id,
-            runtime_session_id: anchor.runtime_session_id.clone(),
-            orchestration_id: anchor.orchestration_id,
-            node_path: anchor.node_path.clone(),
-            node_attempt: anchor.node_attempt,
-            status: binding.status,
-            active_turn_id: binding.active_turn_id,
-            last_turn_id: binding.last_turn_id,
-            terminal_state: binding.terminal_state,
-            terminal_message: binding.terminal_message,
-            observed_at: binding.observed_at,
+            run_id,
+            agent_id,
+            current_frame_id: current_frame.id,
+            launch_frame_id,
+            runtime_session_id: runtime_session_id.clone(),
+            orchestration_id: orchestration_coordinate.as_ref().map(|value| value.0),
+            node_path: orchestration_coordinate
+                .as_ref()
+                .map(|value| value.1.clone()),
+            node_attempt: orchestration_coordinate.map(|value| value.2),
+            observed_at,
             address: AgentRunRuntimeAddress {
-                run_id: anchor.run_id,
-                agent_id: agent.id,
-                frame_id: current_frame_id,
+                run_id,
+                agent_id,
+                frame_id: current_frame.id,
             },
             message_stream: MessageStreamProjectionRef {
-                runtime_session_id: anchor.runtime_session_id.clone(),
+                runtime_session_id,
                 trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
             },
-            anchor,
+            thread_name,
+            execution_state,
         })
     }
 }
 
-fn validate_anchor_matches(
-    anchor: &RuntimeSessionExecutionAnchor,
-    expected_run_id: Uuid,
-    expected_agent_id: Uuid,
-    expected_launch_frame_id: Uuid,
-    expected_orchestration_id: Option<Uuid>,
-    expected_node_path: Option<&str>,
-    expected_node_attempt: Option<u32>,
-) -> Result<(), DeliveryRuntimeSelectionError> {
-    if anchor.run_id != expected_run_id
-        || anchor.agent_id != expected_agent_id
-        || anchor.launch_frame_id != expected_launch_frame_id
+fn runtime_state(
+    agent: &LifecycleAgent,
+    snapshot: Option<&agentdash_agent_runtime_contract::RuntimeSnapshot>,
+) -> Result<(AgentRunExecutionState, DateTime<Utc>), DeliveryRuntimeSelectionError> {
+    let observed_at = snapshot
+        .and_then(|snapshot| {
+            Utc.timestamp_millis_opt(snapshot.captured_at_ms as i64)
+                .single()
+        })
+        .unwrap_or(agent.updated_at);
+    let active_turn_id = snapshot
+        .and_then(|snapshot| snapshot.active_presentation_turn_id.as_ref())
+        .map(ToString::to_string);
+    let last_turn_id = active_turn_id.clone().or_else(|| {
+        snapshot.and_then(|snapshot| {
+            snapshot
+                .transcript
+                .iter()
+                .rev()
+                .map(|item| item.source_turn_id.trim())
+                .find(|turn_id| !turn_id.is_empty())
+                .map(ToOwned::to_owned)
+        })
+    });
+    let state = if snapshot.is_some_and(|snapshot| {
+        snapshot.status == agentdash_agent_runtime_contract::RuntimeThreadStatus::Lost
+    }) || agent.status == "lost"
     {
-        return Err(DeliveryRuntimeSelectionError::AnchorMismatch {
-            runtime_session_id: anchor.runtime_session_id.clone(),
-            expected_run_id,
-            expected_agent_id,
-            expected_launch_frame_id,
-            actual_run_id: anchor.run_id,
-            actual_agent_id: anchor.agent_id,
-            actual_launch_frame_id: anchor.launch_frame_id,
-        });
-    }
+        AgentRunExecutionState::Lost {
+            turn_id: last_turn_id,
+            message: None,
+        }
+    } else if active_turn_id.is_some() {
+        AgentRunExecutionState::Running {
+            turn_id: active_turn_id,
+        }
+    } else {
+        match agent.status.as_str() {
+            "running" => AgentRunExecutionState::Running { turn_id: None },
+            "cancelling" => AgentRunExecutionState::Cancelling {
+                turn_id: last_turn_id,
+            },
+            "completed" => AgentRunExecutionState::Completed {
+                turn_id: required_terminal_turn(last_turn_id.clone())?,
+            },
+            "failed" => AgentRunExecutionState::Failed {
+                turn_id: required_terminal_turn(last_turn_id.clone())?,
+                message: None,
+            },
+            "interrupted" | "cancelled" | "canceled" => AgentRunExecutionState::Interrupted {
+                turn_id: last_turn_id,
+                message: None,
+            },
+            _ => AgentRunExecutionState::Idle,
+        }
+    };
+    Ok((state, observed_at))
+}
 
-    if anchor.orchestration_id == expected_orchestration_id
-        && anchor.node_path.as_deref() == expected_node_path
-        && anchor.node_attempt == expected_node_attempt
-    {
-        return Ok(());
-    }
+fn parse_source_frame_id(source_frame_id: &str) -> Result<Uuid, DeliveryRuntimeSelectionError> {
+    Uuid::parse_str(source_frame_id).map_err(|_| {
+        DeliveryRuntimeSelectionError::InvalidSourceFrameId {
+            source_frame_id: source_frame_id.to_string(),
+        }
+    })
+}
 
-    Err(DeliveryRuntimeSelectionError::AnchorNodeMismatch {
-        runtime_session_id: anchor.runtime_session_id.clone(),
-        expected_orchestration_id,
-        expected_node_path: expected_node_path.map(ToOwned::to_owned),
-        expected_node_attempt,
-        actual_orchestration_id: anchor.orchestration_id,
-        actual_node_path: anchor.node_path.clone(),
-        actual_node_attempt: anchor.node_attempt,
+fn required_terminal_turn(
+    turn_id: Option<String>,
+) -> Result<String, DeliveryRuntimeSelectionError> {
+    turn_id.ok_or(DeliveryRuntimeSelectionError::TerminalTurnMissing)
+}
+
+fn find_runtime_node_coordinate(
+    nodes: &[agentdash_domain::workflow::RuntimeNodeState],
+    runtime_session_id: &str,
+) -> Option<(String, u32)> {
+    for node in nodes {
+        if matches!(
+            node.executor_run_ref.as_ref(),
+            Some(agentdash_domain::workflow::ExecutorRunRef::RuntimeSession { session_id })
+                if session_id == runtime_session_id
+        ) {
+            return Some((node.node_path.clone(), node.attempt));
+        }
+        if let Some(found) = find_runtime_node_coordinate(&node.children, runtime_session_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_orchestration_coordinate(
+    orchestrations: &[agentdash_domain::workflow::OrchestrationInstance],
+    runtime_session_id: &str,
+) -> Option<(Uuid, String, u32)> {
+    orchestrations.iter().find_map(|orchestration| {
+        find_runtime_node_coordinate(&orchestration.node_tree, runtime_session_id)
+            .map(|(path, attempt)| (orchestration.orchestration_id, path, attempt))
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use agentdash_domain::DomainError;
-    use agentdash_domain::workflow::{
-        AgentFrame, AgentFrameRepository, AgentRunDeliveryBinding, AgentSource, LifecycleAgent,
-        LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
-    };
-    use tokio::sync::Mutex;
-
     use super::*;
-    use crate::test_support::{
-        MemoryAgentFrameRepository, MemoryAgentRunDeliveryBindingRepository,
-        MemoryLifecycleAgentRepository, MemoryRuntimeSessionExecutionAnchorRepository,
-    };
 
-    #[derive(Default)]
-    struct FixtureLifecycleRunRepository {
-        runs: Mutex<Vec<LifecycleRun>>,
+    fn fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../tests/fixtures/session-parity/workspace-selection.json"
+        ))
+        .expect("pinned Main workspace selection fixture")
     }
 
-    #[async_trait::async_trait]
-    impl LifecycleRunRepository for FixtureLifecycleRunRepository {
-        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            self.runs.lock().await.push(run.clone());
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .await
-                .iter()
-                .find(|run| run.id == id)
-                .cloned())
-        }
-
-        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .await
-                .iter()
-                .filter(|run| ids.contains(&run.id))
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .await
-                .iter()
-                .filter(|run| run.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            let mut runs = self.runs.lock().await;
-            if let Some(existing) = runs.iter_mut().find(|item| item.id == run.id) {
-                *existing = run.clone();
-            }
-            Ok(())
-        }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.runs.lock().await.retain(|run| run.id != id);
-            Ok(())
-        }
+    #[test]
+    fn adopted_surface_uses_typed_source_frame_identity() {
+        let fixture = fixture();
+        let source = Uuid::parse_str(
+            fixture["adopted_surface"]["source_frame_id"]
+                .as_str()
+                .expect("source frame fixture"),
+        )
+        .unwrap();
+        let current = Uuid::parse_str(
+            fixture["adopted_surface"]["current_frame_id"]
+                .as_str()
+                .expect("current frame fixture"),
+        )
+        .unwrap();
+        assert_eq!(parse_source_frame_id(&source.to_string()).unwrap(), source);
+        assert_ne!(
+            source, current,
+            "surface adoption must preserve the source frame"
+        );
+        assert!(matches!(
+            parse_source_frame_id("not-a-frame"),
+            Err(DeliveryRuntimeSelectionError::InvalidSourceFrameId { .. })
+        ));
     }
 
-    struct SelectionFixture {
-        runs: Arc<FixtureLifecycleRunRepository>,
-        agents: Arc<MemoryLifecycleAgentRepository>,
-        frames: Arc<MemoryAgentFrameRepository>,
-        anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
-        delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
-    }
-
-    impl SelectionFixture {
-        fn new() -> Self {
-            Self {
-                runs: Arc::new(FixtureLifecycleRunRepository::default()),
-                agents: Arc::new(MemoryLifecycleAgentRepository::default()),
-                frames: Arc::new(MemoryAgentFrameRepository::default()),
-                anchors: Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default()),
-                delivery_bindings: Arc::new(MemoryAgentRunDeliveryBindingRepository::default()),
-            }
-        }
-
-        fn service(&self) -> DeliveryRuntimeSelectionService<'_> {
-            DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
-                lifecycle_runs: self.runs.as_ref(),
-                lifecycle_agents: self.agents.as_ref(),
-                agent_frames: self.frames.as_ref(),
-                execution_anchors: self.anchors.as_ref(),
-                delivery_bindings: self.delivery_bindings.as_ref(),
-            })
-        }
-
-        async fn seed_current_delivery(
-            &self,
-        ) -> (
-            LifecycleRun,
-            LifecycleAgent,
-            AgentFrame,
-            AgentFrame,
-            RuntimeSessionExecutionAnchor,
-        ) {
-            let run = LifecycleRun::new_plain(Uuid::new_v4());
-            self.runs.create(&run).await.expect("create run");
-
-            let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-            let launch_frame = AgentFrame::new_initial(agent.id);
-            let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
-            let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-                "runtime-current",
-                run.id,
-                launch_frame.id,
-                agent.id,
-            );
-            let binding = AgentRunDeliveryBinding::from_anchor(
-                &anchor,
-                DeliveryBindingStatus::Running,
-                anchor.updated_at,
-            );
-
-            self.frames
-                .create(&launch_frame)
-                .await
-                .expect("launch frame");
-            self.frames
-                .create(&current_frame)
-                .await
-                .expect("current frame");
-            self.anchors.create_once(&anchor).await.expect("anchor");
-            self.delivery_bindings
-                .upsert(&binding)
-                .await
-                .expect("binding");
-            self.agents.create(&agent).await.expect("agent");
-
-            (run, agent, launch_frame, current_frame, anchor)
-        }
-    }
-
-    #[tokio::test]
-    async fn delivery_runtime_selection_current_delivery_returns_binding_coordinate() {
-        let fixture = SelectionFixture::new();
-        let (run, agent, launch_frame, current_frame, anchor) =
-            fixture.seed_current_delivery().await;
-
-        let selection = fixture
-            .service()
-            .select(DeliveryRuntimeSelectionPolicy::CurrentDelivery {
-                run_id: run.id,
-                agent_id: agent.id,
-            })
-            .await
-            .expect("selection");
-
-        assert_eq!(selection.run_id, run.id);
-        assert_eq!(selection.agent_id, agent.id);
-        assert_eq!(selection.current_frame_id, current_frame.id);
-        assert_eq!(selection.launch_frame_id, launch_frame.id);
-        assert_eq!(selection.runtime_session_id, "runtime-current");
-        assert_eq!(selection.status, DeliveryBindingStatus::Running);
-        assert_eq!(selection.address.frame_id, current_frame.id);
+    #[test]
+    fn workflow_node_coordinate_matches_presentation_runtime_session() {
+        let fixture = fixture();
+        let runtime_session_id = fixture["workflow_node"]["runtime_session_id"]
+            .as_str()
+            .unwrap();
+        let driver_thread_id = fixture["workflow_node"]["driver_thread_id"]
+            .as_str()
+            .unwrap();
+        let node_path = fixture["workflow_node"]["node_path"].as_str().unwrap();
+        let attempt = fixture["workflow_node"]["attempt"].as_u64().unwrap() as u32;
+        let nodes: Vec<agentdash_domain::workflow::RuntimeNodeState> =
+            serde_json::from_value(serde_json::json!([{
+                "node_id": "root",
+                "node_path": "root",
+                "kind": "phase",
+                "status": "running",
+                "attempt": 1,
+                "children": [{
+                    "node_id": "agent",
+                    "node_path": node_path,
+                    "kind": "agent_call",
+                    "status": "running",
+                    "attempt": attempt,
+                    "executor_run_ref": {
+                        "kind": "runtime_session",
+                        "session_id": runtime_session_id
+                    }
+                }]
+            }]))
+            .expect("workflow node fixture");
         assert_eq!(
-            selection.message_stream.runtime_session_id,
-            anchor.runtime_session_id
+            find_runtime_node_coordinate(&nodes, runtime_session_id),
+            Some((node_path.to_string(), attempt))
         );
-        assert_eq!(selection.anchor.launch_frame_id, launch_frame.id);
+        assert_eq!(find_runtime_node_coordinate(&nodes, driver_thread_id), None);
     }
 
-    #[tokio::test]
-    async fn delivery_runtime_selection_current_delivery_requires_binding() {
-        let fixture = SelectionFixture::new();
-        let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let frame = AgentFrame::new_initial(agent.id);
-        fixture.runs.create(&run).await.expect("run");
-        fixture.frames.create(&frame).await.expect("frame");
-        fixture.agents.create(&agent).await.expect("agent");
-
-        let error = fixture
-            .service()
-            .select(DeliveryRuntimeSelectionPolicy::CurrentDelivery {
-                run_id: run.id,
-                agent_id: agent.id,
-            })
-            .await
-            .expect_err("missing binding");
-
+    #[test]
+    fn terminal_state_rejects_missing_presentation_turn_identity() {
+        let fixture = fixture();
+        let turn_id = fixture["terminal"]["turn_id"].as_str().unwrap();
+        assert_eq!(
+            required_terminal_turn(Some(turn_id.to_string())).unwrap(),
+            turn_id
+        );
         assert!(matches!(
-            error,
-            DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }
+            required_terminal_turn(None),
+            Err(DeliveryRuntimeSelectionError::TerminalTurnMissing)
         ));
-    }
-
-    #[tokio::test]
-    async fn delivery_runtime_selection_current_delivery_rejects_anchor_mismatch() {
-        let fixture = SelectionFixture::new();
-        let (run, agent, launch_frame, _current_frame, anchor) =
-            fixture.seed_current_delivery().await;
-        let mismatched_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            anchor.runtime_session_id.clone(),
-            Uuid::new_v4(),
-            launch_frame.id,
-            agent.id,
-        );
-        fixture
-            .anchors
-            .delete_by_session(&anchor.runtime_session_id)
-            .await
-            .expect("delete anchor");
-        fixture
-            .anchors
-            .create_once(&mismatched_anchor)
-            .await
-            .expect("create mismatched anchor");
-
-        let error = fixture
-            .service()
-            .select(DeliveryRuntimeSelectionPolicy::CurrentDelivery {
-                run_id: run.id,
-                agent_id: agent.id,
-            })
-            .await
-            .expect_err("mismatch");
-
-        assert!(matches!(
-            error,
-            DeliveryRuntimeSelectionError::AnchorMismatch { .. }
-        ));
-    }
-
-    #[tokio::test]
-    async fn delivery_runtime_selection_current_delivery_rejects_node_coordinate_mismatch() {
-        let fixture = SelectionFixture::new();
-        let (run, agent, launch_frame, _current_frame, anchor) =
-            fixture.seed_current_delivery().await;
-        let orchestration_id = Uuid::new_v4();
-        let mismatched_anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-            anchor.runtime_session_id.clone(),
-            run.id,
-            launch_frame.id,
-            agent.id,
-            orchestration_id,
-            "implement",
-            1,
-        );
-        fixture
-            .anchors
-            .delete_by_session(&anchor.runtime_session_id)
-            .await
-            .expect("delete anchor");
-        fixture
-            .anchors
-            .create_once(&mismatched_anchor)
-            .await
-            .expect("create mismatched anchor");
-
-        let error = fixture
-            .service()
-            .select_current_delivery(run.id, agent.id)
-            .await
-            .expect_err("node coordinate mismatch");
-
-        assert!(matches!(
-            error,
-            DeliveryRuntimeSelectionError::AnchorNodeMismatch { .. }
-        ));
-    }
-
-    #[tokio::test]
-    async fn execution_anchor_create_once_is_idempotent_for_same_coordinates() {
-        let repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
-        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-current",
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        );
-
-        repo.create_once(&anchor).await.expect("first create");
-        repo.create_once(&anchor).await.expect("idempotent create");
-
-        let anchors = repo
-            .list_by_agent(anchor.agent_id)
-            .await
-            .expect("list anchors");
-        assert_eq!(anchors.len(), 1);
-        assert_eq!(anchors[0].runtime_session_id, anchor.runtime_session_id);
-    }
-
-    #[tokio::test]
-    async fn execution_anchor_create_once_conflicts_for_coordinate_change() {
-        let repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
-        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-current",
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        );
-        let conflicting = RuntimeSessionExecutionAnchor::new_dispatch(
-            anchor.runtime_session_id.clone(),
-            Uuid::new_v4(),
-            anchor.launch_frame_id,
-            anchor.agent_id,
-        );
-
-        repo.create_once(&anchor).await.expect("first create");
-        let error = repo
-            .create_once(&conflicting)
-            .await
-            .expect_err("coordinate change conflicts");
-
-        assert!(matches!(error, DomainError::Conflict { .. }));
     }
 }

@@ -1,16 +1,18 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
-use agentdash_application_ports::agent_run_fork_materialization::{
-    AgentRunForkMaterializationError, AgentRunForkMaterializationInput,
-    AgentRunForkMaterializationPort, AgentRunForkMaterializationResult,
+use agentdash_application_ports::agent_run_message_submission::{
+    AgentRunAcceptedDeliveryKind, AgentRunMailboxAcceptedSettlement,
+    AgentRunMailboxAcceptedSettlementResult, AgentRunMailboxDeliverySettlementPort,
+    AgentRunMailboxDeliverySettlementResult, AgentRunMailboxFailedSettlement,
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::agent_run_mailbox::{
-    AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
-    AgentRunMailboxState, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
-    MailboxMessageStatus, NewAgentRunMailboxMessage,
+    AgentRunMailboxClaimRequest, AgentRunMailboxCreateOutcome, AgentRunMailboxMessage,
+    AgentRunMailboxRepository, AgentRunMailboxState, ConsumptionBarrier,
+    MAILBOX_CLAIM_LEASE_EXPIRED_RECONCILIATION, MailboxDelivery, MailboxDrainMode,
+    MailboxMessageOrigin, MailboxMessageStatus, NewAgentRunMailboxMessage, SteeringStopEffect,
 };
 use agentdash_domain::backend::{
     ProjectBackendAccess, ProjectBackendAccessRepository, ProjectBackendAccessStatus,
@@ -18,17 +20,10 @@ use agentdash_domain::backend::{
 use agentdash_domain::channel::{ChannelRegistryDocument, ChannelRegistryMutation};
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentLineage, AgentLineageRepository, AgentProcedure,
-    AgentProcedureRepository, AgentRunCommandClaim, AgentRunCommandReceipt,
-    AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunDeliveryBinding,
-    AgentRunDeliveryBindingRepository, AgentRunLineage, AgentRunLineageRepository,
-    DeliveryBindingStatus, GateWaitPolicyEnvelope, LifecycleAgent, LifecycleAgentRepository,
-    LifecycleGate, LifecycleGateRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
-    ManualContextCompactionRequest, ManualContextCompactionRequestRepository,
-    ManualContextCompactionRequestStatus, NewAgentRunCommandReceipt,
-    NewManualContextCompactionRequest, RuntimeSessionExecutionAnchor,
-    RuntimeSessionExecutionAnchorRepository, SubjectRef, WaitProducerRef, WorkflowGraph,
-    WorkflowGraphRepository,
+    AgentProcedureRepository, AgentRunLineage, AgentRunLineageRepository, GateWaitPolicyEnvelope,
+    LifecycleAgent, LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleRun,
+    LifecycleRunRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
+    SubjectRef, WaitProducerRef, WorkflowGraph, WorkflowGraphRepository,
 };
 use chrono::Utc;
 use tokio::sync::Mutex;
@@ -202,155 +197,6 @@ impl AgentRunLineageRepository for MemoryAgentRunLineageRepository {
     }
 }
 
-pub struct MemoryAgentRunForkMaterialization {
-    runs: Arc<MemoryLifecycleRunRepository>,
-    agents: Arc<MemoryLifecycleAgentRepository>,
-    frames: Arc<MemoryAgentFrameRepository>,
-    anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
-    delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
-    lineages: Arc<MemoryAgentRunLineageRepository>,
-    fail_message: Mutex<Option<String>>,
-}
-
-impl MemoryAgentRunForkMaterialization {
-    pub fn new(
-        runs: Arc<MemoryLifecycleRunRepository>,
-        agents: Arc<MemoryLifecycleAgentRepository>,
-        frames: Arc<MemoryAgentFrameRepository>,
-        anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
-        delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
-        lineages: Arc<MemoryAgentRunLineageRepository>,
-    ) -> Self {
-        Self {
-            runs,
-            agents,
-            frames,
-            anchors,
-            delivery_bindings,
-            lineages,
-            fail_message: Mutex::new(None),
-        }
-    }
-
-    pub async fn fail_next(&self, message: impl Into<String>) {
-        *self.fail_message.lock().await = Some(message.into());
-    }
-}
-
-#[async_trait::async_trait]
-impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
-    async fn materialize_forked_agent_run(
-        &self,
-        input: AgentRunForkMaterializationInput,
-    ) -> Result<AgentRunForkMaterializationResult, AgentRunForkMaterializationError> {
-        if let Some(message) = self.fail_message.lock().await.take() {
-            return Err(AgentRunForkMaterializationError::Internal { message });
-        }
-
-        let child_runtime_session_id = input.child_runtime_session_id.clone();
-        let mut child_run =
-            LifecycleRun::new_plain_for_user(input.parent_run.project_id, &input.forked_by_user_id);
-        child_run.topology = input.parent_run.topology;
-
-        let mut child_agent = LifecycleAgent::new_root_for_user(
-            child_run.id,
-            child_run.project_id,
-            input.parent_agent.source,
-            &input.forked_by_user_id,
-        )
-        .with_bootstrap_status(&input.parent_agent.bootstrap_status);
-        child_agent.project_agent_id = input.parent_agent.project_agent_id;
-
-        let mut child_frame = AgentFrame::new_revision(
-            child_agent.id,
-            input.parent_frame.revision,
-            "agent_run_fork",
-        );
-        child_frame.effective_capability_json =
-            input.parent_frame.effective_capability_json.clone();
-        child_frame.context_slice_json = input.parent_frame.context_slice_json.clone();
-        child_frame.vfs_surface_json = input.parent_frame.vfs_surface_json.clone();
-        child_frame.mcp_surface_json = input.parent_frame.mcp_surface_json.clone();
-        child_frame.execution_profile_json = input.parent_frame.execution_profile_json.clone();
-        child_frame.visible_canvas_mount_ids_json =
-            input.parent_frame.visible_canvas_mount_ids_json.clone();
-        child_frame.visible_workspace_module_refs_json = input
-            .parent_frame
-            .visible_workspace_module_refs_json
-            .clone();
-        child_frame.created_by_id = Some(input.forked_by_user_id.clone());
-
-        let mut anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            child_runtime_session_id.clone(),
-            child_run.id,
-            child_frame.id,
-            child_agent.id,
-        );
-        anchor.created_by_kind = "agent_run_fork".to_string();
-        let delivery_binding = AgentRunDeliveryBinding::from_anchor(
-            &anchor,
-            DeliveryBindingStatus::Ready,
-            anchor.updated_at,
-        );
-
-        let lineage = AgentRunLineage::new_fork(
-            input.parent_run.id,
-            input.parent_agent.id,
-            child_run.id,
-            child_agent.id,
-            input.fork_point_event_seq,
-            input.fork_point_ref_json,
-            input.forked_by_user_id,
-            input.metadata_json,
-        )
-        .with_frame_baseline(
-            input.parent_frame.id,
-            input.parent_frame.revision,
-            child_frame.id,
-            child_frame.revision,
-        );
-
-        self.runs
-            .create(&child_run)
-            .await
-            .map_err(materialization_error)?;
-        self.agents
-            .create(&child_agent)
-            .await
-            .map_err(materialization_error)?;
-        self.frames
-            .create(&child_frame)
-            .await
-            .map_err(materialization_error)?;
-        self.anchors
-            .create_once(&anchor)
-            .await
-            .map_err(materialization_error)?;
-        self.delivery_bindings
-            .upsert(&delivery_binding)
-            .await
-            .map_err(materialization_error)?;
-        self.lineages
-            .create(&lineage)
-            .await
-            .map_err(materialization_error)?;
-
-        Ok(AgentRunForkMaterializationResult {
-            child_run,
-            child_agent,
-            child_frame,
-            child_runtime_session_id,
-            lineage,
-        })
-    }
-}
-
-fn materialization_error(error: DomainError) -> AgentRunForkMaterializationError {
-    AgentRunForkMaterializationError::Internal {
-        message: error.to_string(),
-    }
-}
-
 #[async_trait::async_trait]
 impl AgentFrameRepository for MemoryAgentFrameRepository {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
@@ -368,7 +214,7 @@ impl AgentFrameRepository for MemoryAgentFrameRepository {
             .cloned())
     }
 
-    async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+    async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         Ok(self
             .frames
             .lock()
@@ -445,7 +291,7 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
         );
         outcome.frame_id = Some(frame.id);
         outcome.agent_id = Some(frame.agent_id);
-        outcome.runtime_session_id = Some(runtime_session_id);
+        outcome.runtime_session_id = runtime_session_id;
         outcome.wrote_frame_revision = true;
         Ok(outcome)
     }
@@ -694,499 +540,6 @@ impl AgentLineageRepository for MemoryAgentLineageRepository {
             .filter(|lineage| lineage.run_id == run_id)
             .cloned()
             .collect())
-    }
-}
-
-#[derive(Default)]
-pub struct MemoryRuntimeSessionExecutionAnchorRepository {
-    anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
-}
-
-#[async_trait::async_trait]
-impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAnchorRepository {
-    async fn create_once(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
-        let mut anchors = self.anchors.lock().await;
-        if let Some(existing) = anchors
-            .iter()
-            .find(|item| item.runtime_session_id == anchor.runtime_session_id)
-        {
-            if existing.has_same_launch_coordinates_as(anchor) {
-                return Ok(());
-            }
-            return Err(existing.immutable_conflict(anchor));
-        }
-        anchors.push(anchor.clone());
-        Ok(())
-    }
-
-    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-        self.anchors
-            .lock()
-            .await
-            .retain(|anchor| anchor.runtime_session_id != runtime_session_id);
-        Ok(())
-    }
-
-    async fn find_by_session(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-        Ok(self
-            .anchors
-            .lock()
-            .await
-            .iter()
-            .find(|anchor| anchor.runtime_session_id == runtime_session_id)
-            .cloned())
-    }
-
-    async fn list_by_run(
-        &self,
-        run_id: Uuid,
-    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-        Ok(self
-            .anchors
-            .lock()
-            .await
-            .iter()
-            .filter(|anchor| anchor.run_id == run_id)
-            .cloned()
-            .collect())
-    }
-
-    async fn list_by_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-        Ok(self
-            .anchors
-            .lock()
-            .await
-            .iter()
-            .filter(|anchor| anchor.agent_id == agent_id)
-            .cloned()
-            .collect())
-    }
-
-    async fn list_by_project_session_ids(
-        &self,
-        runtime_session_ids: &[String],
-    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-        Ok(self
-            .anchors
-            .lock()
-            .await
-            .iter()
-            .filter(|anchor| runtime_session_ids.contains(&anchor.runtime_session_id))
-            .cloned()
-            .collect())
-    }
-}
-
-impl MemoryRuntimeSessionExecutionAnchorRepository {
-    pub async fn debug_list(&self) -> Vec<RuntimeSessionExecutionAnchor> {
-        self.anchors.lock().await.clone()
-    }
-}
-
-#[derive(Default)]
-pub struct MemoryAgentRunDeliveryBindingRepository {
-    bindings: Mutex<Vec<AgentRunDeliveryBinding>>,
-}
-
-#[async_trait::async_trait]
-impl AgentRunDeliveryBindingRepository for MemoryAgentRunDeliveryBindingRepository {
-    async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
-        let mut bindings = self.bindings.lock().await;
-        if let Some(existing) = bindings
-            .iter_mut()
-            .find(|item| item.run_id == binding.run_id && item.agent_id == binding.agent_id)
-        {
-            *existing = binding.clone();
-        } else {
-            bindings.push(binding.clone());
-        }
-        Ok(())
-    }
-
-    async fn upsert_if_current_runtime_session(
-        &self,
-        binding: &AgentRunDeliveryBinding,
-    ) -> Result<bool, DomainError> {
-        let mut bindings = self.bindings.lock().await;
-        if let Some(existing) = bindings
-            .iter_mut()
-            .find(|item| item.run_id == binding.run_id && item.agent_id == binding.agent_id)
-        {
-            if existing.runtime_session_id != binding.runtime_session_id {
-                return Ok(false);
-            }
-            *existing = binding.clone();
-        } else {
-            bindings.push(binding.clone());
-        }
-        Ok(true)
-    }
-
-    async fn get_current(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-    ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
-        Ok(self
-            .bindings
-            .lock()
-            .await
-            .iter()
-            .find(|binding| binding.run_id == run_id && binding.agent_id == agent_id)
-            .cloned())
-    }
-
-    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
-        Ok(self
-            .bindings
-            .lock()
-            .await
-            .iter()
-            .filter(|binding| binding.run_id == run_id)
-            .cloned()
-            .collect())
-    }
-
-    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-        self.bindings
-            .lock()
-            .await
-            .retain(|binding| binding.runtime_session_id != runtime_session_id);
-        Ok(())
-    }
-}
-
-impl MemoryAgentRunDeliveryBindingRepository {
-    pub async fn debug_list(&self) -> Vec<AgentRunDeliveryBinding> {
-        self.bindings.lock().await.clone()
-    }
-}
-
-#[derive(Default)]
-pub struct MemoryAgentRunCommandReceiptRepository {
-    receipts: Mutex<Vec<AgentRunCommandReceipt>>,
-}
-
-#[async_trait::async_trait]
-impl AgentRunCommandReceiptRepository for MemoryAgentRunCommandReceiptRepository {
-    async fn claim(
-        &self,
-        receipt: NewAgentRunCommandReceipt,
-    ) -> Result<AgentRunCommandClaim, DomainError> {
-        let mut receipts = self.receipts.lock().await;
-        if let Some(existing) = receipts.iter().find(|item| {
-            item.scope_kind == receipt.scope_kind
-                && item.scope_key == receipt.scope_key
-                && item.client_command_id == receipt.client_command_id
-        }) {
-            if existing.request_digest != receipt.request_digest {
-                return Err(DomainError::Conflict {
-                    entity: "agent_run_command_receipt",
-                    constraint: "request_digest",
-                    message: format!(
-                        "client_command_id `{}` 已用于不同请求",
-                        receipt.client_command_id
-                    ),
-                });
-            }
-            return Ok(AgentRunCommandClaim::Duplicate(existing.clone()));
-        }
-
-        let now = Utc::now();
-        let record = AgentRunCommandReceipt {
-            id: Uuid::new_v4(),
-            scope_kind: receipt.scope_kind,
-            scope_key: receipt.scope_key,
-            command_kind: receipt.command_kind,
-            client_command_id: receipt.client_command_id,
-            request_digest: receipt.request_digest,
-            status: AgentRunCommandStatus::Pending,
-            mailbox_message_id: None,
-            accepted_refs: None,
-            result_json: None,
-            error_message: None,
-            created_at: now,
-            updated_at: now,
-            accepted_at: None,
-            failed_at: None,
-        };
-        receipts.push(record.clone());
-        Ok(AgentRunCommandClaim::Created(record))
-    }
-
-    async fn mark_accepted(
-        &self,
-        id: Uuid,
-        accepted_refs: agentdash_domain::workflow::AgentRunAcceptedRefs,
-    ) -> Result<AgentRunCommandReceipt, DomainError> {
-        let mut receipts = self.receipts.lock().await;
-        let record = receipts
-            .iter_mut()
-            .find(|item| item.id == id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_run_command_receipt",
-                id: id.to_string(),
-            })?;
-        record.status = AgentRunCommandStatus::Accepted;
-        record.accepted_refs = Some(accepted_refs);
-        record.error_message = None;
-        record.updated_at = Utc::now();
-        record.accepted_at = Some(record.updated_at);
-        record.failed_at = None;
-        Ok(record.clone())
-    }
-
-    async fn attach_mailbox_message(
-        &self,
-        id: Uuid,
-        mailbox_message_id: Uuid,
-    ) -> Result<AgentRunCommandReceipt, DomainError> {
-        let mut receipts = self.receipts.lock().await;
-        let record = receipts
-            .iter_mut()
-            .find(|item| item.id == id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_run_command_receipt",
-                id: id.to_string(),
-            })?;
-        record.mailbox_message_id = Some(mailbox_message_id);
-        record.updated_at = Utc::now();
-        Ok(record.clone())
-    }
-
-    async fn store_result_json(
-        &self,
-        id: Uuid,
-        result_json: serde_json::Value,
-    ) -> Result<AgentRunCommandReceipt, DomainError> {
-        let mut receipts = self.receipts.lock().await;
-        let record = receipts
-            .iter_mut()
-            .find(|item| item.id == id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_run_command_receipt",
-                id: id.to_string(),
-            })?;
-        record.result_json = Some(result_json);
-        record.updated_at = Utc::now();
-        Ok(record.clone())
-    }
-
-    async fn mark_terminal_failed(
-        &self,
-        id: Uuid,
-        error_message: String,
-    ) -> Result<AgentRunCommandReceipt, DomainError> {
-        let mut receipts = self.receipts.lock().await;
-        let record = receipts
-            .iter_mut()
-            .find(|item| item.id == id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_run_command_receipt",
-                id: id.to_string(),
-            })?;
-        record.status = AgentRunCommandStatus::TerminalFailed;
-        record.error_message = Some(error_message);
-        record.updated_at = Utc::now();
-        record.failed_at = Some(record.updated_at);
-        Ok(record.clone())
-    }
-
-    async fn get(&self, id: Uuid) -> Result<Option<AgentRunCommandReceipt>, DomainError> {
-        Ok(self
-            .receipts
-            .lock()
-            .await
-            .iter()
-            .find(|item| item.id == id)
-            .cloned())
-    }
-}
-
-impl MemoryAgentRunCommandReceiptRepository {
-    pub async fn debug_list(&self) -> Vec<AgentRunCommandReceipt> {
-        self.receipts.lock().await.clone()
-    }
-}
-
-#[derive(Default)]
-pub struct MemoryManualContextCompactionRequestRepository {
-    requests: Mutex<Vec<ManualContextCompactionRequest>>,
-}
-
-#[async_trait::async_trait]
-impl ManualContextCompactionRequestRepository for MemoryManualContextCompactionRequestRepository {
-    async fn create_requested(
-        &self,
-        request: NewManualContextCompactionRequest,
-    ) -> Result<ManualContextCompactionRequest, DomainError> {
-        let mut requests = self.requests.lock().await;
-        if let Some(existing) = requests
-            .iter()
-            .find(|item| item.command_receipt_id == request.command_receipt_id)
-        {
-            return Ok(existing.clone());
-        }
-        if requests.iter().any(|item| {
-            item.session_id == request.session_id
-                && item.status == ManualContextCompactionRequestStatus::Requested
-        }) {
-            return Err(DomainError::Conflict {
-                entity: "runtime_session_compaction_request",
-                constraint: "requested_session",
-                message: "runtime session already has a pending context compact request"
-                    .to_string(),
-            });
-        }
-
-        let now = Utc::now();
-        let record = ManualContextCompactionRequest {
-            id: Uuid::new_v4(),
-            session_id: request.session_id,
-            run_id: request.run_id,
-            agent_id: request.agent_id,
-            command_receipt_id: request.command_receipt_id,
-            status: ManualContextCompactionRequestStatus::Requested,
-            requested_mode: request.requested_mode,
-            keep_last_n: request.keep_last_n,
-            reserve_tokens: request.reserve_tokens,
-            request_metadata: request.request_metadata,
-            result_metadata: None,
-            requested_at: now,
-            updated_at: now,
-            consumed_turn_id: None,
-            completed_compaction_id: None,
-            compacted_until_ref: None,
-            first_kept_ref: None,
-        };
-        requests.push(record.clone());
-        Ok(record)
-    }
-
-    async fn get_by_command_receipt(
-        &self,
-        command_receipt_id: Uuid,
-    ) -> Result<Option<ManualContextCompactionRequest>, DomainError> {
-        Ok(self
-            .requests
-            .lock()
-            .await
-            .iter()
-            .find(|item| item.command_receipt_id == command_receipt_id)
-            .cloned())
-    }
-
-    async fn get_by_id(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<ManualContextCompactionRequest>, DomainError> {
-        Ok(self
-            .requests
-            .lock()
-            .await
-            .iter()
-            .find(|item| item.id == id)
-            .cloned())
-    }
-
-    async fn find_requested_by_session(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<ManualContextCompactionRequest>, DomainError> {
-        Ok(self
-            .requests
-            .lock()
-            .await
-            .iter()
-            .find(|item| {
-                item.session_id == session_id
-                    && item.status == ManualContextCompactionRequestStatus::Requested
-            })
-            .cloned())
-    }
-
-    async fn mark_consumed(
-        &self,
-        id: Uuid,
-        turn_id: String,
-    ) -> Result<ManualContextCompactionRequest, DomainError> {
-        self.update(id, |request| {
-            request.status = ManualContextCompactionRequestStatus::Consumed;
-            request.consumed_turn_id = Some(turn_id);
-        })
-        .await
-    }
-
-    async fn mark_completed(
-        &self,
-        id: Uuid,
-        compaction_id: String,
-        compacted_until_ref: Option<serde_json::Value>,
-        first_kept_ref: Option<serde_json::Value>,
-        result_metadata: Option<serde_json::Value>,
-    ) -> Result<ManualContextCompactionRequest, DomainError> {
-        self.update(id, |request| {
-            request.status = ManualContextCompactionRequestStatus::Completed;
-            request.completed_compaction_id = Some(compaction_id);
-            request.compacted_until_ref = compacted_until_ref;
-            request.first_kept_ref = first_kept_ref;
-            request.result_metadata = result_metadata;
-        })
-        .await
-    }
-
-    async fn mark_noop(
-        &self,
-        id: Uuid,
-        result_metadata: Option<serde_json::Value>,
-    ) -> Result<ManualContextCompactionRequest, DomainError> {
-        self.update(id, |request| {
-            request.status = ManualContextCompactionRequestStatus::Noop;
-            request.result_metadata = result_metadata;
-        })
-        .await
-    }
-
-    async fn mark_failed(
-        &self,
-        id: Uuid,
-        result_metadata: Option<serde_json::Value>,
-    ) -> Result<ManualContextCompactionRequest, DomainError> {
-        self.update(id, |request| {
-            request.status = ManualContextCompactionRequestStatus::Failed;
-            request.result_metadata = result_metadata;
-        })
-        .await
-    }
-}
-
-impl MemoryManualContextCompactionRequestRepository {
-    async fn update(
-        &self,
-        id: Uuid,
-        apply: impl FnOnce(&mut ManualContextCompactionRequest),
-    ) -> Result<ManualContextCompactionRequest, DomainError> {
-        let mut requests = self.requests.lock().await;
-        let request = requests
-            .iter_mut()
-            .find(|item| item.id == id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "runtime_session_compaction_request",
-                id: id.to_string(),
-            })?;
-        apply(request);
-        request.updated_at = Utc::now();
-        Ok(request.clone())
-    }
-
-    pub async fn debug_list(&self) -> Vec<ManualContextCompactionRequest> {
-        self.requests.lock().await.clone()
     }
 }
 
@@ -1451,8 +804,125 @@ impl MemoryAgentRunMailboxRepository {
     }
 }
 
+pub struct MemoryAgentRunMessageSubmissionStore {
+    mailbox: Arc<MemoryAgentRunMailboxRepository>,
+}
+
+impl MemoryAgentRunMessageSubmissionStore {
+    pub fn new(mailbox: Arc<MemoryAgentRunMailboxRepository>) -> Self {
+        Self { mailbox }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentRunMailboxDeliverySettlementPort for MemoryAgentRunMessageSubmissionStore {
+    async fn settle_delivery_failed(
+        &self,
+        failure: AgentRunMailboxFailedSettlement,
+    ) -> Result<AgentRunMailboxDeliverySettlementResult, DomainError> {
+        let now = Utc::now();
+        let mut messages = self.mailbox.messages.lock().await;
+        let message = messages
+            .iter_mut()
+            .find(|message| {
+                message.id == failure.mailbox_message_id
+                    && message.claim_token == Some(failure.claim_token)
+                    && message.status == MailboxMessageStatus::Consuming
+            })
+            .ok_or_else(|| DomainError::Conflict {
+                entity: "agent_run_mailbox_message",
+                constraint: "delivery_failure_claim",
+                message: "mailbox claim no longer owns delivery failure settlement".to_string(),
+            })?;
+        message.status = MailboxMessageStatus::Failed;
+        message.reconcile_required = false;
+        message.last_error = Some(failure.error_message);
+        message.claim_token = None;
+        message.claimed_at = None;
+        message.claim_expires_at = None;
+        message.consumed_at.get_or_insert(now);
+        message.updated_at = now;
+        if message.origin == MailboxMessageOrigin::User && !message.retain_payload {
+            message.payload_json = None;
+            message.launch_planning_input = None;
+        }
+        Ok(AgentRunMailboxDeliverySettlementResult {
+            message: message.clone(),
+        })
+    }
+
+    async fn settle_delivery_accepted(
+        &self,
+        settlement: AgentRunMailboxAcceptedSettlement,
+    ) -> Result<AgentRunMailboxAcceptedSettlementResult, DomainError> {
+        let operation_id = settlement
+            .accepted_refs
+            .runtime_operation_id
+            .ok_or_else(|| {
+                DomainError::InvalidConfig(
+                    "accepted mailbox settlement requires runtime_operation_id".to_string(),
+                )
+            })?;
+        let now = Utc::now();
+        let mut messages = self.mailbox.messages.lock().await;
+        let message = messages
+            .iter_mut()
+            .find(|message| {
+                message.id == settlement.mailbox_message_id
+                    && message.claim_token == Some(settlement.claim_token)
+                    && message.status == MailboxMessageStatus::Consuming
+            })
+            .ok_or_else(|| DomainError::Conflict {
+                entity: "agent_run_mailbox_message",
+                constraint: "runtime_operation_claim",
+                message: "mailbox claim no longer owns runtime operation acceptance".to_string(),
+            })?;
+        message.status = match settlement.delivery_kind {
+            AgentRunAcceptedDeliveryKind::Started => MailboxMessageStatus::Dispatched,
+            AgentRunAcceptedDeliveryKind::Steered => MailboxMessageStatus::Steered,
+        };
+        message.accepted_runtime_operation_id = Some(operation_id);
+        message.reconcile_required = false;
+        message.last_error = None;
+        message.claim_token = None;
+        message.claimed_at = None;
+        message.claim_expires_at = None;
+        message.consumed_at.get_or_insert(now);
+        message.updated_at = now;
+        if message.origin == MailboxMessageOrigin::User && !message.retain_payload {
+            message.payload_json = None;
+            message.launch_planning_input = None;
+        }
+        Ok(AgentRunMailboxAcceptedSettlementResult {
+            message: message.clone(),
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
+    async fn list_pending_targets(&self) -> Result<Vec<(Uuid, Uuid)>, DomainError> {
+        let mut targets = self
+            .messages
+            .lock()
+            .await
+            .iter()
+            .filter(|message| {
+                matches!(
+                    message.status,
+                    MailboxMessageStatus::Accepted
+                        | MailboxMessageStatus::Queued
+                        | MailboxMessageStatus::ReadyToConsume
+                        | MailboxMessageStatus::Consuming
+                )
+            })
+            .map(|message| (message.run_id, message.agent_id))
+            .collect::<Vec<_>>();
+        targets.sort_unstable();
+        targets.dedup();
+        Ok(targets)
+    }
+
     async fn create_message(
         &self,
         message: NewAgentRunMailboxMessage,
@@ -1465,7 +935,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
     async fn create_message_idempotent(
         &self,
         message: NewAgentRunMailboxMessage,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
+    ) -> Result<AgentRunMailboxCreateOutcome, DomainError> {
         if let Some(dedup_key) = message.source_dedup_key.as_deref()
             && let Some(existing) = self.messages.lock().await.iter().find(|existing| {
                 existing.run_id == message.run_id
@@ -1473,9 +943,20 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
                     && existing.source_dedup_key.as_deref() == Some(dedup_key)
             })
         {
-            return Ok(existing.clone());
+            if existing.delivery_request_digest != message.delivery_request_digest {
+                return Err(DomainError::Conflict {
+                    entity: "agent_run_mailbox_message",
+                    constraint: "source_dedup_request_digest",
+                    message:
+                        "mailbox source_dedup_key is already bound to a different delivery request"
+                            .to_string(),
+                });
+            }
+            return Ok(AgentRunMailboxCreateOutcome::Existing(existing.clone()));
         }
-        self.create_message(message).await
+        self.create_message(message)
+            .await
+            .map(AgentRunMailboxCreateOutcome::Created)
     }
 
     async fn get_message(&self, id: Uuid) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
@@ -1507,6 +988,11 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         &self,
         request: AgentRunMailboxClaimRequest,
     ) -> Result<Vec<AgentRunMailboxMessage>, DomainError> {
+        if self.states.lock().await.iter().any(|state| {
+            state.run_id == request.run_id && state.agent_id == request.agent_id && state.paused
+        }) {
+            return Ok(Vec::new());
+        }
         let mut messages = self.messages.lock().await;
         let mut claimed = Vec::new();
         for message in messages.iter_mut() {
@@ -1519,6 +1005,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
                 || request
                     .drain_mode
                     .is_some_and(|mode| mode != message.drain_mode)
+                || message.reconcile_required
                 || !matches!(
                     message.status,
                     MailboxMessageStatus::Queued | MailboxMessageStatus::ReadyToConsume
@@ -1526,11 +1013,9 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             {
                 continue;
             }
-            if let Some(runtime_session_id) = request.delivery_runtime_session_id.clone() {
-                message.delivery_runtime_session_id = Some(runtime_session_id);
-            }
             message.status = MailboxMessageStatus::Consuming;
             message.claim_token = Some(request.claim_token);
+            message.claimed_at = Some(Utc::now());
             message.claim_expires_at = Some(request.claim_expires_at);
             message.attempt_count += 1;
             claimed.push(message.clone());
@@ -1538,11 +1023,96 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         Ok(claimed)
     }
 
+    async fn claim_reconciliation(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        claim_token: Uuid,
+        claim_expires_at: chrono::DateTime<Utc>,
+    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
+        if self
+            .states
+            .lock()
+            .await
+            .iter()
+            .any(|state| state.run_id == run_id && state.agent_id == agent_id && state.paused)
+        {
+            return Ok(None);
+        }
+        let now = Utc::now();
+        let mut messages = self.messages.lock().await;
+        let Some(message) = messages
+            .iter_mut()
+            .filter(|message| {
+                message.run_id == run_id
+                    && message.agent_id == agent_id
+                    && message.status == MailboxMessageStatus::Queued
+                    && message.reconcile_required
+            })
+            .max_by_key(|message| (message.priority, -message.order_key))
+        else {
+            return Ok(None);
+        };
+        message.status = MailboxMessageStatus::Consuming;
+        message.claim_token = Some(claim_token);
+        message.claimed_at = Some(now);
+        message.claim_expires_at = Some(claim_expires_at);
+        message.attempt_count += 1;
+        message.updated_at = now;
+        Ok(Some(message.clone()))
+    }
+
+    async fn release_reconciliation_claim(
+        &self,
+        id: Uuid,
+        claim_token: Uuid,
+        last_error: String,
+    ) -> Result<AgentRunMailboxMessage, DomainError> {
+        let mut messages = self.messages.lock().await;
+        let message = messages
+            .iter_mut()
+            .find(|message| {
+                message.id == id
+                    && message.claim_token == Some(claim_token)
+                    && message.status == MailboxMessageStatus::Consuming
+                    && message.reconcile_required
+            })
+            .ok_or_else(|| DomainError::Conflict {
+                entity: "agent_run_mailbox_message",
+                constraint: "reconciliation_claim",
+                message: "mailbox reconciliation claim is no longer owned".to_string(),
+            })?;
+        message.status = MailboxMessageStatus::Queued;
+        message.claim_token = None;
+        message.claimed_at = None;
+        message.claim_expires_at = None;
+        message.last_error = Some(last_error);
+        message.updated_at = Utc::now();
+        Ok(message.clone())
+    }
+
     async fn recover_expired_consuming(
         &self,
-        _now: chrono::DateTime<Utc>,
+        now: chrono::DateTime<Utc>,
     ) -> Result<u64, DomainError> {
-        Ok(0)
+        let mut messages = self.messages.lock().await;
+        let mut recovered = 0;
+        for message in messages.iter_mut().filter(|message| {
+            message.status == MailboxMessageStatus::Consuming
+                && message
+                    .claim_expires_at
+                    .is_some_and(|expires_at| expires_at < now)
+        }) {
+            message.status = MailboxMessageStatus::Queued;
+            message.reconcile_required = true;
+            message.claim_token = None;
+            message.claimed_at = None;
+            message.claim_expires_at = None;
+            message.last_error = Some(MAILBOX_CLAIM_LEASE_EXPIRED_RECONCILIATION.to_string());
+            message.updated_at = now;
+            recovered += 1;
+        }
+        Ok(recovered)
     }
 
     async fn mark_message_status(
@@ -1550,8 +1120,6 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         id: Uuid,
         claim_token: Option<Uuid>,
         status: MailboxMessageStatus,
-        accepted_agent_run_turn_id: Option<String>,
-        accepted_protocol_turn_id: Option<String>,
         last_error: Option<String>,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
         let mut messages = self.messages.lock().await;
@@ -1570,35 +1138,65 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             });
         }
         message.status = status;
-        message.accepted_agent_run_turn_id = accepted_agent_run_turn_id;
-        message.accepted_protocol_turn_id = accepted_protocol_turn_id;
         message.last_error = last_error;
+        message.reconcile_required = false;
         message.claim_token = None;
+        message.claimed_at = None;
         message.claim_expires_at = None;
-        message.consumed_at = Some(Utc::now());
-        message.updated_at = Utc::now();
+        let now = Utc::now();
+        if matches!(
+            status,
+            MailboxMessageStatus::Dispatched
+                | MailboxMessageStatus::Steered
+                | MailboxMessageStatus::Failed
+                | MailboxMessageStatus::Deleted
+        ) {
+            message.consumed_at.get_or_insert(now);
+        }
+        message.updated_at = now;
         Ok(message.clone())
     }
 
-    async fn update_message_policy(
+    async fn promote_message(
         &self,
+        run_id: Uuid,
+        agent_id: Uuid,
         id: Uuid,
-        delivery: MailboxDelivery,
-        barrier: ConsumptionBarrier,
-        drain_mode: MailboxDrainMode,
         priority: i32,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
         let mut messages = self.messages.lock().await;
         let message = messages
             .iter_mut()
-            .find(|message| message.id == id)
+            .find(|message| {
+                message.id == id && message.run_id == run_id && message.agent_id == agent_id
+            })
             .ok_or_else(|| DomainError::NotFound {
                 entity: "agent_run_mailbox_message",
                 id: id.to_string(),
             })?;
-        message.delivery = delivery;
-        message.barrier = barrier;
-        message.drain_mode = drain_mode;
+        if message.origin != MailboxMessageOrigin::User
+            || message.delivery != MailboxDelivery::LaunchOrContinueTurn
+            || !matches!(
+                message.status,
+                MailboxMessageStatus::Accepted
+                    | MailboxMessageStatus::Queued
+                    | MailboxMessageStatus::ReadyToConsume
+                    | MailboxMessageStatus::Paused
+                    | MailboxMessageStatus::Blocked
+            )
+            || message.reconcile_required
+        {
+            return Err(DomainError::Conflict {
+                entity: "agent_run_mailbox_message",
+                constraint: "promotable_state",
+                message: "mailbox message is not promotable".to_string(),
+            });
+        }
+        message.delivery = MailboxDelivery::SteerActiveTurn {
+            stop_effect: SteeringStopEffect::None,
+        };
+        message.barrier = ConsumptionBarrier::AgentLoopTurnBoundary;
+        message.drain_mode = MailboxDrainMode::All;
         message.priority = priority;
         message.updated_at = Utc::now();
         Ok(message.clone())
@@ -1627,6 +1225,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             .find(|message| message.id == id)
         {
             message.payload_json = None;
+            message.launch_planning_input = None;
         }
         Ok(())
     }
@@ -1635,18 +1234,15 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: Option<String>,
         reason: String,
         message: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            delivery_runtime_session_id: runtime_session_id,
             paused: true,
             pause_reason: Some(reason),
             pause_message: message,
-            backend_selection_preference: None,
             updated_at: Utc::now(),
         };
         self.upsert_state(state.clone()).await;
@@ -1657,16 +1253,13 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            delivery_runtime_session_id: runtime_session_id,
             paused: false,
             pause_reason: None,
             pause_message: None,
-            backend_selection_preference: None,
             updated_at: Utc::now(),
         };
         self.upsert_state(state.clone()).await;
@@ -1685,32 +1278,6 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             .iter()
             .find(|state| state.run_id == run_id && state.agent_id == agent_id)
             .cloned())
-    }
-
-    async fn set_backend_selection_preference(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-        runtime_session_id: Option<String>,
-        preference: serde_json::Value,
-    ) -> Result<AgentRunMailboxState, DomainError> {
-        let mut state = self
-            .get_state(run_id, agent_id)
-            .await?
-            .unwrap_or(AgentRunMailboxState {
-                run_id,
-                agent_id,
-                delivery_runtime_session_id: runtime_session_id,
-                paused: false,
-                pause_reason: None,
-                pause_message: None,
-                backend_selection_preference: None,
-                updated_at: Utc::now(),
-            });
-        state.backend_selection_preference = Some(preference);
-        state.updated_at = Utc::now();
-        self.upsert_state(state.clone()).await;
-        Ok(state)
     }
 
     async fn move_message_after(
@@ -1746,10 +1313,9 @@ impl MemoryAgentRunMailboxRepository {
 fn mailbox_message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailboxMessage {
     let now = Utc::now();
     AgentRunMailboxMessage {
-        id: Uuid::new_v4(),
+        id: message.id.unwrap_or_else(Uuid::new_v4),
         run_id: message.run_id,
         agent_id: message.agent_id,
-        delivery_runtime_session_id: message.delivery_runtime_session_id,
         origin: message.origin,
         source: message.source,
         delivery: message.delivery,
@@ -1759,17 +1325,13 @@ fn mailbox_message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailb
         priority: message.priority,
         order_key: now.timestamp_micros(),
         source_dedup_key: message.source_dedup_key,
-        queued_agent_run_turn_id: message.queued_agent_run_turn_id,
-        consuming_agent_run_turn_id: None,
-        expected_active_agent_run_turn_id: message.expected_active_agent_run_turn_id,
-        accepted_agent_run_turn_id: None,
-        accepted_protocol_turn_id: None,
+        delivery_request_digest: message.delivery_request_digest,
+        accepted_runtime_operation_id: None,
+        reconcile_required: false,
         claim_token: None,
         claimed_at: None,
         claim_expires_at: None,
-        command_receipt_id: message.command_receipt_id,
         payload_json: message.payload_json,
-        executor_config_json: message.executor_config_json,
         launch_planning_input: message.launch_planning_input,
         preview: message.preview,
         has_images: message.has_images,
@@ -1894,7 +1456,6 @@ impl MemoryLifecycleGateRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::workflow::AgentRunCommandKind;
     use chrono::TimeDelta;
 
     #[tokio::test]
@@ -1923,120 +1484,10 @@ mod tests {
         repo.create(&latest_high_revision).await.unwrap();
         repo.create(&other_agent_frame).await.unwrap();
 
-        let current = repo.get_current(agent_id).await.unwrap().unwrap();
+        let current = repo.get_latest(agent_id).await.unwrap().unwrap();
 
         assert_eq!(current.id, latest_high_revision_id);
         assert_ne!(current.id, older_high_revision_id);
         assert_eq!(current.revision, 2);
-    }
-
-    #[tokio::test]
-    async fn anchor_create_once_is_idempotent_and_rejects_immutable_conflict() {
-        let repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
-        let run_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let frame_id = Uuid::new_v4();
-        let anchor =
-            RuntimeSessionExecutionAnchor::new_dispatch("runtime-a", run_id, frame_id, agent_id);
-
-        repo.create_once(&anchor).await.unwrap();
-        repo.create_once(&anchor).await.unwrap();
-
-        let anchors = repo.list_by_run(run_id).await.unwrap();
-        assert_eq!(anchors.len(), 1);
-        assert_eq!(anchors[0].runtime_session_id, "runtime-a");
-
-        let conflicting = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-a",
-            run_id,
-            Uuid::new_v4(),
-            agent_id,
-        );
-
-        let error = repo.create_once(&conflicting).await.unwrap_err();
-        assert!(matches!(
-            error,
-            DomainError::Conflict {
-                entity: "runtime_session_execution_anchor",
-                constraint: "runtime_session_id_immutable",
-                ..
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn delivery_binding_upsert_replaces_current_binding_for_run_agent() {
-        let repo = MemoryAgentRunDeliveryBindingRepository::default();
-        let run_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-
-        let first_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-a",
-            run_id,
-            Uuid::new_v4(),
-            agent_id,
-        );
-        let second_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-b",
-            run_id,
-            Uuid::new_v4(),
-            agent_id,
-        );
-
-        let first = AgentRunDeliveryBinding::from_anchor(
-            &first_anchor,
-            DeliveryBindingStatus::Ready,
-            Utc::now(),
-        );
-        let second = AgentRunDeliveryBinding::from_anchor(
-            &second_anchor,
-            DeliveryBindingStatus::Running,
-            Utc::now() + TimeDelta::seconds(1),
-        );
-
-        repo.upsert(&first).await.unwrap();
-        repo.upsert(&second).await.unwrap();
-
-        let current = repo.get_current(run_id, agent_id).await.unwrap().unwrap();
-        let bindings = repo.list_by_run(run_id).await.unwrap();
-
-        assert_eq!(current.runtime_session_id, "runtime-b");
-        assert_eq!(current.status, DeliveryBindingStatus::Running);
-        assert_eq!(bindings.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn command_receipt_claim_detects_duplicate_and_digest_conflict() {
-        let repo = MemoryAgentRunCommandReceiptRepository::default();
-        let receipt = new_receipt("command-a", "digest-a");
-
-        let created = repo.claim(receipt.clone()).await.unwrap();
-        let duplicate = repo.claim(receipt).await.unwrap();
-        let conflict = repo
-            .claim(new_receipt("command-a", "digest-b"))
-            .await
-            .unwrap_err();
-
-        assert!(matches!(created, AgentRunCommandClaim::Created(_)));
-        assert!(matches!(duplicate, AgentRunCommandClaim::Duplicate(_)));
-        assert!(matches!(
-            conflict,
-            DomainError::Conflict {
-                entity: "agent_run_command_receipt",
-                constraint: "request_digest",
-                ..
-            }
-        ));
-        assert_eq!(repo.debug_list().await.len(), 1);
-    }
-
-    fn new_receipt(client_command_id: &str, request_digest: &str) -> NewAgentRunCommandReceipt {
-        NewAgentRunCommandReceipt {
-            scope_kind: "agent_run".to_string(),
-            scope_key: "run-a:agent-a".to_string(),
-            command_kind: AgentRunCommandKind::MessageSubmit,
-            client_command_id: client_command_id.to_string(),
-            request_digest: request_digest.to_string(),
-        }
     }
 }

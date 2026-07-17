@@ -1,177 +1,174 @@
-# Session Architecture
+# Agent Runtime Conversation Architecture
 
-## Role
+## 1. Scope / Trigger
 
-Session 子系统把来源请求转换为可执行 turn，维护 runtime event、runtime projection、connector input 和终态副作用。目标语义上，当前 `Session` 是 `RuntimeSession`：它只拥有 turn / tool / event / resume / debug / projection / trace lineage，不拥有业务归属、permission scope、Lifecycle progress 或 Agent effective surface。
+本规范定义 AgentRun 产品坐标如何映射到 Managed Agent Runtime conversation。新增消息、steer、interrupt、interaction、context read/compact、fork/resume 或 runtime trace 功能时复核。产品 Lifecycle/AgentFrame 仍拥有业务归属与期望 surface；Runtime 独占执行会话事实。
 
-## Invariants
-
-- 当前启动主线仍是：
-
-```text
-LaunchCommand
-  -> FrameLaunchEnvelope
-  -> LaunchPlan
-  -> PreparedTurn
-  -> ConnectorAcceptedTurn
-  -> CommittedTurn
-  -> AttachedTurn
-```
-
-- `LaunchCommand` 只表达来源意图；不携带最终 VFS、MCP、capability、context 或 connector facts。
-- `FrameLaunchEnvelope` 是 frame construction 到 launch planner 的唯一传递物，必须在 launch 前携带 working directory、VFS、MCP、capability、context、identity 与 resolution trace。
-- `LaunchPlan` 只承载单轮启动决策：resolved prompt、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input projection。
-- `PreparedTurn` 承载 connector accepted 前准备好的 turn runtime、tools、context frame 与 `ExecutionContext` projection。
-- `ConnectorAcceptedTurn` 表达 `connector.prompt` 已返回 `ExecutionStream` 的 accepted 边界。
-- `CommittedTurn` 表达 user/start/context/capability/meta/runtime-command/title 等 accepted 后事实已提交。
-- `AttachedTurn` 表达 stream 已接入 `SessionTurnProcessor` 与 stream adapter supervision。
-- `ExecutionContext` 是 connector-facing projection，不是 application 层事实源。
-- 目标控制面中，`AgentFrame` 是 capability / context / VFS / MCP 的事实源；runtime trace/delivery refs 由 `RuntimeSessionExecutionAnchor` 索引和投影。`FrameConstructionService` 负责从 control-plane facts 与 composer 输出生成 `AgentFrame` revision 和 `FrameLaunchEnvelope`。
-- `RuntimeSession` 是 delivery / trace substrate。AgentRun delivery/control commands 使用 AgentRun Workspace public identity，accepted result 返回 runtime session / turn / frame refs，原因是用户动作目标是 AgentRun workspace；RuntimeSession 负责 trace refs、event log、connector continuation 与 repository rehydrate。
-- AgentRun workspace 的 message intake、queued work、steering continuation 和 system/hook pending work 统一进入 AgentRun Mailbox；scheduler 再映射到 Codex-compatible `turn/start`、`turn/steer` 或 AgentDash envelope extension。原因是 command 幂等、恢复、hook replay dedup 和前端投影需要同一个 durable control-plane 事实源。
-- 显式业务资源管理仍从 `ExecutionIntent`、`SubjectRef`、run/agent/frame refs 或 graph instance refs 开始；Lifecycle 内 AgentRun 资源管理语境使用 `/lifecycles/{lifecycle_run_id}/agent-runs`。
-- runtime trace 回调以 `RuntimeSessionExecutionAnchor` 建立 delivery evidence，再投影为 run / agent / frame / orchestration node coordinate 进入业务校验；这样 terminal effect、artifact 写入和 node projection 消费同一组 Lifecycle control-plane facts。
-- runtime map、active turn、connector live session 是三个不同问题，不能用一个状态互相推断。
-- terminal fact 先持久化为事件，业务副作用进入 durable outbox；副作用失败不回滚 terminal event。
-- pending runtime delivery command 只保存投递指令；`AgentFrameTransitionRecord` 保存可 replay 的 frame surface transition records，不保存完整 `CapabilityState` projection。
-- `AgentFrame.surface` 是 frame revision 的 canonical typed surface document；split JSON columns 只作为 repository projection / migration materialization path。
-
-## Current Baseline
-
-核心文档分工：
-
-| 文档 | 当前职责 |
-| --- | --- |
-| `session-startup-pipeline.md` | LaunchCommand / FrameConstructionService / LaunchPlan / launch stages 主线契约 |
-| `runtime-execution-state.md` | runtime registry、turn supervisor、terminal effect、runtime command store |
-| `execution-context-frames.md` | connector-facing `ExecutionContext` frame 投影 |
-| `bundle-main-datasource.md` | `SessionContextBundle` 主数据面 |
-| `streaming-protocol.md` | NDJSON session stream wire contract |
-| `pi-agent-streaming.md` | PiAgent `AgentEvent -> BackboneEnvelope` 映射 |
-| `context-compaction-projection.md` | compact checkpoint、projection store、ContextProjector 与模型上下文查询契约 |
-| `session-lineage-projection.md` | session lineage、fork、rollback 与 branch-aware restore 契约 |
-
-## Local Decisions
-
-- Frame construction 阶段一次性产出 launch-ready final facts，原因是 context query、inspector、audit 和 connector launch 必须观察同一份事实。
-- Project / Story / Routine owner bootstrap composition 归 AgentRun frame construction 与 project-agent context facade，原因是 owner VFS、capability、MCP、context bundle 与 execution profile 的组合结果会写入 `AgentFrame` surface；session 层只消费 `FrameLaunchEnvelope` 进入 launch / delivery / trace。
-- runtime delivery replay 从 frame runtime surface 开始，并从 `AgentFrameTransitionRecord` 投影出 capability transition，原因是 pending transition、context query 和 next-turn launch 必须共享相同闭包逻辑。
-- terminal effect 使用 outbox，原因是业务副作用需要跨进程恢复，且不应影响 terminal event 的事实性。
-- 会话标题由 `TitleSource` 管控：用户手动标题优先，其次接受具备来源标题能力的 connector 通过 typed Backbone event 提供的标题；无来源标题能力时才从首条用户消息本地派生 `auto` 标题。原因是标题属于会话列表元信息，业务层不应绑定 provider 私有实现，也不应为标题额外消耗模型执行能力。
-- 上下文压缩采用 Codex-aligned lifecycle 加 AgentDash-owned projection store。原因是 compact 在产品上是可观察 lifecycle，在恢复上是模型上下文 checkpoint；二者分层后，timeline、ContextFrame、agent input、branch restore 可以共享 durable facts 但消费不同 projection。
-- fork 默认把 parent fork point 的模型可见 projection 固化为 child session 自己的 initial compaction。原因是 child 的继续执行、retention、rollback 和团队协作权限都应依赖 child 自身的 durable facts，而不是重新读取 parent 的 live projection。
-- `RuntimeSessionExecutionAnchor` 承载 session 到 lifecycle control-plane identity 的反查，原因是 `RuntimeSession` 是 trace substrate，而业务推进需要稳定落到 run、agent、frame、assignment 和 activity attempt。
-- Task terminal effect 的校验先从 trace callback 解析 `RuntimeSessionExecutionAnchor`，再构造 `run_id + agent_id + frame_id + orchestration_id + node_path + attempt` coordinate，原因是 artifact/status side effect 需要绑定明确的 runtime node evidence。
-- 用户输入在 session 链路只有单一 canonical 表示 `UserInputBlock`（`agentdash-agent-protocol` 对 Codex app-server v2 `UserInput` 的封名别名），贯穿 API 入参 → `UserPromptInput.input` → `PromptPayload::Input` → connector。连接器边界用唯一映射 `user_input_blocks_to_content_parts` 转 `Vec<ContentPart>`：图片（data URL / 可读 `LocalImage`）直达 `ContentPart::Image`，`Skill`/`Mention` 收敛为定义集中一处的文本语义。原因是历史上 prompt / steer / continuation 三路各自把输入拍平成文本（图片因此丢失多模态），且 ACP `ContentBlock` / codex `UserInput` / `ContentPart` 三套表示并存产生 ≥4 个平行 flattener；收敛为单表示 + 单映射后，多模态可结构化直达模型，且后续替换为自定义扩展类型只需改别名与映射单点。`ContentBlock` 仅保留在 relay 远程边界的单处双向转换，`codex_user_input_to_text` 仅作标题 / trace 摘要、非投递路径。
-- AgentRun lifecycle naming uses `AgentRunThread` for workspace-level thread, `AgentRunTurn` for the user-visible `start_prompt -> terminal` execution, and `AgentLoopTurn` only for PiAgent/agent loop `AgentEvent::TurnStart/TurnEnd` boundaries referenced by mailbox scheduling. This keeps public control-plane language aligned with Codex `Thread/Turn` while avoiding ambiguity with internal loop turns.
-- RuntimeSession 只承载 AgentRun admission 的执行桥接，不拥有 Grant authorization。`RuntimeSessionEffectiveCapabilityPort` 的 schema-visible state 只服务 tool assembly；真实工具调用必须在 agent loop `before_tool_call` 链路中调用 AgentRun admission，并在 deny 时阻断 `tool.execute`。原因是 RuntimeSession 拥有物理执行入口，AgentRun 拥有业务 runtime anchor、anchored AgentFrame surface 与 frame-scoped grant projection，二者通过 delegate bridge 组合可避免 provider-local 授权分叉。
-- Runtime delegate composition 使用显式 facet set：Hook runtime 可以提供 compaction、context transform、tool policy、turn boundary 与 provider observer 全量 facet；AgentRun admission 只替换 tool policy facet；AgentRun mailbox 只替换 turn boundary facet。原因是各 adapter 的职责不同，launch/prepared-turn 必须按 owner 拼装 lifecycle concern，避免窄 adapter 被迫代理不归它拥有的 runtime 行为。
-- AgentRun command availability 由 `ConversationCommandAvailabilityResolver` 单点推导，并由 command policy 重新解析同一模型校验 submitted precondition、stale guard 与 enabled 状态。Workspace shell 的 `delivery_status` 和 workspace state code 只服务列表/chrome/status 展示，原因是命令语义必须和 stale guard、keyboard map、disabled reason 同源，不能由执行状态展示投影再派生一套控制状态。
-
-## Scenario: AgentRun Frame Surface Command Boundary
-
-### 1. Scope / Trigger
-
-- Trigger: AgentFrame construction、accepted launch commit 或运行期 Canvas / WorkspaceModule / Permission / MCP / VFS / Skill surface 变化需要写入 model-visible frame revision 或同步 active runtime。
-- Scope: 业务来源只提交 typed command；AgentRun frame/surface boundary 统一解析 current frame、delivery runtime、active turn、identity、VFS、MCP、permission/admission、skill providers 与 hook runtime target。
-
-### 2. Signatures
+## 2. Signatures
 
 ```rust
-pub struct AgentRunFrameSurfaceService<Construction, Update> {
-    construction: Construction,
-    update: Update,
-}
-
-pub enum AgentRunFrameSurfaceCommand {
-    Construct(FrameConstructionCommand),
-    Update(RuntimeSurfaceUpdateRequest),
-}
-
-pub enum FrameConstructionCommand {
-    DispatchLaunchAnchor { reason: FrameConstructionReason },
-    ComposeLaunchSurface { reason: FrameConstructionReason },
-    CommitAcceptedLaunch { reason: FrameConstructionReason },
-}
-
-pub enum RuntimeSurfaceUpdateRequest {
-    CanvasBindingChanged { canvas_mount_id: String },
-    CanvasVisibilityRequested { canvas_mount_id: String, reason: CanvasVisibilityReason },
-    PermissionGrantApplied { grant_id: Uuid },
-    PermissionGrantRevoked { grant_id: Uuid },
-    McpPresetChanged { preset_key: String },
-    ProjectVfsMountChanged { mount_id: String },
-    WorkspaceModuleVisibilityChanged { module_ref: String },
-    SkillInventoryChanged { provider_key: String },
-    AgentProcedureContractChanged { procedure_id: Uuid },
+#[async_trait]
+pub trait AgentRunRuntime: Send + Sync {
+    async fn inspect(&self, target: AgentRunRuntimeTarget) -> Result<AgentRunRuntimeView, Error>;
+    async fn send_message(&self, command: SendAgentRunMessage) -> Result<RuntimeCommandReceipt, Error>;
+    async fn compact_context(&self, command: GuardedAgentRunCommand) -> Result<RuntimeCommandReceipt, Error>;
+    async fn steer_turn(&self, command: SteerAgentRunTurn) -> Result<RuntimeCommandReceipt, Error>;
+    async fn interrupt(&self, command: GuardedAgentRunCommand) -> Result<RuntimeCommandReceipt, Error>;
+    async fn resolve_interaction(&self, command: ResolveAgentRunInteraction) -> Result<RuntimeCommandReceipt, Error>;
 }
 ```
 
-### 3. Contracts
+```text
+AgentRun product command
+  -> durable AgentRun mailbox/client command id
+  -> AgentRunRuntime facade
+  -> Runtime binding/provisioning
+  -> canonical Runtime operation + outbox
+  -> Integration Driver Host
+  -> Driver event
+  -> canonical snapshot/event cursor
+```
 
-- `Construct` owns initial frame creation, Lifecycle Workflow / AgentProcedure construction surface, definition/contract projection, and accepted launch commit.
-- `Update` owns live runtime surface mutation. It may write an AgentFrame revision, adopt that revision into active runtime, and emit semantic context-frame deltas.
-- Business modules pass stable change identifiers such as `canvas_mount_id` or `grant_id`; they do not pass a prebuilt `CapabilityState`, `AuthIdentity`, `AgentFrameRuntimeTarget`, active VFS, or skill discovery context.
-- `AgentFrameBuilder` is a frame/surface boundary primitive. Production writes are owned by frame construction, launch commit, or runtime surface update adapters.
-- `SessionCapabilityService::adopt_persisted_agent_frame_revision` is an application-internal live adoption primitive. API routes and business modules consume higher-level application services.
+## 3. Contracts
 
-### 4. Validation & Error Matrix
+- `AgentRunRuntime` facade 只做 product coordinate、authorization/admission input 与 canonical Runtime command 的映射，不保存 Thread/Turn/Item/Interaction 状态。
+- `agent_run_runtime_binding` 是 `run_id + agent_id` 到 Runtime thread/Host binding 的唯一产品锚点。Host binding 与 Managed Runtime binding 由 Host activation 原子创建；产品锚点不复制 driver/source coordinate authority。
+- mailbox 保存 canonical accepted Runtime operation ID。client command 重试返回同一 receipt，不产生第二 outbox side effect。
+- Managed Runtime journal、snapshot、context head、HookRun/effect、tool call 与 durable cursor 是执行会话唯一事实源。
+- AgentFrame 与 Business Surface 提供产品期望；`RuntimeOffer` 提供 service 实际保证；admission 持久化 `BoundAgentSurface`。required contribution 未应用时 dispatch 不可用。
+- command availability 来自 canonical Runtime snapshot/profile。Lifecycle status、AgentFrame status、Backbone 或 transcript 只用于产品展示，不能制造执行权限。
+- compaction 使用 candidate preparation、driver activation、active-head CAS 与 recovery saga；opaque context 不得进入平台 active head。
+- disconnect 对 active binding exactly-once 收敛为 `BindingLost`，并 terminalize active Thread/Turn/Operation 为 `Lost`；旧 generation 晚到事件被 fence。
+
+## 4. Validation & Error Matrix
 
 | Condition | Required behavior |
 | --- | --- |
-| Adapter returns a write role that does not match command kind | Return `AgentRunFrameSurfaceCommandError::RoleMismatch`; do not hide ownership drift. |
-| Runtime update target cannot resolve current AgentFrame / delivery runtime anchor | Return a visible surface update error; do not synthesize a partial projection from local business facts. |
-| Permission grant state is persisted but active-runtime adoption fails | Return visible adoption diagnostics while preserving the durable grant fact. |
-| Canvas visibility request references a different canvas mount than the loaded Canvas domain object | Reject the request before frame write/adoption. |
-| Runtime surface projection after-state equals the current frame surface and the requested visibility refs already exist | Return a no-op projection result without writing or adopting a new AgentFrame revision, because frame revisions and runtime context frames represent observable model-visible changes. |
-| Capability key delta has no added/removed keys | Omit the capability key section so pure runtime surface updates are not labeled as capability-key changes. |
+| AgentRun 无 durable Runtime binding | provision through Integration offer or return typed unavailable |
+| duplicate client command | replay original operation receipt; no duplicate dispatch |
+| expected revision/active turn 不匹配 | typed stale rejection before side effect |
+| command 不在 availability 中 | typed unsupported/unavailable before outbox |
+| required surface revision 未应用 | dispatch unavailable |
+| Driver event 生命周期非法 | quarantine + critical Lost convergence |
+| stale generation event | fence without cursor advance |
+| context activation crash | recovery resumes same compaction operation |
 
-### 5. Good/Base/Bad Cases
+## 5. Good / Base / Bad Cases
 
-- Good: `workspace_module_invoke(canvas.bind_data)` mutates Canvas domain state, then submits `RuntimeSurfaceUpdateRequest::CanvasBindingChanged`; the boundary decides whether frame revision/adoption is required.
-- Base: Lifecycle Workflow materializes an AgentProcedure node by composing construction input into a pending AgentFrame; this is `Construct`, not runtime surface update.
-- Bad: API route approving a PermissionGrant directly calls an active-runtime adoption primitive with a locally assembled `AgentFrameRuntimeTarget`, because the route lacks full AgentRun projection context.
+- Good：用户消息进入 mailbox，facade provision/复用 binding，Managed Runtime 原子接受 operation/outbox，Driver 完成后 UI 从 snapshot/events 观察同一事实。
+- Base：重复提交同一 `client_command_id` 返回原 operation receipt；worker claim 到期后由新 lease token 接管。
+- Bad：Application 自己维护 active turn，或从 product status 判断可 interrupt，再直接调用具体 Codex/Native client。
 
-### 6. Tests Required
+## 6. Tests Required
 
-- Unit test the facade routes `Construct` and `Update` commands to matching adapters and rejects role mismatch.
-- Static/behavioral tests assert business owners such as Canvas, WorkspaceModule, Permission, and API route are not AgentFrame write boundary owners.
-- Runtime skill projection tests assert identity-aware provider discovery and provider/capability-key merge keep external integration skills across Canvas/VFS refresh.
-- Permission tests assert approve/revoke uses the application update path and surfaces adoption failure after grant state changes.
-- Frontend/session delta tests assert empty capability-key deltas are omitted and pure Skill/VFS/MCP/runtime-surface updates do not display as capability-key changes.
+- Facade 与 mailbox tests：coordinate mapping、idempotency、stale guard、availability、operation receipt。
+- PostgreSQL tests：binding、operation/event sequence、outbox/worker lease、context/hook/tool exactly-once。
+- Native/Codex production composition tests 与 enterprise remote RuntimeWire E2E。
+- API/frontend tests：runtime snapshot/events/context endpoints 与 snapshot-only command availability。
+- Migration test：旧 session/delivery tables、columns 与 production readers 全部不存在。
 
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```rust
-let mut next_state = project_capability_state_from_frame(&current_frame)?;
-next_state.merge_business_change(change);
-let next_frame = AgentFrameBuilder::new(agent_id)
-    .with_capability_state(&next_state)
-    .build(frame_repo.as_ref())
-    .await?;
-session_capability.adopt_persisted_agent_frame_revision(target).await?;
-```
-
-#### Correct
+## 7. Wrong vs Correct
 
 ```rust
-runtime_surface.update_runtime_surface(
-    RuntimeSurfaceUpdateRequest::PermissionGrantApplied { grant_id },
-).await?;
+// Wrong
+if lifecycle_agent.status.is_running() { connector.cancel(session_id).await?; }
+
+// Correct
+let view = agent_run_runtime.inspect(target.clone()).await?;
+view.require_available(RuntimeCommandKind::Interrupt)?;
+agent_run_runtime.interrupt(command.guarded_by(&view)).await?;
 ```
 
-The boundary owns context resolution and live adoption because AgentFrame surface, runtime tool cache, hook target, skill discovery identity, and semantic context-frame emission must move as one observable AgentRun fact.
+## 8. Immutable Session Presentation Contract
 
-## Contract Appendices
+### 8.1 Scope / Trigger
 
-- [Session Startup Pipeline](./session-startup-pipeline.md)
-- [Session Runtime Execution State](./runtime-execution-state.md)
-- [AgentRun Mailbox And Turn Boundary Contract](./agentrun-mailbox.md)
-- [Execution Context Frames](./execution-context-frames.md)
-- [Session Context Bundle](./bundle-main-datasource.md)
-- [NDJSON Streaming Protocol](./streaming-protocol.md)
-- [Pi Agent Streaming](./pi-agent-streaming.md)
-- [Context Compaction Projection](./context-compaction-projection.md)
-- [Session Lineage Projection](./session-lineage-projection.md)
+本节适用于 connector、Tool Broker、application producer、Runtime journal、AgentRun history/NDJSON 与 `features/session` 之间的会话展示链路。之所以在 producer 边界固定完整 payload，是因为 source ID、event timestamp、显式 `null`、事件顺序与具体 item family 都是会话可观察行为；这些信息一旦被压缩成 Runtime 摘要，读取侧无法可靠恢复。
+
+### 8.2 Signatures
+
+```rust
+pub struct ImmutablePresentationEvent {
+    pub durability: PresentationDurability,
+    pub event: agentdash_agent_protocol::BackboneEvent,
+}
+
+pub enum RuntimeJournalFact {
+    Presentation(ImmutablePresentationEvent),
+    Internal(RuntimeEvent),
+}
+
+pub struct RuntimeCarrierMetadata {
+    pub thread_id: RuntimeThreadId,
+    pub recorded_at_ms: u64,
+    pub sequence: Option<EventSequence>,
+    pub transient: Option<RuntimeTransientCoordinate>,
+    pub coordinate: RuntimePresentationCoordinate,
+    // operation/binding/revision/idempotency metadata omitted here
+}
+```
+
+### 8.3 Contracts
+
+- `ImmutablePresentationEvent.event` 是受保护正文。Codex 标准 family 使用 `0.144.1` 生成的 AgentDash-owned 同构类型，AgentDash extension 使用同一 typed protocol 中的显式扩展 variant；两者都在 producer boundary 一次构造完成。
+- Runtime carrier 只拥有 canonical routing、source correlation、sequence、revision、binding、operation 与 durability。持久化、replay、fork projection、GET、NDJSON 和 frontend adapter 可以替换外层会话坐标，但必须逐字段保留正文。
+- durable 与 ephemeral presentation 共享同一正文合同；durability 由 producer 显式声明，不从 cursor 或 item kind 推断。`Internal(RuntimeEvent)` 只服务执行状态机，不进入 session presentation stream。
+- source thread/turn/item/request ID 与 Runtime canonical ID 同时存在于不同层。carrier correlation 不替换正文中的 source identity，`PresentationThreadId` 则来自产品 delivery session 并贯穿 binding、outbox 与 driver dispatch。
+- Journal GET、initial stream、live、reconnect、refresh 与 fork inherited projection消费同一 `Presentation` facts。`features/session` 继续使用同一 reducer/renderer；仅 envelope unwrap seam 理解 carrier。
+- 标准 `ThreadNameUpdated` 是 durable presentation，同时由 Runtime reducer投影到
+  `RuntimeSnapshot.thread_name`。session stream 保留原事件用于 live UI invalidation，
+  snapshot 则提供可重启恢复的当前名称；两条读取路径共享同一 journal fact，因而不会形成
+  独立标题事实源。
+
+### 8.4 Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| producer payload不能反序列化为owned protocol | typed protocol error；不生成文本、空对象或诊断消息替代正文 |
+| append idempotency identity携带不同events | `IdempotencyConflict`，不覆盖既有记录 |
+| durable sequence重复、跳号或乱序 | 整批拒绝，正文和projection都不产生部分写入 |
+| ephemeral event晚于同item terminal | 丢弃stale transient；不得复活terminal presentation |
+| journal读取到`Internal` fact | 从presentation查询中排除；API不得把它转换成会话事件 |
+| GET/stream/fork需要目标会话坐标 | 只改allowlisted carrier/envelope字段，受保护正文保持deep equality |
+| optional字段为显式`null` | 按owned protocol保留`null`；不得改成omitted、默认字符串或空数组 |
+| live `ThreadNameUpdated` | session正文保真，同时触发读取侧projection invalidation |
+| initial hydration包含历史名称事件 | reducer恢复presentation，但不重复执行页面refetch副作用 |
+
+### 8.5 Good / Base / Bad Cases
+
+- Good：Codex/Native/tool/application producer提交完整typed event，Runtime原子保存，Journal重新包装后旧 `features/session` reducer得到与producer相同的event body。
+- Good：名称事件的`threadId + threadName(string|null)`在journal、GET与live stream中deep equal；
+  Runtime snapshot独立提供当前值，但二者来自同一commit。
+- Base：同一idempotency key携带完全相同的有序events时返回原receipt；reconnect从durable/transient cursor继续，不复制或改写正文。
+- Bad：producer只保存`role + text + tool_name`摘要，再由API按名称猜回ThreadItem；这会丢失协议variant、ID、timestamp、nullable语义与事件顺序。
+- Bad：前端用live payload直接patch一个标题缓存、同时list/workspace继续查询后端；这会产生两个优先级实现。
+
+### 8.6 Tests Required
+
+- contract tests逐字段覆盖serialize/deserialize/reducer/snapshot roundtrip，并包含source IDs、timestamp、显式`null`与数组顺序。
+- memory/PostgreSQL tests覆盖ordered batch、idempotency conflict、durable/transient race、terminal fencing与commit→read→replay deep equality。
+- pinned Main parity tests对同一输入分别执行Main/current production path，只允许声明过的eventstream envelope差异；正文comparator不配置字段ignore list。
+- Journal parity覆盖GET、initial/live、reconnect/refresh、fork inherited、heartbeat、lagged与closed；frontend parity覆盖原reducer/renderer和无phantom tool card。
+- Thread name parity覆盖set/replace/clear的protected body deep equality，并断言live事件触发refetch、
+  hydration历史事件不触发refetch、refetch结果应用后端统一display-title resolver。
+
+### 8.7 Wrong vs Correct
+
+```rust
+// Wrong: read side reconstructs a protocol event from a lossy Runtime summary.
+let event = project_summary_as_thread_item(record.summary)?;
+
+// Correct: producer-owned body is persisted once; read side only wraps it.
+let RuntimeJournalFact::Presentation(presentation) = record.fact() else { return None };
+let envelope = wrap_for_target(record.carrier(), presentation.event.clone());
+```
+
+```ts
+// Wrong: session reducer直接维护产品标题优先级。
+workspace.title = event.payload.threadName ?? "新会话";
+
+// Correct: live事件只invalidate；产品查询返回统一组合后的display title。
+if (isLive && event.type === "thread_name_updated") {
+  invalidateAgentRunWorkspaceAndList();
+}
+```

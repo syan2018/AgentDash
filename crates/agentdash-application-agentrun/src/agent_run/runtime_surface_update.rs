@@ -1,6 +1,5 @@
 use std::{path::PathBuf, sync::Arc};
 
-use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::agent_frame_materialization::{
     CanvasVisibilityReason, RuntimeSurfaceUpdateRequest,
 };
@@ -18,7 +17,7 @@ use agentdash_spi::{
     AuthIdentity, CapabilityState, RuntimeVfsAccessPolicy, RuntimeVfsAccessSource, Vfs,
 };
 use agentdash_workspace_module::canvas::{
-    CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY, canvas_module_id, canvas_provider_root_ref,
+    CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY, canvas_provider_root_ref,
     upsert_canvas_runtime_data_binding,
 };
 use async_trait::async_trait;
@@ -29,8 +28,8 @@ use crate::agent_run::runtime_capability_projection::{
     RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline, merge_live_vfs_skill_entries,
 };
 use crate::agent_run::{
-    AgentFrameBuilder, AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView,
-    AgentRunRuntimeSurfaceQueryPort, RuntimeSurfaceQueryPurpose,
+    AgentFrameBuilder, AgentRunEffectiveCapabilityView, AgentRunRuntimeSurfaceQueryPort,
+    RuntimeSurfaceQueryPurpose,
 };
 use agentdash_application_vfs::VfsService;
 
@@ -71,7 +70,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
     pub async fn adopt_persisted_frame_revision_into_active_runtime(
         &self,
         target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, String> {
+    ) -> Result<(), String> {
         self.active_adopter
             .adopt_runtime_surface(target)
             .await
@@ -154,22 +153,24 @@ impl AgentRunRuntimeSurfaceUpdateService {
             &canvas.mount_id,
         )?;
 
-        let workspace_module_ref = canvas_module_id(&canvas.mount_id);
         let created_by_kind = match request {
             RuntimeSurfaceUpdateRequest::CanvasBindingChanged { .. } => "canvas_bind_data",
             RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested { .. } => "canvas_expose",
             _ => "canvas_surface_update",
         };
-        let mut next_frame = AgentFrameBuilder::new(current_frame.agent_id)
+        current_frame.validated_hook_plan().map_err(|error| {
+            format!(
+                "AgentFrame `{}` cannot produce a new Runtime surface revision: {error}",
+                current_frame.id
+            )
+        })?;
+        let next_frame = AgentFrameBuilder::new(current_frame.agent_id)
             .with_capability_state(&after_state)
             .with_created_by(created_by_kind, Some(current_frame.id.to_string()))
             .with_runtime_session(session_id.to_string())
             .build_uncommitted(self.frame_repo.as_ref())
             .await
             .map_err(|error| error.to_string())?;
-        materialize_visible_canvas_mount_projection(&mut next_frame, &canvas.mount_id);
-        materialize_visible_workspace_module_ref_projection(&mut next_frame, &workspace_module_ref);
-
         if agent_frame_runtime_surface_unchanged(&current_frame, &next_frame) {
             return Ok(RuntimeVfsState::new(active_vfs, active_policy));
         }
@@ -182,7 +183,10 @@ impl AgentRunRuntimeSurfaceUpdateService {
         self.active_adopter
             .adopt_runtime_surface(AgentFrameRuntimeTarget {
                 frame_id: next_frame.id,
-                delivery_runtime_session_id: session_id.to_string(),
+                runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId::new(
+                    session_id,
+                )
+                .expect("runtime thread id"),
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -207,7 +211,8 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .map_err(|error| error.to_string())?;
         let target = AgentFrameRuntimeTarget {
             frame_id: surface.current_surface_frame_id,
-            delivery_runtime_session_id: session_id.to_string(),
+            runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId::new(session_id)
+                .expect("runtime thread id"),
         };
         let frame = self
             .frame_repo
@@ -215,7 +220,14 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("AgentFrame `{}` 不存在", surface.current_surface_frame_id))?;
-        Ok(AgentRunEffectiveCapabilityService::effective_view_from_frame(target, &frame))
+        let capability_state = project_capability_state_from_frame(&frame);
+        Ok(AgentRunEffectiveCapabilityView {
+            target,
+            visible_capabilities: capability_state.tool.capabilities.clone(),
+            vfs_surface: capability_state.vfs.active.clone().unwrap_or_default(),
+            mcp_surface: capability_state.tool.mcp_servers.clone(),
+            capability_state,
+        })
     }
 
     async fn derive_skill_baseline_for_transition_state(
@@ -383,51 +395,6 @@ fn append_canvas_mount(vfs: &mut Vfs, canvas: &Canvas, access: CanvasMountAccess
     }
 }
 
-fn materialize_visible_canvas_mount_projection(
-    frame: &mut agentdash_domain::workflow::AgentFrame,
-    mount_id: &str,
-) {
-    frame.visible_canvas_mount_ids_json =
-        merge_string_projection(frame.visible_canvas_mount_ids_json.as_ref(), mount_id);
-}
-
-fn materialize_visible_workspace_module_ref_projection(
-    frame: &mut agentdash_domain::workflow::AgentFrame,
-    module_ref: &str,
-) {
-    frame.visible_workspace_module_refs_json = merge_string_projection(
-        frame.visible_workspace_module_refs_json.as_ref(),
-        module_ref,
-    );
-}
-
-fn merge_string_projection(
-    current: Option<&serde_json::Value>,
-    next_value: &str,
-) -> Option<serde_json::Value> {
-    let mut values = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    if let Some(serde_json::Value::Array(current)) = current {
-        for value in current.iter().filter_map(serde_json::Value::as_str) {
-            let value = value.trim();
-            if !value.is_empty() && seen.insert(value.to_string()) {
-                values.push(value.to_string());
-            }
-        }
-    }
-    let next_value = next_value.trim();
-    if !next_value.is_empty() && seen.insert(next_value.to_string()) {
-        values.push(next_value.to_string());
-    }
-    if values.is_empty() {
-        None
-    } else {
-        Some(serde_json::Value::Array(
-            values.into_iter().map(serde_json::Value::String).collect(),
-        ))
-    }
-}
-
 fn runtime_vfs_access_policy_after_canvas_mount_update(
     current_policy: &RuntimeVfsAccessPolicy,
     active_vfs: &Vfs,
@@ -506,9 +473,6 @@ fn agent_frame_runtime_surface_unchanged(
         && current_frame.vfs_surface_json == next_frame.vfs_surface_json
         && current_frame.mcp_surface_json == next_frame.mcp_surface_json
         && current_frame.execution_profile_json == next_frame.execution_profile_json
-        && current_frame.visible_canvas_mount_ids_json == next_frame.visible_canvas_mount_ids_json
-        && current_frame.visible_workspace_module_refs_json
-            == next_frame.visible_workspace_module_refs_json
 }
 
 #[async_trait]
@@ -516,7 +480,7 @@ impl RuntimeSurfaceAdoptionPort for AgentRunRuntimeSurfaceUpdateService {
     async fn adopt_runtime_surface(
         &self,
         target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
+    ) -> Result<(), RuntimeSurfaceAdoptionError> {
         self.active_adopter.adopt_runtime_surface(target).await
     }
 }
@@ -527,6 +491,8 @@ mod tests {
 
     use std::collections::BTreeSet;
 
+    use agentdash_agent_runtime_contract::HookPlanRevision;
+    use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
     use agentdash_domain::canvas::{Canvas, CanvasDataBinding};
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
@@ -549,6 +515,12 @@ mod tests {
 
     struct FixedSurfaceQuery {
         surface: AgentRunRuntimeSurface,
+    }
+
+    fn attach_empty_hook_plan(frame: &mut AgentFrame) {
+        let plan = AgentFrameHookPlan::compile(HookPlanRevision(1), Vec::new())
+            .expect("empty HookPlan should compile");
+        frame.hook_plan = Some(serde_json::to_value(plan).expect("HookPlan should serialize"));
     }
 
     #[async_trait::async_trait]
@@ -580,14 +552,14 @@ mod tests {
         async fn adopt_runtime_surface(
             &self,
             target: AgentFrameRuntimeTarget,
-        ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
+        ) -> Result<(), RuntimeSurfaceAdoptionError> {
             self.targets.lock().await.push(target);
-            Ok(Vec::new())
+            Ok(())
         }
     }
 
     #[tokio::test]
-    async fn canvas_expose_noops_when_surface_and_visibility_are_unchanged() {
+    async fn canvas_expose_noops_when_canonical_vfs_is_unchanged() {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
@@ -602,18 +574,13 @@ mod tests {
         capability_state.vfs.active = Some(active_vfs.clone());
 
         let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        attach_empty_hook_plan(&mut frame);
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
         frame.mcp_surface_json =
             Some(serde_json::to_value(Vec::<RuntimeMcpServer>::new()).unwrap());
         frame.execution_profile_json =
             Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
-        materialize_visible_canvas_mount_projection(&mut frame, &canvas.mount_id);
-        materialize_visible_workspace_module_ref_projection(
-            &mut frame,
-            &canvas_module_id(&canvas.mount_id),
-        );
-
         let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
         frame_repo.create(&frame).await.expect("frame should save");
         let adopter = Arc::new(RecordingAdopter::default());
@@ -675,6 +642,7 @@ mod tests {
         capability_state.vfs.active = Some(active_vfs.clone());
 
         let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        attach_empty_hook_plan(&mut frame);
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
         frame.mcp_surface_json =
@@ -755,13 +723,14 @@ mod tests {
                 mount_id: "workspace".to_string(),
                 path_pattern: RuntimeVfsPathPattern::Prefix("docs".to_string()),
                 operations: BTreeSet::from([RuntimeVfsOperation::Read]),
-                source: RuntimeVfsAccessSource::PermissionGrant,
+                source: RuntimeVfsAccessSource::ProjectPreset,
             }],
         };
         let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
         capability_state.vfs.active = Some(active_vfs.clone());
 
         let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        attach_empty_hook_plan(&mut frame);
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
         frame.mcp_surface_json =
@@ -834,6 +803,7 @@ mod tests {
         capability_state.vfs.active = Some(active_vfs.clone());
 
         let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        attach_empty_hook_plan(&mut frame);
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
         frame.mcp_surface_json =
@@ -930,6 +900,7 @@ mod tests {
         capability_state.vfs.active = Some(active_vfs.clone());
 
         let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        attach_empty_hook_plan(&mut frame);
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
         frame.mcp_surface_json =
@@ -1010,23 +981,22 @@ mod tests {
         let mut current = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
         current.effective_capability_json = Some(serde_json::json!({"tools": []}));
         current.vfs_surface_json = Some(serde_json::json!({"mounts": []}));
-        current.visible_canvas_mount_ids_json = Some(serde_json::json!(["cvs-dashboard-a"]));
-        current.visible_workspace_module_refs_json =
-            Some(serde_json::json!(["canvas:cvs-dashboard-a"]));
 
         let mut candidate = AgentFrame::new_revision(agent_id, 2, "canvas_expose");
         candidate.effective_capability_json = current.effective_capability_json.clone();
         candidate.vfs_surface_json = current.vfs_surface_json.clone();
-        candidate.visible_canvas_mount_ids_json = current.visible_canvas_mount_ids_json.clone();
-        candidate.visible_workspace_module_refs_json =
-            current.visible_workspace_module_refs_json.clone();
 
         assert!(
             agent_frame_runtime_surface_unchanged(&current, &candidate),
             "revision id, revision number and created_by are not model-visible surface changes"
         );
 
-        materialize_visible_workspace_module_ref_projection(&mut candidate, "canvas:cvs-other");
+        candidate.vfs_surface_json = Some(serde_json::json!({
+            "mounts": [{
+                "id": "cvs-other",
+                "provider": "canvas_fs"
+            }]
+        }));
         assert!(!agent_frame_runtime_surface_unchanged(&current, &candidate));
     }
 
@@ -1042,6 +1012,9 @@ mod tests {
         let vfs_access_policy = agentdash_spi::RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs);
         AgentRunRuntimeSurface {
             runtime_session_id: runtime_session_id.to_string(),
+            presentation_thread_id: format!("presentation-{runtime_session_id}")
+                .parse()
+                .expect("fixture presentation thread"),
             run_id,
             project_id,
             agent_id: frame.agent_id,

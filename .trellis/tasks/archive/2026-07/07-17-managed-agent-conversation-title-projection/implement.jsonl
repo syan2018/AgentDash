@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/07-17-managed-agent-conversation-title-projection/research/current-chain.md", "reason": "提供标准thread/name/updated证据、当前断点、main对照与已确认所有权结论。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "约束Runtime journal、projection、原子commit、replay与driver admission边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "约束Native Agent Core/adapter依赖方向、异步event sink、generation fence与恢复语义。"}
+{"file": ".trellis/spec/backend/agent-runtime-codex-adapter.md", "reason": "约束Codex app-server标准DTO严格映射、bind/live事件与adapter职责。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "约束AgentRun通过RuntimeSnapshot消费当前态并保持facade边界。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "约束session presentation单事实源、journal消费与旧RuntimeSession边界清理。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "约束Backbone标准事件、immutable payload与producer/admission/consumer矩阵。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "约束Rust schema、generated TypeScript与跨层字段同步。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "约束project invalidation、workspace refresh与前端重新查询策略。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "约束前端只消费generated union，不手写标题事件契约。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "用于检查Agent、Runtime、AgentRun、API和frontend整条数据流未断裂。"}

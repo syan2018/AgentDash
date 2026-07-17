@@ -1,7 +1,6 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
-use agentdash_application::runtime::Mount;
 use agentdash_application_vfs::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, GrepQuery,
     ListOptions, ListResult, MountEditCapabilities, MountError, MountOperationContext,
@@ -10,6 +9,7 @@ use agentdash_application_vfs::{
     ShellSessionSnapshot, ShellSessionTerminateRequest, ShellSessionTerminateResult,
     ShellSessionWriteRequest, ShellSessionWriteResult, normalize_mount_relative_path,
 };
+use agentdash_domain::common::Mount;
 use agentdash_relay::{
     DEFAULT_TOOL_SHELL_EXEC_YIELD_TIME_MS, DEFAULT_TOOL_SHELL_READ_WAIT_MS, RelayMessage,
     ShellOutputStream, TerminalResizePayload, ToolApplyPatchPayload, ToolFileDeletePayload,

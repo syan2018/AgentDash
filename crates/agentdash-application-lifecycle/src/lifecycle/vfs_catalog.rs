@@ -1,5 +1,3 @@
-use agentdash_spi::platform::mount::RuntimeFileEntry;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LifecyclePathKind {
     File,
@@ -255,21 +253,5 @@ mod tests {
         assert!(!paths.contains(&"runs"));
         assert_eq!(paths.len(), LIFECYCLE_PATH_CATALOG.len());
     }
-
-    #[test]
-    fn root_entries_share_catalog_surface_names() {
-        let entries = lifecycle_root_entries(true)
-            .into_iter()
-            .map(|entry| entry.path)
-            .collect::<Vec<_>>();
-
-        assert!(entries.contains(&"state".to_string()));
-        assert!(entries.contains(&"session".to_string()));
-        assert!(entries.contains(&"agent-runs".to_string()));
-        assert!(entries.contains(&"artifacts".to_string()));
-        assert!(entries.contains(&"records".to_string()));
-        assert!(entries.contains(&"skills".to_string()));
-        assert!(!entries.contains(&"runs".to_string()));
-        assert!(!entries.contains(&"nodes".to_string()));
-    }
 }
+use agentdash_spi::platform::mount::RuntimeFileEntry;

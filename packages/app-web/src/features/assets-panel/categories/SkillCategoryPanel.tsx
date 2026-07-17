@@ -5,7 +5,7 @@
  * - 简洁 header：标题 + 来源统计 + 刷新 + 新建按钮
  * - 卡片网格：优化的 origin badge、来源 URL 展示
  * - 新建/导入通过 CreateSkillDialog 分步体验（Manual / URL / Workspace）
- * - 编辑仍使用 SkillEditorDialog（VFS 浏览器模式 + 创建表单模式）
+ * - 已有 Skill 使用 VFS 浏览器查看，手动创建使用表单模式
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -52,13 +52,15 @@ import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
 import { useLibraryPublishedAssets } from "../_shared/useLibraryPublishedAssets";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
+import { resolveSkillAssetCardPolicy } from "./skillAssetCardPolicy";
 
 // ─── Detail mode ─────────────────────────────────────────
 
 type DetailMode =
   | { kind: "closed" }
   | { kind: "create" }
-  | { kind: "edit"; assetId: string; originalKey: string };
+  | { kind: "edit"; assetId: string; originalKey: string }
+  | { kind: "view"; assetId: string; originalKey: string };
 
 function cloneDraft(draft: SkillAssetDraft): SkillAssetDraft {
   return {
@@ -134,14 +136,19 @@ export function SkillCategoryPanel() {
     setDetail({ kind: "create" });
   }, [clearNotice]);
 
-  const openEdit = useCallback((skill: SkillAssetDto) => {
+  const openDetail = useCallback((skill: SkillAssetDto) => {
     setDraft(cloneDraft(draftFromSkillAsset(skill)));
     clearNotice();
-    setDetail({ kind: "edit", assetId: skill.id, originalKey: skill.key });
+    const policy = resolveSkillAssetCardPolicy(skill);
+    setDetail({
+      kind: policy.detailKind,
+      assetId: skill.id,
+      originalKey: skill.key,
+    });
   }, [clearNotice]);
 
   const handleSaveDraft = useCallback(async () => {
-    if (!currentProjectId || detail.kind === "closed") return;
+    if (!currentProjectId || detail.kind === "closed" || detail.kind === "view") return;
     const normalizedDraft: SkillAssetDraft = {
       ...draft,
       key: draft.key.trim(),
@@ -257,7 +264,7 @@ export function SkillCategoryPanel() {
           skills={skills}
           publishedByKey={publishedByKey}
           busyId={busyId}
-          onEdit={openEdit}
+          onOpen={openDetail}
           onPublish={setPublishTarget}
           onDelete={setConfirmDelete}
         />
@@ -343,14 +350,14 @@ function SkillGrid({
   skills,
   publishedByKey,
   busyId,
-  onEdit,
+  onOpen,
   onPublish,
   onDelete,
 }: {
   skills: SkillAssetDto[];
   publishedByKey: Map<string, LibraryAssetDto>;
   busyId: string | null;
-  onEdit: (skill: SkillAssetDto) => void;
+  onOpen: (skill: SkillAssetDto) => void;
   onPublish: (skill: SkillAssetDto) => void;
   onDelete: (skill: SkillAssetDto) => void;
 }) {
@@ -368,17 +375,17 @@ function SkillGrid({
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {skills.map((skill) => {
-        const isInstalled = Boolean(skill.installed_source);
-        const isBuiltin = skill.source === "builtin_seed";
-        const canPublish = !isInstalled && !isBuiltin;
+        const policy = resolveSkillAssetCardPolicy(skill);
         const published = publishedByKey.get(skill.key) ?? null;
         const isBusy = busyId === skill.id;
         const menuItems = buildAssetMenuItems({
-          primary: { label: "编辑", onSelect: () => onEdit(skill) },
-          publish: canPublish
+          primary: { label: policy.primaryLabel, onSelect: () => onOpen(skill) },
+          publish: policy.canPublish
             ? { published: Boolean(published), onSelect: () => onPublish(skill) }
             : null,
-          danger: { label: "删除", busy: isBusy, onSelect: () => onDelete(skill) },
+          danger: policy.canDelete
+            ? { label: "删除", busy: isBusy, onSelect: () => onDelete(skill) }
+            : null,
         });
 
         const tags: MetaTagItem[] = [
@@ -402,8 +409,8 @@ function SkillGrid({
         return (
           <AssetCard
             key={skill.id}
-            onOpen={() => onEdit(skill)}
-            openTitle="编辑"
+            onOpen={() => onOpen(skill)}
+            openTitle={policy.primaryLabel}
             title={skill.display_name}
             subtitle={`skills/${skill.key}/SKILL.md`}
             description={skill.description}
@@ -425,7 +432,7 @@ function SkillGrid({
 
 // ─── Skill Editor Dialog ─────────────────────────────────
 //
-// 复用原有编辑 / 创建逻辑，保持 VFS 浏览器模式。
+// 已有资产通过 VFS 浏览器展示，创建流程使用表单。
 
 function SkillEditorDialog({
   mode,
@@ -436,7 +443,7 @@ function SkillEditorDialog({
   onClose,
   onSave,
 }: {
-  mode: "create" | "edit";
+  mode: "create" | "edit" | "view";
   projectId: string;
   draft: SkillAssetDraft;
   isSaving: boolean;
@@ -449,7 +456,7 @@ function SkillEditorDialog({
   };
   const skillRootPath = draft.key ? `skills/${draft.key}` : "";
 
-  if (mode === "edit" && skillRootPath) {
+  if (mode !== "create" && skillRootPath) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-6" onClick={onClose}>
         <div
@@ -458,7 +465,9 @@ function SkillEditorDialog({
         >
           <header className="flex items-center justify-between border-b border-border px-5 py-4">
             <div>
-              <h3 className="text-sm font-semibold text-foreground">编辑 Skill</h3>
+              <h3 className="text-sm font-semibold text-foreground">
+                {mode === "view" ? "查看平台 Skill" : "编辑 Skill"}
+              </h3>
               <p className="mt-0.5 text-xs text-muted-foreground">{skillRootPath}/SKILL.md</p>
             </div>
             <button type="button" onClick={onClose} className="agentdash-button-secondary">
@@ -1007,4 +1016,3 @@ function TrashIcon() {
     </svg>
   );
 }
-

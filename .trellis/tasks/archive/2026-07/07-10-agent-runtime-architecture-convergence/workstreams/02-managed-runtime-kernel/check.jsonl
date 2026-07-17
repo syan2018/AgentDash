@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"复核checkpoint fidelity、activation与恢复"}
+{"file":".trellis/spec/backend/agent-runtime-kernel.md","reason":"复核terminal与generation fencing"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"复核事务、约束、migration与并发"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"复核persistence/driver failure传播与Lost"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"复核required Hook、effect replay与trace disposition"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"复核pending recovery、activation identity、head CAS与fidelity"}
+{"file":".trellis/spec/backend/agent-runtime-persistence.md","reason":"复核真实PostgreSQL事务、复合约束、Host ownership与claim fencing"}
+{"file":".trellis/spec/backend/agent-runtime-hooks.md","reason":"复核HookRun三段状态、跨execution site journal、effect digest与两类恢复队列"}

@@ -1,4 +1,4 @@
-﻿import { renderToStaticMarkup } from "react-dom/server";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
@@ -382,3 +382,4 @@ describe("MailboxMessageList", () => {
     expect(markup).not.toContain("打开终端");
   });
 });
+

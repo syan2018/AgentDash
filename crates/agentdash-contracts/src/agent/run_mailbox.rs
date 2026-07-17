@@ -148,24 +148,6 @@ pub struct MailboxMessageView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunMailboxMoveRequest {
-    pub client_command_id: String,
-    pub command: AgentRunCommandPreconditionView,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub after_message_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunMailboxMessageContentView {
-    pub id: String,
-    #[ts(type = "JsonValue")]
-    pub input: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct MailboxStateView {
     pub paused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,36 +167,6 @@ pub struct AgentRunCommandReceipt {
     pub client_command_id: String,
     pub status: String,
     pub duplicate: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRunContextCompactionCommandOutcome {
-    ScheduledNextTurn,
-    LaunchedCompactionTurn,
-    Completed,
-    NoEligibleMessages,
-    Blocked,
-    Failed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunContextCompactionCommandResponse {
-    pub command_receipt: AgentRunCommandReceipt,
-    pub outcome: AgentRunContextCompactionCommandOutcome,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub runtime_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub request_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub turn_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub message: Option<String>,
@@ -260,13 +212,13 @@ pub struct AgentRunComposerSubmitRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub backend_selection: Option<BackendSelectionRequestDto>,
     /// 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub delivery_intent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub backend_selection: Option<BackendSelectionRequestDto>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -300,6 +252,61 @@ pub struct AgentRunMessageCommandResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct AgentRunCommandOnlyRequest {
+    pub client_command_id: String,
+    pub command: AgentRunCommandPreconditionView,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunContextCompactionCommandOutcome {
+    ScheduledNextTurn,
+    LaunchedCompactionTurn,
+    Completed,
+    NoEligibleMessages,
+    Blocked,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunContextCompactionCommandResponse {
+    pub command_receipt: AgentRunCommandReceipt,
+    pub outcome: AgentRunContextCompactionCommandOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunMailboxMoveRequest {
+    pub client_command_id: String,
+    pub command: AgentRunCommandPreconditionView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub after_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunMailboxMessageContentView {
+    pub id: String,
+    #[ts(type = "JsonValue")]
+    pub input: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct AgentRunForkRequest {
     pub client_command_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -319,6 +326,9 @@ pub struct AgentRunForkSubmitRequest {
     pub input: Vec<codex::UserInput>,
     pub client_command_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub executor_config: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -327,9 +337,6 @@ pub struct AgentRunForkSubmitRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub metadata_json: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "JsonValue")]
-    pub executor_config: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub backend_selection: Option<BackendSelectionRequestDto>,
@@ -384,38 +391,54 @@ pub struct AgentRunMailboxView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
-    fn mailbox_source_identity_serializes_as_open_wire_object() {
-        let source = MailboxSourceIdentity {
-            namespace: "routine".to_string(),
-            kind: "trigger".to_string(),
-            source_ref: Some("routine-execution-1".to_string()),
-            correlation_ref: Some("routine-trigger-1".to_string()),
-            actor: "routine".to_string(),
-            route: Some("reuse".to_string()),
-            display_label_key: "mailbox.source.routine.trigger".to_string(),
-            metadata: Some(json!({ "entity_key": "story-1" })),
+    fn composer_submit_preserves_existing_run_execution_override() {
+        let payload = serde_json::json!({
+            "input": [{ "type": "text", "text": "hello", "text_elements": [] }],
+            "client_command_id": "command-1",
+            "executor_config": { "model_id": "other-model" }
+        });
+
+        let request = serde_json::from_value::<AgentRunComposerSubmitRequest>(payload)
+            .expect("existing AgentRun composer accepts an explicit execution override");
+        assert_eq!(
+            request.executor_config,
+            Some(serde_json::json!({ "model_id": "other-model" }))
+        );
+    }
+
+    #[test]
+    fn composer_submit_accepts_enqueue_delivery_intent() {
+        let payload = serde_json::json!({
+            "input": [{ "type": "text", "text": "hello", "text_elements": [] }],
+            "client_command_id": "command-1",
+            "delivery_intent": "enqueue"
+        });
+
+        let request = serde_json::from_value::<AgentRunComposerSubmitRequest>(payload)
+            .expect("unknown delivery values remain forward compatible");
+        assert_eq!(request.delivery_intent.as_deref(), Some("enqueue"));
+    }
+
+    #[test]
+    fn queued_message_response_exposes_mailbox_message() {
+        let response = AgentRunMessageCommandResponse {
+            command_receipt: AgentRunCommandReceipt {
+                client_command_id: "command-1".to_string(),
+                status: "queued".to_string(),
+                duplicate: false,
+                message: None,
+            },
+            outcome: AgentRunMessageCommandOutcome::Queued,
+            mailbox_message: None,
+            accepted_refs: None,
+            fork: None,
         };
 
-        let value = serde_json::to_value(&source).expect("serialize source identity");
-        assert_eq!(
-            value,
-            json!({
-                "namespace": "routine",
-                "kind": "trigger",
-                "source_ref": "routine-execution-1",
-                "correlation_ref": "routine-trigger-1",
-                "actor": "routine",
-                "route": "reuse",
-                "display_label_key": "mailbox.source.routine.trigger",
-                "metadata": { "entity_key": "story-1" }
-            })
-        );
-
-        let decoded: MailboxSourceIdentity =
-            serde_json::from_value(value).expect("deserialize source identity");
-        assert_eq!(decoded, source);
+        let value = serde_json::to_value(response).expect("serialize queued response");
+        assert!(value.get("mailbox_message_id").is_none());
+        assert!(value.get("mailbox_message").is_none());
+        assert!(value.get("accepted_refs").is_none());
     }
 }

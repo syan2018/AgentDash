@@ -43,7 +43,7 @@ pub struct GateResultDeliveryMarker {
     pub target_agent_id: Option<Uuid>,
     pub target_waiter_ref: Option<String>,
     pub mailbox_message_id: Option<Uuid>,
-    pub command_receipt_id: Option<Uuid>,
+    pub accepted_runtime_operation_id: Option<String>,
     pub claim_token: Option<Uuid>,
     pub claim_expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -85,7 +85,7 @@ pub struct CompleteGateResultParentContinuationRequest {
     pub result_attempt: i32,
     pub claim_token: Uuid,
     pub mailbox_message_id: Option<Uuid>,
-    pub command_receipt_id: Option<Uuid>,
+    pub accepted_runtime_operation_id: Option<String>,
     pub dispatched_to_parent: bool,
 }
 

@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type {
   AgentRunOwnershipView,
@@ -260,7 +260,6 @@ describe("AgentRun conversation command state", () => {
       model_id: "gpt-test",
       agent_id: undefined,
       thinking_level: undefined,
-      permission_policy: undefined,
       source: "user_override",
     });
   });

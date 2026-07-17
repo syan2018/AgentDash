@@ -1,7 +1,10 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { AgentFrameRuntimeView, AgentRunWorkspaceView } from "../../../types";
-import type { AgentFrameHookRuntimeInfo } from "../../../types";
+import type {
+  AgentFrameHookRuntimeInfo,
+  AgentFrameRuntimeView,
+  AgentRunWorkspaceView,
+} from "../../../types";
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { fetchAgentRunWorkspace } from "../../../services/lifecycle";
@@ -136,14 +139,9 @@ export function useAgentRunWorkspaceState({
     try {
       const workspace = await fetchAgentRunWorkspace(rid, aid);
       const runtimeSurface = agentRunWorkspaceResourceSurface(workspace);
-
       if (!canCommit()) return workspace;
-      if (workspace.agent) {
-        setAgent(workspace.agent);
-      }
-      if (workspace.frame_runtime) {
-        setFrame(workspace.frame_runtime);
-      }
+      if (workspace.agent) setAgent(workspace.agent);
+      if (workspace.frame_runtime) setFrame(workspace.frame_runtime);
       setState({
         run_id: rid,
         agent_id: aid,
@@ -160,7 +158,14 @@ export function useAgentRunWorkspaceState({
     } catch (error: unknown) {
       if (!canCommit()) return null;
       const message = errorMessage(error);
-      setState((current) => failAgentRunWorkspaceStateLoad(current, rid, aid, skey, mode, message));
+      setState((current) => failAgentRunWorkspaceStateLoad(
+        current,
+        rid,
+        aid,
+        skey,
+        mode,
+        message,
+      ));
       return null;
     }
   }, [setAgent, setFrame]);

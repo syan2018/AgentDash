@@ -1,0 +1,34 @@
+{
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "capture_method": "pinned_main_workspace_source_selection_contract",
+    "source_producers": [
+      {
+        "path": "crates/agentdash-application-agentrun/src/agent_run/workspace/query.rs",
+        "git_blob_sha": "f3e9390d7dba7f66ea905cae26d724573e0804e1"
+      },
+      {
+        "path": "crates/agentdash-api/src/routes/lifecycle_agents.rs",
+        "git_blob_sha": "1a57393df53a1c9695899ccb537aaebf246400b0"
+      },
+      {
+        "path": "crates/agentdash-domain/src/workflow/value_objects/orchestration.rs",
+        "git_blob_sha": "b6a34a732d6ae30aed5999fd4358ba6d5f085088"
+      }
+    ]
+  },
+  "adopted_surface": {
+    "current_frame_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "source_frame_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+  },
+  "workflow_node": {
+    "runtime_session_id": "presentation-thread-7",
+    "driver_thread_id": "driver-thread-7",
+    "node_path": "root/agent",
+    "attempt": 3
+  },
+  "terminal": {
+    "turn_id": "turn-7",
+    "missing_turn_must_error": true
+  }
+}

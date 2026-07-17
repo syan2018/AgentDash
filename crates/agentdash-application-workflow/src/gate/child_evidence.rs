@@ -6,11 +6,11 @@ pub(crate) fn child_evidence_result_refs(
     child_run_id: Uuid,
     child_agent_id: Uuid,
     child_frame_id: Option<Uuid>,
-    delivery_runtime_session_id: Option<&str>,
+    runtime_thread_id: Option<&str>,
 ) -> Value {
     let child_frame_id = child_frame_id.map(|id| id.to_string());
-    let delivery_runtime_session_id = delivery_runtime_session_id.map(str::to_string);
-    let evidence = delivery_runtime_session_id
+    let runtime_thread_id = runtime_thread_id.map(str::to_string);
+    let evidence = runtime_thread_id
         .as_deref()
         .map(|session_id| {
             vec![json!({
@@ -19,7 +19,7 @@ pub(crate) fn child_evidence_result_refs(
                 "child_run_id": child_run_id.to_string(),
                 "child_agent_id": child_agent_id.to_string(),
                 "child_frame_id": child_frame_id.clone(),
-                "delivery_runtime_session_id": session_id,
+                "runtime_thread_id": session_id,
                 "mount_id": "lifecycle",
                 "uri": child_messages_uri(child_agent_id),
             })]
@@ -33,7 +33,7 @@ pub(crate) fn child_evidence_result_refs(
             "run_id": child_run_id.to_string(),
             "agent_id": child_agent_id.to_string(),
             "frame_id": child_frame_id,
-            "delivery_runtime_session_id": delivery_runtime_session_id,
+            "runtime_thread_id": runtime_thread_id,
         },
         "evidence": evidence,
     })
@@ -63,7 +63,7 @@ mod tests {
             .expect("evidence refs");
         assert!(evidence.iter().any(|entry| {
             entry.get("kind") == Some(&json!("lifecycle_file"))
-                && entry.get("delivery_runtime_session_id") == Some(&json!("child-session"))
+                && entry.get("runtime_thread_id") == Some(&json!("child-session"))
                 && entry.get("mount_id") == Some(&json!("lifecycle"))
                 && entry
                     .get("uri")

@@ -10,23 +10,31 @@ export type {
   ActiveRuntimeNodeRefDto,
   AgentFrameRuntimeView,
   AgentRunLineageRef,
-  AgentRunListChild,
+  AgentRunListChildView,
+  AgentRunListEntryView,
   AgentRunView,
   AgentRunWorkspaceControlPlaneStatus,
   AgentRunWorkspaceControlPlaneView,
-  AgentRunWorkspaceListEntry,
-  AgentRunWorkspaceListView,
   AgentRunWorkspaceView,
   LifecycleRunView,
   LifecycleSubjectAssociationDto,
   OrchestrationInstanceView,
   ProjectActiveAgentsView,
+  ProjectAgentRunListView,
   RuntimeNodeView,
   RuntimeSessionRefDto,
   RuntimeSessionTraceView,
   SubjectExecutionView,
   SubjectRuntimeAttemptView,
 } from "../generated/workflow-contracts";
+
+import type {
+  AgentRunListChildView,
+  AgentRunListEntryView,
+} from "../generated/workflow-contracts";
+
+export type AgentRunListChild = AgentRunListChildView;
+export type AgentRunWorkspaceListEntry = AgentRunListEntryView;
 
 // ─── Subject Execution 索引 key ─────────────────────────
 

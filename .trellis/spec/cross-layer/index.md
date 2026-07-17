@@ -14,6 +14,7 @@
 | [Frontend / Backend Contracts](./frontend-backend-contracts.md) | Rust wire DTO、TS 生成与 drift check 契约 |
 | [Desktop Local Runtime](./desktop-local-runtime.md) | Tauri 桌面壳、DashboardHost、LocalRuntimeClient 边界 |
 | [Deployment Runtime Contract](./deployment-runtime.md) | 云端部署运行入口、环境变量、版本发现和 image command 契约 |
+| [Agent Runtime Wire Relay Transport](./agent-runtime-wire-relay.md) | typed Runtime Wire、双向stream、ack/replay与remote placement合同 |
 | [Project Backend Workspace Routing](./project-backend-workspace-routing.md) | Backend Access、workspace detect、inventory registration |
 | [Shared Library Contract](./shared-library-contract.md) | Shared Library / Marketplace / Project Asset 跨层契约 |
 

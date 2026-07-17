@@ -33,8 +33,7 @@ impl ProjectProjectionNotificationPort for ProjectProjectionNotificationPublishe
             frame_id: invalidation.frame_id.map(|id| id.to_string()),
             gate_id: invalidation.gate_id.map(|id| id.to_string()),
             mailbox_message_id: invalidation.mailbox_message_id.map(|id| id.to_string()),
-            delivery_runtime_session_id: invalidation.delivery_runtime_session_id,
-            workspace_module_presentation: None,
+            delivery_runtime_session_id: None,
         };
         let event = ProjectEventStreamEnvelope::control_plane_projection_changed(
             ProjectControlPlaneProjectionChanged::new(invalidation.project_id.to_string(), change),

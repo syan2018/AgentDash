@@ -1,6 +1,7 @@
 import { api } from "../api/client";
 import type {
   AgentRunCommandReceipt,
+  AgentRunCommandOnlyRequest,
   AgentRunForkRequest,
   AgentRunForkResponse,
   AgentRunForkSubmitRequest,
@@ -9,7 +10,6 @@ import type {
   AgentRunMailboxMoveRequest,
   AgentRunMessageCommandResponse,
 } from "../generated/agent-run-mailbox-contracts";
-import type { AgentRunCommandOnlyRequest } from "../generated/workflow-contracts";
 import { agentRunScopedPath } from "./agentRunRuntime";
 
 export async function submitAgentRunComposerInput(

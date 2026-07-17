@@ -27,7 +27,7 @@ pub use agentdash_agent_types::{
 };
 pub use agentdash_agent_types::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
-    ToolUpdateCallback,
+    ToolProtocolProjector, ToolUpdateCallback,
 };
 
 // ─── domain re-export ───────────────────────────────────────
@@ -43,11 +43,11 @@ pub use agentdash_domain::backend::{
     RuntimeBackendAnchorSource,
 };
 pub use connector::{
-    AgentConnector, AgentInfo, CapabilityState, CapabilityStateDelta, ChannelDimension,
-    CompanionDimension, ConnectorCapabilities, ConnectorError, ConnectorType, DefaultMountDelta,
-    DiscoveredGuideline, DiscoveryContext, ExecutionBackendPlacement, ExecutionContext,
-    ExecutionSessionFrame, ExecutionStream, ExecutionTurnFrame, ExecutionTurnMode, McpEnvVar,
-    McpHttpHeader, McpServerReadinessSummary, McpTransportConfig, NamedEntityDelta, PromptPayload,
+    CapabilityState, CapabilityStateDelta, ChannelDimension, CompanionDimension, ConnectorError,
+    DefaultMountDelta, DiscoveredGuideline, DiscoveryContext, ExecutionBackendPlacement,
+    ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, ExecutionTurnMode, McpEnvVar,
+    McpHttpHeader, McpServerReadinessSummary, McpTransportConfig, NamedEntityDelta,
+    PlatformToolExecutionContext, PlatformToolInvocationCoordinates, PromptPayload,
     RestoredSessionState, RuntimeMcpServer, RuntimeMcpSourceReadiness, RuntimeVfsAccessPolicy,
     RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern,
     SetDelta, SkillClusterMeta, SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension,
@@ -88,18 +88,14 @@ pub use hooks::trace::{
 pub use hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
     AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, AgentFrameRuntimeSnapshot,
-    ContextAgentConsumption, ContextAgentConsumptionMode, ContextCachePolicy,
-    ContextConnectorProfile, ContextDeliveryEntry, ContextDeliveryMetadata, ContextDeliveryPhase,
-    ContextDeliveryPlan, ContextDeliveryTarget, ContextFrame, ContextFrameSection,
-    ContextModelChannel, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,
-    HookCompactionDecision, HookCompletionStatus, HookControlTarget, HookDiagnosticEntry,
-    HookEffect, HookError, HookEvaluationQuery, HookEvaluationTrigger, HookInjection,
-    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
-    HookRuntimeAccess, HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookStepAdvanceRequest,
-    HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
-    RuntimeAdapterProvenance, RuntimeContextFragmentEntry, RuntimeEventSource,
-    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SessionSnapshotMetadata,
-    SharedHookRuntime, SubjectRunContext, action_type, context_usage_kind,
+    ContextTokenStats, ExecutionHookProvider, HookApprovalRequest, HookCompactionDecision,
+    HookCompletionStatus, HookControlTarget, HookDiagnosticEntry, HookEffect, HookError,
+    HookEvaluationQuery, HookEvaluationTrigger, HookInjection, HookPendingAction,
+    HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution, HookRuntimeAccess,
+    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookStepAdvanceRequest, HookTraceEntry,
+    HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
+    RuntimeAdapterProvenance, RuntimeEventSource, SessionSnapshotMetadata, SharedHookRuntime,
+    SubjectRunContext, action_type, context_usage_kind,
 };
 
 // ─── workflow scripts ──────────────────────────────────────
@@ -150,24 +146,21 @@ pub use platform::tool_capability::{
 };
 
 pub use session_persistence::{
-    AccumulationPolicy, AgentFrameTransitionRecord, AgentRunControlEffectKind,
-    AgentRunControlEffectRecord, AgentRunControlEffectStatus, AgentRunControlEffectStore,
-    ApplyChannelDirectivesEffect, ApplyMountOperationsEffect, ApplyVfsOverlayEffect,
-    CAPABILITY_DIMENSION_CHANNEL, CAPABILITY_DIMENSION_COMPANION, CAPABILITY_DIMENSION_MCP,
-    CAPABILITY_DIMENSION_SKILL, CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS,
-    CAPABILITY_DIMENSION_WORKSPACE_MODULE, CapabilityArtifactSource, CapabilityContributionRecord,
-    CapabilityDeclarationRecord, CapabilityDimensionKey, CompactionProjectionCommitResult,
-    EFFECT_TYPE_APPLY_CHANNEL_DIRECTIVES, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
-    EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
-    EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus,
-    NewAgentRunControlEffectRecord, NewCompactionProjectionCommit,
+    AccumulationPolicy, AgentFrameTransitionRecord, ApplyChannelDirectivesEffect,
+    ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_CHANNEL,
+    CAPABILITY_DIMENSION_COMPANION, CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_SKILL,
+    CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS, CAPABILITY_DIMENSION_WORKSPACE_MODULE,
+    CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
+    CapabilityDimensionKey, CompactionProjectionCommitResult, EFFECT_TYPE_APPLY_CHANNEL_DIRECTIVES,
+    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
+    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
+    EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, NewCompactionProjectionCommit,
     PendingCapabilityStateTransition, PersistedSessionEvent, RuntimeCapabilityEffectRecord,
     RuntimeCapabilityTransition, RuntimeCommandRecord, RuntimeCommandStatus,
     RuntimeDeliveryCommand, RuntimeDeliveryCommandKind, SESSION_PROJECTION_KIND_AUDIT,
     SESSION_PROJECTION_KIND_HANDOFF, SESSION_PROJECTION_KIND_MODEL_CONTEXT,
     SESSION_PROJECTION_KIND_TIMELINE, SessionCompactionRecord, SessionCompactionStatus,
-    SessionCompactionStore, SessionEventBacklog, SessionEventPage, SessionEventStore, SessionMeta,
-    SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    SessionProjectionStore, SessionRuntimeCommandStore, SetCompanionAgentRosterEffect,
-    SetMcpServerSetEffect, SetToolAccessEffect,
+    SessionEventBacklog, SessionEventPage, SessionMeta, SessionProjectionHeadRecord,
+    SessionProjectionSegmentRecord, SetCompanionAgentRosterEffect, SetMcpServerSetEffect,
+    SetToolAccessEffect,
 };

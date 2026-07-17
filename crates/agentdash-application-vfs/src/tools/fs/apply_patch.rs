@@ -111,6 +111,12 @@ impl AgentTool for FsApplyPatchTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<FsApplyPatchParams>()
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::FileChange)
+    }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_fs_apply_patch_lifecycle".to_string())
+    }
 
     async fn execute(
         &self,
@@ -167,9 +173,86 @@ impl AgentTool for FsApplyPatchTool {
         Ok(AgentToolResult {
             content: vec![ContentPart::text(lines.join("\n"))],
             is_error,
-            details: None,
+            details: Some(apply_patch_protocol_details(&result, &params.patch)),
         })
     }
+}
+
+fn apply_patch_protocol_details(
+    result: &crate::MultiMountPatchResult,
+    patch: &str,
+) -> serde_json::Value {
+    let parsed_changes = apply_patch_protocol_changes(patch).unwrap_or_default();
+    let actual_paths = result
+        .added
+        .iter()
+        .chain(result.modified.iter())
+        .chain(result.deleted.iter())
+        .collect::<BTreeSet<_>>();
+    serde_json::json!({
+        "changes": parsed_changes.into_iter().filter(|change| {
+            change.get("path").and_then(serde_json::Value::as_str).is_some_and(|path| actual_paths.iter().any(|actual| actual.as_str() == path))
+                || change.get("kind").and_then(|kind| kind.get("move_path")).and_then(serde_json::Value::as_str).is_some_and(|path| actual_paths.iter().any(|actual| actual.as_str() == path))
+        }).collect::<Vec<_>>(),
+        "errors": result.errors.iter().map(|error| serde_json::json!({
+            "mount_id": error.mount_id,
+            "path": error.path,
+            "message": error.message,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn apply_patch_protocol_changes(patch: &str) -> Result<Vec<serde_json::Value>, String> {
+    let entries = parse_patch_text(patch).map_err(|error| error.to_string())?;
+    let diffs = patch_entry_diffs(patch);
+    entries
+        .into_iter()
+        .zip(diffs)
+        .map(|(mut entry, diff)| {
+            let entry_kind = match &entry {
+                crate::PatchEntry::AddFile { .. } => serde_json::json!({"type":"add"}),
+                crate::PatchEntry::DeleteFile { .. } => serde_json::json!({"type":"delete"}),
+                crate::PatchEntry::UpdateFile { .. } => serde_json::json!({"type":"update"}),
+            };
+            let targets = normalize_patch_entry_targets(&mut entry)?;
+            let kind = if entry_kind["type"] == "update" {
+                serde_json::json!({
+                    "type":"update",
+                    "move_path": targets.move_target.as_ref().map(|target| format!("{}://{}", target.mount_id, target.relative_path)),
+                })
+            } else {
+                entry_kind
+            };
+            Ok(serde_json::json!({
+                "path": format!("{}://{}", targets.primary.mount_id, targets.primary.relative_path),
+                "kind": kind,
+                "diff": diff,
+            }))
+        })
+        .collect()
+}
+
+fn patch_entry_diffs(patch: &str) -> Vec<String> {
+    let mut diffs = Vec::new();
+    let mut current = Vec::new();
+    for line in patch.lines() {
+        let starts_entry = line.starts_with("*** Add File: ")
+            || line.starts_with("*** Delete File: ")
+            || line.starts_with("*** Update File: ");
+        if starts_entry && !current.is_empty() {
+            diffs.push(current.join("\n"));
+            current.clear();
+        }
+        if starts_entry || !current.is_empty() {
+            if line != "*** End Patch" {
+                current.push(line.to_string());
+            }
+        }
+    }
+    if !current.is_empty() {
+        diffs.push(current.join("\n"));
+    }
+    diffs
 }
 
 fn fs_apply_patch_mutation_keys(patch: &str) -> Result<Vec<String>, String> {
@@ -195,6 +278,39 @@ fn fs_apply_patch_mutation_keys(patch: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod fs_apply_patch_mutation_tests {
     use super::*;
+
+    #[test]
+    fn apply_patch_owner_details_preserve_actual_changes() {
+        let patch = "*** Begin Patch\n*** Add File: main://src/new.rs\n+new\n*** Update File: main://src/lib.rs\n*** Move to: main://src/moved.rs\n@@\n-old\n+new\n*** Delete File: main://src/old.rs\n*** End Patch";
+        let details = apply_patch_protocol_details(
+            &crate::MultiMountPatchResult {
+                added: vec!["main://src/new.rs".into()],
+                modified: vec!["main://src/moved.rs".into()],
+                deleted: vec!["main://src/old.rs".into()],
+                errors: Vec::new(),
+            },
+            patch,
+        );
+        assert_eq!(details["changes"].as_array().unwrap().len(), 3);
+        assert_eq!(details["changes"][1]["path"], "main://src/lib.rs");
+        assert_eq!(
+            details["changes"][1]["kind"]["move_path"],
+            "main://src/moved.rs"
+        );
+        for change in details["changes"].as_array().unwrap() {
+            let diff = change["diff"].as_str().unwrap();
+            let path = change["path"].as_str().unwrap();
+            for other in [
+                "main://src/new.rs",
+                "main://src/lib.rs",
+                "main://src/old.rs",
+            ] {
+                if other != path {
+                    assert!(!diff.contains(other), "{path} diff leaked {other}: {diff}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn apply_patch_mutation_keys_reject_bare_paths() {

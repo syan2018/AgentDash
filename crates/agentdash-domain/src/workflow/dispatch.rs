@@ -58,13 +58,11 @@ pub enum CapabilityPolicy {
     GrantConstrained,
 }
 
-/// RuntimeSession 创建/附加策略。
+/// AgentRun canonical runtime thread provisioning policy。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimePolicy {
-    CreateRuntimeSession,
-    AttachExisting(Uuid),
-    ContinueCurrent(Uuid),
+    ProvisionRuntimeThread,
 }
 
 /// Gate 创建策略与参数。
@@ -103,6 +101,11 @@ pub struct SubjectExecutionRef {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentLaunchIntent {
     pub project_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_agent_id: Option<Uuid>,
+    /// 本次 AgentRun 的 effective execution profile；缺失时使用 ProjectAgent 默认配置。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_profile_override: Option<serde_json::Value>,
     pub source: ExecutionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_user_id: Option<String>,
@@ -172,7 +175,7 @@ pub enum ExecutionIntent {
     AgentLaunch(AgentLaunchIntent),
     SubjectExecution(SubjectExecutionIntent),
     LifecycleRunStart(LifecycleRunStartIntent),
-    InteractionDispatch(InteractionDispatchIntent),
+    InteractionDispatch(Box<InteractionDispatchIntent>),
 }
 
 // ─── Result ──────────────────────────────────────────────────────────────────
@@ -248,17 +251,14 @@ pub type RuntimeControlRefs = AgentRuntimeRefs;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentLaunchDispatchResult {
     pub runtime_refs: AgentRuntimeRefs,
-    /// 投递目标 runtime session（合并原 runtime_session_ref + trace_ref）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delivery_runtime_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubjectExecutionDispatchResult {
     pub runtime_refs: AgentRuntimeRefs,
     pub subject_execution_ref: SubjectExecutionRef,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delivery_runtime_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,8 +271,7 @@ pub struct LifecycleRunStartDispatchResult {
 pub struct InteractionGateOpenedDispatchResult {
     pub runtime_refs: AgentRuntimeRefs,
     pub gate_ref: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delivery_runtime_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Uuid,
 }
 
 /// Dispatch 调度结果按 intent family 分类，避免全 optional DTO 掩盖必需锚点。
@@ -303,7 +302,7 @@ mod tests {
             agent_policy: AgentPolicy::Create,
             context_policy: ContextPolicy::Isolated,
             capability_policy: CapabilityPolicy::Baseline,
-            runtime_policy: RuntimePolicy::CreateRuntimeSession,
+            runtime_policy: RuntimePolicy::ProvisionRuntimeThread,
         });
         let json = serde_json::to_string(&intent).expect("serialize");
         let deserialized: ExecutionIntent = serde_json::from_str(&json).expect("deserialize");
@@ -321,6 +320,7 @@ mod tests {
     #[test]
     fn subject_execution_result_serializes_orchestration_binding() {
         let orchestration_ref = Uuid::new_v4();
+        let delivery_runtime_ref = Uuid::new_v4();
         let result = ExecutionDispatchResult::SubjectExecution(SubjectExecutionDispatchResult {
             runtime_refs: AgentRuntimeRefs::new(
                 Uuid::new_v4(),
@@ -336,13 +336,13 @@ mod tests {
                 subject_ref: SubjectRef::new("task", Uuid::new_v4()),
                 association_id: Uuid::new_v4(),
             },
-            delivery_runtime_ref: None,
+            delivery_runtime_ref,
         });
         let json = serde_json::to_string(&result).expect("serialize");
-        assert!(!json.contains("runtime_session_ref"));
         assert!(json.contains(&orchestration_ref.to_string()));
         assert!(json.contains("orchestration_ref"));
         assert!(json.contains("node_path"));
         assert!(json.contains("subject_execution"));
+        assert!(json.contains(&delivery_runtime_ref.to_string()));
     }
 }

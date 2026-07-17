@@ -1,12 +1,11 @@
 use uuid::Uuid;
 
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
-use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
 use agentdash_application_ports::workflow_graph_planning as workflow_graph_planning_port;
 use agentdash_domain::workflow::{
     AgentLaunchIntent, AgentPolicy, AgentRuntimeRefs, ExecutionSource, GatePolicy,
     InteractionDispatchIntent, LifecycleAgent, LifecycleRun, OrchestrationBindingRefs, RunPolicy,
-    RuntimePolicy, SubjectExecutionIntent, SubjectExecutionRef, SubjectRef, ValidationSeverity,
+    SubjectExecutionIntent, SubjectExecutionRef, SubjectRef, ValidationSeverity,
 };
 
 use crate::lifecycle::WorkflowApplicationError;
@@ -14,6 +13,8 @@ use crate::lifecycle::WorkflowApplicationError;
 #[derive(Debug, Clone)]
 pub(crate) struct DispatchPlan {
     pub(crate) project_id: Uuid,
+    pub(crate) project_agent_id: Option<Uuid>,
+    pub(crate) execution_profile_override: Option<serde_json::Value>,
     pub(crate) source: ExecutionSource,
     pub(crate) created_by_user_id: Option<String>,
     pub(crate) subject_ref: Option<SubjectRef>,
@@ -22,13 +23,12 @@ pub(crate) struct DispatchPlan {
     pub(crate) workflow_graph_ref: Option<agentdash_domain::workflow::WorkflowGraphRef>,
     pub(crate) run_policy: RunPolicy,
     pub(crate) agent_policy: AgentPolicy,
-    pub(crate) runtime_policy: RuntimePolicy,
     pub(crate) gate_policy: Option<GatePolicy>,
 }
 
 pub(crate) struct DispatchFacts {
     pub(crate) runtime_refs: AgentRuntimeRefs,
-    pub(crate) runtime_session_ref: Option<Uuid>,
+    pub(crate) delivery_runtime_ref: Uuid,
     pub(crate) gate_ref: Option<Uuid>,
     pub(crate) subject_execution_ref: Option<SubjectExecutionRef>,
 }
@@ -47,14 +47,16 @@ pub(crate) struct WorkflowAgentNodeRuntimeContext {
 pub(crate) struct MaterializedAgentRuntime {
     pub(crate) agent: LifecycleAgent,
     pub(crate) frame_id: Uuid,
-    pub(crate) runtime_session_ref: Option<Uuid>,
     pub(crate) runtime_refs: AgentRuntimeRefs,
+    pub(crate) delivery_runtime_ref: Uuid,
 }
 
 impl From<&AgentLaunchIntent> for DispatchPlan {
     fn from(intent: &AgentLaunchIntent) -> Self {
         Self {
             project_id: intent.project_id,
+            project_agent_id: intent.project_agent_id,
+            execution_profile_override: intent.execution_profile_override.clone(),
             source: intent.source.clone(),
             created_by_user_id: intent.created_by_user_id.clone(),
             subject_ref: intent.subject_ref.clone(),
@@ -63,7 +65,6 @@ impl From<&AgentLaunchIntent> for DispatchPlan {
             workflow_graph_ref: intent.workflow_graph_ref.clone(),
             run_policy: intent.run_policy.clone(),
             agent_policy: intent.agent_policy.clone(),
-            runtime_policy: intent.runtime_policy.clone(),
             gate_policy: None,
         }
     }
@@ -73,6 +74,8 @@ impl From<&SubjectExecutionIntent> for DispatchPlan {
     fn from(intent: &SubjectExecutionIntent) -> Self {
         Self {
             project_id: intent.project_id,
+            project_agent_id: None,
+            execution_profile_override: None,
             source: intent.source.clone(),
             created_by_user_id: intent.created_by_user_id.clone(),
             subject_ref: Some(intent.subject_ref.clone()),
@@ -81,7 +84,6 @@ impl From<&SubjectExecutionIntent> for DispatchPlan {
             workflow_graph_ref: intent.workflow_graph_ref.clone(),
             run_policy: intent.run_policy.clone(),
             agent_policy: intent.agent_policy.clone(),
-            runtime_policy: intent.runtime_policy.clone(),
             gate_policy: None,
         }
     }
@@ -91,6 +93,8 @@ impl From<&InteractionDispatchIntent> for DispatchPlan {
     fn from(intent: &InteractionDispatchIntent) -> Self {
         Self {
             project_id: intent.project_id,
+            project_agent_id: None,
+            execution_profile_override: None,
             source: intent.source.clone(),
             created_by_user_id: None,
             subject_ref: None,
@@ -99,27 +103,7 @@ impl From<&InteractionDispatchIntent> for DispatchPlan {
             workflow_graph_ref: intent.workflow_graph_ref.clone(),
             run_policy: RunPolicy::AppendGraph,
             agent_policy: AgentPolicy::SpawnChild,
-            runtime_policy: intent.runtime_policy.clone(),
             gate_policy: Some(intent.gate_policy.clone()),
-        }
-    }
-}
-
-pub(crate) fn workflow_error_from_runtime_session_delivery_error(
-    error: runtime_session_delivery_port::RuntimeSessionDeliveryError,
-) -> WorkflowApplicationError {
-    match error {
-        runtime_session_delivery_port::RuntimeSessionDeliveryError::NotFound { .. } => {
-            WorkflowApplicationError::NotFound(error.to_string())
-        }
-        runtime_session_delivery_port::RuntimeSessionDeliveryError::Rejected { .. } => {
-            WorkflowApplicationError::Conflict(error.to_string())
-        }
-        runtime_session_delivery_port::RuntimeSessionDeliveryError::Unavailable { .. } => {
-            WorkflowApplicationError::Internal(error.to_string())
-        }
-        runtime_session_delivery_port::RuntimeSessionDeliveryError::Internal { message } => {
-            WorkflowApplicationError::Internal(message)
         }
     }
 }
@@ -185,4 +169,38 @@ fn blocking_planning_diagnostics_message(
         "WorkflowGraph {} 无法编译为 OrchestrationPlanSnapshot: {}",
         workflow_graph_id, details
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::workflow::{CapabilityPolicy, ContextPolicy, RuntimePolicy};
+
+    #[test]
+    fn project_agent_launch_preserves_run_execution_profile_override() {
+        let profile = serde_json::json!({
+            "executor": "PI_AGENT",
+            "provider_id": "openai",
+            "model_id": "gpt-5"
+        });
+        let intent = AgentLaunchIntent {
+            project_id: Uuid::new_v4(),
+            project_agent_id: Some(Uuid::new_v4()),
+            execution_profile_override: Some(profile.clone()),
+            source: ExecutionSource::ProjectAgent,
+            created_by_user_id: Some("user-1".to_string()),
+            subject_ref: None,
+            parent_run_id: None,
+            parent_agent_id: None,
+            workflow_graph_ref: None,
+            run_policy: RunPolicy::CreateLinkedRun,
+            agent_policy: AgentPolicy::Create,
+            context_policy: ContextPolicy::Isolated,
+            capability_policy: CapabilityPolicy::Baseline,
+            runtime_policy: RuntimePolicy::ProvisionRuntimeThread,
+        };
+
+        let plan = DispatchPlan::from(&intent);
+        assert_eq!(plan.execution_profile_override, Some(profile));
+    }
 }

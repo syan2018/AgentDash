@@ -24,7 +24,6 @@
 
 use std::collections::BTreeSet;
 
-use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workflow::{
@@ -89,19 +88,6 @@ pub trait CompanionParentFactsProvider: Send + Sync {
         &self,
         parent_session_id: &str,
     ) -> Option<CapabilityState>;
-}
-
-#[async_trait]
-impl CompanionParentFactsProvider
-    for agentdash_application_runtime_session::session::SessionRuntimeTransitionService
-{
-    async fn latest_companion_parent_capability_state(
-        &self,
-        parent_session_id: &str,
-    ) -> Option<CapabilityState> {
-        self.latest_runtime_capability_state(parent_session_id)
-            .await
-    }
 }
 
 impl<'a> FrameRequestAssembler<'a> {
@@ -311,48 +297,35 @@ impl<'a> FrameRequestAssembler<'a> {
         prepared: &mut FrameAssemblyBuilder,
         explicit_skill_asset_keys: Vec<String>,
     ) -> Result<(), String> {
-        let Some(anchor) = self
-            .repos
-            .execution_anchor_repo
-            .find_by_session(child_session_id)
-            .await
-            .map_err(|error| error.to_string())?
+        let Some((address, message_stream)) =
+            resolve_existing_runtime_surface_refs(self.repos, child_session_id).await?
         else {
             return Ok(());
         };
         let run = self
             .repos
             .lifecycle_run_repo
-            .get_by_id(anchor.run_id)
+            .get_by_id(address.run_id)
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| {
                 format!(
                     "LifecycleRun {} 不存在，无法投影 companion-system",
-                    anchor.run_id
+                    address.run_id
                 )
             })?;
         let surface = self
             .lifecycle_surface_projection
             .project_lifecycle_surface(ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
                 base_vfs: prepared.vfs.take(),
-                address: ports_agent_run_surface::AgentRunRuntimeAddress {
-                    run_id: anchor.run_id,
-                    agent_id: anchor.agent_id,
-                    frame_id: anchor.launch_frame_id,
-                },
-                message_stream: Some(ports_lifecycle_surface::MessageStreamProjectionRef {
-                    runtime_session_id: anchor.runtime_session_id,
-                    trace_kind:
-                        ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession,
-                }),
+                address,
+                message_stream: Some(message_stream),
                 project_id: run.project_id,
                 mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::CompanionChildSurface,
                 explicit_skill_asset_keys,
-                builtin_skills:
-                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![
-                        ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
-                    ]),
+                builtin_skills: ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::Project(
+                    vec![ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem],
+                ),
                 node_evidence: None,
                 node_projection: None,
             })
@@ -491,12 +464,8 @@ async fn compose_lifecycle_node_with_audit(
         },
         platform_config,
     )?;
-    if let Some(anchor) = match audit_session_key {
-        Some(session_id) => repos
-            .execution_anchor_repo
-            .find_by_session(session_id)
-            .await
-            .map_err(|error| error.to_string())?,
+    if let Some((address, message_stream)) = match audit_session_key {
+        Some(session_id) => resolve_existing_runtime_surface_refs(repos, session_id).await?,
         None => None,
     } {
         let base_vfs = activation.lifecycle_vfs.clone();
@@ -516,20 +485,13 @@ async fn compose_lifecycle_node_with_audit(
         let surface = lifecycle_surface_projection
             .project_lifecycle_surface(ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
                 base_vfs: Some(base_vfs),
-                address: ports_agent_run_surface::AgentRunRuntimeAddress {
-                    run_id: anchor.run_id,
-                    agent_id: anchor.agent_id,
-                    frame_id: anchor.launch_frame_id,
-                },
-                message_stream: Some(ports_lifecycle_surface::MessageStreamProjectionRef {
-                    runtime_session_id: anchor.runtime_session_id,
-                    trace_kind: ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession,
-                }),
+                address,
+                message_stream: Some(message_stream),
                 project_id: spec.run.project_id,
                 mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
                 explicit_skill_asset_keys: Vec::new(),
                 builtin_skills:
-                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![
+                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::Project(vec![
                         ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
                     ]),
                 node_evidence: Some(node_projection.evidence_ref()),
@@ -911,11 +873,8 @@ async fn compose_companion_with_workflow(
         },
         platform_config,
     )?;
-    if let Some(anchor) = repos
-        .execution_anchor_repo
-        .find_by_session(spec.child_session_id)
-        .await
-        .map_err(|error| error.to_string())?
+    if let Some((address, message_stream)) =
+        resolve_existing_runtime_surface_refs(repos, spec.child_session_id).await?
     {
         let base_vfs = activation.lifecycle_vfs.clone();
         let node_projection = ports_lifecycle_surface::OrchestrationNodeProjectionInput {
@@ -934,15 +893,8 @@ async fn compose_companion_with_workflow(
         let surface = lifecycle_surface_projection
             .project_lifecycle_surface(ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
                 base_vfs: Some(base_vfs),
-                address: ports_agent_run_surface::AgentRunRuntimeAddress {
-                    run_id: anchor.run_id,
-                    agent_id: anchor.agent_id,
-                    frame_id: anchor.launch_frame_id,
-                },
-                message_stream: Some(ports_lifecycle_surface::MessageStreamProjectionRef {
-                    runtime_session_id: anchor.runtime_session_id,
-                    trace_kind: ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession,
-                }),
+                address,
+                message_stream: Some(message_stream),
                 project_id,
                 mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
                 explicit_skill_asset_keys: comp
@@ -951,7 +903,7 @@ async fn compose_companion_with_workflow(
                     .and_then(|context| context.preset_config.skill_asset_keys.clone())
                     .unwrap_or_default(),
                 builtin_skills:
-                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![
+                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::Project(vec![
                         ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
                     ]),
                 node_evidence: Some(node_projection.evidence_ref()),
@@ -1019,6 +971,44 @@ async fn compose_companion_with_workflow(
         .with_optional_context_bundle(merged_bundle)
         .with_input(user_input)
         .build())
+}
+
+/// 仅为已经建立 binding/current frame 的 session 解析 lifecycle projection 坐标。
+///
+/// 首次 owner frame construction 直接携带 dispatch 坐标，不得调用此入口。
+async fn resolve_existing_runtime_surface_refs(
+    repos: &RepositorySet,
+    runtime_session_id: &str,
+) -> Result<
+    Option<(
+        agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress,
+        ports_lifecycle_surface::MessageStreamProjectionRef,
+    )>,
+    String,
+> {
+    let Some((_binding, agent, frame)) =
+        agentdash_application_lifecycle::resolve_current_frame_from_delivery_trace_ref(
+            runtime_session_id,
+            repos.agent_run_runtime_binding_repo.as_ref(),
+            repos.lifecycle_agent_repo.as_ref(),
+            repos.agent_frame_repo.as_ref(),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((
+        agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress {
+            run_id: agent.run_id,
+            agent_id: agent.id,
+            frame_id: frame.id,
+        },
+        ports_lifecycle_surface::MessageStreamProjectionRef {
+            runtime_session_id: runtime_session_id.to_string(),
+            trace_kind: ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession,
+        },
+    )))
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -1,4 +1,7 @@
+use std::sync::{Arc, OnceLock};
+
 use agentdash_domain::canvas::CanvasDataBinding;
+use agentdash_domain::workflow::SubjectRef;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -22,8 +25,10 @@ pub enum FrameConstructionCommand {
     DispatchLaunchAnchor {
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        subject_ref: Option<SubjectRef>,
+        runtime_session_id: Option<String>,
         created_by_id: Option<String>,
+        execution_profile: Option<serde_json::Value>,
     },
     CommitAcceptedLaunch {
         runtime_session_id: String,
@@ -49,12 +54,6 @@ pub enum RuntimeSurfaceUpdateRequest {
     CanvasVisibilityRequested {
         canvas_mount_id: String,
         reason: CanvasVisibilityReason,
-    },
-    PermissionGrantApplied {
-        grant_id: Uuid,
-    },
-    PermissionGrantRevoked {
-        grant_id: Uuid,
     },
     McpPresetChanged {
         preset_key: String,
@@ -83,9 +82,6 @@ impl RuntimeSurfaceUpdateRequest {
             Self::CanvasBindingChanged { .. } | Self::CanvasVisibilityRequested { .. } => {
                 RuntimeSurfaceKind::Canvas
             }
-            Self::PermissionGrantApplied { .. } | Self::PermissionGrantRevoked { .. } => {
-                RuntimeSurfaceKind::Permission
-            }
             Self::McpPresetChanged { .. } => RuntimeSurfaceKind::Mcp,
             Self::ProjectVfsMountChanged { .. } => RuntimeSurfaceKind::Vfs,
             Self::WorkspaceModuleVisibilityChanged { .. } => RuntimeSurfaceKind::WorkspaceModule,
@@ -105,7 +101,6 @@ pub enum CanvasVisibilityReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeSurfaceKind {
     Canvas,
-    Permission,
     Mcp,
     Vfs,
     WorkspaceModule,
@@ -166,6 +161,48 @@ pub trait AgentRunFrameConstructionPort: Send + Sync {
         &self,
         command: FrameConstructionCommand,
     ) -> Result<AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError>;
+}
+
+/// Composition-time handle for the canonical frame-construction implementation.
+///
+/// Repository bootstrap precedes VFS bootstrap, while ProjectAgent owner surface
+/// materialization requires the fully assembled VFS service. The composition root
+/// injects clones of this handle into lifecycle services, then binds the single
+/// application-owned implementation before the application state becomes visible.
+#[derive(Clone, Default)]
+pub struct SharedAgentRunFrameConstructionHandle {
+    inner: Arc<OnceLock<Arc<dyn AgentRunFrameConstructionPort>>>,
+}
+
+impl SharedAgentRunFrameConstructionHandle {
+    pub fn set(
+        &self,
+        frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    ) -> Result<(), Arc<dyn AgentRunFrameConstructionPort>> {
+        self.inner.set(frame_construction)
+    }
+
+    pub fn is_bound(&self) -> bool {
+        self.inner.get().is_some()
+    }
+}
+
+#[async_trait]
+impl AgentRunFrameConstructionPort for SharedAgentRunFrameConstructionHandle {
+    async fn execute_frame_construction_command(
+        &self,
+        command: FrameConstructionCommand,
+    ) -> Result<AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError> {
+        let frame_construction =
+            self.inner
+                .get()
+                .ok_or_else(|| AgentRunFrameSurfaceError::ConstructionRejected {
+                    message: "AgentRun frame-construction composition 尚未完成绑定".to_string(),
+                })?;
+        frame_construction
+            .execute_frame_construction_command(command)
+            .await
+    }
 }
 
 #[async_trait]

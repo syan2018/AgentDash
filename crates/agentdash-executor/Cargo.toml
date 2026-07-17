@@ -1,6 +1,6 @@
 [package]
 name = "agentdash-executor"
-description = "AgentDash 执行器层 — AgentConnector trait、SessionHub、连接器实现"
+description = "AgentDash execution infrastructure adapters"
 version.workspace = true
 edition.workspace = true
 
@@ -10,35 +10,16 @@ agentdash-spi = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-agent-types = { workspace = true }
 agentdash-mcp = { workspace = true }
-agentdash-process = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 agentdash-diagnostics = { workspace = true }
-tracing = { workspace = true }
-chrono = { workspace = true }
-uuid = { workspace = true }
 tokio = { workspace = true }
-futures = { workspace = true }
 async-trait = { workspace = true }
 tokio-util = { workspace = true, features = ["io"] }
-tokio-stream = { workspace = true }
 
-codex-app-server-protocol = { workspace = true }
-agentdash-agent-protocol = { workspace = true }
-json-patch = { workspace = true }
-serde_yaml = "0.9"
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 reqwest = { workspace = true, features = ["form"] }
-base64 = { workspace = true }
-
-# Pi Agent 框架（仅云端编译）
-agentdash-agent = { workspace = true, optional = true }
-
-[features]
-default = ["pi-agent"]
-pi-agent = ["dep:agentdash-agent"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
-agentdash-agent = { workspace = true }

@@ -8,7 +8,7 @@ use crate::inline_persistence::InlineContentOverlay;
 use crate::service::VfsService;
 use crate::tools::fs::{
     FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
-    ShellExecTool, ShellTerminalRegistry,
+    ShellExecTool, ShellTerminalOwner, ShellTerminalRegistry,
 };
 
 #[derive(Clone)]
@@ -16,16 +16,19 @@ pub struct VfsToolFactory {
     service: Arc<VfsService>,
     materialization: Option<Arc<VfsMaterializationService>>,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
-    terminal_registry: Option<Arc<dyn ShellTerminalRegistry>>,
+    terminal_registry: Arc<dyn ShellTerminalRegistry>,
 }
 
 impl VfsToolFactory {
-    pub fn new(service: Arc<VfsService>) -> Self {
+    pub fn new(
+        service: Arc<VfsService>,
+        terminal_registry: Arc<dyn ShellTerminalRegistry>,
+    ) -> Self {
         Self {
             service,
             materialization: None,
             shell_output_registry: None,
-            terminal_registry: None,
+            terminal_registry,
         }
     }
 
@@ -42,14 +45,6 @@ impl VfsToolFactory {
         shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
     ) -> Self {
         self.shell_output_registry = shell_output_registry;
-        self
-    }
-
-    pub fn with_terminal_registry(
-        mut self,
-        terminal_registry: Option<Arc<dyn ShellTerminalRegistry>>,
-    ) -> Self {
-        self.terminal_registry = terminal_registry;
         self
     }
 
@@ -132,6 +127,8 @@ impl VfsToolFactory {
             )
         {
             let mut shell_tool = ShellExecTool::new(self.service.clone(), input.shared_vfs.clone())
+                .with_terminal_owner(input.terminal_owner.clone())
+                .with_terminal_registry(self.terminal_registry.clone())
                 .with_materialization_context(
                     self.materialization.clone(),
                     input.session_id.clone(),
@@ -142,9 +139,6 @@ impl VfsToolFactory {
                 .with_capability_state(input.flow.clone());
             if let Some(ref registry) = self.shell_output_registry {
                 shell_tool = shell_tool.with_shell_output_registry(registry.clone());
-            }
-            if let Some(ref registry) = self.terminal_registry {
-                shell_tool = shell_tool.with_terminal_registry(registry.clone());
             }
             tools.push(Arc::new(shell_tool));
         }
@@ -159,5 +153,6 @@ pub struct VfsToolFactoryInput<'a> {
     pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
     pub session_id: String,
     pub turn_id: String,
+    pub terminal_owner: ShellTerminalOwner,
     pub flow: &'a CapabilityState,
 }

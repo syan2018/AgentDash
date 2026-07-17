@@ -2,45 +2,24 @@
  * 执行器发现与选择相关的类型定义
  */
 
-/** 连接器类型 */
-export type ConnectorType = "local_executor" | "remote_acp_backend";
+import type {
+  ExecutionProfileAgentDto,
+  ExecutionProfileDiscoveryResponse,
+  ExecutionProfileDto,
+  ExecutionProfileModelDto,
+  ExecutionProfileOptionsDto,
+  ExecutionProfileProviderDto,
+  ExecutionProfileSlashCommandDto,
+} from "../../../generated/project-agent-contracts";
 
-/** 连接器能力声明 */
-export interface ConnectorCapabilities {
-  supports_cancel: boolean;
-  supports_discovery: boolean;
-  supports_variants: boolean;
-  supports_model_override: boolean;
-  supports_permission_policy: boolean;
-  supports_source_session_title: boolean;
-}
-
-/** 连接器信息 */
-export interface ConnectorInfo {
-  id: string;
-  connector_type: ConnectorType;
-  capabilities: ConnectorCapabilities;
-}
-
-/** 后端返回的执行器信息 */
-export interface ExecutorInfo {
-  id: string;
-  name: string;
-  variants: string[];
-  available: boolean;
-  /** 该执行器可用的远程后端 ID 列表（为空则仅本机） */
-  backend_ids?: string[];
-}
+/** 产品可配置 execution profile；不是 Runtime offer。 */
+export type ExecutorInfo = ExecutionProfileDto;
 
 /** 后端 /api/agents/discovery 响应 */
-export interface DiscoveryResponse {
-  connector: ConnectorInfo;
-  executors: ExecutorInfo[];
-}
+export type DiscoveryResponse = ExecutionProfileDiscoveryResponse;
 
 /** 执行器发现 Hook 状态 */
 export interface UseExecutorDiscoveryResult {
-  connector: ConnectorInfo | null;
   executors: ExecutorInfo[];
   isLoading: boolean;
   error: Error | null;
@@ -49,65 +28,24 @@ export interface UseExecutorDiscoveryResult {
 
 // ===================== discovered-options =====================
 
-export type PermissionPolicy = "AUTO" | "SUPERVISED" | "PLAN";
+export type ModelProvider = ExecutionProfileProviderDto;
 
-export interface ModelProvider {
-  id: string;
-  name: string;
-  credential_mode?: string;
-  credential_source?: string;
-  protocol?: string;
-  base_url?: string | null;
-  discovery_url?: string | null;
-  resolved_wire_api?: string | null;
-  discovery_status?: string;
-  discovery_message?: string | null;
-}
+export type ModelInfo = ExecutionProfileModelDto;
 
-export interface ModelInfo {
-  id: string;
-  name: string;
-  provider_id?: string | null;
-  /** 是否支持 extended thinking */
-  reasoning: boolean;
-  /** 是否支持图像输入 */
-  supports_image: boolean;
-  /** 上下文窗口大小（tokens） */
-  context_window: number;
-  /** 是否被当前 provider 设置为屏蔽 */
-  blocked?: boolean;
-  /** true = 来自 API 动态发现；false = 仅来自 models JSON 配置 */
-  discovered?: boolean;
-  source?: string;
-}
-
-export interface AgentInfo {
-  id: string;
-  label: string;
-  description?: string | null;
-  is_default: boolean;
-}
+export type AgentInfo = ExecutionProfileAgentDto;
 
 export interface ModelSelectorConfig {
   providers: ModelProvider[];
   models: ModelInfo[];
   default_model?: string | null;
   agents: AgentInfo[];
-  permissions: PermissionPolicy[];
 }
 
-export interface ExecutorDiscoveredOptions {
-  model_selector: ModelSelectorConfig;
-  slash_commands: Array<{ name: string; description?: string | null }>;
-  loading_models: boolean;
-  loading_agents: boolean;
-  loading_slash_commands: boolean;
-  error: string | null;
-}
+export type ExecutorDiscoveredOptions = ExecutionProfileOptionsDto;
 
 export interface ExecutorDiscoveryStreamState {
   options: ExecutorDiscoveredOptions | null;
-  commands: Array<{ name: string; description?: string | null }>;
+  commands: ExecutionProfileSlashCommandDto[];
   discovering: boolean;
   error: string | null;
 }
@@ -127,7 +65,6 @@ export interface PersistedExecutorConfig {
   modelId?: string;
   /** 推理级别，替代旧的 reasoningId 字段（v2 格式） */
   thinkingLevel?: string;
-  permissionPolicy?: string;
 }
 
 /** 最近使用记录 */
@@ -148,13 +85,11 @@ export interface UseExecutorConfigResult {
   modelId: string;
   /** 推理级别，替代旧的 reasoningId 字段 */
   thinkingLevel: string;
-  permissionPolicy: string;
   recentEntries: RecentExecutorEntry[];
   setExecutor: (executor: string) => void;
   setProviderId: (providerId: string) => void;
   setModelId: (modelId: string) => void;
   setThinkingLevel: (thinkingLevel: string) => void;
-  setPermissionPolicy: (policy: string) => void;
   recordUsage: () => void;
   reset: () => void;
   /**

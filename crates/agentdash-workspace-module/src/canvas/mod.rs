@@ -39,4 +39,4 @@ pub use vfs_mount::{
     upsert_canvas_runtime_data_binding,
 };
 pub use vfs_provider::CanvasFsMountProvider;
-pub use visibility::{canvas_runtime_mount_access, project_visible_canvas_mounts};
+pub use visibility::canvas_runtime_mount_access;

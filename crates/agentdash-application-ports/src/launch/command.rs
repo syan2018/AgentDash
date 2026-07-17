@@ -17,7 +17,6 @@ pub enum LaunchSource {
     SystemDelivery,
     WorkflowOrchestrator,
     RoutineExecutor,
-    LocalRelayPrompt,
     ContextCompaction,
 }
 
@@ -81,10 +80,6 @@ impl LaunchInputSource {
 
     pub fn core_composer() -> Self {
         Self::new("core", "composer", "user")
-    }
-
-    pub fn local_relay_prompt() -> Self {
-        Self::new("core", "local_relay_prompt", "user")
     }
 
     pub fn companion_parent_resume() -> Self {
@@ -175,13 +170,6 @@ impl LaunchCommand {
         })
     }
 
-    pub fn local_relay_modifier(&self) -> Option<&super::LocalRelayLaunchPayload> {
-        self.modifiers.iter().find_map(|modifier| match modifier {
-            LaunchModifier::LocalRelay(payload) => Some(payload),
-            _ => None,
-        })
-    }
-
     pub fn modifiers(&self) -> &[LaunchModifier] {
         &self.modifiers
     }
@@ -204,7 +192,6 @@ impl LaunchCommand {
             LaunchSource::SystemDelivery => "system_delivery",
             LaunchSource::WorkflowOrchestrator => "workflow_orchestrator",
             LaunchSource::RoutineExecutor => "routine_executor",
-            LaunchSource::LocalRelayPrompt => "local_relay_prompt",
             LaunchSource::ContextCompaction => "context_compaction",
         }
     }
@@ -294,23 +281,6 @@ impl LaunchCommand {
         )
     }
 
-    pub fn local_relay_prompt_input(
-        input: LaunchPromptInput,
-        mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
-        workspace_root: std::path::PathBuf,
-    ) -> Self {
-        Self::command_with(
-            input,
-            None,
-            vec![LaunchModifier::LocalRelay(super::LocalRelayLaunchPayload {
-                mcp_servers,
-                workspace_root,
-            })],
-            LaunchSource::LocalRelayPrompt,
-        )
-        .with_input_source(LaunchInputSource::local_relay_prompt())
-    }
-
     pub fn context_compaction_input(input: LaunchPromptInput) -> Self {
         Self::source_input(input, LaunchSource::ContextCompaction)
     }
@@ -318,47 +288,11 @@ impl LaunchCommand {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use agentdash_spi::{AgentConfig, CompanionSliceMode, McpTransportConfig};
+    use agentdash_spi::{AgentConfig, CompanionSliceMode};
     use uuid::Uuid;
 
     use super::{LaunchCommand, LaunchPromptInput, LaunchSource};
     use crate::launch::{CompanionLaunchSource, LaunchModifier, RoutineLaunchSource};
-
-    #[test]
-    fn source_specific_facts_are_stored_as_modifiers() {
-        let mcp_server = agentdash_spi::RuntimeMcpServer {
-            name: "local-tools".to_string(),
-            transport: McpTransportConfig::Stdio {
-                command: "tool".to_string(),
-                args: Vec::new(),
-                env: Vec::new(),
-                cwd: None,
-            },
-            uses_relay: false,
-            readiness: Default::default(),
-        };
-        let command = LaunchCommand::local_relay_prompt_input(
-            LaunchPromptInput::from_text("ping"),
-            vec![mcp_server.clone()],
-            PathBuf::from("/workspace"),
-        );
-
-        assert_eq!(command.source(), LaunchSource::LocalRelayPrompt);
-        let local_relay = command
-            .local_relay_modifier()
-            .expect("local relay modifier");
-        assert_eq!(local_relay.mcp_servers, vec![mcp_server]);
-        assert_eq!(
-            local_relay.workspace_root.as_path(),
-            std::path::Path::new("/workspace")
-        );
-        assert!(matches!(
-            command.modifiers().first(),
-            Some(LaunchModifier::LocalRelay(_))
-        ));
-    }
 
     #[test]
     fn companion_and_routine_constructors_push_typed_modifiers() {

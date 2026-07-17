@@ -121,14 +121,11 @@ export interface SessionChatViewProps {
   /** 消息发送成功后回调（父组件可刷新列表等） */
   onMessageSent?: () => void;
 
-  /** Agent turn 结束时回调（turn_completed / turn_failed） */
-  onTurnEnd?: () => void;
-
-  /** 收到系统事件时回调，用于父层按事件驱动刷新额外状态面板 */
-  onSystemEvent?: (eventType: string, event: BackboneEvent) => void;
-
-  /** task_write 工具完成时回调；用于刷新外部 Task plan 展示。 */
-  onTaskPlanChanged?: () => void;
+  /**
+   * 当前观察者在 history hydration 完成后收到的新事件。
+   * 父层通过 generated Backbone union 规划产品副作用。
+   */
+  onLiveEvent?: (event: BackboneEvent) => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 

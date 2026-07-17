@@ -61,6 +61,7 @@ impl RuntimeNodeCoordinate {
 pub(super) struct ReadyNodeView<'a> {
     pub(super) coordinate: RuntimeNodeCoordinate,
     pub(super) plan_node: &'a PlanNode,
+    pub(super) runtime_node: &'a RuntimeNodeState,
 }
 
 impl<'a> ReadyNodeView<'a> {
@@ -98,6 +99,7 @@ impl<'a> ReadyNodeView<'a> {
         Ok(Self {
             coordinate: coordinate.clone(),
             plan_node,
+            runtime_node,
         })
     }
 
@@ -123,6 +125,7 @@ impl<'a> ReadyNodeView<'a> {
                 runtime_node.attempt,
             ),
             plan_node,
+            runtime_node,
         })
     }
 }

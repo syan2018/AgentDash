@@ -73,12 +73,6 @@ pub enum RuntimeSurfaceUpdateRequest {
         canvas_mount_id: String,
         reason: CanvasVisibilityReason,
     },
-    PermissionGrantApplied {
-        grant_id: Uuid,
-    },
-    PermissionGrantRevoked {
-        grant_id: Uuid,
-    },
     McpPresetChanged {
         preset_key: String,
     },
@@ -106,9 +100,6 @@ impl RuntimeSurfaceUpdateRequest {
             Self::CanvasBindingChanged { .. } | Self::CanvasVisibilityRequested { .. } => {
                 RuntimeSurfaceKind::Canvas
             }
-            Self::PermissionGrantApplied { .. } | Self::PermissionGrantRevoked { .. } => {
-                RuntimeSurfaceKind::Permission
-            }
             Self::McpPresetChanged { .. } => RuntimeSurfaceKind::Mcp,
             Self::ProjectVfsMountChanged { .. } => RuntimeSurfaceKind::Vfs,
             Self::WorkspaceModuleVisibilityChanged { .. } => RuntimeSurfaceKind::WorkspaceModule,
@@ -128,7 +119,6 @@ pub enum CanvasVisibilityReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeSurfaceKind {
     Canvas,
-    Permission,
     Mcp,
     Vfs,
     WorkspaceModule,
@@ -146,19 +136,18 @@ pub enum AgentRunSurfaceProjectionContextSource {
     /// Resolve the AgentRun that owns an existing effect frame.
     EffectFrame {
         effect_frame_id: Uuid,
-        delivery_runtime_session_id: String,
+        runtime_thread_id: String,
     },
 }
 
 impl AgentRunSurfaceProjectionContextSource {
-    pub fn delivery_runtime_session_id(&self) -> &str {
+    pub fn runtime_thread_id(&self) -> &str {
         match self {
             Self::DeliveryRuntimeSession { runtime_session_id } => runtime_session_id,
-            Self::RuntimeTarget { target } => &target.delivery_runtime_session_id,
+            Self::RuntimeTarget { target } => target.runtime_thread_id.as_str(),
             Self::EffectFrame {
-                delivery_runtime_session_id,
-                ..
-            } => delivery_runtime_session_id,
+                runtime_thread_id, ..
+            } => runtime_thread_id,
         }
     }
 }
@@ -171,7 +160,7 @@ impl AgentRunSurfaceProjectionContextSource {
 #[derive(Debug, Clone)]
 pub struct AgentRunSurfaceProjectionContext {
     pub target: AgentFrameRuntimeTarget,
-    pub delivery_runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub active_turn_id: Option<String>,
     pub current_frame: AgentFrame,
     pub identity: Option<AuthIdentity>,
@@ -192,7 +181,7 @@ impl AgentRunSurfaceProjectionContext {
         self.identity.as_ref().ok_or_else(|| {
             AgentRunFrameSurfaceError::ProjectionContextUnavailable(format!(
                 "delivery RuntimeSession `{}` 缺少 active turn identity",
-                self.delivery_runtime_session_id
+                self.runtime_thread_id
             ))
         })
     }
@@ -260,6 +249,11 @@ pub const AGENT_FRAME_WRITE_BOUNDARIES: &[AgentFrameWriteBoundary] = &[
         owner: "agent_run::frame::AgentRunFrameSurfaceService",
         role: AgentFrameWriteRole::RuntimeSurfaceUpdate,
         primitive: AgentFrameWritePrimitive::PersistedRevisionAdoption,
+    },
+    AgentFrameWriteBoundary {
+        owner: "agent_run::runtime_facade::CurrentAgentFrameExecutionProfileCoordinator",
+        role: AgentFrameWriteRole::RuntimeSurfaceUpdate,
+        primitive: AgentFrameWritePrimitive::AgentFrameBuilder,
     },
 ];
 
@@ -562,30 +556,19 @@ mod tests {
     }
 
     #[test]
-    fn runtime_update_requests_are_surface_kind_only() {
-        let request = RuntimeSurfaceUpdateRequest::PermissionGrantApplied {
-            grant_id: Uuid::new_v4(),
-        };
-        assert_eq!(request.surface_kind(), RuntimeSurfaceKind::Permission);
-        assert_eq!(
-            AgentRunFrameSurfaceCommand::Update(request).write_role(),
-            AgentFrameWriteRole::RuntimeSurfaceUpdate
-        );
-    }
-
-    #[test]
     fn projection_context_exposes_runtime_update_target_and_identity() {
         let agent_id = Uuid::new_v4();
         let frame = AgentFrame::new_revision(agent_id, 7, "test");
         let target = AgentFrameRuntimeTarget {
             frame_id: frame.id,
-            delivery_runtime_session_id: "runtime-a".to_string(),
+            runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId::new("runtime-a")
+                .expect("runtime thread id"),
         };
         let identity = AuthIdentity::system_routine("surface-context-test");
 
         let context = AgentRunSurfaceProjectionContext {
             target: target.clone(),
-            delivery_runtime_session_id: "runtime-a".to_string(),
+            runtime_thread_id: "runtime-a".to_string(),
             active_turn_id: Some("turn-a".to_string()),
             current_frame: frame,
             identity: Some(identity.clone()),
@@ -628,12 +611,7 @@ mod tests {
                 && boundary.primitive == AgentFrameWritePrimitive::PersistedRevisionAdoption
         }));
 
-        let forbidden_prefixes = [
-            "canvas::",
-            "workspace_module::",
-            "permission::",
-            "agentdash-api::",
-        ];
+        let forbidden_prefixes = ["canvas::", "workspace_module::", "agentdash-api::"];
         for boundary in boundaries {
             assert!(
                 !forbidden_prefixes
@@ -664,8 +642,6 @@ mod tests {
             "crates/agentdash-workspace-module/src/canvas/management.rs",
             "crates/agentdash-workspace-module/src/canvas/visibility.rs",
             "crates/agentdash-application/src/canvas/promotion.rs",
-            "crates/agentdash-application/src/permission/service.rs",
-            "crates/agentdash-api/src/routes/permission_grants.rs",
         ] {
             let source = read_workspace_file(path);
             assert!(
@@ -682,8 +658,6 @@ mod tests {
             "crates/agentdash-workspace-module/src/canvas/management.rs",
             "crates/agentdash-workspace-module/src/canvas/visibility.rs",
             "crates/agentdash-application/src/canvas/promotion.rs",
-            "crates/agentdash-application/src/permission/service.rs",
-            "crates/agentdash-api/src/routes/permission_grants.rs",
         ] {
             let source = read_workspace_file(path);
             assert!(

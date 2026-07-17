@@ -4,8 +4,11 @@
 //! 通过 `AgentFrameSurfaceExt` trait 提供类型安全的反序列化读取，
 //! 避免每个消费者各自 parse，替代此前散落在各处的 JSON 反序列化逻辑。
 
+use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, SessionContextBundle, Vfs};
+use agentdash_spi::{
+    AgentConfig, CapabilityState, FragmentScope, RuntimeMcpServer, SessionContextBundle, Vfs,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -32,6 +35,57 @@ impl FrameContextBundleSummary {
     }
 }
 
+/// Immutable normalized context inputs persisted with one AgentFrame revision.
+///
+/// Unlike `FrameContextBundleSummary`, this snapshot retains the complete source fragments needed
+/// by Business Agent Surface compilation and is safe to replay after the launch request is gone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentContextSourceSnapshot {
+    pub bundle_id: Uuid,
+    pub session_id: String,
+    pub phase_tag: String,
+    pub created_at_ms: u64,
+    pub fragments: Vec<AgentContextSourceFragment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentContextSourceFragment {
+    pub slot: String,
+    pub label: String,
+    pub order: i32,
+    pub runtime_agent_scope: bool,
+    pub source: String,
+    pub content: String,
+    pub context_usage_kind: Option<String>,
+}
+
+impl AgentContextSourceSnapshot {
+    #[must_use]
+    pub fn from_bundle(bundle: &SessionContextBundle) -> Self {
+        Self {
+            bundle_id: bundle.bundle_id,
+            session_id: bundle.session_id.to_string(),
+            phase_tag: bundle.phase_tag.clone(),
+            created_at_ms: bundle.created_at_ms,
+            fragments: bundle
+                .bootstrap_fragments
+                .iter()
+                .map(|fragment| AgentContextSourceFragment {
+                    slot: fragment.slot.clone(),
+                    label: fragment.label.clone(),
+                    order: fragment.order,
+                    runtime_agent_scope: fragment.scope.contains(FragmentScope::RuntimeAgent),
+                    source: fragment.source.clone(),
+                    content: fragment.content.clone(),
+                    context_usage_kind: agentdash_spi::ASSIGNMENT_CONTEXT_SLOTS
+                        .contains(&fragment.slot.as_str())
+                        .then(|| agentdash_spi::context_usage_kind::SYSTEM_DEVELOPER.to_string()),
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Frame construction 产出的可执行 surface 草稿。
 ///
 /// Draft 是写入 `AgentFrame` revision 前的 typed handoff，承载 capability、
@@ -44,6 +98,7 @@ pub struct FrameSurfaceDraft {
     pub vfs: Option<Vfs>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub context_bundle_summary: Option<FrameContextBundleSummary>,
+    pub context_source_snapshot: Option<AgentContextSourceSnapshot>,
     pub execution_profile: Option<AgentConfig>,
 }
 
@@ -54,12 +109,14 @@ impl FrameSurfaceDraft {
             vfs: frame.typed_vfs(),
             mcp_servers: frame.typed_mcp_servers(),
             context_bundle_summary: frame.context_bundle_summary(),
+            context_source_snapshot: frame.context_source_snapshot(),
             execution_profile: frame.typed_execution_profile(),
         }
     }
 
     pub fn with_context_bundle_summary(mut self, bundle: &SessionContextBundle) -> Self {
         self.context_bundle_summary = Some(FrameContextBundleSummary::from_bundle(bundle));
+        self.context_source_snapshot = Some(AgentContextSourceSnapshot::from_bundle(bundle));
         self
     }
 }
@@ -73,6 +130,7 @@ pub trait AgentFrameSurfaceExt {
     fn typed_vfs(&self) -> Option<Vfs>;
     fn typed_mcp_servers(&self) -> Vec<RuntimeMcpServer>;
     fn typed_execution_profile(&self) -> Option<AgentConfig>;
+    fn validated_hook_plan(&self) -> Result<AgentFrameHookPlan, String>;
     /// 原始 context_slice JSON value，缺失返回 `Value::Null`。
     fn context_slice_value(&self) -> serde_json::Value;
     /// frame 上记录的 context bundle 摘要 (bundle_id, phase_tag, fragment_count)。
@@ -80,6 +138,8 @@ pub trait AgentFrameSurfaceExt {
     /// 只有当 `context_slice_json` 包含 `with_context_bundle_summary` 写入的
     /// 结构时才能成功反序列化；其他格式或缺失均返回 `None`。
     fn context_bundle_summary(&self) -> Option<FrameContextBundleSummary>;
+    /// Complete immutable context source snapshot for this exact frame revision.
+    fn context_source_snapshot(&self) -> Option<AgentContextSourceSnapshot>;
 }
 
 impl AgentFrameSurfaceExt for AgentFrame {
@@ -108,6 +168,17 @@ impl AgentFrameSurfaceExt for AgentFrame {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 
+    fn validated_hook_plan(&self) -> Result<AgentFrameHookPlan, String> {
+        let value = self
+            .hook_plan
+            .as_ref()
+            .ok_or_else(|| "AgentFrame has no immutable HookPlan".to_string())?;
+        let plan: AgentFrameHookPlan = serde_json::from_value(value.clone())
+            .map_err(|error| format!("AgentFrame HookPlan is invalid: {error}"))?;
+        plan.validate().map_err(|error| error.to_string())?;
+        Ok(plan)
+    }
+
     fn context_slice_value(&self) -> serde_json::Value {
         self.context_slice_json
             .clone()
@@ -118,6 +189,12 @@ impl AgentFrameSurfaceExt for AgentFrame {
         self.context_slice_json
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    fn context_source_snapshot(&self) -> Option<AgentContextSourceSnapshot> {
+        self.surface_document()
+            .context_source_snapshot
+            .and_then(|value| serde_json::from_value(value).ok())
     }
 }
 
@@ -313,6 +390,38 @@ mod tests {
                 .context_bundle_summary
                 .map(|summary| summary.bundle_id),
             Some(bundle.bundle_id)
+        );
+    }
+
+    #[test]
+    fn validated_hook_plan_rejects_requirements_that_do_not_match_digest() {
+        use agentdash_agent_runtime_contract::{
+            HookAction, HookDefinitionId, HookExecutionSite, HookFailurePolicy, HookPlanRevision,
+            HookPoint, HookRequirement, SemanticStrength,
+        };
+        use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
+        use std::collections::BTreeSet;
+
+        let mut plan = AgentFrameHookPlan::compile(HookPlanRevision(1), Vec::new()).unwrap();
+        plan.requirements.push(AgentFrameHookRequirement {
+            definition_id: HookDefinitionId::new("tampered.requirement").unwrap(),
+            requirement: HookRequirement {
+                point: HookPoint::BeforeTool,
+                actions: BTreeSet::from([HookAction::Block]),
+                minimum_strength: SemanticStrength::ExactSynchronous,
+                failure_policy: HookFailurePolicy::FailClosed,
+                required: true,
+            },
+            site: HookExecutionSite::ToolBroker,
+        });
+        let mut frame = test_frame();
+        frame.hook_plan = Some(serde_json::to_value(plan).unwrap());
+
+        assert!(
+            frame
+                .validated_hook_plan()
+                .unwrap_err()
+                .contains("do not match the persisted digest")
         );
     }
 }

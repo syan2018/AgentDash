@@ -4,7 +4,7 @@ import { create, type StoreApi } from "zustand";
 import { fetchProjectAgentRuns } from "../../services/lifecycle";
 import { subscribeProjectEvents } from "../../stores/eventStore";
 import type { ProjectEventStreamEnvelope } from "../../generated/project-contracts";
-import type { AgentRunWorkspaceListEntry } from "../../types";
+import type { AgentRunListEntryView } from "../../types";
 
 export const AGENT_RUN_LIST_FIRST_PAGE_LIMIT = 30;
 
@@ -18,7 +18,7 @@ export type AgentRunListStateStatus =
 export interface AgentRunListState {
   project_id: string | null;
   status: AgentRunListStateStatus;
-  entries: AgentRunWorkspaceListEntry[];
+  entries: AgentRunListEntryView[];
   next_cursor: string | null;
   first_page_limit: number;
   is_loading_more: boolean;
@@ -66,14 +66,14 @@ function normalizeLimit(limit: number | undefined): number {
   return Math.max(1, Math.floor(limit));
 }
 
-function entryKey(entry: AgentRunWorkspaceListEntry): string {
+function entryKey(entry: AgentRunListEntryView): string {
   return `${entry.run_ref.run_id}:${entry.agent_ref.agent_id}`;
 }
 
 function appendPageEntries(
-  current: AgentRunWorkspaceListEntry[],
-  pageEntries: AgentRunWorkspaceListEntry[],
-): AgentRunWorkspaceListEntry[] {
+  current: AgentRunListEntryView[],
+  pageEntries: AgentRunListEntryView[],
+): AgentRunListEntryView[] {
   const seen = new Set(current.map(entryKey));
   const next = current.slice();
   for (const entry of pageEntries) {

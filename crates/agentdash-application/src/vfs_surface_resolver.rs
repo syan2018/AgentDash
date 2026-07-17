@@ -300,7 +300,7 @@ fn runtime_surface_query_error(error: AgentRunRuntimeSurfaceQueryError) -> Appli
         AgentRunRuntimeSurfaceQueryError::MissingAnchor {
             runtime_session_id, ..
         } => ApplicationError::NotFound(format!(
-            "runtime_session 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
+            "runtime thread 缺少 AgentRunRuntimeBinding/current AgentFrame: {runtime_session_id}"
         )),
         AgentRunRuntimeSurfaceQueryError::MissingLifecycleRun { run_id, .. } => {
             ApplicationError::NotFound(format!("lifecycle_run 不存在: {run_id}"))
@@ -313,7 +313,8 @@ fn runtime_surface_query_error(error: AgentRunRuntimeSurfaceQueryError) -> Appli
                 "lifecycle_agent {agent_id} 没有可用 current runtime surface"
             ))
         }
-        AgentRunRuntimeSurfaceQueryError::RuntimeBackendAnchor { .. }
+        AgentRunRuntimeSurfaceQueryError::MissingSurfaceClosure { .. }
+        | AgentRunRuntimeSurfaceQueryError::RuntimeBackendAnchor { .. }
         | AgentRunRuntimeSurfaceQueryError::Projection { .. } => {
             ApplicationError::Conflict(error.to_string())
         }

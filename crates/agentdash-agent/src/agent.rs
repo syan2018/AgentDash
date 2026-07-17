@@ -568,6 +568,7 @@ impl Agent {
 
             let result = match result {
                 Ok(messages) => Ok(messages),
+                Err(AgentError::Cancelled) => Err(AgentError::Cancelled),
                 Err(error) => {
                     let error_text = error.to_string();
                     {

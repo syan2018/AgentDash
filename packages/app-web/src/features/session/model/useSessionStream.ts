@@ -59,6 +59,13 @@ const RECEIVING_IDLE_TIMEOUT_MS = 600;
 const HISTORY_PAGE_SIZE = 500;
 const EMPTY_INITIAL_ENTRIES: SessionDisplayEntry[] = [];
 
+export function historyReplayBoundaryAfterCompletedLoad(
+  currentBoundarySeq: number | null,
+  replayedThroughSeq: number,
+): number {
+  return currentBoundarySeq ?? replayedThroughSeq;
+}
+
 export function useSessionStream(options: UseSessionStreamOptions): UseSessionStreamResult {
   const {
     agentRunTarget = null,
@@ -235,9 +242,11 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
         }
 
         if (cancelled || !mountedRef.current) return;
-        if (shouldResetState) {
-          setHistoryReplayBoundarySeq(nextState.lastAppliedSeq);
-        }
+        setHistoryReplayBoundarySeq((currentBoundarySeq) =>
+          historyReplayBoundaryAfterCompletedLoad(
+            currentBoundarySeq,
+            nextState.lastAppliedSeq,
+          ));
 
         transportRef.current = createSessionStreamTransport({
           agentRunTarget,

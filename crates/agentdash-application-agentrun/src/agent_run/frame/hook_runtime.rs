@@ -6,7 +6,7 @@
 //! hook query/resolution 以 `run_id + agent_id + frame_id` 为主语：
 //!
 //! - 读取 context/capability/VFS/MCP surface：从 `AgentFrame` 读取
-//! - advance/resolution：使用 RuntimeSessionExecutionAnchor / orchestration node refs 推进 runtime node
+//! - advance/resolution：使用 canonical Runtime thread 与 orchestration node refs 推进 runtime node
 //! - `runtime_session_id` 仅保留 trace adapter / provider query 语义
 
 use std::collections::BTreeSet;
@@ -91,7 +91,7 @@ impl RuntimeSessionHookTargetPort for AgentRunHookTargetRuntimeAdapter {
             request.control_target.agent_id,
             request.control_target.frame_id,
             request.frame_revision,
-            request.delivery_runtime_session_id,
+            request.runtime_thread_id.to_string(),
             request.provider,
             request.snapshot,
         ))))
@@ -224,7 +224,6 @@ fn preserve_session_level_metadata(
             }
         };
     }
-    preserve_field!(permission_policy);
     preserve_field!(working_directory);
     preserve_field!(connector_id);
     preserve_field!(executor);
@@ -522,6 +521,29 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
         notices
     }
 
+    fn peek_turn_start_notices(&self) -> Vec<HookTurnStartNotice> {
+        self.turn_start_notices
+            .read()
+            .expect("hook turn-start notices read lock poisoned")
+            .clone()
+    }
+
+    fn acknowledge_turn_start_notices(&self, notice_ids: &[String]) {
+        if notice_ids.is_empty() {
+            return;
+        }
+        let ids = notice_ids.iter().collect::<std::collections::BTreeSet<_>>();
+        let mut guard = self
+            .turn_start_notices
+            .write()
+            .expect("hook turn-start notices write lock poisoned");
+        let before = guard.len();
+        guard.retain(|notice| !ids.contains(&notice.id));
+        if guard.len() != before {
+            self.revision.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
     fn unresolved_pending_actions(&self) -> Vec<HookPendingAction> {
         self.pending_actions
             .read()
@@ -674,7 +696,6 @@ mod tests {
         };
         let previous = SessionSnapshotMetadata {
             turn_id: Some("turn-1".into()),
-            permission_policy: Some("SUPERVISED".into()),
             working_directory: Some(".".into()),
             connector_id: Some("pi_agent".into()),
             executor: Some("local".into()),
@@ -684,7 +705,6 @@ mod tests {
         preserve_session_level_metadata(&mut snapshot, Some(&previous));
 
         let meta = snapshot.metadata.as_ref().unwrap();
-        assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));
@@ -696,7 +716,6 @@ mod tests {
         let initial_snapshot = AgentFrameHookSnapshot {
             runtime_adapter_session_id: "sess-1".into(),
             metadata: Some(SessionSnapshotMetadata {
-                permission_policy: Some("SUPERVISED".into()),
                 working_directory: Some(".".into()),
                 connector_id: Some("pi_agent".into()),
                 executor: Some("local".into()),
@@ -721,7 +740,6 @@ mod tests {
             .expect("refresh should succeed");
 
         let meta = refreshed.metadata.unwrap();
-        assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));

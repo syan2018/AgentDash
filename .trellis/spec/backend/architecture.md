@@ -21,15 +21,23 @@
 | Crate | 当前职责 |
 | --- | --- |
 | `agentdash-api` | HTTP 路由模块、API-only DTO、中间件、AppState 装配 |
-| `agentdash-application` | 剩余用例编排、session/context/capability 服务与 application composition adapters |
+| `agentdash-application` | 产品用例编排与 AgentFrame/product fact source adapters |
 | `agentdash-application-workflow` | Workflow catalog、builtin templates、graph/script compiler、orchestration reducer 与 executor launcher |
 | `agentdash-application-hooks` | Hook policy provider、preset registry、hook script service 与 `ExecutionHookProvider` implementation |
 | `agentdash-application-shared-library` | Shared Library seed、external marketplace import/refresh、Project install/publish/source-status use cases |
 | `agentdash-domain` | 实体、值对象、Repository trait、领域错误 |
 | `agentdash-infrastructure` | PostgreSQL / SQLite 持久化实现 |
-| `agentdash-executor` | connector、LLM bridge、hook runtime 适配 |
-| `agentdash-spi` | Connector / Hook / capability 等跨 crate port |
-| `agentdash-agent` | Agent Loop 引擎 |
+| `agentdash-agent-runtime-contract` | AgentDash-owned canonical Thread/Turn/Item/Interaction、command、snapshot 与 capability contract |
+| `agentdash-agent-runtime` | Managed Runtime 状态机、上下文/压缩、Hook orchestration 与 Tool Broker |
+| `agentdash-agent-runtime-host` | Integration service instance、offer、binding、driver lease 与 conformance host |
+| `agentdash-agent-runtime-wire` | Cloud/Local 与 remote enterprise driver 的 typed RuntimeWire transport |
+| `agentdash-integration-native-agent` | 内建 Agent Core 的 Runtime Driver adapter |
+| `agentdash-integration-codex` | Codex App Server Protocol 的 Runtime Driver adapter |
+| `agentdash-integration-remote-runtime` | 远端 Agent service 的通用 placement proxy，不拥有 Agent 业务语义 |
+| `agentdash-llm-provider` | Native Agent 使用的 provider bridge 与 credential-scoped resolver |
+| `agentdash-executor` | 非 Agent Runtime 的执行与 MCP adapter substrate |
+| `agentdash-spi` | 平台 feature、Hook policy、VFS/MCP 与 tool source ports |
+| `agentdash-agent` | 无平台会话事实的 Agent Loop core |
 | `agentdash-agent-types` | Agent 领域通用类型 |
 | `agentdash-agent-protocol` | Backbone Protocol 与协议适配 |
 | `agentdash-relay` | Cloud/Local WebSocket relay 协议 |
@@ -40,10 +48,11 @@ Agent runtime module baseline：
 
 | Module | 当前职责 |
 | --- | --- |
-| `agentdash-agent/src/agent_loop.rs` | Agent loop 入口、turn/follow-up orchestration、runtime delegate stop/after-turn 调度 |
-| `agentdash-agent/src/agent_loop/streaming.rs` | Assistant stream state machine、provider request delegate、message delta/event projection |
-| `agentdash-agent/src/agent_loop/tool_call.rs` | Tool call prepare / approval / execute / finalize / result event projection |
-| `agentdash-agent/src/agent_loop/tool_result.rs` | Tool execution error/approval result helper |
+| `agentdash-application-agentrun::runtime_facade` | 产品 coordinate/command 到 canonical Runtime 的唯一 facade |
+| `agentdash-infrastructure::agent_runtime_composition` | PostgreSQL Managed Runtime、Business Surface、Integration Host、driver callbacks 与 durable workers 的生产装配 |
+| `agentdash-agent-runtime-host` | definition -> instance -> verified offer -> durable binding -> driver generation 生命周期 |
+| `agentdash-agent-runtime` | canonical operation journal、snapshot/event cursor、context head、compaction saga、HookRun/effect 与 tool call exactly-once |
+| `agentdash-agent/src/agent_loop.rs` | Native adapter 内部使用的纯 Agent loop，不拥有 AgentDash Thread/Turn/context persistence |
 
 ## AppState Bootstrap
 
@@ -53,7 +62,7 @@ Repository bootstrap 负责 PostgreSQL repository 实例化、composition-root `
 
 Relay bootstrap 负责创建 backend registry、backend runtime event channel、shell output registry 与 terminal cache。VFS bootstrap 基于 repository ports、session persistence、relay registry 和插件 mount providers 构建 mount provider registry、VFS service、mutation dispatcher、runtime tool provider 与 materializing MCP relay。这样 session runtime 装配只消费 VFS/relay 的明确输出。
 
-Session bootstrap 负责组合 Pi / relay / plugin connectors，构建 `CompositeConnector`、execution hook provider、`SessionRuntimeBuilder` 及 session service handles，并完成 lifecycle terminal callback 与 runtime tool session handle 绑定。`SessionRuntimeBuilder` 作为显式输出保留给 AppState 完成 launch envelope provider、hook effect registry 与 audit bus 这些 AppState-aware 延迟绑定。
+Agent Runtime bootstrap 负责收集受信 Integration contributions 与 trust manifests，构造 PostgreSQL Host/Managed Runtime/Business Surface/Tool Broker/Hook callback，并启动 outbox、context、hook effect 与 recovery workers。Native、Codex 和企业远端服务都经过 definition、instance、offer、binding 生命周期；Relay 只提供 remote placement transport。
 
 Auth、runtime gateway 与 background worker bootstrap 分别负责认证模式校验、runtime action provider 组合、以及 AppState 构建完成后的 terminal effect replay、stall detector、routine scheduler 和 auth session cleanup。后台 worker 只在 AppState 已完成延迟绑定检查后启动。
 
@@ -79,7 +88,7 @@ Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService`
 - PostgreSQL migration 与 SQLite 初始化策略分开维护，原因是云端业务库需要统一可审计 schema 历史，本机会话缓存则由本机 runtime 拥有 per-user 初始化生命周期。
 - Project 授权放在 domain，原因是角色、主体 grant 与 template 可见性属于 Project 聚合语义，MCP 与 API 都需要在不反向依赖 application 的情况下复用同一判定。`ProjectAuthorizationContext` 保留认证身份的 `user_id` 与 `subject` 别名，原因是企业目录解析、登录态 claim 与授权持久化可能使用不同但等价的用户标识，Project 角色判定需要在同一领域入口完成身份收束。Backend 授权放在 application，原因是 backend scope 可能需要组合 Backend 与 Project repository，属于跨聚合用例编排。
 - Canvas access projection 放在 domain，原因是 Canvas 管理 API、Workspace Module descriptor、runtime VFS mount 暴露和 Canvas 文件操作都需要消费同一份 view/edit/runtime-write 语义；各 application adapter 只负责提供当前身份与 Project access 上下文。
-- `agentdash-executor` 直接维护 Codex app-server bridge，原因是本机进程生命周期、connector 能力声明与 Backbone 事件投影属于 AgentDash runtime 边界，外部编排 crate 不应成为该边界的事实源。
+- Codex app-server bridge 归 `agentdash-integration-codex`，原因是 vendor protocol、进程生命周期与 native hook materialization 都是 Driver adapter 语义；AgentDash canonical state 与 capability truth 由 owned Runtime contract/Host 持有。
 - `agentdash-process` 承载 AgentDash 自有后台子进程启动 substrate，原因是本机 relay、MCP stdio、tool shell、workspace probe、function runner、desktop sidecar 和 Codex bridge 都可能从桌面 GUI 宿主触发 console 子进程；统一的 `ProcessVisibility` / `ProcessDomain` 边界让 Windows 后台启动静默、诊断可按 domain/program/cwd/visibility 回溯，且不记录 args/env 等 credential-bearing 值。
 - Extension package artifact 独立于 LibraryAsset payload，原因是正式插件包是平台可下载、可校验、可审计的运行产物；owner 模型让 Project 本地导入与 LibraryAsset Marketplace 模板共享同一套 digest、storage 与访问校验。
 - Extension package archive object storage 端口放在 `agentdash-spi`，原因是 application 需要消费该端口表达用例意图，而 infrastructure 需要实现该端口且不应反向依赖 application 编排层。

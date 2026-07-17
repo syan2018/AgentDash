@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+agentdash-agent-runtime-contract = { workspace = true }
+agentdash-agent-runtime-wire = { workspace = true }
+agentdash-integration-api = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
@@ -13,3 +16,4 @@ thiserror.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 tokio = { workspace = true, features = ["sync"] }
+async-trait.workspace = true

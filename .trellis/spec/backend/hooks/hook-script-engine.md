@@ -41,7 +41,7 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 | `snapshot` | Session Snapshot 切片（owners / tags / injections） |
 | `workflow` | Workflow 元数据（lifecycle_key / activity_key / transition_policy 等） |
 | `contract` | Contract 切片（hook_rules / constraints / checks） |
-| `meta` | Session 元数据（permission_policy / workspace_root 等） |
+| `meta` | Session 元数据（workspace_root 等运行上下文） |
 | `params` | `WorkflowHookRuleSpec.params` 透传 |
 | `signals` | Rust 侧预计算的便利信号（避免脚本重复实现 snapshot 查询） |
 
@@ -78,7 +78,6 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 | `approve` | `(reason) -> Map` | 快捷审批请求 |
 | `complete` | `(mode, satisfied, reason) -> Map` | 快捷完成信号 |
 | `log` | `(message) -> Map` | 快捷诊断日志 |
-| `requires_supervised_approval` | `(name) -> bool` | 判断是否需要监管审批 |
 
 ## 沙箱限制
 
@@ -112,7 +111,6 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 | `subagent_inherit_context` | `BeforeSubagentDispatch` | 子 Agent 继承注入和约束 |
 | `subagent_record_result` | `AfterSubagentDispatch` | 记录子 Agent 派发结果 |
 | `companion_result_channel` | `CompanionResult` | 处理 Companion 回流 |
-| `supervised_tool_gate` | `BeforeTool` | SUPERVISED 策略工具审批门禁 |
 
 ---
 

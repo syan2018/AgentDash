@@ -61,6 +61,8 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
     const running = status === "inProgress" || status === "pending";
     if (running) {
       inProgressSinceRef.current = Date.now();
+      // 保持 Main 的同步状态交接；此 effect 只镜像外部生命周期属性。
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRenderStatus(status);
       return;
     }
@@ -82,6 +84,8 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   }, [status]);
 
   useEffect(() => {
+    // 审批到达属于外部生命周期切换，需要立即展开操作控件。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isPendingApproval) setExpanded(true);
   }, [isPendingApproval]);
 

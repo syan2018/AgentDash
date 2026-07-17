@@ -94,7 +94,6 @@ impl AppExecutionHookProvider {
             "hook_source:global_builtin".to_string(),
             "hook_builtin:runtime_trace".to_string(),
             "hook_builtin:workspace_path_safety".to_string(),
-            "hook_builtin:supervised_tool_approval".to_string(),
         ]);
 
         if let Some(HookActiveWorkflowFacts {

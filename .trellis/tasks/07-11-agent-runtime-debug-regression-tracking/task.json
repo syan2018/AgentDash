@@ -1,0 +1,28 @@
+{
+  "id": "agent-runtime-debug-regression-tracking",
+  "name": "agent-runtime-debug-regression-tracking",
+  "title": "Agent Runtime 重构调试回归长期追踪",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-07-11",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/agent-runtime-architecture-convergence",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-12-local-runtime-ephemeral-host-state"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

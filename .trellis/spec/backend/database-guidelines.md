@@ -1,6 +1,6 @@
 # 数据库规范
 
-PostgreSQL + SQLx 覆盖云端业务库与本机 embedded PostgreSQL。
+PostgreSQL + SQLx承载云端业务库与Managed Runtime durable facts。Local Integration Host的执行状态按process incarnation重建，避免把Dashboard schema生命周期引入Desktop与Standalone Runner启动链。
 
 ## 基础规则
 
@@ -371,6 +371,9 @@ AgentFrame capability/context/VFS/MCP/execution/profile surface 或 `agent_frame
 ```sql
 ALTER TABLE agent_frames
     ADD COLUMN IF NOT EXISTS surface text;
+
+ALTER TABLE agent_frames
+    ADD COLUMN hook_plan jsonb;
 ```
 
 ```rust
@@ -381,11 +384,13 @@ pub struct AgentFrame {
     pub vfs_surface_json: Option<Value>,
     pub mcp_surface_json: Option<Value>,
     pub execution_profile_json: Option<Value>,
+    pub hook_plan: Option<Value>,
 }
 
 impl AgentFrame {
     pub fn surface_document(&self) -> AgentFrameSurfaceDocument;
     pub fn apply_surface_projection(&mut self);
+    pub fn attach_immutable_hook_plan(&mut self, hook_plan: Value);
 }
 ```
 
@@ -394,7 +399,11 @@ impl AgentFrame {
 - `agent_frames.surface` 是 frame revision surface 的 canonical document。
 - `agent_frames.surface` 当前是既有 `TEXT` JSON schema 事实；新增 adjacent document 按 JSONB 文档列规则设计。
 - Split columns 是 repository projection columns；写入从 `surface_document()` 派生，读取时用于迁移物化和 projection 校验。
+- `agent_frames.hook_plan`是新revision的immutable HookPlan projection，使用业务语义列名与`jsonb`。它保持nullable以明确表示历史Frame尚未物化；生产writer必须写入typed plan，Runtime读取缺失值时精确失败。
+- 最终`hook_plan`列可由后续rename migration建立；已在任一Dashboard或本机Runtime数据库应用的migration内容保持immutable，使所有持久实例通过checksum后顺序收敛到同一schema。
+- rename migration只接受单一旧列或单一最终列，并验证最终类型为`jsonb`；双列并存、来源列缺失或类型错误都表示schema事实不一致，应显式失败。
 - 新 AgentFrame 写入先填 `surface`，再 `apply_surface_projection()`。
+- construction 结束后补挂 HookPlan 时必须调用 `attach_immutable_hook_plan()`：该入口先更新 canonical `surface.hook_plan`，再刷新 split projection；直接写 `frame.hook_plan` 会在下一次 `apply_surface_projection()` 时被 canonical surface 覆盖。
 - Backfill migration 从 split columns 物化 `surface`。
 - 无 live repository query 的索引用新 migration 删除。
 
@@ -406,27 +415,101 @@ impl AgentFrame {
 | row 无 `surface` 但有 split columns | mapper 从 split columns 物化 `surface` |
 | `surface` JSON invalid | mapped `DomainError` 带 `agent_frames.surface` context |
 | split projection serialization fails | insert 前返回 mapped `DomainError` |
+| 新Frame writer没有提供HookPlan | writer/adoption测试失败；该Frame不得进入Runtime materialization |
+| construction 只更新 split `hook_plan` | canonical surface 仍为空，后续 projection 会清除该值；domain/construction port 测试失败 |
+| `hook_plan` digest与requirements不匹配 | typed validation error；Host side effect前停止 |
 | index 无 live query path | 新 migration 删除，并记录理由 |
 
 ### 5. Cases
 
 - Canonical: build `FrameSurfaceDraft` -> write `AgentFrame.surface` -> project split columns。
+- Late attachment: `frame.attach_immutable_hook_plan(plan)` -> update canonical surface -> refresh split columns。
 - Backfill: split columns -> complete `AgentFrameSurfaceDocument`。
 - Boundary mismatch: 只写 `vfs_surface_json`，让 frame surface facts 分裂。
 
 ### 6. Tests Required
 
 - Domain: `surface_document()` 与 `apply_surface_projection()`。
+- Domain: `attach_immutable_hook_plan()` 后 canonical `surface.hook_plan` 与 split `hook_plan` 完全相等。
 - Mapper: surface-overrides-split、split-to-surface materialization。
 - Migration guard for `agent_frames` schema change。
 - Repository roundtrip preserves canonical surface and projected fields。
+- `hook_plan` roundtrip覆盖空requirements与显式ToolBroker requirement；migration guard断言最终列名为`hook_plan jsonb`并覆盖顺序rename migration。
 
 ### 7. Boundary / Canonical
 
 ```rust
 frame.surface = Some(surface_document);
 frame.apply_surface_projection();
+frame.attach_immutable_hook_plan(validated_hook_plan);
 repo.insert_frame(&frame).await?;
+```
+
+---
+
+## Scenario: AgentRun Product Command Receipts
+
+### 1. Scope / Trigger
+
+AgentRun 产品命令的 client-command 幂等、结果重放或 accepted Runtime coordinate 持久化发生变化时。
+
+### 2. Signatures
+
+```sql
+CREATE TABLE agent_run_product_command_receipts (
+    scope_kind text NOT NULL,
+    scope_key text NOT NULL,
+    client_command_id text NOT NULL,
+    runtime_thread_id text,
+    runtime_operation_id text,
+    UNIQUE (scope_kind, scope_key, client_command_id),
+    FOREIGN KEY (runtime_thread_id, runtime_operation_id)
+        REFERENCES agent_runtime_operation(thread_id, id)
+);
+```
+
+```rust
+pub struct AgentRunAcceptedRefs {
+    pub runtime_thread_id: Option<String>,
+    pub runtime_operation_id: Option<String>,
+}
+```
+
+### 3. Contracts
+
+- Product receipt 只拥有请求 digest、状态、结果重放与产品坐标；Managed Runtime 仍独占 operation/turn 状态。
+- accepted Runtime 引用使用 `runtime_thread_id + runtime_operation_id`，复合外键保证 operation 属于同一 thread。
+- 纯产品命令可以没有 Runtime operation；Runtime 命令被接受后必须保存原 operation ID。
+- `result_json` 保存对调用方返回的 typed response，用于同一 client command 的精确重放。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 相同 scope/client ID 与相同 digest | 返回首次 receipt/result，不重复 side effect |
+| 相同 scope/client ID 与不同 digest | typed digest conflict |
+| operation ID 不属于给定 thread | 复合外键拒绝整个 accepted update |
+| Runtime command accepted 但 receipt 未保存 operation | API/application 测试失败，不得伪造 protocol turn ID |
+| receipt schema 缺失 | readiness 失败，不装配 repository |
+
+### 5. Cases
+
+- Good: compact command -> Runtime operation receipt -> product receipt stores thread/operation -> duplicate replays result。
+- Base: mailbox reorder has no Runtime operation and stores only product refs/result。
+- Bad: 把 Runtime operation ID 编码为 `protocol_turn_id`，或恢复已退役 RuntimeSession FK。
+
+### 6. Tests Required
+
+- Repository: claim/duplicate/digest conflict、accepted refs/result roundtrip、复合 FK mismatch。
+- Migration: fresh embedded PostgreSQL 与既有 schema 顺序升级后新表 ready，旧 `agent_run_command_receipts` 仍 retired。
+- API: cancel/compaction 接受后保存真实 operation ID；重复 client command 不产生第二 operation。
+
+### 7. Boundary / Canonical
+
+```text
+AgentRun product command -> product receipt claim -> Managed Runtime command
+                         -> accepted thread/operation refs + typed result
+                         -> duplicate result replay
 ```
 
 ---

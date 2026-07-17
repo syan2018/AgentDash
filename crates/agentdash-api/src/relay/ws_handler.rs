@@ -239,6 +239,34 @@ async fn handle_backend_connection(
         return;
     }
 
+    if let Err(error) = state
+        .services
+        .agent_runtime_inventory
+        .validate_inventory(&payload.capabilities.agent_runtime_offers)
+    {
+        let context = DiagnosticErrorContext::new("relay.ws.register", "agent_runtime_inventory")
+            .with_field("backend_id", &bid)
+            .with_field("request_id", &reg_id);
+        diag_error!(
+            Error,
+            Subsystem::Relay,
+            context = &context,
+            error = &error,
+            backend_id = %bid,
+            request_id = %reg_id,
+            "Agent Runtime offer inventory registration failed"
+        );
+        let _ = state.services.agent_runtime_inventory.withdraw(&bid).await;
+        state.services.backend_registry.unregister(&bid).await;
+        let _ = send_relay_error(
+            &mut ws_tx,
+            reg_id,
+            RelayError::runtime_error("Agent Runtime offer inventory is invalid"),
+        )
+        .await;
+        return;
+    }
+
     let connected_at = chrono::Utc::now();
     if let Err(error) = state
         .repos
@@ -266,6 +294,7 @@ async fn handle_backend_connection(
             request_id = %reg_id,
             "写入 runtime health 在线状态失败"
         );
+        let _ = state.services.agent_runtime_inventory.withdraw(&bid).await;
         state.services.backend_registry.unregister(&bid).await;
         let send_result = send_relay_error(
             &mut ws_tx,
@@ -314,10 +343,21 @@ async fn handle_backend_connection(
             message_kind = %relay_message_kind(&ack),
             "relay register ack send failed"
         );
+        let _ = state.services.agent_runtime_inventory.withdraw(&bid).await;
         state.services.backend_registry.unregister(&bid).await;
         notify_backend_runtime_changed(&state, &bid);
         return;
     }
+    state
+        .services
+        .agent_runtime_inventory
+        .mark_online(&bid)
+        .await;
+    spawn_runtime_inventory_sync(
+        state.clone(),
+        bid.clone(),
+        payload.capabilities.agent_runtime_offers.clone(),
+    );
     notify_backend_runtime_changed(&state, &bid);
 
     diag!(Info, Subsystem::Relay,
@@ -424,21 +464,6 @@ async fn handle_backend_connection(
         }
     }
 
-    let lost_session_count = state.services.backend_registry.feed_backend_terminal(
-        &bid,
-        agentdash_application_ports::backend_transport::RelayTerminalKind::Lost,
-        Some("backend disconnected".to_string()),
-    );
-    if lost_session_count > 0 {
-        diag!(Warn, Subsystem::Relay,
-
-            operation = "relay.ws.disconnect",
-            stage = "feed_backend_terminal",
-            backend_id = %bid,
-            count = lost_session_count,
-            "后端断连，已向 active relay session 投递 lost terminal"
-        );
-    }
     match state
         .repos
         .backend_execution_lease_repo
@@ -474,7 +499,21 @@ async fn handle_backend_connection(
             );
         }
     }
+    // Runtime Wire routes must be disconnected while their remote drivers are still
+    // alive so each active binding can emit its terminal BindingLost event.
     state.services.backend_registry.unregister(&bid).await;
+    if let Err(error) = state.services.agent_runtime_inventory.withdraw(&bid).await {
+        let context = DiagnosticErrorContext::new("relay.ws.disconnect", "runtime_offer_withdraw")
+            .with_field("backend_id", &bid);
+        diag_error!(
+            Warn,
+            Subsystem::Relay,
+            context = &context,
+            error = &error,
+            backend_id = %bid,
+            "Agent Runtime remote offers withdraw failed"
+        );
+    }
     if let Err(error) = state
         .repos
         .runtime_health_repo
@@ -503,56 +542,6 @@ async fn handle_backend_connection(
         .services
         .terminal_registry
         .handle_backend_disconnect(&bid);
-    for terminal_id in &lost_terminal_ids {
-        if let Some(term_state) = state.services.terminal_registry.get_terminal(terminal_id) {
-            let Some(session_id) = state
-                .services
-                .terminal_registry
-                .resolve_active_session(&term_state.run_id, &term_state.agent_id)
-            else {
-                continue;
-            };
-            let source = agentdash_agent_protocol::SourceInfo {
-                connector_id: "platform".to_string(),
-                connector_type: "terminal".to_string(),
-                executor_id: None,
-            };
-            let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
-                agentdash_agent_protocol::BackboneEvent::Platform(
-                    agentdash_agent_protocol::PlatformEvent::PtyTerminalStateChanged {
-                        terminal_id: terminal_id.clone(),
-                        state: "lost".to_string(),
-                        exit_code: None,
-                        message: Some("backend disconnected".to_string()),
-                    },
-                ),
-                &session_id,
-                source,
-            );
-            if let Err(error) = state
-                .services
-                .session_eventing
-                .inject_notification(&session_id, envelope)
-                .await
-            {
-                let context =
-                    DiagnosticErrorContext::new("relay.ws.disconnect", "inject_lost_terminal")
-                        .with_field("backend_id", &bid)
-                        .with_field("terminal_id", terminal_id)
-                        .with_field("session_id", &session_id);
-                diag_error!(
-                    Warn,
-                    Subsystem::Relay,
-                    context = &context,
-                    error = &error,
-                    backend_id = %bid,
-                    terminal_id = %terminal_id,
-                    session_id = %session_id,
-                    "后端断连终端 lost 事件注入 session 失败"
-                );
-            }
-        }
-    }
     if !lost_terminal_ids.is_empty() {
         diag!(Info, Subsystem::Relay,
 
@@ -563,7 +552,42 @@ async fn handle_backend_connection(
     }
 }
 
+fn spawn_runtime_inventory_sync(
+    state: Arc<AppState>,
+    backend_id: String,
+    advertisements: Vec<agentdash_relay::RuntimeOfferAdvertisement>,
+) {
+    tokio::spawn(async move {
+        if let Err(error) = state
+            .services
+            .agent_runtime_inventory
+            .sync(&backend_id, &advertisements)
+            .await
+        {
+            let context =
+                DiagnosticErrorContext::new("relay.runtime_inventory", "activate_remote_offers")
+                    .with_field("backend_id", &backend_id);
+            diag_error!(
+                Error,
+                Subsystem::Relay,
+                context = &context,
+                error = &error,
+                backend_id = %backend_id,
+                "Agent Runtime remote proxy activation failed"
+            );
+        }
+    });
+}
+
 async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: RelayMessage) {
+    if state
+        .services
+        .backend_registry
+        .handle_runtime_wire_message(backend_id, &msg)
+        .await
+    {
+        return;
+    }
     match &msg {
         RelayMessage::Pong { .. } => {
             diag!(Debug, Subsystem::Relay,
@@ -601,90 +625,31 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 );
             }
         }
-        RelayMessage::EventSessionNotification { payload, .. } => {
-            use agentdash_application_ports::backend_transport::RelaySessionEvent;
-
-            match serde_json::from_value::<agentdash_agent_protocol::BackboneEnvelope>(
-                payload.notification.clone(),
-            ) {
-                Ok(envelope) => {
-                    if !state.services.backend_registry.feed_session_event(
-                        &payload.session_id,
-                        RelaySessionEvent::Notification(Box::new(envelope)),
-                    ) {
-                        diag!(Debug, Subsystem::Relay,
-
-                            backend_id = %backend_id,
-                            session_id = %payload.session_id,
-                            "relay notification 到达时 session sink 不存在（session 可能已结束）"
-                        );
-                    }
-                }
-                Err(err) => {
-                    let context = DiagnosticErrorContext::new(
-                        "relay.ws.handle_message",
-                        "deserialize_session_notification",
-                    )
-                    .with_field("backend_id", backend_id)
-                    .with_field("session_id", &payload.session_id)
-                    .with_field("request_id", msg.id())
-                    .with_field("message_kind", relay_message_kind(&msg));
-                    diag_error!(
-                        Warn,
-                        Subsystem::Relay,
-                        context = &context,
-                        error = &err,
-                        backend_id = %backend_id,
-                        session_id = %payload.session_id,
-                        request_id = %msg.id(),
-                        message_kind = %relay_message_kind(&msg),
-                        "反序列化远程 BackboneEnvelope 失败"
-                    );
-                }
-            }
-        }
-        RelayMessage::EventRuntimeSessionStateChanged { payload, .. } => {
-            use agentdash_application_ports::backend_transport::{
-                RelaySessionEvent, RelayTerminalKind,
-            };
-
-            diag!(Info, Subsystem::Relay,
-
-                backend_id = %backend_id,
-                runtime_session_id = %payload.runtime_session_id,
-                state = ?payload.state,
-                "收到远程 RuntimeSession delivery 状态变更"
-            );
-
-            if matches!(payload.state, agentdash_relay::RuntimeSessionState::Started) {
-                return;
-            }
-
-            let terminal_kind = match payload.state {
-                agentdash_relay::RuntimeSessionState::Completed => RelayTerminalKind::Completed,
-                agentdash_relay::RuntimeSessionState::Failed => RelayTerminalKind::Failed,
-                agentdash_relay::RuntimeSessionState::Cancelled => RelayTerminalKind::Interrupted,
-                agentdash_relay::RuntimeSessionState::Started => unreachable!(),
-            };
-
-            if !state.services.backend_registry.feed_session_event(
-                &payload.runtime_session_id,
-                RelaySessionEvent::Terminal {
-                    kind: terminal_kind,
-                    message: payload.message.clone(),
-                },
-            ) {
-                diag!(Debug, Subsystem::Relay,
-
-                    backend_id = %backend_id,
-                    runtime_session_id = %payload.runtime_session_id,
-                    "relay runtime terminal 到达时 session sink 不存在（session 可能已结束）"
-                );
-            }
-        }
         RelayMessage::EventCapabilitiesChanged { payload, .. } => {
             diag!(Info, Subsystem::Relay,
         backend_id = %backend_id, "收到能力变更通知");
+            if let Err(error) = state
+                .services
+                .agent_runtime_inventory
+                .validate_inventory(&payload.agent_runtime_offers)
+            {
+                let context = DiagnosticErrorContext::new(
+                    "relay.ws.handle_message",
+                    "agent_runtime_inventory",
+                )
+                .with_field("backend_id", backend_id)
+                .with_field("request_id", msg.id());
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &error,
+                    backend_id = %backend_id,
+                    request_id = %msg.id(),
+                    "Agent Runtime offer inventory update rejected"
+                );
+                return;
+            }
             state
                 .services
                 .backend_registry
@@ -717,6 +682,11 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     "更新 runtime health capabilities 失败"
                 );
             }
+            spawn_runtime_inventory_sync(
+                state.clone(),
+                backend_id.to_string(),
+                payload.agent_runtime_offers.clone(),
+            );
             notify_backend_runtime_changed(state, backend_id);
         }
         RelayMessage::EventToolShellOutput { payload, .. } => {
@@ -732,7 +702,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 );
             }
         }
-        RelayMessage::EventTerminalOutput { payload, .. } => {
+        RelayMessage::EventTerminalOutput { id, payload } => {
             let payload = payload
                 .clone()
                 .bounded(agentdash_relay::LIVE_OUTPUT_EVENT_MAX_BYTES);
@@ -744,72 +714,11 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 data_len = payload.data.len(),
                 "收到终端输出事件"
             );
-            if let Some(term_state) = state.services.terminal_registry.get_terminal(terminal_id) {
-                state.services.terminal_registry.append_terminal_output(
-                    terminal_id,
-                    &payload.data,
-                    payload.truncation.truncated,
-                    payload.truncation.omitted_bytes,
-                );
-                let Some(session_id) = state
-                    .services
-                    .terminal_registry
-                    .resolve_active_session(&term_state.run_id, &term_state.agent_id)
-                else {
-                    diag!(Warn, Subsystem::Relay,
-                        operation = "relay.ws.handle_message",
-                        stage = "resolve_active_session",
-                        backend_id = %backend_id,
-                        terminal_id = %terminal_id,
-                        run_id = %term_state.run_id,
-                        agent_id = %term_state.agent_id,
-                        "终端输出事件到达但无法解析活跃 session"
-                    );
-                    return;
-                };
-                let source = agentdash_agent_protocol::SourceInfo {
-                    connector_id: "platform".to_string(),
-                    connector_type: "terminal".to_string(),
-                    executor_id: None,
-                };
-                let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
-                    agentdash_agent_protocol::BackboneEvent::Platform(
-                        agentdash_agent_protocol::PlatformEvent::TerminalOutput {
-                            terminal_id: terminal_id.clone(),
-                            data: terminal_output_event_data(&payload),
-                        },
-                    ),
-                    &session_id,
-                    source,
-                );
-                if let Err(e) = state
-                    .services
-                    .session_eventing
-                    .inject_notification(&session_id, envelope)
-                    .await
-                {
-                    let context = DiagnosticErrorContext::new(
-                        "relay.ws.handle_message",
-                        "inject_terminal_output",
-                    )
-                    .with_field("backend_id", backend_id)
-                    .with_field("terminal_id", terminal_id)
-                    .with_field("session_id", &session_id)
-                    .with_field("request_id", msg.id())
-                    .with_field("message_kind", relay_message_kind(&msg));
-                    diag_error!(
-                        Warn,
-                        Subsystem::Relay,
-                        context = &context,
-                        error = &e,
-                        backend_id = %backend_id,
-                        terminal_id = %terminal_id,
-                        session_id = %session_id,
-                        request_id = %msg.id(),
-                        message_kind = %relay_message_kind(&msg),
-                        "终端输出事件注入 session 失败"
-                    );
-                }
+            if let Some((terminal, event)) = prepare_terminal_output_presentation(
+                state.services.terminal_registry.as_ref(),
+                &payload,
+            ) {
+                append_terminal_presentation(state, &terminal, id.to_string(), event).await;
             } else {
                 diag!(Warn, Subsystem::Relay,
 
@@ -821,7 +730,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 );
             }
         }
-        RelayMessage::EventPtyTerminalStateChanged { payload, .. } => {
+        RelayMessage::EventPtyTerminalStateChanged { id, payload } => {
             diag!(Info, Subsystem::Relay,
 
                 backend_id = %backend_id,
@@ -835,66 +744,12 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 agentdash_relay::PtyTerminalProcessState::Lost => "lost",
                 agentdash_relay::PtyTerminalProcessState::Killed => "killed",
             };
-            state.services.terminal_registry.update_state(
-                &payload.terminal_id,
+            if let Some((terminal, event)) = prepare_pty_terminal_state_presentation(
+                state.services.terminal_registry.as_ref(),
+                payload,
                 state_str,
-                payload.exit_code,
-            );
-
-            if let Some(term_state) = state
-                .services
-                .terminal_registry
-                .get_terminal(&payload.terminal_id)
-                && let Some(session_id) = state
-                    .services
-                    .terminal_registry
-                    .resolve_active_session(&term_state.run_id, &term_state.agent_id)
-            {
-                let source = agentdash_agent_protocol::SourceInfo {
-                    connector_id: "platform".to_string(),
-                    connector_type: "terminal".to_string(),
-                    executor_id: None,
-                };
-                let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
-                    agentdash_agent_protocol::BackboneEvent::Platform(
-                        agentdash_agent_protocol::PlatformEvent::PtyTerminalStateChanged {
-                            terminal_id: payload.terminal_id.clone(),
-                            state: state_str.to_string(),
-                            exit_code: payload.exit_code,
-                            message: payload.message.clone(),
-                        },
-                    ),
-                    &session_id,
-                    source,
-                );
-                if let Err(e) = state
-                    .services
-                    .session_eventing
-                    .inject_notification(&session_id, envelope)
-                    .await
-                {
-                    let context = DiagnosticErrorContext::new(
-                        "relay.ws.handle_message",
-                        "inject_terminal_state",
-                    )
-                    .with_field("backend_id", backend_id)
-                    .with_field("terminal_id", &payload.terminal_id)
-                    .with_field("session_id", &session_id)
-                    .with_field("request_id", msg.id())
-                    .with_field("message_kind", relay_message_kind(&msg));
-                    diag_error!(
-                        Warn,
-                        Subsystem::Relay,
-                        context = &context,
-                        error = &e,
-                        backend_id = %backend_id,
-                        terminal_id = %payload.terminal_id,
-                        session_id = %session_id,
-                        request_id = %msg.id(),
-                        message_kind = %relay_message_kind(&msg),
-                        "终端状态变更注入 session 失败"
-                    );
-                }
+            ) {
+                append_terminal_presentation(state, &terminal, id.to_string(), event).await;
             }
         }
         RelayMessage::EventDiscoverOptionsPatch { .. } => {
@@ -912,19 +767,141 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
     }
 }
 
-fn terminal_output_event_data(payload: &agentdash_relay::TerminalOutputPayload) -> String {
-    if !payload.truncation.truncated {
-        return payload.data.clone();
-    }
+fn prepare_terminal_output_presentation(
+    registry: &agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry,
+    payload: &agentdash_relay::TerminalOutputPayload,
+) -> Option<(
+    agentdash_application_agentrun::agent_run::terminal_registry::TerminalState,
+    agentdash_agent_protocol::BackboneEvent,
+)> {
+    let terminal = registry.get_terminal(&payload.terminal_id)?;
+    registry.append_terminal_output(
+        &payload.terminal_id,
+        &payload.data,
+        payload.truncation.truncated,
+        payload.truncation.omitted_bytes,
+    );
+    Some((terminal, terminal_output_presentation_event(payload)))
+}
+
+fn prepare_pty_terminal_state_presentation(
+    registry: &agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry,
+    payload: &agentdash_relay::PtyTerminalStateChangedPayload,
+    state: &str,
+) -> Option<(
+    agentdash_application_agentrun::agent_run::terminal_registry::TerminalState,
+    agentdash_agent_protocol::BackboneEvent,
+)> {
+    registry.update_state(&payload.terminal_id, state, payload.exit_code);
+    let terminal = registry.get_terminal(&payload.terminal_id)?;
+    Some((
+        terminal,
+        pty_terminal_state_presentation_event(payload, state),
+    ))
+}
+
+fn terminal_output_presentation_event(
+    payload: &agentdash_relay::TerminalOutputPayload,
+) -> agentdash_agent_protocol::BackboneEvent {
     let mut data = payload.data.clone();
-    if !data.ends_with('\n') && !data.is_empty() {
-        data.push('\n');
+    if payload.truncation.truncated {
+        if !data.ends_with('\n') && !data.is_empty() {
+            data.push('\n');
+        }
+        data.push_str(&format!(
+            "[terminal output truncated: omitted_bytes={}]\n",
+            payload.truncation.omitted_bytes
+        ));
     }
-    data.push_str(&format!(
-        "[terminal output truncated: omitted_bytes={}]\n",
-        payload.truncation.omitted_bytes
-    ));
-    data
+    agentdash_agent_protocol::BackboneEvent::Platform(
+        agentdash_agent_protocol::PlatformEvent::TerminalOutput {
+            terminal_id: payload.terminal_id.clone(),
+            data,
+        },
+    )
+}
+
+fn pty_terminal_state_presentation_event(
+    payload: &agentdash_relay::PtyTerminalStateChangedPayload,
+    state: &str,
+) -> agentdash_agent_protocol::BackboneEvent {
+    agentdash_agent_protocol::BackboneEvent::Platform(
+        agentdash_agent_protocol::PlatformEvent::PtyTerminalStateChanged {
+            terminal_id: payload.terminal_id.clone(),
+            state: state.to_string(),
+            exit_code: payload.exit_code,
+            message: payload.message.clone(),
+        },
+    )
+}
+
+async fn append_terminal_presentation(
+    state: &AppState,
+    terminal: &agentdash_application_agentrun::agent_run::terminal_registry::TerminalState,
+    source_request_id: String,
+    event: agentdash_agent_protocol::BackboneEvent,
+) {
+    use agentdash_application_agentrun::agent_run::AppendAgentRunPresentation;
+    let (Ok(run_id), Ok(agent_id)) = (
+        uuid::Uuid::parse_str(&terminal.run_id),
+        uuid::Uuid::parse_str(&terminal.agent_id),
+    ) else {
+        return;
+    };
+    let target =
+        agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget { run_id, agent_id };
+    let Ok(view) = state
+        .services
+        .agent_run_runtime
+        .inspect(target.clone())
+        .await
+    else {
+        return;
+    };
+    let (Some(binding), Some(snapshot)) = (view.binding, view.snapshot) else {
+        return;
+    };
+    let idempotency_key = match agentdash_agent_runtime_contract::IdempotencyKey::new(format!(
+        "relay-terminal-presentation:{source_request_id}"
+    )) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    let result = state
+        .services
+        .agent_run_runtime
+        .append_presentation(AppendAgentRunPresentation {
+            target,
+            producer: "relay.terminal.presentation".into(),
+            idempotency_key,
+            events: vec![agentdash_agent_runtime_contract::RuntimePresentationInput {
+                coordinate: agentdash_agent_runtime_contract::RuntimePresentationCoordinate {
+                    runtime_turn_id: snapshot.active_turn_id,
+                    presentation_turn_id: snapshot.active_presentation_turn_id.clone(),
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(binding.presentation_thread_id.to_string()),
+                    source_turn_id: snapshot
+                        .active_presentation_turn_id
+                        .map(|turn_id| turn_id.to_string()),
+                    source_item_id: Some(terminal.terminal_id.clone()),
+                    source_request_id: Some(source_request_id),
+                    source_entry_index: None,
+                },
+                event: agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                    agentdash_agent_runtime_contract::PresentationDurability::Durable,
+                    event,
+                ),
+            }],
+        })
+        .await;
+    if let Err(error) = result {
+        diag!(Warn, Subsystem::Relay,
+            terminal_id = %terminal.terminal_id,
+            error = %error,
+            "terminal presentation append failed"
+        );
+    }
 }
 
 fn notify_backend_runtime_changed(state: &AppState, backend_id: &str) {
@@ -1363,5 +1340,125 @@ mod tests {
         };
 
         assert!(!is_pending_response_message(&event));
+    }
+
+    #[test]
+    fn runtime_wire_messages_never_enter_generic_oneshot_routing() {
+        let message = RelayMessage::RuntimeWireAck {
+            id: "runtime-wire-ack".to_string(),
+            payload: agentdash_relay::RuntimeRelayAck {
+                stream_id: agentdash_relay::RuntimeRelayStreamId("stream-1".to_string()),
+                through_sequence: 3,
+            },
+        };
+        assert!(!is_pending_response_message(&message));
+    }
+
+    #[test]
+    fn terminal_output_projection_matches_main_truncation_body_exactly() {
+        let event = terminal_output_presentation_event(&agentdash_relay::TerminalOutputPayload {
+            terminal_id: "terminal-1".to_string(),
+            data: "partial".to_string(),
+            truncation: agentdash_relay::ToolShellTruncationInfo {
+                truncated: true,
+                omitted_bytes: 17,
+                omitted_chunks: 1,
+                omitted_tokens_estimate: None,
+            },
+        });
+
+        assert_eq!(
+            serde_json::to_value(event).expect("terminal output event"),
+            serde_json::json!({
+                "type": "platform",
+                "payload": {
+                    "kind": "terminal_output",
+                    "data": {
+                        "terminal_id": "terminal-1",
+                        "data": "partial\n[terminal output truncated: omitted_bytes=17]\n"
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn pty_terminal_projection_preserves_main_optional_message_exactly() {
+        let payload = agentdash_relay::PtyTerminalStateChangedPayload {
+            terminal_id: "terminal-1".to_string(),
+            state: agentdash_relay::PtyTerminalProcessState::Lost,
+            exit_code: None,
+            message: Some("backend disconnected".to_string()),
+        };
+        let event = pty_terminal_state_presentation_event(&payload, "lost");
+
+        assert_eq!(
+            serde_json::to_value(event).expect("PTY event"),
+            serde_json::json!({
+                "type": "platform",
+                "payload": {
+                    "kind": "pty_terminal_state_changed",
+                    "data": {
+                        "terminal_id": "terminal-1",
+                        "state": "lost",
+                        "message": "backend disconnected"
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn terminal_preparation_updates_registry_before_returning_event_for_append() {
+        let registry = agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry::new();
+        registry.register_terminal("run-1", "agent-1", "terminal-1", "backend-1", None);
+        let payload = agentdash_relay::TerminalOutputPayload {
+            terminal_id: "terminal-1".into(),
+            data: "ready\n".into(),
+            truncation: Default::default(),
+        };
+
+        let prepared = prepare_terminal_output_presentation(registry.as_ref(), &payload)
+            .expect("registered terminal has presentation");
+
+        assert!(matches!(
+            prepared.1,
+            agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::TerminalOutput { .. }
+            )
+        ));
+        assert_eq!(
+            registry
+                .get_terminal("terminal-1")
+                .and_then(|terminal| terminal.output_projection)
+                .and_then(|projection| projection.pty_preview)
+                .map(|preview| preview.text),
+            Some("ready".into())
+        );
+    }
+
+    #[test]
+    fn pty_preparation_updates_registry_before_returning_event_for_append() {
+        let registry = agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry::new();
+        registry.register_terminal("run-1", "agent-1", "terminal-1", "backend-1", None);
+        let payload = agentdash_relay::PtyTerminalStateChangedPayload {
+            terminal_id: "terminal-1".into(),
+            state: agentdash_relay::PtyTerminalProcessState::Exited,
+            exit_code: Some(7),
+            message: Some("process exited".into()),
+        };
+
+        let prepared =
+            prepare_pty_terminal_state_presentation(registry.as_ref(), &payload, "exited")
+                .expect("registered terminal has presentation");
+
+        assert_eq!(prepared.0.state, "exited");
+        assert_eq!(prepared.0.exit_code, Some(7));
+        assert!(matches!(
+            prepared.1,
+            agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::PtyTerminalStateChanged { .. }
+            )
+        ));
     }
 }

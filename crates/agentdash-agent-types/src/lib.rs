@@ -1,7 +1,19 @@
 pub mod model;
-pub mod protocol;
 pub mod runtime;
 pub mod token_estimation;
+
+/// Provider-neutral reasoning effort requested from Agent Core.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingLevel {
+    #[default]
+    Off,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+}
 
 // ─── 集中 re-export（保持外部 API 不变）───────────────────
 
@@ -14,12 +26,6 @@ pub use model::projection::{
     AgentContextEnvelope, AgentInputMessage, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     ProjectionOrigin, ProjectionSourceRange,
 };
-pub use protocol::{
-    AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus,
-    DynamicToolCallOutputContentItem, DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus,
-    ShellExecExecutionMode,
-};
-
 pub use runtime::decisions::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeProviderRequestInput,
     BeforeStopInput, BeforeToolCallInput, CompactionFailureInput, CompactionImplementation,
@@ -40,7 +46,8 @@ pub use runtime::hooks_io::{
     ToolApprovalOutcome, ToolApprovalRequest,
 };
 pub use runtime::tool::{
-    AgentTool, AgentToolError, AgentToolResult, DynAgentTool, ToolDefinition, ToolUpdateCallback,
+    AgentTool, AgentToolError, AgentToolResult, DynAgentTool, ToolDefinition,
+    ToolProtocolProjector, ToolUpdateCallback,
 };
 pub use token_estimation::{
     chars_to_tokens, estimate_content_tokens, estimate_message_tokens, estimate_request_tokens,

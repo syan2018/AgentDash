@@ -1,4 +1,5 @@
 use agentdash_agent_protocol::{ControlPlaneProjection, ControlPlaneProjectionChangeReason};
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -12,7 +13,7 @@ pub struct ProjectProjectionInvalidation {
     pub gate_id: Option<Uuid>,
     pub mailbox_message_id: Option<Uuid>,
     pub reason: ControlPlaneProjectionChangeReason,
-    pub delivery_runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<RuntimeThreadId>,
 }
 
 impl ProjectProjectionInvalidation {
@@ -22,7 +23,7 @@ impl ProjectProjectionInvalidation {
         agent_id: Uuid,
         frame_id: Option<Uuid>,
         reason: ControlPlaneProjectionChangeReason,
-        delivery_runtime_session_id: Option<String>,
+        runtime_thread_id: Option<RuntimeThreadId>,
     ) -> Self {
         Self {
             project_id,
@@ -33,7 +34,7 @@ impl ProjectProjectionInvalidation {
             gate_id: None,
             mailbox_message_id: None,
             reason,
-            delivery_runtime_session_id,
+            runtime_thread_id,
         }
     }
 }

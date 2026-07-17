@@ -292,7 +292,7 @@ function SessionErrorCard({ notification }: { notification: ErrorNotification })
   );
 }
 
-function formatCodexErrorInfo(info: CodexErrorInfo | null): string | null {
+function formatCodexErrorInfo(info: CodexErrorInfo | null | undefined): string | null {
   if (info == null) return null;
   if (typeof info === "string") return info;
   if ("httpConnectionFailed" in info) {
@@ -322,7 +322,7 @@ function formatCodexErrorInfo(info: CodexErrorInfo | null): string | null {
   return null;
 }
 
-function formatHttpErrorInfo(kind: string, httpStatusCode: number | null): string {
+function formatHttpErrorInfo(kind: string, httpStatusCode: number | null | undefined): string {
   return httpStatusCode == null ? kind : `${kind}:HTTP ${httpStatusCode}`;
 }
 

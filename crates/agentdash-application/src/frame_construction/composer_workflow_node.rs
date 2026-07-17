@@ -26,31 +26,24 @@ pub(super) async fn compose(
     input: &FrameLaunchEnvelopeConstructionInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
-    let anchor = svc
-        .repos
-        .execution_anchor_repo
-        .find_by_session(input.session_id.as_str())
+    let association = agentdash_application_lifecycle::resolve_activity_runtime_association_from_message_stream_trace(
+        input.session_id.as_str(),
+        svc.repos.agent_frame_repo.as_ref(),
+        svc.repos.lifecycle_agent_repo.as_ref(),
+        svc.repos.lifecycle_run_repo.as_ref(),
+        Some(svc.repos.agent_run_runtime_binding_repo.as_ref()),
+    )
         .await
         .map_err(connector_internal)?
         .ok_or_else(|| {
             ConnectorError::InvalidConfig(format!(
-                "RuntimeSession {} 缺少 orchestration anchor",
+                "RuntimeSession {} 缺少 lifecycle runtime association",
                 input.session_id
             ))
         })?;
-    let orchestration_id = anchor.orchestration_id.ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!(
-            "RuntimeSession {} anchor 缺少 orchestration_id",
-            input.session_id
-        ))
-    })?;
-    let node_path = anchor.node_path.clone().ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!(
-            "RuntimeSession {} anchor 缺少 node_path",
-            input.session_id
-        ))
-    })?;
-    let attempt = anchor.node_attempt.unwrap_or(1);
+    let orchestration_id = association.orchestration_id;
+    let node_path = association.node_path;
+    let attempt = association.attempt;
     let orchestration = run
         .orchestrations
         .iter()

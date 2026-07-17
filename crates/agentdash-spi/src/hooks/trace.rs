@@ -312,6 +312,67 @@ mod tests {
     }
 
     #[test]
+    fn current_hook_projection_matches_all_pinned_main_protected_bodies() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json"
+        ))
+        .expect("pinned Main platform fixture");
+        let entry = |trigger, decision: &str| HookTraceEntry {
+            sequence: 7,
+            timestamp_ms: 1_783_684_800_000,
+            revision: 3,
+            trigger,
+            decision: decision.into(),
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            matched_rule_keys: Vec::new(),
+            refresh_snapshot: false,
+            effects_applied: false,
+            block_reason: None,
+            completion: None,
+            diagnostics: Vec::new(),
+            injections: Vec::new(),
+        };
+        let mut deny = entry(HookTrigger::BeforeTool, "deny");
+        deny.tool_name = Some("shell".into());
+        deny.tool_call_id = Some("call-hook-1".into());
+        deny.matched_rule_keys = vec!["policy:deny-shell".into()];
+        deny.block_reason = Some("shell denied".into());
+        deny.diagnostics = vec![HookDiagnosticEntry {
+            code: "tool_denied".into(),
+            message: "shell denied by policy".into(),
+        }];
+        let ask = entry(HookTrigger::BeforeTool, "ask");
+        let rewrite = entry(HookTrigger::BeforeTool, "rewrite");
+        let mut allow = entry(HookTrigger::BeforeTool, "allow");
+        allow.matched_rule_keys = vec!["policy:observed".into()];
+        let mut effects = entry(HookTrigger::AfterTool, "effects_applied");
+        effects.effects_applied = true;
+        effects.matched_rule_keys = vec!["workflow:tool-effect".into()];
+        let noop = entry(HookTrigger::AfterTool, "noop");
+
+        for (case, entry) in [
+            ("hook_before_tool_deny", deny),
+            ("hook_before_tool_ask", ask),
+            ("hook_before_tool_rewrite", rewrite),
+            ("hook_before_tool_allow_ephemeral", allow),
+            ("hook_after_tool_effects", effects),
+            ("hook_after_tool_noop_dropped", noop),
+        ] {
+            let body = build_hook_trace_envelope(
+                "session-hook-0001",
+                Some("turn-hook-0001"),
+                sample_source(),
+                &entry,
+            )
+            .map(|envelope| serde_json::to_value(envelope.event).expect("hook body"))
+            .unwrap_or(serde_json::Value::Null);
+            assert_eq!(body, fixture["cases"][case], "hook case {case}");
+        }
+    }
+
+    #[test]
     fn empty_silent_events_are_dropped() {
         for decision in [
             "allow",

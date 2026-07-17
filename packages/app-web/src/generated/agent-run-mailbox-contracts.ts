@@ -8,6 +8,8 @@ export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: 
 
 export type AgentRunAcceptedRefs = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref?: AgentFrameRefDto, turn_id?: string, };
 
+export type AgentRunCommandOnlyRequest = { client_command_id: string, command: AgentRunCommandPreconditionView, };
+
 export type AgentRunCommandPreconditionView = { command_id: string, command_kind: ConversationCommandKind, stale_guard: ConversationCommandStaleGuardView, };
 
 export type AgentRunCommandReceipt = { client_command_id: string, status: string, duplicate: boolean, message?: string, };
@@ -16,11 +18,11 @@ export type AgentRunComposerSubmitRequest = {
 /**
  * canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
  */
-input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue, backend_selection?: BackendSelectionRequestDto,
+input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue,
 /**
  * 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
  */
-delivery_intent?: string, };
+delivery_intent?: string, backend_selection?: BackendSelectionRequestDto, };
 
 export type AgentRunContextCompactionCommandOutcome = "scheduled_next_turn" | "launched_compaction_turn" | "completed" | "no_eligible_messages" | "blocked" | "failed";
 
@@ -34,7 +36,7 @@ export type AgentRunForkRequest = { client_command_id: string, title?: string, f
 
 export type AgentRunForkResponse = { command_receipt: AgentRunCommandReceipt, outcome: string, parent_refs: AgentRunMessageAcceptedRefs, child_refs: AgentRunMessageAcceptedRefs, lineage: AgentRunForkLineageView, redirect: AgentRunRefDto, };
 
-export type AgentRunForkSubmitRequest = { input: Array<UserInput>, client_command_id: string, title?: string, fork_point_ref?: SessionMessageRefDto, metadata_json?: JsonValue, executor_config?: JsonValue, backend_selection?: BackendSelectionRequestDto, };
+export type AgentRunForkSubmitRequest = { input: Array<UserInput>, client_command_id: string, executor_config?: JsonValue, title?: string, fork_point_ref?: SessionMessageRefDto, metadata_json?: JsonValue, backend_selection?: BackendSelectionRequestDto, };
 
 export type AgentRunMailboxMessageContentView = { id: string, input: JsonValue, };
 

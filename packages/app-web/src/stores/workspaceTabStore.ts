@@ -100,6 +100,18 @@ interface WorkspaceTabState {
   activateTab: (tabId: string) => void;
   /** 按 URI 查找并激活同类型 Tab，不存在则新建 */
   openOrActivate: (typeId: string, uri: string, options?: WorkspaceTabLayoutOptions) => string;
+  /**
+   * 在指定 workspace 中按 URI 打开或激活 Tab。
+   *
+   * 页面首屏 hydration 可能早于 WorkspacePanel 的被动初始化 effect；
+   * 命令式打开必须先原子绑定 workspace，避免随后初始化把新 Tab 重置掉。
+   */
+  openOrActivateInWorkspace: (
+    workspaceKey: string | null,
+    typeId: string,
+    uri: string,
+    options?: WorkspaceTabLayoutOptions,
+  ) => string;
   /** 触发指定 Tab 内容重拉，不改变 URI 或布局持久化结果 */
   refreshTab: (tabId: string) => void;
   /** 拖拽排序后更新顺序 */
@@ -117,6 +129,7 @@ interface WorkspaceTabState {
 }
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let layoutRestoreRevision = 0;
 const PERSIST_DEBOUNCE_MS = 1500;
 
 export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
@@ -127,10 +140,12 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   initialize: (workspaceKey, saved, options) => {
     // 尝试加载已保存的布局（异步，不阻塞初始化）
     if (!saved && workspaceKey) {
+      const restoreRevision = layoutRestoreRevision;
       void loadWorkspaceTabLayout(workspaceKey)
         .then((loaded) => {
           if (
             loaded
+            && restoreRevision === layoutRestoreRevision
             && get().workspaceKey === workspaceKey
             && get().tabs.every((t) => t.pinned)
           ) {
@@ -274,6 +289,13 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
     return get().addTab(typeId, uri, true, options);
   },
 
+  openOrActivateInWorkspace: (workspaceKey, typeId, uri, options) => {
+    if (get().workspaceKey !== workspaceKey) {
+      get().initialize(workspaceKey, null, options);
+    }
+    return get().openOrActivate(typeId, uri, options);
+  },
+
   refreshTab: (tabId) => {
     set((s) => ({
       tabs: s.tabs.map((tab) =>
@@ -309,6 +331,8 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   },
 
   pruneInvalidTabs: (options) => {
+    // 当前投影已经到达；任何更早发起的异步布局恢复都不得再覆盖这次校验。
+    layoutRestoreRevision += 1;
     const state = get();
     const nextTabs = state.tabs.filter(
       (tab) => tab.pinned || canUseTabUri(tab.typeId, tab.uri, options),
@@ -351,6 +375,7 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   },
 
   reset: () => {
+    layoutRestoreRevision += 1;
     if (persistTimer) {
       clearTimeout(persistTimer);
       persistTimer = null;

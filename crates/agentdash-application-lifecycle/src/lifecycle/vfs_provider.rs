@@ -14,11 +14,10 @@ use async_trait::async_trait;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::lifecycle::SessionToolResultCache;
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, encode_node_path_segment};
 use crate::lifecycle::surface::journey::{
-    AgentRunJournalReader, AgentRunJournalRef, LifecycleJourneyError, LifecycleJourneyProjection,
-    SessionItemView, SessionToolResultCacheReader, filter_session_items,
+    AgentRunCompactionArchiveReader, AgentRunJournalReader, AgentRunJournalRef,
+    LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, filter_session_items,
     group_events_into_turn_summaries, item_file_name, session_summary_archives, to_json_pretty,
     tool_result_metadata_for_projection,
 };
@@ -36,7 +35,6 @@ use agentdash_application_vfs::provider::{
 use agentdash_application_vfs::types::{ListOptions, ListResult, ReadResult};
 use agentdash_domain::common::Mount;
 use agentdash_spi::platform::mount::RuntimeFileEntry;
-use agentdash_spi::{SessionCompactionStore, SessionMetaStore};
 
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -51,43 +49,17 @@ impl LifecycleMountProvider {
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
-        session_meta_store: Arc<dyn SessionMetaStore>,
-        session_compaction_store: Arc<dyn SessionCompactionStore>,
         agent_run_journal_reader: Arc<dyn AgentRunJournalReader>,
-    ) -> Self {
-        Self::new_with_tool_result_cache(
-            lifecycle_run_repo,
-            lifecycle_agent_repo,
-            inline_file_repo,
-            skill_asset_repo,
-            session_meta_store,
-            session_compaction_store,
-            SessionToolResultCache::new(),
-            agent_run_journal_reader,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_tool_result_cache(
-        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-        inline_file_repo: Arc<dyn InlineFileRepository>,
-        skill_asset_repo: Arc<dyn SkillAssetRepository>,
-        session_meta_store: Arc<dyn SessionMetaStore>,
-        session_compaction_store: Arc<dyn SessionCompactionStore>,
-        tool_result_cache: Arc<dyn SessionToolResultCacheReader>,
-        agent_run_journal_reader: Arc<dyn AgentRunJournalReader>,
+        agent_run_compaction_archive_reader: Arc<dyn AgentRunCompactionArchiveReader>,
     ) -> Self {
         Self {
             lifecycle_run_repo,
             lifecycle_agent_repo,
             skill_asset_repo,
-            journey: LifecycleJourneyProjection::new_with_tool_result_cache(
+            journey: LifecycleJourneyProjection::new(
                 inline_file_repo,
-                session_meta_store,
-                session_compaction_store,
-                tool_result_cache,
                 agent_run_journal_reader,
+                agent_run_compaction_archive_reader,
             ),
         }
     }
@@ -1563,16 +1535,12 @@ async fn list_session_summary_entries(
     source: &AgentRunJournalRef,
     display_root: &str,
 ) -> Result<Vec<RuntimeFileEntry>, MountError> {
-    let journal = journey
-        .journal_projection(source)
-        .await
-        .map_err(map_journey_err)?;
     let entries = session_summary_archives(
-        journey.session_compaction_store(),
-        &journal.delivery_runtime_session_id,
-    )
-    .await
-    .map_err(map_journey_err)?;
+        journey
+            .compaction_archives(source)
+            .await
+            .map_err(map_journey_err)?,
+    );
     Ok(entries
         .into_iter()
         .filter_map(|(entry, _)| {
@@ -1642,15 +1610,21 @@ async fn list_session_turn_entries_for_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lifecycle::surface::journey::{AgentRunJournalProjection, JourneyResult};
+    use crate::lifecycle::surface::journey::{
+        AgentRunJournalProjection, JourneyResult, SessionCompactionArchive,
+        SessionCompactionArchiveStatus,
+    };
+    use agentdash_agent_protocol::backbone::item::ItemCompletedNotification;
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
+    use agentdash_agent_protocol::{
+        AgentDashThreadItem, BackboneEnvelope, BackboneEvent, SourceInfo, TraceInfo,
+    };
     use agentdash_domain::common::MountCapability;
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
     use agentdash_domain::skill_asset::SkillAsset;
     use agentdash_domain::workflow::{AgentSource, LifecycleAgent};
-    use agentdash_spi::session_persistence::{
-        SessionCompactionRecord, SessionMeta, SessionStoreResult,
-    };
+    use agentdash_spi::PersistedSessionEvent;
     use std::collections::HashMap;
     use std::sync::Mutex;
 
@@ -1859,55 +1833,6 @@ mod tests {
         }
     }
 
-    struct EmptySessionMetaStore;
-
-    #[async_trait]
-    impl SessionMetaStore for EmptySessionMetaStore {
-        async fn create_session(&self, _meta: &SessionMeta) -> SessionStoreResult<()> {
-            Ok(())
-        }
-
-        async fn get_session_meta(
-            &self,
-            _session_id: &str,
-        ) -> SessionStoreResult<Option<SessionMeta>> {
-            Ok(None)
-        }
-
-        async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
-            Ok(Vec::new())
-        }
-
-        async fn save_session_meta(&self, _meta: &SessionMeta) -> SessionStoreResult<()> {
-            Ok(())
-        }
-
-        async fn delete_session(&self, _session_id: &str) -> SessionStoreResult<()> {
-            Ok(())
-        }
-    }
-
-    struct EmptySessionCompactionStore;
-
-    #[async_trait]
-    impl SessionCompactionStore for EmptySessionCompactionStore {
-        async fn get_compaction(
-            &self,
-            _session_id: &str,
-            _compaction_id: &str,
-        ) -> SessionStoreResult<Option<SessionCompactionRecord>> {
-            Ok(None)
-        }
-
-        async fn list_compactions(
-            &self,
-            _session_id: &str,
-            _projection_kind: &str,
-        ) -> SessionStoreResult<Vec<SessionCompactionRecord>> {
-            Ok(Vec::new())
-        }
-    }
-
     struct EmptyAgentRunJournalReader;
 
     #[async_trait]
@@ -1922,9 +1847,89 @@ mod tests {
         }
     }
 
-    fn provider_fixture(
+    struct EmptyAgentRunCompactionArchiveReader;
+
+    #[async_trait]
+    impl AgentRunCompactionArchiveReader for EmptyAgentRunCompactionArchiveReader {
+        async fn list_archives(
+            &self,
+            _reference: AgentRunJournalRef,
+        ) -> JourneyResult<Vec<SessionCompactionArchive>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Clone)]
+    struct FixtureAgentRunJournalReader {
+        projection: AgentRunJournalProjection,
+    }
+
+    #[async_trait]
+    impl AgentRunJournalReader for FixtureAgentRunJournalReader {
+        async fn visible_journal(
+            &self,
+            _reference: AgentRunJournalRef,
+        ) -> JourneyResult<AgentRunJournalProjection> {
+            Ok(self.projection.clone())
+        }
+    }
+
+    #[derive(Clone)]
+    struct FixtureAgentRunCompactionArchiveReader {
+        archives: Vec<SessionCompactionArchive>,
+    }
+
+    #[async_trait]
+    impl AgentRunCompactionArchiveReader for FixtureAgentRunCompactionArchiveReader {
+        async fn list_archives(
+            &self,
+            _reference: AgentRunJournalRef,
+        ) -> JourneyResult<Vec<SessionCompactionArchive>> {
+            Ok(self.archives.clone())
+        }
+    }
+
+    fn item_completed_event(
+        session_id: &str,
+        event_seq: u64,
+        item: AgentDashThreadItem,
+    ) -> PersistedSessionEvent {
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                item,
+                session_id.to_string(),
+                "turn-1".to_string(),
+            )),
+            session_id,
+            SourceInfo {
+                connector_id: "fixture".to_string(),
+                connector_type: "managed_runtime".to_string(),
+                executor_id: None,
+            },
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("turn-1".to_string()),
+            entry_index: Some(0),
+        });
+        PersistedSessionEvent {
+            session_id: session_id.to_string(),
+            event_seq,
+            occurred_at_ms: event_seq as i64,
+            committed_at_ms: event_seq as i64,
+            session_update_type: "item_completed".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            entry_index: Some(0),
+            tool_call_id: None,
+            ephemeral: false,
+            notification: envelope,
+        }
+    }
+
+    fn provider_fixture_with_journey(
         run: LifecycleRun,
         agents: Vec<LifecycleAgent>,
+        journal_reader: Arc<dyn AgentRunJournalReader>,
+        archive_reader: Arc<dyn AgentRunCompactionArchiveReader>,
     ) -> (LifecycleMountProvider, Mount) {
         let mount_agent_id = agents
             .first()
@@ -1939,9 +1944,8 @@ mod tests {
             agent_repo,
             Arc::new(EmptyInlineRepo),
             Arc::new(EmptySkillRepo),
-            Arc::new(EmptySessionMetaStore),
-            Arc::new(EmptySessionCompactionStore),
-            Arc::new(EmptyAgentRunJournalReader),
+            journal_reader,
+            archive_reader,
         );
         let mount = Mount {
             id: "lifecycle".to_string(),
@@ -1960,6 +1964,18 @@ mod tests {
             }),
         };
         (provider, mount)
+    }
+
+    fn provider_fixture(
+        run: LifecycleRun,
+        agents: Vec<LifecycleAgent>,
+    ) -> (LifecycleMountProvider, Mount) {
+        provider_fixture_with_journey(
+            run,
+            agents,
+            Arc::new(EmptyAgentRunJournalReader),
+            Arc::new(EmptyAgentRunCompactionArchiveReader),
+        )
     }
 
     #[tokio::test]
@@ -2036,6 +2052,438 @@ mod tests {
                 .iter()
                 .any(|path| *path == format!("agent-runs/{child_agent_id}/sessions/tool-results"))
         );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_mount_lists_and_reads_messages_and_compaction_summaries() {
+        let project_id = Uuid::new_v4();
+        let run = LifecycleRun::new_plain(project_id);
+        let agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
+        let projection_session_id = format!("agentrun:{}:{}", run.id, agent.id);
+        let message_item: AgentDashThreadItem = codex::ThreadItem::AgentMessage {
+            id: "turn-1:message-1".to_string(),
+            text: "完整的助手消息正文".to_string(),
+            phase: None,
+            memory_citation: None,
+        }
+        .into();
+        let journal_reader = Arc::new(FixtureAgentRunJournalReader {
+            projection: AgentRunJournalProjection {
+                delivery_runtime_session_id: "actual-runtime-thread".to_string(),
+                events: vec![item_completed_event(
+                    &projection_session_id,
+                    1,
+                    message_item,
+                )],
+            },
+        });
+        let archive_reader = Arc::new(FixtureAgentRunCompactionArchiveReader {
+            archives: vec![SessionCompactionArchive {
+                id: "compact-1".to_string(),
+                lifecycle_item_id: "item-compact-1".to_string(),
+                projection_version: 1,
+                completed_event_seq: 2,
+                source_start_event_seq: Some(1),
+                source_end_event_seq: Some(1),
+                summary: "压缩前会话摘要".to_string(),
+                trigger: None,
+                phase: None,
+                strategy: None,
+                token_stats_json: serde_json::json!({"tokens_before": 42}),
+                diagnostics_json: serde_json::Value::Null,
+                turn_id: Some("turn-1".to_string()),
+                entry_index: Some(1),
+                status: SessionCompactionArchiveStatus::ProjectionCommitted,
+            }],
+        });
+        let (provider, mount) =
+            provider_fixture_with_journey(run, vec![agent], journal_reader, archive_reader);
+
+        let messages = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "session/messages".to_string(),
+                    pattern: None,
+                    recursive: false,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("messages list");
+        let message_path = messages
+            .entries
+            .iter()
+            .find(|entry| !entry.is_dir)
+            .expect("message projection file")
+            .path
+            .clone();
+        let message = provider
+            .read_text(&mount, &message_path, &MountOperationContext::default())
+            .await
+            .expect("message read");
+        assert!(message.content.contains("完整的助手消息正文"));
+
+        let summaries = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "session/summaries".to_string(),
+                    pattern: None,
+                    recursive: false,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("summaries list");
+        let summary_path = summaries
+            .entries
+            .iter()
+            .find(|entry| !entry.is_dir)
+            .expect("summary projection file")
+            .path
+            .clone();
+        let summary = provider
+            .read_text(&mount, &summary_path, &MountOperationContext::default())
+            .await
+            .expect("summary read");
+        assert!(summary.content.contains("压缩前会话摘要"));
+        assert!(summary.content.contains("\"trigger\": null"));
+        assert!(summary.content.contains("\"strategy\": null"));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_mount_lists_and_reads_canonical_tool_result_bodies() {
+        let project_id = Uuid::new_v4();
+        let run = LifecycleRun::new_plain(project_id);
+        let agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
+        let projection_session_id = format!("agentrun:{}:{}", run.id, agent.id);
+        let items = vec![
+            codex::ThreadItem::CommandExecution {
+                aggregated_output: Some(Some("command-full-output".to_string())),
+                command: "echo command".to_string(),
+                command_actions: Vec::new(),
+                cwd: codex::LegacyAppPathString("D:/workspace".to_string()),
+                duration_ms: Some(Some(10)),
+                exit_code: Some(Some(0)),
+                id: "turn-1:command".to_string(),
+                process_id: None,
+                source: codex::CommandExecutionSource::Agent,
+                status: codex::CommandExecutionStatus::Completed,
+            },
+            codex::ThreadItem::DynamicToolCall {
+                arguments: serde_json::json!({"path": "README.md"}),
+                content_items: Some(Some(vec![
+                    codex::DynamicToolCallOutputContentItem::InputText {
+                        text: "dynamic-full-output".to_string(),
+                    },
+                ])),
+                duration_ms: Some(Some(12)),
+                id: "turn-1:dynamic".to_string(),
+                namespace: None,
+                status: codex::DynamicToolCallStatus::Completed,
+                success: Some(Some(true)),
+                tool: "read_file".to_string(),
+            },
+            codex::ThreadItem::McpToolCall {
+                app_context: None,
+                arguments: serde_json::json!({"query": "fixture"}),
+                duration_ms: Some(Some(14)),
+                error: None,
+                id: "turn-1:mcp".to_string(),
+                mcp_app_resource_uri: None,
+                plugin_id: None,
+                result: Some(Some(codex::McpToolCallResult {
+                    content: vec![serde_json::json!({
+                        "type": "text",
+                        "text": "mcp-full-output"
+                    })],
+                    meta: None,
+                    structured_content: None,
+                })),
+                server: "fixture-server".to_string(),
+                status: codex::McpToolCallStatus::Completed,
+                tool: "fixture-tool".to_string(),
+            },
+        ];
+        let events = items
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| {
+                item_completed_event(
+                    &projection_session_id,
+                    index as u64 + 1,
+                    AgentDashThreadItem::Codex(item),
+                )
+            })
+            .collect();
+        let journal_reader = Arc::new(FixtureAgentRunJournalReader {
+            projection: AgentRunJournalProjection {
+                delivery_runtime_session_id: "actual-runtime-thread".to_string(),
+                events,
+            },
+        });
+        let (provider, mount) = provider_fixture_with_journey(
+            run,
+            vec![agent],
+            journal_reader,
+            Arc::new(FixtureAgentRunCompactionArchiveReader {
+                archives: Vec::new(),
+            }),
+        );
+
+        let index = provider
+            .read_text(
+                &mount,
+                "session/tool-results",
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("tool result index");
+        let index_json: serde_json::Value =
+            serde_json::from_str(&index.content).expect("tool result index json");
+        let entries = index_json.as_array().expect("tool result metadata array");
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().all(|entry| {
+            entry
+                .pointer("/body_status/status")
+                .and_then(|value| value.as_str())
+                == Some("available")
+        }));
+
+        for (body_alias, expected) in [
+            ("command", "command-full-output"),
+            ("dynamic", "dynamic-full-output"),
+            ("mcp", "mcp-full-output"),
+        ] {
+            let body = provider
+                .read_text(
+                    &mount,
+                    &format!("session/tool-results/turn-1/{body_alias}/result.txt"),
+                    &MountOperationContext::default(),
+                )
+                .await
+                .unwrap_or_else(|error| panic!("{body_alias} tool result read: {error}"));
+            assert_eq!(body.content, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn current_lifecycle_vfs_matches_pinned_main_observable_capture() {
+        let project_id = Uuid::nil();
+        let mut run = LifecycleRun::new_plain(project_id);
+        run.id = Uuid::parse_str("10000000-0000-0000-0000-000000000001").unwrap();
+        let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
+        agent.id = Uuid::parse_str("20000000-0000-0000-0000-000000000002").unwrap();
+        let projection_session_id = format!("agentrun:{}:{}", run.id, agent.id);
+        let mcp_result = codex::McpToolCallResult {
+            content: vec![serde_json::json!({
+                "type": "text",
+                "text": "mcp retained body"
+            })],
+            meta: Some(serde_json::json!({
+                "truncation": {"policy": "head_tail", "originalBytes": 4096}
+            })),
+            structured_content: Some(serde_json::Value::Null),
+        };
+        let events = vec![
+            item_completed_event(
+                &projection_session_id,
+                1,
+                codex::ThreadItem::AgentMessage {
+                    id: "turn-1:message".to_string(),
+                    text: "canonical assistant body".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                }
+                .into(),
+            ),
+            item_completed_event(
+                &projection_session_id,
+                2,
+                codex::ThreadItem::CommandExecution {
+                    aggregated_output: Some(Some("command complete body\n".to_string())),
+                    command: "echo complete".to_string(),
+                    command_actions: Vec::new(),
+                    cwd: codex::LegacyAppPathString("D:/workspace".to_string()),
+                    duration_ms: Some(Some(10)),
+                    exit_code: Some(Some(0)),
+                    id: "turn-1:command".to_string(),
+                    process_id: None,
+                    source: codex::CommandExecutionSource::Agent,
+                    status: codex::CommandExecutionStatus::Completed,
+                }
+                .into(),
+            ),
+            item_completed_event(
+                &projection_session_id,
+                3,
+                codex::ThreadItem::McpToolCall {
+                    app_context: None,
+                    arguments: serde_json::json!({"path": "large.log"}),
+                    duration_ms: Some(Some(20)),
+                    error: None,
+                    id: "turn-1:mcp".to_string(),
+                    mcp_app_resource_uri: None,
+                    plugin_id: None,
+                    result: Some(Some(mcp_result)),
+                    server: "fixture-server".to_string(),
+                    status: codex::McpToolCallStatus::Completed,
+                    tool: "read".to_string(),
+                }
+                .into(),
+            ),
+        ];
+        let journal_reader = Arc::new(FixtureAgentRunJournalReader {
+            projection: AgentRunJournalProjection {
+                delivery_runtime_session_id: "actual-runtime-thread".to_string(),
+                events,
+            },
+        });
+        let archive_reader = Arc::new(FixtureAgentRunCompactionArchiveReader {
+            archives: vec![SessionCompactionArchive {
+                id: "compact-1".to_string(),
+                lifecycle_item_id: "item-compact-1".to_string(),
+                projection_version: 1,
+                completed_event_seq: 4,
+                source_start_event_seq: Some(1),
+                source_end_event_seq: Some(3),
+                summary: "canonical compacted summary".to_string(),
+                trigger: None,
+                phase: None,
+                strategy: None,
+                token_stats_json: serde_json::json!({"tokens_before": 42}),
+                diagnostics_json: serde_json::Value::Null,
+                turn_id: Some("turn-1".to_string()),
+                entry_index: Some(3),
+                status: SessionCompactionArchiveStatus::ProjectionCommitted,
+            }],
+        });
+        let (provider, mount) =
+            provider_fixture_with_journey(run, vec![agent], journal_reader, archive_reader);
+
+        let message_list = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "session/messages".to_string(),
+                    pattern: None,
+                    recursive: false,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .unwrap();
+        let message_paths = message_list
+            .entries
+            .iter()
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        let message_body = provider
+            .read_text(
+                &mount,
+                message_paths.first().expect("message path"),
+                &MountOperationContext::default(),
+            )
+            .await
+            .unwrap()
+            .content;
+
+        let tool_list = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "session/tool-results".to_string(),
+                    pattern: None,
+                    recursive: true,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .unwrap();
+        let tool_paths = tool_list
+            .entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        let tool_index = provider
+            .read_text(
+                &mount,
+                "session/tool-results",
+                &MountOperationContext::default(),
+            )
+            .await
+            .unwrap();
+        let tool_metadata: Vec<serde_json::Value> =
+            serde_json::from_str(&tool_index.content).unwrap();
+        let mut tool_reads = Vec::new();
+        for metadata in tool_metadata {
+            let result_path = metadata["result_path"].as_str().unwrap();
+            let body = provider
+                .read_text(&mount, result_path, &MountOperationContext::default())
+                .await
+                .unwrap()
+                .content;
+            tool_reads.push(serde_json::json!({
+                "metadata": metadata,
+                "body": body,
+            }));
+        }
+        let summary_list = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "session/summaries".to_string(),
+                    pattern: None,
+                    recursive: false,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .unwrap();
+        let summary_paths = summary_list
+            .entries
+            .iter()
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        let summary_markdown = provider
+            .read_text(
+                &mount,
+                summary_paths.first().expect("summary path"),
+                &MountOperationContext::default(),
+            )
+            .await
+            .unwrap()
+            .content;
+        let capture = serde_json::json!({
+            "messages": {
+                "list_paths": message_paths,
+                "reads": [{"path": message_paths[0], "body": message_body}],
+            },
+            "tool_results": {
+                "list_paths": tool_paths,
+                "reads": tool_reads,
+            },
+            "summaries": {
+                "list_paths": summary_paths,
+                "reads": [{
+                    "path": summary_paths[0],
+                    "summary": "canonical compacted summary",
+                    "trigger": serde_json::Value::Null,
+                    "strategy": serde_json::Value::Null,
+                    "contains_summary": summary_markdown.ends_with("canonical compacted summary"),
+                    "contains_null_trigger": summary_markdown.contains("\"trigger\": null"),
+                    "contains_null_strategy": summary_markdown.contains("\"strategy\": null"),
+                }],
+            },
+        });
+        let expected: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agentdash-agent-runtime-test-support/fixtures/session-parity/main/lifecycle-vfs-observables.json"
+        ))
+        .unwrap();
+        assert_eq!(capture, expected["protected_observables"]);
     }
 
     #[tokio::test]

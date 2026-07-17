@@ -1,22 +1,17 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use super::context_frame::ContextFrameChanged;
+
 /// 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum PlatformEvent {
+    /// Materialized platform context presentation changed.
+    ContextFrameChanged(Box<ContextFrameChanged>),
     /// Connector 绑定了底层执行器 session（用于 follow-up / resume）。
     ExecutorSessionBound { executor_session_id: String },
-
-    /// 来源执行器提供了已有会话标题（如 Codex `Thread.name`）。
-    SourceSessionTitleUpdated {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        executor_session_id: Option<String>,
-        title: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        preview: Option<String>,
-        source: String,
-    },
 
     /// Hook 运行时追踪条目。
     HookTrace(Box<HookTracePayload>),
@@ -37,7 +32,12 @@ pub enum PlatformEvent {
     SessionRewound(SessionRewound),
 
     /// AgentRun control-plane projection invalidation hint.
-    ControlPlaneProjectionChanged(ControlPlaneProjectionChanged),
+    ControlPlaneProjectionChanged(Box<ControlPlaneProjectionChanged>),
+
+    /// Best-effort request for the observing workspace UI to open one module presentation.
+    ///
+    /// This is an imperative presentation intent, not a resource-surface projection change.
+    WorkspaceModulePresentationRequested(Box<WorkspaceModulePresentationRequested>),
 
     /// 交互式终端输出流数据（路由到前端 xterm.js，不作为 chat entry 展示）。
     TerminalOutput { terminal_id: String, data: String },
@@ -53,7 +53,7 @@ pub enum PlatformEvent {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeTerminalDiagnostic {
     pub kind: String,
@@ -70,7 +70,7 @@ pub struct RuntimeTerminalDiagnostic {
     pub retryable: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct ControlPlaneProjectionChanged {
     pub projection: ControlPlaneProjection,
@@ -85,11 +85,9 @@ pub struct ControlPlaneProjectionChanged {
     pub mailbox_message_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_module_presentation: Option<ControlPlaneWorkspaceModulePresentation>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlPlaneProjection {
     Workspace,
@@ -102,7 +100,7 @@ pub enum ControlPlaneProjection {
     Title,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlPlaneProjectionChangeReason {
     AgentRunLineageChanged,
@@ -114,15 +112,14 @@ pub enum ControlPlaneProjectionChangeReason {
     CompanionResult,
     HookEffectApplied,
     HookAutoResumeQueued,
-    WorkspaceModulePresented,
     CapabilityStateChanged,
     ContextFrameChanged,
     TitleChanged,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub struct ControlPlaneWorkspaceModulePresentation {
+pub struct WorkspaceModulePresentationRequested {
     pub module_id: String,
     pub view_key: String,
     pub renderer_kind: String,
@@ -134,7 +131,7 @@ pub struct ControlPlaneWorkspaceModulePresentation {
     pub diagnostics: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ProviderAttemptStatus {
     pub turn_id: String,
@@ -155,7 +152,7 @@ pub struct ProviderAttemptStatus {
     pub model: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderAttemptPhase {
     Connecting,
@@ -167,7 +164,7 @@ pub enum ProviderAttemptPhase {
     Succeeded,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionRewound {
     pub discarded_turn_id: String,
@@ -183,7 +180,7 @@ pub struct SessionRewound {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionRewindReason {
     ProviderRetry,
@@ -192,7 +189,7 @@ pub enum SessionRewindReason {
 }
 
 /// Hook trace payload — 对应原 `hook_trace_notification.rs` 产出的信息。
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct HookTracePayload {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -204,7 +201,7 @@ pub struct HookTracePayload {
 }
 
 /// Hook trace 的结构化数据体。
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct HookTraceData {
     pub trigger: HookTraceTrigger,
@@ -236,7 +233,7 @@ pub struct HookTraceData {
     pub injections: Vec<HookTraceInjection>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HookTraceTrigger {
     SessionStart,
@@ -253,7 +250,7 @@ pub enum HookTraceTrigger {
     BeforeProviderRequest,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HookTraceSeverity {
     Error,
@@ -294,7 +291,7 @@ impl HookTraceSeverity {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct HookTraceCompletion {
     pub mode: String,
@@ -303,7 +300,7 @@ pub struct HookTraceCompletion {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct HookTraceDiagnostic {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -312,7 +309,7 @@ pub struct HookTraceDiagnostic {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct HookTraceInjection {
     #[serde(skip_serializing_if = "Option::is_none")]

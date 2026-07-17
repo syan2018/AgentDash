@@ -52,11 +52,10 @@ packages/app-web/src/
 │   ├── vfs/                        # VFS 浏览器
 │   ├── context-source/             # 上下文来源配置
 │   ├── mcp-shared/                 # MCP Server 配置共享组件
-│   ├── permission/                 # Permission Grant 审批 UI（PermissionGrantCard）
 │   └── routine/                    # Routine 自动触发
 ├── pages/                          # 页面组件
 │   ├── DashboardPage.tsx           # Project 看板页
-│   ├── AgentRunWorkspacePage.tsx   # AgentRun 工作台页（RuntimeSession 事件流）
+│   ├── AgentRunWorkspacePage.tsx   # AgentRun工作台（canonical Runtime snapshot/events）
 │   ├── StoryPage.tsx               # Story 详情页
 │   ├── ProjectSettingsPage.tsx     # 项目设置页
 │   ├── SettingsPage.tsx            # 全局设置页
@@ -74,8 +73,7 @@ packages/app-web/src/
 │   ├── skillAsset.ts               # Skill 资产
 │   ├── mcpPreset.ts                # MCP Preset 管理
 │   ├── directory.ts                # 用户/组目录
-│   ├── contextAudit.ts             # 上下文审计
-│   └── permission.ts              # Permission Grant API 客户端
+│   └── contextAudit.ts             # 上下文审计
 ├── stores/                         # 全局 Zustand stores
 │   ├── projectStore.ts             # Project CRUD + 选择
 │   ├── workspaceStore.ts           # Workspace CRUD + 状态
@@ -104,8 +102,7 @@ packages/app-web/src/
 │   ├── canvas.ts                   # Canvas 类型
 │   ├── mcp-preset.ts               # MCP Preset 类型
 │   ├── skill-asset.ts              # Skill 资产类型
-│   ├── terminal.ts                 # Terminal 类型
-│   └── permission.ts              # Permission Grant 类型（GrantScope / GrantStatus / PermissionGrant）
+│   └── terminal.ts                 # Terminal 类型
 ├── desktop/                        # Tauri 桌面端相关
 ├── App.tsx                         # 路由根组件
 └── main.tsx                        # 入口

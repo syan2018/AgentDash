@@ -31,6 +31,12 @@ impl AgentTool for WaitTool {
     fn parameters_schema(&self) -> Value {
         schema_value(schemars::schema_for!(WaitActivityRequest))
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_wait_activity_dynamic_lifecycle".to_string())
+    }
 
     async fn execute(
         &self,

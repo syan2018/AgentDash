@@ -1,14 +1,32 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::agent_run_control_effect::{
-    ProducerLastMessageEvidence, RuntimeTerminalDiagnostic,
+use agentdash_application_ports::agent_run_runtime::{
+    AgentRunRuntimeBindingRepository, AgentRunRuntimeTarget,
 };
 use agentdash_domain::workflow::{
-    AgentRunDeliveryBindingRepository, GateWaitPolicyEnvelope, LifecycleGate,
-    LifecycleGateRepository, WaitProducerRef,
+    GateWaitPolicyEnvelope, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeTerminalDiagnostic {
+    pub kind: String,
+    pub code: Option<String>,
+    pub http_status: Option<u16>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub message: String,
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProducerLastMessageEvidence {
+    pub summary: String,
+    pub message_path: String,
+    pub journal_session_id: String,
+    pub source_event_seq: u64,
+}
 
 use crate::WorkflowApplicationError;
 
@@ -56,17 +74,17 @@ pub enum GateProducerTerminalConvergenceOutcomeKind {
 #[derive(Clone)]
 pub struct GateProducerTerminalConvergenceService {
     gate_repo: Arc<dyn LifecycleGateRepository>,
-    delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+    runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
 }
 
 impl GateProducerTerminalConvergenceService {
     pub fn new(
         gate_repo: Arc<dyn LifecycleGateRepository>,
-        delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+        runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     ) -> Self {
         Self {
             gate_repo,
-            delivery_binding_repo,
+            runtime_binding_repo,
         }
     }
 
@@ -184,9 +202,13 @@ impl GateProducerTerminalConvergenceService {
         let WaitProducerRef::AgentRunDelivery { agent_id, .. } = &event.producer;
         let wake_target = &envelope.wait_policy.wake_target;
         let target_binding = self
-            .delivery_binding_repo
-            .get_current(wake_target.target_run_id, wake_target.target_agent_id)
-            .await?
+            .runtime_binding_repo
+            .load(&AgentRunRuntimeTarget {
+                run_id: wake_target.target_run_id,
+                agent_id: wake_target.target_agent_id,
+            })
+            .await
+            .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?
             .ok_or_else(|| {
                 WorkflowApplicationError::Conflict(format!(
                     "gate producer terminal convergence gate {} missing target delivery binding",
@@ -199,9 +221,9 @@ impl GateProducerTerminalConvergenceService {
             request_id: payload_request_id(gate, envelope, &payload),
             target_run_id: wake_target.target_run_id,
             target_agent_id: wake_target.target_agent_id,
-            target_delivery_runtime_session_id: target_binding.runtime_session_id,
+            target_runtime_thread_id: target_binding.thread_id.to_string(),
             producer_agent_id: *agent_id,
-            producer_delivery_runtime_session_id: event.trace_ref.clone(),
+            producer_runtime_thread_id: event.trace_ref.clone(),
             resolved_turn_id: payload
                 .get("resolved_turn_id")
                 .and_then(Value::as_str)
@@ -314,16 +336,20 @@ fn producer_resolved_by(producer: &WaitProducerRef) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
+        collections::{BTreeSet, HashMap},
+        str::FromStr,
         sync::{Arc, Mutex},
     };
 
+    use agentdash_agent_runtime_contract::*;
+    use agentdash_application_ports::agent_run_runtime::{
+        AgentRunRuntimeBinding, AgentRunRuntimeBindingError,
+    };
     use agentdash_domain::{
         DomainError,
         workflow::{
-            AgentRunDeliveryBinding, DeliveryBindingStatus, GateWaitPolicy,
-            RuntimeSessionExecutionAnchor, WaitExpectedResult, WaitTerminalOutcome,
-            WaitTerminalPolicy, WaitWakeTarget,
+            GateWaitPolicy, WaitExpectedResult, WaitTerminalOutcome, WaitTerminalPolicy,
+            WaitWakeTarget,
         },
     };
 
@@ -435,54 +461,133 @@ mod tests {
         }
     }
 
-    struct FixtureDeliveryBindingRepo {
-        binding: AgentRunDeliveryBinding,
+    struct FixtureRuntimeBindingRepo {
+        binding: AgentRunRuntimeBinding,
     }
 
     #[async_trait::async_trait]
-    impl AgentRunDeliveryBindingRepository for FixtureDeliveryBindingRepo {
-        async fn upsert(&self, _binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
-            Ok(())
+    impl AgentRunRuntimeBindingRepository for FixtureRuntimeBindingRepo {
+        async fn load(
+            &self,
+            target: &AgentRunRuntimeTarget,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((&self.binding.target == target).then(|| self.binding.clone()))
         }
 
-        async fn upsert_if_current_runtime_session(
+        async fn load_by_thread_id(
             &self,
-            binding: &AgentRunDeliveryBinding,
-        ) -> Result<bool, DomainError> {
-            if self.binding.run_id == binding.run_id
-                && self.binding.agent_id == binding.agent_id
-                && self.binding.runtime_session_id != binding.runtime_session_id
-            {
-                return Ok(false);
-            }
-            Ok(true)
-        }
-
-        async fn get_current(
-            &self,
-            run_id: Uuid,
-            agent_id: Uuid,
-        ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
-            if self.binding.run_id == run_id && self.binding.agent_id == agent_id {
-                Ok(Some(self.binding.clone()))
-            } else {
-                Ok(None)
-            }
+            thread_id: &RuntimeThreadId,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((&self.binding.thread_id == thread_id).then(|| self.binding.clone()))
         }
 
         async fn list_by_run(
             &self,
             run_id: Uuid,
-        ) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
-            if self.binding.run_id == run_id {
-                Ok(vec![self.binding.clone()])
-            } else {
-                Ok(Vec::new())
-            }
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((self.binding.target.run_id == run_id)
+                .then(|| self.binding.clone())
+                .into_iter()
+                .collect())
         }
 
-        async fn delete_by_session(&self, _runtime_session_id: &str) -> Result<(), DomainError> {
-            Ok(())
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((self.binding.target.agent_id == agent_id)
+                .then(|| self.binding.clone())
+                .into_iter()
+                .collect())
+        }
+
+        async fn insert(
+            &self,
+            binding: AgentRunRuntimeBinding,
+        ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+            Ok(binding)
+        }
+    }
+
+    fn runtime_id<T: FromStr>(value: &str) -> T
+    where
+        T::Err: std::fmt::Debug,
+    {
+        value.parse().expect("valid runtime id")
+    }
+
+    fn runtime_binding(run_id: Uuid, agent_id: Uuid) -> AgentRunRuntimeBinding {
+        AgentRunRuntimeBinding {
+            target: AgentRunRuntimeTarget { run_id, agent_id },
+            presentation_thread_id: runtime_id("parent-presentation-session"),
+            thread_id: runtime_id("parent-session"),
+            binding_id: runtime_id("parent-binding"),
+            binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
+            driver_generation: RuntimeDriverGeneration(1),
+            source_thread_id: runtime_id("parent-source"),
+            profile_digest: runtime_id("parent-profile"),
+            profile_provenance: ProfileProvenance {
+                service_digest: runtime_id("parent-service"),
+                transport_digest: runtime_id("parent-transport"),
+                host_policy_digest: runtime_id("parent-policy"),
+            },
+            bound_profile: RuntimeProfile {
+                reference_class: ReferenceRuntimeClass::ManagedThread,
+                input: InputProfile {
+                    modalities: BTreeSet::new(),
+                },
+                instruction: InstructionProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                tools: ToolProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                    cancellation: true,
+                },
+                workspace: WorkspaceProfile {
+                    capabilities: BTreeSet::new(),
+                    mechanism: DeliveryMechanism::Native,
+                },
+                interactions: InteractionProfile {
+                    kinds: BTreeSet::new(),
+                    durable_correlation: true,
+                },
+                lifecycle: BTreeSet::new(),
+                hooks: HookProfile {
+                    points: Vec::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                context: ContextProfile {
+                    capabilities: BTreeSet::new(),
+                    fidelity: ContextFidelity::Opaque,
+                    activation_idempotent: false,
+                },
+                telemetry_config: BTreeSet::new(),
+            },
+            surface: agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
+                source_frame_id: "parent-frame".to_string(),
+                surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(1),
+                surface_digest: runtime_id("parent-surface"),
+                vfs_digest: "parent-vfs".to_string(),
+                context_recipe_revision: agentdash_agent_runtime_contract::ContextRecipeRevision(1),
+                context_digest: runtime_id("parent-context"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                tool_set_digest: "parent-tools".to_string(),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: runtime_id("parent-hook"),
+                    entries: Vec::new(),
+                },
+                terminal_hook_effect_binding: None,
+            },
+            settings_revision: ThreadSettingsRevision(0),
+            context_delivery_target:
+                agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget {
+                    connector_id: "pi-agent".to_string(),
+                    executor: "PI_AGENT".to_string(),
+                },
         }
     }
 
@@ -564,20 +669,11 @@ mod tests {
     ) -> (Arc<FixtureGateRepo>, GateProducerTerminalConvergenceService) {
         let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(gate).await.expect("seed gate");
-        let parent_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "parent-session".to_string(),
-            run_id,
-            Uuid::new_v4(),
-            parent_agent_id,
-        );
-        let delivery_repo = Arc::new(FixtureDeliveryBindingRepo {
-            binding: AgentRunDeliveryBinding::from_anchor(
-                &parent_anchor,
-                DeliveryBindingStatus::Running,
-                parent_anchor.updated_at,
-            ),
+        let runtime_binding_repo = Arc::new(FixtureRuntimeBindingRepo {
+            binding: runtime_binding(run_id, parent_agent_id),
         });
-        let service = GateProducerTerminalConvergenceService::new(gate_repo.clone(), delivery_repo);
+        let service =
+            GateProducerTerminalConvergenceService::new(gate_repo.clone(), runtime_binding_repo);
         (gate_repo, service)
     }
 
@@ -649,7 +745,7 @@ mod tests {
             json!(child_frame_id.to_string())
         );
         assert_eq!(
-            payload["result_refs"]["child"]["delivery_runtime_session_id"],
+            payload["result_refs"]["child"]["runtime_thread_id"],
             json!("child-session")
         );
         let evidence = payload["result_refs"]["evidence"]
@@ -662,7 +758,7 @@ mod tests {
                     == Some(&json!(format!(
                         "lifecycle://agent-runs/{child_agent_id}/sessions/messages"
                     )))
-                && entry.get("delivery_runtime_session_id") == Some(&json!("child-session"))
+                && entry.get("runtime_thread_id") == Some(&json!("child-session"))
         }));
         assert!(
             !serde_json::to_string(&payload["result_refs"])

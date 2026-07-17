@@ -1,9 +1,10 @@
-use agentdash_agent_types::AgentDashThreadItem;
-use codex_app_server_protocol as codex;
+use crate::AgentDashThreadItem;
+use crate::codex_app_server_protocol as codex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "backbone/")]
 pub struct ItemStartedNotification {
@@ -14,7 +15,7 @@ pub struct ItemStartedNotification {
     pub started_at_ms: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "backbone/")]
 pub struct ItemUpdatedNotification {
@@ -25,7 +26,7 @@ pub struct ItemUpdatedNotification {
     pub updated_at_ms: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "backbone/")]
 pub struct ItemCompletedNotification {

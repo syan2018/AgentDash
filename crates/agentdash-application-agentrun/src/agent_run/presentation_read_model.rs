@@ -3,10 +3,10 @@ use std::{io, sync::Arc};
 use serde_json::Value;
 use uuid::Uuid;
 
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
-    RuntimeSessionExecutionAnchorRepository,
 };
 
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
@@ -30,7 +30,7 @@ pub struct AgentRunPresentationReadModelQueryRepos {
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
     pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
 }
 
 #[derive(Clone)]
@@ -169,12 +169,17 @@ impl AgentRunPresentationReadModelQuery {
         };
         let runtime_session_refs = self
             .repos
-            .execution_anchor_repo
+            .runtime_binding_repo
             .list_by_agent(frame.agent_id)
-            .await?
+            .await
+            .map_err(|error| {
+                AgentRunPresentationReadModelError::Application(WorkflowApplicationError::Internal(
+                    error.to_string(),
+                ))
+            })?
             .into_iter()
-            .map(|anchor| RuntimeSessionRefReadModel {
-                runtime_session_id: anchor.runtime_session_id,
+            .map(|binding| RuntimeSessionRefReadModel {
+                runtime_session_id: binding.thread_id.to_string(),
             })
             .collect();
         Ok(AgentFrameRuntimeReadModel {

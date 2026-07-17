@@ -997,17 +997,56 @@ describe("aggregateEntries — tool burst", () => {
 
   it("T29: agent message removes empty provider thinking placeholder", () => {
     const agent = mkMessageEntry("m1", "正式输出");
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([agent]), providerWaitingSeqs(1));
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([agent]), new Map());
 
     expect(display).toHaveLength(1);
     expect(isThinkingGroup(display[0])).toBe(false);
     expect((display[0] as SessionDisplayEntry).id).toBe("m1");
   });
 
+  it("T29b: a later provider wait creates a new thinking placeholder after prior output", () => {
+    const agent = mkMessageEntry("m1", "先执行工具");
+    const tool = mkCmdEntry("c1", "ls");
+    const display = mergeThinkingIntoDisplayItems(
+      aggregateEntries([agent, tool]),
+      providerWaitingSeqs(3),
+    );
+
+    expect(display).toHaveLength(3);
+    expect((display[0] as SessionDisplayEntry).id).toBe("m1");
+    expect((display[1] as SessionDisplayEntry).id).toBe("c1");
+    expect(isThinkingGroup(display[2])).toBe(true);
+    const group = display[2] as AggregatedThinkingGroup;
+    expect(group.entries).toHaveLength(0);
+    expect(group.isStreamingThinking).toBe(true);
+  });
+
+  it("T29c: a later provider wait preserves historical reasoning in place", () => {
+    const reasoning = mkReasoningEntryWithText("r1", "第一轮分析");
+    const agent = mkMessageEntry("m1", "先执行工具");
+    const tool = mkCmdEntry("c1", "ls");
+    const display = mergeThinkingIntoDisplayItems(
+      aggregateEntries([reasoning, agent, tool]),
+      providerWaitingSeqs(4),
+    );
+
+    expect(display).toHaveLength(4);
+    expect(isThinkingGroup(display[0])).toBe(true);
+    const historicalGroup = display[0] as AggregatedThinkingGroup;
+    expect(historicalGroup.entries.map((entry) => entry.id)).toEqual(["r1"]);
+    expect(historicalGroup.isStreamingThinking).toBe(false);
+    expect((display[1] as SessionDisplayEntry).id).toBe("m1");
+    expect((display[2] as SessionDisplayEntry).id).toBe("c1");
+    expect(isThinkingGroup(display[3])).toBe(true);
+    const liveGroup = display[3] as AggregatedThinkingGroup;
+    expect(liveGroup.entries).toHaveLength(0);
+    expect(liveGroup.isStreamingThinking).toBe(true);
+  });
+
   it("T30: reasoning stays as historical thinking once agent message arrives", () => {
     const reasoning = mkReasoningEntryWithText("r1", "分析中");
     const agent = mkMessageEntry("m1", "正式输出");
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning, agent]), providerWaitingSeqs(1));
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning, agent]), new Map());
 
     expect(display).toHaveLength(2);
     expect(isThinkingGroup(display[0])).toBe(true);
@@ -1023,7 +1062,7 @@ describe("aggregateEntries — tool burst", () => {
     const agent = mkMessageEntry("m1", "正式输出");
     const display = mergeThinkingIntoDisplayItems(
       aggregateEntries([user, reasoning, agent]),
-      providerWaitingSeqs(2),
+      new Map(),
     );
 
     expect(display).toHaveLength(3);

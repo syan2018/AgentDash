@@ -1,4 +1,4 @@
-﻿/**
+/**
  * AgentRunWorkspacePage — AgentRun 交互工作台。
  *
  * 用户认知中 "AgentRun = 一个可继续交互的工作台"。此页面是用户点击 AgentRun 后的主视图，
@@ -21,7 +21,6 @@ import {
   refreshAgentRunListState,
   useAgentRunListState,
 } from "../features/agent/agent-run-list-state-store";
-import type { CompanionSubagentKnownAgentRef } from "../features/session/model/companionSubagentDispatch";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
@@ -37,20 +36,18 @@ import {
   type ProjectBackendAccess,
 } from "../services/backendAccess";
 import type { BackendSelectionRequestDto } from "../generated/agent-run-mailbox-contracts";
-import { useWorkspaceModuleStore } from "../features/workspace-module";
 import type {
   BackendConfig,
   RuntimeTraceAgentContext,
   SessionNavigationState,
   AgentRunWorkspaceView,
-  AgentRunListChild,
-  AgentRunWorkspaceListEntry,
   SubjectRunContext,
   ProjectAgentSummary,
   ProjectAgentRunStartResult,
   Story,
   StoryNavigationState,
 } from "../types";
+import { collectCompanionSubagentRefs } from "./AgentRunWorkspacePage.companionRefs";
 
 // ─── AgentRunWorkspacePage ────────────────────────────────────────
 
@@ -74,36 +71,6 @@ function backendDisplayLabel(backend: BackendConfig): string {
     || "未命名 Backend";
 }
 
-function collectCompanionSubagentRefs(
-  entries: AgentRunWorkspaceListEntry[],
-  currentRunId: string | null,
-): CompanionSubagentKnownAgentRef[] {
-  const refs: CompanionSubagentKnownAgentRef[] = [];
-  for (const entry of entries) {
-    if (currentRunId && entry.run_ref.run_id !== currentRunId) continue;
-    for (const child of entry.children) {
-      appendCompanionSubagentRef(refs, child);
-    }
-  }
-  return refs;
-}
-
-function appendCompanionSubagentRef(
-  refs: CompanionSubagentKnownAgentRef[],
-  child: AgentRunListChild,
-): void {
-  refs.push({
-    run_id: child.run_ref.run_id,
-    agent_id: child.agent_ref.agent_id,
-    display_title: child.shell.display_title,
-    delivery_status: child.shell.delivery_status,
-    last_activity_at: child.shell.last_activity_at,
-  });
-  for (const nested of child.children) {
-    appendCompanionSubagentRef(refs, nested);
-  }
-}
-
 export function AgentRunWorkspacePage({
   runId: propRunId,
   agentId: propAgentId,
@@ -122,7 +89,6 @@ export function AgentRunWorkspacePage({
   const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
-  const fetchWorkspaceModules = useWorkspaceModuleStore((state) => state.fetchProject);
 
   const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
     story_id: string;
@@ -282,10 +248,6 @@ export function AgentRunWorkspacePage({
     ?? ownerStory?.project_id
     ?? draftProjectIdValue
     ?? null;
-  const refreshWorkspaceModuleCatalog = useCallback(() => {
-    if (!ownerProjectId) return;
-    void fetchWorkspaceModules(ownerProjectId);
-  }, [fetchWorkspaceModules, ownerProjectId]);
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
@@ -468,9 +430,7 @@ export function AgentRunWorkspacePage({
     chatModel: controlPlaneChatModel,
     chatIntents: controlPlaneChatIntents,
     handleMessageSent,
-    handleTurnEnd,
-    handleTaskPlanChanged,
-    handleSystemEvent,
+    handleLiveEvent,
     handleWorkspaceModuleOpened,
   } = useAgentRunWorkspaceControlPlane({
     currentRunId,
@@ -488,7 +448,6 @@ export function AgentRunWorkspacePage({
     onDraftStarted: handleDraftAgentRunStarted,
     onAgentRunRedirect: handleAgentRunRedirect,
     refreshAgentRunList,
-    refreshWorkspaceModuleCatalog,
     openWorkspacePanel: ({ typeId, uri, options }) => {
       expandWorkspacePanel(typeId, uri, options);
     },
@@ -542,6 +501,7 @@ export function AgentRunWorkspacePage({
       : "返回 Story";
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
+    workspaceModules: workspaceControl?.workspace_modules ?? [],
     agentRunRuntimeTarget,
     lifecycleRun: null,
     lifecycleAgent: workspaceControl?.agent ?? null,
@@ -734,9 +694,7 @@ export function AgentRunWorkspacePage({
                 model={chatModel}
                 intents={chatIntents}
                 onMessageSent={handleMessageSent}
-                onTurnEnd={handleTurnEnd}
-                onSystemEvent={handleSystemEvent}
-                onTaskPlanChanged={handleTaskPlanChanged}
+                onLiveEvent={handleLiveEvent}
                 inputPrefix={chatInputPrefix}
                 inputToolbarSlot={backendSelectionBar}
                 openWorkspacePanel={({ typeId, uri, options }) => {

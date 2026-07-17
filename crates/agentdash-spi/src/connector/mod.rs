@@ -1,10 +1,15 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::PathBuf,
-    pin::Pin,
     sync::Arc,
 };
 
+use agentdash_agent_protocol::{ContextDeliveryPlan, ContextFrame};
+use agentdash_agent_runtime_contract::{
+    DriverItemId, DriverThreadId, DriverTurnId, PresentationItemId, PresentationThreadId,
+    RuntimeBindingId, RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId,
+    ToolSetRevision,
+};
 use agentdash_agent_types::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
@@ -12,13 +17,11 @@ use agentdash_domain::backend::{
 use agentdash_domain::channel::ChannelCapabilityRef;
 use agentdash_domain::common::{AgentConfig, MountCapability, Vfs};
 use async_trait::async_trait;
-use futures::Stream;
-use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::context::capability::SkillEntry;
-use crate::hooks::{ContextDeliveryPlan, ContextFrame, HookRuntimeAccess};
+use crate::hooks::HookRuntimeAccess;
 use crate::platform::memory_discovery::MemoryDiscoveryOutput;
 pub mod capability_delta;
 
@@ -26,37 +29,6 @@ pub use capability_delta::{
     CapabilityStateDelta, DefaultMountDelta, McpServerReadinessSummary, NamedEntityDelta, SetDelta,
     VfsSurfaceDelta, compute_capability_state_delta,
 };
-
-/// 连接器类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectorType {
-    /// 本地子进程执行器（Claude Code, Codex, AMP 等）
-    LocalExecutor,
-    /// 远程 ACP 后端
-    RemoteAcpBackend,
-}
-
-/// 连接器能力声明
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct ConnectorCapabilities {
-    pub supports_cancel: bool,
-    pub supports_steering: bool,
-    pub supports_discovery: bool,
-    pub supports_variants: bool,
-    pub supports_model_override: bool,
-    pub supports_permission_policy: bool,
-    pub supports_source_session_title: bool,
-}
-
-/// 连接器对外暴露的执行器选项（用于前端选择器渲染）
-#[derive(Debug, Clone, Serialize)]
-pub struct AgentInfo {
-    pub id: String,
-    pub name: String,
-    pub variants: Vec<String>,
-    pub available: bool,
-}
 
 /// Session 级执行上下文（Who + Where）。
 ///
@@ -134,7 +106,6 @@ impl RuntimeVfsPathPattern {
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeVfsAccessSource {
     ProjectPreset,
-    PermissionGrant,
     SystemRuntimeProjection,
 }
 
@@ -237,6 +208,11 @@ pub enum ExecutionTurnMode {
 pub struct ExecutionTurnFrame {
     pub mode: ExecutionTurnMode,
     pub hook_runtime: Option<Arc<dyn HookRuntimeAccess>>,
+    /// Canonical owner coordinates for a single Platform Tool invocation.
+    ///
+    /// Business tool providers consume this typed scope directly. HookRuntime remains the Hook
+    /// evaluator and must not be used to infer session/run/frame ownership.
+    pub platform_tool_execution: Option<PlatformToolExecutionContext>,
     pub capability_state: CapabilityState,
     pub runtime_delegates: AgentRuntimeDelegateSet,
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
@@ -252,6 +228,39 @@ pub struct ExecutionTurnFrame {
     /// 内嵌 connector 只持有并调用这里的 `DynAgentTool`，不重新持有
     /// `McpServer` 声明，也不自行区分 direct / relay MCP。
     pub assembled_tools: Vec<agentdash_agent_types::DynAgentTool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformToolExecutionContext {
+    pub run_id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub agent_id: uuid::Uuid,
+    pub frame_id: uuid::Uuid,
+    /// Canonical runtime/control-plane thread owned by the Agent Runtime binding.
+    pub runtime_thread_id: RuntimeThreadId,
+    /// Product delivery/presentation thread used by workflow and transcript associations.
+    pub presentation_thread_id: PresentationThreadId,
+    /// Present only for a callable invocation. Definition/schema materialization retains the
+    /// exact owner surface but has no fabricated per-call coordinates.
+    pub invocation: Option<PlatformToolInvocationCoordinates>,
+    pub launch_evidence_frame_id: uuid::Uuid,
+    pub current_surface_frame_id: uuid::Uuid,
+    pub orchestration_id: Option<uuid::Uuid>,
+    pub node_path: Option<String>,
+    pub node_attempt: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformToolInvocationCoordinates {
+    pub runtime_turn_id: RuntimeTurnId,
+    pub runtime_item_id: RuntimeItemId,
+    pub presentation_item_id: PresentationItemId,
+    pub source_thread_id: DriverThreadId,
+    pub source_turn_id: DriverTurnId,
+    pub source_item_id: DriverItemId,
+    pub binding_id: RuntimeBindingId,
+    pub binding_generation: RuntimeDriverGeneration,
+    pub tool_set_revision: ToolSetRevision,
 }
 
 /// 连接器拿到的一次 `prompt(...)` 调用上下文。
@@ -302,7 +311,6 @@ impl std::fmt::Debug for ExecutionContext {
             .field(
                 "runtime_delegates",
                 &[
-                    self.turn.runtime_delegates.compaction.is_some(),
                     self.turn.runtime_delegates.context_transform.is_some(),
                     self.turn.runtime_delegates.tool_policy.is_some(),
                     self.turn.runtime_delegates.turn_boundary.is_some(),
@@ -941,14 +949,6 @@ mod tests {
     }
 }
 
-pub type ExecutionStream = Pin<
-    Box<
-        dyn Stream<Item = Result<agentdash_agent_protocol::BackboneEnvelope, ConnectorError>>
-            + Send
-            + 'static,
-    >,
->;
-
 /// 运行时工具构建 SPI。
 /// 由 application 层持有，executor 层提供具体实现。
 #[async_trait]
@@ -973,115 +973,4 @@ pub enum ConnectorError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
-}
-
-#[async_trait]
-pub trait AgentConnector: Send + Sync {
-    fn connector_id(&self) -> &'static str;
-
-    fn connector_type(&self) -> ConnectorType;
-
-    fn capabilities(&self) -> ConnectorCapabilities;
-
-    /// 指示给定 executor 是否支持基于 session 仓储的原生消息恢复。
-    ///
-    /// 当返回 `true` 时，session 生命周期层会在冷启动 continuation 场景下
-    /// 传入 `ExecutionContext.restored_session_state`，而不是退化为 continuation 文本。
-    fn supports_repository_restore(&self, _executor: &str) -> bool {
-        false
-    }
-
-    fn list_executors(&self) -> Vec<AgentInfo>;
-
-    async fn discover_options_stream(
-        &self,
-        executor: &str,
-        working_dir: Option<PathBuf>,
-    ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError>;
-
-    async fn discover_options_stream_with_context(
-        &self,
-        executor: &str,
-        context: DiscoveryContext,
-    ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
-        self.discover_options_stream(executor, context.working_dir)
-            .await
-    }
-
-    /// 返回当前进程内该 session 是否仍有可直接续跑的执行器 runtime。
-    ///
-    /// 这与 session 事件广播或订阅状态不同；仅用于判断是否可以跳过仓储恢复。
-    async fn has_live_session(&self, _session_id: &str) -> bool {
-        false
-    }
-
-    async fn supports_session_steering(&self, session_id: &str) -> bool {
-        self.capabilities().supports_steering && self.has_live_session(session_id).await
-    }
-
-    async fn prompt(
-        &self,
-        session_id: &str,
-        follow_up_session_id: Option<&str>,
-        prompt: &PromptPayload,
-        context: ExecutionContext,
-    ) -> Result<ExecutionStream, ConnectorError>;
-
-    async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError>;
-
-    /// 向正在运行的 session 注入用户 steer 消息。
-    ///
-    /// 与 `prompt` 不同，这里不创建新 turn，也不重新进入 launch/claim 流程。
-    async fn steer_session(
-        &self,
-        session_id: &str,
-        _expected_turn_id: &str,
-        _input: Vec<agentdash_agent_protocol::UserInputBlock>,
-    ) -> Result<(), ConnectorError> {
-        Err(ConnectorError::Runtime(format!(
-            "connector `{}` 不支持 session `{session_id}` 的 steering",
-            self.connector_id()
-        )))
-    }
-
-    async fn approve_tool_call(
-        &self,
-        session_id: &str,
-        tool_call_id: &str,
-    ) -> Result<(), ConnectorError>;
-
-    async fn reject_tool_call(
-        &self,
-        session_id: &str,
-        tool_call_id: &str,
-        reason: Option<String>,
-    ) -> Result<(), ConnectorError>;
-
-    /// Phase Node 切换时热更新 session 的工具集。
-    /// `tools` 为 application 层预构建好的完整工具列表（runtime + MCP），
-    /// connector 直接 replace-set 到运行中 agent。
-    /// 默认 no-op — 仅 PiAgentConnector 等 in-process connector 需要实现。
-    async fn update_session_tools(
-        &self,
-        _session_id: &str,
-        _tools: Vec<agentdash_agent_types::DynAgentTool>,
-    ) -> Result<(), ConnectorError> {
-        Ok(())
-    }
-
-    /// 向活跃 session 注入一条用户消息（用于能力变更等 out-of-band 通知）。
-    ///
-    /// 与 `prompt` 不同，这里只是把消息塞进 steering 队列，
-    /// 下一次 LLM 调用前会被自动合并到对话末尾，保持 KV cache 前缀稳定。
-    /// 默认 no-op — 仅 in-process connector（如 PiAgent）需要实现。
-    async fn push_session_notification(
-        &self,
-        session_id: &str,
-        _message: String,
-    ) -> Result<(), ConnectorError> {
-        Err(ConnectorError::Runtime(format!(
-            "connector `{}` 不支持 session `{session_id}` 的 steering notification",
-            self.connector_id()
-        )))
-    }
 }

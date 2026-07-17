@@ -31,7 +31,7 @@ Agent 运转只需要三个业务参数：
 ## AgentConfig 关键字段
 
 定义在 `agentdash-domain/src/common/agent_config.rs`：
-`executor`、`provider_id`、`model_id`、`agent_id`、`thinking_level`、`permission_policy`、`system_prompt`、`system_prompt_mode`
+`executor`、`provider_id`、`model_id`、`agent_id`、`thinking_level`、`system_prompt`、`system_prompt_mode`
 
 能力配置由 `AgentPresetConfig.capability_directives` 表达。
 
@@ -83,11 +83,76 @@ Agent 运转只需要三个业务参数：
 | `global_or_user` | 当前用户有 BYOK 时优先使用用户 Key，否则使用全局 Key |
 | `user_required` | 只使用当前用户 BYOK；没有用户身份或用户 Key 时不可执行 |
 
-PiAgent prompt 和 discovered-options discovery 需要按当前 `AuthIdentity` 解析 effective Provider。HTTP prompt 已通过 `ExecutionSessionFrame.identity` 携带身份；discovered-options 通过 `DiscoveryContext.identity` 传入 connector。无身份的系统级执行只解析全局凭据。OpenAI-compatible 的本地无 Key 端点可以以 `credential_source = none` 进入运行态，原因是该协议承载 Ollama 等无鉴权端点；`user_required` 不适用无 Key 端点。
+Native Runtime provisioning按`AuthIdentity`构造明确credential scope；factory通过`RepositoryNativeBridgeResolver`解析effective Provider。无身份只允许显式platform scope，user_required不回退。OpenAI-compatible本地无Key端点可声明`credential_source=none`。
 
 DB-backed Key 的加解密通过 `LlmSecretCodec` 端口完成，当前基础设施实现使用 AES-GCM 主密钥：部署可以通过 `AGENTDASH_SECRET_KEY` 显式指定；未指定时服务端会在 AgentDash 数据根下创建并复用本地 master key 文件。这样本地开发和 embedded Postgres 数据生命周期保持一致，同时 API 响应只暴露配置状态、来源和脱敏 preview，运行态 secret 只在 resolver 到 bridge 构建链路内短暂存在。
 
 `openai_codex` 的凭据内容是 ChatGPT OAuth token JSON，不是用户可直接获取的 API Key。管理员全局 Codex 登录写入 Provider 的 `global_api_key_ciphertext`，用户个人 Codex 登录写入 `llm_provider_user_credentials`；两者复用同一套 PKCE 回调与 token exchange，只在保存目标上区分所有权。API 响应对 Codex 凭据只展示 OAuth 状态 preview，不返回 token JSON 或其中任意字段。
+
+桌面 OAuth bridge 的平台 access token 是可选传输字段：Personal 模式没有 Bearer 时由 API AuthProvider 建立固定 local identity；Enterprise 模式缺少有效 token 在统一认证中返回 401，已认证但非管理员访问全局 Provider 管理入口返回 403。OAuth flow 以发起 identity 作为短时 owner 防止劫持，但 global credential 的持久化 ownership 仍属于 Provider catalog，不随 flow owner 转为用户 BYOK。
+
+### Scenario: Desktop ChatGPT OAuth 授权边界
+
+#### 1. Scope / Trigger
+
+- Trigger：桌面端为 `openai_codex` Provider 发起 PKCE OAuth，目标为 `global_provider` 或 `user_byok`。
+
+#### 2. Signatures
+
+```text
+POST /llm-providers/{id}/codex-oauth/desktop/prepare
+POST /llm-providers/{id}/user-credential/codex-oauth/desktop/prepare
+POST /llm-providers/codex-oauth/{flow_id}/{complete|fail|cancel}
+
+DesktopCodexOAuthStartRequest {
+  api_origin: string,
+  access_token?: string,
+  provider_id: string,
+  target: global_provider | user_byok,
+}
+```
+
+#### 3. Contracts
+
+- Desktop bridge 仅在 `access_token` 存在且非空时发送 Bearer；缺失时省略 Authorization。
+- API AuthProvider 是身份事实源。Personal 模式建立 local identity；Enterprise 模式验证真实登录 token。
+- flow owner 仅约束 status/cancel/complete/fail 的短时访问；credential target 决定最终保存到 Provider global ciphertext 或 user credential repository。
+- 全局 Provider 的运行态 credential 不随发起 OAuth 的用户变化。
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Personal + 无平台 token | prepare 成功，flow owner 为 local identity |
+| Enterprise + 无效或缺失 token | 统一认证返回 401 |
+| Enterprise + 已认证非管理员 + global target | `require_system_access` 返回 403 |
+| Enterprise admin + global target | prepare 成功，完成后写 `global_api_key_ciphertext` |
+| 任意身份完成他人 flow | owner 校验拒绝，不交换或保存 credential |
+| user_byok target | 保存到 `provider_id + user_id` 唯一用户凭据 |
+
+#### 5. Good / Base / Bad Cases
+
+- Good：Personal 桌面没有平台登录 token，仍可完成全局 ChatGPT OAuth；凭据成为平台 Provider 配置。
+- Base：Enterprise 桌面透传当前平台 token，由 API 判断管理员权限。
+- Bad：Web 或 Tauri 在请求到达 API 前以“当前会话未登录”拒绝，因为它绕过了 AuthProvider 的模式语义。
+
+#### 6. Tests Required
+
+- Web：无 stored token 仍调用 desktop bridge；有 token 时正确透传。
+- Tauri：`None` 不产生 Authorization，`Some` 产生 Bearer。
+- API：Personal allow、Enterprise non-admin 403、admin allow；flow owner 与 credential target 分离。
+- Product path：无 Bearer 创建临时全局 Codex Provider并调用 desktop prepare，断言返回 flow ID/auth URL。
+
+#### 7. Wrong vs Correct
+
+```ts
+// Wrong
+if (!getStoredToken()) throw new Error("需要当前登录会话")
+
+// Correct
+const token = getStoredToken()
+desktop.startCodexOAuth({ ...request, ...(token ? { access_token: token } : {}) })
+```
 
 ### OpenAI `wire_api` 契约
 
@@ -123,11 +188,12 @@ agent.pi.system_prompt       # PiAgent 系统提示词
 ## 数据流
 
 ```
-AgentRunWorkspacePage / Agent 入口 → LifecycleAgent message command { prompt_blocks, executor_config }
-  → AgentFrame / LifecycleAgent 解析 delivery RuntimeSession
-  → Runtime delivery pipeline 按 model_id 选择 provider bridge
-  → agent.set_thinking_level(thinking_level)
-  → AgentLoop → LLM API
+AgentRun product command + AuthIdentity
+  → Business Surface编译provider/model期望
+  → Native service instance(config + credential scope)
+  → trusted factory解析LlmBridge
+  → Host offer/binding + Managed Runtime operation
+  → Native Driver → AgentLoop → LLM API
 ```
 
 ## Scenario: Companion SubAgent Model Preflight
@@ -228,24 +294,17 @@ companion_request(target=sub)
   -> open wait gate / launch child only when executable
 ```
 
-## PiAgent Live Runtime 模型切换
+## Native Agent Runtime 模型绑定
 
-PiAgent 的 `LlmBridge` 在 `Agent::new(bridge, config)` 时绑定具体 provider/model。
-同一个 `session_id` 的 live runtime 会跨 turn 复用 Agent 以保留会话历史、工具状态和
-identity prompt，因此后续 prompt 的 `executor_config.provider_id/model_id` 变化必须在
-connector 边界显式投影到 Agent bridge。
+Native Integration service instance保存明确provider/model与credential scope；factory激活时通过repository+secret codec解析`LlmBridge`。配置与surface revision绑定到durable Runtime binding，不能在turn中静默切换provider。
 
 ### 契约
 
-- 每次 `PiAgentConnector::prompt` 从 `ExecutionContext.session.executor_config` 读取当前
-  `provider_id` 与 `model_id`，空白值按 `None` 处理。
-- live runtime 记录上一次已绑定 bridge 的模型选择。
-- 如果当前模型选择与 live runtime 记录不同，connector 必须用新 bridge 重建 Agent，并把
-  existing Agent 的消息历史、当前工具列表和已应用的 identity prompt 带入新 Agent。
-- `thinking_level` 不要求重建 Agent；每轮 prompt 前调用 `agent.set_thinking_level(...)`
-  即可生效。
-- `AgentFrame.execution_profile` 记录当前生效配置；真正发往 LLM 的模型由 connector
-  runtime bridge 决定，测试需要覆盖 connector bridge 选择而不只检查 runtime trace。
+- user credential scope必须带authenticated user coordinate，不回退platform credential。
+- provider/model不存在、blocked或credential缺失在Driver factory side effect前返回typed unavailable/invalid configuration。
+- model/surface变化创建新的service instance revision/offer generation；已有binding保持sticky，显式rebind才采用新revision。
+- secret不进入instance JSON、RuntimeOffer、RuntimeWire或日志。
+- 测试覆盖provider extraction、scope、error mapping与无fallback。
 
 ---
 

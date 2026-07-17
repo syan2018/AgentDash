@@ -1,15 +1,13 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
-use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_application_workflow::{
     OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher,
 };
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryBindingRepository,
-    ExecutionSource, LifecycleAgentRepository, LifecycleGateRepository, LifecycleRun,
-    LifecycleRunRepository, LifecycleRunStartIntent, LifecycleSubjectAssociationRepository,
-    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRef, WorkflowGraphRepository,
+    AgentFrameRepository, AgentLineageRepository, ExecutionSource, LifecycleAgentRepository,
+    LifecycleGateRepository, LifecycleRun, LifecycleRunRepository, LifecycleRunStartIntent,
+    LifecycleSubjectAssociationRepository, WorkflowGraphRef, WorkflowGraphRepository,
 };
 use agentdash_spi::FunctionRunner;
 use uuid::Uuid;
@@ -46,9 +44,6 @@ pub struct LifecycleRunCommandDeps {
     pub association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub gate_repo: Arc<dyn LifecycleGateRepository>,
     pub lineage_repo: Arc<dyn AgentLineageRepository>,
-    pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-    pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     pub orchestration_launcher: OrchestrationExecutorLauncher,
 }
@@ -79,9 +74,6 @@ impl LifecycleRunCommandService {
             self.deps.gate_repo.as_ref(),
             self.deps.lineage_repo.as_ref(),
         )
-        .with_anchor_repo(self.deps.anchor_repo.as_ref())
-        .with_delivery_binding_repo(self.deps.delivery_binding_repo.as_ref())
-        .with_runtime_session_creator(self.deps.runtime_session_creator.as_ref())
         .with_frame_construction_port(self.deps.frame_construction.as_ref());
         let dispatch_result = dispatch_service
             .start_lifecycle_run(&LifecycleRunStartIntent {

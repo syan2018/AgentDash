@@ -103,38 +103,15 @@ pub struct StoryMcpServer {
 
 ---
 
-## Runtime Trace 恢复状态持久化
+## Agent Runtime 恢复质量
 
-### 原则
-
-`SessionMeta.last_delivery_status` 是 RuntimeSession trace-head 的恢复摘要，用于 repository rehydrate、connector continuation 与 trace 诊断。AgentRun 用户可见 running/terminal 状态由 `AgentRunDeliveryBinding` 持久化，并由 AgentRun workspace/conversation snapshot 投影。
-
-```rust
-// RuntimeSession turn 边界更新 trace recovery metadata。
-session_meta.last_delivery_status = "running".to_string();
-store.write_meta(&session_meta).await?;
-```
-
-### SessionMeta 写回约束
-
-- `last_event_seq`、`last_delivery_status`、`last_turn_id`、`last_terminal_message` 是事件投影字段，只能单调前进
-- `save_session_meta()` 更新普通元信息时，底层必须按"合并"语义处理，保证投影字段不回退
-
-### 冷启动 continuation
-
-- `SessionRuntimeRegistry` 中有 runtime entry / broadcaster 不等于 connector 仍有 live session。
-- 冷启动 continuation 以 `connector.has_live_session(session_id)` 判断是否需要恢复。
-- 仓储恢复：connector 支持原生恢复时用 `restored_session_state`，否则退化为 continuation `system_context`
-
-### Runtime trace delivery summary 合法值
-
-`last_delivery_status` 只有五个合法值：`idle` / `running` / `completed` / `failed` / `interrupted`。
+canonical Runtime event cursor、operation/turn terminal、context head与binding generation只能通过Managed Runtime事务/CAS推进。恢复worker消费typed lease queue；产品状态和Backbone不能重建或覆盖Runtime snapshot。
 
 ---
 
-## Session Context 注入架构
+## Business Surface Context 架构
 
-### system_context vs prompt_blocks
+### system context contribution vs display resource
 
 | 字段 | 用途 | 展示 |
 |------|------|------|

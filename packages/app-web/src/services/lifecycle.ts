@@ -7,13 +7,13 @@
 import { api } from "../api/client";
 import type {
   AgentFrameRuntimeView,
-  AgentRunWorkspaceListView,
+  AgentRunWorkspaceView,
+  ProjectAgentRunListView,
   LifecycleRunView,
   ProjectActiveAgentsView,
   RuntimeSessionTraceView,
   SubjectExecutionView,
 } from "../types";
-import type { AgentRunWorkspaceView } from "../generated/workflow-contracts";
 import { agentRunScopedPath } from "./agentRunRuntime";
 
 function agentRunCommandPath(runId: string, agentId: string, route: string): string {
@@ -49,12 +49,12 @@ export interface FetchProjectAgentRunsOptions {
 export async function fetchProjectAgentRuns(
   projectId: string,
   opts: FetchProjectAgentRunsOptions = {},
-): Promise<AgentRunWorkspaceListView> {
+): Promise<ProjectAgentRunListView> {
   const params = new URLSearchParams();
   if (opts.limit != null) params.set("limit", String(opts.limit));
   if (opts.cursor) params.set("cursor", opts.cursor);
   const query = params.toString();
-  return api.get<AgentRunWorkspaceListView>(
+  return api.get<ProjectAgentRunListView>(
     `/projects/${encodeURIComponent(projectId)}/agent-runs${query ? `?${query}` : ""}`,
   );
 }

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
+use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
 use agentdash_application_runtime_gateway::{
     ExtensionInvocationWorkspaceContext, RuntimeGateway, resolve_extension_invocation_workspace,
 };
@@ -37,27 +37,50 @@ impl SharedWorkspaceModuleRuntimeGatewayHandle {
 pub trait WorkspaceModuleAgentRunBridge: Send + Sync {
     async fn effective_capability_view_for_agent_run_delivery(
         &self,
-        delivery_runtime_session_id: &str,
+        runtime_thread_id: &str,
     ) -> Result<AgentRunEffectiveCapabilityView, String>;
 
     async fn apply_canvas_runtime_surface_update_to_agent_run(
         &self,
-        delivery_runtime_session_id: &str,
+        runtime_thread_id: &str,
         canvas: &Canvas,
         current_user: Option<&ProjectAuthorizationContext>,
         request: RuntimeSurfaceUpdateRequest,
     ) -> Result<RuntimeVfsState, String>;
-
-    async fn inject_agent_run_notification(
-        &self,
-        delivery_runtime_session_id: &str,
-        notification: BackboneEnvelope,
-    ) -> Result<(), String>;
 }
 
 #[derive(Clone, Default)]
 pub struct SharedWorkspaceModuleAgentRunBridgeHandle {
     inner: Arc<RwLock<Option<Arc<dyn WorkspaceModuleAgentRunBridge>>>>,
+}
+
+#[async_trait]
+pub trait WorkspaceModulePresentationAppendPort: Send + Sync {
+    async fn append_presentation(
+        &self,
+        request: agentdash_agent_runtime_contract::RuntimePresentationAppendRequest,
+    ) -> Result<agentdash_agent_runtime_contract::RuntimePresentationAppendReceipt, String>;
+}
+
+#[derive(Clone, Default)]
+pub struct SharedWorkspaceModulePresentationAppendHandle {
+    inner: Arc<RwLock<Option<Arc<dyn WorkspaceModulePresentationAppendPort>>>>,
+}
+
+impl SharedWorkspaceModulePresentationAppendHandle {
+    pub async fn set(&self, port: Arc<dyn WorkspaceModulePresentationAppendPort>) {
+        *self.inner.write().await = Some(port);
+    }
+
+    pub async fn append_presentation(
+        &self,
+        request: agentdash_agent_runtime_contract::RuntimePresentationAppendRequest,
+    ) -> Result<agentdash_agent_runtime_contract::RuntimePresentationAppendReceipt, String> {
+        let port = self.inner.read().await.clone().ok_or_else(|| {
+            "Workspace module canonical presentation append port 尚未完成初始化".to_string()
+        })?;
+        port.append_presentation(request).await
+    }
 }
 
 impl SharedWorkspaceModuleAgentRunBridgeHandle {
@@ -118,30 +141,63 @@ pub fn shared_runtime_vfs_from_context(
     Ok(SharedRuntimeVfs::new_with_policy(vfs, access_policy))
 }
 
-pub fn delivery_runtime_session_id_from_context(context: &ExecutionContext) -> String {
+pub fn runtime_thread_id_from_context(
+    context: &ExecutionContext,
+) -> Result<String, ConnectorError> {
     context
         .turn
-        .hook_runtime
+        .platform_tool_execution
         .as_ref()
-        .map(|session| session.session_id().to_string())
-        .unwrap_or_else(|| context.session.turn_id.clone())
+        .map(|owner| owner.runtime_thread_id.to_string())
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "缺少 Platform Tool typed owner context，无法定位 runtime thread".to_string(),
+            )
+        })
 }
 
-pub fn project_id_from_context(context: &ExecutionContext) -> Option<Uuid> {
-    if let Some(hook_runtime) = context.turn.hook_runtime.as_ref() {
-        let snapshot = hook_runtime.snapshot();
-
-        if let Some(run_context) = &snapshot.run_context {
-            return Some(run_context.project_id);
-        }
-    }
-
+pub fn project_id_from_context(context: &ExecutionContext) -> Result<Uuid, ConnectorError> {
     context
-        .session
-        .vfs
+        .turn
+        .platform_tool_execution
         .as_ref()
-        .and_then(|space| space.source_project_id.as_deref())
-        .and_then(|project_id| Uuid::parse_str(project_id).ok())
+        .map(|owner| owner.project_id)
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "缺少 Platform Tool typed owner context，无法定位 project".to_string(),
+            )
+        })
+}
+
+pub fn effective_capability_view_from_context(
+    context: &ExecutionContext,
+) -> Result<AgentRunEffectiveCapabilityView, ConnectorError> {
+    let owner = context
+        .turn
+        .platform_tool_execution
+        .as_ref()
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "缺少 Platform Tool typed owner context，无法定位 capability surface".to_string(),
+            )
+        })?;
+    Ok(AgentRunEffectiveCapabilityView {
+        target: AgentFrameRuntimeTarget {
+            frame_id: owner.current_surface_frame_id,
+            runtime_thread_id: owner.runtime_thread_id.clone(),
+        },
+        capability_state: context.turn.capability_state.clone(),
+        visible_capabilities: context.turn.capability_state.tool.capabilities.clone(),
+        vfs_surface: context
+            .turn
+            .capability_state
+            .vfs
+            .active
+            .clone()
+            .or_else(|| context.session.vfs.clone())
+            .unwrap_or_default(),
+        mcp_surface: context.session.mcp_servers.clone(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -167,7 +223,7 @@ pub fn resolve_invocation_backend(
 pub async fn submit_canvas_runtime_surface_update(
     vfs: Option<&SharedRuntimeVfs>,
     agent_run_bridge_handle: &SharedWorkspaceModuleAgentRunBridgeHandle,
-    delivery_runtime_session_id: Option<&str>,
+    runtime_thread_id: Option<&str>,
     current_user: Option<&ProjectAuthorizationContext>,
     canvas: &Canvas,
     request: RuntimeSurfaceUpdateRequest,
@@ -178,14 +234,14 @@ pub async fn submit_canvas_runtime_surface_update(
             "Workspace module AgentRun bridge 尚未完成初始化，无法提交 Canvas runtime surface request: {request:?}"
         ))
     })?;
-    let delivery_runtime_session_id = delivery_runtime_session_id.ok_or_else(|| {
+    let runtime_thread_id = runtime_thread_id.ok_or_else(|| {
         WorkspaceModuleRuntimeBridgeError::ExecutionFailed(format!(
             "当前工具调用缺少 AgentRun delivery runtime id，无法提交 Canvas runtime surface request: {request:?}"
         ))
     })?;
     let active_vfs_state = bridge
         .apply_canvas_runtime_surface_update_to_agent_run(
-            delivery_runtime_session_id,
+            runtime_thread_id,
             canvas,
             current_user,
             request.clone(),
@@ -209,14 +265,14 @@ pub async fn request_existing_canvas_visibility_for_runtime(
     canvas_mount_id: &str,
     vfs: Option<&SharedRuntimeVfs>,
     agent_run_bridge_handle: &SharedWorkspaceModuleAgentRunBridgeHandle,
-    delivery_runtime_session_id: Option<&str>,
+    runtime_thread_id: Option<&str>,
     current_user: Option<&ProjectAuthorizationContext>,
 ) -> Result<Canvas, WorkspaceModuleRuntimeBridgeError> {
     let canvas = load_canvas_by_project_mount_id(canvas_repo, project_id, canvas_mount_id).await?;
     submit_canvas_runtime_surface_update(
         vfs,
         agent_run_bridge_handle,
-        delivery_runtime_session_id,
+        runtime_thread_id,
         current_user,
         &canvas,
         RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
@@ -293,8 +349,9 @@ mod tests {
     use agentdash_domain::canvas::Canvas;
     use agentdash_spi::{
         AgentConfig, CapabilityState, ExecutionSessionFrame, ExecutionTurnFrame, Mount,
-        MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource,
-        RuntimeVfsOperation, RuntimeVfsPathPattern, Vfs,
+        MountCapability, PlatformToolExecutionContext, RuntimeVfsAccessPolicy,
+        RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern,
+        Vfs,
     };
     use async_trait::async_trait;
 
@@ -329,7 +386,7 @@ mod tests {
                 mount_id: "main".to_string(),
                 path_pattern: RuntimeVfsPathPattern::Prefix("docs".to_string()),
                 operations: BTreeSet::from([RuntimeVfsOperation::Read]),
-                source: RuntimeVfsAccessSource::PermissionGrant,
+                source: RuntimeVfsAccessSource::ProjectPreset,
             }],
         }
     }
@@ -391,6 +448,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn workspace_owner_coordinates_come_only_from_typed_platform_context() {
+        let project_id = Uuid::new_v4();
+        let frame_id = Uuid::new_v4();
+        let mut context = execution_context(vfs(vec![mount("main")]), docs_only_policy());
+        context.turn.platform_tool_execution = Some(PlatformToolExecutionContext {
+            run_id: Uuid::new_v4(),
+            project_id,
+            agent_id: Uuid::new_v4(),
+            frame_id,
+            runtime_thread_id: "thread-typed-owner".parse().expect("runtime thread"),
+            presentation_thread_id: "presentation-typed-owner"
+                .parse()
+                .expect("presentation thread"),
+            invocation: None,
+            launch_evidence_frame_id: Uuid::new_v4(),
+            current_surface_frame_id: frame_id,
+            orchestration_id: Some(Uuid::new_v4()),
+            node_path: Some("root/workspace".to_string()),
+            node_attempt: Some(3),
+        });
+
+        assert_eq!(project_id_from_context(&context).unwrap(), project_id);
+        assert_eq!(
+            runtime_thread_id_from_context(&context).unwrap(),
+            "thread-typed-owner"
+        );
+        let view = effective_capability_view_from_context(&context).unwrap();
+        assert_eq!(view.target.frame_id, frame_id);
+    }
+
+    #[test]
+    fn workspace_owner_inference_is_rejected_without_typed_platform_context() {
+        let context = execution_context(vfs(vec![mount("main")]), docs_only_policy());
+
+        assert!(project_id_from_context(&context).is_err());
+        assert!(runtime_thread_id_from_context(&context).is_err());
+        assert!(effective_capability_view_from_context(&context).is_err());
+    }
+
     #[derive(Clone)]
     struct ReturningCanvasBridge {
         state: RuntimeVfsState,
@@ -400,27 +497,19 @@ mod tests {
     impl WorkspaceModuleAgentRunBridge for ReturningCanvasBridge {
         async fn effective_capability_view_for_agent_run_delivery(
             &self,
-            _delivery_runtime_session_id: &str,
+            _runtime_thread_id: &str,
         ) -> Result<AgentRunEffectiveCapabilityView, String> {
             Err("not used".to_string())
         }
 
         async fn apply_canvas_runtime_surface_update_to_agent_run(
             &self,
-            _delivery_runtime_session_id: &str,
+            _runtime_thread_id: &str,
             _canvas: &Canvas,
             _current_user: Option<&ProjectAuthorizationContext>,
             _request: RuntimeSurfaceUpdateRequest,
         ) -> Result<RuntimeVfsState, String> {
             Ok(self.state.clone())
-        }
-
-        async fn inject_agent_run_notification(
-            &self,
-            _delivery_runtime_session_id: &str,
-            _notification: BackboneEnvelope,
-        ) -> Result<(), String> {
-            Ok(())
         }
     }
 

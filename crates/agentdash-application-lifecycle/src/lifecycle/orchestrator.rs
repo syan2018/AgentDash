@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
 use agentdash_application_workflow::orchestration::{
     OrchestrationRuntimeError, OrchestrationRuntimeEvent, apply_orchestration_event_to_run,
 };
@@ -22,17 +23,14 @@ use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-    NodePortValue, RuntimeNodeError, RuntimeNodeStatus, RuntimeSessionExecutionAnchorRepository,
-    WorkflowSessionTerminalState,
+    NodePortValue, RuntimeNodeError, RuntimeNodeStatus, WorkflowSessionTerminalState,
 };
-use agentdash_spi::FunctionRunner;
 use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
+use agentdash_spi::{FunctionRunner, PlatformToolExecutionContext};
 use uuid::Uuid;
 
-use crate::SharedPlatformConfig;
-
-use super::session_association::resolve_activity_runtime_association_from_message_stream_trace;
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};
+use crate::lifecycle::session_association::resolve_activity_runtime_association_from_message_stream_trace;
 use crate::lifecycle::session_terminal_summary;
 
 #[async_trait::async_trait]
@@ -66,7 +64,7 @@ pub enum LifecycleNodeAdvanceOutcome {
 pub struct AdvanceCurrentActivityInput {
     pub hook_runtime: SharedHookRuntime,
     pub turn_id: String,
-    pub runtime_session_id: String,
+    pub owner: PlatformToolExecutionContext,
     pub outcome: LifecycleNodeAdvanceOutcome,
     pub summary: Option<String>,
 }
@@ -101,16 +99,13 @@ pub struct LifecycleOrchestratorDeps {
     pub run_repo: Arc<dyn LifecycleRunRepository>,
     pub agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub frame_repo: Arc<dyn AgentFrameRepository>,
-    pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,
     pub orchestration_launcher: OrchestrationExecutorLauncher,
 }
 
 impl LifecycleOrchestrator {
-    pub fn new_with_platform_config(
-        deps: LifecycleOrchestratorDeps,
-        _platform_config: SharedPlatformConfig,
-    ) -> Self {
+    pub fn new(deps: LifecycleOrchestratorDeps) -> Self {
         Self {
             deps,
             function_runner: None,
@@ -150,7 +145,7 @@ impl LifecycleOrchestrator {
             self.deps.frame_repo.as_ref(),
             self.deps.agent_repo.as_ref(),
             self.deps.run_repo.as_ref(),
-            Some(self.deps.anchor_repo.as_ref()),
+            Some(self.deps.binding_repo.as_ref()),
         )
         .await
         .map_err(|error| error.to_string())?
@@ -225,18 +220,42 @@ impl LifecycleOrchestrator {
         &self,
         input: AdvanceCurrentActivityInput,
     ) -> Result<AdvanceCurrentNodeResult, String> {
-        let Some(association) = resolve_activity_runtime_association_from_message_stream_trace(
-            &input.runtime_session_id,
-            self.deps.frame_repo.as_ref(),
-            self.deps.agent_repo.as_ref(),
-            self.deps.run_repo.as_ref(),
-            Some(self.deps.anchor_repo.as_ref()),
-        )
-        .await
-        .map_err(|error| error.to_string())?
-        else {
-            return Err("当前 runtime session 没有关联 lifecycle runtime node".to_string());
-        };
+        let run = self.load_run(input.owner.run_id).await?;
+        if run.project_id != input.owner.project_id {
+            return Err("Platform Tool owner project 与 LifecycleRun 不一致".to_string());
+        }
+        let orchestration_id = input.owner.orchestration_id.ok_or_else(|| {
+            "Platform Tool owner context 缺少 orchestration_id，无法推进 lifecycle node".to_string()
+        })?;
+        let node_path = input.owner.node_path.clone().ok_or_else(|| {
+            "Platform Tool owner context 缺少 node_path，无法推进 lifecycle node".to_string()
+        })?;
+        let attempt = input.owner.node_attempt.ok_or_else(|| {
+            "Platform Tool owner context 缺少 node_attempt，无法推进 lifecycle node".to_string()
+        })?;
+        let node = run
+            .orchestrations
+            .iter()
+            .find(|orchestration| orchestration.orchestration_id == orchestration_id)
+            .and_then(|orchestration| {
+                find_runtime_node_for_association(&orchestration.node_tree, &node_path, attempt)
+            })
+            .ok_or_else(|| {
+                "Platform Tool owner context 指向的 lifecycle runtime node 不存在".to_string()
+            })?;
+        if let Some(executor_run_ref) = node.executor_run_ref.as_ref() {
+            let matches_presentation = matches!(
+                executor_run_ref,
+                agentdash_domain::workflow::ExecutorRunRef::RuntimeSession { session_id }
+                    if session_id == input.owner.presentation_thread_id.as_str()
+            );
+            if !matches_presentation {
+                return Err(
+                    "Platform Tool owner presentation thread 与 lifecycle runtime node 不一致"
+                        .to_string(),
+                );
+            }
+        }
 
         let status = if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
             RuntimeNodeStatus::Failed
@@ -244,29 +263,20 @@ impl LifecycleOrchestrator {
             RuntimeNodeStatus::Completed
         };
         let outputs = if status == RuntimeNodeStatus::Completed {
-            self.load_runtime_node_outputs(
-                association.run.id,
-                association.orchestration_id,
-                &association.node_path,
-                association.attempt,
-            )
-            .await?
+            self.load_runtime_node_outputs(run.id, orchestration_id, &node_path, attempt)
+                .await?
         } else {
             Vec::new()
         };
         let event = runtime_terminal_event(
-            association.node_path.clone(),
-            association.attempt,
+            node_path.clone(),
+            attempt,
             status,
             outputs,
             input.summary.clone(),
         );
-        let run_before = association.run.clone();
-        let updated_run = match apply_orchestration_event_to_run(
-            association.run,
-            association.orchestration_id,
-            event,
-        ) {
+        let run_before = run.clone();
+        let updated_run = match apply_orchestration_event_to_run(run, orchestration_id, event) {
             Ok((run, _outcome)) => run,
             Err(OrchestrationRuntimeError::CompletionPolicyRejected {
                 missing_output_ports,
@@ -274,8 +284,8 @@ impl LifecycleOrchestrator {
             }) if input.outcome == LifecycleNodeAdvanceOutcome::Completed => {
                 return Ok(AdvanceCurrentNodeResult {
                     run: run_before,
-                    orchestration_id: association.orchestration_id,
-                    node_path: association.node_path,
+                    orchestration_id,
+                    node_path,
                     status: AdvanceCurrentNodeStatus::GateRejected {
                         gate_collision_count: 1,
                         missing_output_keys: missing_output_ports,
@@ -289,8 +299,8 @@ impl LifecycleOrchestrator {
             {
                 return Ok(AdvanceCurrentNodeResult {
                     run: run_before,
-                    orchestration_id: association.orchestration_id,
-                    node_path: association.node_path,
+                    orchestration_id,
+                    node_path,
                     status: AdvanceCurrentNodeStatus::GateRejected {
                         gate_collision_count: 1,
                         missing_output_keys: vec![from_port],
@@ -313,8 +323,8 @@ impl LifecycleOrchestrator {
         let final_run = self.load_run(updated_run.id).await?;
         Ok(AdvanceCurrentNodeResult {
             run: final_run,
-            orchestration_id: association.orchestration_id,
-            node_path: association.node_path,
+            orchestration_id,
+            node_path,
             status: if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
                 AdvanceCurrentNodeStatus::Failed
             } else {
@@ -429,6 +439,32 @@ impl LifecycleTerminalConvergencePort for LifecycleOrchestrator {
             }
         }
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl agentdash_application_ports::agent_run_control_effect::AgentRunLifecycleTerminalConvergencePort
+    for LifecycleOrchestrator
+{
+    async fn observe_lifecycle_terminal(
+        &self,
+        presentation_thread_id: &agentdash_agent_runtime_contract::PresentationThreadId,
+        terminal: agentdash_agent_runtime_contract::RuntimeTurnTerminal,
+    ) -> Result<(), String> {
+        let terminal_state = match terminal {
+            agentdash_agent_runtime_contract::RuntimeTurnTerminal::Completed => "completed",
+            agentdash_agent_runtime_contract::RuntimeTurnTerminal::Interrupted => "interrupted",
+            agentdash_agent_runtime_contract::RuntimeTurnTerminal::Refused
+            | agentdash_agent_runtime_contract::RuntimeTurnTerminal::LimitReached
+            | agentdash_agent_runtime_contract::RuntimeTurnTerminal::Failed
+            | agentdash_agent_runtime_contract::RuntimeTurnTerminal::Lost => "failed",
+        };
+        LifecycleTerminalConvergencePort::observe_lifecycle_terminal(
+            self,
+            presentation_thread_id.as_str(),
+            terminal_state,
+        )
+        .await
     }
 }
 

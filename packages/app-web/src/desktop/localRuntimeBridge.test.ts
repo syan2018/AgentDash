@@ -31,11 +31,12 @@ function createProfile(autoStart: boolean, serverUrl = "http://127.0.0.1:3001"):
 }
 
 function createStatus(state: LocalRuntimeStatus["state"]): LocalRuntimeStatus {
+  const backendId = state === "running" ? "backend-local" : "";
   return {
     state,
     owner: "desktop_embedded_runner",
     registration_source: "desktop_access_token",
-    backend_id: state === "running" ? "backend-local" : "",
+    backend_id: backendId,
     name: "Desktop Local Runtime",
     workspace_roots: [],
     executor_enabled: true,
@@ -46,7 +47,16 @@ function createStatus(state: LocalRuntimeStatus["state"]): LocalRuntimeStatus {
     last_attempt_at: null,
     next_retry_at: null,
     retry_count: null,
-    relay_connection: null,
+    relay_connection: state === "running" ? {
+      state: "registered",
+      target: "ws://runtime.test/ws/backend",
+      last_connected_at: "2026-07-12T00:00:00Z",
+      last_disconnected_at: null,
+      last_error: null,
+      retry_count: 0,
+      next_retry_at: null,
+      registered_backend_id: backendId,
+    } : null,
     registration: null,
   };
 }
@@ -123,6 +133,7 @@ function createClient(runtimeStart: (request: RuntimeStartRequest) => Promise<Lo
 
 describe("desktop local runtime bridge", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.resetModules();
     Reflect.deleteProperty(globalThis, "window");
   });
@@ -163,6 +174,65 @@ describe("desktop local runtime bridge", () => {
       access_token: "",
       server_url: "http://10.22.71.7:8080",
     }));
+  });
+
+  it("claiming 中间态只做有界 snapshot 观察且不会重复 runtimeStart", async () => {
+    vi.useFakeTimers();
+    const runtimeStart = vi.fn(async () => createStatus("running"));
+    const client = createClient(runtimeStart);
+    vi.mocked(client.runtimeSnapshot)
+      .mockResolvedValueOnce(createStatus("claiming"))
+      .mockResolvedValueOnce(createStatus("running"));
+    installDesktopBridge(client);
+
+    const { ensureDesktopLocalRuntimeStarted } = await import("./localRuntimeBridge");
+    await ensureDesktopLocalRuntimeStarted("token-current");
+    expect(runtimeStart).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(client.runtimeSnapshot).toHaveBeenCalledTimes(2);
+    expect(runtimeStart).not.toHaveBeenCalled();
+  });
+
+  it("中间态最多观察 8 次", async () => {
+    vi.useFakeTimers();
+    const runtimeStart = vi.fn(async () => createStatus("running"));
+    const client = createClient(runtimeStart);
+    vi.mocked(client.runtimeSnapshot).mockResolvedValue(createStatus("retrying"));
+    installDesktopBridge(client);
+
+    const { ensureDesktopLocalRuntimeStarted } = await import("./localRuntimeBridge");
+    await ensureDesktopLocalRuntimeStarted("token-current");
+    await vi.advanceTimersByTimeAsync(20000);
+
+    expect(client.runtimeSnapshot).toHaveBeenCalledTimes(8);
+    expect(runtimeStart).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("running 只有 relay 注册到同一 backend 后才完成", async () => {
+    vi.useFakeTimers();
+    const runtimeStart = vi.fn(async () => createStatus("running"));
+    const client = createClient(runtimeStart);
+    const unregistered = createStatus("running");
+    const relayConnection = unregistered.relay_connection;
+    if (!relayConnection) throw new Error("running fixture must include relay state");
+    unregistered.relay_connection = {
+      ...relayConnection,
+      registered_backend_id: "backend-other",
+    };
+    vi.mocked(client.runtimeSnapshot)
+      .mockResolvedValueOnce(unregistered)
+      .mockResolvedValueOnce(createStatus("running"));
+    installDesktopBridge(client);
+
+    const { ensureDesktopLocalRuntimeStarted } = await import("./localRuntimeBridge");
+    await ensureDesktopLocalRuntimeStarted("token-current");
+    await vi.advanceTimersByTimeAsync(2000);
+    await ensureDesktopLocalRuntimeStarted("token-current");
+
+    expect(client.runtimeSnapshot).toHaveBeenCalledTimes(2);
+    expect(runtimeStart).not.toHaveBeenCalled();
   });
 
   it("打包默认后端会覆盖旧 profile 中的开发默认 server URL", async () => {

@@ -686,6 +686,7 @@ function extensionRuntimeWithBackendFetchRoute(
 function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): WorkspaceData {
   return {
     projectId: "project-1",
+    workspaceModules: [],
     agentRunRuntimeTarget: {
       runId: "run-1",
       agentId: "agent-1",

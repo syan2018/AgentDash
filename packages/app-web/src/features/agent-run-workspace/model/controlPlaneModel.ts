@@ -1,10 +1,12 @@
 import type {
   BackboneEvent,
   ControlPlaneProjectionChanged,
+  WorkspaceModulePresentationRequested,
 } from "../../../generated/backbone-protocol";
+import type { WorkspaceModulePresentation } from "../../../generated/workspace-module-contracts";
 import {
   workspaceModulePresentationFromPlatformEventData,
-  workspaceModulePresentedTabTarget,
+  workspaceModulePresentationTabTarget,
 } from "../../workspace-module/model/presentation";
 import type {
   AgentRunConversationCommand,
@@ -17,21 +19,25 @@ export interface AgentRunWorkspacePanelTarget {
   uri?: string;
   options?: { refreshContent?: boolean };
 }
-
 export interface AgentRunWorkspacePanelOpenPlan {
   target: AgentRunWorkspacePanelTarget;
   afterWorkspaceRefresh: boolean;
+  presentation: WorkspaceModulePresentation;
 }
 
 export interface AgentRunControlPlaneEffectPlan {
   refreshWorkspaceState?: boolean;
-  refreshWorkspaceModuleCatalog?: boolean;
   refreshAgentRunListReason?: string;
   hookRuntimeRefresh?: {
     reason: string;
     immediate?: boolean;
   };
   openWorkspacePanel?: AgentRunWorkspacePanelOpenPlan;
+}
+
+export interface AgentRunLiveEventPlan {
+  effects: AgentRunControlPlaneEffectPlan;
+  refreshTaskPlan: boolean;
 }
 
 export type AgentRunSubmitCommandResolution =
@@ -87,7 +93,6 @@ export function planAgentRunTurnEnded(): AgentRunControlPlaneEffectPlan {
 export function planAgentRunWorkspaceModuleOpened(): AgentRunControlPlaneEffectPlan {
   return {
     refreshWorkspaceState: true,
-    refreshWorkspaceModuleCatalog: true,
     hookRuntimeRefresh: { reason: "workspace_module_user_opened" },
   };
 }
@@ -96,32 +101,24 @@ function projectionRefreshReason(change: ControlPlaneProjectionChanged): string 
   return "control_plane:" + change.projection + ":" + change.reason;
 }
 
-function extractControlPlaneProjectionChanged(
-  event: BackboneEvent,
-): ControlPlaneProjectionChanged | null {
-  if (event.type !== "platform") return null;
-  if (event.payload.kind !== "control_plane_projection_changed") return null;
-  return event.payload.data;
-}
-
-function planWorkspaceModulePresented(
-  change: ControlPlaneProjectionChanged,
+function planWorkspaceModulePresentation(
+  request: WorkspaceModulePresentationRequested,
 ): AgentRunControlPlaneEffectPlan {
   const data = workspaceModulePresentationFromPlatformEventData(
-    change.workspace_module_presentation,
+    request,
   );
-  const target = workspaceModulePresentedTabTarget(data);
+  if (!data) return {};
+  const target = workspaceModulePresentationTabTarget(data);
   if (!target) return {};
-  const refreshContent = target.typeId === "canvas" ? false : target.refreshRuntime;
   return {
-    refreshWorkspaceState: target.refreshRuntime,
-    refreshWorkspaceModuleCatalog: target.refreshRuntime,
+    refreshWorkspaceState: true,
     openWorkspacePanel: {
-      afterWorkspaceRefresh: target.refreshRuntime,
+      afterWorkspaceRefresh: true,
+      presentation: data,
       target: {
         typeId: target.typeId,
         uri: target.uri,
-        options: { refreshContent },
+        options: { refreshContent: false },
       },
     },
   };
@@ -147,7 +144,6 @@ function planControlPlaneProjectionChanged(
       break;
     case "resource_surface":
       plan.refreshWorkspaceState = true;
-      plan.refreshWorkspaceModuleCatalog = true;
       break;
     case "hook_runtime":
       plan.hookRuntimeRefresh = { reason };
@@ -159,7 +155,6 @@ function planControlPlaneProjectionChanged(
     change.reason === "context_frame_changed"
   ) {
     plan.refreshWorkspaceState = true;
-    plan.refreshWorkspaceModuleCatalog = true;
     plan.hookRuntimeRefresh = { reason };
   }
 
@@ -170,39 +165,85 @@ function planControlPlaneProjectionChanged(
     plan.hookRuntimeRefresh = { reason };
   }
 
-  if (change.workspace_module_presentation) {
-    const presentationPlan = planWorkspaceModulePresented(change);
-    return {
-      ...plan,
-      ...presentationPlan,
-      refreshWorkspaceState:
-        plan.refreshWorkspaceState || presentationPlan.refreshWorkspaceState || undefined,
-      refreshWorkspaceModuleCatalog:
-        plan.refreshWorkspaceModuleCatalog ||
-        presentationPlan.refreshWorkspaceModuleCatalog ||
-        undefined,
-    };
-  }
-
   return plan;
 }
 
-export function planAgentRunSystemEvent(
-  eventType: string,
+function isTaskPlanMutation(event: BackboneEvent): boolean {
+  if (event.type !== "item_completed") return false;
+  const item = event.payload.item;
+  return item.type === "dynamicToolCall" &&
+    item.tool === "task_write" &&
+    item.status === "completed" &&
+    item.success !== false;
+}
+
+function isTurnTerminal(event: BackboneEvent): boolean {
+  if (event.type === "turn_completed") return true;
+  if (
+    event.type !== "platform" ||
+    event.payload.kind !== "session_meta_update" ||
+    event.payload.data.key !== "turn_terminal"
+  ) {
+    return false;
+  }
+  const value = event.payload.data.value;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  return value.terminal_type === "turn_completed" ||
+    value.terminal_type === "turn_failed" ||
+    value.terminal_type === "turn_interrupted";
+}
+
+function planAgentRunEventEffects(
   event: BackboneEvent,
 ): AgentRunControlPlaneEffectPlan {
-  const controlPlaneChange = extractControlPlaneProjectionChanged(event);
-  if (controlPlaneChange) {
-    return planControlPlaneProjectionChanged(controlPlaneChange);
+  if (isTurnTerminal(event)) {
+    return planAgentRunTurnEnded();
+  }
+  if (event.type === "thread_name_updated") {
+    return {
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "thread_name_updated",
+    };
+  }
+  if (event.type !== "platform") {
+    return {};
   }
 
-  switch (eventType) {
-    case "hook_event":
-    case "hook_action_resolved":
-      return {
-        hookRuntimeRefresh: { reason: eventType },
-      };
-    default:
-      return {};
+  if (event.payload.kind === "workspace_module_presentation_requested") {
+    return planWorkspaceModulePresentation(event.payload.data);
   }
+  if (event.payload.kind === "control_plane_projection_changed") {
+    return planControlPlaneProjectionChanged(event.payload.data);
+  }
+  if (event.payload.kind === "context_frame_changed") {
+    return {
+      refreshWorkspaceState: true,
+      hookRuntimeRefresh: { reason: "context_frame_changed" },
+    };
+  }
+  if (event.payload.kind === "hook_trace") {
+    return {
+      hookRuntimeRefresh: { reason: "hook_event" },
+    };
+  }
+  if (
+    event.payload.kind === "session_meta_update" &&
+    event.payload.data.key === "hook_action_resolved"
+  ) {
+    return {
+      hookRuntimeRefresh: { reason: "hook_action_resolved" },
+    };
+  }
+  return {};
+}
+
+export function planAgentRunLiveEvent(
+  event: BackboneEvent,
+): AgentRunLiveEventPlan {
+  return {
+    effects: planAgentRunEventEffects(event),
+    refreshTaskPlan: isTurnTerminal(event) || isTaskPlanMutation(event),
+  };
 }

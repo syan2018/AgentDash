@@ -1,3 +1,4 @@
+pub mod control_effect;
 pub mod inline_file;
 pub mod shared_library;
 pub mod skill;

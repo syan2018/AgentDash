@@ -44,6 +44,12 @@ impl AgentTool for MountsListTool {
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {}, "required": [], "additionalProperties": false })
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_vfs_mounts_dynamic_lifecycle".to_string())
+    }
     async fn execute(
         &self,
         _: &str,
@@ -153,7 +159,7 @@ mod tests {
                 mount_id: "main".to_string(),
                 path_pattern: RuntimeVfsPathPattern::All,
                 operations: BTreeSet::from([RuntimeVfsOperation::Read]),
-                source: RuntimeVfsAccessSource::PermissionGrant,
+                source: RuntimeVfsAccessSource::ProjectPreset,
             }],
         };
         let tool = MountsListTool::new(
@@ -191,7 +197,7 @@ mod tests {
                 mount_id: "main".to_string(),
                 path_pattern: RuntimeVfsPathPattern::Prefix("docs".to_string()),
                 operations: BTreeSet::from([RuntimeVfsOperation::Read]),
-                source: RuntimeVfsAccessSource::PermissionGrant,
+                source: RuntimeVfsAccessSource::ProjectPreset,
             }],
         };
         let tool = MountsListTool::new(

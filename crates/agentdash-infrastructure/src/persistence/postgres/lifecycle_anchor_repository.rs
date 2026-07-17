@@ -6,8 +6,7 @@ use agentdash_domain::workflow::{
     GateResultDeliveryMarkerRepository, GateResultDeliveryStatus, GateWaitPolicyEnvelope,
     LifecycleAgent, LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository,
     LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
-    RegisterGateResultWaiterRequest, RuntimeSessionExecutionAnchor,
-    RuntimeSessionExecutionAnchorRepository, SubjectRef, WaitProducerRef,
+    RegisterGateResultWaiterRequest, SubjectRef, WaitProducerRef,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -190,8 +189,7 @@ struct FrameRow {
     vfs_surface_json: Option<Value>,
     mcp_surface_json: Option<Value>,
     execution_profile_json: Option<Value>,
-    visible_canvas_mount_ids_json: Option<Value>,
-    visible_workspace_module_refs_json: Option<Value>,
+    hook_plan: Option<Value>,
     created_by_kind: String,
     created_by_id: Option<String>,
     created_at: DateTime<Utc>,
@@ -217,8 +215,7 @@ impl TryFrom<FrameRow> for AgentFrame {
             vfs_surface_json: row.vfs_surface_json,
             mcp_surface_json: row.mcp_surface_json,
             execution_profile_json: row.execution_profile_json,
-            visible_canvas_mount_ids_json: row.visible_canvas_mount_ids_json,
-            visible_workspace_module_refs_json: row.visible_workspace_module_refs_json,
+            hook_plan: row.hook_plan,
             created_by_kind: row.created_by_kind,
             created_by_id: row.created_by_id,
             created_at: row.created_at,
@@ -237,11 +234,10 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
                 (id, agent_id, revision,
                  surface,
                  effective_capability_json, context_slice_json, vfs_surface_json, mcp_surface_json,
-                 visible_canvas_mount_ids_json,
-                 visible_workspace_module_refs_json,
                  execution_profile_json,
+                 hook_plan,
                  created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
@@ -264,16 +260,12 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             "agent_frames.mcp_surface_json",
         )?)
         .bind(to_optional_jsonb(
-            surface.visible_canvas_mount_ids.as_ref(),
-            "agent_frames.visible_canvas_mount_ids_json",
-        )?)
-        .bind(to_optional_jsonb(
-            surface.visible_workspace_module_refs.as_ref(),
-            "agent_frames.visible_workspace_module_refs_json",
-        )?)
-        .bind(to_optional_jsonb(
             surface.execution_profile.as_ref(),
             "agent_frames.execution_profile_json",
+        )?)
+        .bind(to_optional_jsonb(
+            surface.hook_plan.as_ref(),
+            "agent_frames.hook_plan",
         )?)
         .bind(&frame.created_by_kind)
         .bind(&frame.created_by_id)
@@ -289,9 +281,8 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,
                       surface,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      visible_canvas_mount_ids_json,
-                      visible_workspace_module_refs_json,
                       execution_profile_json,
+                      hook_plan,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE id=$1"#,
         )
@@ -303,14 +294,13 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .transpose()
     }
 
-    async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+    async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,
                       surface,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      visible_canvas_mount_ids_json,
-                      visible_workspace_module_refs_json,
                       execution_profile_json,
+                      hook_plan,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision DESC, created_at DESC LIMIT 1"#,
         )
@@ -327,9 +317,8 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,
                       surface,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      visible_canvas_mount_ids_json,
-                      visible_workspace_module_refs_json,
                       execution_profile_json,
+                      hook_plan,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision ASC"#,
         )
@@ -712,14 +701,14 @@ struct GateResultDeliveryMarkerRow {
     target_agent_id: Option<String>,
     target_waiter_ref: Option<String>,
     mailbox_message_id: Option<String>,
-    command_receipt_id: Option<String>,
+    accepted_runtime_operation_id: Option<String>,
     claim_token: Option<String>,
     claim_expires_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
 
-const GATE_RESULT_DELIVERY_MARKER_COLS: &str = "gate_id,result_attempt,status,target_run_id,target_agent_id,target_waiter_ref,mailbox_message_id,command_receipt_id,claim_token,claim_expires_at,created_at,updated_at";
+const GATE_RESULT_DELIVERY_MARKER_COLS: &str = "gate_id,result_attempt,status,target_run_id,target_agent_id,target_waiter_ref,mailbox_message_id,accepted_runtime_operation_id,claim_token,claim_expires_at,created_at,updated_at";
 
 impl TryFrom<GateResultDeliveryMarkerRow> for GateResultDeliveryMarker {
     type Error = DomainError;
@@ -742,10 +731,7 @@ impl TryFrom<GateResultDeliveryMarkerRow> for GateResultDeliveryMarker {
                 row.mailbox_message_id.as_ref(),
                 "gate_result_delivery_markers.mailbox_message_id",
             )?,
-            command_receipt_id: opt_uuid(
-                row.command_receipt_id.as_ref(),
-                "gate_result_delivery_markers.command_receipt_id",
-            )?,
+            accepted_runtime_operation_id: row.accepted_runtime_operation_id,
             claim_token: opt_uuid(
                 row.claim_token.as_ref(),
                 "gate_result_delivery_markers.claim_token",
@@ -950,7 +936,7 @@ impl GateResultDeliveryMarkerRepository for PostgresLifecycleGateRepository {
             r#"UPDATE gate_result_delivery_markers
                SET status=$4,
                    mailbox_message_id=$5,
-                   command_receipt_id=$6,
+                   accepted_runtime_operation_id=$6,
                    claim_token=NULL,
                    claim_expires_at=NULL,
                    updated_at=$7
@@ -962,7 +948,7 @@ impl GateResultDeliveryMarkerRepository for PostgresLifecycleGateRepository {
         .bind(request.claim_token.to_string())
         .bind(status.as_str())
         .bind(request.mailbox_message_id.map(|id| id.to_string()))
-        .bind(request.command_receipt_id.map(|id| id.to_string()))
+        .bind(request.accepted_runtime_operation_id)
         .bind(Utc::now())
         .fetch_optional(&self.pool)
         .await
@@ -1121,194 +1107,6 @@ impl AgentLineageRepository for PostgresAgentLineageRepository {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// RuntimeSessionExecutionAnchorRepository
-// ═══════════════════════════════════════════════════════════════════════════════
-
-pub struct PostgresRuntimeSessionExecutionAnchorRepository {
-    pool: PgPool,
-}
-
-impl PostgresRuntimeSessionExecutionAnchorRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
-}
-
-#[derive(sqlx::FromRow)]
-struct AnchorRow {
-    runtime_session_id: String,
-    run_id: String,
-    launch_frame_id: String,
-    agent_id: String,
-    orchestration_id: Option<String>,
-    node_path: Option<String>,
-    node_attempt: Option<i32>,
-    created_by_kind: String,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-}
-
-impl TryFrom<AnchorRow> for RuntimeSessionExecutionAnchor {
-    type Error = DomainError;
-    fn try_from(row: AnchorRow) -> Result<Self, Self::Error> {
-        Ok(RuntimeSessionExecutionAnchor {
-            runtime_session_id: row.runtime_session_id,
-            run_id: parse_uuid(&row.run_id, "rsea.run_id")?,
-            launch_frame_id: parse_uuid(&row.launch_frame_id, "rsea.launch_frame_id")?,
-            agent_id: parse_uuid(&row.agent_id, "rsea.agent_id")?,
-            orchestration_id: opt_uuid(row.orchestration_id.as_ref(), "rsea.orchestration_id")?,
-            node_path: row.node_path,
-            node_attempt: row.node_attempt.map(|attempt| attempt as u32),
-            created_by_kind: row.created_by_kind,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecutionAnchorRepository {
-    async fn create_once(&self, a: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
-        let result = sqlx::query(
-            r#"INSERT INTO runtime_session_execution_anchors
-                (runtime_session_id, run_id, launch_frame_id, agent_id,
-                 orchestration_id, node_path, node_attempt,
-                 created_by_kind, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-               ON CONFLICT (runtime_session_id) DO NOTHING"#,
-        )
-        .bind(&a.runtime_session_id)
-        .bind(a.run_id.to_string())
-        .bind(a.launch_frame_id.to_string())
-        .bind(a.agent_id.to_string())
-        .bind(a.orchestration_id.map(|id| id.to_string()))
-        .bind(&a.node_path)
-        .bind(a.node_attempt.map(|attempt| attempt as i32))
-        .bind(&a.created_by_kind)
-        .bind(a.created_at)
-        .bind(a.updated_at)
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        if result.rows_affected() > 0 {
-            return Ok(());
-        }
-
-        let existing = self
-            .find_by_session(&a.runtime_session_id)
-            .await?
-            .ok_or_else(|| DomainError::Database {
-                operation: "create_runtime_session_execution_anchor",
-                message: format!(
-                    "runtime_session_id={} conflicted but existing anchor was not visible",
-                    a.runtime_session_id
-                ),
-            })?;
-        if existing.has_same_launch_coordinates_as(a) {
-            return Ok(());
-        }
-        Err(existing.immutable_conflict(a))
-    }
-
-    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"DELETE FROM runtime_session_execution_anchors
-               WHERE runtime_session_id = $1"#,
-        )
-        .bind(runtime_session_id)
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        Ok(())
-    }
-
-    async fn find_by_session(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-        sqlx::query_as::<_, AnchorRow>(
-            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      orchestration_id, node_path, node_attempt,
-                      created_by_kind, created_at, updated_at
-               FROM runtime_session_execution_anchors
-               WHERE runtime_session_id = $1"#,
-        )
-        .bind(runtime_session_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
-    }
-
-    async fn list_by_run(
-        &self,
-        run_id: Uuid,
-    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-        sqlx::query_as::<_, AnchorRow>(
-            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      orchestration_id, node_path, node_attempt,
-                      created_by_kind, created_at, updated_at
-               FROM runtime_session_execution_anchors
-               WHERE run_id = $1
-               ORDER BY updated_at DESC"#,
-        )
-        .bind(run_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-
-    async fn list_by_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-        sqlx::query_as::<_, AnchorRow>(
-            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      orchestration_id, node_path, node_attempt,
-                      created_by_kind, created_at, updated_at
-               FROM runtime_session_execution_anchors
-               WHERE agent_id = $1
-               ORDER BY updated_at DESC"#,
-        )
-        .bind(agent_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-
-    async fn list_by_project_session_ids(
-        &self,
-        runtime_session_ids: &[String],
-    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-        if runtime_session_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        sqlx::query_as::<_, AnchorRow>(
-            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      orchestration_id, node_path, node_attempt,
-                      created_by_kind, created_at, updated_at
-               FROM runtime_session_execution_anchors
-               WHERE runtime_session_id = ANY($1)
-               ORDER BY updated_at DESC"#,
-        )
-        .bind(runtime_session_ids)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1326,8 +1124,7 @@ mod tests {
             vfs_surface_json: None,
             mcp_surface_json: None,
             execution_profile_json: None,
-            visible_canvas_mount_ids_json: None,
-            visible_workspace_module_refs_json: None,
+            hook_plan: None,
             created_by_kind: "test".to_string(),
             created_by_id: Some("tester".to_string()),
             created_at: Utc::now(),
@@ -1338,12 +1135,10 @@ mod tests {
     fn frame_row_projects_surface_document_as_canonical_source() {
         let mut row = frame_row_with_surface(Some(json!({
             "capability_state": {"canonical": true},
-            "vfs_surface": {"mounts": ["canonical"]},
-            "visible_canvas_mount_ids": ["canvas:canonical"]
+            "vfs_surface": {"mounts": ["canonical"]}
         })));
         row.effective_capability_json = Some(json!({"stale": true}));
         row.vfs_surface_json = Some(json!({"mounts": ["stale"]}));
-        row.visible_canvas_mount_ids_json = Some(json!(["canvas:stale"]));
 
         let frame = AgentFrame::try_from(row).expect("frame row should map");
 
@@ -1354,10 +1149,6 @@ mod tests {
         assert_eq!(
             frame.vfs_surface_json,
             Some(json!({"mounts": ["canonical"]}))
-        );
-        assert_eq!(
-            frame.visible_canvas_mount_ids_json,
-            Some(json!(["canvas:canonical"]))
         );
     }
 
@@ -1521,14 +1312,14 @@ mod tests {
         );
 
         let mailbox_message_id = Uuid::new_v4();
-        let command_receipt_id = Uuid::new_v4();
+        let runtime_operation_id = "operation-gate-continuation".to_string();
         let completed = repo
             .complete_parent_continuation(CompleteGateResultParentContinuationRequest {
                 gate_id: gate.id,
                 result_attempt: 1,
                 claim_token,
                 mailbox_message_id: Some(mailbox_message_id),
-                command_receipt_id: Some(command_receipt_id),
+                accepted_runtime_operation_id: Some(runtime_operation_id.clone()),
                 dispatched_to_parent: false,
             })
             .await
@@ -1538,7 +1329,10 @@ mod tests {
             GateResultDeliveryStatus::QueuedForParentContinuation
         );
         assert_eq!(completed.mailbox_message_id, Some(mailbox_message_id));
-        assert_eq!(completed.command_receipt_id, Some(command_receipt_id));
+        assert_eq!(
+            completed.accepted_runtime_operation_id,
+            Some(runtime_operation_id)
+        );
 
         let replay = repo
             .claim_parent_continuation(ClaimGateResultParentContinuationRequest {

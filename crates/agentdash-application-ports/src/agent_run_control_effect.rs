@@ -1,23 +1,15 @@
 use std::sync::Arc;
 
-use crate::frame_launch_envelope::TerminalHookEffectBinding;
-pub use agentdash_agent_protocol::RuntimeTerminalDiagnostic;
-use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo};
-use agentdash_spi::hooks::{HookControlTarget, HookEffect, HookRuntimeAccess, SharedHookRuntime};
+use agentdash_agent_protocol::BackboneEnvelope;
+use agentdash_agent_protocol::RuntimeTerminalDiagnostic;
+use agentdash_agent_runtime_contract::{
+    EventSequence, PresentationThreadId, PresentationTurnId, RuntimeBindingId,
+    RuntimeDriverGeneration, RuntimeTerminalHookEffectBinding, RuntimeTerminalHookEffectHandlerRef,
+    RuntimeThreadId, RuntimeTurnId, RuntimeTurnTerminal, SurfaceDigest, SurfaceRevision,
+};
+use agentdash_spi::hooks::HookEffect;
 use async_trait::async_trait;
 use uuid::Uuid;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentRunControlEffectReplayPhase {
-    DeliveryConvergence,
-    TerminalSideEffects,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentRunTerminalControlEffectMode {
-    ImmediateAll,
-    DeliveryConvergenceOnly,
-}
 
 #[async_trait]
 pub trait AgentRunPostTurnHandler: Send + Sync + 'static {
@@ -25,6 +17,7 @@ pub trait AgentRunPostTurnHandler: Send + Sync + 'static {
 
     async fn execute_effects(
         &self,
+        effect_id: &str,
         session_id: &str,
         turn_id: &str,
         effects: &[HookEffect],
@@ -32,7 +25,8 @@ pub trait AgentRunPostTurnHandler: Send + Sync + 'static {
 
     fn supported_effect_kinds(&self) -> &[&str];
 
-    fn durable_effect_handler(&self) -> Option<serde_json::Value> {
+    /// Stable typed identity persisted with the canonical Runtime surface binding.
+    fn durable_effect_handler(&self) -> Option<RuntimeTerminalHookEffectHandlerRef> {
         None
     }
 }
@@ -43,8 +37,8 @@ pub type DynAgentRunPostTurnHandler = Arc<dyn AgentRunPostTurnHandler>;
 pub trait AgentRunHookEffectHandlerRegistry: Send + Sync + 'static {
     async fn handler_for(
         &self,
-        delivery_runtime_session_id: &str,
-        payload: &serde_json::Value,
+        presentation_thread_id: &PresentationThreadId,
+        handler: &RuntimeTerminalHookEffectHandlerRef,
     ) -> Result<Option<DynAgentRunPostTurnHandler>, String>;
 }
 
@@ -57,91 +51,144 @@ pub struct EmptyAgentRunHookEffectHandlerRegistry;
 impl AgentRunHookEffectHandlerRegistry for EmptyAgentRunHookEffectHandlerRegistry {
     async fn handler_for(
         &self,
-        _delivery_runtime_session_id: &str,
-        payload: &serde_json::Value,
+        _presentation_thread_id: &PresentationThreadId,
+        handler: &RuntimeTerminalHookEffectHandlerRef,
     ) -> Result<Option<DynAgentRunPostTurnHandler>, String> {
-        match payload.get("handler") {
-            None | Some(serde_json::Value::Null) => Ok(None),
-            Some(handler) => Err(format!(
-                "未注册 durable AgentRun hook effect handler: {handler}"
-            )),
+        Err(format!(
+            "未注册 durable AgentRun hook effect handler: {}:{}@{}",
+            handler.handler_type, handler.handler_id, handler.revision.0
+        ))
+    }
+}
+
+/// Managed Runtime 已经原子提交的 terminal evidence。
+///
+/// 该类型只描述 application side effects 的稳定输入；lease、attempt 与 ack 状态属于
+/// Runtime durable outbox，不混入业务 evidence。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AgentRunTerminalControlInput {
+    pub effect_id: String,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub presentation_thread_id: PresentationThreadId,
+    pub runtime_turn_id: RuntimeTurnId,
+    pub presentation_turn_id: PresentationTurnId,
+    pub terminal_event_sequence: EventSequence,
+    pub terminal: RuntimeTurnTerminal,
+    pub message: Option<String>,
+    pub diagnostic: Option<RuntimeTerminalDiagnostic>,
+    pub started_at_ms: Option<u64>,
+    pub completed_at_ms: u64,
+    pub binding_id: RuntimeBindingId,
+    pub driver_generation: RuntimeDriverGeneration,
+    pub surface_revision: SurfaceRevision,
+    pub surface_digest: SurfaceDigest,
+    pub source_thread_id: String,
+    pub source_turn_id: Option<String>,
+    pub terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunControlEffectKind {
+    DeliveryConvergence,
+    WaitProducerTerminalConvergence,
+    LifecycleTerminalConvergence,
+    TerminalHookEffects,
+}
+
+impl AgentRunControlEffectKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DeliveryConvergence => "agent_run_delivery_convergence",
+            Self::WaitProducerTerminalConvergence => "wait_producer_terminal_convergence",
+            Self::LifecycleTerminalConvergence => "lifecycle_terminal_convergence",
+            Self::TerminalHookEffects => "terminal_hook_effects",
         }
     }
 }
 
-#[derive(Clone)]
-pub struct AgentRunTerminalHookEffects {
-    pub control_target: Option<HookControlTarget>,
-    pub effects: Vec<HookEffect>,
-    pub handler: Option<DynAgentRunPostTurnHandler>,
-    pub durable_binding: Option<TerminalHookEffectBinding>,
+impl TryFrom<&str> for AgentRunControlEffectKind {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "agent_run_delivery_convergence" => Ok(Self::DeliveryConvergence),
+            "wait_producer_terminal_convergence" => Ok(Self::WaitProducerTerminalConvergence),
+            "lifecycle_terminal_convergence" => Ok(Self::LifecycleTerminalConvergence),
+            "terminal_hook_effects" => Ok(Self::TerminalHookEffects),
+            other => Err(format!("unknown AgentRun control effect kind: {other}")),
+        }
+    }
 }
 
-#[derive(Clone)]
-pub struct AgentRunTerminalHookContext {
-    pub hook_runtime: SharedHookRuntime,
-    pub post_turn_handler: Option<DynAgentRunPostTurnHandler>,
-    pub source: SourceInfo,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRunControlEffectStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
 }
 
-#[derive(Clone)]
-pub struct AgentRunTerminalControlInput {
-    pub delivery_runtime_session_id: String,
-    pub turn_id: String,
-    pub terminal_event_seq: u64,
-    pub terminal_state: String,
-    pub terminal_message: Option<String>,
-    pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
-    pub terminal_hook_context: Option<AgentRunTerminalHookContext>,
-    pub effect_mode: AgentRunTerminalControlEffectMode,
+#[derive(Debug, Clone)]
+pub struct AgentRunControlEffectRecord {
+    pub id: Uuid,
+    pub dedup_key: String,
+    pub presentation_thread_id: PresentationThreadId,
+    pub presentation_turn_id: PresentationTurnId,
+    pub terminal_event_sequence: EventSequence,
+    pub effect_kind: AgentRunControlEffectKind,
+    pub payload: serde_json::Value,
+    pub status: AgentRunControlEffectStatus,
+    pub claim_token: Option<Uuid>,
 }
 
-pub struct AgentRunTerminalHookTriggerInput {
-    pub delivery_runtime_session_id: String,
-    pub turn_id: String,
-    pub terminal_state: String,
-    pub terminal_message: Option<String>,
-    pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
-    pub source: SourceInfo,
+#[derive(Debug, Clone)]
+pub struct NewAgentRunControlEffectRecord {
+    pub dedup_key: String,
+    pub presentation_thread_id: PresentationThreadId,
+    pub presentation_turn_id: PresentationTurnId,
+    pub terminal_event_sequence: EventSequence,
+    pub effect_kind: AgentRunControlEffectKind,
+    pub payload: serde_json::Value,
 }
 
 #[async_trait]
-pub trait AgentRunTerminalHookTriggerPort: Send + Sync {
-    async fn emit_agent_run_terminal_hook_trigger(
+pub trait AgentRunControlEffectStore: Send + Sync {
+    async fn insert_or_get(
         &self,
-        hook_runtime: &dyn HookRuntimeAccess,
-        input: AgentRunTerminalHookTriggerInput,
-    ) -> Vec<HookEffect>;
+        effect: NewAgentRunControlEffectRecord,
+    ) -> Result<AgentRunControlEffectRecord, String>;
+
+    async fn claim(
+        &self,
+        dedup_key: &str,
+        owner: &str,
+        lease_duration_ms: i64,
+    ) -> Result<Option<AgentRunControlEffectRecord>, String>;
+
+    async fn mark_succeeded(&self, effect_id: Uuid, claim_token: Uuid) -> Result<(), String>;
+
+    async fn mark_failed(
+        &self,
+        effect_id: Uuid,
+        claim_token: Uuid,
+        error: String,
+    ) -> Result<(), String>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunWaitProducerTerminalEvent {
-    pub run_id: Uuid,
-    pub agent_id: Uuid,
-    pub frame_id: Option<Uuid>,
-    pub terminal_state: String,
-    pub terminal_message: Option<String>,
-    pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
-    pub producer_last_message: Option<ProducerLastMessageEvidence>,
-    pub source_turn_id: Option<String>,
-    pub delivery_trace_ref: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ProducerLastMessageEvidence {
-    pub summary: String,
-    pub message_path: String,
-    pub journal_session_id: String,
-    pub source_event_seq: u64,
+#[async_trait]
+pub trait AgentRunDeliveryTerminalConvergencePort: Send + Sync {
+    async fn converge_delivery_terminal(
+        &self,
+        input: &AgentRunTerminalControlInput,
+    ) -> Result<(), String>;
 }
 
 #[async_trait]
 pub trait AgentRunWaitProducerTerminalConvergencePort: Send + Sync {
-    async fn observe_agent_run_wait_producer_terminal(
+    async fn converge_wait_producer_terminal(
         &self,
-        event: AgentRunWaitProducerTerminalEvent,
+        input: &AgentRunTerminalControlInput,
     ) -> Result<(), String>;
 }
 
@@ -149,8 +196,17 @@ pub trait AgentRunWaitProducerTerminalConvergencePort: Send + Sync {
 pub trait AgentRunLifecycleTerminalConvergencePort: Send + Sync {
     async fn observe_lifecycle_terminal(
         &self,
-        delivery_runtime_session_id: &str,
-        terminal_state: &str,
+        presentation_thread_id: &PresentationThreadId,
+        terminal: RuntimeTurnTerminal,
+    ) -> Result<(), String>;
+}
+
+/// Executes canonical SessionTerminal hooks for the exact surface revision bound to the effect.
+#[async_trait]
+pub trait AgentRunTerminalHookEffectPort: Send + Sync {
+    async fn execute_terminal_hooks(
+        &self,
+        input: &AgentRunTerminalControlInput,
     ) -> Result<(), String>;
 }
 
@@ -160,15 +216,4 @@ pub trait AgentRunControlEffectPort: Send + Sync {
         &self,
         input: AgentRunTerminalControlInput,
     ) -> Result<(), String>;
-}
-
-#[async_trait]
-pub trait AgentRunControlEffectReplayPort: Send + Sync {
-    async fn replay_control_effect_outbox_phase(
-        &self,
-        phase: AgentRunControlEffectReplayPhase,
-        limit: u32,
-    ) -> Result<usize, String>;
-
-    async fn replay_control_effect_outbox(&self, limit: u32) -> Result<usize, String>;
 }

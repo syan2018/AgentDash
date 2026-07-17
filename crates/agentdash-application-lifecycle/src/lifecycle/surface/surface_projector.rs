@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 
 use agentdash_application_ports::agent_run_surface as agent_run_surface_port;
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
-use agentdash_application_skill::asset::SkillAssetService;
 use agentdash_application_vfs::mount_skill_asset::refresh_lifecycle_skill_asset_projection;
 use agentdash_domain::canvas::CANVAS_SYSTEM_SKILL_NAME;
 use agentdash_domain::skill_asset::SkillAssetRepository;
@@ -182,12 +181,12 @@ impl From<BuiltinLifecycleSkill> for lifecycle_surface_port::BuiltinLifecycleSki
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkillPolicy {
     PreserveProjected,
-    EnsureAndProject(Vec<BuiltinLifecycleSkill>),
+    Project(Vec<BuiltinLifecycleSkill>),
 }
 
 impl BuiltinLifecycleSkillPolicy {
-    pub fn ensure(skills: impl IntoIterator<Item = BuiltinLifecycleSkill>) -> Self {
-        Self::EnsureAndProject(skills.into_iter().collect())
+    pub fn project(skills: impl IntoIterator<Item = BuiltinLifecycleSkill>) -> Self {
+        Self::Project(skills.into_iter().collect())
     }
 }
 
@@ -197,8 +196,8 @@ impl From<lifecycle_surface_port::BuiltinLifecycleSkillPolicy> for BuiltinLifecy
             lifecycle_surface_port::BuiltinLifecycleSkillPolicy::PreserveProjected => {
                 Self::PreserveProjected
             }
-            lifecycle_surface_port::BuiltinLifecycleSkillPolicy::EnsureAndProject(skills) => {
-                Self::EnsureAndProject(skills.into_iter().map(Into::into).collect())
+            lifecycle_surface_port::BuiltinLifecycleSkillPolicy::Project(skills) => {
+                Self::Project(skills.into_iter().map(Into::into).collect())
             }
         }
     }
@@ -208,8 +207,8 @@ impl From<BuiltinLifecycleSkillPolicy> for lifecycle_surface_port::BuiltinLifecy
     fn from(value: BuiltinLifecycleSkillPolicy) -> Self {
         match value {
             BuiltinLifecycleSkillPolicy::PreserveProjected => Self::PreserveProjected,
-            BuiltinLifecycleSkillPolicy::EnsureAndProject(skills) => {
-                Self::EnsureAndProject(skills.into_iter().map(Into::into).collect())
+            BuiltinLifecycleSkillPolicy::Project(skills) => {
+                Self::Project(skills.into_iter().map(Into::into).collect())
             }
         }
     }
@@ -229,13 +228,13 @@ impl AgentRunLifecycleSkillProjectionFacts {
         }
     }
 
-    pub fn ensure(
+    pub fn project(
         explicit_skill_asset_keys: Vec<String>,
         skills: impl IntoIterator<Item = BuiltinLifecycleSkill>,
     ) -> Self {
         Self {
             explicit_skill_asset_keys,
-            builtin_skills: BuiltinLifecycleSkillPolicy::ensure(skills),
+            builtin_skills: BuiltinLifecycleSkillPolicy::project(skills),
         }
     }
 }
@@ -419,49 +418,13 @@ impl From<OrchestrationNodeProjectionFacts>
     }
 }
 
-#[async_trait::async_trait]
-pub trait BuiltinLifecycleSkillBootstrapper: Send + Sync {
-    async fn bootstrap_builtin(&self, project_id: Uuid, builtin_key: &str) -> Result<(), String>;
-}
-
-struct SkillAssetServiceBuiltinLifecycleSkillBootstrapper {
+pub struct AgentRunLifecycleSurfaceProjector {
     repo: Arc<dyn SkillAssetRepository>,
 }
 
-impl SkillAssetServiceBuiltinLifecycleSkillBootstrapper {
-    fn new(repo: Arc<dyn SkillAssetRepository>) -> Self {
-        Self { repo }
-    }
-}
-
-#[async_trait::async_trait]
-impl BuiltinLifecycleSkillBootstrapper for SkillAssetServiceBuiltinLifecycleSkillBootstrapper {
-    async fn bootstrap_builtin(&self, project_id: Uuid, builtin_key: &str) -> Result<(), String> {
-        SkillAssetService::new(self.repo.as_ref())
-            .bootstrap_builtins(project_id, Some(builtin_key))
-            .await
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-}
-
-pub struct AgentRunLifecycleSurfaceProjector {
-    builtin_skill_bootstrapper: Arc<dyn BuiltinLifecycleSkillBootstrapper>,
-}
-
 impl AgentRunLifecycleSurfaceProjector {
-    pub fn from_skill_asset_repo(skill_asset_repo: Arc<dyn SkillAssetRepository>) -> Self {
-        Self::from_builtin_skill_bootstrapper(Arc::new(
-            SkillAssetServiceBuiltinLifecycleSkillBootstrapper::new(skill_asset_repo),
-        ))
-    }
-
-    pub fn from_builtin_skill_bootstrapper(
-        builtin_skill_bootstrapper: Arc<dyn BuiltinLifecycleSkillBootstrapper>,
-    ) -> Self {
-        Self {
-            builtin_skill_bootstrapper,
-        }
+    pub fn from_skill_asset_repo(repo: Arc<dyn SkillAssetRepository>) -> Self {
+        Self { repo }
     }
 
     pub async fn project_workspace_read_surface(
@@ -521,22 +484,31 @@ impl AgentRunLifecycleSurfaceProjector {
             BuiltinLifecycleSkillPolicy::PreserveProjected => {
                 projected_skill_keys_for_project(input.base_vfs.as_ref(), input.project_id)
             }
-            BuiltinLifecycleSkillPolicy::EnsureAndProject(_) => Vec::new(),
+            BuiltinLifecycleSkillPolicy::Project(skills) => {
+                skills.iter().map(|skill| skill.key().to_string()).collect()
+            }
         };
         skill_asset_keys.extend(input.explicit_skill_asset_keys.iter().cloned());
-
-        if let BuiltinLifecycleSkillPolicy::EnsureAndProject(skills) = &input.builtin_skills {
-            for skill in skills {
-                self.builtin_skill_bootstrapper
-                    .bootstrap_builtin(input.project_id, skill.key())
-                    .await?;
-                skill_asset_keys.push(skill.key().to_string());
+        let skill_asset_keys = normalized_skill_asset_keys(skill_asset_keys);
+        for key in &skill_asset_keys {
+            let asset = self
+                .repo
+                .get_by_project_and_key(input.project_id, key)
+                .await
+                .map_err(|error| {
+                    format!(
+                        "Project {} SkillAsset `{key}` projection 读取失败: {error}",
+                        input.project_id
+                    )
+                })?;
+            if asset.is_none() {
+                return Err(format!(
+                    "Project {} 缺少已 provision 的 SkillAsset `{key}`",
+                    input.project_id
+                ));
             }
         }
-        project_surface_with_effective_skill_keys(
-            input,
-            normalized_skill_asset_keys(skill_asset_keys),
-        )
+        project_surface_with_effective_skill_keys(input, skill_asset_keys)
     }
 
     pub async fn project_activation(
@@ -643,12 +615,16 @@ fn project_surface_with_effective_skill_keys(
                     .as_ref()
                     .map(|node| node.evidence_ref())
             });
-            let anchor = agent_run_session_anchor_from_projector_input(
-                &input.address,
-                message_stream,
-                node_evidence.as_ref(),
+            install_agent_run_lifecycle_mount(
+                &mut vfs,
+                input.address.run_id,
+                input.address.agent_id,
+                &message_stream.runtime_session_id,
+                input.address.frame_id,
+                node_evidence
+                    .as_ref()
+                    .map(|node| (node.orchestration_id, node.node_path.as_str(), node.attempt)),
             );
-            install_agent_run_lifecycle_mount(&mut vfs, &anchor);
         }
     }
 
@@ -736,32 +712,6 @@ fn normalized_skill_asset_keys(keys: impl IntoIterator<Item = String>) -> Vec<St
         .collect()
 }
 
-fn agent_run_session_anchor_from_projector_input(
-    address: &AgentRunRuntimeAddress,
-    message_stream: &MessageStreamProjectionRef,
-    node_evidence: Option<&OrchestrationNodeEvidenceRef>,
-) -> agentdash_domain::workflow::RuntimeSessionExecutionAnchor {
-    match node_evidence {
-        Some(node) => {
-            agentdash_domain::workflow::RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-                message_stream.runtime_session_id.clone(),
-                address.run_id,
-                address.frame_id,
-                address.agent_id,
-                node.orchestration_id,
-                node.node_path.clone(),
-                node.attempt,
-            )
-        }
-        None => agentdash_domain::workflow::RuntimeSessionExecutionAnchor::new_dispatch(
-            message_stream.runtime_session_id.clone(),
-            address.run_id,
-            address.frame_id,
-            address.agent_id,
-        ),
-    }
-}
-
 fn refresh_lifecycle_projection_metadata(
     vfs: &mut Vfs,
     project_id: Uuid,
@@ -827,35 +777,77 @@ fn projection_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_application_skill::skill_asset::SkillAssetService;
     use agentdash_application_vfs::append_lifecycle_skill_asset_projection;
+    use agentdash_domain::DomainError;
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_domain::skill_asset::SkillAssetSource;
+    use agentdash_domain::skill_asset::{SkillAsset, SkillAssetRepository};
     use agentdash_test_support::skill::MemorySkillAssetRepository;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Default)]
-    struct RecordingBuiltinSkillBootstrapper {
-        calls: Mutex<Vec<(Uuid, String)>>,
+    struct RecordingSkillAssetRepository {
+        inner: MemorySkillAssetRepository,
+        creates: AtomicUsize,
+        updates: AtomicUsize,
+        deletes: AtomicUsize,
     }
 
-    impl RecordingBuiltinSkillBootstrapper {
-        fn calls(&self) -> Vec<(Uuid, String)> {
-            self.calls.lock().unwrap().clone()
+    impl RecordingSkillAssetRepository {
+        fn reset_writes(&self) {
+            self.creates.store(0, Ordering::SeqCst);
+            self.updates.store(0, Ordering::SeqCst);
+            self.deletes.store(0, Ordering::SeqCst);
+        }
+
+        fn writes(&self) -> usize {
+            self.creates.load(Ordering::SeqCst)
+                + self.updates.load(Ordering::SeqCst)
+                + self.deletes.load(Ordering::SeqCst)
         }
     }
 
     #[async_trait::async_trait]
-    impl BuiltinLifecycleSkillBootstrapper for RecordingBuiltinSkillBootstrapper {
-        async fn bootstrap_builtin(
+    impl SkillAssetRepository for RecordingSkillAssetRepository {
+        async fn create(&self, asset: &SkillAsset) -> Result<(), DomainError> {
+            self.creates.fetch_add(1, Ordering::SeqCst);
+            self.inner.create(asset).await
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<SkillAsset>, DomainError> {
+            self.inner.get(id).await
+        }
+
+        async fn get_by_project_and_key(
+            &self,
+            project_id: Uuid,
+            key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            self.inner.get_by_project_and_key(project_id, key).await
+        }
+
+        async fn get_by_project_and_builtin_key(
             &self,
             project_id: Uuid,
             builtin_key: &str,
-        ) -> Result<(), String> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push((project_id, builtin_key.to_string()));
-            Ok(())
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            self.inner
+                .get_by_project_and_builtin_key(project_id, builtin_key)
+                .await
+        }
+
+        async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
+            self.inner.list_by_project(project_id).await
+        }
+
+        async fn update(&self, asset: &SkillAsset) -> Result<(), DomainError> {
+            self.updates.fetch_add(1, Ordering::SeqCst);
+            self.inner.update(asset).await
+        }
+
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.deletes.fetch_add(1, Ordering::SeqCst);
+            self.inner.delete(id).await
         }
     }
 
@@ -932,16 +924,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_and_project_bootstraps_builtin_keys_before_metadata_projection() {
+    async fn projected_builtin_keys_are_read_only_and_written_to_metadata() {
         let project_id = Uuid::new_v4();
-        let bootstrapper = Arc::new(RecordingBuiltinSkillBootstrapper::default());
-        let projector = AgentRunLifecycleSurfaceProjector::from_builtin_skill_bootstrapper(
-            bootstrapper.clone(),
-        );
+        let repo = Arc::new(RecordingSkillAssetRepository::default());
+        SkillAssetService::new(repo.as_ref())
+            .provision_project_builtins(project_id, None)
+            .await
+            .expect("provision project builtins");
+        repo.reset_writes();
+        let projector = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(repo.clone());
 
         let surface = projector
             .project(AgentRunLifecycleSurfaceInput {
-                builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
+                builtin_skills: BuiltinLifecycleSkillPolicy::project([
                     BuiltinLifecycleSkill::CanvasSystem,
                     BuiltinLifecycleSkill::WorkspaceModuleSystem,
                     BuiltinLifecycleSkill::CompanionSystem,
@@ -982,28 +977,19 @@ mod tests {
                 }),
             Some(surface.skill_asset_keys.clone())
         );
-
-        assert_eq!(
-            bootstrapper.calls(),
-            expected_keys
-                .into_iter()
-                .map(|key| (project_id, key))
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(repo.writes(), 0, "lifecycle projection must be read-only");
     }
 
     #[tokio::test]
-    async fn ensure_and_project_with_skill_service_creates_builtin_seed_assets() {
+    async fn projection_rejects_missing_project_skill_asset() {
         let project_id = Uuid::new_v4();
         let repo = Arc::new(MemorySkillAssetRepository::default());
-        let projector = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(repo.clone());
+        let projector = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(repo);
 
-        let surface = projector
+        let error = projector
             .project(AgentRunLifecycleSurfaceInput {
-                builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
+                builtin_skills: BuiltinLifecycleSkillPolicy::project([
                     BuiltinLifecycleSkill::CanvasSystem,
-                    BuiltinLifecycleSkill::WorkspaceModuleSystem,
-                    BuiltinLifecycleSkill::CompanionSystem,
                 ]),
                 ..projector_input(
                     project_id,
@@ -1018,39 +1004,23 @@ mod tests {
                 )
             })
             .await
-            .expect("project lifecycle surface");
+            .expect_err("missing skill asset must reject projection");
 
-        let expected_keys = vec![
-            "canvas-system".to_string(),
-            "workspace-module-system".to_string(),
-            "companion-system".to_string(),
-        ];
-        assert_eq!(surface.skill_asset_keys, expected_keys);
-        let assets = repo
-            .list_by_project(project_id)
-            .await
-            .expect("list skill assets");
-        assert_eq!(assets.len(), 3);
-        for key in expected_keys {
-            let asset = assets
-                .iter()
-                .find(|asset| asset.key == key)
-                .unwrap_or_else(|| panic!("missing asset {key}"));
-            assert_eq!(
-                asset.source,
-                SkillAssetSource::BuiltinSeed { key: key.clone() }
-            );
-            assert!(asset.files.iter().any(|file| file.path == "SKILL.md"));
-        }
+        assert!(error.contains(project_id.to_string().as_str()));
+        assert!(error.contains("canvas-system"));
+        assert!(error.contains("provision"));
     }
 
     #[tokio::test]
-    async fn preserve_projected_keeps_existing_metadata_without_bootstrap() {
+    async fn preserve_projected_keeps_existing_metadata_without_writes() {
         let project_id = Uuid::new_v4();
-        let bootstrapper = Arc::new(RecordingBuiltinSkillBootstrapper::default());
-        let projector = AgentRunLifecycleSurfaceProjector::from_builtin_skill_bootstrapper(
-            bootstrapper.clone(),
-        );
+        let repo = Arc::new(RecordingSkillAssetRepository::default());
+        SkillAssetService::new(repo.as_ref())
+            .provision_project_builtins(project_id, Some("companion-system"))
+            .await
+            .expect("provision companion-system");
+        repo.reset_writes();
+        let projector = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(repo.clone());
 
         let surface = projector
             .project(projector_input(
@@ -1062,10 +1032,7 @@ mod tests {
             .expect("project lifecycle surface");
 
         assert_eq!(surface.skill_asset_keys, vec!["companion-system"]);
-        assert!(
-            bootstrapper.calls().is_empty(),
-            "PreserveProjected must not call builtin bootstrap service"
-        );
+        assert_eq!(repo.writes(), 0, "PreserveProjected must be read-only");
     }
 
     #[test]

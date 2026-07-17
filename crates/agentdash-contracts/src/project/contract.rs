@@ -93,7 +93,7 @@ pub enum ProjectEventStreamEnvelope {
         last_event_id: i64,
     },
     StateChanged(ProjectStateChange),
-    ControlPlaneProjectionChanged(ProjectControlPlaneProjectionChanged),
+    ControlPlaneProjectionChanged(Box<ProjectControlPlaneProjectionChanged>),
     BackendRuntimeChanged {
         backend_id: String,
     },
@@ -119,7 +119,7 @@ impl ProjectEventStreamEnvelope {
     }
 
     pub fn control_plane_projection_changed(event: ProjectControlPlaneProjectionChanged) -> Self {
-        Self::ControlPlaneProjectionChanged(event)
+        Self::ControlPlaneProjectionChanged(Box::new(event))
     }
 
     pub fn heartbeat(timestamp: i64) -> Self {

@@ -1,21 +1,15 @@
-use std::{collections::HashSet, io, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
-use agentdash_application_runtime_session::session::{
-    SessionBranchingService, SessionLineageRecord, SessionLineageRelationKind,
+use agentdash_agent_runtime_contract::{
+    EventSequence, PresentationDurability, RuntimeJournalRecord, RuntimeThreadId,
 };
-use agentdash_spi::session_persistence::{
-    PersistedSessionEvent, SessionEventPage, SessionEventStore, SessionLineageStore,
-};
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
+use agentdash_domain::workflow::AgentRunLineageRepository;
 use async_trait::async_trait;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::agent_run::runtime_session_boundary::{
-    RuntimeSessionEventSubscription, SessionEventingService,
-};
 use crate::error::WorkflowApplicationError;
-
-const JOURNAL_EVENT_PAGE_SIZE: u32 = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRunJournalSegmentRole {
@@ -23,83 +17,124 @@ pub enum AgentRunJournalSegmentRole {
     CurrentDelivery,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunJournalSegment {
-    pub index: usize,
-    pub role: AgentRunJournalSegmentRole,
-    pub runtime_session_id: String,
-    pub from_after_event_seq: u64,
-    pub to_event_seq: u64,
-}
-
 #[derive(Debug, Clone)]
 pub struct AgentRunJournalEvent {
     pub journal_seq: u64,
-    pub segment_index: usize,
     pub segment_role: AgentRunJournalSegmentRole,
-    pub source_runtime_session_id: String,
-    pub source_event_seq: u64,
-    pub event: PersistedSessionEvent,
-}
-
-#[derive(Debug, Clone)]
-pub struct AgentRunJournalView {
-    pub run_id: Uuid,
-    pub agent_id: Uuid,
-    pub delivery_runtime_session_id: String,
-    pub segments: Vec<AgentRunJournalSegment>,
-    pub events: Vec<AgentRunJournalEvent>,
+    pub source_runtime_thread_id: RuntimeThreadId,
+    pub source_event_seq: Option<EventSequence>,
+    pub record: RuntimeJournalRecord,
 }
 
 #[derive(Debug, Clone)]
 pub struct AgentRunJournalPage {
+    pub delivery_runtime_thread_id: RuntimeThreadId,
     pub snapshot_seq: u64,
     pub events: Vec<AgentRunJournalEvent>,
     pub has_more: bool,
     pub next_after_seq: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentRunJournalQuery {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+}
+
+pub struct AgentRunJournalSourceSubscription {
+    pub ephemeral_epoch: u64,
+    pub durable_snapshot: Vec<RuntimeJournalRecord>,
+    pub ephemeral_backlog: Vec<RuntimeJournalRecord>,
+    pub live: broadcast::Receiver<RuntimeJournalRecord>,
+}
+
+#[async_trait]
+pub trait AgentRunJournalSource: Send + Sync {
+    async fn durable_records(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<Vec<RuntimeJournalRecord>, WorkflowApplicationError>;
+
+    async fn subscribe(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<AgentRunJournalSourceSubscription, WorkflowApplicationError>;
+}
+
+#[async_trait]
+pub trait AgentRunJournalBindingResolver: Send + Sync {
+    async fn resolve_thread(
+        &self,
+        target: &AgentRunRuntimeTarget,
+    ) -> Result<Option<RuntimeThreadId>, WorkflowApplicationError>;
+}
+
 pub struct AgentRunJournalStreamSubscription {
     pub state: AgentRunJournalStreamState,
-    pub live_events: broadcast::Receiver<PersistedSessionEvent>,
+    pub live: broadcast::Receiver<RuntimeJournalRecord>,
 }
 
 pub struct AgentRunJournalStreamState {
     pub journal_session_id: String,
-    pub delivery_runtime_session_id: String,
-    pub resume_from: u64,
+    pub delivery_runtime_thread_id: RuntimeThreadId,
     pub connected_seq: u64,
     pub ephemeral_epoch: u64,
     pub prefix_events: Vec<AgentRunJournalEvent>,
     pub backlog_events: Vec<AgentRunJournalEvent>,
     pub ephemeral_backlog_events: Vec<AgentRunJournalEvent>,
     prefix_len: u64,
-    snapshot_journal_seq: u64,
-    current_segment_index: usize,
+    snapshot_runtime_sequence: Option<EventSequence>,
 }
 
 impl AgentRunJournalStreamState {
-    pub fn project_live_event(&self, event: PersistedSessionEvent) -> AgentRunJournalLiveEvent {
-        let projected = self.project_current_delivery_event(event);
-        if projected.event.ephemeral {
-            return AgentRunJournalLiveEvent::Ephemeral(projected);
+    pub fn project_live_record(
+        &self,
+        record: RuntimeJournalRecord,
+    ) -> Result<AgentRunJournalLiveEvent, WorkflowApplicationError> {
+        let Some(presentation) = record.as_presentation() else {
+            return Ok(AgentRunJournalLiveEvent::Internal);
+        };
+        if presentation.durability == PresentationDurability::Ephemeral {
+            return Ok(AgentRunJournalLiveEvent::Ephemeral(
+                self.project_ephemeral(record)?,
+            ));
         }
-        if projected.journal_seq <= self.snapshot_journal_seq {
-            return AgentRunJournalLiveEvent::StaleDurable;
+        let sequence = record.carrier().sequence.ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "durable presentation record is missing its Runtime sequence".to_string(),
+            )
+        })?;
+        if self
+            .snapshot_runtime_sequence
+            .is_some_and(|snapshot| sequence <= snapshot)
+        {
+            return Ok(AgentRunJournalLiveEvent::StaleDurable);
         }
-        AgentRunJournalLiveEvent::Durable(projected)
+        Ok(AgentRunJournalLiveEvent::Durable(
+            project_current_durable_record(
+                self.prefix_len,
+                &self.delivery_runtime_thread_id,
+                record,
+            )?,
+        ))
     }
 
-    fn project_current_delivery_event(&self, event: PersistedSessionEvent) -> AgentRunJournalEvent {
-        let journal_seq = self.prefix_len + event.event_seq;
-        AgentRunJournalEvent {
-            journal_seq,
-            segment_index: self.current_segment_index,
+    fn project_ephemeral(
+        &self,
+        record: RuntimeJournalRecord,
+    ) -> Result<AgentRunJournalEvent, WorkflowApplicationError> {
+        let transient = record.carrier().transient.as_ref().ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "ephemeral presentation record is missing its transient sequence".to_string(),
+            )
+        })?;
+        Ok(AgentRunJournalEvent {
+            journal_seq: self.prefix_len + transient.sequence.0,
             segment_role: AgentRunJournalSegmentRole::CurrentDelivery,
-            source_runtime_session_id: self.delivery_runtime_session_id.clone(),
-            source_event_seq: event.event_seq,
-            event,
-        }
+            source_runtime_thread_id: self.delivery_runtime_thread_id.clone(),
+            source_event_seq: None,
+            record,
+        })
     }
 }
 
@@ -107,60 +142,26 @@ pub enum AgentRunJournalLiveEvent {
     Durable(AgentRunJournalEvent),
     Ephemeral(AgentRunJournalEvent),
     StaleDurable,
-}
-
-#[derive(Debug, Clone)]
-pub struct AgentRunJournalQuery {
-    pub run_id: Uuid,
-    pub agent_id: Uuid,
-    pub delivery_runtime_session_id: Option<String>,
+    Internal,
 }
 
 pub struct AgentRunJournalService {
-    lineage: Arc<dyn AgentRunJournalLineagePort>,
-    event_reader: Arc<dyn AgentRunJournalEventPageReader>,
-    live_source: Option<Arc<dyn AgentRunJournalLiveEventSource>>,
+    lineage: Arc<dyn AgentRunLineageRepository>,
+    bindings: Arc<dyn AgentRunJournalBindingResolver>,
+    source: Arc<dyn AgentRunJournalSource>,
 }
 
 impl AgentRunJournalService {
     pub fn new(
-        session_branching: SessionBranchingService,
-        session_eventing: SessionEventingService,
+        lineage: Arc<dyn AgentRunLineageRepository>,
+        bindings: Arc<dyn AgentRunJournalBindingResolver>,
+        source: Arc<dyn AgentRunJournalSource>,
     ) -> Self {
         Self {
-            lineage: Arc::new(session_branching),
-            event_reader: Arc::new(SessionEventingJournalEventPageReader {
-                session_eventing: session_eventing.clone(),
-            }),
-            live_source: Some(Arc::new(SessionEventingJournalLiveEventSource {
-                session_eventing,
-            })),
+            lineage,
+            bindings,
+            source,
         }
-    }
-
-    pub fn new_from_session_stores(
-        lineage_store: Arc<dyn SessionLineageStore>,
-        event_store: Arc<dyn SessionEventStore>,
-    ) -> Self {
-        Self {
-            lineage: Arc::new(SessionLineageStoreJournalLineagePort { lineage_store }),
-            event_reader: Arc::new(SessionEventStoreJournalEventPageReader { event_store }),
-            live_source: None,
-        }
-    }
-
-    pub async fn load_inherited_prefix(
-        &self,
-        query: AgentRunJournalQuery,
-    ) -> Result<AgentRunJournalView, WorkflowApplicationError> {
-        self.load_journal(query, false).await
-    }
-
-    pub async fn load_visible_journal(
-        &self,
-        query: AgentRunJournalQuery,
-    ) -> Result<AgentRunJournalView, WorkflowApplicationError> {
-        self.load_journal(query, true).await
     }
 
     pub async fn load_visible_journal_page(
@@ -169,27 +170,50 @@ impl AgentRunJournalService {
         after_seq: u64,
         limit: u32,
     ) -> Result<AgentRunJournalPage, WorkflowApplicationError> {
-        let journal = self.load_visible_journal(query).await?;
-        let snapshot_seq = journal
-            .events
-            .last()
-            .map(|event| event.journal_seq)
-            .unwrap_or_default();
-        let events = journal
-            .events
+        let delivery_runtime_thread_id = self.binding(&query).await?;
+        let events = self
+            .load_visible_journal_for_thread(&query, delivery_runtime_thread_id.clone())
+            .await?;
+        let snapshot_seq = events.last().map_or(0, |event| event.journal_seq);
+        let page = events
             .into_iter()
             .filter(|event| event.journal_seq > after_seq)
             .take(limit.max(1) as usize)
             .collect::<Vec<_>>();
-        let next_after_seq = events
-            .last()
-            .map(|event| event.journal_seq)
-            .unwrap_or(after_seq);
+        let next_after_seq = page.last().map_or(after_seq, |event| event.journal_seq);
         Ok(AgentRunJournalPage {
+            delivery_runtime_thread_id,
             snapshot_seq,
+            events: page,
             has_more: next_after_seq < snapshot_seq,
             next_after_seq,
-            events,
+        })
+    }
+
+    pub async fn load_visible_journal_page_for_thread(
+        &self,
+        query: AgentRunJournalQuery,
+        delivery_runtime_thread_id: RuntimeThreadId,
+        after_seq: u64,
+        limit: u32,
+    ) -> Result<AgentRunJournalPage, WorkflowApplicationError> {
+        let page_delivery_runtime_thread_id = delivery_runtime_thread_id.clone();
+        let events = self
+            .load_visible_journal_for_thread(&query, delivery_runtime_thread_id)
+            .await?;
+        let snapshot_seq = events.last().map_or(0, |event| event.journal_seq);
+        let page = events
+            .into_iter()
+            .filter(|event| event.journal_seq > after_seq)
+            .take(limit.max(1) as usize)
+            .collect::<Vec<_>>();
+        let next_after_seq = page.last().map_or(after_seq, |event| event.journal_seq);
+        Ok(AgentRunJournalPage {
+            delivery_runtime_thread_id: page_delivery_runtime_thread_id,
+            has_more: next_after_seq < snapshot_seq,
+            snapshot_seq,
+            events: page,
+            next_after_seq,
         })
     }
 
@@ -198,778 +222,1252 @@ impl AgentRunJournalService {
         query: AgentRunJournalQuery,
         resume_from: u64,
     ) -> Result<AgentRunJournalStreamSubscription, WorkflowApplicationError> {
-        let delivery_runtime_session_id =
-            query.delivery_runtime_session_id.clone().ok_or_else(|| {
-                WorkflowApplicationError::NotFound(
-                    "AgentRun 当前没有可读取的 delivery RuntimeSession".to_string(),
-                )
-            })?;
-        let live_source = self.live_source.as_ref().ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "AgentRun journal live stream event source is not configured".to_string(),
-            )
-        })?;
-        let prefix = self.load_inherited_prefix(query).await?;
-        let prefix_len = prefix
-            .events
-            .last()
-            .map(|event| event.journal_seq)
-            .unwrap_or_default();
-        let runtime_resume_from = resume_from.saturating_sub(prefix_len);
-        let subscription = live_source
-            .subscribe_after(&delivery_runtime_session_id, runtime_resume_from)
-            .await
-            .map_err(map_session_io_error)?;
-        let ephemeral_epoch = live_source.ephemeral_epoch();
-        let stream = build_stream_subscription(
-            prefix,
-            delivery_runtime_session_id,
-            resume_from,
-            prefix_len,
-            subscription,
-            ephemeral_epoch,
-        );
-        Ok(stream)
-    }
-
-    async fn load_journal(
-        &self,
-        query: AgentRunJournalQuery,
-        include_current_delivery: bool,
-    ) -> Result<AgentRunJournalView, WorkflowApplicationError> {
-        let delivery_runtime_session_id = query.delivery_runtime_session_id.ok_or_else(|| {
-            WorkflowApplicationError::NotFound(
-                "AgentRun 当前没有可读取的 delivery RuntimeSession".to_string(),
-            )
-        })?;
-        let mut segment_specs = self
-            .resolve_inherited_segments(&delivery_runtime_session_id)
-            .await?;
-
-        if include_current_delivery {
-            let latest_seq = self.latest_event_seq(&delivery_runtime_session_id).await?;
-            if latest_seq > 0 {
-                segment_specs.push(UnindexedJournalSegment {
-                    role: AgentRunJournalSegmentRole::CurrentDelivery,
-                    runtime_session_id: delivery_runtime_session_id.clone(),
-                    from_after_event_seq: 0,
-                    to_event_seq: latest_seq,
-                });
-            }
-        }
-
-        let mut journal_seq = 0_u64;
-        let mut segments = Vec::with_capacity(segment_specs.len());
-        let mut events = Vec::new();
-
-        for (index, spec) in segment_specs.into_iter().enumerate() {
-            let segment = AgentRunJournalSegment {
-                index,
-                role: spec.role,
-                runtime_session_id: spec.runtime_session_id.clone(),
-                from_after_event_seq: spec.from_after_event_seq,
-                to_event_seq: spec.to_event_seq,
-            };
-            let segment_events = self.load_segment_events(&segment).await?;
-            for event in segment_events {
-                journal_seq += 1;
-                events.push(AgentRunJournalEvent {
-                    journal_seq,
-                    segment_index: segment.index,
-                    segment_role: segment.role,
-                    source_runtime_session_id: segment.runtime_session_id.clone(),
-                    source_event_seq: event.event_seq,
-                    event,
-                });
-            }
-            segments.push(segment);
-        }
-
-        Ok(AgentRunJournalView {
-            run_id: query.run_id,
-            agent_id: query.agent_id,
-            delivery_runtime_session_id,
-            segments,
-            events,
+        let prefix = self.load_inherited_prefix(&query).await?;
+        let prefix_len = prefix.len() as u64;
+        let binding = self.binding(&query).await?;
+        let source = self.source.subscribe(&binding).await?;
+        let durable = presentation_records(source.durable_snapshot);
+        let snapshot_runtime_sequence = durable.last().and_then(|record| record.carrier().sequence);
+        let current = durable
+            .into_iter()
+            .map(|record| project_current_durable_record(prefix_len, &binding, record))
+            .collect::<Result<Vec<_>, _>>()?;
+        let visible_snapshot_seq = current.last().map_or(prefix_len, |event| event.journal_seq);
+        let connected_seq = visible_snapshot_seq.max(resume_from);
+        let prefix_events = prefix
+            .into_iter()
+            .filter(|event| event.journal_seq > resume_from)
+            .collect();
+        let backlog_events = current
+            .into_iter()
+            .filter(|event| event.journal_seq > resume_from)
+            .collect();
+        let ephemeral_backlog_events = presentation_records(source.ephemeral_backlog)
+            .into_iter()
+            .map(|record| {
+                let transient = record.carrier().transient.as_ref().ok_or_else(|| {
+                    WorkflowApplicationError::Internal(
+                        "ephemeral backlog presentation record is missing its transient sequence"
+                            .to_string(),
+                    )
+                })?;
+                Ok(AgentRunJournalEvent {
+                    journal_seq: prefix_len + transient.sequence.0,
+                    segment_role: AgentRunJournalSegmentRole::CurrentDelivery,
+                    source_runtime_thread_id: binding.clone(),
+                    source_event_seq: None,
+                    record,
+                })
+            })
+            .collect::<Result<Vec<_>, WorkflowApplicationError>>()?;
+        Ok(AgentRunJournalStreamSubscription {
+            state: AgentRunJournalStreamState {
+                journal_session_id: agent_run_journal_session_id(query.run_id, query.agent_id),
+                delivery_runtime_thread_id: binding,
+                connected_seq,
+                ephemeral_epoch: source.ephemeral_epoch,
+                prefix_events,
+                backlog_events,
+                ephemeral_backlog_events,
+                prefix_len,
+                snapshot_runtime_sequence,
+            },
+            live: source.live,
         })
     }
 
-    async fn resolve_inherited_segments(
+    async fn load_visible_journal_for_thread(
         &self,
-        delivery_runtime_session_id: &str,
-    ) -> Result<Vec<UnindexedJournalSegment>, WorkflowApplicationError> {
-        let mut current_session_id = delivery_runtime_session_id.to_string();
-        let mut visited = HashSet::new();
-        let mut segments = Vec::new();
+        query: &AgentRunJournalQuery,
+        binding: RuntimeThreadId,
+    ) -> Result<Vec<AgentRunJournalEvent>, WorkflowApplicationError> {
+        let mut events = self.load_inherited_prefix(query).await?;
+        let current = presentation_records(self.source.durable_records(&binding).await?);
+        let prefix_len = events.len() as u64;
+        events.extend(
+            current
+                .into_iter()
+                .map(|record| project_current_durable_record(prefix_len, &binding, record))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        Ok(events)
+    }
 
-        while visited.insert(current_session_id.clone()) {
+    async fn load_inherited_prefix(
+        &self,
+        query: &AgentRunJournalQuery,
+    ) -> Result<Vec<AgentRunJournalEvent>, WorkflowApplicationError> {
+        let mut target = AgentRunRuntimeTarget {
+            run_id: query.run_id,
+            agent_id: query.agent_id,
+        };
+        let mut visited = HashSet::new();
+        let mut edges = Vec::new();
+        loop {
+            if !visited.insert((target.run_id, target.agent_id)) {
+                return Err(WorkflowApplicationError::Internal(format!(
+                    "AgentRun fork lineage 存在循环: {} / {}",
+                    target.run_id, target.agent_id
+                )));
+            }
             let Some(lineage) = self
                 .lineage
-                .lineage_parent(&current_session_id)
-                .await
-                .map_err(map_session_io_error)?
-                .filter(|lineage| lineage.relation_kind == SessionLineageRelationKind::Fork)
+                .find_parent(target.run_id, target.agent_id)
+                .await?
+                .filter(|lineage| lineage.relation_kind == "fork")
             else {
                 break;
             };
-
-            let to_event_seq = lineage.fork_point_event_seq.unwrap_or_default();
-            if to_event_seq > 0 {
-                segments.push(UnindexedJournalSegment {
-                    role: AgentRunJournalSegmentRole::InheritedLineage,
-                    runtime_session_id: lineage.parent_session_id.clone(),
-                    from_after_event_seq: 0,
-                    to_event_seq,
-                });
-            }
-
-            current_session_id = lineage.parent_session_id;
+            edges.push((
+                AgentRunRuntimeTarget {
+                    run_id: lineage.parent_run_id,
+                    agent_id: lineage.parent_agent_id,
+                },
+                lineage.fork_point_event_seq.unwrap_or_default(),
+            ));
+            target = edges.last().expect("edge was pushed").0.clone();
         }
+        edges.reverse();
 
-        segments.reverse();
-        Ok(segments)
-    }
-
-    async fn latest_event_seq(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<u64, WorkflowApplicationError> {
-        let mut after_seq = 0;
-        let mut latest = 0;
-        loop {
-            let page = self
-                .event_reader
-                .list_event_page(runtime_session_id, after_seq, JOURNAL_EVENT_PAGE_SIZE)
-                .await
-                .map_err(map_session_io_error)?;
-            for event in page.events {
-                latest = latest.max(event.event_seq);
-            }
-            if !page.has_more {
-                break;
-            }
-            after_seq = page.next_after_seq;
-        }
-        Ok(latest)
-    }
-
-    async fn load_segment_events(
-        &self,
-        segment: &AgentRunJournalSegment,
-    ) -> Result<Vec<PersistedSessionEvent>, WorkflowApplicationError> {
-        let mut after_seq = segment.from_after_event_seq;
         let mut events = Vec::new();
-        loop {
-            let page = self
-                .event_reader
-                .list_event_page(
-                    &segment.runtime_session_id,
-                    after_seq,
-                    JOURNAL_EVENT_PAGE_SIZE,
-                )
-                .await
-                .map_err(map_session_io_error)?;
-            for event in page.events {
-                if event.event_seq <= segment.to_event_seq {
-                    events.push(event);
-                }
+        for (target, cutoff) in edges {
+            if cutoff == 0 {
+                continue;
             }
-            if !page.has_more || page.next_after_seq >= segment.to_event_seq {
-                break;
+            let binding = self
+                .bindings
+                .resolve_thread(&target)
+                .await?
+                .ok_or_else(|| {
+                    WorkflowApplicationError::NotFound(format!(
+                        "fork lineage parent AgentRun {} / {} 缺少 Runtime binding",
+                        target.run_id, target.agent_id
+                    ))
+                })?;
+            let records = presentation_records(self.source.durable_records(&binding).await?);
+            let prefix_len = events.len() as u64;
+            events.extend(
+                records
+                    .into_iter()
+                    .map(|record| project_current_durable_record(prefix_len, &binding, record))
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            events.retain(|event| event.journal_seq <= cutoff);
+            for (index, event) in events.iter_mut().enumerate() {
+                event.journal_seq = index as u64 + 1;
+                event.segment_role = AgentRunJournalSegmentRole::InheritedLineage;
             }
-            after_seq = page.next_after_seq;
         }
         Ok(events)
     }
-}
 
-#[async_trait]
-trait AgentRunJournalLineagePort: Send + Sync {
-    async fn lineage_parent(&self, session_id: &str) -> io::Result<Option<SessionLineageRecord>>;
-}
-
-#[async_trait]
-trait AgentRunJournalEventPageReader: Send + Sync {
-    async fn list_event_page(
+    async fn binding(
         &self,
-        session_id: &str,
-        after_seq: u64,
-        limit: u32,
-    ) -> io::Result<SessionEventPage>;
-}
-
-#[async_trait]
-trait AgentRunJournalLiveEventSource: Send + Sync {
-    async fn subscribe_after(
-        &self,
-        session_id: &str,
-        after_seq: u64,
-    ) -> io::Result<RuntimeSessionEventSubscription>;
-
-    fn ephemeral_epoch(&self) -> u64;
-}
-
-#[async_trait]
-impl AgentRunJournalLineagePort for SessionBranchingService {
-    async fn lineage_parent(&self, session_id: &str) -> io::Result<Option<SessionLineageRecord>> {
-        SessionBranchingService::lineage_parent(self, session_id).await
+        query: &AgentRunJournalQuery,
+    ) -> Result<RuntimeThreadId, WorkflowApplicationError> {
+        self.bindings
+            .resolve_thread(&AgentRunRuntimeTarget {
+                run_id: query.run_id,
+                agent_id: query.agent_id,
+            })
+            .await?
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(
+                    "AgentRun 当前没有可读取的 delivery Runtime thread".to_string(),
+                )
+            })
     }
-}
-
-struct SessionEventingJournalEventPageReader {
-    session_eventing: SessionEventingService,
-}
-
-#[async_trait]
-impl AgentRunJournalEventPageReader for SessionEventingJournalEventPageReader {
-    async fn list_event_page(
-        &self,
-        session_id: &str,
-        after_seq: u64,
-        limit: u32,
-    ) -> io::Result<SessionEventPage> {
-        self.session_eventing
-            .list_event_page(session_id, after_seq, limit)
-            .await
-    }
-}
-
-struct SessionEventingJournalLiveEventSource {
-    session_eventing: SessionEventingService,
-}
-
-#[async_trait]
-impl AgentRunJournalLiveEventSource for SessionEventingJournalLiveEventSource {
-    async fn subscribe_after(
-        &self,
-        session_id: &str,
-        after_seq: u64,
-    ) -> io::Result<RuntimeSessionEventSubscription> {
-        self.session_eventing
-            .subscribe_after(session_id, after_seq)
-            .await
-    }
-
-    fn ephemeral_epoch(&self) -> u64 {
-        self.session_eventing.ephemeral_epoch()
-    }
-}
-
-struct SessionEventStoreJournalEventPageReader {
-    event_store: Arc<dyn SessionEventStore>,
-}
-
-#[async_trait]
-impl AgentRunJournalEventPageReader for SessionEventStoreJournalEventPageReader {
-    async fn list_event_page(
-        &self,
-        session_id: &str,
-        after_seq: u64,
-        limit: u32,
-    ) -> io::Result<SessionEventPage> {
-        self.event_store
-            .list_event_page(session_id, after_seq, limit)
-            .await
-            .map_err(Into::into)
-    }
-}
-
-struct SessionLineageStoreJournalLineagePort {
-    lineage_store: Arc<dyn SessionLineageStore>,
-}
-
-#[async_trait]
-impl AgentRunJournalLineagePort for SessionLineageStoreJournalLineagePort {
-    async fn lineage_parent(&self, session_id: &str) -> io::Result<Option<SessionLineageRecord>> {
-        self.lineage_store
-            .get_session_lineage(session_id)
-            .await
-            .map_err(Into::into)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct UnindexedJournalSegment {
-    role: AgentRunJournalSegmentRole,
-    runtime_session_id: String,
-    from_after_event_seq: u64,
-    to_event_seq: u64,
-}
-
-fn map_session_io_error(error: std::io::Error) -> WorkflowApplicationError {
-    WorkflowApplicationError::Internal(format!("AgentRun journal 读取会话事件失败: {error}"))
 }
 
 pub fn agent_run_journal_session_id(run_id: Uuid, agent_id: Uuid) -> String {
     format!("agentrun:{run_id}:{agent_id}")
 }
 
-pub fn project_event_to_agent_run_journal(
-    mut event: PersistedSessionEvent,
-    journal_seq: u64,
-    journal_session_id: &str,
-) -> PersistedSessionEvent {
-    event.session_id = journal_session_id.to_string();
-    event.event_seq = journal_seq;
-    event.notification.session_id = journal_session_id.to_string();
-    event
+fn presentation_records(records: Vec<RuntimeJournalRecord>) -> Vec<RuntimeJournalRecord> {
+    records
+        .into_iter()
+        .filter(|record| record.as_presentation().is_some())
+        .collect()
 }
 
-fn build_stream_subscription(
-    prefix: AgentRunJournalView,
-    delivery_runtime_session_id: String,
-    resume_from: u64,
+fn project_current_durable_record(
     prefix_len: u64,
-    subscription: RuntimeSessionEventSubscription,
-    ephemeral_epoch: u64,
-) -> AgentRunJournalStreamSubscription {
-    let journal_session_id = agent_run_journal_session_id(prefix.run_id, prefix.agent_id);
-    let current_segment_index = prefix.segments.len();
-    let prefix_events = prefix
-        .events
-        .into_iter()
-        .filter(|event| event.journal_seq > resume_from)
-        .collect::<Vec<_>>();
-    let backlog_events = subscription
-        .backlog
-        .into_iter()
-        .map(|event| {
-            project_current_delivery_stream_event(
-                &delivery_runtime_session_id,
-                prefix_len,
-                current_segment_index,
-                event,
-            )
-        })
-        .collect::<Vec<_>>();
-    let ephemeral_backlog_events = subscription
-        .ephemeral_backlog
-        .into_iter()
-        .map(|event| {
-            project_current_delivery_stream_event(
-                &delivery_runtime_session_id,
-                prefix_len,
-                current_segment_index,
-                event,
-            )
-        })
-        .collect::<Vec<_>>();
-    let last_prefix_seq = prefix_events
-        .last()
-        .map(|event| event.journal_seq)
-        .unwrap_or(resume_from);
-    let last_backlog_seq = backlog_events
-        .last()
-        .map(|event| event.journal_seq)
-        .unwrap_or(last_prefix_seq);
-    let snapshot_journal_seq = prefix_len + subscription.snapshot_seq;
-    AgentRunJournalStreamSubscription {
-        state: AgentRunJournalStreamState {
-            journal_session_id,
-            delivery_runtime_session_id,
-            resume_from,
-            connected_seq: last_backlog_seq.max(snapshot_journal_seq),
-            ephemeral_epoch,
-            prefix_events,
-            backlog_events,
-            ephemeral_backlog_events,
-            prefix_len,
-            snapshot_journal_seq,
-            current_segment_index,
-        },
-        live_events: subscription.rx,
-    }
-}
-
-fn project_current_delivery_stream_event(
-    delivery_runtime_session_id: &str,
-    prefix_len: u64,
-    current_segment_index: usize,
-    event: PersistedSessionEvent,
-) -> AgentRunJournalEvent {
-    let journal_seq = prefix_len + event.event_seq;
-    AgentRunJournalEvent {
-        journal_seq,
-        segment_index: current_segment_index,
+    binding: &RuntimeThreadId,
+    record: RuntimeJournalRecord,
+) -> Result<AgentRunJournalEvent, WorkflowApplicationError> {
+    let sequence = record.carrier().sequence.ok_or_else(|| {
+        WorkflowApplicationError::Internal(
+            "durable presentation record is missing its Runtime sequence".to_string(),
+        )
+    })?;
+    Ok(AgentRunJournalEvent {
+        journal_seq: prefix_len + sequence.0,
         segment_role: AgentRunJournalSegmentRole::CurrentDelivery,
-        source_runtime_session_id: delivery_runtime_session_id.to_string(),
-        source_event_seq: event.event_seq,
-        event,
-    }
+        source_runtime_thread_id: binding.clone(),
+        source_event_seq: Some(sequence),
+        record,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use agentdash_agent_protocol::{
-        BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
-    };
-    use agentdash_spi::session_persistence::{SessionEventPage, SessionLineageStatus};
-    use tokio::sync::broadcast;
-
     use super::*;
-    use crate::agent_run::runtime_session_boundary::RuntimeSessionEventingPort;
-
-    const RUN_ID: Uuid = Uuid::from_u128(0x11111111111111111111111111111111);
-    const AGENT_ID: Uuid = Uuid::from_u128(0x22222222222222222222222222222222);
-
-    #[tokio::test]
-    async fn visible_journal_uses_child_fork_event_once() {
-        let service = test_service();
-
-        let page = service
-            .load_visible_journal_page(
-                AgentRunJournalQuery {
-                    run_id: RUN_ID,
-                    agent_id: AGENT_ID,
-                    delivery_runtime_session_id: Some("child".to_string()),
-                },
-                0,
-                100,
-            )
-            .await
-            .expect("journal page 应可读取");
-
-        assert_eq!(page.snapshot_seq, 4);
-        assert!(!page.has_more);
-        assert_eq!(page.next_after_seq, 4);
-        assert_eq!(
-            journal_sources(&page.events),
-            vec!["parent:1", "parent:2", "child:1", "child:2"]
-        );
-        assert_eq!(journal_sequences(&page.events), vec![1, 2, 3, 4]);
-
-        let marker = &page.events[2].event.notification.event;
-        match marker {
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
-                assert_eq!(key, "session_branch_forked");
-                assert_eq!(value["parent_session_id"], "parent");
-                assert_eq!(value["child_session_id"], "child");
-                assert_eq!(value["fork_point_event_seq"], 2);
-            }
-            other => panic!("fork marker 应是 session_branch_forked platform event: {other:?}"),
-        }
-        let fork_event_count = page
-            .events
-            .iter()
-            .filter(|event| is_fork_event(&event.event))
-            .count();
-        assert_eq!(fork_event_count, 1);
-    }
-
-    #[tokio::test]
-    async fn visible_journal_page_resume_uses_journal_sequence_not_runtime_sequence() {
-        let service = test_service();
-
-        let page = service
-            .load_visible_journal_page(
-                AgentRunJournalQuery {
-                    run_id: RUN_ID,
-                    agent_id: AGENT_ID,
-                    delivery_runtime_session_id: Some("child".to_string()),
-                },
-                2,
-                10,
-            )
-            .await
-            .expect("journal page 应可读取");
-
-        assert_eq!(journal_sources(&page.events), vec!["child:1", "child:2"]);
-        assert_eq!(journal_sequences(&page.events), vec![3, 4]);
-    }
-
-    #[tokio::test]
-    async fn inherited_prefix_excludes_child_delivery_events() {
-        let service = test_service();
-
-        let journal = service
-            .load_inherited_prefix(AgentRunJournalQuery {
-                run_id: RUN_ID,
-                agent_id: AGENT_ID,
-                delivery_runtime_session_id: Some("child".to_string()),
-            })
-            .await
-            .expect("inherited prefix 应可读取");
-
-        assert_eq!(
-            journal_sources(&journal.events),
-            vec!["parent:1", "parent:2"]
-        );
-        assert_eq!(journal_sequences(&journal.events), vec![1, 2]);
-    }
-
-    #[tokio::test]
-    async fn visible_journal_stream_uses_agent_run_sequence_mapping() {
-        let service = test_service();
-
-        let subscription = service
-            .subscribe_visible_journal_stream(
-                AgentRunJournalQuery {
-                    run_id: RUN_ID,
-                    agent_id: AGENT_ID,
-                    delivery_runtime_session_id: Some("child".to_string()),
-                },
-                2,
-            )
-            .await
-            .expect("journal stream subscription 应可创建");
-
-        assert!(subscription.state.prefix_events.is_empty());
-        assert_eq!(
-            journal_sources(&subscription.state.backlog_events),
-            vec!["child:1", "child:2"]
-        );
-        assert_eq!(
-            journal_sequences(&subscription.state.backlog_events),
-            vec![3, 4]
-        );
-        assert_eq!(subscription.state.connected_seq, 4);
-        assert_eq!(subscription.state.ephemeral_epoch, 123);
-    }
+    use agentdash_agent_runtime_contract::{
+        RuntimeBindingId, RuntimeCarrierMetadata, RuntimeDriverGeneration, RuntimeEvent,
+        RuntimeJournalFact, RuntimePresentationCoordinate, RuntimeRevision, RuntimeThreadStatus,
+        RuntimeTransientCoordinate, RuntimeTransientEventId, RuntimeTransientSequence,
+    };
 
     #[test]
-    fn projected_journal_event_rewrites_only_agent_run_coordinates() {
-        let event = persisted_event("parent", 1, "typed_event");
-        let projected = project_event_to_agent_run_journal(
-            event,
-            7,
-            &agent_run_journal_session_id(RUN_ID, AGENT_ID),
+    fn session_projection_reads_only_presentation_facts_without_rewriting_body() {
+        let protected = agentdash_agent_protocol::BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                key: "fixture".to_string(),
+                value: serde_json::json!({ "nullable": null, "ordered": [1, 2] }),
+            },
         );
-
+        let presentation = record(
+            1,
+            RuntimeJournalFact::Presentation(
+                agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    protected.clone(),
+                ),
+            ),
+        );
+        let internal = record(
+            2,
+            RuntimeJournalFact::Internal(RuntimeEvent::ThreadStatusChanged {
+                status: RuntimeThreadStatus::Active,
+            }),
+        );
+        let projected = presentation_records(vec![presentation, internal]);
+        assert_eq!(projected.len(), 1);
         assert_eq!(
-            projected.session_id,
-            format!("agentrun:{RUN_ID}:{AGENT_ID}")
+            projected[0].as_presentation().expect("presentation").event,
+            protected
         );
-        assert_eq!(projected.event_seq, 7);
-        assert_eq!(
-            projected.notification.session_id,
-            format!("agentrun:{RUN_ID}:{AGENT_ID}")
-        );
-        match projected.notification.event {
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
-                assert_eq!(key, "typed_event");
-                assert_eq!(value["label"], "typed_event");
-            }
-            other => panic!("typed Backbone event 不应被 journal projection 改写: {other:?}"),
-        }
     }
 
-    fn test_service() -> AgentRunJournalService {
-        let lineage = Arc::new(TestLineagePort {
-            parents: HashMap::from([("child".to_string(), fork_lineage("parent", "child", 2))]),
-        });
-        let eventing = SessionEventingService::new(Arc::new(TestEventingPort {
-            events: HashMap::from([
+    #[tokio::test]
+    async fn fork_get_and_reconnect_share_one_ordered_projection() {
+        let control = journal_control_fixture();
+        let parent = AgentRunRuntimeTarget {
+            run_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").expect("run id"),
+            agent_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").expect("agent id"),
+        };
+        let child = AgentRunRuntimeTarget {
+            run_id: Uuid::parse_str("33333333-3333-3333-3333-333333333333").expect("run id"),
+            agent_id: Uuid::parse_str("44444444-4444-4444-4444-444444444444").expect("agent id"),
+        };
+        let parent_thread = RuntimeThreadId::new("parent-thread").expect("thread id");
+        let child_thread = RuntimeThreadId::new("child-thread").expect("thread id");
+        let lineage = agentdash_domain::workflow::AgentRunLineage::new_fork(
+            parent.run_id,
+            parent.agent_id,
+            child.run_id,
+            child.agent_id,
+            Some(2),
+            Some(serde_json::json!({ "turn_id": "parent-turn", "entry_index": 1 })),
+            "fixture",
+            None,
+        );
+        let source = Arc::new(FixtureSource {
+            records: HashMap::from([
                 (
-                    "parent".to_string(),
+                    parent_thread.clone(),
                     vec![
-                        persisted_event("parent", 1, "parent_1"),
-                        persisted_event("parent", 2, "parent_2"),
-                        persisted_event("parent", 3, "parent_after_fork"),
+                        presentation_record(&parent_thread, 1, "parent-1"),
+                        presentation_record(&parent_thread, 2, "parent-2"),
+                        presentation_record(&parent_thread, 3, "parent-after-fork"),
                     ],
                 ),
                 (
-                    "child".to_string(),
+                    child_thread.clone(),
                     vec![
-                        fork_event("child", 1, "parent", 2),
-                        persisted_event("child", 2, "child_2"),
+                        presentation_record(&child_thread, 1, "session_branch_forked"),
+                        presentation_record(&child_thread, 2, "child-2"),
                     ],
                 ),
             ]),
-        }));
-        AgentRunJournalService {
-            lineage,
-            event_reader: Arc::new(SessionEventingJournalEventPageReader {
-                session_eventing: eventing.clone(),
+            ephemeral: HashMap::new(),
+        });
+        let service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::from([(child.clone(), lineage)]),
             }),
-            live_source: Some(Arc::new(SessionEventingJournalLiveEventSource {
-                session_eventing: eventing,
-            })),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([
+                    (parent.clone(), parent_thread),
+                    (child.clone(), child_thread.clone()),
+                ]),
+            }),
+            source,
+        );
+        let query = AgentRunJournalQuery {
+            run_id: child.run_id,
+            agent_id: child.agent_id,
+        };
+        let page = service
+            .load_visible_journal_page(query.clone(), 0, 20)
+            .await
+            .expect("GET journal page");
+        assert_eq!(page.delivery_runtime_thread_id, child_thread);
+        assert_ne!(
+            page.delivery_runtime_thread_id.as_str(),
+            agent_run_journal_session_id(child.run_id, child.agent_id)
+        );
+        assert_eq!(page.snapshot_seq, 4);
+        assert_eq!(
+            journal_labels(&page.events),
+            fixture_strings(&control["single_fork"]["labels"])
+        );
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            fixture_u64s(&control["single_fork"]["journal_seq"])
+        );
+
+        let reconnect = service
+            .subscribe_visible_journal_stream(query, 2)
+            .await
+            .expect("reconnect journal stream");
+        assert!(reconnect.state.prefix_events.is_empty());
+        assert_eq!(
+            journal_labels(&reconnect.state.backlog_events),
+            ["session_branch_forked", "child-2"]
+        );
+        assert_eq!(reconnect.state.connected_seq, 4);
+        assert_eq!(reconnect.state.ephemeral_epoch, 77);
+    }
+
+    #[tokio::test]
+    async fn fork_cutoff_uses_parent_visible_cursor_across_internal_sequence_gaps() {
+        let parent = target(0x91, 0x92);
+        let child = target(0x93, 0x94);
+        let parent_thread = RuntimeThreadId::new("gapped-parent-thread").expect("parent thread");
+        let child_thread = RuntimeThreadId::new("gapped-child-thread").expect("child thread");
+        let service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::from([(child.clone(), lineage(&parent, &child, 4))]),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([
+                    (parent, parent_thread.clone()),
+                    (child.clone(), child_thread.clone()),
+                ]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([
+                    (
+                        parent_thread.clone(),
+                        vec![
+                            internal_record(&parent_thread, 1),
+                            presentation_record(&parent_thread, 2, "parent-tool-start"),
+                            internal_record(&parent_thread, 3),
+                            presentation_record(&parent_thread, 4, "parent-tool-completed"),
+                            presentation_record(&parent_thread, 6, "parent-after-fork"),
+                        ],
+                    ),
+                    (
+                        child_thread.clone(),
+                        vec![presentation_record(&child_thread, 1, "child-marker")],
+                    ),
+                ]),
+                ephemeral: HashMap::new(),
+            }),
+        );
+
+        let page = service
+            .load_visible_journal_page(
+                AgentRunJournalQuery {
+                    run_id: child.run_id,
+                    agent_id: child.agent_id,
+                },
+                0,
+                20,
+            )
+            .await
+            .expect("forked journal page");
+
+        assert_eq!(
+            journal_labels(&page.events),
+            ["parent-tool-start", "parent-tool-completed", "child-marker"]
+        );
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.source_event_seq.map(|sequence| sequence.0))
+                .collect::<Vec<_>>(),
+            [Some(2), Some(4), Some(1)]
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_evidence_query_stays_on_explicit_delivery_thread_after_rebind() {
+        let delivery = target(0x31, 0x32);
+        let old_thread = RuntimeThreadId::new("old-terminal-thread").unwrap();
+        let rebound_thread = RuntimeThreadId::new("rebound-thread").unwrap();
+        let service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::new(),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([(delivery.clone(), rebound_thread.clone())]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([
+                    (
+                        old_thread.clone(),
+                        vec![presentation_record(&old_thread, 1, "old-terminal-message")],
+                    ),
+                    (
+                        rebound_thread.clone(),
+                        vec![presentation_record(
+                            &rebound_thread,
+                            1,
+                            "new-delivery-message",
+                        )],
+                    ),
+                ]),
+                ephemeral: HashMap::new(),
+            }),
+        );
+
+        let page = service
+            .load_visible_journal_page_for_thread(
+                AgentRunJournalQuery {
+                    run_id: delivery.run_id,
+                    agent_id: delivery.agent_id,
+                },
+                old_thread,
+                0,
+                20,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(journal_labels(&page.events), ["old-terminal-message"]);
+    }
+
+    #[tokio::test]
+    async fn get_paging_initial_live_reconnect_and_refresh_match_main_fixture() {
+        let replay = journal_replay_fixture();
+        let current = target(0x61, 0x62);
+        let thread = RuntimeThreadId::new("replay-thread").expect("thread id");
+        let replay_records = replay["frames"]
+            .as_array()
+            .expect("Main replay frames")
+            .iter()
+            .map(|frame| presentation_record_from_main_frame(&thread, frame))
+            .collect::<Vec<_>>();
+        let service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::new(),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([(current.clone(), thread.clone())]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([(thread.clone(), replay_records)]),
+                ephemeral: HashMap::new(),
+            }),
+        );
+        let query = AgentRunJournalQuery {
+            run_id: current.run_id,
+            agent_id: current.agent_id,
+        };
+
+        let full = service
+            .load_visible_journal_page(query.clone(), 0, 20)
+            .await
+            .expect("GET journal");
+        assert_eq!(full.snapshot_seq, replay["expected"]["get"]["snapshot_seq"]);
+        assert_eq!(
+            full.events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            fixture_u64s(&replay["expected"]["get"]["event_seq"])
+        );
+        assert_eq!(full.has_more, replay["expected"]["get"]["has_more"]);
+        assert_eq!(
+            full.next_after_seq,
+            replay["expected"]["get"]["next_after_seq"]
+        );
+
+        for expected in replay["expected"]["paging"]
+            .as_array()
+            .expect("paging fixture")
+        {
+            let page = service
+                .load_visible_journal_page(
+                    query.clone(),
+                    expected["after_seq"].as_u64().expect("after_seq"),
+                    expected["limit"].as_u64().expect("limit") as u32,
+                )
+                .await
+                .expect("paged GET journal");
+            assert_eq!(
+                page.events
+                    .iter()
+                    .map(|event| event.journal_seq)
+                    .collect::<Vec<_>>(),
+                fixture_u64s(&expected["event_seq"])
+            );
+            assert_eq!(page.has_more, expected["has_more"]);
+            assert_eq!(page.next_after_seq, expected["next_after_seq"]);
+        }
+
+        let initial = service
+            .subscribe_visible_journal_stream(query.clone(), 0)
+            .await
+            .expect("initial stream");
+        assert_eq!(
+            initial
+                .state
+                .backlog_events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert_eq!(initial.state.connected_seq, 2);
+        let live = initial
+            .state
+            .project_live_record(presentation_record(&thread, 3, "journal-live-3"))
+            .expect("live projection");
+        let AgentRunJournalLiveEvent::Durable(live) = live else {
+            panic!("expected durable live event");
+        };
+        assert_eq!(live.journal_seq, 3);
+
+        let reconnect = service
+            .subscribe_visible_journal_stream(query.clone(), 1)
+            .await
+            .expect("reconnect stream");
+        assert_eq!(
+            reconnect
+                .state
+                .backlog_events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [2]
+        );
+        assert_eq!(reconnect.state.connected_seq, 2);
+
+        let refresh = service
+            .load_visible_journal_page(query, 0, 20)
+            .await
+            .expect("refresh GET journal");
+        assert_eq!(
+            refresh
+                .events
+                .iter()
+                .map(|event| &event.record)
+                .collect::<Vec<_>>(),
+            full.events
+                .iter()
+                .map(|event| &event.record)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn durable_cursor_survives_live_to_replay_with_hidden_internal_gaps() {
+        let current = target(0x81, 0x82);
+        let thread = RuntimeThreadId::new("interleaved-runtime-thread").expect("thread id");
+        let query = AgentRunJournalQuery {
+            run_id: current.run_id,
+            agent_id: current.agent_id,
+        };
+        let initial_service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::new(),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([(current.clone(), thread.clone())]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([(
+                    thread.clone(),
+                    vec![
+                        internal_record(&thread, 1),
+                        presentation_record(&thread, 2, "tool-start"),
+                    ],
+                )]),
+                ephemeral: HashMap::new(),
+            }),
+        );
+
+        let initial = initial_service
+            .subscribe_visible_journal_stream(query.clone(), 0)
+            .await
+            .expect("initial stream");
+        assert_eq!(
+            initial
+                .state
+                .backlog_events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [2]
+        );
+        let live = initial
+            .state
+            .project_live_record(presentation_record(&thread, 4, "tool-update"))
+            .expect("live projection");
+        let AgentRunJournalLiveEvent::Durable(live) = live else {
+            panic!("expected durable live event");
+        };
+        assert_eq!(live.journal_seq, 4);
+        assert_eq!(live.source_event_seq, Some(EventSequence(4)));
+
+        let replay_service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::new(),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([(current, thread.clone())]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([(
+                    thread.clone(),
+                    vec![
+                        internal_record(&thread, 1),
+                        presentation_record(&thread, 2, "tool-start"),
+                        internal_record(&thread, 3),
+                        presentation_record(&thread, 4, "tool-update"),
+                        internal_record(&thread, 5),
+                        presentation_record(&thread, 6, "tool-completed"),
+                    ],
+                )]),
+                ephemeral: HashMap::new(),
+            }),
+        );
+        let replay = replay_service
+            .subscribe_visible_journal_stream(query.clone(), 0)
+            .await
+            .expect("full replay stream");
+        assert_eq!(
+            replay
+                .state
+                .backlog_events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [2, 4, 6]
+        );
+
+        let reconnect = replay_service
+            .subscribe_visible_journal_stream(query.clone(), live.journal_seq)
+            .await
+            .expect("reconnect stream");
+        assert_eq!(
+            reconnect
+                .state
+                .backlog_events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [6]
+        );
+        assert_eq!(reconnect.state.connected_seq, 6);
+
+        let page = replay_service
+            .load_visible_journal_page(query, live.journal_seq, 20)
+            .await
+            .expect("reconnect GET page");
+        assert_eq!(page.snapshot_seq, 6);
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            [6]
+        );
+        assert_eq!(journal_labels(&page.events), ["tool-completed"]);
+    }
+
+    #[tokio::test]
+    async fn multi_level_fork_applies_each_parent_local_cutoff_before_concatenation() {
+        let control = journal_control_fixture();
+        let grandparent = target(0x11, 0x12);
+        let parent = target(0x21, 0x22);
+        let child = target(0x31, 0x32);
+        let grandparent_thread = RuntimeThreadId::new("grandparent-thread").expect("thread id");
+        let parent_thread = RuntimeThreadId::new("parent-thread").expect("thread id");
+        let child_thread = RuntimeThreadId::new("child-thread").expect("thread id");
+        let service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::from([
+                    (parent.clone(), lineage(&grandparent, &parent, 2)),
+                    // Parent-visible cursor 4 = two inherited events + parent source sequence 2.
+                    (child.clone(), lineage(&parent, &child, 4)),
+                ]),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([
+                    (grandparent.clone(), grandparent_thread.clone()),
+                    (parent.clone(), parent_thread.clone()),
+                    (child.clone(), child_thread.clone()),
+                ]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([
+                    (
+                        grandparent_thread.clone(),
+                        vec![
+                            presentation_record(&grandparent_thread, 1, "grandparent-1"),
+                            presentation_record(&grandparent_thread, 2, "grandparent-2"),
+                            presentation_record(&grandparent_thread, 3, "grandparent-after-fork"),
+                        ],
+                    ),
+                    (
+                        parent_thread.clone(),
+                        vec![
+                            presentation_record(&parent_thread, 1, "session_branch_forked"),
+                            presentation_record(&parent_thread, 2, "parent-2"),
+                            presentation_record(&parent_thread, 3, "parent-after-fork"),
+                        ],
+                    ),
+                    (
+                        child_thread.clone(),
+                        vec![
+                            presentation_record(&child_thread, 1, "session_branch_forked"),
+                            presentation_record(&child_thread, 2, "child-2"),
+                        ],
+                    ),
+                ]),
+                ephemeral: HashMap::new(),
+            }),
+        );
+
+        let page = service
+            .load_visible_journal_page(
+                AgentRunJournalQuery {
+                    run_id: child.run_id,
+                    agent_id: child.agent_id,
+                },
+                0,
+                20,
+            )
+            .await
+            .expect("multi-level fork journal");
+        assert_eq!(
+            journal_labels(&page.events),
+            fixture_strings(&control["multi_fork"]["labels"])
+        );
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            fixture_u64s(&control["multi_fork"]["journal_seq"])
+        );
+    }
+
+    #[tokio::test]
+    async fn future_resume_cursor_is_accepted_and_ephemeral_sequence_uses_transient_coordinate() {
+        let control = journal_control_fixture();
+        let parent = target(0x41, 0x42);
+        let child = target(0x51, 0x52);
+        let parent_thread = RuntimeThreadId::new("parent-thread").expect("thread id");
+        let child_thread = RuntimeThreadId::new("child-thread").expect("thread id");
+        let service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::from([(child.clone(), lineage(&parent, &child, 2))]),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([
+                    (parent.clone(), parent_thread.clone()),
+                    (child.clone(), child_thread.clone()),
+                ]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([
+                    (
+                        parent_thread.clone(),
+                        vec![
+                            presentation_record(&parent_thread, 1, "parent-1"),
+                            presentation_record(&parent_thread, 2, "parent-2"),
+                        ],
+                    ),
+                    (
+                        child_thread.clone(),
+                        vec![presentation_record(&child_thread, 1, "child-marker")],
+                    ),
+                ]),
+                ephemeral: HashMap::from([(
+                    child_thread.clone(),
+                    vec![
+                        ephemeral_record(&child_thread, 1, "ephemeral-backlog-1"),
+                        ephemeral_record(&child_thread, 3, "ephemeral-backlog-3"),
+                    ],
+                )]),
+            }),
+        );
+        let query = AgentRunJournalQuery {
+            run_id: child.run_id,
+            agent_id: child.agent_id,
+        };
+
+        let normal = service
+            .subscribe_visible_journal_stream(query.clone(), 0)
+            .await
+            .expect("initial stream");
+        assert_eq!(
+            normal
+                .state
+                .ephemeral_backlog_events
+                .iter()
+                .map(|event| event.journal_seq)
+                .collect::<Vec<_>>(),
+            fixture_u64s(&control["ephemeral"]["backlog_event_seq"])
+        );
+        let live = normal
+            .state
+            .project_live_record(ephemeral_record(&child_thread, 6, "ephemeral-live"))
+            .expect("live projection");
+        let AgentRunJournalLiveEvent::Ephemeral(live) = live else {
+            panic!("expected ephemeral live event");
+        };
+        assert_eq!(live.journal_seq, control["ephemeral"]["live_event_seq"]);
+        let after_clear = normal
+            .state
+            .project_live_record(ephemeral_record(&child_thread, 9, "ephemeral-after-clear"))
+            .expect("post-clear live projection");
+        let AgentRunJournalLiveEvent::Ephemeral(after_clear) = after_clear else {
+            panic!("expected post-clear ephemeral live event");
+        };
+        assert_eq!(
+            after_clear.journal_seq,
+            control["ephemeral"]["after_clear_event_seq"]
+        );
+
+        let future = service
+            .subscribe_visible_journal_stream(
+                query,
+                control["resume"]["future_cursor"]
+                    .as_u64()
+                    .expect("future cursor"),
+            )
+            .await
+            .expect("future cursor remains valid");
+        assert_eq!(
+            future.state.connected_seq,
+            control["resume"]["connected_seq"]
+        );
+        assert!(future.state.prefix_events.is_empty());
+        assert!(future.state.backlog_events.is_empty());
+        assert_eq!(future.state.ephemeral_epoch, normal.state.ephemeral_epoch);
+    }
+
+    #[tokio::test]
+    async fn future_connected_cursor_does_not_renumber_next_durable_live_event() {
+        let control = journal_control_fixture();
+        let current = target(0x71, 0x72);
+        let thread = RuntimeThreadId::new("future-resume-thread").expect("thread id");
+        let service = AgentRunJournalService::new(
+            Arc::new(FixtureLineage {
+                parents: HashMap::new(),
+            }),
+            Arc::new(FixtureBindings {
+                threads: HashMap::from([(current.clone(), thread.clone())]),
+            }),
+            Arc::new(FixtureSource {
+                records: HashMap::from([(
+                    thread.clone(),
+                    (1..=4)
+                        .map(|sequence| {
+                            presentation_record(&thread, sequence, &format!("snapshot-{sequence}"))
+                        })
+                        .collect(),
+                )]),
+                ephemeral: HashMap::new(),
+            }),
+        );
+        let stream = service
+            .subscribe_visible_journal_stream(
+                AgentRunJournalQuery {
+                    run_id: current.run_id,
+                    agent_id: current.agent_id,
+                },
+                control["resume"]["future_cursor"]
+                    .as_u64()
+                    .expect("future cursor"),
+            )
+            .await
+            .expect("future resume stream");
+        assert_eq!(
+            stream.state.connected_seq,
+            control["resume"]["connected_seq"]
+        );
+        assert!(stream.state.backlog_events.is_empty());
+
+        assert!(matches!(
+            stream
+                .state
+                .project_live_record(presentation_record(&thread, 4, "duplicate-4"))
+                .expect("duplicate projection"),
+            AgentRunJournalLiveEvent::StaleDurable
+        ));
+        let live = stream
+            .state
+            .project_live_record(presentation_record(
+                &thread,
+                control["resume"]["next_live_source_event_seq"]
+                    .as_u64()
+                    .expect("next live source event sequence"),
+                "live-5",
+            ))
+            .expect("next live projection");
+        let AgentRunJournalLiveEvent::Durable(live) = live else {
+            panic!("expected durable live event");
+        };
+        assert_eq!(live.journal_seq, control["resume"]["next_live_journal_seq"]);
+    }
+
+    fn target(run: u128, agent: u128) -> AgentRunRuntimeTarget {
+        AgentRunRuntimeTarget {
+            run_id: Uuid::from_u128(run),
+            agent_id: Uuid::from_u128(agent),
         }
     }
 
-    fn journal_sources(events: &[AgentRunJournalEvent]) -> Vec<String> {
-        events
+    fn journal_replay_fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../../agentdash-agent-runtime-test-support/fixtures/session-parity/main/journal-replay.json"
+        ))
+        .expect("journal replay fixture")
+    }
+
+    fn journal_control_fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../../agentdash-agent-runtime-test-support/fixtures/session-parity/main/journal-control.json"
+        ))
+        .expect("journal control fixture")
+    }
+
+    fn fixture_strings(value: &serde_json::Value) -> Vec<&str> {
+        value
+            .as_array()
+            .expect("string fixture array")
             .iter()
-            .map(|event| {
-                format!(
-                    "{}:{}",
-                    event.source_runtime_session_id, event.source_event_seq
-                )
-            })
+            .map(|value| value.as_str().expect("fixture string"))
             .collect()
     }
 
-    fn journal_sequences(events: &[AgentRunJournalEvent]) -> Vec<u64> {
-        events.iter().map(|event| event.journal_seq).collect()
+    fn fixture_u64s(value: &serde_json::Value) -> Vec<u64> {
+        value
+            .as_array()
+            .expect("integer fixture array")
+            .iter()
+            .map(|value| value.as_u64().expect("fixture integer"))
+            .collect()
     }
 
-    fn fork_lineage(
-        parent_session_id: &str,
-        child_session_id: &str,
-        fork_point_event_seq: u64,
-    ) -> SessionLineageRecord {
-        SessionLineageRecord {
-            child_session_id: child_session_id.to_string(),
-            parent_session_id: parent_session_id.to_string(),
-            relation_kind: SessionLineageRelationKind::Fork,
-            fork_point_event_seq: Some(fork_point_event_seq),
-            fork_point_ref_json: serde_json::json!({}),
-            fork_point_compaction_id: None,
-            status: SessionLineageStatus::Open,
-            created_at_ms: 1,
-            updated_at_ms: 1,
-            metadata_json: serde_json::json!({}),
-        }
+    fn lineage(
+        parent: &AgentRunRuntimeTarget,
+        child: &AgentRunRuntimeTarget,
+        cutoff: u64,
+    ) -> agentdash_domain::workflow::AgentRunLineage {
+        agentdash_domain::workflow::AgentRunLineage::new_fork(
+            parent.run_id,
+            parent.agent_id,
+            child.run_id,
+            child.agent_id,
+            Some(cutoff),
+            Some(serde_json::json!({ "turn_id": "parent-turn", "entry_index": 1 })),
+            "fixture",
+            None,
+        )
     }
 
-    fn persisted_event(session_id: &str, event_seq: u64, label: &str) -> PersistedSessionEvent {
-        let turn_id = format!("{session_id}-turn-{event_seq}");
-        let notification = BackboneEnvelope::new(
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: label.to_string(),
-                value: serde_json::json!({ "label": label }),
-            }),
-            session_id,
-            SourceInfo {
-                connector_id: "test".to_string(),
-                connector_type: "test".to_string(),
-                executor_id: None,
+    fn journal_labels(events: &[AgentRunJournalEvent]) -> Vec<&str> {
+        events
+            .iter()
+            .map(
+                |event| match &event.record.as_presentation().expect("presentation").event {
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. },
+                    ) => key.as_str(),
+                    other => panic!("unexpected event: {other:?}"),
+                },
+            )
+            .collect()
+    }
+
+    fn presentation_record(
+        thread_id: &RuntimeThreadId,
+        sequence: u64,
+        label: &str,
+    ) -> RuntimeJournalRecord {
+        RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: thread_id.clone(),
+                recorded_at_ms: 100 + sequence,
+                sequence: Some(EventSequence(sequence)),
+                transient: None,
+                revision: RuntimeRevision(sequence),
+                operation_id: None,
+                binding_id: None,
+                append_idempotency_key: None,
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    presentation_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(thread_id.to_string()),
+                    source_turn_id: Some(format!("{thread_id}-turn")),
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: Some(sequence as u32 - 1),
+                },
             },
+            RuntimeJournalFact::Presentation(
+                agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                            key: label.to_string(),
+                            value: serde_json::json!({ "label": label }),
+                        },
+                    ),
+                ),
+            ),
         )
-        .with_trace(TraceInfo {
-            turn_id: Some(turn_id.clone()),
-            entry_index: Some(event_seq as u32),
-        });
-
-        PersistedSessionEvent {
-            session_id: session_id.to_string(),
-            event_seq,
-            occurred_at_ms: event_seq as i64,
-            committed_at_ms: event_seq as i64,
-            session_update_type: "platform".to_string(),
-            turn_id: Some(turn_id),
-            entry_index: Some(event_seq as u32),
-            tool_call_id: None,
-            ephemeral: false,
-            notification,
-        }
+        .expect("presentation record")
     }
 
-    fn fork_event(
-        child_session_id: &str,
-        event_seq: u64,
-        parent_session_id: &str,
-        fork_point_event_seq: u64,
-    ) -> PersistedSessionEvent {
-        let mut event = persisted_event(child_session_id, event_seq, "session_branch_forked");
-        event.notification.event = BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-            key: "session_branch_forked".to_string(),
-            value: serde_json::json!({
-                "child_session_id": child_session_id,
-                "parent_session_id": parent_session_id,
-                "fork_point_event_seq": fork_point_event_seq,
-                "relation_kind": "fork",
+    fn presentation_record_from_main_frame(
+        thread_id: &RuntimeThreadId,
+        frame: &serde_json::Value,
+    ) -> RuntimeJournalRecord {
+        let sequence = frame["event_seq"].as_u64().expect("Main event sequence");
+        let event = serde_json::from_value(frame["notification"]["event"].clone())
+            .expect("typed Main protected event");
+        RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: thread_id.clone(),
+                recorded_at_ms: frame["occurred_at_ms"]
+                    .as_u64()
+                    .expect("Main occurred_at_ms"),
+                sequence: Some(EventSequence(sequence)),
+                transient: None,
+                revision: RuntimeRevision(sequence),
+                operation_id: None,
+                binding_id: None,
+                append_idempotency_key: None,
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    presentation_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: frame["notification"]["source"]["connectorId"]
+                        .as_str()
+                        .map(ToString::to_string),
+                    source_turn_id: frame["turn_id"].as_str().map(ToString::to_string),
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: frame["entry_index"].as_u64().map(|value| value as u32),
+                },
+            },
+            RuntimeJournalFact::Presentation(
+                agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    event,
+                ),
+            ),
+        )
+        .expect("Main presentation record")
+    }
+
+    fn ephemeral_record(
+        thread_id: &RuntimeThreadId,
+        sequence: u64,
+        label: &str,
+    ) -> RuntimeJournalRecord {
+        RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: thread_id.clone(),
+                recorded_at_ms: 1_000 + sequence,
+                sequence: None,
+                transient: Some(RuntimeTransientCoordinate {
+                    binding_id: RuntimeBindingId::new("binding").expect("binding id"),
+                    stream_generation: RuntimeDriverGeneration(7),
+                    sequence: RuntimeTransientSequence(sequence),
+                    event_id: RuntimeTransientEventId::new(format!("transient-{sequence}"))
+                        .expect("event id"),
+                    turn_id: None,
+                }),
+                revision: RuntimeRevision(sequence),
+                operation_id: None,
+                binding_id: None,
+                append_idempotency_key: None,
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    presentation_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(thread_id.to_string()),
+                    source_turn_id: Some(format!("{thread_id}-turn")),
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: None,
+                },
+            },
+            RuntimeJournalFact::Presentation(
+                agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                    PresentationDurability::Ephemeral,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                            key: label.to_string(),
+                            value: serde_json::json!({ "label": label }),
+                        },
+                    ),
+                ),
+            ),
+        )
+        .expect("ephemeral presentation record")
+    }
+
+    fn internal_record(_thread_id: &RuntimeThreadId, sequence: u64) -> RuntimeJournalRecord {
+        record(
+            sequence,
+            RuntimeJournalFact::Internal(RuntimeEvent::ThreadStatusChanged {
+                status: RuntimeThreadStatus::Active,
             }),
-        });
-        event
-    }
-
-    fn is_fork_event(event: &PersistedSessionEvent) -> bool {
-        matches!(
-            &event.notification.event,
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, .. })
-                if key == "session_branch_forked"
         )
     }
 
-    struct TestLineagePort {
-        parents: HashMap<String, SessionLineageRecord>,
+    struct FixtureBindings {
+        threads: HashMap<AgentRunRuntimeTarget, RuntimeThreadId>,
     }
 
     #[async_trait]
-    impl AgentRunJournalLineagePort for TestLineagePort {
-        async fn lineage_parent(
+    impl AgentRunJournalBindingResolver for FixtureBindings {
+        async fn resolve_thread(
             &self,
-            session_id: &str,
-        ) -> io::Result<Option<SessionLineageRecord>> {
-            Ok(self.parents.get(session_id).cloned())
+            target: &AgentRunRuntimeTarget,
+        ) -> Result<Option<RuntimeThreadId>, WorkflowApplicationError> {
+            Ok(self.threads.get(target).cloned())
         }
     }
 
-    struct TestEventingPort {
-        events: HashMap<String, Vec<PersistedSessionEvent>>,
+    struct FixtureSource {
+        records: HashMap<RuntimeThreadId, Vec<RuntimeJournalRecord>>,
+        ephemeral: HashMap<RuntimeThreadId, Vec<RuntimeJournalRecord>>,
     }
 
     #[async_trait]
-    impl RuntimeSessionEventingPort for TestEventingPort {
-        async fn list_event_page(
+    impl AgentRunJournalSource for FixtureSource {
+        async fn durable_records(
             &self,
-            session_id: &str,
-            after_seq: u64,
-            limit: u32,
-        ) -> io::Result<SessionEventPage> {
-            let all = self.events.get(session_id).cloned().unwrap_or_default();
-            let snapshot_seq = all.last().map(|event| event.event_seq).unwrap_or_default();
-            let events = all
-                .into_iter()
-                .filter(|event| event.event_seq > after_seq)
-                .take(limit as usize)
-                .collect::<Vec<_>>();
-            let next_after_seq = events
-                .last()
-                .map(|event| event.event_seq)
-                .unwrap_or(after_seq);
-            Ok(SessionEventPage {
-                snapshot_seq,
-                has_more: next_after_seq < snapshot_seq,
-                next_after_seq,
-                events,
+            thread_id: &RuntimeThreadId,
+        ) -> Result<Vec<RuntimeJournalRecord>, WorkflowApplicationError> {
+            Ok(self.records.get(thread_id).cloned().unwrap_or_default())
+        }
+
+        async fn subscribe(
+            &self,
+            thread_id: &RuntimeThreadId,
+        ) -> Result<AgentRunJournalSourceSubscription, WorkflowApplicationError> {
+            let (_tx, live) = broadcast::channel(4);
+            Ok(AgentRunJournalSourceSubscription {
+                ephemeral_epoch: 77,
+                durable_snapshot: self.records.get(thread_id).cloned().unwrap_or_default(),
+                ephemeral_backlog: self.ephemeral.get(thread_id).cloned().unwrap_or_default(),
+                live,
             })
         }
+    }
 
-        async fn persist_notification(
+    struct FixtureLineage {
+        parents: HashMap<AgentRunRuntimeTarget, agentdash_domain::workflow::AgentRunLineage>,
+    }
+
+    #[async_trait]
+    impl AgentRunLineageRepository for FixtureLineage {
+        async fn create(
             &self,
-            _session_id: &str,
-            _envelope: BackboneEnvelope,
-        ) -> Result<(), WorkflowApplicationError> {
-            Err(WorkflowApplicationError::Internal(
-                "test eventing port 不支持写入 notification".to_string(),
-            ))
+            _lineage: &agentdash_domain::workflow::AgentRunLineage,
+        ) -> Result<(), agentdash_domain::DomainError> {
+            Ok(())
         }
 
-        async fn emit_user_input_submitted(
+        async fn find_parent(
             &self,
-            _session_id: &str,
-            _turn_id: &str,
-            _event_id: &str,
-            _kind: agentdash_agent_protocol::UserInputSubmissionKind,
-            _source: agentdash_agent_protocol::UserInputSource,
-            _input: Vec<agentdash_agent_protocol::UserInputBlock>,
-        ) -> Result<(), WorkflowApplicationError> {
-            Err(WorkflowApplicationError::Internal(
-                "test eventing port 不支持写入 user input".to_string(),
-            ))
+            child_run_id: Uuid,
+            child_agent_id: Uuid,
+        ) -> Result<
+            Option<agentdash_domain::workflow::AgentRunLineage>,
+            agentdash_domain::DomainError,
+        > {
+            Ok(self
+                .parents
+                .get(&AgentRunRuntimeTarget {
+                    run_id: child_run_id,
+                    agent_id: child_agent_id,
+                })
+                .cloned())
         }
 
-        async fn subscribe_after(
+        async fn list_children(
             &self,
-            session_id: &str,
-            after_seq: u64,
-        ) -> io::Result<RuntimeSessionEventSubscription> {
-            let page = self.list_event_page(session_id, after_seq, 100).await?;
-            let (_tx, rx) = broadcast::channel(16);
-            Ok(RuntimeSessionEventSubscription {
-                snapshot_seq: page.snapshot_seq,
-                backlog: page.events,
-                ephemeral_backlog: Vec::new(),
-                rx,
-            })
+            _parent_run_id: Uuid,
+            _parent_agent_id: Uuid,
+        ) -> Result<Vec<agentdash_domain::workflow::AgentRunLineage>, agentdash_domain::DomainError>
+        {
+            Ok(Vec::new())
         }
 
-        fn ephemeral_epoch(&self) -> u64 {
-            123
+        async fn list_by_run(
+            &self,
+            _run_id: Uuid,
+        ) -> Result<Vec<agentdash_domain::workflow::AgentRunLineage>, agentdash_domain::DomainError>
+        {
+            Ok(Vec::new())
         }
+    }
+
+    fn record(sequence: u64, fact: RuntimeJournalFact) -> RuntimeJournalRecord {
+        RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: RuntimeThreadId::new("thread").expect("thread id"),
+                recorded_at_ms: 100 + sequence,
+                sequence: Some(EventSequence(sequence)),
+                transient: None,
+                revision: RuntimeRevision(sequence),
+                operation_id: None,
+                binding_id: None,
+                append_idempotency_key: None,
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    presentation_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: None,
+                    source_turn_id: None,
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: None,
+                },
+            },
+            fact,
+        )
+        .expect("journal record")
     }
 }

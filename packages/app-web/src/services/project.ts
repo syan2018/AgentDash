@@ -37,8 +37,6 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
       model_id: rawExecutor.model_id != null ? String(rawExecutor.model_id) : null,
       agent_id: rawExecutor.agent_id != null ? String(rawExecutor.agent_id) : null,
       thinking_level: thinkingLevel,
-      permission_policy:
-        rawExecutor.permission_policy != null ? String(rawExecutor.permission_policy) : null,
     },
     effective_executor_config:
       raw.effective_executor_config && typeof raw.effective_executor_config === "object"

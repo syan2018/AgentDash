@@ -1,229 +1,238 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo, TraceInfo};
 use agentdash_application_agentrun::agent_run::{
-    AgentRunJournalQuery, AgentRunJournalService, DeliveryRuntimeSelectionPolicy,
-    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
-    agent_run_journal_session_id, project_event_to_agent_run_journal,
+    AgentRunJournalQuery, AgentRunJournalService, agent_run_journal_session_id,
 };
+use agentdash_application_lifecycle::lifecycle::LifecycleMountProvider;
 use agentdash_application_lifecycle::lifecycle::surface::journey::{
-    AgentRunJournalProjection, AgentRunJournalReader, AgentRunJournalRef, JourneyResult,
-    LifecycleJourneyError, SessionToolResultCacheReadResult, SessionToolResultCacheReader,
+    AgentRunCompactionArchiveReader, AgentRunJournalProjection, AgentRunJournalReader,
+    AgentRunJournalRef, JourneyResult, LifecycleJourneyError, SessionCompactionArchive,
+    SessionCompactionArchiveStatus,
 };
-use agentdash_domain::canvas::CanvasRepository;
-use agentdash_domain::inline_file::InlineFileRepository;
-use agentdash_domain::routine::RoutineExecutionRepository;
-use agentdash_domain::skill_asset::SkillAssetRepository;
-use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentRunDeliveryBindingRepository, LifecycleAgentRepository,
-    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
-};
-use agentdash_spi::session_persistence::{
-    SessionCompactionStore, SessionEventStore, SessionLineageStore, SessionMetaStore,
-};
+use agentdash_application_vfs::MountProviderRegistryBuilder;
+use agentdash_spi::PersistedSessionEvent;
 use async_trait::async_trait;
 
 use crate::canvas::CanvasFsMountProvider;
-use crate::lifecycle::{
-    LifecycleMountProvider, SessionToolResultCacheStatus as LifecycleToolResultCacheStatus,
-    SessionToolResultCacheStatusKind as LifecycleToolResultCacheStatusKind,
-};
-use crate::session::{
-    SessionToolResultCache, SessionToolResultCacheRead as RuntimeToolResultCacheRead,
-    SessionToolResultCacheStatusKind as RuntimeToolResultCacheStatusKind,
-};
-use crate::vfs::provider::MountProviderRegistryBuilder;
+use crate::repository_set::RepositorySet;
 use crate::vfs::{InlineFsMountProvider, RoutineMountProvider, SkillAssetFsMountProvider};
 
+#[derive(Clone, Default)]
+pub struct SharedAgentRunJournalReaderHandle {
+    service: Arc<OnceLock<Arc<AgentRunJournalService>>>,
+}
+
+impl SharedAgentRunJournalReaderHandle {
+    pub fn bind(&self, service: Arc<AgentRunJournalService>) -> Result<(), &'static str> {
+        self.service
+            .set(service)
+            .map_err(|_| "AgentRun journal reader composition handle was already bound")
+    }
+
+    fn service(&self) -> JourneyResult<&Arc<AgentRunJournalService>> {
+        self.service.get().ok_or_else(|| {
+            LifecycleJourneyError::OperationFailed(
+                "AgentRun journal reader composition handle is not bound".to_string(),
+            )
+        })
+    }
+}
+
 pub trait MountProviderRegistryBuilderOwnerExt {
-    #[allow(clippy::too_many_arguments)]
     fn with_application_builtins(
         self,
-        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        canvas_repo: Arc<dyn CanvasRepository>,
-        inline_file_repo: Arc<dyn InlineFileRepository>,
-        routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
-        skill_asset_repo: Arc<dyn SkillAssetRepository>,
-        session_meta_store: Arc<dyn SessionMetaStore>,
-        session_event_store: Arc<dyn SessionEventStore>,
-        session_lineage_store: Arc<dyn SessionLineageStore>,
-        session_compaction_store: Arc<dyn SessionCompactionStore>,
-        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-        agent_frame_repo: Arc<dyn AgentFrameRepository>,
-        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        agent_run_delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-        tool_result_cache: Arc<SessionToolResultCache>,
+        repos: &RepositorySet,
+        agent_run_journal_reader: SharedAgentRunJournalReaderHandle,
     ) -> Self;
 }
 
 impl MountProviderRegistryBuilderOwnerExt for MountProviderRegistryBuilder {
-    #[allow(clippy::too_many_arguments)]
     fn with_application_builtins(
         self,
-        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        canvas_repo: Arc<dyn CanvasRepository>,
-        inline_file_repo: Arc<dyn InlineFileRepository>,
-        routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
-        skill_asset_repo: Arc<dyn SkillAssetRepository>,
-        session_meta_store: Arc<dyn SessionMetaStore>,
-        session_event_store: Arc<dyn SessionEventStore>,
-        session_lineage_store: Arc<dyn SessionLineageStore>,
-        session_compaction_store: Arc<dyn SessionCompactionStore>,
-        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-        agent_frame_repo: Arc<dyn AgentFrameRepository>,
-        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        agent_run_delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-        tool_result_cache: Arc<SessionToolResultCache>,
+        repos: &RepositorySet,
+        agent_run_journal_reader: SharedAgentRunJournalReaderHandle,
     ) -> Self {
-        let agent_run_journal_reader = Arc::new(ApplicationAgentRunJournalReader::new(
-            lifecycle_run_repo.clone(),
-            lifecycle_agent_repo.clone(),
-            agent_frame_repo,
-            execution_anchor_repo,
-            agent_run_delivery_binding_repo,
-            session_lineage_store,
-            session_event_store.clone(),
-        ));
         self.register(Arc::new(InlineFsMountProvider::new(
-            inline_file_repo.clone(),
+            repos.inline_file_repo.clone(),
         )))
-        .register(Arc::new(
-            LifecycleMountProvider::new_with_tool_result_cache(
-                lifecycle_run_repo,
-                lifecycle_agent_repo,
-                inline_file_repo.clone(),
-                skill_asset_repo.clone(),
-                session_meta_store,
-                session_compaction_store,
-                Arc::new(RuntimeSessionToolResultCacheReader { tool_result_cache }),
-                agent_run_journal_reader,
-            ),
-        ))
+        .register(Arc::new(LifecycleMountProvider::new(
+            repos.lifecycle_run_repo.clone(),
+            repos.lifecycle_agent_repo.clone(),
+            repos.inline_file_repo.clone(),
+            repos.skill_asset_repo.clone(),
+            Arc::new(agent_run_journal_reader.clone()),
+            Arc::new(agent_run_journal_reader),
+        )))
         .register(Arc::new(RoutineMountProvider::new(
-            routine_execution_repo,
-            inline_file_repo.clone(),
+            repos.routine_execution_repo.clone(),
+            repos.inline_file_repo.clone(),
         )))
-        .register(Arc::new(CanvasFsMountProvider::new(canvas_repo)))
-        .register(Arc::new(SkillAssetFsMountProvider::new(skill_asset_repo)))
-    }
-}
-
-struct ApplicationAgentRunJournalReader {
-    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-    agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-    service: AgentRunJournalService,
-}
-
-impl ApplicationAgentRunJournalReader {
-    fn new(
-        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-        agent_frame_repo: Arc<dyn AgentFrameRepository>,
-        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-        lineage_store: Arc<dyn SessionLineageStore>,
-        event_store: Arc<dyn SessionEventStore>,
-    ) -> Self {
-        Self {
-            lifecycle_run_repo,
-            lifecycle_agent_repo,
-            agent_frame_repo,
-            execution_anchor_repo,
-            delivery_binding_repo,
-            service: AgentRunJournalService::new_from_session_stores(lineage_store, event_store),
-        }
+        .register(Arc::new(CanvasFsMountProvider::new(
+            repos.canvas_repo.clone(),
+        )))
+        .register(Arc::new(SkillAssetFsMountProvider::new(
+            repos.skill_asset_repo.clone(),
+        )))
     }
 }
 
 #[async_trait]
-impl AgentRunJournalReader for ApplicationAgentRunJournalReader {
+impl AgentRunJournalReader for SharedAgentRunJournalReaderHandle {
     async fn visible_journal(
         &self,
         reference: AgentRunJournalRef,
     ) -> JourneyResult<AgentRunJournalProjection> {
-        let delivery = DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
-            lifecycle_runs: self.lifecycle_run_repo.as_ref(),
-            lifecycle_agents: self.lifecycle_agent_repo.as_ref(),
-            agent_frames: self.agent_frame_repo.as_ref(),
-            execution_anchors: self.execution_anchor_repo.as_ref(),
-            delivery_bindings: self.delivery_binding_repo.as_ref(),
-        })
-        .select(DeliveryRuntimeSelectionPolicy::CurrentDelivery {
-            run_id: reference.run_id,
-            agent_id: reference.agent_id,
-        })
-        .await
-        .map_err(|error| {
-            LifecycleJourneyError::OperationFailed(format!(
-                "解析 AgentRun 当前 delivery 失败: {error}"
-            ))
-        })?;
-        let journal = self
-            .service
-            .load_visible_journal(AgentRunJournalQuery {
-                run_id: reference.run_id,
-                agent_id: reference.agent_id,
-                delivery_runtime_session_id: Some(delivery.runtime_session_id.clone()),
-            })
+        let page = self
+            .service()?
+            .load_visible_journal_page(
+                AgentRunJournalQuery {
+                    run_id: reference.run_id,
+                    agent_id: reference.agent_id,
+                },
+                0,
+                u32::MAX,
+            )
             .await
             .map_err(|error| {
                 LifecycleJourneyError::OperationFailed(format!(
                     "读取 AgentRun journal 失败: {error}"
                 ))
             })?;
-        let journal_session_id = agent_run_journal_session_id(journal.run_id, journal.agent_id);
-        let events = journal
+        let session_id = agent_run_journal_session_id(reference.run_id, reference.agent_id);
+        let delivery_runtime_session_id = page.delivery_runtime_thread_id.as_str().to_string();
+        let events = page
             .events
             .into_iter()
-            .map(|event| {
-                project_event_to_agent_run_journal(
-                    event.event,
-                    event.journal_seq,
-                    &journal_session_id,
-                )
-            })
-            .collect();
+            .map(|event| project_journal_event(&session_id, event))
+            .collect::<JourneyResult<Vec<_>>>()?;
         Ok(AgentRunJournalProjection {
-            delivery_runtime_session_id: delivery.runtime_session_id,
+            delivery_runtime_session_id,
             events,
         })
     }
 }
 
-struct RuntimeSessionToolResultCacheReader {
-    tool_result_cache: Arc<SessionToolResultCache>,
-}
-
-impl SessionToolResultCacheReader for RuntimeSessionToolResultCacheReader {
-    fn read_text(&self, session_id: &str, item_id: &str) -> SessionToolResultCacheReadResult {
-        match self.tool_result_cache.read_text(session_id, item_id) {
-            RuntimeToolResultCacheRead::Available { metadata, text } => {
-                SessionToolResultCacheReadResult::Available {
-                    text,
-                    stored_bytes: metadata.stored_bytes,
-                    original_bytes: metadata.original_bytes,
-                }
-            }
-            RuntimeToolResultCacheRead::Unavailable(status) => {
-                SessionToolResultCacheReadResult::Unavailable(LifecycleToolResultCacheStatus {
-                    status: map_tool_result_cache_status(status.status),
-                    session_id: status.session_id,
-                    item_id: status.item_id,
-                    lifecycle_path: status.lifecycle_path,
-                    message: status.message,
-                })
-            }
-        }
+#[async_trait]
+impl AgentRunCompactionArchiveReader for SharedAgentRunJournalReaderHandle {
+    async fn list_archives(
+        &self,
+        reference: AgentRunJournalRef,
+    ) -> JourneyResult<Vec<SessionCompactionArchive>> {
+        self.service()?
+            .list_context_compaction_archives(AgentRunJournalQuery {
+                run_id: reference.run_id,
+                agent_id: reference.agent_id,
+            })
+            .await
+            .map_err(|error| {
+                LifecycleJourneyError::OperationFailed(format!(
+                    "读取 AgentRun compaction archive 失败: {error}"
+                ))
+            })
+            .map(|archives| {
+                archives
+                    .into_iter()
+                    .map(|archive| SessionCompactionArchive {
+                        id: archive.compaction_id,
+                        lifecycle_item_id: archive.lifecycle_item_id,
+                        projection_version: archive.projection_version,
+                        completed_event_seq: archive.completed_event_seq,
+                        source_start_event_seq: archive.source_start_event_seq,
+                        source_end_event_seq: archive.source_end_event_seq,
+                        summary: archive.summary,
+                        trigger: archive.trigger,
+                        phase: archive.phase,
+                        strategy: archive.strategy,
+                        token_stats_json: serde_json::json!({
+                            "tokens_before": archive.tokens_before,
+                            "messages_compacted": archive.messages_compacted,
+                        }),
+                        diagnostics_json: serde_json::Value::Null,
+                        turn_id: archive.turn_id,
+                        entry_index: archive.entry_index,
+                        status: SessionCompactionArchiveStatus::ProjectionCommitted,
+                    })
+                    .collect()
+            })
     }
 }
 
-fn map_tool_result_cache_status(
-    status: RuntimeToolResultCacheStatusKind,
-) -> LifecycleToolResultCacheStatusKind {
-    match status {
-        RuntimeToolResultCacheStatusKind::Missing => LifecycleToolResultCacheStatusKind::Missing,
-        RuntimeToolResultCacheStatusKind::Expired => LifecycleToolResultCacheStatusKind::Expired,
+fn project_journal_event(
+    session_id: &str,
+    event: agentdash_application_agentrun::agent_run::AgentRunJournalEvent,
+) -> JourneyResult<PersistedSessionEvent> {
+    let carrier = event.record.carrier();
+    let presentation = event.record.as_presentation().ok_or_else(|| {
+        LifecycleJourneyError::OperationFailed(
+            "AgentRun visible journal contained an internal Runtime fact".to_string(),
+        )
+    })?;
+    let event_value = serde_json::to_value(&presentation.event)
+        .map_err(|error| LifecycleJourneyError::OperationFailed(error.to_string()))?;
+    let session_update_type = event_value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            LifecycleJourneyError::OperationFailed(
+                "AgentRun presentation event is missing its protocol type".to_string(),
+            )
+        })?
+        .to_string();
+    let recorded_at_ms = i64::try_from(carrier.recorded_at_ms).map_err(|_| {
+        LifecycleJourneyError::OperationFailed(
+            "AgentRun journal timestamp exceeds the supported range".to_string(),
+        )
+    })?;
+    let observed_at = chrono::DateTime::from_timestamp_millis(recorded_at_ms).ok_or_else(|| {
+        LifecycleJourneyError::OperationFailed("AgentRun journal timestamp is invalid".to_string())
+    })?;
+    let notification = BackboneEnvelope {
+        event: presentation.event.clone(),
+        session_id: session_id.to_string(),
+        source: SourceInfo {
+            connector_id: "agent_run_journal".to_string(),
+            connector_type: "managed_runtime".to_string(),
+            executor_id: None,
+        },
+        trace: TraceInfo {
+            turn_id: carrier.coordinate.source_turn_id.clone(),
+            entry_index: carrier.coordinate.source_entry_index,
+        },
+        observed_at,
+    };
+    Ok(PersistedSessionEvent {
+        session_id: session_id.to_string(),
+        event_seq: event.journal_seq,
+        occurred_at_ms: recorded_at_ms,
+        committed_at_ms: recorded_at_ms,
+        session_update_type,
+        turn_id: carrier.coordinate.source_turn_id.clone(),
+        entry_index: carrier.coordinate.source_entry_index,
+        tool_call_id: None,
+        ephemeral: presentation.durability
+            == agentdash_agent_runtime_contract::PresentationDurability::Ephemeral,
+        notification,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn unbound_agent_run_journal_handle_fails_explicitly() {
+        let handle = SharedAgentRunJournalReaderHandle::default();
+        let error = handle
+            .visible_journal(AgentRunJournalRef::new(Uuid::new_v4(), Uuid::new_v4()))
+            .await
+            .expect_err("unbound composition handle must fail");
+
+        assert!(matches!(
+            error,
+            LifecycleJourneyError::OperationFailed(message)
+                if message.contains("is not bound")
+        ));
     }
 }

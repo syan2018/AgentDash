@@ -1,0 +1,23 @@
+{
+  "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+  "source": "Main SessionEventResponse.notification.event captures derived from crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs",
+  "source_sha256": "d2e1cea154e40e8f66aa8e5ec36ef0cd57ebee78332f157a22c639a4db4bbb05",
+  "capture_method": "normalized protected bodies captured before Runtime Wire and Relay wrapper roundtrips",
+  "source_entry_index": 0,
+  "scenarios": {
+    "item_started_updated_completed": [
+      { "durability": "durable", "event": { "type": "item_started", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "path": "main://README.md" }, "contentItems": null, "durationMs": null, "id": "turn_001:tool_001", "namespace": null, "status": "inProgress", "success": null, "tool": "read" }, "threadId": "native-thread", "turnId": "runtime-turn", "startedAtMs": 1783684800000 } } },
+      { "durability": "ephemeral", "event": { "type": "item_updated", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "path": "main://README.md" }, "contentItems": [{ "type": "inputText", "text": "partial" }], "durationMs": null, "id": "turn_001:tool_001", "namespace": null, "status": "inProgress", "success": null, "tool": "read" }, "threadId": "native-thread", "turnId": "runtime-turn", "updatedAtMs": 1783684800000 } } },
+      { "durability": "durable", "event": { "type": "item_completed", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "path": "main://README.md" }, "contentItems": [{ "type": "inputText", "text": "complete" }], "durationMs": null, "id": "turn_001:tool_001", "namespace": null, "status": "completed", "success": true, "tool": "read" }, "threadId": "native-thread", "turnId": "runtime-turn", "completedAtMs": 1783684800000 } } }
+    ],
+    "interactions_all_connectors": [
+      { "durability": "durable", "event": { "type": "platform", "payload": { "kind": "session_meta_update", "data": { "key": "approval_requested", "value": { "tool_call_id": "approval-1", "tool_name": "shell_exec", "reason": "permission required", "args": { "command": "echo ok" }, "details": { "scope": "workspace" }, "entry_index": 0 } } } } },
+      { "durability": "durable", "event": { "type": "platform", "payload": { "kind": "session_meta_update", "data": { "key": "approval_resolved", "value": { "tool_call_id": "approval-1", "tool_name": "shell_exec", "approved": true, "reason": "approved", "args": { "command": "echo ok" }, "entry_index": 0 } } } } }
+    ],
+    "journal_get_initial_live_reconnect_refresh": [
+      { "durability": "ephemeral", "event": { "type": "agent_message_delta", "payload": { "delta": "answer", "itemId": "runtime-turn:0:msg", "threadId": "native-thread", "turnId": "runtime-turn" } } },
+      { "durability": "durable", "event": { "type": "item_completed", "payload": { "item": { "type": "agentMessage", "id": "runtime-turn:0:msg", "memoryCitation": null, "phase": null, "text": "answer" }, "threadId": "native-thread", "turnId": "runtime-turn", "completedAtMs": 1783684800000 } } },
+      { "durability": "durable", "event": { "type": "error", "payload": { "error": { "additionalDetails": "context_compaction_item_id=compaction-1", "codexErrorInfo": null, "message": "compaction failed" }, "threadId": "native-thread", "turnId": "runtime-turn", "willRetry": false } } }
+    ]
+  }
+}

@@ -10,6 +10,30 @@ import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
 type JsonObject = { [key: string]: JsonValue | undefined };
 
 describe("SessionSystemEventCard", () => {
+  it("以成功卡片渲染 Workspace Module 展示请求审计事件", () => {
+    const event: BackboneEvent = {
+      type: "platform",
+      payload: {
+        kind: "workspace_module_presentation_requested",
+        data: {
+          module_id: "canvas:cvs-canvas",
+          view_key: "preview",
+          renderer_kind: "canvas",
+          presentation_uri: "canvas://cvs-canvas",
+          title: "临时 Canvas 展示测试",
+          payload: { reason: "smoke-test" },
+          diagnostics: null,
+        },
+      },
+    };
+
+    expect(isRenderableSystemEventUpdate(event)).toBe(true);
+    const markup = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
+    expect(markup).toContain("Workspace Module 展示请求已提交");
+    expect(markup).toContain("已请求展示「临时 Canvas 展示测试」");
+    expect(markup).toContain("text-success");
+  });
+
   it("放行并渲染 session_branch_forked 事件", () => {
     const event: BackboneEvent = {
       type: "platform",

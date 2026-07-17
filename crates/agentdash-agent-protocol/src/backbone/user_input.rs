@@ -1,6 +1,7 @@
+use crate::codex_app_server_protocol as codex;
 use agentdash_agent_types::ContentPart;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
-use codex_app_server_protocol as codex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
@@ -15,14 +16,14 @@ use crate::{ContentBlock, EmbeddedResourceResource};
 /// 并在边界补 `From/Into codex::UserInput`，调用方无需改动。
 pub type UserInputBlock = codex::UserInput;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum UserInputSubmissionKind {
     Prompt,
     Steer,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UserInputSource {
     pub namespace: String,
@@ -68,16 +69,12 @@ impl UserInputSource {
         Self::new("core", "composer", "user")
     }
 
-    pub fn local_relay_prompt() -> Self {
-        Self::new("core", "local_relay_prompt", "user")
-    }
-
     pub fn companion_parent_resume() -> Self {
         Self::new("companion", "parent_resume", "agent").with_route("parent")
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct UserInputSubmittedNotification {
     pub thread_id: String,
@@ -161,10 +158,12 @@ fn user_input_block_to_content_part(input: &UserInputBlock) -> Option<ContentPar
             }
         }
         codex::UserInput::Image { url, .. } => Some(image_url_to_content_part(url)),
-        codex::UserInput::LocalImage { path, .. } => Some(local_image_to_content_part(path)),
+        codex::UserInput::LocalImage { path, .. } => {
+            Some(local_image_to_content_part(std::path::Path::new(path)))
+        }
         codex::UserInput::Skill { name, path } => Some(ContentPart::text(format!(
             "[引用 Skill: {name} ({})]",
-            path.display()
+            path
         ))),
         codex::UserInput::Mention { name, path } => {
             Some(ContentPart::text(format!("[引用: {name} ({path})]")))
@@ -321,7 +320,7 @@ pub fn codex_user_input_to_text(
         .filter_map(|item| match item {
             codex::UserInput::Text { text, .. } => Some(text.as_str().to_string()),
             codex::UserInput::Image { url, .. } => Some(url.clone()),
-            codex::UserInput::LocalImage { path, .. } => path.to_str().map(ToString::to_string),
+            codex::UserInput::LocalImage { path, .. } => Some(path.clone()),
             codex::UserInput::Skill { name, .. } => Some(name.clone()),
             codex::UserInput::Mention { name, .. } => Some(name.clone()),
         })

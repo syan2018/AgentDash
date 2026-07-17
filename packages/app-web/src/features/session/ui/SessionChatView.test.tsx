@@ -1,18 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "../../../generated/common-contracts";
 import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
+import { historyReplayBoundaryAfterCompletedLoad } from "../model/useSessionStream";
 import {
   computeProjectionRefreshKey,
+  dispatchLiveSessionEvents,
   extractTurnLifecycleEventType,
   isAgentRunWorkspaceActionRunning,
   rawEventsBelongToRuntimeStreamTarget,
 } from "./SessionChatViewModel";
-import {
-  collectAllPlatformEvents,
-  collectRenderableSystemEvents,
-  collectTurnLifecycleEvents,
-} from "./SessionChatViewModel";
+import { collectRenderableSystemEvents } from "./SessionChatViewModel";
 import {
   isSessionComposerSubmitDisabled,
   isSessionModelRequirementSatisfied,
@@ -28,6 +26,16 @@ const completedTurn: Turn = {
   completedAt: null,
   durationMs: null,
 };
+
+describe("history replay boundary lifecycle", () => {
+  it("establishes the boundary on the first completed load after a StrictMode setup was cancelled", () => {
+    expect(historyReplayBoundaryAfterCompletedLoad(null, 116)).toBe(116);
+  });
+
+  it("preserves the original hydration boundary when the same target reconnects", () => {
+    expect(historyReplayBoundaryAfterCompletedLoad(57, 116)).toBe(57);
+  });
+});
 
 function eventEnvelope(eventSeq: number, event: BackboneEvent, sessionId = "session-1"): SessionEventEnvelope {
   return {
@@ -75,11 +83,70 @@ function platformMetaEvent(key: string, value: Record<string, JsonValue>): Backb
   };
 }
 
+function workspaceModulePresentationRequestedEvent(): BackboneEvent {
+  return {
+    type: "platform",
+    payload: {
+      kind: "workspace_module_presentation_requested",
+      data: {
+        module_id: "canvas:cvs-canvas",
+        view_key: "preview",
+        renderer_kind: "canvas",
+        presentation_uri: "canvas://cvs-canvas",
+        title: "Canvas",
+        payload: null,
+        diagnostics: null,
+      },
+    },
+  };
+}
+
 function turnTerminalMetaEvent(terminalType: "turn_completed" | "turn_failed" | "turn_interrupted"): BackboneEvent {
   return platformMetaEvent("turn_terminal", {
     terminal_type: terminalType,
     message: null,
   });
+}
+
+function contextFrameChangedEvent(): BackboneEvent {
+  return {
+    type: "platform",
+    payload: {
+      kind: "context_frame_changed",
+      data: {
+        frame: {
+          id: "surface-frame-2",
+          kind: "capability_state_delta",
+          source: "runtime_context_update",
+          delivery_status: "accepted",
+          delivery_channel: "continuation",
+          message_role: "context",
+          delivery_metadata: {
+            delivery_phase: "run_state",
+            delivery_order: 0,
+            cache_policy: "runtime_state_digest",
+            model_channel: "audit_only",
+            agent_consumption: {
+              target: "runtime",
+              mode: "audit_only",
+              reason: "surface adopted",
+            },
+            frontend_label: "VFS UPDATE",
+            connector_profile: {
+              profile_id: "managed-runtime",
+            },
+          },
+          rendered_text: "Canvas mount added",
+          sections: [{
+            kind: "vfs_delta",
+            vfs_mounts_added: ["cvs-canvas"],
+            vfs_mounts_removed: [],
+          }],
+          created_at_ms: 1n,
+        },
+      },
+    },
+  };
 }
 
 describe("computeProjectionRefreshKey", () => {
@@ -238,78 +305,73 @@ describe("collectRenderableSystemEvents", () => {
     expect(result.items[0]?.eventType).toBe("system_message");
   });
 
-  it("全量 platform 收集函数保留不可渲染事件入口", () => {
-    const events = [
-      eventEnvelope(1, platformMetaEvent("system_message", { message: "需要用户确认" })),
-      eventEnvelope(2, platformMetaEvent("unknown_meta", { message: "静默" })),
-      eventEnvelope(3, agentDeltaEvent("assistant-1")),
-    ];
+  it("将 Workspace Module 展示请求作为审计事实收进可渲染会话流", () => {
+    const result = collectRenderableSystemEvents([
+      eventEnvelope(4, workspaceModulePresentationRequestedEvent()),
+    ], 0);
 
-    const result = collectAllPlatformEvents(events, 0);
-
-    expect(result.lastSeenSeq).toBe(3);
-    expect(result.items.map((item) => item.eventType)).toEqual([
-      "system_message",
-      "unknown_meta",
-    ]);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.eventType).toBe("workspace_module_presentation_requested");
+    expect(result.items[0]?.eventSeq).toBe(4);
   });
 
-  it("全量 platform 收集函数可用历史边界跳过 hydrate 事件", () => {
-    const events = [
-      eventEnvelope(9, platformMetaEvent("workspace_module_presented", {
-        module_id: "canvas:history",
-        view_key: "preview",
-        renderer_kind: "canvas",
-        presentation_uri: "canvas://history",
-        title: "History Canvas",
-      })),
-      eventEnvelope(10, platformMetaEvent("session_meta_updated", { title: "历史标题" })),
-      eventEnvelope(11, platformMetaEvent("workspace_module_presented", {
-        module_id: "canvas:live",
-        view_key: "preview",
-        renderer_kind: "canvas",
-        presentation_uri: "canvas://live",
-        title: "Live Canvas",
-      })),
-      eventEnvelope(12, platformMetaEvent("session_meta_updated", { title: "新标题" })),
-    ];
+  it("history hydration 只恢复事实，不执行命令式页面动作", () => {
+    const onLiveEvent = vi.fn();
 
-    const result = collectAllPlatformEvents(events, 10);
+    const lastSeenSeq = dispatchLiveSessionEvents(
+      [
+        eventEnvelope(93, platformMetaEvent("system_message", {
+          message: "hydrated message",
+        })),
+        eventEnvelope(94, workspaceModulePresentationRequestedEvent()),
+        eventEnvelope(97, {
+          type: "item_completed",
+          payload: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: {
+              type: "dynamicToolCall",
+              id: "tool-1",
+              tool: "workspace_module_present",
+              status: "completed",
+              success: true,
+              arguments: {},
+              namespace: null,
+              durationMs: null,
+              contentItems: null,
+            },
+            completedAtMs: 97,
+          },
+        }),
+      ],
+      null,
+      97,
+      onLiveEvent,
+    );
 
-    expect(result.lastSeenSeq).toBe(12);
-    expect(result.items.map((item) => item.eventType)).toEqual([
-      "workspace_module_presented",
-      "session_meta_updated",
-    ]);
-    expect(result.items.map((item) => item.eventSeq)).toEqual([11, 12]);
+    expect(lastSeenSeq).toBe(97);
+    expect(onLiveEvent).not.toHaveBeenCalled();
   });
-});
 
-describe("collectTurnLifecycleEvents", () => {
-  it("按边界只收集 live turn lifecycle 并推进 lastSeenSeq", () => {
-    const events = [
-      eventEnvelope(8, {
-        type: "turn_completed",
-        payload: { threadId: "thread-1", turn: completedTurn },
-      }),
-      eventEnvelope(10, turnTerminalMetaEvent("turn_completed")),
-      eventEnvelope(11, {
-        type: "turn_started",
-        payload: {
-          threadId: "thread-1",
-          turn: { ...completedTurn, id: "turn-2", status: "inProgress" },
-        },
-      }),
-      eventEnvelope(12, turnTerminalMetaEvent("turn_failed")),
-    ];
+  it("在同一入口按 sequence 分发所有 live 事件", () => {
+    const onLiveEvent = vi.fn();
+    const presentation = workspaceModulePresentationRequestedEvent();
+    const contextFrame = contextFrameChangedEvent();
 
-    const result = collectTurnLifecycleEvents(events, 10);
+    const lastSeenSeq = dispatchLiveSessionEvents(
+      [
+        eventEnvelope(51, presentation),
+        eventEnvelope(52, contextFrame),
+      ],
+      50,
+      50,
+      onLiveEvent,
+    );
 
-    expect(result.lastSeenSeq).toBe(12);
-    expect(result.items.map((item) => item.eventSeq)).toEqual([11, 12]);
-    expect(result.items.map((item) => item.eventType)).toEqual([
-      "turn_started",
-      "turn_failed",
+    expect(lastSeenSeq).toBe(52);
+    expect(onLiveEvent.mock.calls.map(([event]) => event)).toEqual([
+      presentation,
+      contextFrame,
     ]);
   });
 });

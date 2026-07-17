@@ -5,7 +5,7 @@
  * 无 subject 关联的主 Run 归入兜底组。
  */
 
-import type { AgentRunWorkspaceListEntry } from "../../types";
+import type { AgentRunListEntryView } from "../../types";
 
 export interface AgentRunGroup {
   /** 分组稳定 key：`${kind}:${id}` 或兜底组常量。 */
@@ -14,7 +14,7 @@ export interface AgentRunGroup {
   kind: string;
   /** 展示标签：subject_label，缺失时回退到 kind / 兜底文案。 */
   label: string;
-  entries: AgentRunWorkspaceListEntry[];
+  entries: AgentRunListEntryView[];
 }
 
 export const UNGROUPED_KEY = "__ungrouped__";
@@ -29,9 +29,9 @@ export function groupKindLabel(kind: string): string {
   return GROUP_KIND_LABEL[kind] ?? kind;
 }
 
-export function groupAgentRunsBySubject(entries: AgentRunWorkspaceListEntry[]): AgentRunGroup[] {
+export function groupAgentRunsBySubject(entries: AgentRunListEntryView[]): AgentRunGroup[] {
   const groups = new Map<string, AgentRunGroup>();
-  const ungrouped: AgentRunWorkspaceListEntry[] = [];
+  const ungrouped: AgentRunListEntryView[] = [];
 
   for (const entry of entries) {
     const ref = entry.subject_ref;

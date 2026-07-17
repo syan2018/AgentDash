@@ -11,7 +11,7 @@
 
 - 公共资源（skill-assets、内置 skill、项目级共享资料）可跨 session 复用
 - 物化路径必须可读、稳定，不含 `plan_id / turn_id / tool_call_id / backend_id`
-- `lifecycle_vfs` 的 AgentRun workspace 资源身份来自 `RuntimeSessionExecutionAnchor`；执行期 `node_runtime` mount 的资源身份来自 `orchestration_id + node_path + attempt`。它们被 runtime 工具物化为本地副本时使用 session cache scope，原因是 session trace、当前 node artifact / record overlay 都是 runtime session 证据面。
+- AgentRun workspace资源身份来自LifecycleRun/Agent/current AgentFrame与canonical Runtime binding；执行期node mount继续使用`orchestration_id + node_path + attempt`产品证据。物化cache scope以binding/thread与资源digest隔离。
 
 ---
 

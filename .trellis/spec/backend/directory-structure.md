@@ -8,6 +8,9 @@
 
 ```
 crates/
+├── agentdash-agent-runtime-contract/ # AgentDash-owned Runtime IDs/commands/events/profiles/errors
+├── agentdash-agent-runtime-wire/     # transport-neutral Runtime request/response/event framing
+├── agentdash-agent-runtime-test-support/ # Runtime/Driver共享conformance behavior harness
 ├── agentdash-api/               # Interface Layer — HTTP 路由、DTO、中间件
 ├── agentdash-application/       # Application Layer — 剩余用例编排与 composition adapters
 ├── agentdash-application-ports/ # Application Boundary Ports — API/local 实现、application 消费的纯端口
@@ -21,6 +24,7 @@ crates/
 ├── agentdash-spi/               # SPI — Connector/Hook trait + 能力协议
 ├── agentdash-agent/             # Agent Loop 引擎（纯 loop + bridge trait）
 ├── agentdash-agent-types/       # Agent 领域通用类型
+├── agentdash-llm-provider/      # Provider catalog、凭据解析与Agent Core LLM bridges
 ├── agentdash-agent-protocol/    # Backbone Protocol + 外部协议 adapter
 ├── agentdash-mcp/               # MCP Server 实现
 ├── agentdash-relay/             # WebSocket Relay 协议
@@ -46,7 +50,10 @@ Domain Layer (agentdash-domain)
 Infrastructure Layer (agentdash-infrastructure, agentdash-executor)
 
 Agent 子系统（独立于主分层）：
-agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-executor
+agentdash-agent-runtime-contract ← agentdash-agent-runtime-wire
+agentdash-agent-runtime-contract ← agentdash-agent-runtime-test-support
+
+现有Agent执行链在后续工作包中逐步切换到Managed Runtime与Integration Driver Host；新Runtime Contract不反向依赖application、domain repository、旧protocol、vendor或transport。
 ```
 
 ### 分层职责
@@ -62,6 +69,10 @@ agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-execut
 | **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor` | 持久化实现、连接器、WebSocket 中继 | domain |
 | **Agent Types** | `agentdash-agent-types` | 跨层共享类型（Message/Tool/Context/Delegate） | serde, async-trait |
 | **Agent Engine** | `agentdash-agent` | Agent Loop 引擎、LlmBridge trait | agent-types, domain |
+| **LLM Provider Adapter** | `agentdash-llm-provider` | Provider catalog、账户凭据解析、模型发现与provider protocol bridge；向Agent Core产出固定provider/model的`LlmBridge` | agent, domain, spi |
+| **Agent Runtime Contract** | `agentdash-agent-runtime-contract` | canonical Runtime IDs、commands、events、snapshots、profiles、availability、errors与Driver SPI | serde、schema/TS生成、结构化错误与async trait |
+| **Agent Runtime Wire** | `agentdash-agent-runtime-wire` | typed request/response/notification/ack、protocol revision与critical frame violation | agent-runtime-contract、serde、schema/TS生成 |
+| **Agent Runtime Test Support** | `agentdash-agent-runtime-test-support` | 可被Runtime/Host/Adapter复用的行为一致性测试 | agent-runtime-contract、test runtime |
 
 ---
 
@@ -86,7 +97,7 @@ agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-execut
 
 `agentdash-workspace-module` 是 Workspace Module 业务边界：Canvas 作为 `agentdash-workspace-module::canvas` 子模块承载 mount/module/presentation identity、Canvas 管理/runtime/VFS/visibility 业务服务、operation keys、runtime tool provider 与 Workspace Module descriptor/presentation 组装。它通过 domain repository trait 和 application ports 连接外部能力。
 
-Workspace Module 与运行中 Agent 的协作端口使用 AgentRun 语义命名，例如 `WorkspaceModuleAgentRunBridge`。`runtime_session_id` 只能作为 application/API adapter 内部解析当前 AgentRun delivery runtime 的 trace 坐标；workspace-module 对外业务抽象不以 session 为主语。HTTP authorization、route mapping、Postgres repository implementation、API composition 与具体 service wiring 仍属于 API/application/infrastructure adapter 层。
+Workspace Module 与运行中 Agent 的协作端口使用AgentRun语义命名。运行坐标通过`AgentRunRuntimeTarget/Binding`解析；workspace-module不接触Driver source identity。HTTP authorization、route mapping、Postgres adapter与composition仍属于API/application/infrastructure边界。
 
 ---
 

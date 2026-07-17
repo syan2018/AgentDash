@@ -28,9 +28,8 @@ import {
   SessionChatStream,
 } from "./SessionChatViewParts";
 import {
-  collectAllPlatformEvents,
-  collectTurnLifecycleEvents,
   computeProjectionRefreshKey,
+  dispatchLiveSessionEvents,
   isAgentRunWorkspaceActionRunning,
   rawEventsBelongToRuntimeStreamTarget,
   resolveExecutorFromHint,
@@ -62,9 +61,7 @@ export function SessionChatView({
   model,
   intents,
   onMessageSent,
-  onTurnEnd,
-  onSystemEvent,
-  onTaskPlanChanged,
+  onLiveEvent,
   headerSlot,
   inputPrefix,
   inputToolbarSlot,
@@ -190,7 +187,6 @@ export function SessionChatView({
         source.providerId ?? "",
         source.modelId ?? "",
         source.thinkingLevel ?? "",
-        source.permissionPolicy ?? "",
       ].join(":");
     }
     return resolvedHint ? `draft:${resolvedHint}` : null;
@@ -245,21 +241,18 @@ export function SessionChatView({
       model_id: execConfig.modelId.trim() || undefined,
       // 将 camelCase 的 thinkingLevel 转为 snake_case 发给后端
       thinking_level: (execConfig.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
-      permission_policy: (execConfig.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
     };
   }, [
     execConfig.executor,
     execConfig.providerId,
     execConfig.modelId,
     execConfig.thinkingLevel,
-    execConfig.permissionPolicy,
   ]);
 
   const emitExplicitExecutorOverride = useCallback((config: {
     providerId: string;
     modelId: string;
     thinkingLevel: string;
-    permissionPolicy: string;
   }) => {
     const executor = execConfig.executor.trim();
     if (!executor) {
@@ -271,7 +264,6 @@ export function SessionChatView({
       provider_id: config.providerId.trim() || undefined,
       model_id: config.modelId.trim() || undefined,
       thinking_level: (config.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
-      permission_policy: (config.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
     });
   }, [execConfig.executor, setExecutorConfigOverride]);
 
@@ -317,81 +309,21 @@ export function SessionChatView({
     executionStatus: commandState.executionStatus,
   });
 
-  const onTurnEndRef = useRef(onTurnEnd);
-  useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
-  const onSystemEventRef = useRef(onSystemEvent);
-  const lastSystemEventSeqRef = useRef<number | null>(null);
-  useEffect(() => { onSystemEventRef.current = onSystemEvent; }, [onSystemEvent]);
-  const onTaskPlanChangedRef = useRef(onTaskPlanChanged);
-  const lastTaskToolEventSeqRef = useRef<number | null>(null);
-  const lastTurnLifecycleEventSeqRef = useRef<number | null>(null);
-  useEffect(() => { onTaskPlanChangedRef.current = onTaskPlanChanged; }, [onTaskPlanChanged]);
+  const onLiveEventRef = useRef(onLiveEvent);
+  const lastLiveEventSeqRef = useRef<number | null>(null);
+  useEffect(() => { onLiveEventRef.current = onLiveEvent; }, [onLiveEvent]);
   useEffect(() => {
-    lastSystemEventSeqRef.current = null;
-    lastTaskToolEventSeqRef.current = null;
-    lastTurnLifecycleEventSeqRef.current = null;
+    lastLiveEventSeqRef.current = null;
   }, [agentRunTargetKey]);
 
   useEffect(() => {
-    if (!hasRuntimeStreamTarget || !rawEventsBelongToCurrentSession || rawEvents.length === 0) return;
-    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? 0;
-    lastTurnLifecycleEventSeqRef.current = afterSeq;
-    const result = collectTurnLifecycleEvents(rawEvents, afterSeq);
-    lastTurnLifecycleEventSeqRef.current = result.lastSeenSeq;
-    let terminalSeen = false;
-    for (const item of result.items) {
-      if (item.eventType === "turn_started") {
-        continue;
-      } else {
-        terminalSeen = true;
-      }
-    }
-    if (terminalSeen) {
-      onTurnEndRef.current?.();
-    }
-  }, [
-    agentRunTarget,
-    hasRuntimeStreamTarget,
-    historyReplayBoundarySeq,
-    rawEvents,
-    rawEventsBelongToCurrentSession,
-  ]);
-
-  useEffect(() => {
     if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    const afterSeq = lastSystemEventSeqRef.current ?? historyReplayBoundarySeq;
-    lastSystemEventSeqRef.current = afterSeq;
-    const result = collectAllPlatformEvents(rawEvents, afterSeq);
-    lastSystemEventSeqRef.current = result.lastSeenSeq;
-    if (result.items.length === 0) return;
-    for (const item of result.items) {
-      onSystemEventRef.current?.(item.eventType, item.event);
-    }
-  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
-
-  useEffect(() => {
-    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    const afterSeq = lastTaskToolEventSeqRef.current ?? historyReplayBoundarySeq;
-    lastTaskToolEventSeqRef.current = afterSeq;
-    let lastSeenSeq = afterSeq;
-    let changed = false;
-    for (const event of rawEvents) {
-      if (!event || event.event_seq <= afterSeq) continue;
-      lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-      const bbEvent = event.notification.event;
-      if (bbEvent.type !== "item_completed") continue;
-      const item = bbEvent.payload.item;
-      if (
-        item.type === "dynamicToolCall"
-        && item.tool === "task_write"
-        && item.status === "completed"
-        && item.success !== false
-      ) {
-        changed = true;
-      }
-    }
-    lastTaskToolEventSeqRef.current = lastSeenSeq;
-    if (changed) onTaskPlanChangedRef.current?.();
+    lastLiveEventSeqRef.current = dispatchLiveSessionEvents(
+      rawEvents,
+      lastLiveEventSeqRef.current,
+      historyReplayBoundarySeq,
+      (event) => onLiveEventRef.current?.(event),
+    );
   }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────

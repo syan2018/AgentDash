@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::vfs_owner_providers::MountProviderRegistryBuilderOwnerExt;
-use agentdash_application_runtime_session::session::{SessionStoreSet, SessionToolResultCache};
+use agentdash_application::vfs_owner_providers::{
+    MountProviderRegistryBuilderOwnerExt, SharedAgentRunJournalReaderHandle,
+};
 use agentdash_application_vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application_vfs::{VfsMaterializationService, VfsMutationDispatcher, VfsService};
 use agentdash_spi::VfsDiscoveryProvider;
@@ -19,32 +20,17 @@ pub(crate) struct VfsBootstrapOutput {
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
     pub vfs_materialization_service: Arc<VfsMaterializationService>,
     pub mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,
+    pub agent_run_journal_reader: SharedAgentRunJournalReaderHandle,
 }
 
 pub(crate) fn build_vfs_kernel(
     repos: RepositorySet,
-    session_stores: SessionStoreSet,
-    tool_result_cache: Arc<SessionToolResultCache>,
     backend_registry: Arc<BackendRegistry>,
     integration_mount_providers: Vec<Arc<dyn MountProvider>>,
 ) -> VfsBootstrapOutput {
+    let agent_run_journal_reader = SharedAgentRunJournalReaderHandle::default();
     let mut mount_registry_builder = MountProviderRegistryBuilder::new()
-        .with_application_builtins(
-            repos.lifecycle_run_repo.clone(),
-            repos.canvas_repo.clone(),
-            repos.inline_file_repo.clone(),
-            repos.routine_execution_repo.clone(),
-            repos.skill_asset_repo.clone(),
-            session_stores.meta.clone(),
-            session_stores.events.clone(),
-            session_stores.lineage.clone(),
-            session_stores.compactions.clone(),
-            repos.lifecycle_agent_repo.clone(),
-            repos.agent_frame_repo.clone(),
-            repos.execution_anchor_repo.clone(),
-            repos.agent_run_delivery_binding_repo.clone(),
-            tool_result_cache,
-        )
+        .with_application_builtins(&repos, agent_run_journal_reader.clone())
         .register(Arc::new(RelayFsMountProvider::new(
             backend_registry.clone(),
         )));
@@ -88,6 +74,7 @@ pub(crate) fn build_vfs_kernel(
         vfs_mutation_dispatcher,
         vfs_materialization_service: materialization_service,
         mcp_relay_provider,
+        agent_run_journal_reader,
     }
 }
 

@@ -49,7 +49,6 @@ export interface AgentPresetConfig extends Record<string, unknown> {
   model_id?: string;
   agent_id?: string;
   thinking_level?: ThinkingLevel;
-  permission_policy?: string;
   system_prompt?: string;
   display_name?: string;
   description?: string;
@@ -71,13 +70,12 @@ export type ProjectAgent = Pick<
 
 export type ProjectAgentExecutor = Omit<
   GeneratedProjectAgentExecutor,
-  "provider_id" | "model_id" | "agent_id" | "thinking_level" | "permission_policy"
+  "provider_id" | "model_id" | "agent_id" | "thinking_level"
 > & {
   provider_id?: string | null;
   model_id?: string | null;
   agent_id?: string | null;
   thinking_level?: ThinkingLevel | null;
-  permission_policy?: string | null;
 };
 
 export type ProjectAgentSummary = Omit<

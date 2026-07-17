@@ -5,6 +5,7 @@ use agentdash_application_ports::lifecycle_surface_projection::ActiveWorkflowPro
 mod active_workflow_contribution;
 mod error;
 mod helpers;
+mod plan;
 pub mod presets;
 mod provider;
 mod rules;

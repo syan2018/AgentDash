@@ -12,6 +12,7 @@ import type {
   TaskSessionExecutorSummary,
 } from "../../../types";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type { WorkspaceModuleDescriptor } from "../../../generated/workspace-module-contracts";
 
 export type WorkspaceRuntimeStateStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
 
@@ -42,6 +43,7 @@ export interface AgentRunCanvasBridgeIdentity extends AgentRunCanvasBridgeBase {
 
 export interface WorkspaceRuntimeData {
   projectId: string | null;
+  workspaceModules: WorkspaceModuleDescriptor[];
   agentRunRuntimeTarget?: AgentRunRuntimeTarget | null;
   agentRunCanvasBridgeBase?: AgentRunCanvasBridgeBase | null;
   refreshAgentRunWorkspace?: (() => Promise<unknown>) | null;

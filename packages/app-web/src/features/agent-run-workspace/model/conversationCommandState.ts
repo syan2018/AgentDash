@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   ConversationCommandSetView,
   ConversationCommandView,
   ConversationMailboxSnapshotView,
@@ -37,7 +37,6 @@ export interface LocalDraftStartAction {
   requires_input: true;
   executor_config_policy: "required";
 }
-
 export type AgentRunConversationCommand = ConversationCommandView | LocalDraftStartAction;
 
 export interface AgentRunConversationCommandState {
@@ -79,7 +78,6 @@ function baseExecutorConfigForDraft(
     model_id: optionalTrimmed(agent?.executor.model_id),
     agent_id: optionalTrimmed(agent?.executor.agent_id),
     thinking_level: optionalTrimmed(agent?.executor.thinking_level),
-    permission_policy: optionalTrimmed(agent?.executor.permission_policy),
     source: "project_agent_preset",
   };
 }
@@ -99,7 +97,6 @@ function effectiveExecutorConfigForDraft(input: {
     model_id: optionalTrimmed(override.model_id) ?? base?.model_id,
     agent_id: optionalTrimmed(override.agent_id) ?? base?.agent_id,
     thinking_level: optionalTrimmed(override.thinking_level) ?? base?.thinking_level,
-    permission_policy: optionalTrimmed(override.permission_policy) ?? base?.permission_policy,
     source: "user_override",
   };
 }
@@ -123,7 +120,6 @@ export function executorConfigFromConversationModel(
     model_id: effective.model_id,
     agent_id: effective.agent_id,
     thinking_level: effective.thinking_level as ExecutorConfig["thinking_level"],
-    permission_policy: effective.permission_policy as ExecutorConfig["permission_policy"],
   };
 }
 

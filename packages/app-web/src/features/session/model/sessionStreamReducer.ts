@@ -1,4 +1,8 @@
-import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
+import type {
+  BackboneEvent,
+  AgentDashThreadItem,
+  ProviderAttemptPhase,
+} from "../../../generated/backbone-protocol";
 import type {
   SessionDisplayEntry,
   SessionEventEnvelope,
@@ -162,7 +166,7 @@ function getCommandAggregatedOutput(item: AgentDashThreadItem): string | null {
   if (item.type !== "commandExecution" && item.type !== "shellExec") {
     return null;
   }
-  return item.aggregatedOutput;
+  return item.aggregatedOutput ?? null;
 }
 
 function isWillRetryErrorEvent(event: BackboneEvent): boolean {
@@ -178,26 +182,28 @@ function eventTurnId(event: SessionEventEnvelope): string | undefined {
   return event.turn_id ?? event.notification.trace.turnId ?? undefined;
 }
 
-function extractProviderAttemptStatus(event: SessionEventEnvelope): { turnId?: string; phase: string } | null {
+function extractProviderAttemptStatus(event: SessionEventEnvelope): {
+  turnId?: string;
+  phase: ProviderAttemptPhase;
+  attempt: number;
+  maxAttempts: number;
+  willRetry: boolean;
+  message?: string;
+} | null {
   const bbEvent = event.notification.event;
-  if (bbEvent.type !== "platform" || !isRecord(bbEvent.payload)) {
+  if (bbEvent.type !== "platform" || bbEvent.payload.kind !== "provider_attempt_status") {
     return null;
   }
 
-  const platform: Record<string, unknown> = bbEvent.payload;
-  const kind = readStringField(platform, "kind");
-  if (kind !== "provider_attempt_status" || !isRecord(platform.data)) {
-    return null;
-  }
-
-  const phase = readStringField(platform.data, "phase");
-  if (!phase) {
-    return null;
-  }
+  const status = bbEvent.payload.data;
 
   return {
-    turnId: readStringField(platform.data, "turn_id") ?? eventTurnId(event),
-    phase,
+    turnId: status.turn_id || eventTurnId(event),
+    phase: status.phase,
+    attempt: status.attempt,
+    maxAttempts: status.max_attempts,
+    willRetry: status.will_retry,
+    message: status.message?.trim() || undefined,
   };
 }
 

@@ -6,15 +6,8 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::{
-    companion::{
-        AgentRunCompanionMailboxDelivery, CompanionGateControlRepos, CompanionGateControlService,
-        RespondCompanionGateCommand,
-    },
-    runtime_session_agent_run_bridge::{
-        agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
-        agent_run_session_launch,
-    },
+use agentdash_application::companion::{
+    CompanionGateControlRepos, CompanionGateControlService, RespondCompanionGateCommand,
 };
 use agentdash_contracts::companion::{CompanionGateRespondRequest, CompanionGateRespondResponse};
 
@@ -52,22 +45,11 @@ pub async fn respond_companion_gate(
     let service =
         CompanionGateControlService::with_agent_run_projection(CompanionGateControlRepos {
             gate_repo: state.repos.lifecycle_gate_repo.clone(),
-            run_repo: state.repos.lifecycle_run_repo.clone(),
             frame_repo: state.repos.agent_frame_repo.clone(),
             agent_repo: state.repos.lifecycle_agent_repo.clone(),
-            anchor_repo: state.repos.execution_anchor_repo.clone(),
-            delivery_binding_repo: state.repos.agent_run_delivery_binding_repo.clone(),
+            runtime_binding_repo: state.repos.agent_run_runtime_binding_repo.clone(),
             lineage_repo: state.repos.agent_lineage_repo.clone(),
-        })
-        .with_human_response_mailbox_delivery(Arc::new(
-            AgentRunCompanionMailboxDelivery::from_runtime_services(
-                state.repos.clone(),
-                agent_run_session_core(state.services.session_core.clone()),
-                agent_run_session_control(state.services.session_control.clone()),
-                agent_run_session_eventing(state.services.session_eventing.clone()),
-                agent_run_session_launch(state.services.session_launch.clone()),
-            ),
-        ));
+        });
     let result = service
         .respond(RespondCompanionGateCommand {
             gate_id: gate_uuid,
@@ -79,7 +61,6 @@ pub async fn respond_companion_gate(
         responded: true,
         gate_id: result.gate_id.to_string(),
         request_id: result.request_id,
-        delivery_runtime_session_id: result.delivery_runtime_session_id,
         gate_resolved: result.gate_resolved,
     }))
 }

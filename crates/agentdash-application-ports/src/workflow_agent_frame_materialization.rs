@@ -14,7 +14,7 @@ pub struct WorkflowAgentNodeFrameMaterializationInput {
     pub run_id: Uuid,
     pub project_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub runtime_session_id: Option<String>,
     pub created_by_id: Option<String>,
     pub orchestration_id: Uuid,
     pub node_path: String,

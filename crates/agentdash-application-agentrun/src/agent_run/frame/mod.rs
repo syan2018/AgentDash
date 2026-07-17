@@ -1,6 +1,5 @@
 pub(crate) mod builder;
 pub(crate) mod hook_runtime;
-pub(crate) mod launch_commit;
 pub(crate) mod launch_envelope_provider;
 pub(crate) mod lifecycle_materialization;
 pub(crate) mod runtime_launch;
@@ -14,10 +13,6 @@ pub use builder::{
 pub use hook_runtime::{
     AgentFrameHookRuntime, AgentRunHookTargetRuntimeAdapter, hook_target_runtime_port,
 };
-pub use launch_commit::{
-    AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,
-    accepted_launch_commit_port,
-};
 pub use launch_envelope_provider::FrameLaunchEnvelopeConstructionInput;
 pub use lifecycle_materialization::{
     AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
@@ -25,9 +20,12 @@ pub use lifecycle_materialization::{
 pub use runtime_launch::{
     FrameLaunchContextProjection, FrameLaunchDiagnostics, FrameLaunchEnvelope, FrameLaunchFrameRef,
     FrameLaunchIntent, FrameLaunchRuntimeSurface, FrameLaunchSurface, FrameRuntimeSurface,
-    LaunchResolutionTrace, TerminalHookEffectBinding,
+    LaunchResolutionTrace, TerminalHookEffectBinding, runtime_backend_anchor_from_vfs,
 };
-pub use surface::{AgentFrameSurfaceExt, FrameContextBundleSummary, FrameSurfaceDraft};
+pub use surface::{
+    AgentContextSourceFragment, AgentContextSourceSnapshot, AgentFrameSurfaceExt,
+    FrameContextBundleSummary, FrameSurfaceDraft,
+};
 pub use surface_service::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameWriteBoundary, AgentFrameWritePrimitive,
     AgentFrameWriteRole, AgentRunFrameConstructionAdapter, AgentRunFrameSurfaceCommand,

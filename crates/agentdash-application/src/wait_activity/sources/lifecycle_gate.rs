@@ -2,7 +2,6 @@ use agentdash_domain::workflow::LifecycleGate;
 use serde_json::{Map, Value, json};
 
 use crate::wait_activity::types::{ResolvedWaitScope, WaitActivityItem};
-use agentdash_application_ports::agent_run_control_effect::RuntimeTerminalDiagnostic;
 
 pub(crate) fn gate_belongs_to_scope(gate: &LifecycleGate, scope: &ResolvedWaitScope) -> bool {
     scope.run_id.is_none_or(|run_id| gate.run_id == run_id)
@@ -71,12 +70,11 @@ fn gate_result_refs(gate: &LifecycleGate) -> Value {
     Value::Object(refs)
 }
 
-fn gate_terminal_diagnostic(gate: &LifecycleGate) -> Option<RuntimeTerminalDiagnostic> {
+fn gate_terminal_diagnostic(gate: &LifecycleGate) -> Option<Value> {
     gate.payload_json
         .as_ref()
         .and_then(|payload| payload.get("diagnostic"))
         .cloned()
-        .and_then(|value| serde_json::from_value(value).ok())
 }
 
 fn gate_status(gate: &LifecycleGate) -> String {

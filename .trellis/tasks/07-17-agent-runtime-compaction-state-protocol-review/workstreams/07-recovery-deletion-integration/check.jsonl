@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "最终Rust lint/test/cross-crate检查。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "最终migration与PostgreSQL原子性检查。"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查Hosted Agent深模块和依赖方向。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "最终协议identity/ordering/reconnect检查。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "最终API/generated/frontend一致性检查。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "最终frontend质量门禁。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "Journal删除测试和唯一事实源最终判据。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md", "reason": "compaction与Codex-shaped事件最终判据。"}

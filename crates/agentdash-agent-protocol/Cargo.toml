@@ -8,13 +8,13 @@ edition.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-codex-app-server-protocol = { workspace = true }
 agentdash-agent-types = { workspace = true }
 agent-client-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 ts-rs = { workspace = true }
+schemars = { workspace = true }
 thiserror = { workspace = true }
 base64 = "0.22"
 agentdash-diagnostics = { workspace = true }

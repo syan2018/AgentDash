@@ -1,15 +1,14 @@
 use std::collections::HashMap;
 
-use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{AuthIdentity, CapabilityState, SessionContextBundle, Vfs};
-use uuid::Uuid;
+use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 
-use crate::agent_run::frame::{FrameContextBundleSummary, FrameSurfaceDraft};
+use crate::agent_run::frame::{
+    AgentContextSourceSnapshot, FrameContextBundleSummary, FrameSurfaceDraft,
+};
 #[cfg(test)]
 use crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives;
-use crate::canvas::project_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 use agentdash_application_ports::launch::LaunchPromptInput;
@@ -89,22 +88,6 @@ impl FrameAssemblyBuilder {
             &[],
         ));
         self
-    }
-
-    /// 在已有 VFS 上追加 canvas mount。
-    pub(super) async fn append_canvas_mounts(
-        mut self,
-        canvas_repo: &dyn CanvasRepository,
-        project_id: Uuid,
-        mount_ids: &[String],
-        identity: Option<&AuthIdentity>,
-    ) -> Result<Self, String> {
-        if let Some(space) = self.vfs.as_mut() {
-            project_visible_canvas_mounts(canvas_repo, project_id, space, mount_ids, identity)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(self)
     }
 
     /// 设置已解析的能力输出（由外部 CapabilityResolver 产出）。
@@ -288,6 +271,10 @@ impl FrameAssemblyBuilder {
                 .context_bundle
                 .as_ref()
                 .map(FrameContextBundleSummary::from_bundle),
+            context_source_snapshot: self
+                .context_bundle
+                .as_ref()
+                .map(AgentContextSourceSnapshot::from_bundle),
             execution_profile: self.executor_config.clone(),
         }
     }

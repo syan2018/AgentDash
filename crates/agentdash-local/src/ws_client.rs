@@ -15,15 +15,11 @@ use chrono::Utc;
 use serde::Serialize;
 
 use crate::LocalExtensionHostManager;
-use crate::handlers::{CommandExecutionMode, LocalCommandRouter};
-use crate::local_backend_config::WorkspaceContractRuntimeConfig;
+use crate::handlers::{CommandExecutionMode, LocalCommandRouter, RuntimeWireCommandHandler};
 use crate::mcp_client_manager::McpClientManager;
 use crate::runner_redaction::redact_secret;
 use crate::runner_status::RunnerStatusReporter;
 use crate::tool_executor::ToolExecutor;
-use agentdash_application_runtime_session::session::SessionRuntimeServices;
-use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
-use agentdash_spi::AgentConnector;
 
 #[derive(Clone)]
 pub struct Config {
@@ -33,16 +29,14 @@ pub struct Config {
     pub backend_id: String,
     pub name: String,
     pub workspace_roots: Vec<PathBuf>,
+    pub executor_enabled: bool,
     pub tool_executor: ToolExecutor,
-    pub session_runtime: Option<SessionRuntimeServices>,
-    pub _session_db_runtime: Option<Arc<PostgresRuntime>>,
-    pub connector: Option<Arc<dyn AgentConnector>>,
     pub mcp_manager: Option<Arc<McpClientManager>>,
-    pub workspace_contract_config: WorkspaceContractRuntimeConfig,
     pub extension_host: LocalExtensionHostManager,
     pub extension_artifact_cache_root: PathBuf,
     pub runner_status: Option<RunnerStatusReporter>,
     pub relay_status_tx: Option<watch::Sender<RelayConnectionStatus>>,
+    pub runtime_wire: Arc<RuntimeWireCommandHandler>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -296,20 +290,19 @@ async fn run_session(
 
     // 创建事件通道（domain handlers 通过此通道推送异步事件）
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<RelayMessage>();
+    config.runtime_wire.attach_outbound(event_tx.clone());
 
     let handler = LocalCommandRouter::new(crate::handlers::LocalCommandRouterConfig {
         backend_id: config.backend_id.clone(),
         workspace_roots: config.workspace_roots.clone(),
         tool_executor: config.tool_executor.clone(),
-        session_runtime: config.session_runtime.clone(),
-        connector: config.connector.clone(),
         mcp_manager: config.mcp_manager.clone(),
-        workspace_contract_config: config.workspace_contract_config.clone(),
         extension_host: config.extension_host.clone(),
         extension_artifact_api_base_url: config.api_base_url.clone(),
         extension_artifact_access_token: config.token.clone(),
         extension_artifact_cache_root: config.extension_artifact_cache_root.clone(),
         event_tx,
+        runtime_wire: config.runtime_wire.clone(),
     });
 
     // 第一步：发送注册消息
@@ -592,7 +585,7 @@ async fn build_capabilities(
     handler: &LocalCommandRouter,
     mcp_manager: &Option<Arc<McpClientManager>>,
 ) -> CapabilitiesPayload {
-    let executors = handler.list_executors();
+    let executors = Vec::new();
     let mcp_servers = mcp_manager
         .as_ref()
         .map(|m| m.capability_entries())
@@ -620,12 +613,17 @@ async fn build_capabilities(
             .collect(),
         None => Vec::new(),
     };
+    let agent_runtime_offers = handler
+        .advertised_runtime_offers()
+        .await
+        .unwrap_or_default();
     CapabilitiesPayload {
         executors,
         supports_cancel: true,
         supports_discover_options: false,
         mcp_servers,
         capability_health,
+        agent_runtime_offers,
     }
 }
 

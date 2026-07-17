@@ -12,12 +12,6 @@ pub struct AgentRunJournalEventsQuery {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RejectToolApprovalRequest {
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct ContextAuditQuery {
     pub since_ms: Option<u64>,
     pub scope: Option<String>,

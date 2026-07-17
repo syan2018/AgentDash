@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "读取现有context preparation/activation/checkpoint基线并按typed ContextRevision收敛。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "指导状态迁移与不变量；journal-centric描述由父design取代。"}
+{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "约束stateful replica apply/inspect与generation fence。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "指导atomic promotion、singleton、CAS与真实并发测试。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md", "reason": "现有压缩链、replay不一致与references/codex时序证据。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "保证context/compaction归Agent拥有且不从Journal重建。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/runtime-state-machine-convergence.md", "reason": "现有operation/turn/binding/work状态inventory；目标以父design为准。"}

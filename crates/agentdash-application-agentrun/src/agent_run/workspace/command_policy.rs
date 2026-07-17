@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::agent_run::{
     AgentFrameSurfaceExt, AgentRunCommandPreconditionModel, AgentRunExecutionState,
-    ConversationCommandAvailability, ConversationCommandAvailabilityInput,
+    AgentRunRuntime, ConversationCommandAvailability, ConversationCommandAvailabilityInput,
     ConversationCommandAvailabilityResolver, ConversationCommandKindModel,
     ConversationCommandModel, ConversationExecutionStatusModel, ConversationModelConfigInput,
     ConversationModelConfigResolver, ConversationModelConfigStatusModel, DeliveryRuntimeSelection,
@@ -30,18 +30,15 @@ pub struct AgentRunWorkspaceCommandPolicyDeps<'a> {
 
 pub struct AgentRunWorkspaceCommandPolicyService<'a> {
     repos: AgentRunWorkspaceCommandPolicyDeps<'a>,
-    session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
+    runtime: &'a dyn AgentRunRuntime,
 }
 
 impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
     pub fn new(
         repos: AgentRunWorkspaceCommandPolicyDeps<'a>,
-        session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
+        runtime: &'a dyn AgentRunRuntime,
     ) -> Self {
-        Self {
-            repos,
-            session_control,
-        }
+        Self { repos, runtime }
     }
 
     pub async fn ensure_command_allowed(
@@ -167,13 +164,36 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         execution_state: AgentRunExecutionState,
         terminal_agent: bool,
     ) -> Result<ConversationCommandAvailability, AgentRunWorkspaceCommandPolicyError> {
-        let supports_steering = match (&execution_state, delivery_runtime_session_id) {
-            (AgentRunExecutionState::Running { turn_id: Some(_) }, Some(session_id)) => {
-                self.session_control
-                    .supports_session_steering(session_id)
-                    .await
-            }
-            _ => false,
+        let supports_steering = if matches!(
+            execution_state,
+            AgentRunExecutionState::Running { turn_id: Some(_) }
+        ) && delivery_runtime_session_id.is_some()
+        {
+            let runtime = self
+                .runtime
+                .inspect(
+                    agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget {
+                        run_id: context.run.id,
+                        agent_id: context.agent.id,
+                    },
+                )
+                .await
+                .map_err(|error| {
+                    AgentRunWorkspaceCommandPolicyError::from(WorkflowApplicationError::Internal(
+                        error.to_string(),
+                    ))
+                })?;
+            runtime.snapshot.as_ref().is_some_and(|snapshot| {
+                snapshot.active_turn_id.is_some()
+                    && matches!(
+                        snapshot
+                            .command_availability
+                            .get(&agentdash_agent_runtime_contract::RuntimeCommandKind::TurnSteer,),
+                        Some(agentdash_agent_runtime_contract::CommandAvailability::Available)
+                    )
+            })
+        } else {
+            false
         };
         let messages = self
             .repos
@@ -220,9 +240,12 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         &self,
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
     ) -> Result<Option<DeliveryRuntimeSelection>, AgentRunWorkspaceCommandPolicyError> {
-        match DeliveryRuntimeSelectionService::new(self.repos.delivery_selection_repos)
-            .select_current_delivery(context.run.id, context.agent.id)
-            .await
+        match DeliveryRuntimeSelectionService::new(
+            self.repos.delivery_selection_repos,
+            self.runtime,
+        )
+        .select_current_delivery(context.run.id, context.agent.id)
+        .await
         {
             Ok(selection) => Ok(Some(selection)),
             Err(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }) => Ok(None),
@@ -248,7 +271,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         }
         self.repos
             .agent_frame_repo
-            .get_current(agent.id)
+            .get_latest(agent.id)
             .await
             .map_err(WorkflowApplicationError::from)
             .map_err(AgentRunWorkspaceCommandPolicyError::from)
@@ -461,8 +484,7 @@ fn workflow_error_from_selection_error(
         DeliveryRuntimeSelectionError::RunNotFound { .. }
         | DeliveryRuntimeSelectionError::AgentNotFound { .. }
         | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
-        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
-        | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
+        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. } => {
             WorkflowApplicationError::NotFound(error.to_string())
         }
         DeliveryRuntimeSelectionError::Repository(source) => WorkflowApplicationError::from(source),

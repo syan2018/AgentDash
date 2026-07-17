@@ -1,0 +1,26 @@
+[package]
+name = "agentdash-agent-runtime-host"
+description = "Integration Driver Host for Agent service definitions, offers, bindings, and routing"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+agentdash-agent-runtime-contract = { workspace = true }
+agentdash-diagnostics = { workspace = true }
+agentdash-integration-api = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+jsonschema = "0.30"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+agentdash-agent-runtime = { workspace = true }

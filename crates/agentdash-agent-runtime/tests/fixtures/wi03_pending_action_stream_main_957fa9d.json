@@ -1,0 +1,39 @@
+{
+  "provenance": {
+    "repository": "AgentDash-main-reference",
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "builder": "crates/agentdash-application-runtime-session/src/session/pending_action_context_frame.rs",
+    "messages": "crates/agentdash-application-runtime-session/src/session/hook_messages.rs",
+    "scenario": "pending blocking review without owner, turn, or injection"
+  },
+  "frame": {
+    "id": "pending-action-a1-9",
+    "kind": "pending_action",
+    "source": "companion_result",
+    "delivery_status": "queued_for_transform_context",
+    "delivery_channel": "turn_start",
+    "message_role": "user",
+    "delivery_metadata": {
+      "delivery_phase": "turn_runtime",
+      "delivery_order": 70,
+      "cache_policy": "turn_ephemeral",
+      "model_channel": "user",
+      "agent_consumption": { "target": "", "mode": "consume", "reason": "default_pending_action_delivery" },
+      "frontend_label": "Pending Action",
+      "connector_profile": { "profile_id": "" }
+    },
+    "rendered_text": "[待处理 Hook 事项]\nReview（type=blocking_review，status=pending，revision=1）\n\n事项 id: a1\n\nresult\n\n当前事项是阻塞式 review。不要复述前文；直接处理剩余动作，并在完成后明确结案。\n\n以上事项来自 Hook Runtime 的待处理回流，优先级高于普通自然对话推进。处理时尽量避免重复总结，聚焦完成剩余动作。",
+    "sections": [{
+      "kind": "pending_action",
+      "title": "Review",
+      "summary": "result",
+      "action_id": "a1",
+      "action_type": "blocking_review",
+      "status": "pending",
+      "revision": 1,
+      "instructions": ["当前事项是阻塞式 review。不要复述前文；直接处理剩余动作，并在完成后明确结案。"],
+      "injections": []
+    }],
+    "created_at_ms": 9
+  }
+}

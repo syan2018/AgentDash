@@ -1,0 +1,26 @@
+[package]
+name = "agentdash-integration-native-agent"
+description = "First-party Native Agent Core adapter for the managed Agent Runtime driver SPI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-agent = { workspace = true }
+agentdash-agent-types = { workspace = true }
+agentdash-agent-protocol = { workspace = true }
+agentdash-agent-runtime-contract = { workspace = true }
+agentdash-diagnostics = { workspace = true }
+agentdash-integration-api = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+agentdash-agent-runtime = { workspace = true }
+agentdash-agent-runtime-test-support = { workspace = true }

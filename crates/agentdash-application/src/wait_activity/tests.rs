@@ -1,29 +1,56 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
-use agentdash_application_agentrun::agent_run::{
-    AgentRunTerminalRegistry, ConversationWaitingItemModel,
+use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_application_agentrun::agent_run::{AgentRunTerminalRegistry, TerminalOutputSnapshot};
+use agentdash_application_ports::agent_run_runtime::{
+    AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
+    AgentRunRuntimeTarget,
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::agent_run_mailbox::{
-    AgentRunMailboxMessage, AgentRunMailboxRepository, ConsumptionBarrier, MailboxDelivery,
-    MailboxDrainMode, MailboxMessageStatus, NewAgentRunMailboxMessage,
+    AgentRunMailboxCreateOutcome, AgentRunMailboxMessage, AgentRunMailboxRepository,
+    MailboxMessageStatus, NewAgentRunMailboxMessage,
 };
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, GateWaitPolicyEnvelope, LifecycleAgent,
-    LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository,
-    RuntimeSessionExecutionAnchorRepository, WaitProducerRef,
+    LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
 };
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::connector::RuntimeToolProvider;
 use async_trait::async_trait;
 use chrono::Utc;
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::types::ResolvedWaitScope;
 use super::*;
+
+#[tokio::test]
+async fn typed_owner_scope_does_not_require_runtime_binding_inference() {
+    let service = test_service(AgentRunTerminalRegistry::new());
+    let run_id = Uuid::new_v4();
+    let agent_id = Uuid::new_v4();
+    let frame_id = Uuid::new_v4();
+
+    let scope = service
+        .resolve_scope(&WaitToolContext {
+            runtime_thread_id: Some(RuntimeThreadId::new("unbound-runtime").unwrap()),
+            turn_id: "turn-owner".to_string(),
+            owner: Some(WaitActivityOwnerScope {
+                run_id,
+                agent_id,
+                frame_id,
+            }),
+        })
+        .await
+        .expect("typed owner scope");
+
+    assert_eq!(scope.run_id, Some(run_id));
+    assert_eq!(scope.agent_id, Some(agent_id));
+    assert_eq!(scope.frame_id, Some(frame_id));
+}
 
 #[tokio::test]
 async fn wait_timeout_keeps_running_exec_activity_alive() {
@@ -44,8 +71,9 @@ async fn wait_timeout_keeps_running_exec_activity_alive() {
     let result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -89,8 +117,9 @@ async fn wait_returns_completed_exec_with_shell_exec_next_ref() {
     let result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -159,23 +188,24 @@ async fn wait_returns_failed_exec_for_non_zero_exit_with_diagnostic_refs() {
         Some("D:/repo"),
         Some("interactive"),
     );
-    terminal_registry.record_output_snapshot(
-        "term-1",
-        "partial stdout\n",
-        "missing file\n",
-        "",
-        Some(7),
-        false,
-        0,
-    );
+    terminal_registry.record_output_snapshot(TerminalOutputSnapshot {
+        terminal_id: "term-1",
+        stdout: "partial stdout\n",
+        stderr: "missing file\n",
+        pty: "",
+        next_seq: Some(7),
+        truncated: false,
+        omitted_bytes: 0,
+    });
     terminal_registry.update_state("term-1", "exited", Some(2));
 
     let service = test_service(terminal_registry);
     let result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -213,8 +243,8 @@ async fn wait_returns_failed_exec_for_non_zero_exit_with_diagnostic_refs() {
         Some(&json!(7))
     );
     assert_eq!(
-        item.diagnostic.as_ref().expect("diagnostic").kind,
-        "exec_exit"
+        item.diagnostic.as_ref().expect("diagnostic")["kind"],
+        json!("exec_exit")
     );
     assert!(item.preview.as_deref().unwrap_or("").contains("stderr"));
 }
@@ -242,7 +272,7 @@ async fn wait_maps_cancelled_lost_and_unknown_exec_statuses() {
 
     let service = test_service(terminal_registry);
     let scope = ResolvedWaitScope {
-        delivery_runtime_session_id: None,
+        runtime_thread_id: None,
         run_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000001").expect("run id")),
         agent_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000002").expect("agent id")),
         frame_id: None,
@@ -299,7 +329,15 @@ async fn later_wait_salvages_completed_exec_with_preview_and_read_refs() {
         Some("D:/repo"),
         Some("interactive"),
     );
-    terminal_registry.record_output_snapshot("term-1", "done\n", "", "", Some(3), false, 0);
+    terminal_registry.record_output_snapshot(TerminalOutputSnapshot {
+        terminal_id: "term-1",
+        stdout: "done\n",
+        stderr: "",
+        pty: "",
+        next_seq: Some(3),
+        truncated: false,
+        omitted_bytes: 0,
+    });
     terminal_registry.update_state("term-1", "exited", Some(0));
 
     let service = test_service(terminal_registry);
@@ -307,8 +345,9 @@ async fn later_wait_salvages_completed_exec_with_preview_and_read_refs() {
     let result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -351,7 +390,15 @@ async fn wait_timeout_does_not_consume_exec_output_projection() {
         Some("D:/repo"),
         Some("interactive"),
     );
-    terminal_registry.record_output_snapshot("term-1", "hello\n", "", "", Some(2), false, 0);
+    terminal_registry.record_output_snapshot(TerminalOutputSnapshot {
+        terminal_id: "term-1",
+        stdout: "hello\n",
+        stderr: "",
+        pty: "",
+        next_seq: Some(2),
+        truncated: false,
+        omitted_bytes: 0,
+    });
     terminal_registry.update_state("term-1", "running", None);
     let before = terminal_registry
         .get_terminal("term-1")
@@ -363,8 +410,9 @@ async fn wait_timeout_does_not_consume_exec_output_projection() {
     let result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -402,15 +450,24 @@ async fn wait_exec_preview_is_bounded_to_terminal_projection_tail() {
         Some("interactive"),
     );
     let large_stdout = format!("{}tail", "x".repeat(5000));
-    terminal_registry.record_output_snapshot("term-1", &large_stdout, "", "", Some(9), false, 0);
+    terminal_registry.record_output_snapshot(TerminalOutputSnapshot {
+        terminal_id: "term-1",
+        stdout: &large_stdout,
+        stderr: "",
+        pty: "",
+        next_seq: Some(9),
+        truncated: false,
+        omitted_bytes: 0,
+    });
     terminal_registry.update_state("term-1", "exited", Some(0));
 
     let service = test_service(terminal_registry);
     let result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec!["term-1".to_string()],
@@ -457,8 +514,9 @@ async fn wait_returns_resolved_lifecycle_gate_activity() {
     let result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec![gate_id.to_string()],
@@ -510,8 +568,9 @@ async fn wait_uses_resolved_lifecycle_gate_payload_status() {
     let result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec![gate_id.to_string()],
@@ -533,12 +592,12 @@ async fn wait_uses_resolved_lifecycle_gate_payload_status() {
         Some("provider model unsupported")
     );
     let diagnostic = result.items[0].diagnostic.as_ref().expect("diagnostic");
-    assert_eq!(diagnostic.kind, "provider");
-    assert_eq!(diagnostic.code.as_deref(), Some("invalid_request"));
-    assert_eq!(diagnostic.http_status, Some(400));
-    assert_eq!(diagnostic.provider.as_deref(), Some("Example LLM"));
-    assert_eq!(diagnostic.model.as_deref(), Some("example-chat-large"));
-    assert!(!diagnostic.retryable);
+    assert_eq!(diagnostic["kind"], json!("provider"));
+    assert_eq!(diagnostic["code"], json!("invalid_request"));
+    assert_eq!(diagnostic["http_status"], json!(400));
+    assert_eq!(diagnostic["provider"], json!("Example LLM"));
+    assert_eq!(diagnostic["model"], json!("example-chat-large"));
+    assert_eq!(diagnostic["retryable"], json!(false));
     assert_eq!(
         result.items[0].result_refs["diagnostic"]["code"],
         json!("invalid_request")
@@ -568,7 +627,7 @@ async fn wait_exposes_gate_payload_child_evidence_refs() {
                     "run_id": run_id.to_string(),
                     "agent_id": child_agent_id.to_string(),
                     "frame_id": child_frame_id.to_string(),
-                    "delivery_runtime_session_id": "child-session"
+                    "runtime_thread_id": "child-session"
                 },
                 "evidence": [
                     {
@@ -577,7 +636,7 @@ async fn wait_exposes_gate_payload_child_evidence_refs() {
                         "child_run_id": run_id.to_string(),
                         "child_agent_id": child_agent_id.to_string(),
                         "child_frame_id": child_frame_id.to_string(),
-                        "delivery_runtime_session_id": "child-session",
+                        "runtime_thread_id": "child-session",
                         "mount_id": "lifecycle",
                         "path": "session/events.json"
                     },
@@ -587,7 +646,7 @@ async fn wait_exposes_gate_payload_child_evidence_refs() {
                         "child_run_id": run_id.to_string(),
                         "child_agent_id": child_agent_id.to_string(),
                         "child_frame_id": child_frame_id.to_string(),
-                        "delivery_runtime_session_id": "child-session"
+                        "runtime_thread_id": "child-session"
                     }
                 ]
             }
@@ -601,8 +660,9 @@ async fn wait_exposes_gate_payload_child_evidence_refs() {
     let result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("parent-session".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("parent-session").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec![gate_id.to_string()],
@@ -619,10 +679,7 @@ async fn wait_exposes_gate_payload_child_evidence_refs() {
     let refs = &result.items[0].result_refs;
     assert_eq!(refs["gate_id"], json!(gate_id.to_string()));
     assert_eq!(refs["child"]["run_id"], json!(run_id.to_string()));
-    assert_eq!(
-        refs["child"]["delivery_runtime_session_id"],
-        json!("child-session")
-    );
+    assert_eq!(refs["child"]["runtime_thread_id"], json!("child-session"));
     assert_eq!(refs["evidence"][0]["path"], json!("session/events.json"));
     assert_eq!(refs["evidence"][1]["kind"], json!("runtime_trace"));
     assert!(
@@ -657,8 +714,9 @@ async fn wait_and_workspace_gate_projection_share_kind_preview_and_status() {
     let wait_result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: vec![gate_id.to_string()],
@@ -672,16 +730,11 @@ async fn wait_and_workspace_gate_projection_share_kind_preview_and_status() {
         .await
         .expect("wait result");
     let wait_item = wait_result.items.first().expect("wait item");
-    let workspace_item = ConversationWaitingItemModel::from_lifecycle_gate(&gate);
     let projection = gate.waiting_projection();
 
     assert_eq!(wait_item.kind, projection.kind);
-    assert_eq!(workspace_item.kind, projection.kind);
     assert_eq!(wait_item.preview, projection.preview);
-    assert_eq!(workspace_item.preview, projection.preview);
-    assert_eq!(workspace_item.source_label, projection.source_label);
     assert_eq!(wait_item.status, "failed");
-    assert_eq!(workspace_item.status, wait_item.status);
 }
 
 #[tokio::test]
@@ -704,7 +757,7 @@ async fn scoped_gate_wait_keeps_observed_gate_ref_after_resolution() {
 
     let service = test_service_with_gate_repo(terminal_registry, gate_repo.clone());
     let scope = ResolvedWaitScope {
-        delivery_runtime_session_id: None,
+        runtime_thread_id: None,
         run_id: Some(run_id),
         agent_id: Some(agent_id),
         frame_id: Some(frame_id),
@@ -771,7 +824,7 @@ async fn explicit_gate_ref_is_filtered_by_run_scope_not_current_agent_only() {
 
     let service = test_service_with_gate_repo(terminal_registry, gate_repo);
     let parent_scope = ResolvedWaitScope {
-        delivery_runtime_session_id: None,
+        runtime_thread_id: None,
         run_id: Some(run_id),
         agent_id: Some(parent_agent_id),
         frame_id: Some(Uuid::new_v4()),
@@ -815,8 +868,9 @@ async fn wait_after_cursor_filters_older_items() {
     let result = service
         .wait(
             WaitToolContext {
-                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                runtime_thread_id: Some(RuntimeThreadId::new("runtime-1").unwrap()),
                 turn_id: "turn-1".to_string(),
+                owner: None,
             },
             WaitActivityRequest {
                 activity_refs: Vec::new(),
@@ -872,7 +926,7 @@ fn test_service_with_gate_repo(
     WaitActivityService::from_repositories(
         Arc::new(NoopLifecycleAgentRepo),
         Arc::new(NoopAgentFrameRepo),
-        Arc::new(NoopExecutionAnchorRepo),
+        Arc::new(NoopRuntimeBindingRepo),
         gate_repo,
         Arc::new(NoopMailboxRepo),
         terminal_registry,
@@ -1000,7 +1054,7 @@ impl AgentFrameRepository for NoopAgentFrameRepo {
         Ok(None)
     }
 
-    async fn get_current(&self, _agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+    async fn get_latest(&self, _agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         Ok(None)
     }
 
@@ -1009,48 +1063,43 @@ impl AgentFrameRepository for NoopAgentFrameRepo {
     }
 }
 
-struct NoopExecutionAnchorRepo;
+struct NoopRuntimeBindingRepo;
 
 #[async_trait]
-impl RuntimeSessionExecutionAnchorRepository for NoopExecutionAnchorRepo {
-    async fn create_once(
+impl AgentRunRuntimeBindingRepository for NoopRuntimeBindingRepo {
+    async fn load(
         &self,
-        _anchor: &agentdash_domain::workflow::RuntimeSessionExecutionAnchor,
-    ) -> Result<(), DomainError> {
-        Ok(())
+        _target: &AgentRunRuntimeTarget,
+    ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+        Ok(None)
     }
 
-    async fn delete_by_session(&self, _runtime_session_id: &str) -> Result<(), DomainError> {
-        Ok(())
-    }
-
-    async fn find_by_session(
+    async fn load_by_thread_id(
         &self,
-        _runtime_session_id: &str,
-    ) -> Result<Option<agentdash_domain::workflow::RuntimeSessionExecutionAnchor>, DomainError>
-    {
+        _thread_id: &RuntimeThreadId,
+    ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
         Ok(None)
     }
 
     async fn list_by_run(
         &self,
         _run_id: Uuid,
-    ) -> Result<Vec<agentdash_domain::workflow::RuntimeSessionExecutionAnchor>, DomainError> {
+    ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
         Ok(Vec::new())
     }
 
     async fn list_by_agent(
         &self,
         _agent_id: Uuid,
-    ) -> Result<Vec<agentdash_domain::workflow::RuntimeSessionExecutionAnchor>, DomainError> {
+    ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
         Ok(Vec::new())
     }
 
-    async fn list_by_project_session_ids(
+    async fn insert(
         &self,
-        _runtime_session_ids: &[String],
-    ) -> Result<Vec<agentdash_domain::workflow::RuntimeSessionExecutionAnchor>, DomainError> {
-        Ok(Vec::new())
+        binding: AgentRunRuntimeBinding,
+    ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+        Ok(binding)
     }
 }
 
@@ -1068,7 +1117,7 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
     async fn create_message_idempotent(
         &self,
         _message: NewAgentRunMailboxMessage,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
+    ) -> Result<AgentRunMailboxCreateOutcome, DomainError> {
         Err(DomainError::InvalidConfig("noop".to_string()))
     }
 
@@ -1091,6 +1140,25 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         Ok(Vec::new())
     }
 
+    async fn claim_reconciliation(
+        &self,
+        _run_id: Uuid,
+        _agent_id: Uuid,
+        _claim_token: Uuid,
+        _claim_expires_at: chrono::DateTime<Utc>,
+    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
+        Ok(None)
+    }
+
+    async fn release_reconciliation_claim(
+        &self,
+        _id: Uuid,
+        _claim_token: Uuid,
+        _last_error: String,
+    ) -> Result<AgentRunMailboxMessage, DomainError> {
+        Err(DomainError::InvalidConfig("noop".to_string()))
+    }
+
     async fn recover_expired_consuming(
         &self,
         _now: chrono::DateTime<Utc>,
@@ -1103,19 +1171,16 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         _id: Uuid,
         _claim_token: Option<Uuid>,
         _status: MailboxMessageStatus,
-        _accepted_agent_run_turn_id: Option<String>,
-        _accepted_protocol_turn_id: Option<String>,
         _last_error: Option<String>,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
         Err(DomainError::InvalidConfig("noop".to_string()))
     }
 
-    async fn update_message_policy(
+    async fn promote_message(
         &self,
+        _run_id: Uuid,
+        _agent_id: Uuid,
         _id: Uuid,
-        _delivery: MailboxDelivery,
-        _barrier: ConsumptionBarrier,
-        _drain_mode: MailboxDrainMode,
         _priority: i32,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
         Err(DomainError::InvalidConfig("noop".to_string()))
@@ -1136,7 +1201,6 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         &self,
         _run_id: Uuid,
         _agent_id: Uuid,
-        _runtime_session_id: Option<String>,
         _reason: String,
         _message: Option<String>,
     ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
@@ -1147,7 +1211,6 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         &self,
         _run_id: Uuid,
         _agent_id: Uuid,
-        _runtime_session_id: Option<String>,
     ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
         Err(DomainError::InvalidConfig("noop".to_string()))
     }
@@ -1159,16 +1222,6 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
     ) -> Result<Option<agentdash_domain::agent_run_mailbox::AgentRunMailboxState>, DomainError>
     {
         Ok(None)
-    }
-
-    async fn set_backend_selection_preference(
-        &self,
-        _run_id: Uuid,
-        _agent_id: Uuid,
-        _runtime_session_id: Option<String>,
-        _preference: Value,
-    ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
-        Err(DomainError::InvalidConfig("noop".to_string()))
     }
 
     async fn move_message_after(

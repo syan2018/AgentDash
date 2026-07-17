@@ -80,7 +80,6 @@ pub struct ConversationEffectiveExecutorConfigModel {
     pub model_id: Option<String>,
     pub agent_id: Option<String>,
     pub thinking_level: Option<String>,
-    pub permission_policy: Option<String>,
     pub source: ConversationModelConfigSourceModel,
 }
 
@@ -361,9 +360,6 @@ pub fn merge_executor_config_fields(
     if override_config.thinking_level.is_some() {
         base.thinking_level = override_config.thinking_level;
     }
-    if override_config.permission_policy.is_some() {
-        base.permission_policy = normalize_option_string(override_config.permission_policy.clone());
-    }
     if override_config.system_prompt.is_some() {
         base.system_prompt = normalize_option_string(override_config.system_prompt.clone());
     }
@@ -454,7 +450,6 @@ fn effective_executor_config_view(
         model_id: normalize_option_string(config.model_id.clone()),
         agent_id: normalize_option_string(config.agent_id.clone()),
         thinking_level: config.thinking_level.map(thinking_level_string),
-        permission_policy: normalize_option_string(config.permission_policy.clone()),
         source,
     }
 }
@@ -1159,7 +1154,6 @@ mod tests {
             model_id: Some("gpt-5".to_string()),
             agent_id: None,
             thinking_level: None,
-            permission_policy: None,
             system_prompt: Some("preset prompt".to_string()),
         };
         let user = AgentConfig::new("PI_AGENT");
@@ -1218,7 +1212,6 @@ mod tests {
             model_id: Some("gpt-5".to_string()),
             agent_id: None,
             thinking_level: None,
-            permission_policy: None,
             system_prompt: None,
         };
 

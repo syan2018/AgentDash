@@ -1,7 +1,6 @@
 use agentdash_application_agentrun::agent_run::terminal_registry::{
     TerminalOutputPreview, TerminalState,
 };
-use agentdash_application_ports::agent_run_control_effect::RuntimeTerminalDiagnostic;
 use serde_json::{Map, Value, json};
 
 use super::bound_string;
@@ -176,51 +175,37 @@ fn diagnostic_ref(status: &str, terminal: &TerminalState) -> Value {
     }
 }
 
-fn exec_diagnostic(status: &str, terminal: &TerminalState) -> Option<RuntimeTerminalDiagnostic> {
+fn exec_diagnostic(status: &str, terminal: &TerminalState) -> Option<Value> {
     match status {
-        "failed" => Some(RuntimeTerminalDiagnostic {
-            kind: "exec_exit".to_string(),
-            code: terminal.exit_code.map(|code| code.to_string()),
-            http_status: None,
-            provider: None,
-            model: None,
-            message: format!(
+        "failed" => Some(json!({
+            "kind": "exec_exit",
+            "code": terminal.exit_code.map(|code| code.to_string()),
+            "message": format!(
                 "terminal `{}` exited with code {}",
                 terminal.terminal_id,
                 terminal.exit_code.unwrap_or_default()
             ),
-            retryable: false,
-        }),
-        "cancelled" => Some(RuntimeTerminalDiagnostic {
-            kind: "terminal_killed".to_string(),
-            code: None,
-            http_status: None,
-            provider: None,
-            model: None,
-            message: format!("terminal `{}` was killed", terminal.terminal_id),
-            retryable: false,
-        }),
-        "lost" => Some(RuntimeTerminalDiagnostic {
-            kind: "terminal_lost".to_string(),
-            code: None,
-            http_status: None,
-            provider: None,
-            model: None,
-            message: format!("terminal `{}` was lost", terminal.terminal_id),
-            retryable: true,
-        }),
-        "unknown" => Some(RuntimeTerminalDiagnostic {
-            kind: "terminal_state_unknown".to_string(),
-            code: Some(terminal.state.clone()),
-            http_status: None,
-            provider: None,
-            model: None,
-            message: format!(
+            "retryable": false,
+        })),
+        "cancelled" => Some(json!({
+            "kind": "terminal_killed",
+            "message": format!("terminal `{}` was killed", terminal.terminal_id),
+            "retryable": false,
+        })),
+        "lost" => Some(json!({
+            "kind": "terminal_lost",
+            "message": format!("terminal `{}` was lost", terminal.terminal_id),
+            "retryable": true,
+        })),
+        "unknown" => Some(json!({
+            "kind": "terminal_state_unknown",
+            "code": terminal.state,
+            "message": format!(
                 "terminal `{}` has unknown state `{}`",
                 terminal.terminal_id, terminal.state
             ),
-            retryable: false,
-        }),
+            "retryable": false,
+        })),
         _ => None,
     }
 }

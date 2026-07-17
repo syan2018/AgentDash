@@ -8,14 +8,18 @@ use agentdash_application_lifecycle::{
     LifecycleWorkflowAgentNodeMaterializationDeps,
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
-use agentdash_application_ports::agent_run_fork_materialization::AgentRunForkMaterializationPort;
+use agentdash_application_ports::agent_run_delete::AgentRunDeleteStore;
+use agentdash_application_ports::agent_run_fork::AgentRunForkGraphStore;
+use agentdash_application_ports::agent_run_message_submission::AgentRunMessageSubmissionStore;
+use agentdash_application_ports::agent_run_runtime::{
+    AgentRunRuntimeBindingRepository, AgentRunRuntimeProvisioner,
+};
 use agentdash_application_ports::hook_workflow_projection::{
     HookActiveWorkflowFacts, HookExecutionLogAppendCommand, HookWorkflowProjection,
     HookWorkflowProjectionError, HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
 };
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
-use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
 use agentdash_application_shared_library::SharedLibraryRepositorySet;
 use agentdash_application_workflow::{OrchestrationExecutorLauncher, WorkflowRepositorySet};
@@ -32,7 +36,6 @@ use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::llm_provider::{LlmProviderCredentialRepository, LlmProviderRepository};
 use agentdash_domain::mcp_preset::McpPresetRepository;
-use agentdash_domain::permission::PermissionGrantRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::project_vfs_mount::ProjectVfsMountRepository;
 use agentdash_domain::routine::{RoutineExecutionRepository, RoutineRepository};
@@ -44,11 +47,10 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository, AgentRunLineageRepository,
+    AgentRunCommandReceiptRepository, AgentRunLineageRepository,
     GateResultDeliveryMarkerRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    ManualContextCompactionRequestRepository, RuntimeSessionExecutionAnchorRepository,
-    WorkflowGraphRepository, WorkflowTemplateInstallRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository, WorkflowGraphRepository,
+    WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 use async_trait::async_trait;
@@ -98,20 +100,21 @@ pub struct RepositorySet {
     pub gate_result_delivery_marker_repo: Arc<dyn GateResultDeliveryMarkerRepository>,
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     pub agent_run_lineage_repo: Arc<dyn AgentRunLineageRepository>,
-    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    pub agent_run_delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+    pub agent_run_fork_graph_store: Arc<dyn AgentRunForkGraphStore>,
+    pub agent_run_delete_store: Arc<dyn AgentRunDeleteStore>,
     pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
-    pub manual_context_compaction_request_repo: Arc<dyn ManualContextCompactionRequestRepository>,
+    pub agent_run_message_submission_store: Arc<dyn AgentRunMessageSubmissionStore>,
+    pub agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    pub agent_run_runtime_provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
+    pub workflow_agent_run_delivery:
+        agentdash_application_ports::workflow_agent_run_delivery::SharedWorkflowAgentRunDeliveryHandle,
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
-    pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     pub agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
-    pub agent_run_fork_materialization: Arc<dyn AgentRunForkMaterializationPort>,
     pub workflow_agent_frame_materialization: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
     pub project_agent_lifecycle_launch: Arc<dyn ProjectAgentLifecycleLaunchPort>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,
-    pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
     pub project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 }
 
@@ -120,7 +123,7 @@ impl RepositorySet {
         WaitActivityRepositories {
             lifecycle_agent_repo: self.lifecycle_agent_repo.clone(),
             agent_frame_repo: self.agent_frame_repo.clone(),
-            execution_anchor_repo: self.execution_anchor_repo.clone(),
+            agent_run_runtime_binding_repo: self.agent_run_runtime_binding_repo.clone(),
             lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
             mailbox_repo: self.agent_run_mailbox_repo.clone(),
         }
@@ -133,8 +136,7 @@ impl RepositorySet {
             agent_frame_repo: self.agent_frame_repo.clone(),
             lifecycle_subject_association_repo: self.lifecycle_subject_association_repo.clone(),
             agent_lineage_repo: self.agent_lineage_repo.clone(),
-            execution_anchor_repo: self.execution_anchor_repo.clone(),
-            agent_run_delivery_binding_repo: self.agent_run_delivery_binding_repo.clone(),
+            agent_run_runtime_binding_repo: self.agent_run_runtime_binding_repo.clone(),
         }
     }
 
@@ -149,9 +151,6 @@ impl RepositorySet {
             association_repo: self.lifecycle_subject_association_repo.clone(),
             gate_repo: self.lifecycle_gate_repo.clone(),
             lineage_repo: self.agent_lineage_repo.clone(),
-            anchor_repo: self.execution_anchor_repo.clone(),
-            delivery_binding_repo: self.agent_run_delivery_binding_repo.clone(),
-            runtime_session_creator: self.runtime_session_creator.clone(),
             frame_construction: self.agent_frame_construction.clone(),
             workflow_agent_frame_materialization: self.workflow_agent_frame_materialization.clone(),
         }
@@ -162,7 +161,7 @@ impl RepositorySet {
             run_repo: self.lifecycle_run_repo.clone(),
             agent_repo: self.lifecycle_agent_repo.clone(),
             frame_repo: self.agent_frame_repo.clone(),
-            anchor_repo: self.execution_anchor_repo.clone(),
+            binding_repo: self.agent_run_runtime_binding_repo.clone(),
             inline_file_repo: self.inline_file_repo.clone(),
             orchestration_launcher: OrchestrationExecutorLauncher::new(
                 self.to_workflow_repository_set(),
@@ -179,9 +178,6 @@ impl RepositorySet {
             association_repo: self.lifecycle_subject_association_repo.clone(),
             gate_repo: self.lifecycle_gate_repo.clone(),
             lineage_repo: self.agent_lineage_repo.clone(),
-            anchor_repo: self.execution_anchor_repo.clone(),
-            delivery_binding_repo: self.agent_run_delivery_binding_repo.clone(),
-            runtime_session_creator: self.runtime_session_creator.clone(),
             frame_construction: self.agent_frame_construction.clone(),
             orchestration_launcher: OrchestrationExecutorLauncher::new(
                 self.to_workflow_repository_set(),
@@ -199,6 +195,8 @@ impl RepositorySet {
                     self.lifecycle_workflow_agent_node_materialization_deps(),
                 ),
             ),
+            agent_run_runtime_provisioner: self.agent_run_runtime_provisioner.clone(),
+            workflow_agent_run_delivery: Arc::new(self.workflow_agent_run_delivery.clone()),
         }
     }
 
@@ -224,7 +222,7 @@ impl RepositorySet {
             agent_frame_repo: self.agent_frame_repo.clone(),
             lifecycle_run_repo: self.lifecycle_run_repo.clone(),
             lifecycle_subject_association_repo: self.lifecycle_subject_association_repo.clone(),
-            execution_anchor_repo: self.execution_anchor_repo.clone(),
+            agent_run_runtime_binding_repo: self.agent_run_runtime_binding_repo.clone(),
             lifecycle_agent_repo: self.lifecycle_agent_repo.clone(),
             story_repo: self.story_repo.clone(),
             inline_file_repo: self.inline_file_repo.clone(),
@@ -250,9 +248,6 @@ pub struct LifecycleProjectAgentLaunchAdapter {
     association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     gate_repo: Arc<dyn LifecycleGateRepository>,
     lineage_repo: Arc<dyn AgentLineageRepository>,
-    anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-    runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
 }
 
@@ -264,9 +259,6 @@ pub struct LifecycleProjectAgentLaunchDeps {
     pub association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub gate_repo: Arc<dyn LifecycleGateRepository>,
     pub lineage_repo: Arc<dyn AgentLineageRepository>,
-    pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-    pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
 }
 
@@ -280,9 +272,6 @@ impl LifecycleProjectAgentLaunchAdapter {
             association_repo: deps.association_repo,
             gate_repo: deps.gate_repo,
             lineage_repo: deps.lineage_repo,
-            anchor_repo: deps.anchor_repo,
-            delivery_binding_repo: deps.delivery_binding_repo,
-            runtime_session_creator: deps.runtime_session_creator,
             frame_construction: deps.frame_construction,
         }
     }
@@ -305,9 +294,6 @@ impl ProjectAgentLifecycleLaunchPort for LifecycleProjectAgentLaunchAdapter {
             self.association_repo.as_ref(),
             self.gate_repo.as_ref(),
             self.lineage_repo.as_ref(),
-            self.anchor_repo.as_ref(),
-            self.delivery_binding_repo.as_ref(),
-            self.runtime_session_creator.as_ref(),
             self.frame_construction.as_ref(),
         );
         facade
@@ -345,7 +331,7 @@ struct ApplicationHookWorkflowProjectionAdapter {
     agent_frame_repo: Arc<dyn AgentFrameRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
-    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     story_repo: Arc<dyn StoryRepository>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
@@ -377,7 +363,7 @@ impl HookWorkflowProjectionPort for ApplicationHookWorkflowProjectionAdapter {
         let run_context = agentdash_application_lifecycle::SubjectRunContextResolver::new(
             self.lifecycle_run_repo.as_ref(),
             self.lifecycle_subject_association_repo.as_ref(),
-            self.execution_anchor_repo.as_ref(),
+            self.agent_run_runtime_binding_repo.as_ref(),
             self.lifecycle_agent_repo.as_ref(),
             self.story_repo.as_ref(),
         )

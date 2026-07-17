@@ -62,6 +62,30 @@ pub enum RelayMessage {
     #[serde(rename = "pong")]
     Pong { id: String, payload: PongPayload },
 
+    #[serde(rename = "runtime_wire.open")]
+    RuntimeWireOpen {
+        id: String,
+        payload: crate::RuntimeRelayOpen,
+    },
+
+    #[serde(rename = "runtime_wire.open_ack")]
+    RuntimeWireOpenAck {
+        id: String,
+        payload: crate::RuntimeRelayOpenAck,
+    },
+
+    #[serde(rename = "runtime_wire.frame")]
+    RuntimeWireFrame {
+        id: String,
+        payload: Box<crate::RuntimeRelayFrame>,
+    },
+
+    #[serde(rename = "runtime_wire.ack")]
+    RuntimeWireAck {
+        id: String,
+        payload: crate::RuntimeRelayAck,
+    },
+
     // ── 命令（云端 → 本机）──
     /// 执行第三方 Agent prompt
     #[serde(rename = "command.prompt")]
@@ -642,6 +666,10 @@ impl RelayMessage {
             | Self::RegisterAck { id, .. }
             | Self::Ping { id, .. }
             | Self::Pong { id, .. }
+            | Self::RuntimeWireOpen { id, .. }
+            | Self::RuntimeWireOpenAck { id, .. }
+            | Self::RuntimeWireFrame { id, .. }
+            | Self::RuntimeWireAck { id, .. }
             | Self::CommandPrompt { id, .. }
             | Self::CommandCancel { id, .. }
             | Self::CommandSteer { id, .. }
@@ -738,8 +766,6 @@ mod tests {
     use super::CommandPromptPayload;
     use super::*;
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
-    use std::path::PathBuf;
-
     #[test]
     fn command_prompt_payload_requires_mount_root_ref() {
         let payload: CommandPromptPayload = serde_json::from_value(serde_json::json!({
@@ -839,11 +865,11 @@ mod tests {
             },
             codex::UserInput::LocalImage {
                 detail: None,
-                path: PathBuf::from("assets/local.png"),
+                path: "assets/local.png".to_string(),
             },
             codex::UserInput::Skill {
                 name: "reviewer".to_string(),
-                path: PathBuf::from("skills/reviewer/SKILL.md"),
+                path: "skills/reviewer/SKILL.md".to_string(),
             },
             codex::UserInput::Mention {
                 name: "main.rs".to_string(),

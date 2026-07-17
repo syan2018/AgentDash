@@ -1,0 +1,94 @@
+{
+  "scenario_id": "frontend_submit_no_phantom_refresh",
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "source_path": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/user-submit.json",
+    "source_sha256": "2189abb461ee5f9b5a16f29b088572efaf6aacf33bde789b1c7fe8f07a91bc9c",
+    "source_case": "user_submit_text",
+    "capture_method": "The fixed Main validator, stream reducer, and SessionEntry renderer execute these exact frames through scripts/session-parity/mainFrontendEvidence.test.tsx; no event normalization.",
+    "source_files": [
+      {
+        "path": "packages/app-web/src/features/session/model/sessionNdjsonEnvelopeValidator.ts",
+        "sha256": "fbdffa0793b45504f07ff033f6c119ae7171f0b2ea4f9621544e84d0476a2ecb",
+        "git_blob_sha": "79139888416bf68e8d4c3ef07809d3615bec4bba"
+      },
+      {
+        "path": "packages/app-web/src/features/session/model/sessionStreamReducer.ts",
+        "sha256": "1788c06eaf05c2c73674d77743d4f3ae8c1a7a2797c7e43ea32fb6b481111764",
+        "git_blob_sha": "c204495b89bbde14ae83a393f956c8d0afd934ba"
+      },
+      {
+        "path": "packages/app-web/src/features/session/ui/SessionEntry.tsx",
+        "sha256": "210e542a9cfaca0cc6d0a6ec1c87313632bcee58ca9f7653a3f0ee7264e34186",
+        "git_blob_sha": "868cedcfe153471c86e83cfa4eb7193593884ad6"
+      }
+    ]
+  },
+  "frames": [
+    {
+      "type": "event",
+      "session_id": "session-main-0001",
+      "event_seq": 1,
+      "occurred_at_ms": 1783684800000,
+      "committed_at_ms": 1783684800000,
+      "session_update_type": "user_input_submitted",
+      "turn_id": "turn-main-0001",
+      "entry_index": 0,
+      "notification": {
+        "sessionId": "session-main-0001",
+        "source": { "connectorId": "fixture-connector", "connectorType": "native" },
+        "trace": { "turnId": "turn-main-0001", "entryIndex": 0 },
+        "observedAt": "2026-07-10T12:00:00Z",
+        "event": {
+          "type": "user_input_submitted",
+          "payload": {
+            "threadId": "session-main-0001",
+            "turnId": "turn-main-0001",
+            "itemId": "turn-main-0001:user-input:0",
+            "submissionKind": "prompt",
+            "source": { "namespace": "core", "kind": "composer", "actor": "user", "displayLabelKey": "mailbox.source.core.composer" },
+            "content": [{ "type": "text", "text": "hello", "text_elements": [] }]
+          }
+        }
+      }
+    },
+    {
+      "type": "event",
+      "session_id": "session-main-0001",
+      "event_seq": 2,
+      "occurred_at_ms": 1783684800001,
+      "committed_at_ms": 1783684800001,
+      "session_update_type": "turn_started",
+      "turn_id": "turn-main-0001",
+      "notification": {
+        "sessionId": "session-main-0001",
+        "source": { "connectorId": "fixture-connector", "connectorType": "native" },
+        "trace": { "turnId": "turn-main-0001" },
+        "observedAt": "2026-07-10T12:00:00.001Z",
+        "event": {
+          "type": "turn_started",
+          "payload": {
+            "threadId": "session-main-0001",
+            "turn": {
+              "id": "turn-main-0001",
+              "items": [],
+              "itemsView": "notLoaded",
+              "status": "inProgress",
+              "error": null,
+              "startedAt": 1783684800,
+              "completedAt": null,
+              "durationMs": null
+            }
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "durable_event_seqs": [1, 2],
+    "user_item_id": "turn-main-0001:user-input:0",
+    "user_text": "hello",
+    "display_entry_count": 1,
+    "tool_card_count": 0
+  }
+}

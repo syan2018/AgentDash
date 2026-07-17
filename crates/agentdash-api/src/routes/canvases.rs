@@ -23,24 +23,16 @@ use agentdash_application::extension_package::{
     StoreExtensionPackageArchiveInput, install_extension_package_artifact,
     store_extension_package_archive,
 };
-use agentdash_application::runtime_session_agent_run_bridge::{
-    agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
-    agent_run_session_launch,
-};
-use agentdash_application_agentrun::agent_run::{
-    AgentRunMailboxService, AgentRunMailboxUserMessageCommand, RuntimeSurfaceQueryPurpose,
-};
-use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
+use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
 use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeSurface,
 };
 use agentdash_application_vfs::ResolvedVfsSurfaceSource;
 use agentdash_contracts::canvas::{
-    CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeSnapshotDto,
-    CanvasFileDto, CanvasImportMapDto, CanvasInteractionEventDto, CanvasInteractionSnapshot,
-    CanvasInteractionSnapshotUpsertRequest, CanvasListScopeDto, CanvasResponse,
-    CanvasRuntimeBindingDto, CanvasRuntimeBindingUpsertRequest, CanvasRuntimeBridgeSnapshotDto,
+    CanvasAccessDto, CanvasAgentRunRuntimeSnapshotDto, CanvasFileDto, CanvasImportMapDto,
+    CanvasInteractionEventDto, CanvasInteractionSnapshot, CanvasInteractionSnapshotUpsertRequest,
+    CanvasListScopeDto, CanvasResponse, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto,
     CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto, CanvasRuntimeFileDto,
     CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
     CanvasRuntimeObservationUpsertRequest, CanvasRuntimeViewportDto, CanvasSandboxConfigDto,
@@ -52,8 +44,8 @@ use agentdash_contracts::canvas::{
 };
 use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
 use agentdash_domain::canvas::{
-    Canvas, CanvasAccessAction, CanvasAccessProjection, CanvasDataBinding, CanvasFile,
-    CanvasImportMap, CanvasInteractionEvent, CanvasRuntimeDiagnostic, CanvasRuntimeDocumentState,
+    Canvas, CanvasAccessAction, CanvasAccessProjection, CanvasFile, CanvasImportMap,
+    CanvasInteractionEvent, CanvasRuntimeDiagnostic, CanvasRuntimeDocumentState,
     CanvasRuntimeObservationStatus, CanvasRuntimeViewport, CanvasSandboxConfig, CanvasScope,
 };
 
@@ -64,8 +56,6 @@ use crate::auth::{
 };
 use crate::dto::{ListProjectCanvasesPath, PromoteCanvasToExtensionRequest};
 use crate::rpc::ApiError;
-
-use super::agent_run_mailbox_contracts::agent_run_message_command_response;
 
 pub async fn list_project_canvases(
     State(state): State<Arc<AppState>>,
@@ -126,16 +116,8 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(get_agent_run_canvas_runtime_snapshot),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-bindings/{alias}",
-            axum::routing::put(upsert_agent_run_canvas_runtime_binding),
-        )
-        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-invoke",
             axum::routing::post(invoke_agent_run_canvas_runtime_action),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/agent-input-submit",
-            axum::routing::post(submit_agent_run_canvas_agent_input),
         )
         .route(
             "/canvases/{id}/promote-extension",
@@ -646,56 +628,6 @@ pub async fn get_agent_run_canvas_runtime_snapshot(
     )))
 }
 
-pub async fn upsert_agent_run_canvas_runtime_binding(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, canvas_mount_id, alias)): Path<(String, String, String, String)>,
-    Json(req): Json<CanvasRuntimeBindingUpsertRequest>,
-) -> Result<Json<CanvasAgentRunRuntimeSnapshotDto>, ApiError> {
-    let context = resolve_agent_run_canvas_route_context(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        &canvas_mount_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let current_user_context = project_authorization_context(&current_user);
-    let binding = CanvasDataBinding::with_content_type(alias, req.source_uri, req.content_type);
-    let active_vfs_state = state
-        .services
-        .runtime_surface_update
-        .apply_canvas_runtime_surface_update(
-            &context.runtime_session_id,
-            &context.canvas,
-            Some(&current_user_context),
-            RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
-                canvas_mount_id: context.canvas.mount_id.clone(),
-                binding,
-            },
-        )
-        .await
-        .map_err(ApiError::Conflict)?;
-    let mut snapshot = build_runtime_snapshot_with_bindings(
-        &context.canvas,
-        None,
-        Some(&active_vfs_state.vfs),
-        state.services.vfs_service.as_ref(),
-    )
-    .await;
-    snapshot.resource_surface_ref = Some(agent_run_canvas_resource_surface_ref(&context));
-    snapshot.runtime_bridge = build_canvas_runtime_bridge_surface(
-        state.as_ref(),
-        &context.canvas,
-        &context.runtime_session_id,
-    )
-    .await?;
-    Ok(Json(canvas_agent_run_runtime_snapshot_to_contract(
-        snapshot,
-    )))
-}
-
 pub async fn invoke_agent_run_canvas_runtime_action(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -740,50 +672,6 @@ pub async fn invoke_agent_run_canvas_runtime_action(
     Ok(Json(runtime_invocation_result_to_contract(result)))
 }
 
-pub async fn submit_agent_run_canvas_agent_input(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, canvas_mount_id)): Path<(String, String, String)>,
-    Json(req): Json<CanvasAgentInputSubmitRequest>,
-) -> Result<Json<agentdash_contracts::agent_run_mailbox::AgentRunMessageCommandResponse>, ApiError>
-{
-    let context = resolve_agent_run_canvas_route_context(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        &canvas_mount_id,
-        ProjectPermission::Configure,
-    )
-    .await?;
-    if req.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    if req.input.is_empty() {
-        return Err(ApiError::BadRequest("input 不能为空".to_string()));
-    }
-    let service = agent_run_mailbox_service(state.as_ref());
-    let response = service
-        .accept_user_message(AgentRunMailboxUserMessageCommand {
-            run_id: context.run.id,
-            agent_id: context.agent.id,
-            frame_id: context.current_agent_frame.id,
-            source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::canvas_action(),
-            schedule_on_submit: true,
-            input: req.input,
-            client_command_id: req.client_command_id,
-            executor_config: None,
-            backend_selection: None,
-            identity: Some(current_user),
-            delivery_intent: req.delivery_intent,
-        })
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(agent_run_message_command_response(response)))
-}
-
 async fn resolve_agent_run_canvas_route_context(
     state: &AppState,
     current_user: &agentdash_integration_api::AuthIdentity,
@@ -809,24 +697,6 @@ fn agent_run_canvas_resource_surface_ref_for_session(runtime_session_id: &str) -
         session_id: runtime_session_id.to_string(),
     }
     .surface_ref()
-}
-
-fn agent_run_mailbox_service(state: &AppState) -> AgentRunMailboxService<'_> {
-    AgentRunMailboxService::new(
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.lifecycle_agent_repo.as_ref(),
-        state.repos.project_agent_repo.as_ref(),
-        state.repos.agent_frame_repo.as_ref(),
-        state.repos.execution_anchor_repo.as_ref(),
-        state.repos.agent_run_delivery_binding_repo.as_ref(),
-        state.repos.project_backend_access_repo.as_ref(),
-        state.repos.agent_run_command_receipt_repo.as_ref(),
-        state.repos.agent_run_mailbox_repo.as_ref(),
-        agent_run_session_core(state.services.session_core.clone()),
-        agent_run_session_control(state.services.session_control.clone()),
-        agent_run_session_eventing(state.services.session_eventing.clone()),
-        agent_run_session_launch(state.services.session_launch.clone()),
-    )
 }
 
 fn canvas_agent_run_runtime_snapshot_to_contract(

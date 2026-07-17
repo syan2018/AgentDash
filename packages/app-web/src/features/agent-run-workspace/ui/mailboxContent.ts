@@ -20,3 +20,4 @@ export function mailboxHasContent(
       mailbox?.paused,
   );
 }
+

@@ -17,10 +17,6 @@ fn active_workflow(snapshot: &AgentFrameHookSnapshot) -> Option<&ActiveWorkflowM
     snapshot.metadata.as_ref()?.active_workflow.as_ref()
 }
 
-pub(crate) fn session_permission_policy(snapshot: &AgentFrameHookSnapshot) -> Option<&str> {
-    snapshot.metadata.as_ref()?.permission_policy.as_deref()
-}
-
 pub(crate) fn workflow_activity_key(snapshot: &AgentFrameHookSnapshot) -> Option<&str> {
     active_workflow(snapshot)?.activity_key.as_deref()
 }

@@ -7,7 +7,7 @@ import {
   parseCapabilityPath,
 } from "../../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../../executor-selector";
-import type { ModelInfo, PermissionPolicy } from "../../executor-selector";
+import type { ModelInfo } from "../../executor-selector";
 import { CapabilityPicker } from "./capability-picker";
 import { KnowledgeSection } from "./knowledge-section";
 import { McpPresetPicker } from "./mcp-preset-picker";
@@ -30,7 +30,8 @@ export function useAgentTypeOptions() {
   const options = useMemo(() => {
     return executors.map((executor) => ({
       value: executor.id,
-      label: `${executor.name}${!executor.available ? " (不可用)" : ""}`,
+      label: `${executor.name}${!executor.available ? ` (不可用：${executor.unavailable_reason ?? "运行条件未满足"})` : ""}`,
+      available: executor.available,
     }));
   }, [executors]);
   return { agentTypeOptions: options, isDiscoveryLoading: isLoading };
@@ -49,7 +50,7 @@ export function PresetFormFields({
 }: {
   form: PresetFormState;
   patchForm: (patch: Partial<PresetFormState>) => void;
-  agentTypeOptions: Array<{ value: string; label: string }>;
+  agentTypeOptions: Array<{ value: string; label: string; available: boolean }>;
   isDiscoveryLoading: boolean;
   siblingAgents?: Array<{ name: string; display_name: string; default_companion_enabled?: boolean }>;
   projectId?: string;
@@ -113,7 +114,6 @@ export function PresetFormFields({
 
   const showThinkingSelector = !selectedModel || selectedModel.reasoning === true;
   const agents = modelSelector?.agents ?? [];
-  const permissions = modelSelector?.permissions ?? [];
 
   const handleAgentTypeChange = (newType: string) => {
     patchForm({
@@ -222,7 +222,7 @@ export function PresetFormFields({
             {isDiscoveryLoading ? "加载执行器列表..." : "选择 Agent 类型"}
           </option>
           {agentTypeOptions.map((opt) => (
-            <option key={opt.value} value={opt.value}>
+            <option key={opt.value} value={opt.value} disabled={!opt.available}>
               {opt.label}
             </option>
           ))}
@@ -332,32 +332,6 @@ export function PresetFormFields({
             )}
           </div>
         )}
-        <div>
-          <label className="agentdash-form-label">权限策略</label>
-          <select
-            value={form.permission_policy}
-            onChange={(e) => patchForm({ permission_policy: e.target.value })}
-            className="agentdash-form-select"
-          >
-            <option value="">默认</option>
-            {permissions.length > 0
-              ? permissions.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))
-              : (
-                <>
-                  <option value="AUTO">AUTO</option>
-                  <option value="SUPERVISED">SUPERVISED</option>
-                  <option value="PLAN">PLAN</option>
-                </>
-              )
-            }
-            {form.permission_policy && permissions.length > 0 &&
-              !permissions.includes(form.permission_policy as PermissionPolicy) && (
-              <option value={form.permission_policy}>{form.permission_policy} (当前值)</option>
-            )}
-          </select>
-        </div>
       </div>
     </div>
   );

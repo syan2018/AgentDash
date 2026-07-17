@@ -30,7 +30,7 @@ use chrono::{DateTime, Utc};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::{
+use agentdash_llm_provider::{
     EffectiveLlmProviderProfile, ProviderUnavailableReason,
     build_effective_profile_catalog_from_db, build_effective_provider_profile,
 };
@@ -774,7 +774,7 @@ pub async fn probe_models(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
-    let models = agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::probe_models_for_protocol(
+    let models = agentdash_llm_provider::probe_models_for_protocol(
         protocol,
         &api_key,
         base_url,
@@ -813,7 +813,7 @@ pub async fn probe_user_provider_models(
             (!provider.discovery_url.trim().is_empty()).then_some(provider.discovery_url.as_str())
         });
 
-    let models = agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::probe_models_for_protocol(
+    let models = agentdash_llm_provider::probe_models_for_protocol(
         protocol,
         &api_key,
         base_url,
@@ -892,7 +892,7 @@ async fn verify_user_api_key(
     let discovery_url =
         (!provider.discovery_url.trim().is_empty()).then_some(provider.discovery_url.as_str());
 
-    match agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::probe_models_for_protocol(
+    match agentdash_llm_provider::probe_models_for_protocol(
         provider.protocol,
         api_key,
         base_url,
@@ -1291,9 +1291,7 @@ fn ensure_provider_allows_user_credential(provider: &LlmProvider) -> Result<(), 
     ))
 }
 
-fn probe_model_dto(
-    model: agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::ProbeModelResult,
-) -> ProbeLlmProviderModelDto {
+fn probe_model_dto(model: agentdash_llm_provider::ProbeModelResult) -> ProbeLlmProviderModelDto {
     ProbeLlmProviderModelDto {
         id: model.id,
         name: model.name,
@@ -1314,6 +1312,38 @@ mod tests {
     use tokio::sync::MutexGuard;
 
     static CODEX_OAUTH_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+    fn auth_identity(
+        auth_mode: AuthMode,
+        is_admin: bool,
+    ) -> agentdash_integration_api::AuthIdentity {
+        agentdash_integration_api::AuthIdentity {
+            auth_mode,
+            user_id: "oauth-owner".to_string(),
+            subject: "oauth-owner".to_string(),
+            display_name: None,
+            email: None,
+            avatar_url: None,
+            groups: Vec::new(),
+            is_admin,
+            provider: None,
+            extra: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn global_provider_management_allows_personal_identity_without_login_session() {
+        assert!(require_system_access(&auth_identity(AuthMode::Personal, false)).is_ok());
+    }
+
+    #[test]
+    fn global_provider_management_requires_enterprise_admin() {
+        assert!(matches!(
+            require_system_access(&auth_identity(AuthMode::Enterprise, false)),
+            Err(ApiError::Forbidden(_))
+        ));
+        assert!(require_system_access(&auth_identity(AuthMode::Enterprise, true)).is_ok());
+    }
 
     fn jwt_with_account(account_id: &str) -> String {
         let payload = serde_json::json!({

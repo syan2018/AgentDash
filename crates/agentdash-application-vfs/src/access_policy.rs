@@ -91,7 +91,7 @@ mod tests {
                     RuntimeVfsOperation::Read,
                     RuntimeVfsOperation::Search,
                 ]),
-                source: RuntimeVfsAccessSource::PermissionGrant,
+                source: RuntimeVfsAccessSource::ProjectPreset,
             }],
         };
 

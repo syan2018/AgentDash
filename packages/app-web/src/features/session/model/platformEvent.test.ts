@@ -60,4 +60,27 @@ describe("platformEvent", () => {
     expect(getPlatformEventPolicy(event).isRenderableSystemEvent).toBe(true);
     expect(getPlatformEventPolicy(event).feedBoundary).toBe("hard");
   });
+
+  it("将 Workspace Module 展示请求识别为独立的可渲染审计事件", () => {
+    const event: BackboneEvent = {
+      type: "platform",
+      payload: {
+        kind: "workspace_module_presentation_requested",
+        data: {
+          module_id: "canvas:cvs-canvas",
+          view_key: "preview",
+          renderer_kind: "canvas",
+          presentation_uri: "canvas://cvs-canvas",
+          title: "临时 Canvas 展示测试",
+          payload: { reason: "smoke-test" },
+          diagnostics: null,
+        },
+      },
+    };
+
+    expect(extractPlatformEventType(event)).toBe("workspace_module_presentation_requested");
+    expect(extractPlatformEventMessage(event)).toBe("已请求展示「临时 Canvas 展示测试」");
+    expect(getPlatformEventPolicy(event).isRenderableSystemEvent).toBe(true);
+    expect(getPlatformEventPolicy(event).feedBoundary).toBe("hard");
+  });
 });

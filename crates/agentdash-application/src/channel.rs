@@ -190,7 +190,7 @@ impl ChannelBindingResolver for UnsupportedChannelBindingResolver {
 pub enum ChannelIngressOutcome {
     Resolved {
         owner: ChannelOwner,
-        message: ChannelMessage,
+        message: Box<ChannelMessage>,
     },
     Unresolved,
     Unsupported {
@@ -408,7 +408,10 @@ impl ChannelService {
                 );
                 message.provider_event_ref = envelope.key.provider_event_ref;
                 message.correlation_ref = envelope.correlation_ref;
-                Ok(ChannelIngressOutcome::Resolved { owner, message })
+                Ok(ChannelIngressOutcome::Resolved {
+                    owner,
+                    message: Box::new(message),
+                })
             }
             ChannelBindingResolution::Unresolved => Ok(ChannelIngressOutcome::Unresolved),
             ChannelBindingResolution::Unsupported { provider } => {
@@ -539,12 +542,15 @@ impl ChannelService {
             "payload": intent.message.payload.clone(),
             "content_refs": intent.message.content_refs.clone(),
         });
+        let delivery_request_digest =
+            agentdash_application_ports::request_digest::canonical_request_digest(intent)
+                .map_err(|error| ApplicationError::Internal(error.to_string()))?;
         Ok(ChannelMailboxMaterializationCommand {
             delivery_id: intent.id,
             message: NewAgentRunMailboxMessage {
+                id: None,
                 run_id,
                 agent_id,
-                delivery_runtime_session_id: None,
                 origin: mailbox_origin_from_channel_address(&intent.message.address),
                 source,
                 delivery: MailboxDelivery::LaunchOrContinueTurn,
@@ -552,11 +558,8 @@ impl ChannelService {
                 drain_mode: MailboxDrainMode::One,
                 priority: 0,
                 source_dedup_key: Some(format!("channel_delivery:{}", intent.id)),
-                queued_agent_run_turn_id: None,
-                expected_active_agent_run_turn_id: None,
-                command_receipt_id: None,
+                delivery_request_digest,
                 payload_json: Some(payload_json),
-                executor_config_json: None,
                 launch_planning_input: None,
                 preview: channel_message_preview(&intent.message),
                 has_images: false,

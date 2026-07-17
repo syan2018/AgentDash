@@ -10,14 +10,12 @@ mod classify;
 mod composer_companion;
 mod composer_project_agent;
 mod composer_workflow_node;
+mod launch_anchor_materialization;
 mod owner_bootstrap;
+pub mod plan;
 mod request_assembler;
 mod subject_assignment;
 mod workflow_projection;
-
-pub mod plan {
-    pub use agentdash_application_runtime_session::session::plan::*;
-}
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,9 +26,7 @@ use agentdash_application_ports::frame_launch_envelope::{
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput};
 use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{
-    AgentConfig, AgentConnector, ConnectorError, MemoryDiscoveryProvider, SkillDiscoveryProvider,
-};
+use agentdash_spi::{AgentConfig, ConnectorError, MemoryDiscoveryProvider, SkillDiscoveryProvider};
 
 use crate::repository_set::RepositorySet;
 use agentdash_application_vfs::VfsService;
@@ -63,7 +59,6 @@ pub struct FrameConstructionService {
     pub(crate) audit_bus: SharedContextAuditBus,
     pub(crate) companion_facts: Arc<dyn CompanionParentFactsProvider>,
     pub(crate) lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
-    pub(crate) connector: Arc<dyn AgentConnector>,
     pub(crate) extra_skill_dirs: Vec<PathBuf>,
     pub(crate) skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
     pub(crate) memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
@@ -77,13 +72,15 @@ pub struct FrameConstructionDeps {
     pub audit_bus: SharedContextAuditBus,
     pub companion_facts: Arc<dyn CompanionParentFactsProvider>,
     pub lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
-    pub connector: Arc<dyn AgentConnector>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
     pub memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
 }
 
 pub(crate) use assembly::FrameAssemblyLaunchExtras;
+pub use launch_anchor_materialization::{
+    AgentRunProjectOwnerFrameConstructionAdapter, AgentRunProjectOwnerFrameConstructionDeps,
+};
 pub(crate) use owner_bootstrap::{
     OwnerBootstrapComposer, OwnerBootstrapSpec, OwnerPromptLaunchPath, OwnerScope,
 };
@@ -102,7 +99,6 @@ impl FrameConstructionService {
             audit_bus: deps.audit_bus,
             companion_facts: deps.companion_facts,
             lifecycle_surface_projection: deps.lifecycle_surface_projection,
-            connector: deps.connector,
             extra_skill_dirs: deps.extra_skill_dirs,
             skill_discovery_providers: deps.skill_discovery_providers,
             memory_discovery_providers: deps.memory_discovery_providers,
@@ -115,33 +111,24 @@ impl FrameConstructionService {
         input: FrameLaunchEnvelopeConstructionInput,
     ) -> Result<FrameLaunchEnvelope, ConnectorError> {
         let session_id = input.session_id.clone();
-        let anchor = self
-            .repos
-            .execution_anchor_repo
-            .find_by_session(&session_id)
+        let (_binding, agent, frame) =
+            agentdash_application_lifecycle::resolve_current_frame_from_delivery_trace_ref(
+                &session_id,
+                self.repos.agent_run_runtime_binding_repo.as_ref(),
+                self.repos.lifecycle_agent_repo.as_ref(),
+                self.repos.agent_frame_repo.as_ref(),
+            )
             .await
             .map_err(connector_internal)?
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig(format!(
-                    "RuntimeSession {session_id} 缺少 RuntimeSessionExecutionAnchor，拒绝 launch"
-                ))
-            })?;
-        let agent = self
-            .repos
-            .lifecycle_agent_repo
-            .get(anchor.agent_id)
-            .await
-            .map_err(connector_internal)?
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig(format!(
-                    "RuntimeSessionExecutionAnchor 指向的 LifecycleAgent {} 不存在",
-                    anchor.agent_id
+                    "RuntimeSession {session_id} 缺少 AgentRunRuntimeBinding 或当前 AgentFrame，拒绝 launch"
                 ))
             })?;
         let run = self
             .repos
             .lifecycle_run_repo
-            .get_by_id(anchor.run_id)
+            .get_by_id(agent.run_id)
             .await
             .map_err(connector_internal)?
             .ok_or_else(|| {
@@ -155,25 +142,6 @@ impl FrameConstructionService {
                 "RuntimeSession {session_id} 的 anchor agent/run 不一致"
             )));
         }
-        let frame = self
-            .repos
-            .agent_frame_repo
-            .get_current(agent.id)
-            .await
-            .map_err(connector_internal)?
-            .or(self
-                .repos
-                .agent_frame_repo
-                .get(anchor.launch_frame_id)
-                .await
-                .map_err(connector_internal)?)
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig(format!(
-                    "LifecycleAgent {} 没有可用 AgentFrame，拒绝 launch",
-                    agent.id
-                ))
-            })?;
-
         classify::route_and_compose(self, frame, agent, run, input).await
     }
 
@@ -197,33 +165,15 @@ impl FrameConstructionService {
         .with_companion_parent_facts_provider(self.companion_facts.as_ref())
     }
 
-    pub(crate) fn owner_bootstrap_composer(&self) -> OwnerBootstrapComposer<'_> {
-        OwnerBootstrapComposer::new(
-            self.vfs_service.as_ref(),
-            self.repos.canvas_repo.as_ref(),
-            self.availability.as_ref(),
-            &self.repos,
-            self.platform_config.as_ref(),
-            self.lifecycle_surface_projection.as_ref(),
-        )
-        .with_audit_bus(self.audit_bus.clone())
-    }
-
     pub(crate) fn prompt_launch_path(
         &self,
-        executor_config: Option<&AgentConfig>,
+        _executor_config: Option<&AgentConfig>,
         input: &FrameLaunchEnvelopeConstructionInput,
     ) -> PromptLaunchPath {
-        let supports_repository_restore = executor_config
-            .map(|config| {
-                self.connector
-                    .supports_repository_restore(config.executor.as_str())
-            })
-            .unwrap_or(false);
         crate::agent_run::resolve_prompt_launch_path(
             &input.runtime_trace_state,
             input.had_existing_runtime,
-            supports_repository_restore,
+            false,
             input.agent_needs_bootstrap,
         )
     }

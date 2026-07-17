@@ -1,0 +1,20 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Hosted Agent深模块、application/domain/infrastructure依赖方向与ownership总约束。"}
+{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "Agent command/entity/change/driver observation必须使用typed payload。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "AgentSession repository port、PostgreSQL adapter和transaction边界。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "hard-cut migration、数据库约束、CAS、并发与真实PostgreSQL测试。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "现有kernel基线；实施时必须按父design替换其中journal-centric ownership。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "现有persistence基线；用于定位并删除authoritative Runtime journal。"}
+{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "binding/generation/effect delivery/driver host基线。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "AgentRun/Application facade切到Hosted Agent boundary的基线。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "typed ContextRevision、compaction与旧activation链的基线。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Session read/fork/application边界。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Agent Change、Codex App Server notification、identity与ordering。"}
+{"file": ".trellis/spec/cross-layer/agent-runtime-wire-relay.md", "reason": "effect/observation/change跨进程wire与relay约束。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "API、generated contract与frontend hard cut同步。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "authoritative snapshot+change reducer与derived activity。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "本任务第一性原理、目标ownership、Journal删除测试与目标schema。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md", "reason": "当前压缩链漏洞与references/codex源码级状态/事件证据。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/runtime-state-machine-convergence.md", "reason": "当前Runtime/AgentRun/binding/work状态inventory；其中journal权威结论已被父design supersede。"}
+{"file": ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/research/runtime-seam-options-comparison.md", "reason": "前序seam比较与重构范围；本任务纠正其journal权威前提。"}
+{"file": ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/research/agent-core-executor.md", "reason": "前序Agent core/executor边界研究，供execution adapter hard cut参考。"}
+{"file": ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/research/codex-app-server-l4-vocabulary.md", "reason": "Codex App Server vocabulary与presentation映射参考。"}

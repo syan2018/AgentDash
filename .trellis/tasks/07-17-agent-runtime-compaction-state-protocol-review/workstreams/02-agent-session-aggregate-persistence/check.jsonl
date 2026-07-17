@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 Rust kernel 与 repository测试质量。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "检查 port/adapter 与 transaction职责。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查 migration不可变性、约束和真实数据库验证。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "检查唯一事实源与删除测试是否成立。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/runtime-state-machine-convergence.md", "reason": "核对旧状态和schema是否全部覆盖；忽略已被父 design 推翻的journal结论。"}

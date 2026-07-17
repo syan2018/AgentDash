@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "指导Session authoritative read、fork与应用边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "读取当前AgentRun facade基线并切换到Hosted Agent read/change。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "约束snapshot、outbox与projection repository职责。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "约束revision、cursor、change与projection ordering。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "实现Journal删除测试、snapshot+tail与Agent-owned fork。"}
+{"file": ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/research/runtime-seam-options-comparison.md", "reason": "理解旧seam选择；父design已经修正其中journal权威前提。"}

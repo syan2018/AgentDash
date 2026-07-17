@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "指导AgentRun facade切换与Application职责。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "约束Session read/fork与产品边界。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "约束App Server notification vocabulary、identity与ordering。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "指导API/generated contract/frontend同步hard cut。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "指导snapshot+change reducer和derived activity。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "约束generated union exhaustiveness与状态展示。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md", "reason": "Codex App Server压缩item/turn时序与当前frontend问题。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "确保所有Application查询和feed切到Agent boundary。"}

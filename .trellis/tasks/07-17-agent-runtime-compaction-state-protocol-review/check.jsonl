@@ -1,0 +1,17 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查Hosted Agent边界、依赖方向与唯一业务owner。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust实现、错误、测试与最终质量门禁。"}
+{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "检查Agent/driver/protocol payload保持typed。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "检查domain port、adapter与transaction职责。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查migration、constraint、CAS与PostgreSQL并发测试。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "检查最终kernel spec与实现同步，并移除journal-centric前提。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "检查最终persistence spec、schema与Journal删除。"}
+{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "检查worker/effect/binding/driver职责。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "检查AgentRun只经过Hosted Agent seam。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "检查typed context、compaction与replica convergence。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查Agent Change、notification identity/order/reconnect。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查Rust/API/generated TypeScript一致性。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "frontend reducer/components的lint、typecheck与测试质量。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查前端不复制状态机，只从snapshot/change派生。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "唯一事实源、Journal删除与driver observation验收依据。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md", "reason": "压缩状态、失败、Codex-shaped事件和typed replay验收依据。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/runtime-state-machine-convergence.md", "reason": "旧状态/schema/interface覆盖清单；目标结论以父design为准。"}

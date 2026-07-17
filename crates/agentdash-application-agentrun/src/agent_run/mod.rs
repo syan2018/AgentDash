@@ -27,9 +27,10 @@ pub mod workspace;
 
 pub use context_projection::AgentRunContextCompactionArchive;
 pub use context_sources::{
-    AgentBusinessSurfaceContextDeps, AgentBusinessSurfaceSource, AgentContextProjectionIdentity,
-    AgentContextSurfaceSourceError, AgentContextSurfaceSourceFacts, BaseIdentitySource,
-    LoadedAgentBusinessSurfaceFacts, project_tool_protocol, resolve_tool_capability,
+    AgentBusinessSurfaceContextDeps, AgentBusinessSurfaceFrameTarget, AgentBusinessSurfaceSource,
+    AgentContextProjectionIdentity, AgentContextSurfaceSourceError, AgentContextSurfaceSourceFacts,
+    BaseIdentitySource, LoadedAgentBusinessSurfaceFacts, project_tool_protocol,
+    resolve_tool_capability,
 };
 pub use control_effects::{AgentRunControlEffectDeps, AgentRunControlEffectService};
 pub use conversation_snapshot::{
@@ -106,8 +107,9 @@ pub use agentdash_application_ports::agent_run_surface::{
     AgentRunRuntimeSurfaceQueryPort, AgentRunRuntimeSurfaceWithBackend, RuntimeSurfaceQueryPurpose,
 };
 pub use business_frame_surface_query::{
-    BusinessFrameSurfaceQuery, BusinessFrameSurfaceQueryDeps, BusinessResourceSurfaceQuery,
-    BusinessResourceSurfaceQueryDeps,
+    AgentRunRuntimeSurfaceHead, BusinessFrameSurfaceProjection, BusinessFrameSurfaceQuery,
+    BusinessFrameSurfaceQueryDeps, BusinessResourceSurfaceQuery, BusinessResourceSurfaceQueryDeps,
+    SharedAgentRunRuntimeSurfaceHead,
 };
 pub use execution_state::AgentRunExecutionState;
 pub use fork_command::{AgentRunForkCommandService, AgentRunForkRuntimePort};

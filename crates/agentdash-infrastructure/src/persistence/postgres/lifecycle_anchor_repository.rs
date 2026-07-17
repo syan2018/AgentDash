@@ -310,7 +310,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .transpose()
     }
 
-    async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+    async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,
                       surface,

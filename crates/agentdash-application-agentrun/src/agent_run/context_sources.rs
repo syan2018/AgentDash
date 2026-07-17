@@ -30,7 +30,7 @@ use agentdash_application_vfs::VfsService;
 use agentdash_domain::{
     common::AgentConfig,
     settings::{SettingScope, SettingsRepository},
-    workflow::{AgentFrame, AgentFrameRepository},
+    workflow::AgentFrame,
 };
 use agentdash_spi::{
     AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, AuthIdentity, DynAgentTool,
@@ -101,10 +101,15 @@ pub enum AgentContextSurfaceSourceError {
 
 pub struct AgentBusinessSurfaceSource {
     surface_query: Arc<BusinessFrameSurfaceQuery>,
-    frame_repository: Arc<dyn AgentFrameRepository>,
     runtime_tools: Arc<dyn RuntimeToolProvider>,
     hooks: Arc<dyn ExecutionHookProvider>,
     context: AgentBusinessSurfaceContextDeps,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentBusinessSurfaceFrameTarget {
+    LatestPersisted,
+    Exact(uuid::Uuid),
 }
 
 #[derive(Clone)]
@@ -165,14 +170,12 @@ pub struct LoadedAgentBusinessSurfaceFacts {
 impl AgentBusinessSurfaceSource {
     pub fn new(
         surface_query: Arc<BusinessFrameSurfaceQuery>,
-        frame_repository: Arc<dyn AgentFrameRepository>,
         runtime_tools: Arc<dyn RuntimeToolProvider>,
         hooks: Arc<dyn ExecutionHookProvider>,
         context: AgentBusinessSurfaceContextDeps,
     ) -> Self {
         Self {
             surface_query,
-            frame_repository,
             runtime_tools,
             hooks,
             context,
@@ -184,28 +187,35 @@ impl AgentBusinessSurfaceSource {
         request: &AgentRunRuntimeProvisionRequest,
         thread_id: &RuntimeThreadId,
         operation_id: String,
+        frame_target: AgentBusinessSurfaceFrameTarget,
     ) -> Result<LoadedAgentBusinessSurfaceFacts, String> {
-        let surface = self
-            .surface_query
-            .surface_for_provision_target(
-                &request.target,
-                thread_id,
-                &request.presentation_thread_id,
-                RuntimeSurfaceQueryPurpose::new("canonical_agent_runtime_surface"),
-            )
-            .await
-            .map_err(|error| error.to_string())?;
-        let frame = self
-            .frame_repository
-            .get_current(request.target.agent_id)
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or("AgentRun has no current AgentFrame")?;
-        if frame.id != surface.current_surface_frame_id {
-            return Err(
-                "surface query and AgentFrame repository returned different revisions".to_string(),
-            );
+        let purpose = RuntimeSurfaceQueryPurpose::new("canonical_agent_runtime_surface");
+        let projection = match frame_target {
+            AgentBusinessSurfaceFrameTarget::LatestPersisted => {
+                self.surface_query
+                    .surface_for_latest_provision_target(
+                        &request.target,
+                        thread_id,
+                        &request.presentation_thread_id,
+                        purpose,
+                    )
+                    .await
+            }
+            AgentBusinessSurfaceFrameTarget::Exact(frame_id) => {
+                self.surface_query
+                    .surface_for_frame_target(
+                        &request.target,
+                        frame_id,
+                        thread_id,
+                        &request.presentation_thread_id,
+                        purpose,
+                    )
+                    .await
+            }
         }
+        .map_err(|error| error.to_string())?;
+        let surface = projection.surface;
+        let frame = projection.frame;
         let profile = frame
             .surface
             .as_ref()

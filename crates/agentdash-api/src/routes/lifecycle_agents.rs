@@ -1041,7 +1041,7 @@ async fn fork_agent_run(
     let parent_frame = state
         .repos
         .agent_frame_repo
-        .get_current(context.agent.id)
+        .get_latest(context.agent.id)
         .await?
         .ok_or_else(|| ApiError::Conflict("current AgentFrame 尚未就绪".to_string()))?;
     if context.presentation_thread_id.is_none() {

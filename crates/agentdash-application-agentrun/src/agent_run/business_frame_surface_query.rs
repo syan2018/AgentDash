@@ -1,6 +1,8 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-use agentdash_agent_runtime_contract::{PresentationThreadId, RuntimeThreadId};
+use agentdash_agent_runtime_contract::{
+    PresentationThreadId, RuntimeSurfaceDescriptor, RuntimeThreadId,
+};
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface;
 use agentdash_application_ports::runtime_gateway_mcp_surface::{
     RuntimeGatewayMcpSurface, RuntimeGatewayMcpSurfaceQueryError,
@@ -33,6 +35,7 @@ use crate::agent_run::runtime_capability::project_capability_state_from_frame;
 #[derive(Clone)]
 pub struct BusinessFrameSurfaceQuery {
     binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    surface_head: Arc<dyn AgentRunRuntimeSurfaceHead>,
     run_repo: Arc<dyn LifecycleRunRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
@@ -41,9 +44,50 @@ pub struct BusinessFrameSurfaceQuery {
 #[derive(Clone)]
 pub struct BusinessFrameSurfaceQueryDeps {
     pub binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    pub surface_head: Arc<dyn AgentRunRuntimeSurfaceHead>,
     pub run_repo: Arc<dyn LifecycleRunRepository>,
     pub agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub frame_repo: Arc<dyn AgentFrameRepository>,
+}
+
+pub struct BusinessFrameSurfaceProjection {
+    pub surface: AgentRunRuntimeSurface,
+    pub frame: AgentFrame,
+}
+
+#[async_trait]
+pub trait AgentRunRuntimeSurfaceHead: Send + Sync {
+    async fn current_surface(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<RuntimeSurfaceDescriptor, String>;
+}
+
+#[derive(Default)]
+pub struct SharedAgentRunRuntimeSurfaceHead {
+    inner: OnceLock<Arc<dyn AgentRunRuntimeSurfaceHead>>,
+}
+
+impl SharedAgentRunRuntimeSurfaceHead {
+    pub fn set(&self, head: Arc<dyn AgentRunRuntimeSurfaceHead>) -> Result<(), &'static str> {
+        self.inner
+            .set(head)
+            .map_err(|_| "AgentRun Runtime Surface head重复绑定")
+    }
+}
+
+#[async_trait]
+impl AgentRunRuntimeSurfaceHead for SharedAgentRunRuntimeSurfaceHead {
+    async fn current_surface(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<RuntimeSurfaceDescriptor, String> {
+        let head = self
+            .inner
+            .get()
+            .ok_or("AgentRun Runtime Surface head尚未绑定")?;
+        head.current_surface(thread_id).await
+    }
 }
 
 #[derive(Clone)]
@@ -139,6 +183,7 @@ impl BusinessFrameSurfaceQuery {
     pub fn new(deps: BusinessFrameSurfaceQueryDeps) -> Self {
         Self {
             binding_repo: deps.binding_repo,
+            surface_head: deps.surface_head,
             run_repo: deps.run_repo,
             agent_repo: deps.agent_repo,
             frame_repo: deps.frame_repo,
@@ -166,17 +211,36 @@ impl BusinessFrameSurfaceQuery {
         self.surface(&binding.thread_id.to_string(), purpose).await
     }
 
-    pub async fn surface_for_provision_target(
+    pub async fn surface_for_latest_provision_target(
         &self,
         target: &AgentRunRuntimeTarget,
         thread_id: &RuntimeThreadId,
         presentation_thread_id: &PresentationThreadId,
         purpose: RuntimeSurfaceQueryPurpose,
-    ) -> Result<AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError> {
+    ) -> Result<BusinessFrameSurfaceProjection, AgentRunRuntimeSurfaceQueryError> {
         self.surface_for_resolved_target(
             target,
             &thread_id.to_string(),
             presentation_thread_id,
+            None,
+            purpose,
+        )
+        .await
+    }
+
+    pub async fn surface_for_frame_target(
+        &self,
+        target: &AgentRunRuntimeTarget,
+        frame_id: uuid::Uuid,
+        thread_id: &RuntimeThreadId,
+        presentation_thread_id: &PresentationThreadId,
+        purpose: RuntimeSurfaceQueryPurpose,
+    ) -> Result<BusinessFrameSurfaceProjection, AgentRunRuntimeSurfaceQueryError> {
+        self.surface_for_resolved_target(
+            target,
+            &thread_id.to_string(),
+            presentation_thread_id,
+            Some(frame_id),
             purpose,
         )
         .await
@@ -209,10 +273,33 @@ impl BusinessFrameSurfaceQuery {
             })
     }
 
+    async fn current_surface_frame_id(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<uuid::Uuid, AgentRunRuntimeSurfaceQueryError> {
+        let descriptor = self
+            .surface_head
+            .current_surface(thread_id)
+            .await
+            .map_err(|message| AgentRunRuntimeSurfaceQueryError::Repository {
+                operation: "managed runtime surface head",
+                message,
+            })?;
+        uuid::Uuid::parse_str(&descriptor.source_frame_id).map_err(|_| {
+            AgentRunRuntimeSurfaceQueryError::Projection {
+                message: format!(
+                    "managed runtime surface source_frame_id is invalid: {}",
+                    descriptor.source_frame_id
+                ),
+            }
+        })
+    }
+
     async fn frame_for_target(
         &self,
         target: &AgentRunRuntimeTarget,
         runtime_session_id: &str,
+        frame_id: Option<uuid::Uuid>,
         purpose: &RuntimeSurfaceQueryPurpose,
     ) -> Result<
         (agentdash_domain::workflow::LifecycleRun, AgentFrame),
@@ -245,32 +332,12 @@ impl BusinessFrameSurfaceQuery {
                 runtime_session_id: runtime_session_id.to_string(),
                 agent_id: target.agent_id,
             })?;
-        let adopted_frame_id = self
-            .binding_repo
-            .load(target)
-            .await
-            .map_err(|error| AgentRunRuntimeSurfaceQueryError::Repository {
-                operation: "agent run runtime binding",
-                message: error.to_string(),
-            })?
-            .filter(|binding| binding.thread_id.as_str() == runtime_session_id)
-            .map(|binding| {
-                uuid::Uuid::parse_str(&binding.surface.source_frame_id).map_err(|_| {
-                    AgentRunRuntimeSurfaceQueryError::Projection {
-                        message: format!(
-                            "runtime binding surface source_frame_id is invalid: {}",
-                            binding.surface.source_frame_id
-                        ),
-                    }
-                })
-            })
-            .transpose()?;
-        let frame = match adopted_frame_id {
+        let frame = match frame_id {
             Some(frame_id) => self.frame_repo.get(frame_id).await,
-            None => self.frame_repo.get_current(agent.id).await,
+            None => self.frame_repo.get_latest(agent.id).await,
         }
         .map_err(|error| AgentRunRuntimeSurfaceQueryError::Repository {
-            operation: "current adopted agent frame",
+            operation: "agent frame source",
             message: error.to_string(),
         })?
         .ok_or_else(|| AgentRunRuntimeSurfaceQueryError::MissingCurrentFrame {
@@ -289,13 +356,16 @@ impl BusinessFrameSurfaceQuery {
         let binding = self
             .binding_for_thread(runtime_session_id, &purpose)
             .await?;
-        self.surface_for_resolved_target(
-            &binding.target,
-            runtime_session_id,
-            &binding.presentation_thread_id,
-            purpose,
-        )
-        .await
+        Ok(self
+            .surface_for_resolved_target(
+                &binding.target,
+                runtime_session_id,
+                &binding.presentation_thread_id,
+                Some(self.current_surface_frame_id(&binding.thread_id).await?),
+                purpose,
+            )
+            .await?
+            .surface)
     }
 
     async fn surface_for_resolved_target(
@@ -303,10 +373,11 @@ impl BusinessFrameSurfaceQuery {
         target: &AgentRunRuntimeTarget,
         runtime_session_id: &str,
         presentation_thread_id: &PresentationThreadId,
+        frame_id: Option<uuid::Uuid>,
         purpose: RuntimeSurfaceQueryPurpose,
-    ) -> Result<AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError> {
+    ) -> Result<BusinessFrameSurfaceProjection, AgentRunRuntimeSurfaceQueryError> {
         let (run, frame) = self
-            .frame_for_target(target, runtime_session_id, &purpose)
+            .frame_for_target(target, runtime_session_id, frame_id, &purpose)
             .await?;
         frame.typed_capability_state().ok_or_else(|| {
             AgentRunRuntimeSurfaceQueryError::MissingSurfaceClosure {
@@ -449,7 +520,7 @@ impl BusinessFrameSurfaceQuery {
                 .map_err(
                     |source| AgentRunRuntimeSurfaceQueryError::RuntimeBackendAnchor { source },
                 )?;
-        Ok(AgentRunRuntimeSurface {
+        let surface = AgentRunRuntimeSurface {
             runtime_session_id: runtime_session_id.to_string(),
             presentation_thread_id: presentation_thread_id.clone(),
             run_id: run.id,
@@ -489,7 +560,8 @@ impl BusinessFrameSurfaceQuery {
             capability_state,
             visible_workspace_module_refs: frame.visible_workspace_module_refs(),
             vfs,
-        })
+        };
+        Ok(BusinessFrameSurfaceProjection { surface, frame })
     }
 }
 
@@ -580,6 +652,20 @@ mod orchestration_evidence_tests {
 
     struct StaticBindingRepository {
         binding: AgentRunRuntimeBinding,
+    }
+
+    struct StaticSurfaceHead {
+        descriptor: RuntimeSurfaceDescriptor,
+    }
+
+    #[async_trait]
+    impl AgentRunRuntimeSurfaceHead for StaticSurfaceHead {
+        async fn current_surface(
+            &self,
+            _thread_id: &RuntimeThreadId,
+        ) -> Result<RuntimeSurfaceDescriptor, String> {
+            Ok(self.descriptor.clone())
+        }
     }
 
     #[async_trait]
@@ -763,18 +849,23 @@ mod orchestration_evidence_tests {
     }
 
     #[tokio::test]
-    async fn active_surface_uses_binding_adopted_frame_instead_of_highest_revision() {
+    async fn active_surface_uses_managed_runtime_head_instead_of_binding_or_highest_revision() {
         let project_id = uuid::Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);
         let agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
-        let adopted = AgentFrame::new_revision(agent.id, 1, "adopted");
-        let candidate = AgentFrame::new_revision(agent.id, 2, "candidate_not_adopted");
+        let launch = AgentFrame::new_revision(agent.id, 1, "binding_launch");
+        let adopted = AgentFrame::new_revision(agent.id, 2, "runtime_adopted");
+        let candidate = AgentFrame::new_revision(agent.id, 3, "candidate_not_adopted");
 
         let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
         run_repo.create(&run).await.expect("create run");
         let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
         agent_repo.create(&agent).await.expect("create agent");
         let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        frame_repo
+            .create(&launch)
+            .await
+            .expect("create launch frame");
         frame_repo
             .create(&adopted)
             .await
@@ -785,7 +876,7 @@ mod orchestration_evidence_tests {
             .expect("create candidate frame");
         assert_eq!(
             frame_repo
-                .get_current(agent.id)
+                .get_latest(agent.id)
                 .await
                 .expect("load highest revision")
                 .expect("current frame")
@@ -794,9 +885,16 @@ mod orchestration_evidence_tests {
             "fixture must prove repository current differs from runtime adoption"
         );
 
+        let binding = runtime_binding(run.id, agent.id, launch.id);
+        let mut adopted_descriptor = binding.surface.clone();
+        adopted_descriptor.source_frame_id = adopted.id.to_string();
+        adopted_descriptor.surface_revision = SurfaceRevision(2);
         let query = BusinessFrameSurfaceQuery::new(BusinessFrameSurfaceQueryDeps {
             binding_repo: Arc::new(StaticBindingRepository {
-                binding: runtime_binding(run.id, agent.id, adopted.id),
+                binding: binding.clone(),
+            }),
+            surface_head: Arc::new(StaticSurfaceHead {
+                descriptor: adopted_descriptor,
             }),
             run_repo,
             agent_repo,
@@ -896,7 +994,19 @@ impl AgentRunEffectiveCapabilityPort for BusinessFrameSurfaceQuery {
             });
         }
         let (_, frame) = self
-            .frame_for_target(&binding.target, &request.runtime_session_id, &purpose)
+            .frame_for_target(
+                &binding.target,
+                &request.runtime_session_id,
+                Some(
+                    self.current_surface_frame_id(&binding.thread_id)
+                        .await
+                        .map_err(|error| AgentRunEffectiveCapabilityError::Repository {
+                            operation: "managed runtime surface head",
+                            message: error.to_string(),
+                        })?,
+                ),
+                &purpose,
+            )
             .await
             .map_err(|error| AgentRunEffectiveCapabilityError::Repository {
                 operation: "current frame",
@@ -918,7 +1028,19 @@ impl AgentRunEffectiveCapabilityPort for BusinessFrameSurfaceQuery {
                 message: error.to_string(),
             })?;
         let (_, frame) = self
-            .frame_for_target(&binding.target, &request.runtime_session_id, &purpose)
+            .frame_for_target(
+                &binding.target,
+                &request.runtime_session_id,
+                Some(
+                    self.current_surface_frame_id(&binding.thread_id)
+                        .await
+                        .map_err(|error| AgentRunEffectiveCapabilityError::Repository {
+                            operation: "managed runtime surface head",
+                            message: error.to_string(),
+                        })?,
+                ),
+                &purpose,
+            )
             .await
             .map_err(|error| AgentRunEffectiveCapabilityError::Repository {
                 operation: "current frame",

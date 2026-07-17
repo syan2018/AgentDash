@@ -1054,7 +1054,7 @@ impl AgentFrameRepository for NoopAgentFrameRepo {
         Ok(None)
     }
 
-    async fn get_current(&self, _agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+    async fn get_latest(&self, _agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         Ok(None)
     }
 

@@ -503,7 +503,7 @@ mod tests {
             .expect("Lifecycle launch");
         let frame = repos
             .agent_frame_repo
-            .get_current(launched.runtime_refs.agent_ref)
+            .get_latest(launched.runtime_refs.agent_ref)
             .await
             .expect("load current frame")
             .expect("current frame");

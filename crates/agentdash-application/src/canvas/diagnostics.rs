@@ -106,7 +106,7 @@ pub async fn resolve_agent_run_canvas_context(
         })?;
     let current_agent_frame = repos
         .agent_frame_repo
-        .get_current(agent_id)
+        .get_latest(agent_id)
         .await?
         .ok_or_else(|| {
             ApplicationError::NotFound(format!("LifecycleAgent {agent_id} 没有 current AgentFrame"))

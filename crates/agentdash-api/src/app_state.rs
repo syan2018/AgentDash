@@ -28,7 +28,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunRuntime, AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
     BaseIdentitySource, BusinessFrameSurfaceQuery, BusinessFrameSurfaceQueryDeps,
     BusinessResourceSurfaceQuery, BusinessResourceSurfaceQueryDeps, ManagedAgentRunRuntime,
-    RuntimeAgentRunMailbox, RuntimeMailboxTerminalConvergence,
+    RuntimeAgentRunMailbox, RuntimeMailboxTerminalConvergence, SharedAgentRunRuntimeSurfaceHead,
 };
 use agentdash_application_hooks::AppExecutionHookProvider;
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
@@ -607,9 +607,11 @@ impl AppState {
                 Arc::new(wait_provider),
                 Arc::new(workspace_module_provider),
             ]));
+        let runtime_surface_head = Arc::new(SharedAgentRunRuntimeSurfaceHead::default());
         let runtime_surface_query = Arc::new(BusinessFrameSurfaceQuery::new(
             BusinessFrameSurfaceQueryDeps {
                 binding_repo: repos.agent_run_runtime_binding_repo.clone(),
+                surface_head: runtime_surface_head.clone(),
                 run_repo: repos.lifecycle_run_repo.clone(),
                 agent_repo: repos.lifecycle_agent_repo.clone(),
                 frame_repo: repos.agent_frame_repo.clone(),
@@ -625,7 +627,6 @@ impl AppState {
         let base_identity = BaseIdentitySource::resolve(repos.settings_repo.as_ref()).await;
         let business_surface_source = Arc::new(AgentBusinessSurfaceSource::new(
             runtime_surface_query.clone(),
-            repos.agent_frame_repo.clone(),
             runtime_tool_provider,
             hook_provider.clone(),
             AgentBusinessSurfaceContextDeps {
@@ -706,6 +707,13 @@ impl AppState {
                     node_id: "agentdash-api".to_string(),
                 },
             )?;
+        runtime_surface_head
+            .set(Arc::new(
+                crate::bootstrap::agent_runtime_surface::ManagedRuntimeSurfaceHead::new(
+                    runtime_composition.managed_runtime.clone(),
+                ),
+            ))
+            .map_err(anyhow::Error::msg)?;
         workspace_module_presentation_append
             .set(Arc::new(CanonicalWorkspaceModulePresentationAppender {
                 runtime: runtime_composition.managed_runtime.clone(),

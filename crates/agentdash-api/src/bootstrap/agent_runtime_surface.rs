@@ -1289,7 +1289,19 @@ impl CompiledAgentRunToolBindingRecovery for CanonicalCompiledAgentRunToolBindin
                 terminal_hook_effect_binding: binding.surface.terminal_hook_effect_binding.clone(),
             };
         let plan = compiler
-            .compile(&request, &binding.thread_id, binding_id)
+            .compile(
+                &request,
+                &binding.thread_id,
+                binding_id,
+                agentdash_infrastructure::agent_runtime_composition::NativeAgentRunSurfaceCompileTarget::ExactAgentFrame(
+                    uuid::Uuid::parse_str(
+                        &persisted_business_surface.presentation.source_frame_id,
+                    )
+                    .map_err(|_| AgentRunRuntimeSurfaceSourceError::Invalid {
+                        reason: "persisted business surface source_frame_id is invalid".to_string(),
+                    })?,
+                ),
+            )
             .await?;
         // Recovery republishes executable handles only. Context, workspace and presentation are
         // already canonical durable facts and can depend on relay-backed discovery that is not
@@ -1646,6 +1658,49 @@ pub struct CanonicalRuntimeSurfaceAdopter {
     tools: Arc<CompiledAgentRunToolRegistry>,
 }
 
+pub struct ManagedRuntimeSurfaceHead {
+    runtime: Arc<
+        agentdash_agent_runtime::ManagedAgentRuntime<
+            agentdash_infrastructure::PostgresRuntimeRepository,
+        >,
+    >,
+}
+
+impl ManagedRuntimeSurfaceHead {
+    pub fn new(
+        runtime: Arc<
+            agentdash_agent_runtime::ManagedAgentRuntime<
+                agentdash_infrastructure::PostgresRuntimeRepository,
+            >,
+        >,
+    ) -> Self {
+        Self { runtime }
+    }
+}
+
+#[async_trait]
+impl agentdash_application_agentrun::agent_run::AgentRunRuntimeSurfaceHead
+    for ManagedRuntimeSurfaceHead
+{
+    async fn current_surface(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<RuntimeSurfaceDescriptor, String> {
+        match self
+            .runtime
+            .snapshot(RuntimeSnapshotQuery::Thread {
+                thread_id: thread_id.clone(),
+                at_revision: None,
+            })
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            RuntimeSnapshotResult::Thread { snapshot } => Ok(snapshot.surface),
+            _ => Err("Runtime surface head query returned a non-thread snapshot".to_string()),
+        }
+    }
+}
+
 impl CanonicalRuntimeSurfaceAdopter {
     pub fn new(
         compiler: Arc<dyn NativeAgentRunSurfaceCompiler>,
@@ -1670,6 +1725,25 @@ impl CanonicalRuntimeSurfaceAdopter {
             tools,
         }
     }
+}
+
+async fn compile_exact_runtime_surface_candidate(
+    compiler: &dyn NativeAgentRunSurfaceCompiler,
+    request: &agentdash_application_ports::agent_run_runtime::AgentRunRuntimeProvisionRequest,
+    thread_id: &RuntimeThreadId,
+    binding_id: &RuntimeBindingId,
+    frame_id: uuid::Uuid,
+) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError> {
+    compiler
+        .compile(
+            request,
+            thread_id,
+            binding_id,
+            agentdash_infrastructure::agent_runtime_composition::NativeAgentRunSurfaceCompileTarget::ExactAgentFrame(
+                frame_id,
+            ),
+        )
+        .await
 }
 
 #[async_trait]
@@ -1698,13 +1772,17 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
                 fork: None,
                 terminal_hook_effect_binding: binding.surface.terminal_hook_effect_binding.clone(),
             };
-        let plan = self
-            .compiler
-            .compile(&request, &binding.thread_id, &binding.binding_id)
-            .await
-            .map_err(|error| RuntimeSurfaceAdoptionError::Failed {
-                message: error.to_string(),
-            })?;
+        let plan = compile_exact_runtime_surface_candidate(
+            self.compiler.as_ref(),
+            &request,
+            &binding.thread_id,
+            &binding.binding_id,
+            target.frame_id,
+        )
+        .await
+        .map_err(|error| RuntimeSurfaceAdoptionError::Failed {
+            message: error.to_string(),
+        })?;
         if plan.source_frame_id != target.frame_id.to_string() {
             return Err(RuntimeSurfaceAdoptionError::MissingTarget {
                 frame_id: target.frame_id,
@@ -1893,10 +1971,23 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameSurfaceCompositionAdapter {
         request: &agentdash_application_ports::agent_run_runtime::AgentRunRuntimeProvisionRequest,
         thread_id: &RuntimeThreadId,
         binding_id: &RuntimeBindingId,
+        target: agentdash_infrastructure::agent_runtime_composition::NativeAgentRunSurfaceCompileTarget,
     ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError> {
         let loaded = self
             .source
-            .load(request, thread_id, format!("surface-compile-{binding_id}"))
+            .load(
+                request,
+                thread_id,
+                format!("surface-compile-{binding_id}"),
+                match target {
+                    agentdash_infrastructure::agent_runtime_composition::NativeAgentRunSurfaceCompileTarget::LatestPersistedAgentFrame => {
+                        agentdash_application_agentrun::agent_run::AgentBusinessSurfaceFrameTarget::LatestPersisted
+                    }
+                    agentdash_infrastructure::agent_runtime_composition::NativeAgentRunSurfaceCompileTarget::ExactAgentFrame(frame_id) => {
+                        agentdash_application_agentrun::agent_run::AgentBusinessSurfaceFrameTarget::Exact(frame_id)
+                    }
+                },
+            )
             .await
             .map_err(|reason| AgentRunRuntimeSurfaceSourceError::Unavailable {
                 reason,
@@ -2175,6 +2266,75 @@ mod tests {
         platform::tool_capability::{CAP_FILE_READ, CAP_WORKSPACE_MODULE},
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct RecordingSurfaceCompiler {
+        target: std::sync::Mutex<
+            Option<
+                agentdash_infrastructure::agent_runtime_composition::NativeAgentRunSurfaceCompileTarget,
+            >,
+        >,
+    }
+
+    #[async_trait]
+    impl NativeAgentRunSurfaceCompiler for RecordingSurfaceCompiler {
+        async fn compile(
+            &self,
+            _request: &agentdash_application_ports::agent_run_runtime::AgentRunRuntimeProvisionRequest,
+            _thread_id: &RuntimeThreadId,
+            _binding_id: &RuntimeBindingId,
+            target: agentdash_infrastructure::agent_runtime_composition::NativeAgentRunSurfaceCompileTarget,
+        ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError> {
+            *self.target.lock().expect("record compile target") = Some(target);
+            Err(AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "stop after recording target".to_string(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn surface_adoption_compiles_the_exact_candidate_frame() {
+        let compiler = RecordingSurfaceCompiler::default();
+        let frame_id = uuid::Uuid::new_v4();
+        let request =
+            agentdash_application_ports::agent_run_runtime::AgentRunRuntimeProvisionRequest {
+                target: agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget {
+                    run_id: uuid::Uuid::new_v4(),
+                    agent_id: uuid::Uuid::new_v4(),
+                },
+                presentation_thread_id: PresentationThreadId::new("candidate-presentation")
+                    .expect("presentation thread"),
+                identity: None,
+                backend_selection: None,
+                fork: None,
+                terminal_hook_effect_binding: None,
+            };
+        let thread_id = RuntimeThreadId::new("candidate-runtime").expect("runtime thread");
+        let binding_id = RuntimeBindingId::new("candidate-binding").expect("binding");
+
+        let result = compile_exact_runtime_surface_candidate(
+            &compiler,
+            &request,
+            &thread_id,
+            &binding_id,
+            frame_id,
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("recording compiler must stop after observing the target"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("stop after recording target"));
+        assert_eq!(
+            *compiler.target.lock().expect("load compile target"),
+            Some(
+                agentdash_infrastructure::agent_runtime_composition::NativeAgentRunSurfaceCompileTarget::ExactAgentFrame(
+                    frame_id,
+                )
+            )
+        );
+    }
 
     fn fixture_hook_runtime(session_id: &str) -> SharedHookRuntime {
         Arc::new(AgentFrameHookRuntime::new(

@@ -153,7 +153,7 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
         let current_frame = self
             .repos
             .agent_frames
-            .get_current(agent_id)
+            .get_latest(agent_id)
             .await?
             .ok_or(DeliveryRuntimeSelectionError::CurrentFrameMissing { agent_id })?;
         if current_frame.agent_id != agent_id {

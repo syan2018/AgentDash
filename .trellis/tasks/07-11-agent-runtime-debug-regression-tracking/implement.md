@@ -135,3 +135,15 @@
 - [ ] 引入planned service rebind能力，使不同current Frame execution profile可以原子创建revision、重配service instance并重新对齐binding/snapshot；在此之前保持typed unsupported。
 - [ ] 恢复`ProjectAgentRunStartService`具名application owner，覆盖post-launch失败无orphan、duplicate不重复launch以及首次/duplicate错误结果一致。
 - [ ] 以AgentDash-owned Codex标准`UserInputBlock`替换Runtime自定义Text/Image/FileReference镜像，覆盖nullable detail、text_elements、LocalImage/Skill/Mention保真、空白拒绝与Native typed unsupported。
+
+## ARD-015
+
+- [x] 以三版本回归固定失败边界：binding bootstrap为F1、Managed Runtime snapshot adopted为F2、repository latest为F3，活动查询必须只返回F2。
+- [x] 将exact candidate Frame坐标加入surface compiler/source contract；compiler按F2加载一次完整facts，不再从binding或`AgentFrameRepository::get_current()`重新发现目标。
+- [x] 将current adopted Runtime Surface读取收敛到Managed Runtime snapshot/AgentRun facade；删除`BusinessFrameSurfaceQuery`从immutable binding surface推断live adopted Frame的路径。
+- [x] 删除`AgentBusinessSurfaceSource`冗余Frame repository依赖与revision equality guard；Context facts复用同一次surface projection返回的exact Frame。
+- [x] 将AgentFrame最高revision API按latest persisted真实语义统一改名为`get_latest`，迁移所有调用方且不保留兼容方法。
+- [x] candidate持久化前校验自身closure，持久化后按exact Frame完成完整Business Surface/presentation compile，并以expected revision/digest执行`SurfaceAdopt`；只有Managed Runtime snapshot commit能推进active head。
+- [x] 覆盖三版本active head、exact candidate compiler、Canvas visibility no-op、surface CAS/失败保持旧snapshot、recovery exact descriptor与production composition工具继续执行。
+- [x] 运行相关Rust direct fmt、定向测试、目标三crate check与静态搜索；记录strict clippy中本次未修改的既有lint债。
+- [ ] 使用`pnpm dev`真实Canvas create/write/present确认当前turn继续且后续对话可用。

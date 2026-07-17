@@ -245,7 +245,7 @@ async fn subject_runtime_attempt_history(
         for agent in agents {
             let current_frame_id = repos
                 .agent_frame_repo
-                .get_current(agent.id)
+                .get_latest(agent.id)
                 .await?
                 .map(|frame| frame.id);
             let bindings = repos

@@ -165,6 +165,19 @@
 - Mailbox只拥有输入草稿、投递策略、顺序、barrier、幂等与claim lifecycle，不生成或持久化canonical Runtime/Presentation identity。AgentRun Runtime facade在带当前snapshot guard的command admission内为start生成稳定identity，或为steer绑定当前active presentation turn。
 - Promote必须通过Mailbox application owner修改投递意图，不由API直接拼repository字段。active turn在inspect与execute之间变化时，facade返回typed stale admission；Mailbox保留同一draft重新观察并规划start/steer，不重用旧presentation坐标，也不把合法竞争标记为永久失败。
 
+### R16. Runtime Surface candidate/adopted 事实源收敛
+
+**问题 ARD-015：Canvas live surface adoption 将 latest persisted Frame 与 adopted Frame 混为 current**
+
+- 现象：Canvas 创建时提交 `CanvasVisibilityRequested { reason: Created }`，新 AgentFrame revision 已写入仓储后，production surface compiler 报错 `surface query and AgentFrame repository returned different revisions`，导致 Canvas 无法展示且当前 Agent turn 中断。
+- 已确认直接根因：Canvas update 先持久化 candidate Frame，再调用 `CanonicalRuntimeSurfaceAdopter`；adopter 虽然收到 candidate `frame_id`，compiler contract 却不携带该坐标，转而重新查询旧 runtime binding。`BusinessFrameSurfaceQuery` 按 binding 返回旧 adopted Frame，而 `AgentBusinessSurfaceSource` 又调用 `AgentFrameRepository::get_current()`取得最高持久化 revision，形成确定性冲突。
+- 已确认架构根因：`AgentFrameRepository::get_current()`实际表达 latest persisted revision，runtime binding 的 surface descriptor 是 bootstrap/binding 事实且不会随 `SurfaceAdopt` 更新，Managed Runtime thread snapshot 才拥有当前 adopted Runtime Surface。三种事实被多个查询和编译入口共同命名为 current。
+- Candidate compilation 必须显式消费 exact candidate Frame，不得从 binding、最高 revision 或产品查询反推编译目标。旧 adopted surface 只用于 delta/presentation 与 CAS expected base；成功 adoption 后的 active descriptor只从 Managed Runtime snapshot读取。
+- 删除 `AgentBusinessSurfaceSource` 对 Frame repository 的第二次 current 查询，以及 `BusinessFrameSurfaceQuery` 通过 immutable runtime binding surface推断 live adopted Frame 的路径。需要 exact Frame 的调用方必须携带 Frame ID；需要 active Runtime Surface 的调用方必须查询 Managed Runtime snapshot或其唯一 AgentRun facade。
+- `AgentFrameRepository` 的最高 revision读取不得再命名或用于 active/current adopted 语义；按真实职责收束为 revision allocation/history query。项目未上线，不保留旧 current 兼容入口或 fallback。
+- Surface update 在持久化前完成candidate自身可确定的closure校验；持久化后按exact Frame完成依赖外部Tool/Hook/VFS source的完整编译，再由stable operation identity、expected surface revision/digest和Managed Runtime CAS提交adoption。candidate revision是不可变审计事实，只有snapshot commit成功后才成为产品active surface。
+- 验收必须覆盖真实 production composition seam：F1 已 adopted、F2 已构造/持久化时，adopter必须按 F2 编译并完成 `SurfaceAdopt`；失败注入后 active仍为F1；Canvas create后present不产生冗余revision；测试不得以 `RecordingAdopter` 或 `CapturingAgentRunBridge` 替代该链路。
+
 ## Acceptance Criteria
 
 - [x] ARD-001 已在 `pnpm dev` 启动的真实产品路径复现并记录第一个断点位置。
@@ -205,6 +218,11 @@
 - [ ] ARD-014 Responses bridge在`response.completed`后立即形成唯一canonical MessageEnd/TurnTerminal，且不等待HTTP EOF或被后续decoder错误覆写。
 - [ ] ARD-014 Mailbox draft与delivery policy保持正交；Promote和终态竞争下的消息只会steer当前turn或在idle后start下一turn，不产生stale presentation失败或永久悬空。
 - [ ] ARD-014 通过application/provider定向竞态测试和真实`pnpm dev`连续两轮输入验证可见回复、canonical终态与mailbox继续消费一致。
+- [x] ARD-015 exact candidate Frame 贯穿 Surface compiler/adopter，编译链不再读取 repository highest revision或binding bootstrap surface作为live adopted事实。
+- [x] ARD-015 Managed Runtime snapshot成为唯一current adopted Runtime Surface；未采用candidate不进入产品active查询，失败adoption不改变F1。
+- [ ] ARD-015 真实production composition回归覆盖Canvas create/adopt/present及重复visibility no-op，不使用绕过adopter/compiler的fake bridge。
+- [x] ARD-015 删除错误的冗余current查询与不可达binding adopted-pointer语义，并通过相关crate check、定向回归与production composition E2E验证。
+- [ ] ARD-015 使用真实`pnpm dev`完成Canvas create/write/present产品复验。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -230,6 +248,7 @@
 | ARD-012 | fixed | blocker | Provider status仅保留ephemeral presentation；violation从committed base原子terminalize并停止全部pump，outbox以canonical二次读取决定ack；待真实Provider产品链复验 |
 | ARD-013 | diagnosed | major | canonical Runtime带来placement/recovery收益，但mutation owner与revision职责未收束，Context/Hook及跨实例CAS仍存在结构性竞争面 |
 | ARD-014 | diagnosed | blocker | Responses等待HTTP EOF导致可见回复与canonical终态分裂；Promote跨层改policy却保留预生成presentation坐标，立即发送确定性失败 |
+| ARD-015 | fixed | blocker | exact candidate坐标已贯穿compiler/adopter，Managed Runtime snapshot成为唯一adopted head，latest persisted repository路径已完成语义改名与隔离；待真实Canvas产品链复验 |
 
 ## Verification Record
 
@@ -263,3 +282,5 @@
 - ARD-011真实`pnpm dev` Run `689ea30d-cdf2-4e1b-aac9-613dc72de8ed` / agent `649e80d6-bd33-4337-929e-f0856fae58f9`：`main://` start返回`running`、terminal `term-1784122916605-a9eb7028`、`next_seq=0`；同轮read返回`completed`、exit 0、`next_seq=4`，下一用户轮不带cursor读取同一已完成terminal仍取得`shell-start`与`shell-done`完整retained output。数据库同时保留旧terminal的“未找到可续接终端”失败与新terminal三条completed记录，完成同库前后对照。
 - ARD-012真实embedded PostgreSQL回归在Runtime UoW末阶段注入失败，证明projection/journal/operation/effect/quarantine全部回滚；重试从committed base提交唯一ProtocolViolation、Lost、terminal presentation/effect/quarantine，且thread column revision、projection revision与journal MAX(revision)一致，event head一致。
 - ARD-012 fabricated `DriverError::Terminalized`真实outbox claim回归证明canonical operation仍active时release/no-ack且可reclaim，claim期间canonical terminal后二次读取才ack。Runtime interface 44、Native 37+16、Codex 50、Remote 19、相关crate check、contracts、fmt与diff check通过；本轮未启动`pnpm dev`，真实Provider产品链仍待复验。
+- ARD-015 修复将`NativeAgentRunSurfaceCompileTarget::ExactAgentFrame`贯穿Canonical adopter/compiler/business source；active surface与effective capability改由Managed Runtime thread snapshot定位source Frame，binding只保留bootstrap/recovery坐标。`AgentBusinessSurfaceSource`的第二次Frame repository读取与revision equality guard已删除，repository最高revision入口统一命名为`get_latest`。
+- ARD-015 定向验证通过：三版本回归证明binding=F1、snapshot=F2、repository latest=F3时活动查询只返回F2；exact candidate contract证明adopter以F2调用compiler；production tools E2E从真实PostgreSQL composition完成工具调用到final assistant terminal。目标三crate `cargo check --tests`通过；strict clippy被本次未修改的既有lint债阻断，真实`pnpm dev` Canvas产品链仍待复验。

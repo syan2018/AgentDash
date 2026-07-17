@@ -31,7 +31,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunRuntime, AgentRunTerminalRegistry, BaseIdentitySource, BusinessFrameSurfaceQuery,
     BusinessFrameSurfaceQueryDeps, EnqueueRuntimeMailboxMessage, LaunchPresentationSource,
     ManagedAgentRunRuntime, RuntimeAgentRunMailbox, RuntimeMailboxSubmitOutcome,
-    SendAgentRunMessage,
+    SendAgentRunMessage, SharedAgentRunRuntimeSurfaceHead,
 };
 use agentdash_application_lifecycle::lifecycle::tools::SharedSessionToolServicesHandle as LifecycleSessionToolServicesHandle;
 use agentdash_application_ports::{
@@ -479,9 +479,11 @@ async fn real_agent_frame_task_and_workspace_tools_continue_to_final_assistant()
                 ),
             ),
         ]));
+    let surface_head = Arc::new(SharedAgentRunRuntimeSurfaceHead::default());
     let surface_query = Arc::new(BusinessFrameSurfaceQuery::new(
         BusinessFrameSurfaceQueryDeps {
             binding_repo: repos.agent_run_runtime_binding_repo.clone(),
+            surface_head: surface_head.clone(),
             run_repo: repos.lifecycle_run_repo.clone(),
             agent_repo: repos.lifecycle_agent_repo.clone(),
             frame_repo: repos.agent_frame_repo.clone(),
@@ -489,7 +491,6 @@ async fn real_agent_frame_task_and_workspace_tools_continue_to_final_assistant()
     ));
     let business_surface_source = Arc::new(AgentBusinessSurfaceSource::new(
         surface_query.clone(),
-        repos.agent_frame_repo.clone(),
         runtime_tools,
         Arc::new(NoopExecutionHookProvider),
         AgentBusinessSurfaceContextDeps {
@@ -560,6 +561,13 @@ async fn real_agent_frame_task_and_workspace_tools_continue_to_final_assistant()
         node_id: "production-tools-e2e".to_string(),
     })
     .expect("production Runtime composition");
+    surface_head
+        .set(Arc::new(
+            super::agent_runtime_surface::ManagedRuntimeSurfaceHead::new(
+                composition.managed_runtime.clone(),
+            ),
+        ))
+        .expect("bind production Runtime Surface head");
     let runtime: Arc<dyn AgentRunRuntime> = Arc::new(ManagedAgentRunRuntime::new(
         composition.gateway.clone(),
         composition.bindings.clone(),

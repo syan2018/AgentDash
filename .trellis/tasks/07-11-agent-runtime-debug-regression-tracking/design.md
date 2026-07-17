@@ -122,3 +122,27 @@ ProjectAgent start仍需恢复具名application orchestrator，使receipt、Life
 Runtime输入直接承载AgentDash-owned Codex app-server标准`UserInputBlock`，而不是另一套Text/Image/FileReference镜像。Codex adapter原样序列化Text、Image、LocalImage、Skill与Mention，包括nullable detail和text_elements；Structured走typed additional context。Native adapter仍只支持Text/Image，并在side effect前明确拒绝其它标准variant和Structured。API独立验证至少存在一个非空白Text或任意非Text块，但不trim、过滤或重写已接纳的标准块。
 
 API只负责鉴权和DTO映射，不为每个queued请求从`after=None`订阅Runtime历史事件。canonical terminal后的drain由`RuntimeMailboxTerminalConvergence`触发，进程/租约恢复由pending recovery worker负责。Product receipt第一次返回Queued后保持exact Queued replay，即使后台后来消费了该message；调度器推进旧高优先级message时也不能把旧Operation receipt返回给当前提交。
+
+## 16. Runtime Surface exact candidate 与 adopted snapshot
+
+Runtime Surface adoption同时涉及两个不同版本，接口必须显式区分：`expected_active`来自Managed Runtime thread snapshot，`candidate`来自本次AgentFrame surface mutation。candidate Frame ID是compile/adopt operation的必需坐标，不能在compiler内部通过`get_current(agent_id)`或runtime binding重新发现。
+
+`AgentRunRuntimeBinding`只表达Runtime thread、Host binding、driver generation、profile与启动时descriptor等绑定事实。它不是live surface head，原因是普通`SurfaceAdopt`不会创建新的binding lineage，也不会更新该文档。当前adopted descriptor由Managed Runtime `RuntimeThreadState.surface`唯一持有；产品active surface、CAS expected base与recovery均读取这一事实。
+
+目标数据流：
+
+```text
+current Runtime snapshot F1
+  + exact uncommitted AgentFrame candidate F2
+  -> validate candidate closure / compile Business Surface / compile presentation delta
+  -> persist immutable F2
+  -> RuntimeCommand::SurfaceAdopt(expected=F1 revision+digest, target=F2 descriptor)
+  -> commit executable publication
+  -> current Runtime snapshot F2
+```
+
+Application surface source只加载一次明确Frame并由该Frame派生executor、tools、Hook snapshot与Business facts。旧active surface只作为adoption plan的base输入，不与candidate source facts合并为一个“current”对象。`BusinessFrameSurfaceQuery`继续服务产品/资源查询时，也必须由调用方提供明确adopted descriptor；不得把binding bootstrap descriptor升级为live pointer。
+
+`AgentFrameRepository`保留immutable revision store职责。最高revision只服务revision allocation、历史和诊断；方法命名必须反映latest persisted语义。active读取不进入该repository。由于项目未上线，直接删除错误的`get_current` active语义和冗余兼容分支。
+
+Adopter以stable operation identity协调surface store、tool registry publication与Managed Runtime CAS。所有可确定的candidate closure、tool/hook和presentation compile错误在持久化前暴露；跨系统提交失败时，Managed Runtime snapshot仍是active权威，任何已持久化candidate都只能作为未采用历史，不能被产品查询误认为current。

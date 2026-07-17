@@ -524,7 +524,7 @@ mod tests {
                 .cloned())
         }
 
-        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+        async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
             Ok(self
                 .items
                 .lock()

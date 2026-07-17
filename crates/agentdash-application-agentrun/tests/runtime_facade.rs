@@ -45,7 +45,7 @@ impl AgentFrameRepository for CurrentFrameRepository {
         Ok((frame.id == frame_id).then(|| frame.clone()))
     }
 
-    async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+    async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         let frame = self.frame.lock().await;
         Ok((frame.agent_id == agent_id).then(|| frame.clone()))
     }

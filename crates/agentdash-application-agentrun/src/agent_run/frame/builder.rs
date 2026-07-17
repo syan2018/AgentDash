@@ -250,7 +250,7 @@ impl AgentFrameBuilder {
         &self,
         repo: &dyn AgentFrameRepository,
     ) -> Result<AgentFrame, DomainError> {
-        let current = repo.get_current(self.agent_id).await?;
+        let current = repo.get_latest(self.agent_id).await?;
         let next_revision = match current.as_ref() {
             Some(current) => current.revision + 1,
             None => 1,
@@ -348,7 +348,7 @@ mod tests {
                 .find(|frame| frame.id == frame_id)
                 .cloned())
         }
-        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+        async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
             let items = self.items.lock().unwrap();
             let mut frames: Vec<_> = items.iter().filter(|f| f.agent_id == agent_id).collect();
             frames.sort_by_key(|f| f.revision);

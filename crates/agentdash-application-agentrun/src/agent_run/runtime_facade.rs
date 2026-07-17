@@ -480,7 +480,7 @@ impl ExecutionProfileCoordinator for CurrentAgentFrameExecutionProfileCoordinato
         };
         let frame = self
             .frames
-            .get_current(request.target.agent_id)
+            .get_latest(request.target.agent_id)
             .await
             .map_err(|error| ExecutionProfileCoordinationError::Persistence(error.to_string()))?
             .ok_or(ExecutionProfileCoordinationError::CurrentFrameUnavailable {

@@ -67,7 +67,7 @@ pub async fn resolve_current_frame_from_delivery_trace_ref(
     if agent.run_id != binding.target.run_id {
         return Ok(None);
     }
-    let Some(frame) = frame_repo.get_current(agent.id).await? else {
+    let Some(frame) = frame_repo.get_latest(agent.id).await? else {
         return Ok(None);
     };
     if frame.agent_id != agent.id {
@@ -195,7 +195,7 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
     ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
         let Some(frame) = self
             .frame_repo
-            .get_current(binding.target.agent_id)
+            .get_latest(binding.target.agent_id)
             .await
             .map_err(|e| ActivityRuntimeAssociationError::Repository {
                 operation: "current AgentFrame",

@@ -214,7 +214,7 @@ runtime.accept_message(AcceptAgentRunMessage { presentation: draft, .. }).await?
 
 ```rust
 // Wrong: API handler直接读取Lifecycle/Frame repository并拼装产品投影。
-let frame = state.repos.agent_frame_repo.get_current(agent_id).await?;
+let frame = state.repos.agent_frame_repo.get_latest(agent_id).await?;
 
 // Correct: API鉴权后调用具名application query，再映射generated contract。
 let product = state.services.agent_run_product_query.get(input).await?;

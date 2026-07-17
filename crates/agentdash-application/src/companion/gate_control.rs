@@ -1011,7 +1011,7 @@ impl CompanionGateControlService {
             })?
         } else if let Some(agent_id) = gate.agent_id {
             self.frame_repo
-                .get_current(agent_id)
+                .get_latest(agent_id)
                 .await?
                 .ok_or_else(|| {
                     ApplicationError::NotFound(format!("gate agent 没有当前 frame: {agent_id}"))
@@ -1089,7 +1089,7 @@ impl CompanionGateControlService {
                 "LifecycleAgent {agent_id} 不属于 LifecycleRun {run_id}"
             )));
         }
-        let Some(frame) = self.frame_repo.get_current(agent_id).await? else {
+        let Some(frame) = self.frame_repo.get_latest(agent_id).await? else {
             return Err(ApplicationError::NotFound(format!(
                 "LifecycleAgent {agent_id} 没有 current AgentFrame"
             )));
@@ -1461,7 +1461,7 @@ mod tests {
             Ok(self.frames.lock().unwrap().get(&frame_id).cloned())
         }
 
-        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+        async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
             Ok(self
                 .frames
                 .lock()

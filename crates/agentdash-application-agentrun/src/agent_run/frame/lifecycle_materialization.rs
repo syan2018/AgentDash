@@ -376,7 +376,7 @@ mod tests {
                 .cloned())
         }
 
-        async fn get_current(
+        async fn get_latest(
             &self,
             agent_id: uuid::Uuid,
         ) -> Result<Option<AgentFrame>, DomainError> {
@@ -443,7 +443,7 @@ mod tests {
             .expect("construct launch anchor");
 
         let frame = repo
-            .get_current(agent_id)
+            .get_latest(agent_id)
             .await
             .unwrap()
             .expect("persisted frame");

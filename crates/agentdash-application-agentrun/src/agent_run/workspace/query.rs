@@ -406,7 +406,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         }
         self.repos
             .agent_frame_repo
-            .get_current(agent.id)
+            .get_latest(agent.id)
             .await
             .map_err(WorkflowApplicationError::from)
     }

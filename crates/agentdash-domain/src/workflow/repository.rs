@@ -106,7 +106,7 @@ pub trait LifecycleAgentRepository: Send + Sync {
 pub trait AgentFrameRepository: Send + Sync {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError>;
     async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
-    async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
+    async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError>;
 }
 

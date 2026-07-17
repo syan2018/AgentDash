@@ -214,7 +214,7 @@ impl AgentFrameRepository for MemoryAgentFrameRepository {
             .cloned())
     }
 
-    async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+    async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         Ok(self
             .frames
             .lock()
@@ -1484,7 +1484,7 @@ mod tests {
         repo.create(&latest_high_revision).await.unwrap();
         repo.create(&other_agent_frame).await.unwrap();
 
-        let current = repo.get_current(agent_id).await.unwrap().unwrap();
+        let current = repo.get_latest(agent_id).await.unwrap().unwrap();
 
         assert_eq!(current.id, latest_high_revision_id);
         assert_ne!(current.id, older_high_revision_id);

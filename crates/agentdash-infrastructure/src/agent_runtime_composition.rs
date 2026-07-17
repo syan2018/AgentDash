@@ -268,6 +268,12 @@ pub struct NativeAgentRunSurfacePlan {
     pub terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeAgentRunSurfaceCompileTarget {
+    LatestPersistedAgentFrame,
+    ExactAgentFrame(uuid::Uuid),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AgentRunRuntimeSurfaceSourceError {
     #[error("AgentRun runtime surface is unavailable: {reason}")]
@@ -287,6 +293,7 @@ pub trait NativeAgentRunSurfaceCompiler: Send + Sync {
         request: &AgentRunRuntimeProvisionRequest,
         thread_id: &RuntimeThreadId,
         binding_id: &RuntimeBindingId,
+        target: NativeAgentRunSurfaceCompileTarget,
     ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError>;
 }
 
@@ -363,7 +370,12 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
     ) -> Result<PreparedAgentRunRuntime, AgentRunRuntimeSurfaceSourceError> {
         let plan = self
             .compiler
-            .compile(request, thread_id, binding_id)
+            .compile(
+                request,
+                thread_id,
+                binding_id,
+                NativeAgentRunSurfaceCompileTarget::LatestPersistedAgentFrame,
+            )
             .await?;
         let definition_id = match plan.executor.trim() {
             "PI_AGENT" => NATIVE_DEFINITION_ID,
@@ -3002,6 +3014,7 @@ mod tests {
             request: &AgentRunRuntimeProvisionRequest,
             _thread_id: &RuntimeThreadId,
             _binding_id: &RuntimeBindingId,
+            _target: NativeAgentRunSurfaceCompileTarget,
         ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError> {
             let surface = fixture_surface();
             let business_surface = fixture_business_surface(&surface);

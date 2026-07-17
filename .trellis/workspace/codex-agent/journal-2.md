@@ -371,3 +371,38 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 65: 收敛内嵌 Skill 资产与 Workspace Module 展示闭环
+
+**Date**: 2026-07-17
+**Task**: 收敛内嵌 Skill 资产与 Workspace Module 展示闭环
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+将 embedded Skill catalog 收敛为 Project provision 资产与只读 lifecycle projection；修复持久化 Workspace Module presentation 在 hydration、面板初始化与 workspace tab store 之间丢失的问题；创建仓库同级 Main reference 并恢复 parity oracle。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a3a064035` | (see git log) |
+| `8e22afb81` | (see git log) |
+| `4d56eb3a2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

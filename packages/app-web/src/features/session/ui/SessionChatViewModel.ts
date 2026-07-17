@@ -163,6 +163,42 @@ export function collectAllPlatformEvents(
   return { items, lastSeenSeq };
 }
 
+export function dispatchPlatformSideEffectEvents(
+  rawEvents: SessionEventEnvelope[],
+  afterSeq: number | null,
+  historyReplayBoundarySeq: number,
+  onSystemEvent: (eventType: string, event: BackboneEvent) => void,
+): number {
+  const isInitialProjection = afterSeq == null;
+  const cursor = afterSeq ?? 0;
+  let lastSeenSeq = cursor;
+
+  for (const event of rawEvents) {
+    if (event.event_seq <= cursor) {
+      continue;
+    }
+    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+    const bbEvent = event.notification.event;
+    if (bbEvent.type !== "platform") {
+      continue;
+    }
+    if (
+      isInitialProjection &&
+      event.event_seq <= historyReplayBoundarySeq &&
+      bbEvent.payload.kind !== "control_plane_projection_changed"
+    ) {
+      continue;
+    }
+    const eventType = extractPlatformEventType(bbEvent);
+    if (!eventType) {
+      continue;
+    }
+    onSystemEvent(eventType, bbEvent);
+  }
+
+  return lastSeenSeq;
+}
+
 export function collectTurnLifecycleEvents(
   rawEvents: SessionEventEnvelope[],
   afterSeq: number,

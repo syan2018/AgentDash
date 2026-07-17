@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "../../../generated/common-contracts";
 import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
 import {
   computeProjectionRefreshKey,
+  dispatchPlatformSideEffectEvents,
   extractTurnLifecycleEventType,
   isAgentRunWorkspaceActionRunning,
   rawEventsBelongToRuntimeStreamTarget,
@@ -290,6 +291,45 @@ describe("collectRenderableSystemEvents", () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.eventType).toBe("workspace_module_presented");
     expect(result.items[0]?.eventSeq).toBe(4);
+  });
+
+  it("初次连接时将 hydration 边界内的 control-plane projection 交给页面副作用入口", () => {
+    const onSystemEvent = vi.fn();
+
+    const lastSeenSeq = dispatchPlatformSideEffectEvents(
+      [
+        eventEnvelope(93, platformMetaEvent("system_message", {
+          message: "hydrated message",
+        })),
+        eventEnvelope(94, workspaceModulePresentedEvent()),
+        eventEnvelope(97, {
+          type: "item_completed",
+          payload: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: {
+              type: "dynamicToolCall",
+              id: "tool-1",
+              tool: "workspace_module_present",
+              status: "completed",
+              success: true,
+              arguments: {},
+              namespace: null,
+              durationMs: null,
+              contentItems: null,
+            },
+            completedAtMs: 97,
+          },
+        }),
+      ],
+      null,
+      97,
+      onSystemEvent,
+    );
+
+    expect(lastSeenSeq).toBe(97);
+    expect(onSystemEvent).toHaveBeenCalledTimes(1);
+    expect(onSystemEvent.mock.calls[0]?.[0]).toBe("workspace_module_presented");
   });
 
   it("全量 platform 收集函数可用历史边界跳过 hydrate 事件", () => {

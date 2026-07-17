@@ -68,7 +68,7 @@ describe("platformEvent", () => {
         kind: "control_plane_projection_changed",
         data: {
           projection: "resource_surface",
-          reason: "workspace_module_presented",
+          reason: "capability_state_changed",
           run_id: "run-1",
           agent_id: "agent-1",
           frame_id: "frame-1",

@@ -1,7 +1,7 @@
 import type { JsonValue } from "../../../generated/common-contracts";
 import type { WorkspaceModulePresentation } from "../../../generated/workspace-module-contracts";
 
-export interface WorkspaceModulePresentedTabTarget {
+export interface WorkspaceModuleTabTarget {
   typeId: string;
   uri?: string;
 }
@@ -48,7 +48,7 @@ export function workspaceModulePresentationFromPlatformEventData(
 
 export function workspaceModulePresentationTabTarget(
   data: WorkspaceModulePresentation | null,
-): WorkspaceModulePresentedTabTarget | null {
+): WorkspaceModuleTabTarget | null {
   if (!data) return null;
   const rendererKind = data.renderer_kind.trim();
   const viewKey = data.view_key.trim();
@@ -67,10 +67,4 @@ export function workspaceModulePresentationTabTarget(
     typeId: viewKey,
     uri: presentationUri || undefined,
   };
-}
-
-export function workspaceModulePresentedTabTarget(
-  data: WorkspaceModulePresentation | null,
-): WorkspaceModulePresentedTabTarget | null {
-  return workspaceModulePresentationTabTarget(data);
 }

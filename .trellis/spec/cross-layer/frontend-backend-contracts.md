@@ -161,14 +161,105 @@ AgentRunCommandReceipt {
 ## 5. Workspace Module, Canvas and VFS
 
 - Workspace Module presentation payload 的 concrete URI 是 tab identity；浏览器不根据 view key 猜测资源 URI。
-- `workspace_module_presented` 是 durable presentation fact 与 live panel intent。前端把它
-  渲染为成功事件，并对 live event 立即按 concrete URI 打开 panel；present 不修改
-  AgentFrame/resource surface，因此打开动作不等待 Workspace state/catalog refresh。
+- `workspace_module_presentation` 是 durable、可回放的 control-plane projection。前端把
+  携带该 typed payload 的事件渲染为成功事件，并在 hydration/live 两条路径上交给同一个
+  Workspace Module target mapper。payload 是否存在是 presentation intent 的判据；
+  `reason` 只表达 projection refresh 语义，不建立 renderer 专属事件链。
 - Agent-facing operation 只来自 generated operation catalog。panel-only action 不自动成为 Agent tool。
 - Canvas runtime snapshot、VFS resource surface 与 Agent tool 使用同一当前 AgentFrame/Business Surface projection；Frame 是产品期望，不是 Runtime lifecycle authority。
 - Runtime-bound Canvas/extension invocation 以 `run_id + agent_id` 进入 API，后端通过 canonical `AgentRunRuntimeBinding` 获取 thread/binding coordinate。
 - Backend placement 与 VFS mount access 是资源 facts；它们约束 Business Surface/Tool Broker，但不创建 Runtime capability guarantee。
 - iframe/webview 只发送声明的 action/channel key 与 input；父页面补齐 AgentRun/Project identity，API 完成 authorization 与 binding resolution。
+
+### Scenario: Durable Workspace Module Presentation
+
+#### 1. Scope / Trigger
+
+当 Agent tool 提交 `workspace_module_presentation`，或前端修改 AgentRun journal hydration、
+control-plane dispatcher、WorkspacePanel imperative handle、tab store workspace scope 时适用。
+
+#### 2. Signatures
+
+```ts
+dispatchPlatformSideEffectEvents(
+  rawEvents,
+  afterSeq,
+  historyReplayBoundarySeq,
+  onSystemEvent,
+): number;
+
+workspaceModulePresentationTabTarget(
+  data: WorkspaceModulePresentation | null,
+): WorkspaceModuleTabTarget | null;
+
+openOrActivateInWorkspace(
+  workspaceKey: string | null,
+  typeId: string,
+  uri: string,
+  options?: WorkspaceTabLayoutOptions,
+): string;
+```
+
+#### 3. Contracts
+
+- backend 在 canonical AgentRun journal 中持久化 typed
+  `ControlPlaneProjectionChanged.workspace_module_presentation`；payload 携带
+  `module_id`、`view_key`、`renderer_kind`、`presentation_uri`、`title` 与 `payload`。
+- 初次 hydration 回放边界内的 typed control-plane projection；普通 Hook/meta 的一次性
+  副作用仍从 `historyReplayBoundarySeq` 之后开始。后续 live event 继续使用同一 cursor 和
+  dispatcher。
+- mapper 只按 typed payload 与 concrete presentation URI 生成 registry tab target。
+  打开动作不等待 Workspace state/catalog refresh，原因是 present 不修改 AgentFrame 或
+  resource surface。
+- imperative UI owner 必须携带当前 AgentRun workspace key；tab store 在打开前原子切换到
+  该 scope。WorkspacePanel 首次 effect 从 store 读取最新 workspace key，使 hydration 与
+  mount effect 的先后顺序不影响最终 active tab。
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| typed presentation 位于 `seq <= historyReplayBoundarySeq` | 进入通用 control-plane executor 并按 URI 打开目标 |
+| 普通 Hook/meta 位于 hydration 边界内 | 重建展示状态，但不重复执行一次性页面副作用 |
+| `workspace_module_presentation` 存在且 `reason` 为其他刷新原因 | 同时执行该 reason 的通用 refresh plan 与 presentation open |
+| Canvas `presentation_uri` 为空或仅为 `canvas://` | mapper 拒绝生成无资源 identity 的 Canvas target |
+| tab store 当前 workspace 与命令目标不同 | 先初始化目标 workspace，再打开并激活 tab |
+| presentation 先于 WorkspacePanel 首次 effect | effect 识别已绑定的 workspace，保留刚打开的 tab |
+
+#### 5. Good / Base / Bad Cases
+
+- Good：canonical seq 94 的 Canvas presentation 在 seq 97 tool completion 已进入 hydration
+  boundary 时仍打开 `canvas://{mount_id}`，侧栏展开、tab 激活且 renderer 可见。
+- Base：live presentation 走同一 dispatcher、planner、imperative owner 与 scoped store，
+  不需要单独的 Canvas handler。
+- Bad：planner 回归只断言 `openWorkspacePanel` 被调用，却没有验证随后 WorkspacePanel mount
+  effect 后 active tab 仍然存在；这无法证明用户可见闭环。
+
+#### 6. Tests Required
+
+- hydration dispatcher 回归：typed projection 在 boundary 内执行一次，普通历史 meta 不执行。
+- payload-based planner 回归：presentation 与任意通用 refresh reason 可组合，不按 reason
+  分叉。
+- scoped tab store 回归：presentation 先执行、WorkspacePanel 初始化后执行，目标 tab 保持
+  active。
+- production 页面验证：同一真实 journal 上同时断言成功事件、侧栏展开、concrete active tab
+  与 renderer 内容。
+
+#### 7. Wrong vs Correct
+
+```ts
+// Wrong: 首帧捕获的旧 scope 可在 presentation 之后重置 tab。
+if (capturedWorkspaceKey !== workspaceKey) {
+  store.initialize(workspaceKey);
+}
+store.openOrActivate(typeId, uri);
+
+// Correct: 命令绑定 owner scope，mount effect 再读取最新 store。
+store.openOrActivateInWorkspace(workspaceKey, typeId, uri, options);
+if (useWorkspaceTabStore.getState().workspaceKey !== workspaceKey) {
+  useWorkspaceTabStore.getState().initialize(workspaceKey);
+}
+```
 
 ## 6. MCP and External Resource Contracts
 

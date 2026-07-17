@@ -75,17 +75,22 @@ NDJSON envelope属于cross-layer contract，类型与validator由Rust Runtime co
 ### Platform 事件可见性
 
 `Platform(HookTrace)` 和 `Platform(SessionMetaUpdate)` 不一律静默，交由 `SessionTaskEventGuard` 和 `SessionSystemEventGuard` 判定。
-`Platform(ControlPlaneProjectionChanged(reason=workspace_module_presented))` 是可渲染的
-成功事件；同一 typed body 既提供聊天审计事实，也提供 live workspace panel intent。
+携带 `workspace_module_presentation` 的
+`Platform(ControlPlaneProjectionChanged)` 是可渲染的成功事件；同一 typed body
+既提供聊天审计事实，也提供 live workspace panel intent。`reason` 继续表达 projection
+刷新原因，不作为 presentation dispatcher 的第二套 discriminator。
 
 ### History Hydrate 与 Live 副作用边界
 
-`useSessionStream` 暴露的历史事件用于重建 feed、turn segment、projection refresh key 等本地展示状态；会改变用户工作台意图的控制面副作用（workspace panel open、task plan refresh、module presentation action）只消费初始 `historyReplayBoundarySeq` 之后的新 durable 事件。这样做的原因是历史分页表达的是既有事实回放，而不是新的用户或 Agent 意图；同一条历史 `workspace_module_presented` 不能在每次打开长 session 时重新触发外部打开动作。
+`useSessionStream` 暴露的历史事件用于重建 feed、turn segment、projection refresh key 等本地展示状态。初次 hydration 中的 typed `ControlPlaneProjectionChanged` 也必须交给页面 control-plane executor，原因是路由与 stream 建立期间已经提交的 projection 仍表达当前 UI 状态；若一律从 `historyReplayBoundarySeq` 后开始消费，页面会永久漏掉同一轮较早提交的 projection。普通 Hook/meta、task refresh 等一次性副作用仍只消费边界后的 live 事件。
 
-live `workspace_module_presented` 已携带完整 `presentation_uri`，panel open 必须立即执行，
+`workspace_module_presentation` 已携带完整 `presentation_uri`，panel open 必须立即执行，
 不能先等待 Workspace state/catalog refresh。原因是 present 不改变 AgentFrame 或 resource
 surface；真正的 surface 变化由自己的 control-plane reason 触发 invalidate/refetch。
-成功卡片可以从历史恢复，而 tab/layout 的恢复由 AgentRun workspace layout 负责。
+事件和用户打开动作共同调用唯一的 Workspace Module presentation target mapper；renderer
+kind 只参与 registry target 选择，不建立 Canvas 专用事件链。命令式打开必须把当前
+AgentRun workspace key 一并提交给 tab store，使 workspace scope 与 tab mutation 原子完成；
+否则 WorkspacePanel 随后的首次初始化可能覆盖 hydration 刚打开的 tab。
 
 AgentRun Runtime feed 的 `turn_started`、`turn_terminal`、`interaction_requested`与`interaction_terminal`是Runtime inspect的失效信号：feed保留可展示的event identity/terminal，但命令可用性仍通过重新读取canonical snapshot获得，不直接修改本地command state。有限durable replay即使在页面打开后才消费到terminal，也必须触发同一刷新，原因是composer的`turn_start/turn_steer`与interaction response只能由最新`command_availability`裁决。
 

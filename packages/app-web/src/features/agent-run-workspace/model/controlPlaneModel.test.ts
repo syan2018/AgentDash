@@ -242,12 +242,12 @@ describe("AgentRun control-plane model", () => {
     });
   });
 
-  it("opens a presented Canvas immediately without waiting for an unrelated runtime refresh", () => {
+  it("opens any typed Workspace Module presentation payload without a reason-specific path", () => {
     const plan = planAgentRunSystemEvent(
       "control_plane_projection_changed",
       controlPlaneProjectionEvent({
         projection: "resource_surface",
-        reason: "workspace_module_presented",
+        reason: "capability_state_changed",
         workspace_module_presentation: {
           module_id: "canvas:canvas-1",
           view_key: "preview",
@@ -261,6 +261,11 @@ describe("AgentRun control-plane model", () => {
     );
 
     expect(plan).toEqual({
+      refreshWorkspaceState: true,
+      refreshWorkspaceModuleCatalog: true,
+      hookRuntimeRefresh: {
+        reason: "control_plane:resource_surface:capability_state_changed",
+      },
       openWorkspacePanel: {
         afterWorkspaceRefresh: false,
         target: {

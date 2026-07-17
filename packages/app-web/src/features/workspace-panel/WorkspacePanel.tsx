@@ -72,10 +72,11 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
 
     // 首次挂载或 AgentRun workspace 切换时初始化 Tab 状态
     useEffect(() => {
-      if (storeWorkspaceKey !== workspaceKey) {
-        useWorkspaceTabStore.getState().initialize(workspaceKey, null, tabLayoutOptions);
+      const store = useWorkspaceTabStore.getState();
+      if (store.workspaceKey !== workspaceKey) {
+        store.initialize(workspaceKey, null, tabLayoutOptions);
       }
-    }, [storeWorkspaceKey, tabLayoutOptions, workspaceKey]);
+    }, [tabLayoutOptions, workspaceKey]);
 
     useEffect(() => {
       if (storeWorkspaceKey !== workspaceKey) return;
@@ -120,19 +121,29 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         const s = useWorkspaceTabStore.getState();
         let tabId = "";
         if (uri) {
-          tabId = s.openOrActivate(typeId, uri, tabLayoutOptions);
+          tabId = s.openOrActivateInWorkspace(
+            workspaceKey,
+            typeId,
+            uri,
+            tabLayoutOptions,
+          );
         } else {
           const type = tabTypeRegistry.getType(typeId);
           if (type) {
             const defaultUri = type.defaultUri ?? type.buildUri({});
-            tabId = s.openOrActivate(typeId, defaultUri, tabLayoutOptions);
+            tabId = s.openOrActivateInWorkspace(
+              workspaceKey,
+              typeId,
+              defaultUri,
+              tabLayoutOptions,
+            );
           }
         }
         if (tabId && options?.refreshContent) {
           useWorkspaceTabStore.getState().refreshTab(tabId);
         }
       },
-    }), [tabLayoutOptions]);
+    }), [tabLayoutOptions, workspaceKey]);
 
     const handleAddTab = useCallback((typeId: string) => {
       useWorkspaceTabStore.getState().addTab(typeId, undefined, true, tabLayoutOptions);

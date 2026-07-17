@@ -4,7 +4,7 @@ import type {
 } from "../../../generated/backbone-protocol";
 import {
   workspaceModulePresentationFromPlatformEventData,
-  workspaceModulePresentedTabTarget,
+  workspaceModulePresentationTabTarget,
 } from "../../workspace-module/model/presentation";
 import type {
   AgentRunConversationCommand,
@@ -103,13 +103,13 @@ function extractControlPlaneProjectionChanged(
   return event.payload.data;
 }
 
-function planWorkspaceModulePresented(
+function planWorkspaceModulePresentation(
   change: ControlPlaneProjectionChanged,
 ): AgentRunControlPlaneEffectPlan {
   const data = workspaceModulePresentationFromPlatformEventData(
     change.workspace_module_presentation,
   );
-  const target = workspaceModulePresentedTabTarget(data);
+  const target = workspaceModulePresentationTabTarget(data);
   if (!target) return {};
   return {
     openWorkspacePanel: {
@@ -126,10 +126,6 @@ function planWorkspaceModulePresented(
 function planControlPlaneProjectionChanged(
   change: ControlPlaneProjectionChanged,
 ): AgentRunControlPlaneEffectPlan {
-  if (change.reason === "workspace_module_presented") {
-    return planWorkspaceModulePresented(change);
-  }
-
   const reason = projectionRefreshReason(change);
   const plan: AgentRunControlPlaneEffectPlan = {};
 
@@ -168,6 +164,13 @@ function planControlPlaneProjectionChanged(
     change.reason === "hook_auto_resume_queued"
   ) {
     plan.hookRuntimeRefresh = { reason };
+  }
+
+  if (change.workspace_module_presentation) {
+    return {
+      ...plan,
+      ...planWorkspaceModulePresentation(change),
+    };
   }
 
   return plan;

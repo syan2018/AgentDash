@@ -74,6 +74,52 @@ interface UseAgentRunWorkspaceControlPlaneResult {
   handleWorkspaceModuleOpened: () => void;
 }
 
+export interface AgentRunControlPlaneEffectExecutor {
+  refreshAgentRunWorkspaceState: () => Promise<unknown>;
+  refreshWorkspaceModuleCatalog: () => void;
+  openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
+  scheduleHookRuntimeRefresh: (reason: string, immediate?: boolean) => void;
+  refreshAgentRunList: (reason: string) => void;
+}
+
+export function applyAgentRunControlPlaneEffectPlan(
+  plan: AgentRunControlPlaneEffectPlan,
+  executor: AgentRunControlPlaneEffectExecutor,
+): void {
+  const openPlan = plan.openWorkspacePanel;
+  if (openPlan?.afterWorkspaceRefresh) {
+    void (async () => {
+      if (plan.refreshWorkspaceState) {
+        await executor.refreshAgentRunWorkspaceState().catch(() => {});
+      }
+      if (plan.refreshWorkspaceModuleCatalog) {
+        executor.refreshWorkspaceModuleCatalog();
+      }
+      executor.openWorkspacePanel(openPlan.target);
+    })();
+  } else {
+    if (plan.refreshWorkspaceState) {
+      void executor.refreshAgentRunWorkspaceState().catch(() => {});
+    }
+    if (plan.refreshWorkspaceModuleCatalog) {
+      executor.refreshWorkspaceModuleCatalog();
+    }
+    if (openPlan) {
+      executor.openWorkspacePanel(openPlan.target);
+    }
+  }
+
+  if (plan.hookRuntimeRefresh) {
+    executor.scheduleHookRuntimeRefresh(
+      plan.hookRuntimeRefresh.reason,
+      plan.hookRuntimeRefresh.immediate,
+    );
+  }
+  if (plan.refreshAgentRunListReason) {
+    executor.refreshAgentRunList(plan.refreshAgentRunListReason);
+  }
+}
+
 export function useAgentRunWorkspaceControlPlane({
   currentRunId,
   currentAgentId,
@@ -329,38 +375,13 @@ export function useAgentRunWorkspaceControlPlane({
   ]);
 
   const applyControlPlaneEffectPlan = useCallback((plan: AgentRunControlPlaneEffectPlan) => {
-    const openPlan = plan.openWorkspacePanel;
-    if (openPlan?.afterWorkspaceRefresh) {
-      void (async () => {
-        if (plan.refreshWorkspaceState) {
-          await refreshAgentRunWorkspaceState().catch(() => {});
-        }
-        if (plan.refreshWorkspaceModuleCatalog) {
-          refreshWorkspaceModuleCatalog();
-        }
-        openWorkspacePanel(openPlan.target);
-      })();
-    } else {
-      if (plan.refreshWorkspaceState) {
-        void refreshAgentRunWorkspaceState().catch(() => {});
-      }
-      if (plan.refreshWorkspaceModuleCatalog) {
-        refreshWorkspaceModuleCatalog();
-      }
-      if (openPlan) {
-        openWorkspacePanel(openPlan.target);
-      }
-    }
-
-    if (plan.hookRuntimeRefresh) {
-      scheduleHookRuntimeRefresh(
-        plan.hookRuntimeRefresh.reason,
-        plan.hookRuntimeRefresh.immediate,
-      );
-    }
-    if (plan.refreshAgentRunListReason) {
-      refreshAgentRunList(plan.refreshAgentRunListReason);
-    }
+    applyAgentRunControlPlaneEffectPlan(plan, {
+      refreshAgentRunWorkspaceState,
+      refreshWorkspaceModuleCatalog,
+      openWorkspacePanel,
+      scheduleHookRuntimeRefresh,
+      refreshAgentRunList,
+    });
   }, [
     openWorkspacePanel,
     refreshAgentRunList,

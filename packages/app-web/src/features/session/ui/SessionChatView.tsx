@@ -28,9 +28,9 @@ import {
   SessionChatStream,
 } from "./SessionChatViewParts";
 import {
-  collectAllPlatformEvents,
   collectTurnLifecycleEvents,
   computeProjectionRefreshKey,
+  dispatchPlatformSideEffectEvents,
   isAgentRunWorkspaceActionRunning,
   rawEventsBelongToRuntimeStreamTarget,
   resolveExecutorFromHint,
@@ -354,14 +354,12 @@ export function SessionChatView({
 
   useEffect(() => {
     if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    const afterSeq = lastSystemEventSeqRef.current ?? historyReplayBoundarySeq;
-    lastSystemEventSeqRef.current = afterSeq;
-    const result = collectAllPlatformEvents(rawEvents, afterSeq);
-    lastSystemEventSeqRef.current = result.lastSeenSeq;
-    if (result.items.length === 0) return;
-    for (const item of result.items) {
-      onSystemEventRef.current?.(item.eventType, item.event);
-    }
+    lastSystemEventSeqRef.current = dispatchPlatformSideEffectEvents(
+      rawEvents,
+      lastSystemEventSeqRef.current,
+      historyReplayBoundarySeq,
+      (eventType, event) => onSystemEventRef.current?.(eventType, event),
+    );
   }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   useEffect(() => {

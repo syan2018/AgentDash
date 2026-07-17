@@ -46,8 +46,10 @@ AgentRun lifecycle 只负责选择和投影已经 provision 的 SkillAsset，消
   fallback。
 - R9：`workspace_module_present` 成功后必须提交 typed
   `workspace_module_presented` control-plane presentation；前端必须立即按 concrete
-  presentation URI 打开目标面板并展示成功事件，不得等待与 presentation intent
-  无关的 Workspace runtime refresh。
+  presentation URI 打开目标面板并展示成功事件。hydration 与 live stream 必须进入同一
+  generic control-plane executor；imperative open 必须携带目标 AgentRun workspace scope，
+  使 hydration presentation 先于 WorkspacePanel 首次 effect 时仍保留 active tab。打开动作
+  不等待与 presentation intent 无关的 Workspace runtime refresh，也不建立 Canvas 专用事件链。
 
 ## Acceptance Criteria
 
@@ -69,8 +71,9 @@ AgentRun lifecycle 只负责选择和投影已经 provision 的 SkillAsset，消
 - [x] 相关 Rust 单元/集成测试、格式化与定向检查通过，前端若调整 builtin 操作入口，
   对应 TypeScript 测试和 typecheck 通过。
 - [x] `workspace_module_presented` 在 canonical AgentRun journal 中可见，前端将其
-  渲染为成功事件；Canvas 打开计划为 immediate，不触发 AgentFrame/resource
-  surface mutation 或阻塞式 refresh。
+  渲染为成功事件；`seq <= historyReplayBoundarySeq` 时仍进入 generic control-plane
+  executor。真实页面中 Workspace 侧栏展开、`canvas://{mount_id}` 成为 active tab 且
+  renderer 可见；该结果不依赖 AgentFrame/resource surface mutation 或阻塞式 refresh。
 
 ## Out of Scope
 

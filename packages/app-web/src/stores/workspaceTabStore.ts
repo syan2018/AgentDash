@@ -100,6 +100,18 @@ interface WorkspaceTabState {
   activateTab: (tabId: string) => void;
   /** 按 URI 查找并激活同类型 Tab，不存在则新建 */
   openOrActivate: (typeId: string, uri: string, options?: WorkspaceTabLayoutOptions) => string;
+  /**
+   * 在指定 workspace 中按 URI 打开或激活 Tab。
+   *
+   * 页面首屏 hydration 可能早于 WorkspacePanel 的被动初始化 effect；
+   * 命令式打开必须先原子绑定 workspace，避免随后初始化把新 Tab 重置掉。
+   */
+  openOrActivateInWorkspace: (
+    workspaceKey: string | null,
+    typeId: string,
+    uri: string,
+    options?: WorkspaceTabLayoutOptions,
+  ) => string;
   /** 触发指定 Tab 内容重拉，不改变 URI 或布局持久化结果 */
   refreshTab: (tabId: string) => void;
   /** 拖拽排序后更新顺序 */
@@ -272,6 +284,13 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
       return existing.id;
     }
     return get().addTab(typeId, uri, true, options);
+  },
+
+  openOrActivateInWorkspace: (workspaceKey, typeId, uri, options) => {
+    if (get().workspaceKey !== workspaceKey) {
+      get().initialize(workspaceKey, null, options);
+    }
+    return get().openOrActivate(typeId, uri, options);
   },
 
   refreshTab: (tabId) => {

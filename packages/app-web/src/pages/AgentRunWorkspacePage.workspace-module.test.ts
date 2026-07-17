@@ -27,7 +27,7 @@ import {
 import {
   isConcreteCanvasPresentationUri,
   workspaceModulePresentationFromPlatformEventData,
-  workspaceModulePresentedTabTarget,
+  workspaceModulePresentationTabTarget,
 } from "./AgentRunWorkspacePage.workspaceModulePresentation";
 
 const ownership: AgentRunOwnershipView = {
@@ -204,9 +204,9 @@ function presentation(params: {
   };
 }
 
-describe("workspaceModulePresentedTabTarget", () => {
+describe("workspaceModulePresentationTabTarget", () => {
   it("opens Canvas tabs from presentation_uri", () => {
-    expect(workspaceModulePresentedTabTarget(presentation({
+    expect(workspaceModulePresentationTabTarget(presentation({
       renderer_kind: "canvas",
       presentation_uri: "canvas://cvs-dashboard-a",
     }))).toEqual({
@@ -217,14 +217,14 @@ describe("workspaceModulePresentedTabTarget", () => {
 
   it("does not treat empty canvas:// as a concrete Canvas tab target", () => {
     expect(isConcreteCanvasPresentationUri("canvas://")).toBe(false);
-    expect(workspaceModulePresentedTabTarget(presentation({
+    expect(workspaceModulePresentationTabTarget(presentation({
       renderer_kind: "canvas",
       presentation_uri: "canvas://",
     }))).toBeNull();
   });
 
   it("does not infer Canvas URI from view_key or module_id", () => {
-    expect(workspaceModulePresentedTabTarget(presentation({
+    expect(workspaceModulePresentationTabTarget(presentation({
       module_id: "canvas:cvs-dashboard-a",
       renderer_kind: "canvas",
       view_key: "preview",
@@ -263,7 +263,7 @@ describe("workspaceModulePresentedTabTarget", () => {
   });
 
   it("opens non-Canvas module views by view_key", () => {
-    expect(workspaceModulePresentedTabTarget(presentation({
+    expect(workspaceModulePresentationTabTarget(presentation({
       renderer_kind: "webview",
       view_key: "inspector",
       presentation_uri: "ext-demo://panel",

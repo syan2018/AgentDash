@@ -144,7 +144,15 @@ Platform(ControlPlaneProjectionChanged {
 present 不改变 AgentFrame、mount 或 tool surface。Canvas 用户主动打开已有 tab 时的
 content refresh 是另一个显式动作，不与 Agent presentation intent 共用状态标记。
 
-`workspace_module_presented` 同时是可渲染的成功事件，聊天历史可以回放这条事实。外部
-panel open 仍只消费 `historyReplayBoundarySeq` 之后的 live 事件，原因是历史事实不能在
-用户关闭面板后反复重放 UI 意图；已打开 tab 的恢复由 AgentRun workspace layout
-持久化负责。
+`workspace_module_presented` 同时是可渲染的成功事件。初次 hydration 必须把所有 typed
+`ControlPlaneProjectionChanged` 交给同一个页面 control-plane executor，原因是页面路由
+和 session stream 建立期间已经提交的 canonical projection 仍然是当前 UI 状态，不能被
+`historyReplayBoundarySeq` 吞掉。普通 Hook/meta 一次性副作用仍只消费边界后的 live
+事件。Workspace Module presentation 只读取 generated payload 字段并调用唯一的
+`workspaceModulePresentationTabTarget`；Canvas 与其他 renderer 不存在独立事件链。
+
+页面 imperative handle 将当前 `run_id + agent_id` workspace key 与 tab target 一起提交给
+`WorkspaceTabStore.openOrActivateInWorkspace`。store 在打开 Tab 前原子初始化目标 workspace；
+WorkspacePanel 的首次 effect 读取 store 最新 key，再决定是否初始化。这样 hydration
+dispatcher 与 sibling panel mount effect 无论谁先执行，concrete presentation tab 都不会被
+旧首帧状态重置。

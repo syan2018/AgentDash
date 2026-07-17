@@ -406,3 +406,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 66: 统一 Managed Agent 会话名称事件与 AgentRun 标题投影
+
+**Date**: 2026-07-17
+**Task**: 统一 Managed Agent 会话名称事件与 AgentRun 标题投影
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+将会话自动总结标题收敛到 Codex App Server 标准 ThreadNameUpdated 事件：Native 与 Codex 统一产出，Agent Runtime journal 和 durable projection 统一持久化，AgentRun list/workspace/lineage 统一解析并由前端实时失效刷新；补齐 0082 migration、跨层测试与 Trellis 可执行规格。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4dabce3fb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

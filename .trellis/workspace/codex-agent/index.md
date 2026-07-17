@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 65
+- **Total Sessions**: 66
 - **Last Active**: 2026-07-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~408 | Active |
+| `journal-2.md` | ~441 | Active |
 | `journal-1.md` | ~1971 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 66 | 2026-07-17 | 统一 Managed Agent 会话名称事件与 AgentRun 标题投影 | `4dabce3fb` | `codex/agent-runtime-architecture-convergence` |
 | 65 | 2026-07-17 | 收敛内嵌 Skill 资产与 Workspace Module 展示闭环 | `a3a064035`, `8e22afb81`, `4d56eb3a2` | `codex/agent-runtime-architecture-convergence` |
 | 64 | 2026-07-11 | Agent Runtime 架构收敛与生产切换 | `1330a8560`, `b43d2be53`, `63dbd623b`, `0806457db`, `ef4bdec6f`, `b47164bc5`, `e934c287e`, `af21f9d7c` | `codex/agent-runtime-architecture-convergence` |
 | 63 | 2026-07-09 | 手动上下文压缩生命周期收敛 | `fafe213bf` | `main` |

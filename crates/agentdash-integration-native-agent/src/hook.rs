@@ -225,23 +225,34 @@ impl RuntimeToolPolicyDelegate for NativeHookDelegate {
             )
             .await?
         {
-            DriverHookDecision::Continue { payload } => {
-                let output = payload.get("result").cloned();
-                Ok(AfterToolCallEffects {
-                    content: output
-                        .as_ref()
-                        .map(|value| vec![ContentPart::text(value.to_string())]),
-                    details: output,
-                    is_error: payload.get("is_error").and_then(|value| value.as_bool()),
-                    ..Default::default()
-                })
-            }
+            DriverHookDecision::Continue { payload } => after_tool_effects(&payload),
             DriverHookDecision::Block { reason }
             | DriverHookDecision::InteractionRequired { reason, .. } => {
                 Err(AgentRuntimeError::Runtime(reason))
             }
         }
     }
+}
+
+fn after_tool_effects(
+    payload: &serde_json::Value,
+) -> Result<AfterToolCallEffects, AgentRuntimeError> {
+    let content = payload
+        .get("content")
+        .cloned()
+        .map(serde_json::from_value::<Vec<ContentPart>>)
+        .transpose()
+        .map_err(|error| {
+            AgentRuntimeError::Runtime(format!(
+                "managed Runtime AfterTool returned invalid typed content: {error}"
+            ))
+        })?;
+    Ok(AfterToolCallEffects {
+        content,
+        details: payload.get("result").cloned(),
+        is_error: payload.get("is_error").and_then(serde_json::Value::as_bool),
+        ..Default::default()
+    })
 }
 
 #[async_trait]
@@ -331,4 +342,49 @@ fn messages_from_payload(payload: &serde_json::Value, key: &str) -> Vec<AgentMes
         .filter_map(|value| value.as_str())
         .map(AgentMessage::user)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn after_tool_details_do_not_replace_human_readable_content() {
+        let effects = after_tool_effects(&serde_json::json!({
+            "result": {
+                "module_id": "canvas:cvs-canvas",
+                "content_items": [{
+                    "type": "inputText",
+                    "text": "模块展示请求已提交"
+                }]
+            },
+            "is_error": false
+        }))
+        .expect("effects");
+
+        assert!(effects.content.is_none());
+        assert_eq!(
+            effects
+                .details
+                .as_ref()
+                .and_then(|details| details.get("module_id"))
+                .and_then(serde_json::Value::as_str),
+            Some("canvas:cvs-canvas")
+        );
+        assert_eq!(effects.is_error, Some(false));
+    }
+
+    #[test]
+    fn after_tool_content_rewrite_requires_explicit_typed_content() {
+        let effects = after_tool_effects(&serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": "rewritten"
+            }],
+            "result": {"status": "rewritten"}
+        }))
+        .expect("effects");
+
+        assert_eq!(effects.content, Some(vec![ContentPart::text("rewritten")]));
+    }
 }

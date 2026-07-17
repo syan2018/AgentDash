@@ -355,7 +355,6 @@ impl AgentBusinessSurfaceSource {
         .await?;
         let normalized_context_surface = build_normalized_context_surface(
             &context_source,
-            revision,
             &tool_contributions,
             &bootstrap_context,
             &discovery,
@@ -509,6 +508,42 @@ mod surface_closure_tests {
         .unwrap_err();
 
         assert_eq!(error, "AgentFrame surface closure is missing mcp");
+    }
+
+    #[test]
+    fn normalized_tool_schema_provenance_is_stable_across_agent_frames() {
+        let contribution = |frame_id: &str| ToolContribution {
+            meta: ContributionMeta {
+                key: "tool:file_read:read".to_string(),
+                source: SurfaceSourceRef {
+                    layer: "agent_frame".to_string(),
+                    key: frame_id.to_string(),
+                },
+                priority: 0,
+                requirement: ContributionRequirement::Required,
+            },
+            runtime_name: "read".to_string(),
+            description: "Read a file".to_string(),
+            parameters_schema: serde_json::json!({"type": "object"}),
+            capability_key: "file_read".to_string(),
+            tool_path: "file_read::read".to_string(),
+            allowed_channels: [ToolChannel::DirectCallback].into(),
+            configuration_boundary: ConfigurationBoundary::Binding,
+            protocol_projection: ToolProtocolProjection::FsRead,
+            presentation_emitter: ToolPresentationEmitter::VendorStream,
+            parity_fixture_id: "main_tool_read".to_string(),
+        };
+
+        let previous = normalized_tool_schemas(&[contribution("frame-1")]);
+        let target = normalized_tool_schemas(&[contribution("frame-2")]);
+
+        assert_eq!(previous, target);
+        assert_eq!(
+            target
+                .get("file_read::read")
+                .and_then(|schema| schema.source.as_deref()),
+            Some("agent_frame")
+        );
     }
 
     #[test]
@@ -912,7 +947,6 @@ fn memory_context_facts(inventory: &agentdash_spi::MemoryDiscoveryOutput) -> Mem
 
 fn build_normalized_context_surface(
     context_source: &AgentContextSurfaceSourceFacts,
-    revision: u64,
     tools: &[ToolContribution],
     bootstrap: &BootstrapContextFacts,
     discovery: &super::LaunchContextDiscoveryOutput,
@@ -1059,26 +1093,9 @@ fn build_normalized_context_surface(
             model_summary: cluster.model_summary.clone(),
         })
         .collect();
-    let tool_schemas = tools
-        .iter()
-        .map(|tool| {
-            (
-                tool.tool_path.clone(),
-                RuntimeToolSchemaEntry {
-                    name: tool.runtime_name.clone(),
-                    description: tool.description.clone(),
-                    parameters_schema: tool.parameters_schema.clone(),
-                    capability_key: Some(tool.capability_key.clone()),
-                    source: Some(tool.meta.source.key.clone()),
-                    tool_path: Some(tool.tool_path.clone()),
-                    context_usage_kind: Some("system_tools".to_string()),
-                },
-            )
-        })
-        .collect();
+    let tool_schemas = normalized_tool_schemas(tools);
     let assignment_fragments = normalized_assignment_fragments(&bootstrap.assignment);
     let assignment = (!assignment_fragments.is_empty()).then_some(NormalizedAssignmentContext {
-        revision,
         fragments: assignment_fragments,
     });
 
@@ -1101,6 +1118,28 @@ fn build_normalized_context_surface(
         tool_schemas,
         assignment,
     })
+}
+
+fn normalized_tool_schemas(
+    tools: &[ToolContribution],
+) -> std::collections::BTreeMap<String, RuntimeToolSchemaEntry> {
+    tools
+        .iter()
+        .map(|tool| {
+            (
+                tool.tool_path.clone(),
+                RuntimeToolSchemaEntry {
+                    name: tool.runtime_name.clone(),
+                    description: tool.description.clone(),
+                    parameters_schema: tool.parameters_schema.clone(),
+                    capability_key: Some(tool.capability_key.clone()),
+                    source: Some(tool.meta.source.layer.clone()),
+                    tool_path: Some(tool.tool_path.clone()),
+                    context_usage_kind: Some("system_tools".to_string()),
+                },
+            )
+        })
+        .collect()
 }
 
 fn normalized_assignment_fragments(

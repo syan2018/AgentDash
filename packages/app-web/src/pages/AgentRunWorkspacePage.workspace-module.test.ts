@@ -22,6 +22,7 @@ import {
   activeCanvasMountIdsFromRuntimeSurface,
   openUserCanvasModule,
   selectCanvasModuleOpenOptions,
+  selectCanvasModuleOpenOptionsFromRuntimeSurface,
 } from "../features/workspace-panel/model/canvasModuleOpen";
 import {
   isConcreteCanvasPresentationUri,
@@ -616,6 +617,32 @@ describe("Canvas workspace module selector and user-open flow", () => {
       canvasModule("canvas:cvs-mount-a", "canvas://cvs-mount-a"),
       canvasModule("canvas:cvs-mount-b", "canvas://cvs-mount-b"),
     ], activeCanvasMountIds);
+
+    expect(options.map((option) => option.presentation_uri)).toEqual(["canvas://cvs-mount-a"]);
+  });
+
+  it("keeps an adopted Canvas openable from the resource surface after Runtime execution is lost", () => {
+    const options = selectCanvasModuleOpenOptionsFromRuntimeSurface(
+      [canvasModule("canvas:cvs-mount-a", "canvas://cvs-mount-a")],
+      {
+        surface_ref: "agent-run:run-1:agent-1",
+        source: {
+          source_type: "agent_run",
+          run_id: "run-1",
+          agent_id: "agent-1",
+        },
+        mounts: [{
+          id: "cvs-mount-a",
+          display_name: "Canvas A",
+          provider: "canvas_fs",
+          backend_id: "",
+          capabilities: ["read"],
+          default_write: false,
+          purpose: "canvas",
+          edit_capabilities: { create: true, delete: true, rename: true },
+        }],
+      },
+    );
 
     expect(options.map((option) => option.presentation_uri)).toEqual(["canvas://cvs-mount-a"]);
   });

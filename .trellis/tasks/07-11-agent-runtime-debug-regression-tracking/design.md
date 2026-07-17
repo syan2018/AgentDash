@@ -146,3 +146,43 @@ Application surface source只加载一次明确Frame并由该Frame派生executor
 `AgentFrameRepository`保留immutable revision store职责。最高revision只服务revision allocation、历史和诊断；方法命名必须反映latest persisted语义。active读取不进入该repository。由于项目未上线，直接删除错误的`get_current` active语义和冗余兼容分支。
 
 Adopter以stable operation identity协调surface store、tool registry publication与Managed Runtime CAS。所有可确定的candidate closure、tool/hook和presentation compile错误在持久化前暴露；跨系统提交失败时，Managed Runtime snapshot仍是active权威，任何已持久化candidate都只能作为未采用历史，不能被产品查询误认为current。
+
+## 17. Tool call admission fence 与 durable resource projection
+
+Tool call coordinates中的`tool_set_revision`证明调用被哪个published catalog接纳，只在`accept_tool_call`之前承担stale admission。canonical Item durable accept后，调用身份固定为`thread + turn + item + binding + generation`；progress、approval和terminal convergence读取persisted Item并校验binding generation，不再拿current tool set与历史admission revision比较。
+
+这一区分允许工具在自己的执行边界内合法推进surface/tool set：
+
+```text
+tool call admitted at tool-set T1
+  -> canonical Item Active
+  -> executor creates Canvas
+  -> SurfaceAdopt publishes tool-set T2
+  -> same accepted Item progress/terminal under binding generation G
+  -> next new call must be admitted at T2
+```
+
+绑定generation变化仍表示execution owner已失效，因此所有后续journal mutation必须拒绝；仅tool-set hot-replace不改变已接纳调用的owner。terminal convergence继续以persisted Item phase保证exact replay与冲突检测，不能通过放宽到thread-only identity实现。
+
+Broker失败输出使用同一typed result contract：
+
+```json
+{
+  "error": "tool executor failed: ...",
+  "content_items": [
+    { "type": "inputText", "text": "tool executor failed: ..." }
+  ]
+}
+```
+
+`error`服务机器诊断，`content_items`服务protocol projector与用户展示；两者由Broker在失败形成处原子生成。executor failure、timeout、cancel和policy denial共用该构造，不由Native或前端补猜测分支。
+
+Canvas资源投影与Runtime execution lifecycle正交。Workspace Panel从Workspace Module catalog选取ready Canvas，再与`ResolvedVfsSurface.mounts[purpose=canvas]`求交；`runtimeStatus`不参与资源存在性判断。Lost/terminal只改变command availability，不能删除durable resource surface中已adopted的Canvas。
+
+Canvas create/attach/copy是资源surface mutation，负责经唯一update owner挂载VFS并adopt新Frame；`workspace_module_present`是纯presentation intent，只向canonical presentation append port提交control-plane event，不请求visibility、不编译Business Surface，也不推进tool set。producer提交`RuntimeTurnId/RuntimeItemId`后，由Managed Runtime从canonical turn补全真实`PresentationTurnId`；Workspace Module不是外部driver stream，不生成source correlation三元组。
+
+Normalized context delta只比较可呈现业务语义。Assignment revision属于AgentFrame快照坐标，不进入`NormalizedAssignmentContext`；tool schema的精确Frame UUID属于Business Surface provenance，不进入schema可见`source`，该字段使用稳定owner layer。这样Canvas create的projection只包含实际新增的VFS mount，既有assignment和工具目录不会因Frame换代重复发送。
+
+Native callback的Broker terminal是包含结构化details与typed `content_items`的envelope。Native presentation在无法解码完整`AgentToolResult`时优先恢复`content_items`，再进入统一Dynamic Tool投影；只有既无typed content也无文本content的未知结果才使用JSON诊断兜底。
+
+Native `AfterTool` Hook payload中的`result`属于结构化details rewrite，不能同时派生展示content。Hook只有显式返回可反序列化的typed `content`时才替换原工具正文；未改写正文时保留executor产生的可读content。

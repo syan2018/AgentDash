@@ -178,6 +178,23 @@
 - Surface update 在持久化前完成candidate自身可确定的closure校验；持久化后按exact Frame完成依赖外部Tool/Hook/VFS source的完整编译，再由stable operation identity、expected surface revision/digest和Managed Runtime CAS提交adoption。candidate revision是不可变审计事实，只有snapshot commit成功后才成为产品active surface。
 - 验收必须覆盖真实 production composition seam：F1 已 adopted、F2 已构造/持久化时，adopter必须按 F2 编译并完成 `SurfaceAdopt`；失败注入后 active仍为F1；Canvas create后present不产生冗余revision；测试不得以 `RecordingAdopter` 或 `CapturingAgentRunBridge` 替代该链路。
 
+### R17. Tool Broker 准入 fence 与 Canvas 用户投影
+
+**问题 ARD-016：工具发起 Surface hot-replace 后无法终态化，错误退化为 `null` 并使 Runtime Lost**
+
+- 现象：`workspace_module_operate(operation="canvas.create")` 与后续 `workspace_module_present` 在 Agent 侧已产生 Canvas，但工具卡直接显示失败且输出为 `null`；同一 turn 最终因 Active tool item 未终态化进入 Runtime Lost，用户侧随后显示“无可打开 Canvas”。
+- 已确认直接根因：Broker 在首次接受调用时正确校验 binding、generation 与 `tool_set_revision`，但 `ManagedRuntimeToolJournal` 又在 progress、approval 和 terminal 写入时重复校验调用开始时的旧 `tool_set_revision`。Canvas 工具自身成功执行 `SurfaceAdopt` 后 current tool set 已推进，因此发起更新的同一调用被误判为 `StaleCoordinates`，canonical Item 永久停留 Active。
+- 已确认诊断缺口：executor failure、timeout、cancel 与 permission denial 只写入顶层 `error`，没有写入 protocol projector消费的typed `content_items`；Native callback因此得到空内容并在用户投影中显示`null`，掩盖真正的terminal convergence错误。
+- 已确认前端放大器：Workspace Panel把`runtimeStatus === "ready"`当成Canvas资源可见性的前置条件。Runtime Lost后，durable resource surface和Canvas catalog仍包含合法mount，UI却主动清空可打开项。
+- 已确认presentation坐标错误：Workspace Module producer把canonical `RuntimeTurnId`同时伪装成`PresentationTurnId`，而Managed Runtime已经持有真实runtime-to-presentation映射，因此`workspace_module_present`必然被拒绝为turn identity mismatch。该producer同时伪造source thread/turn/item坐标，混淆了canonical identity与外部source correlation。
+- 已确认重复CTX根因：normalized assignment携带每次AgentFrame revision，工具schema又把每次变化的Frame UUID写入`source`；一次仅新增Canvas mount的surface adoption因此被误投影成assignment更新和全部内置工具变更。`present`还额外请求Canvas visibility，错误地产生第二次AgentFrame mutation。
+- `tool_set_revision`是新调用的admission fence。调用一旦由canonical Item durable accept，后续progress、approval与terminal只校验同一binding generation及persisted item/turn identity；surface hot-replace不得使发起它的调用失效。新调用仍必须使用current tool-set revision。
+- Broker所有失败终态必须携带typed diagnostic `content_items`；presentation projector和Native callback不从顶层`error`猜测展示内容。
+- Canvas用户可用性由Workspace Module catalog与durable Runtime resource surface求交；Runtime execution status只描述执行生命周期，不得遮蔽已经adopted的资源。create/attach/copy负责资源挂载，`present`只提交presentation intent，不创建或修改AgentFrame。
+- Normalized context只比较业务语义：assignment由fragments定义；tool schema provenance使用稳定source layer，精确Frame坐标只留在Business Surface provenance。Workspace Module producer只提交canonical Runtime turn/item，presentation turn由Managed Runtime映射补全；没有真实外部source stream时source correlation保持为空。
+- 工具结果的typed content使用可读的分行摘要，结构化details继续服务机器消费；Native `AfterTool`只在Hook显式返回typed `content`时改写正文，不能把结构化`result/details`隐式序列化成正文。Native presentation遇到历史Broker envelope时仍优先恢复其中的`content_items`。
+- 验收必须覆盖：旧revision调用在自身hot-replace后继续progress并唯一terminal；hot-replace后的新调用仍拒绝旧revision；executor/timeout/cancel failure均输出typed diagnostic；Runtime Lost但resource surface仍含Canvas时用户入口保持可打开；Canvas create只投影新增mount，present不触发SurfaceAdopt且使用真实presentation turn。
+
 ## Acceptance Criteria
 
 - [x] ARD-001 已在 `pnpm dev` 启动的真实产品路径复现并记录第一个断点位置。
@@ -222,7 +239,17 @@
 - [x] ARD-015 Managed Runtime snapshot成为唯一current adopted Runtime Surface；未采用candidate不进入产品active查询，失败adoption不改变F1。
 - [ ] ARD-015 真实production composition回归覆盖Canvas create/adopt/present及重复visibility no-op，不使用绕过adopter/compiler的fake bridge。
 - [x] ARD-015 删除错误的冗余current查询与不可达binding adopted-pointer语义，并通过相关crate check、定向回归与production composition E2E验证。
-- [ ] ARD-015 使用真实`pnpm dev`完成Canvas create/write/present产品复验。
+- [x] ARD-015 使用真实`pnpm dev`完成Canvas create/write/present产品复验。
+- [x] ARD-016 tool-set revision只作为调用准入fence；已accept调用在自身Surface hot-replace后可继续progress并唯一terminal。
+- [x] ARD-016 Broker失败结果统一携带typed diagnostic content，工具卡不再以`null`掩盖executor/terminal错误。
+- [x] ARD-016 Canvas入口由catalog与durable resource surface求交，Runtime Lost不再隐藏已adopted Canvas。
+- [x] ARD-016 Workspace Module presentation只提交canonical Runtime identity，由Runtime补全presentation turn，且不伪造source correlation。
+- [x] ARD-016 normalized assignment/tool schema删除Frame快照坐标污染；Canvas mount adoption不再重复投影assignment与全部内置工具。
+- [x] ARD-016 `present`收敛为纯presentation intent，不再请求Canvas visibility或写入AgentFrame。
+- [x] ARD-016 Workspace Module工具typed content恢复为分行可读摘要。
+- [x] ARD-016 Native presentation对Broker envelope优先投影typed `content_items`，工具卡不再显示单行JSON。
+- [x] ARD-016 Native AfterTool删除`result/details -> content`隐式转换，机器结果不再覆盖可读工具正文。
+- [x] ARD-016 使用真实`pnpm dev`完成Canvas create/write/present、用户打开与后续对话产品复验。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -249,6 +276,7 @@
 | ARD-013 | diagnosed | major | canonical Runtime带来placement/recovery收益，但mutation owner与revision职责未收束，Context/Hook及跨实例CAS仍存在结构性竞争面 |
 | ARD-014 | diagnosed | blocker | Responses等待HTTP EOF导致可见回复与canonical终态分裂；Promote跨层改policy却保留预生成presentation坐标，立即发送确定性失败 |
 | ARD-015 | fixed | blocker | exact candidate坐标已贯穿compiler/adopter，Managed Runtime snapshot成为唯一adopted head，latest persisted repository路径已完成语义改名与隔离；待真实Canvas产品链复验 |
+| ARD-016 | verified | blocker | 真实`pnpm dev`验证create仅产生VFS mount delta，present不写Frame且成功终态，用户可打开Canvas，工具卡展示5行typed摘要而非单行JSON |
 
 ## Verification Record
 
@@ -283,4 +311,5 @@
 - ARD-012真实embedded PostgreSQL回归在Runtime UoW末阶段注入失败，证明projection/journal/operation/effect/quarantine全部回滚；重试从committed base提交唯一ProtocolViolation、Lost、terminal presentation/effect/quarantine，且thread column revision、projection revision与journal MAX(revision)一致，event head一致。
 - ARD-012 fabricated `DriverError::Terminalized`真实outbox claim回归证明canonical operation仍active时release/no-ack且可reclaim，claim期间canonical terminal后二次读取才ack。Runtime interface 44、Native 37+16、Codex 50、Remote 19、相关crate check、contracts、fmt与diff check通过；本轮未启动`pnpm dev`，真实Provider产品链仍待复验。
 - ARD-015 修复将`NativeAgentRunSurfaceCompileTarget::ExactAgentFrame`贯穿Canonical adopter/compiler/business source；active surface与effective capability改由Managed Runtime thread snapshot定位source Frame，binding只保留bootstrap/recovery坐标。`AgentBusinessSurfaceSource`的第二次Frame repository读取与revision equality guard已删除，repository最高revision入口统一命名为`get_latest`。
-- ARD-015 定向验证通过：三版本回归证明binding=F1、snapshot=F2、repository latest=F3时活动查询只返回F2；exact candidate contract证明adopter以F2调用compiler；production tools E2E从真实PostgreSQL composition完成工具调用到final assistant terminal。目标三crate `cargo check --tests`通过；strict clippy被本次未修改的既有lint债阻断，真实`pnpm dev` Canvas产品链仍待复验。
+- ARD-015 定向验证通过：三版本回归证明binding=F1、snapshot=F2、repository latest=F3时活动查询只返回F2；exact candidate contract证明adopter以F2调用compiler；production tools E2E从真实PostgreSQL composition完成工具调用到final assistant terminal。目标三crate `cargo check --tests`通过；真实`pnpm dev` Canvas create/write/present链已完成复验。
+- ARD-016 真实`pnpm dev`验证通过：新Run创建`cvs-canvas-convergence-verification`、写入`src/main.tsx`并成功present；create后会话只投影`VFS UPDATE`，无assignment/全工具重复delta，present后无第二次CTX/Surface更新；独立新Run再次present成功并回到就绪，工具卡输出为5行90字符的typed摘要。

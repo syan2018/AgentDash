@@ -38,6 +38,16 @@ export function activeCanvasMountIdsFromRuntimeSurface(
   return ids;
 }
 
+export function selectCanvasModuleOpenOptionsFromRuntimeSurface(
+  modules: WorkspaceModuleDescriptor[],
+  runtimeSurface: ResolvedVfsSurface | null,
+): CanvasModuleOpenOption[] {
+  return selectCanvasModuleOpenOptions(
+    modules,
+    activeCanvasMountIdsFromRuntimeSurface(runtimeSurface),
+  );
+}
+
 export function isActiveCanvasPresentationUri(
   uri: string,
   activeCanvasMountIds: ReadonlySet<string>,

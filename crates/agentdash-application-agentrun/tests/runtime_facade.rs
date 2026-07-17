@@ -1171,7 +1171,6 @@ async fn compiled_full_bootstrap_is_committed_by_real_thread_start_in_main_order
     let normalized_context_surface = NormalizedContextSurfaceState {
         capability_keys: ["file_read".to_string()].into(),
         assignment: Some(NormalizedAssignmentContext {
-            revision: 1,
             fragments: vec![agentdash_agent_protocol::RuntimeContextFragmentEntry {
                 slot: assignment_fragment.slot,
                 label: assignment_fragment.label,

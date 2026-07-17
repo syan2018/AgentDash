@@ -16,6 +16,20 @@ use tokio_util::sync::CancellationToken;
 mod support;
 use support::TestTerminalPresentationProjector;
 
+struct AllowSurface;
+
+#[async_trait]
+impl RuntimeSurfaceReferenceValidator for AllowSurface {
+    async fn validate_surface_reference(
+        &self,
+        _binding_id: &RuntimeBindingId,
+        _runtime_thread_id: &RuntimeThreadId,
+        _target: &RuntimeSurfaceDescriptor,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 fn id<T: FromStr>(value: &str) -> T
 where
     T::Err: std::fmt::Debug,
@@ -218,6 +232,7 @@ impl ToolCredentialResolver for RecordingCredentials {
 
 struct RecordingExecutor {
     calls: AtomicUsize,
+    fails: AtomicBool,
     delay: Duration,
 }
 
@@ -277,6 +292,11 @@ impl ToolExecutionPort for RecordingExecutor {
             ]);
         }
         tokio::time::sleep(self.delay).await;
+        if self.fails.load(Ordering::SeqCst) {
+            return Err(ToolBrokerError::Execution(
+                "Canvas surface adoption failed".to_string(),
+            ));
+        }
         Ok(ToolBrokerResult {
             output: serde_json::json!({
                 "ok": true,
@@ -303,6 +323,7 @@ fn fixture(delay: Duration) -> Fixture {
     let credentials = Arc::new(RecordingCredentials::default());
     let executor = Arc::new(RecordingExecutor {
         calls: AtomicUsize::new(0),
+        fails: AtomicBool::new(false),
         delay,
     });
     let broker = PlatformToolBroker::new(
@@ -325,6 +346,31 @@ fn fixture(delay: Duration) -> Fixture {
         credentials,
         executor,
     }
+}
+
+#[tokio::test]
+async fn executor_failure_is_projected_as_typed_diagnostic_content() {
+    let fixture = fixture(Duration::ZERO);
+    fixture.executor.fails.store(true, Ordering::SeqCst);
+
+    let outcome = fixture
+        .broker
+        .invoke(
+            ToolChannel::DirectCallback,
+            invocation("item-executor-failure"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("failed tool outcome");
+
+    let ToolBrokerOutcome::Terminal { status, result, .. } = outcome else {
+        panic!("executor failure must produce a terminal outcome");
+    };
+    assert_eq!(status, ToolBrokerCallStatus::Failed);
+    assert_eq!(
+        result.output["content_items"][0]["text"],
+        "tool executor failed: Canvas surface adoption failed"
+    );
 }
 
 #[tokio::test]
@@ -602,12 +648,23 @@ async fn cancellation_and_timeout_are_durable_terminals() {
         .await
         .expect("cancelled outcome");
     assert!(matches!(
-        cancelled,
+        &cancelled,
         ToolBrokerOutcome::Terminal {
             result: ToolBrokerResult { is_error: true, .. },
             ..
         }
     ));
+    let ToolBrokerOutcome::Terminal {
+        result: cancelled_result,
+        ..
+    } = &cancelled
+    else {
+        panic!("cancelled invocation must be terminal");
+    };
+    assert_eq!(
+        cancelled_result.output["content_items"][0]["text"],
+        "tool execution cancelled"
+    );
     assert_eq!(cancelled_fixture.executor.calls.load(Ordering::SeqCst), 0);
     assert_eq!(
         cancelled_fixture
@@ -623,7 +680,7 @@ async fn cancellation_and_timeout_are_durable_terminals() {
     let timeout_fixture = fixture(Duration::from_millis(50));
     let mut timed_invocation = invocation("item-timeout");
     timed_invocation.timeout_ms = 1;
-    timeout_fixture
+    let timed_out = timeout_fixture
         .broker
         .invoke(
             ToolChannel::DirectCallback,
@@ -632,6 +689,17 @@ async fn cancellation_and_timeout_are_durable_terminals() {
         )
         .await
         .expect("timeout outcome");
+    let ToolBrokerOutcome::Terminal {
+        result: timed_out_result,
+        ..
+    } = timed_out
+    else {
+        panic!("timed-out invocation must be terminal");
+    };
+    assert_eq!(
+        timed_out_result.output["content_items"][0]["text"],
+        "tool execution timed out"
+    );
     assert_eq!(
         timeout_fixture
             .repository
@@ -794,7 +862,7 @@ async fn vfs_denial_is_terminal_before_credentials_or_executor_side_effect() {
         .expect("typed denial");
 
     assert!(matches!(
-        outcome,
+        &outcome,
         ToolBrokerOutcome::Denied {
             stage: ToolPolicyStage::Vfs,
             ..
@@ -802,15 +870,16 @@ async fn vfs_denial_is_terminal_before_credentials_or_executor_side_effect() {
     ));
     assert_eq!(fixture.executor.calls.load(Ordering::SeqCst), 0);
     assert!(fixture.credentials.refs.lock().await.is_empty());
+    let denied_call = fixture
+        .repository
+        .load(&id("item-vfs-denied"))
+        .await
+        .expect("load")
+        .expect("call");
+    assert_eq!(denied_call.status, ToolBrokerCallStatus::Failed);
     assert_eq!(
-        fixture
-            .repository
-            .load(&id("item-vfs-denied"))
-            .await
-            .expect("load")
-            .expect("call")
-            .status,
-        ToolBrokerCallStatus::Failed
+        denied_call.result.expect("denial result").output["content_items"][0]["text"],
+        "path outside mounted workspace"
     );
 }
 
@@ -852,6 +921,7 @@ fn runtime_profile() -> RuntimeProfile {
         lifecycle: [
             LifecycleCapability::ThreadStart,
             LifecycleCapability::TurnStart,
+            LifecycleCapability::SurfaceAdopt,
         ]
         .into(),
         hooks: HookProfile {
@@ -1094,12 +1164,12 @@ async fn managed_runtime_journal_preserves_true_mcp_owner_lifecycle() {
 }
 
 #[tokio::test]
-async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_result() {
+async fn managed_runtime_journal_keeps_accepted_tool_alive_across_surface_hot_replace() {
     let store = Arc::new(RuntimeStoreFixture::default());
-    let runtime = Arc::new(ManagedAgentRuntime::new(
-        store.clone(),
-        Arc::new(TestTerminalPresentationProjector),
-    ));
+    let runtime = Arc::new(
+        ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector))
+            .with_surface_validator(Arc::new(AllowSurface)),
+    );
     runtime
         .execute(RuntimeCommandEnvelope {
             presentation: Vec::new(),
@@ -1191,6 +1261,51 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
         .accept_tool_call(&invocation, &catalog().tools[0])
         .await
         .expect("repeated accept is idempotent");
+    let before_adoption = store
+        .load_thread(&id("thread-broker"))
+        .await
+        .expect("load runtime before surface adoption")
+        .expect("runtime thread before surface adoption");
+    let mut adopted_surface = before_adoption.surface.clone();
+    adopted_surface.source_frame_id = "frame-broker-adopted".to_string();
+    adopted_surface.surface_revision = SurfaceRevision(2);
+    adopted_surface.surface_digest = id("surface-broker-adopted");
+    adopted_surface.vfs_digest = "vfs-broker-adopted".to_string();
+    adopted_surface.context_recipe_revision = ContextRecipeRevision(2);
+    adopted_surface.context_digest = id("context-broker-adopted");
+    adopted_surface.tool_set_revision = ToolSetRevision(5);
+    adopted_surface.tool_set_digest = "tools-broker-adopted".to_string();
+    runtime
+        .execute(RuntimeCommandEnvelope {
+            presentation: Vec::new(),
+            meta: OperationMeta {
+                operation_id: id("broker-surface-adopt"),
+                idempotency_key: id("broker-surface-adopt-key"),
+                expected_thread_revision: Some(before_adoption.revision),
+                actor: RuntimeActor::System {
+                    component: "tool-broker-test".to_string(),
+                },
+            },
+            command: RuntimeCommand::SurfaceAdopt {
+                thread_id: id("thread-broker"),
+                expected_surface_revision: before_adoption.surface.surface_revision,
+                expected_surface_digest: before_adoption.surface.surface_digest,
+                target: Box::new(adopted_surface),
+            },
+        })
+        .await
+        .expect("hot-replace surface while the accepted tool is active");
+    let mut stale_new_call = invocation.clone();
+    stale_new_call.coordinates.item_id = id("item-stale-after-surface-adoption");
+    stale_new_call.coordinates.presentation_item_id =
+        id("presentation-item-stale-after-surface-adoption");
+    stale_new_call.coordinates.source_item_id = id("source-item-stale-after-surface-adoption");
+    assert!(matches!(
+        journal
+            .accept_tool_call(&stale_new_call, &catalog().tools[0])
+            .await,
+        Err(ToolBrokerError::StaleCoordinates)
+    ));
     let snapshot = store
         .load_thread(&id("thread-broker"))
         .await
@@ -1360,7 +1475,7 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
             source_item_id: id("source-item-vendor-stream"),
             binding_id: id("binding-broker"),
             binding_generation: RuntimeDriverGeneration(3),
-            tool_set_revision: ToolSetRevision(4),
+            tool_set_revision: ToolSetRevision(5),
         },
         tool_name: "code_scan".to_string(),
         arguments: serde_json::json!({"path":"vendor"}),

@@ -42,11 +42,10 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::canvas::{
-    CANVAS_BIND_DATA_OPERATION_KEY, CANVAS_RENDERER_KIND, CanvasMutationInput, CanvasRepositorySet,
-    CopyCanvasInput, CreatePersonalCanvasInput, canvas_module_id, canvas_presentation_uri,
-    canvas_vfs_mount_id, copy_canvas_to_personal, create_personal_canvas,
-    load_canvas_by_project_mount_id, normalize_canvas_mount_id, upsert_canvas_data_binding,
-    validate_canvas_data_bindings,
+    CANVAS_BIND_DATA_OPERATION_KEY, CanvasMutationInput, CanvasRepositorySet, CopyCanvasInput,
+    CreatePersonalCanvasInput, canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id,
+    copy_canvas_to_personal, create_personal_canvas, load_canvas_by_project_mount_id,
+    normalize_canvas_mount_id, upsert_canvas_data_binding, validate_canvas_data_bindings,
 };
 use crate::workspace_module::runtime_bridge::{
     SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
@@ -946,17 +945,6 @@ async fn present(
             }
         };
 
-    if presentation.renderer_kind == CANVAS_RENDERER_KIND {
-        command
-            .runtime_context
-            .request_existing_canvas_visibility(
-                command.canvas_repo.as_ref(),
-                &module.summary.source,
-            )
-            .await
-            .map_err(runtime_bridge_error_to_surface_error)?;
-    }
-
     let value = serde_json::to_value(&presentation).map_err(|error| {
         WorkspaceModuleSurfaceError::ExecutionFailed(format!(
             "failed to serialize workspace module presentation: {error}"
@@ -1800,7 +1788,9 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct CapturingAgentRunBridge {}
+    struct CapturingAgentRunBridge {
+        surface_update_count: Mutex<usize>,
+    }
 
     #[async_trait]
     impl WorkspaceModuleAgentRunBridge for CapturingAgentRunBridge {
@@ -1818,6 +1808,10 @@ mod tests {
             _current_user: Option<&ProjectAuthorizationContext>,
             _request: RuntimeSurfaceUpdateRequest,
         ) -> Result<RuntimeVfsState, String> {
+            *self
+                .surface_update_count
+                .lock()
+                .expect("surface update lock") += 1;
             let vfs = Vfs::default();
             Ok(RuntimeVfsState::new(
                 vfs.clone(),
@@ -2331,8 +2325,19 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].runtime_thread_id.as_str(), "session-a");
         assert_eq!(
-            requests[0].events[0].coordinate.source_thread_id.as_deref(),
-            Some("presentation-session-a")
+            requests[0].events[0].coordinate.presentation_turn_id, None,
+            "the Runtime owns the canonical runtime-to-presentation turn mapping"
+        );
+        assert!(requests[0].events[0].coordinate.source_thread_id.is_none());
+        assert!(requests[0].events[0].coordinate.source_turn_id.is_none());
+        assert!(requests[0].events[0].coordinate.source_item_id.is_none());
+        assert_eq!(
+            *bridge
+                .surface_update_count
+                .lock()
+                .expect("surface update lock"),
+            0,
+            "present is a presentation intent and must not mutate AgentFrame"
         );
         let BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(changed)) =
             &requests[0].events[0].event.event

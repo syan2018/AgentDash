@@ -76,7 +76,6 @@ pub struct NormalizedSkillCluster {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct NormalizedAssignmentContext {
-    pub revision: u64,
     #[serde(default)]
     pub fragments: Vec<RuntimeContextFragmentEntry>,
 }
@@ -241,5 +240,43 @@ impl NormalizedContextSurfaceDelta {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.capability_dimensions_are_empty() && !self.assignment_changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assignment_equality_is_semantic_and_independent_of_surface_revision() {
+        let assignment = NormalizedAssignmentContext {
+            fragments: vec![RuntimeContextFragmentEntry {
+                slot: "task".to_string(),
+                label: "Task".to_string(),
+                source: "workflow".to_string(),
+                content: "Keep the current assignment".to_string(),
+                context_usage_kind: Some("system_developer".to_string()),
+            }],
+        };
+        let previous = NormalizedContextSurfaceState {
+            assignment: Some(assignment.clone()),
+            ..Default::default()
+        };
+        let target = NormalizedContextSurfaceState {
+            assignment: Some(assignment),
+            vfs_mounts: BTreeMap::from([(
+                "cvs-canvas".to_string(),
+                NormalizedSurfaceEntity {
+                    fingerprint: "canvas".to_string(),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let delta = NormalizedContextSurfaceDelta::between(&previous, &target);
+
+        assert!(!delta.assignment_changed);
+        assert_eq!(delta.vfs.mounts.added, vec!["cvs-canvas".to_string()]);
+        assert!(delta.tool_schemas.is_empty());
     }
 }

@@ -79,6 +79,7 @@ struct ToolCallCoordinates {
 - Driver callback同时传递canonical Runtime item、独立session-visible `PresentationItemId`、原样source thread/turn/item三元组及binding/generation/tool identity/arguments。canonical ID只用于Runtime state与side-effect idempotency；presentation ID只进入Backbone payload；source坐标只进入carrier correlation，三者不得互相替代。
 - readable tool-result ref与presentation item必须由同一个session-scoped identity allocator生成，并按effective `ToolProtocolProjection`判断Tool/Command family。调用首事件必须同时固定该call的projector、emitter与readable family；后续update/result不能按工具名或更新后的surface重新猜测，否则会中途换producer或把大结果ref回填到另一张card。
 - Broker首次accept使用owner projector原子提交authoritative ItemStarted；CAS conflict reload，相同turn与initial payload重放幂等，不同payload返回`IdempotencyConflict`。Tool update通过同一journal进入Runtime transient publisher，由store分配generation内单调sequence与唯一event ID。
+- `tool_set_revision`只在首次accept前作为catalog admission fence。Item durable accept后，progress、approval与terminal convergence按binding、generation及persisted Item/Turn identity继续；调用自身触发的Surface/ToolSet hot-replace不得使该调用变成stale。hot-replace后的新调用仍必须携带current tool-set revision。
 - Shell start按owner arguments区分Platform与MountExec；read/write/status/resize/terminate使用独立TerminalControl variant。ApplyPatch使用真实parser逐entry保存path/kind/diff/move path，多文件patch不得把整包diff复制到每个change。
 - Platform shell terminal registration必须直接持有当前`PlatformToolExecutionContext`的`run_id`、`agent_id`与canonical `runtime_thread_id`，并记录`terminal_id -> backend/mount/cwd`路由。production VFS tool composition必须显式注入同一个AgentRun terminal registry；registry缺失时不得暴露可执行`shell_exec`或返回无法续接的`running` handle。local runtime `ShellSessionManager`仍是process与retained output buffer的唯一事实源，application registry只负责control routing与有界产品投影。
 - Shell start返回`running`后，read/write/status/resize/terminate必须用同一typed owner解析原terminal；不同run、agent或runtime thread的continuation必须typed reject。start结果与后续增量chunks都更新同一terminal projection；增量snapshot必须按stream追加并保持`next_seq`单调，空增量不得清除既有preview。
@@ -89,6 +90,13 @@ struct ToolCallCoordinates {
 - approval先由Runtime journal创建canonical durable Interaction，再将其ref写入Broker call。Direct Callback与MCP façade调用同一状态机。
 - executor收到canonical `RuntimeItemId`作为side-effect idempotency identity。Repository以原子`Accepted|AwaitingApproval -> Running` claim决定唯一executor owner；并发观察到`Running`的调用只等待/读取同一terminal或返回typed in-progress，不进入executor。进程重启后遗留`Running`表示副作用可能已发生，不能自动重放；Broker terminal已写而Runtime terminal失败时，重放只收敛canonical Item terminal。
 - cancellation与timeout产生typed durable terminal；AfterTool同步观察成功、executor failure、timeout和cancel结果，完成result rewrite/effect后才允许terminal commit。
+- executor failure、timeout、cancel与policy denial的`ToolBrokerResult.output`必须同时包含机器可读`error`与typed `content_items: [{ "type": "inputText", "text": diagnostic }]`；Native callback和presentation projector只消费typed content，不从顶层error补猜测展示。
+- Workspace Module的create/attach/copy属于surface mutation；present属于presentation intent。present只提交control-plane presentation，不请求资源visibility、不写AgentFrame、不推进tool set。
+- Application presentation producer提交canonical Runtime turn/item，由Managed Runtime补全runtime-to-presentation turn映射；只有真实外部producer stream才填写source correlation坐标。
+- Normalized context equality只包含可呈现业务语义：assignment比较fragments，tool schema provenance使用稳定owner layer；AgentFrame revision/UUID保留在Business Surface provenance，不得放大成assignment或全工具delta。
+- Dynamic工具typed content提供可读分行摘要，结构化details用于机器消费；两者不得以单行协议JSON互相替代。
+- Native presentation接收Broker envelope时优先恢复typed `content_items`；只有不存在typed/text content的未知payload才允许使用JSON诊断兜底。
+- Native `AfterTool`的结构化`result`只更新details；仅显式typed `content`可改写用户正文，Hook不得从details调用`to_string()`覆盖executor content。
 - Credential material只在local executor boundary解引用，不实现Serialize或Debug；MCP schema与日志只暴露credential ref/provenance，不暴露secret。
 
 ## 4. Validation & Error Matrix
@@ -101,6 +109,8 @@ struct ToolCallCoordinates {
 | frame construction port 在 VFS bootstrap 后仍未绑定 | AppState composition fail-fast；请求不可进入半装配状态 |
 | 一个Hook definition分配多个route | `ConflictingHookRoute` |
 | stale binding generation/tool-set revision | side effect与broker call前typed reject |
+| 已accept调用执行中推进tool-set revision | 同一binding generation下继续progress/approval/terminal；不得返回`StaleCoordinates` |
+| hot-replace后以旧tool-set revision发起新调用 | admission阶段typed reject，不创建canonical Item |
 | 相同Item ID但arguments/channel/provenance不同 | `IdempotencyConflict` |
 | 最终Catalog contribution缺protocol projector | Surface assembly typed reject，不进入Runtime |
 | Driver与Broker对同一tool item提交不同started payload | 拒绝双projection；Driver只调用Broker owner seam |
@@ -111,6 +121,7 @@ struct ToolCallCoordinates {
 | BeforeTool block | 不解引用credential、不调用executor，durable terminal |
 | approval required | 先创建canonical Interaction，再进入AwaitingApproval |
 | permission/VFS deny | credential/executor前durable failure |
+| executor/timeout/cancel/permission failure投影 | terminal output同时具有`error`与非空typed `content_items`；工具卡不得显示`null` |
 | Running进程崩溃 | 保留完整effective arguments并返回typed in-progress/待人工恢复；`recoverable()`不得把Running当作executor重放许可 |
 | 同一Item并发执行 | 原子claim只产生一个`Acquired`；其余调用观察`InProgress`并共享首次terminal，executor只调用一次 |
 | 并发terminal结果不同 | 真实PG行锁只接受一个terminal，另一方typed conflict |
@@ -121,7 +132,7 @@ struct ToolCallCoordinates {
 
 ## 5. Good / Base / Bad Cases
 
-**Good case:** MCP tool call按catalog坐标进入同一个Broker，BeforeTool改写参数后先持久化，policy/VFS/credential校验完成才以canonical Item ID调用executor，AfterTool改写结果后原子记录Broker terminal并收敛Runtime Item。
+**Good case:** MCP tool call按catalog坐标进入同一个Broker，BeforeTool改写参数后先持久化，policy/VFS/credential校验完成才以canonical Item ID调用executor。executor可触发Surface hot-replace；同一accepted Item仍按原binding generation完成AfterTool、Broker terminal和Runtime Item convergence。
 
 **Base case:** required approval创建durable Interaction并暂停；获批后由唯一claim owner使用同一Item和effective arguments继续。若进程在Running后消失，后续调用保留该不确定边界并返回typed in-progress，不猜测副作用是否发生。
 
@@ -132,6 +143,8 @@ struct ToolCallCoordinates {
 - Surface测试覆盖确定性编译、各contribution必填字段、所有identity冲突、required/optional/PromptOnly矩阵、Hook唯一route与profile strength。
 - embedded PostgreSQL Lifecycle launch 测试断言：product delivery 前 current AgentFrame 已包含 canonical workspace mount/backend/root/capability/context 与本次 Run execution profile；无 default workspace 的 Project 在 frame construction 边界失败。
 - Broker behavior覆盖Direct/MCP同状态机、rewrite/block/approval、permission/VFS/credential顺序、cancel/timeout/executor failure/result rewrite。
+- Broker lifecycle必须覆盖调用在accept后触发Surface/ToolSet hot-replace，断言progress与terminal成功、terminal唯一；另以旧revision发起新调用必须在accept前失败。
+- 失败结果测试必须断言executor failure、timeout、cancel和policy denial均具有非空typed diagnostic content。
 - Projector matrix枚举最终production catalog，覆盖每个family的started/update/completed/failed/approval/identity；至少Shell与ApplyPatch必须经过真实owner→Registry→Broker→Runtime链。
 - Shell测试覆盖Platform/MountExec、TerminalControl五类操作及command/cwd/output/exit/status；ApplyPatch覆盖add/update/move/delete多文件逐entry diff。
 - Shell lifecycle测试必须覆盖production composition注入typed owner registry、running start→write/read→completed retained output、跨owner拒绝，以及`after_seq`增量snapshot追加后不清空既有terminal projection。该测试必须在删除composition注入时失败，而不只直接构造adapter。
@@ -184,4 +197,17 @@ let provider = VfsRuntimeToolProvider::new(vfs, materialization);
 
 // Correct: production composition显式提供typed terminal routing owner。
 let provider = VfsRuntimeToolProvider::new(vfs, materialization, terminal_registry);
+```
+
+```rust
+// Wrong: 用调用开始时的catalog revision约束已接受调用的整个生命周期。
+let thread = load_thread(&call.thread_id).await?;
+ensure!(thread.tool_set_revision == call.tool_set_revision, StaleCoordinates);
+record_tool_terminal(call).await?;
+
+// Correct: revision只做新调用准入；已接受调用按稳定owner与persisted Item收敛。
+let thread = load_bound_thread(&call.invocation).await?;
+let item = thread.items.get(&call.item_id).ok_or(StaleCoordinates)?;
+ensure_same_turn_and_active(item, call)?;
+record_tool_terminal(call).await?;
 ```

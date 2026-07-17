@@ -147,3 +147,19 @@
 - [x] 覆盖三版本active head、exact candidate compiler、Canvas visibility no-op、surface CAS/失败保持旧snapshot、recovery exact descriptor与production composition工具继续执行。
 - [x] 运行相关Rust direct fmt、定向测试、目标三crate check与静态搜索；记录strict clippy中本次未修改的既有lint债。
 - [ ] 使用`pnpm dev`真实Canvas create/write/present确认当前turn继续且后续对话可用。
+
+## ARD-016
+
+- [x] 以真实Runtime event/transcript确认Canvas已创建且resource surface已adopt，但两个ToolCall Item因旧tool-set revision fence无法terminal，最终触发active-item protocol violation与Runtime Lost。
+- [x] 将`ManagedRuntimeToolJournal`拆为strict admission lookup与accepted-call bound lookup；仅首次accept校验current tool-set revision，progress/approval/terminal保留binding generation及persisted Item校验。
+- [x] 统一Broker失败结果构造，为executor failure、timeout、cancel与policy denial写入typed diagnostic `content_items`。
+- [x] 删除Workspace Panel的`runtimeStatus === ready` Canvas可见性门禁，改为Workspace Module catalog与durable resource surface求交。
+- [x] 增加Surface hot-replace生命周期、typed failure diagnostic和Runtime Lost资源可打开回归测试。
+- [x] 删除normalized assignment的Frame revision，并将tool schema source收敛为稳定owner layer，覆盖跨Frame语义不变回归。
+- [x] 删除`present -> Canvas visibility -> AgentFrame update`路径；presentation producer仅提交canonical Runtime turn/item并由Runtime补全presentation turn。
+- [x] 将Workspace Module create/present typed content改为分行可读摘要，结构化details保持机器可读。
+- [x] 修正Native presentation的Broker envelope lossy投影，优先恢复typed `content_items`并增加防单行JSON回归。
+- [x] 删除Native AfterTool把结构化result同时写入content的隐式路径；仅显式typed content可覆盖executor正文。
+- [x] 增加Canvas present零surface mutation、presentation identity normalization与normalized delta回归。
+- [x] 运行Tool Broker、Runtime projection、Workspace Module、Native Integration、Canvas前端测试、typecheck/lint与diff检查。
+- [x] 使用`pnpm dev`真实Canvas create/write/present确认工具唯一terminal、用户可打开Canvas且后续对话不进入Lost。

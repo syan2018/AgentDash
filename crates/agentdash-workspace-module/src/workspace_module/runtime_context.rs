@@ -6,14 +6,14 @@ use agentdash_agent_runtime_contract::{
 use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
 use agentdash_application_runtime_gateway::{RuntimeActor, RuntimeContext};
 use agentdash_application_vfs::tools::SharedRuntimeVfs;
-use agentdash_domain::canvas::{Canvas, CanvasRepository};
+use agentdash_domain::canvas::Canvas;
 use agentdash_domain::project::ProjectAuthorizationContext;
 use uuid::Uuid;
 
 use super::runtime_bridge::{
     ResolvedInvocationBackend, SharedWorkspaceModuleAgentRunBridgeHandle,
     SharedWorkspaceModulePresentationAppendHandle, WorkspaceModuleRuntimeBridgeError,
-    request_existing_canvas_visibility_for_runtime, submit_canvas_runtime_surface_update,
+    submit_canvas_runtime_surface_update,
 };
 
 #[derive(Clone)]
@@ -145,28 +145,6 @@ impl WorkspaceModuleRuntimeContext {
         self.submit_canvas_surface_update(canvas, request).await
     }
 
-    pub(crate) async fn request_existing_canvas_visibility(
-        &self,
-        canvas_repo: &dyn CanvasRepository,
-        canvas_mount_id: &str,
-    ) -> Result<Canvas, WorkspaceModuleRuntimeBridgeError> {
-        let handle = self.agent_run_bridge_handle.as_ref().ok_or_else(|| {
-            WorkspaceModuleRuntimeBridgeError::ExecutionFailed(
-                "Workspace module AgentRun bridge 尚未完成初始化".to_string(),
-            )
-        })?;
-        request_existing_canvas_visibility_for_runtime(
-            canvas_repo,
-            self.project_id,
-            canvas_mount_id,
-            self.vfs.as_ref(),
-            handle,
-            Some(self.runtime_thread_id()),
-            self.current_user(),
-        )
-        .await
-    }
-
     pub(crate) async fn append_presentation_event(
         &self,
         binding: &agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBinding,
@@ -205,19 +183,12 @@ impl WorkspaceModuleRuntimeContext {
                 events: vec![RuntimePresentationInput {
                     coordinate: RuntimePresentationCoordinate {
                         runtime_turn_id: Some(runtime_turn_id),
-                        presentation_turn_id: Some(
-                            agentdash_agent_runtime_contract::PresentationTurnId::new(turn_id)
-                                .map_err(|error| {
-                                    WorkspaceModuleRuntimeBridgeError::ExecutionFailed(
-                                        error.to_string(),
-                                    )
-                                })?,
-                        ),
+                        presentation_turn_id: None,
                         runtime_item_id: Some(runtime_item_id),
                         interaction_id: None,
-                        source_thread_id: Some(binding.presentation_thread_id.to_string()),
-                        source_turn_id: Some(turn_id.to_string()),
-                        source_item_id: Some(tool_call_id.to_string()),
+                        source_thread_id: None,
+                        source_turn_id: None,
+                        source_item_id: None,
                         source_request_id: None,
                         source_entry_index: None,
                     },

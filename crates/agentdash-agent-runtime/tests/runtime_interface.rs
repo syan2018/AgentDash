@@ -578,7 +578,6 @@ fn surface_adoption_plan() -> RuntimeSurfacePresentationPlan {
             model_summary: Some("Project skills".to_string()),
         }],
         assignment: Some(NormalizedAssignmentContext {
-            revision: 1,
             fragments: vec![RuntimeContextFragmentEntry {
                 slot: "task".to_string(),
                 label: "Task".to_string(),
@@ -645,7 +644,6 @@ fn surface_adoption_plan() -> RuntimeSurfacePresentationPlan {
         },
     );
     target_state.assignment = Some(NormalizedAssignmentContext {
-        revision: 2,
         fragments: vec![RuntimeContextFragmentEntry {
             slot: "task".to_string(),
             label: "Task".to_string(),

@@ -642,17 +642,19 @@ fn decode_tool_result_lossy(
                 reason = %error,
                 "Native tool result不是完整typed payload，保留lossy presentation"
             );
-            let content = value
-                .get("content")
-                .and_then(serde_json::Value::as_str)
-                .map(|text| vec![ContentPart::text(text)])
-                .unwrap_or_else(|| {
-                    if value.is_null() {
-                        Vec::new()
-                    } else {
-                        vec![ContentPart::text(value.to_string())]
-                    }
-                });
+            let content = decode_dynamic_tool_content(value).unwrap_or_else(|| {
+                value
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|text| vec![ContentPart::text(text)])
+                    .unwrap_or_else(|| {
+                        if value.is_null() {
+                            Vec::new()
+                        } else {
+                            vec![ContentPart::text(value.to_string())]
+                        }
+                    })
+            });
             AgentToolResult {
                 content,
                 is_error,
@@ -660,6 +662,26 @@ fn decode_tool_result_lossy(
             }
         }
     }
+}
+
+fn decode_dynamic_tool_content(value: &serde_json::Value) -> Option<Vec<ContentPart>> {
+    let items = serde_json::from_value::<Vec<codex::DynamicToolCallOutputContentItem>>(
+        value.get("content_items")?.clone(),
+    )
+    .ok()?;
+    Some(
+        items
+            .into_iter()
+            .map(|item| match item {
+                codex::DynamicToolCallOutputContentItem::InputText { text } => {
+                    ContentPart::text(text)
+                }
+                codex::DynamicToolCallOutputContentItem::InputImage { image_url } => {
+                    ContentPart::image("image/*", image_url)
+                }
+            })
+            .collect(),
+    )
 }
 
 fn tool_result_text(
@@ -2244,6 +2266,37 @@ mod tests {
             }
             other => panic!("expected image item, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn broker_envelope_projects_typed_content_instead_of_single_line_json() {
+        let value = serde_json::json!({
+            "module_id": "canvas:cvs-canvas",
+            "content_items": [{
+                "type": "inputText",
+                "text": "模块展示请求已提交\n\n- 模块：`canvas:cvs-canvas`\n- 视图：`preview`"
+            }]
+        });
+
+        let result =
+            decode_tool_result_lossy(&value, "workspace_module_present", "tool_result", false);
+        assert_eq!(
+            result.content,
+            vec![ContentPart::text(
+                "模块展示请求已提交\n\n- 模块：`canvas:cvs-canvas`\n- 视图：`preview`"
+            )]
+        );
+        let items =
+            decode_tool_result_to_content_items(&value, &result, "workspace_module_present")
+                .expect("project")
+                .expect("content items");
+        assert_eq!(
+            items,
+            vec![codex::DynamicToolCallOutputContentItem::InputText {
+                text: "模块展示请求已提交\n\n- 模块：`canvas:cvs-canvas`\n- 视图：`preview`"
+                    .to_string(),
+            }]
+        );
     }
 
     #[test]

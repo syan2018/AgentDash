@@ -498,7 +498,7 @@ fn project_operation_outcome(
             canvas,
         } => {
             let content = format!(
-                "operated workspace module\noperation={operation}\nmodule_id={module_id}\ncanvas_id={}\ncanvas_mount_id={}\nvfs_mount={}://\nskill_path={}",
+                "Canvas 操作完成\n\n- 操作：`{operation}`\n- 模块：`{module_id}`\n- Canvas ID：`{}`\n- Canvas mount：`{}`\n- VFS mount：`{}://`\n- 技能：`{}`",
                 canvas.canvas_id, canvas.canvas_mount_id, canvas.vfs_mount_id, canvas.skill_path
             );
             let details = serde_json::json!({
@@ -556,7 +556,7 @@ fn project_operation_outcome(
             })?;
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(format!(
-                    "presented module={} view={} renderer={}",
+                    "模块展示请求已提交\n\n- 模块：`{}`\n- 视图：`{}`\n- 渲染器：`{}`",
                     presentation.module_id, presentation.view_key, presentation.renderer_kind
                 ))],
                 is_error: false,

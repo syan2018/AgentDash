@@ -303,7 +303,7 @@ where
             )
             .map_err(|error| ToolBrokerError::Execution(error.to_string()))?;
         loop {
-            let mut thread = self.load_matching_thread(invocation).await?;
+            let mut thread = self.load_admission_thread(invocation).await?;
             if let Some(item) = thread.items.get(&invocation.coordinates.item_id) {
                 return if item.turn_id == invocation.coordinates.turn_id
                     && item.initial_content == initial_content
@@ -372,7 +372,7 @@ where
         let _mutation = self.runtime.lock_mutation().await;
         let terminal = broker_terminal(call)?;
         loop {
-            let mut thread = self.load_matching_thread(&call.invocation).await?;
+            let mut thread = self.load_bound_thread(&call.invocation).await?;
             let item = thread
                 .items
                 .get(&call.invocation.coordinates.item_id)
@@ -458,7 +458,7 @@ where
     ) -> Result<(), ToolBrokerError> {
         let _mutation = self.runtime.lock_mutation().await;
         loop {
-            let mut thread = self.load_matching_thread(invocation).await?;
+            let mut thread = self.load_bound_thread(invocation).await?;
             if thread.interactions.contains_key(interaction_id) {
                 return Ok(());
             }
@@ -503,7 +503,7 @@ where
         {
             return Ok(());
         }
-        let thread = self.load_matching_thread(invocation).await?;
+        let thread = self.load_bound_thread(invocation).await?;
         let presentation_turn_id = presentation_turn_id(&thread, invocation)?;
         let presentation_coordinate = tool_presentation_coordinate(&thread, invocation)?;
         if matches!(
@@ -617,7 +617,18 @@ impl<S> ManagedRuntimeToolJournal<S>
 where
     S: RuntimeRepository + RuntimeUnitOfWork,
 {
-    async fn load_matching_thread(
+    async fn load_admission_thread(
+        &self,
+        invocation: &ToolBrokerInvocation,
+    ) -> Result<crate::RuntimeThreadState, ToolBrokerError> {
+        let thread = self.load_bound_thread(invocation).await?;
+        if thread.tool_set_revision != invocation.coordinates.tool_set_revision {
+            return Err(ToolBrokerError::StaleCoordinates);
+        }
+        Ok(thread)
+    }
+
+    async fn load_bound_thread(
         &self,
         invocation: &ToolBrokerInvocation,
     ) -> Result<crate::RuntimeThreadState, ToolBrokerError> {
@@ -630,7 +641,6 @@ where
             .ok_or(ToolBrokerError::StaleCoordinates)?;
         if thread.binding_id != invocation.coordinates.binding_id
             || thread.driver_generation != invocation.coordinates.binding_generation
-            || thread.tool_set_revision != invocation.coordinates.tool_set_revision
         {
             return Err(ToolBrokerError::StaleCoordinates);
         }
@@ -1315,20 +1325,17 @@ impl PlatformToolBroker {
         };
         let execution = match execution {
             ToolExecutionCompletion::Finished(Ok(result)) => (None, result, None),
-            ToolExecutionCompletion::Finished(Err(error)) => (
-                Some(ToolBrokerCallStatus::Failed),
-                ToolBrokerResult {
-                    output: serde_json::json!({"error": error.to_string()}),
-                    is_error: true,
-                },
-                Some(error.to_string()),
-            ),
+            ToolExecutionCompletion::Finished(Err(error)) => {
+                let message = error.to_string();
+                (
+                    Some(ToolBrokerCallStatus::Failed),
+                    failed_result(message.clone()),
+                    Some(message),
+                )
+            }
             ToolExecutionCompletion::TimedOut => (
                 Some(ToolBrokerCallStatus::TimedOut),
-                ToolBrokerResult {
-                    output: serde_json::json!({"error": "tool execution timed out"}),
-                    is_error: true,
-                },
+                failed_result("tool execution timed out"),
                 Some("tool execution timed out".to_string()),
             ),
             ToolExecutionCompletion::Cancelled => {
@@ -1421,10 +1428,7 @@ impl PlatformToolBroker {
         stage: ToolPolicyStage,
         reason: String,
     ) -> Result<ToolBrokerOutcome, ToolBrokerError> {
-        let result = ToolBrokerResult {
-            output: serde_json::json!({"error": reason}),
-            is_error: true,
-        };
+        let result = failed_result(reason.clone());
         let terminal = self
             .repository
             .transition(
@@ -1554,8 +1558,19 @@ fn invocation_digest(
 }
 
 fn cancelled_result() -> ToolBrokerResult {
+    failed_result("tool execution cancelled")
+}
+
+fn failed_result(message: impl Into<String>) -> ToolBrokerResult {
+    let message = message.into();
     ToolBrokerResult {
-        output: serde_json::json!({"error": "tool execution cancelled"}),
+        output: serde_json::json!({
+            "error": message,
+            "content_items": [{
+                "type": "inputText",
+                "text": message,
+            }],
+        }),
         is_error: true,
     }
 }

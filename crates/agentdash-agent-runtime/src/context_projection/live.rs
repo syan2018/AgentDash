@@ -346,7 +346,6 @@ mod tests {
             tool("fs_apply_patch", "file_write", "file_write::fs_apply_patch"),
         )]);
         target.assignment = Some(NormalizedAssignmentContext {
-            revision: 2,
             fragments: vec![RuntimeContextFragmentEntry {
                 slot: "task".to_string(),
                 label: "Task".to_string(),
@@ -388,7 +387,6 @@ mod tests {
         let previous = NormalizedContextSurfaceState::default();
         let mut target = previous.clone();
         target.assignment = Some(NormalizedAssignmentContext {
-            revision: 1,
             fragments: vec![RuntimeContextFragmentEntry {
                 slot: "task".to_string(),
                 label: String::new(),
@@ -647,7 +645,6 @@ mod tests {
 
         let mut target = previous.clone();
         target.assignment = Some(NormalizedAssignmentContext {
-            revision: 1,
             fragments: vec![RuntimeContextFragmentEntry {
                 slot: "task".to_string(),
                 label: "Task".to_string(),

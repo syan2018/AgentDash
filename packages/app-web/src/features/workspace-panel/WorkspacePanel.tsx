@@ -21,10 +21,9 @@ import { AddressBar } from "./AddressBar";
 import type { WorkspacePanelHandle, WorkspacePanelProps } from "./workspace-panel-types";
 import type { WorkspaceTabLayoutOptions } from "../../stores/workspaceTabStore";
 import {
-  activeCanvasMountIdsFromRuntimeSurface,
   canvasMountIdFromPresentationUri,
-  selectCanvasModuleOpenOptions,
   openUserCanvasModule,
+  selectCanvasModuleOpenOptionsFromRuntimeSurface,
   type CanvasModuleOpenOption,
 } from "./model/canvasModuleOpen";
 import {
@@ -54,12 +53,6 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     const [canvasOpenBusyKey, setCanvasOpenBusyKey] = useState<string | null>(null);
     const [canvasOpenError, setCanvasOpenError] = useState<string | null>(null);
 
-    const activeCanvasMountIds = useMemo(
-      () => activeCanvasMountIdsFromRuntimeSurface(runtimeData.runtimeSurface),
-      [runtimeData.runtimeSurface],
-    );
-    const runtimeCanvasSurfaceReady = runtimeData.runtimeStatus === "ready";
-
     const tabLayoutOptions: WorkspaceTabLayoutOptions = useMemo(() => ({
       tabTypes: registrySnapshot.map((type) => ({
         typeId: type.typeId,
@@ -85,9 +78,9 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     }, [storeWorkspaceKey, tabLayoutOptions, workspaceKey]);
 
     useEffect(() => {
-      if (!runtimeCanvasSurfaceReady || storeWorkspaceKey !== workspaceKey) return;
+      if (storeWorkspaceKey !== workspaceKey) return;
       useWorkspaceTabStore.getState().pruneInvalidTabs(tabLayoutOptions);
-    }, [runtimeCanvasSurfaceReady, storeWorkspaceKey, tabLayoutOptions, workspaceKey]);
+    }, [storeWorkspaceKey, tabLayoutOptions, workspaceKey]);
 
     const workspaceModuleState = useMemo(() => {
       if (storedWorkspaceModuleState) return storedWorkspaceModuleState;
@@ -146,10 +139,11 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     }, [tabLayoutOptions]);
 
     const canvasOptions = useMemo(
-      () => runtimeCanvasSurfaceReady
-        ? selectCanvasModuleOpenOptions(workspaceModuleState.modules, activeCanvasMountIds)
-        : [],
-      [activeCanvasMountIds, runtimeCanvasSurfaceReady, workspaceModuleState.modules],
+      () => selectCanvasModuleOpenOptionsFromRuntimeSurface(
+        workspaceModuleState.modules,
+        runtimeData.runtimeSurface,
+      ),
+      [runtimeData.runtimeSurface, workspaceModuleState.modules],
     );
 
     const handleOpenCanvasModule = useCallback(async (option: CanvasModuleOpenOption) => {

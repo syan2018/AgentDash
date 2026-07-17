@@ -13,6 +13,27 @@ use crate::{
     ContextPreparationWorkItem, RuntimeOperationRecord, RuntimeThreadState,
 };
 
+#[derive(Debug, Clone)]
+pub struct CommittedDurablePresentation {
+    pub record: RuntimeJournalRecord,
+    pub projection_changed: bool,
+}
+
+#[async_trait]
+pub trait RuntimeCommittedPresentationObserver: Send + Sync {
+    async fn observe(&self, presentation: CommittedDurablePresentation) -> Result<(), String>;
+}
+
+#[derive(Default)]
+pub struct NoopRuntimeCommittedPresentationObserver;
+
+#[async_trait]
+impl RuntimeCommittedPresentationObserver for NoopRuntimeCommittedPresentationObserver {
+    async fn observe(&self, _presentation: CommittedDurablePresentation) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 #[async_trait]
 pub trait RuntimeSurfaceReferenceValidator: Send + Sync {
     async fn validate_surface_reference(

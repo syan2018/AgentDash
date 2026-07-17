@@ -23,6 +23,7 @@ use crate::agent_run::{
     ConversationModelConfigResolver, ConversationModelConfigSourceModel,
     ConversationWaitingItemModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
     DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService, ValidationSeverityModel,
+    resolve_agent_run_display_title,
 };
 use crate::error::WorkflowApplicationError;
 use agentdash_application_vfs::{
@@ -261,8 +262,10 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 ownership: ownership.clone(),
             });
         let shell = shell_model(
-            project_agent.as_ref(),
             &agent,
+            current_delivery
+                .as_ref()
+                .and_then(|selection| selection.thread_name.as_deref()),
             &workspace_state,
             workspace_state.last_turn_id.clone(),
         );
@@ -304,8 +307,10 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         let workspace_state = derive_workspace_state(&execution_state);
         let project_agent = self.load_project_agent(&run, &agent).await?;
         let shell = shell_model(
-            project_agent.as_ref(),
             &agent,
+            current_delivery
+                .as_ref()
+                .and_then(|selection| selection.thread_name.as_deref()),
             &workspace_state,
             workspace_state.last_turn_id.clone(),
         );
@@ -521,29 +526,20 @@ fn project_agent_display_label(project_agent: &ProjectAgent) -> String {
 }
 
 fn shell_model(
-    project_agent: Option<&ProjectAgent>,
     agent: &LifecycleAgent,
+    runtime_thread_name: Option<&str>,
     workspace_state: &super::types::AgentRunWorkspaceStateModel,
     last_turn_id: Option<String>,
 ) -> AgentRunWorkspaceShellModel {
-    // Title is now a first-class workspace field on LifecycleAgent.
-    // No longer read-through from SessionMeta.
-    let (display_title, title_source) = match (
+    let title = resolve_agent_run_display_title(
         agent.workspace_title.as_deref(),
         agent.workspace_title_source.as_deref(),
-    ) {
-        (Some(title), Some(source)) if !title.is_empty() => (title.to_string(), source.to_string()),
-        _ => (
-            project_agent
-                .map(|project_agent| project_agent.name.clone())
-                .unwrap_or_else(|| format!("AgentRun {}", agent.id)),
-            "agentrun_workspace".to_string(),
-        ),
-    };
+        runtime_thread_name,
+    );
 
     AgentRunWorkspaceShellModel {
-        display_title,
-        title_source,
+        display_title: title.value,
+        title_source: title.source,
         delivery_status: workspace_state.delivery_status.clone(),
         last_turn_id,
         last_activity_at: agent.updated_at.to_rfc3339(),
@@ -714,6 +710,7 @@ fn empty_vfs() -> Vfs {
 mod tests {
     use super::*;
     use agentdash_domain::settings::{Setting, SettingScopeKind};
+    use agentdash_domain::workflow::AgentSource;
 
     struct StaticSettingsRepository {
         value: Option<serde_json::Value>,
@@ -769,6 +766,35 @@ mod tests {
         async fn delete(&self, _scope: &SettingScope, _key: &str) -> Result<bool, DomainError> {
             Ok(false)
         }
+    }
+
+    #[test]
+    fn workspace_shell_uses_shared_explicit_runtime_pending_title_priority() {
+        let run_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
+        let mut agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent);
+        let state = super::super::types::AgentRunWorkspaceStateModel {
+            state_code: super::super::types::AgentRunWorkspaceStateCode::Ready,
+            active_turn_id: None,
+            last_turn_id: None,
+            delivery_status: "ready".to_string(),
+        };
+
+        let runtime = shell_model(&agent, Some("  Runtime 会话名  "), &state, None);
+        assert_eq!(runtime.display_title, "Runtime 会话名");
+        assert_eq!(runtime.title_source, "runtime_thread");
+
+        agent.workspace_title = Some("显式会话名".to_string());
+        agent.workspace_title_source = Some("user".to_string());
+        let explicit = shell_model(&agent, Some("Runtime 会话名"), &state, None);
+        assert_eq!(explicit.display_title, "显式会话名");
+        assert_eq!(explicit.title_source, "user");
+
+        agent.workspace_title = None;
+        agent.workspace_title_source = None;
+        let pending = shell_model(&agent, None, &state, None);
+        assert_eq!(pending.display_title, "新会话");
+        assert_eq!(pending.title_source, "pending");
     }
 
     #[tokio::test]

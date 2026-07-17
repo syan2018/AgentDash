@@ -774,7 +774,7 @@ fn presentation_notification(
     use PresentationDurability::{Durable, Ephemeral};
     use agentdash_agent_protocol::generated::codex_v2::server_notification as owned;
     use agentdash_agent_protocol::{
-        BackboneEvent, ItemCompletedNotification, ItemStartedNotification, PlatformEvent,
+        BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
     };
     match method {
         "turn/started" => {
@@ -874,20 +874,10 @@ fn presentation_notification(
             owned::ThreadNameUpdatedNotification,
         >(params)
         .map(|value| {
-            value.thread_name.and_then(|title| {
-                let title = title.trim();
-                (!title.is_empty()).then(|| {
-                    ImmutablePresentationEvent::new(
-                        Durable,
-                        BackboneEvent::Platform(PlatformEvent::SourceSessionTitleUpdated {
-                            executor_session_id: Some(value.thread_id),
-                            title: title.to_string(),
-                            preview: None,
-                            source: "codex".to_string(),
-                        }),
-                    )
-                })
-            })
+            Some(ImmutablePresentationEvent::new(
+                Durable,
+                BackboneEvent::ThreadNameUpdated(value),
+            ))
         }),
         "error" => strict_owned::<codex::ErrorNotification, owned::ErrorNotification>(params)
             .map(|value| presentation(Durable, BackboneEvent::Error(value))),
@@ -1320,8 +1310,12 @@ mod tests {
     }
 
     #[test]
-    fn nullable_or_blank_thread_name_is_an_admitted_noop() {
-        for thread_name in [Value::Null, Value::String("   ".to_string())] {
+    fn thread_name_update_preserves_set_clear_and_source_identity() {
+        for thread_name in [
+            Value::Null,
+            Value::String("Codex Title".to_string()),
+            Value::String("   ".to_string()),
+        ] {
             let mapped = SourceCoordinateMap::default()
                 .map_notification(RpcServerNotification {
                     method: "thread/name/updated".to_string(),
@@ -1330,8 +1324,22 @@ mod tests {
                         "threadName": thread_name
                     }),
                 })
-                .expect("nullable title is a valid Codex notification");
-            assert!(mapped.is_none());
+                .expect("standard thread name notification")
+                .expect("durable thread name presentation");
+            let agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(notification) =
+                mapped.presentation.event
+            else {
+                panic!("expected standard thread name event");
+            };
+            assert_eq!(notification.thread_id, "source-thread");
+            assert_eq!(
+                notification.thread_name,
+                match thread_name {
+                    Value::Null => None,
+                    Value::String(value) => Some(value),
+                    _ => unreachable!(),
+                }
+            );
         }
     }
 

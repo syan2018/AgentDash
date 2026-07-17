@@ -153,6 +153,7 @@ fn view(target: AgentRunRuntimeTarget, active_turn: Option<&str>) -> AgentRunRun
             latest_event_sequence: EventSequence(3),
             captured_at_ms: 1_783_684_800_000,
             status: RuntimeThreadStatus::Active,
+            thread_name: None,
             active_turn_id: active_turn.map(id),
             active_presentation_turn_id: active_turn.map(|_| id("presentation-turn-active")),
             binding_id: binding.binding_id,

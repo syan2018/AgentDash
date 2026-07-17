@@ -78,6 +78,10 @@ pub struct RuntimeThreadState {
     pub binding_epoch: BindingEpoch,
     pub driver_generation: RuntimeDriverGeneration,
     pub source_thread_id: agentdash_agent_runtime_contract::DriverThreadId,
+    /// Current Agent conversation name projected from the standard
+    /// `thread/name/updated` presentation journal.
+    #[serde(deserialize_with = "deserialize_required_thread_name")]
+    pub thread_name: Option<String>,
     pub profile_digest: ProfileDigest,
     pub bound_profile: RuntimeProfile,
     pub surface: agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor,
@@ -95,6 +99,13 @@ pub struct RuntimeThreadState {
     /// payloads. Runtime item summaries are never used to populate this list.
     pub presentation_transcript: Vec<RuntimeTranscriptItem>,
     pub interactions: BTreeMap<RuntimeInteractionId, RuntimeInteractionState>,
+}
+
+fn deserialize_required_thread_name<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize)]
@@ -200,6 +211,29 @@ impl RuntimeThreadState {
         match fact {
             RuntimeJournalFact::Internal(event) => self.apply_authoritative(event),
             RuntimeJournalFact::Presentation(event) => {
+                if let agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(notification) =
+                    &event.event
+                {
+                    if notification.thread_id != self.source_thread_id.as_str() {
+                        return Err(TransitionError::InvalidJournalFact {
+                            message: format!(
+                                "thread name source `{}` does not match bound source thread `{}`",
+                                notification.thread_id, self.source_thread_id
+                            ),
+                        });
+                    }
+                    if notification
+                        .thread_name
+                        .as_deref()
+                        .is_some_and(|name| name.trim().is_empty())
+                    {
+                        return Err(TransitionError::InvalidJournalFact {
+                            message: "thread name must not be blank".to_string(),
+                        });
+                    }
+                    self.thread_name = notification.thread_name.clone();
+                    return Ok(());
+                }
                 let Some(item) = presentation_terminal_item(event) else {
                     return Ok(());
                 };
@@ -674,6 +708,7 @@ impl RuntimeThreadState {
             latest_event_sequence: self.next_event_sequence,
             captured_at_ms: current_time_ms(),
             status: self.status,
+            thread_name: self.thread_name.clone(),
             active_turn_id: self.active_turn_id.clone(),
             active_presentation_turn_id: self.active_turn_id.as_ref().and_then(|turn_id| {
                 self.turns

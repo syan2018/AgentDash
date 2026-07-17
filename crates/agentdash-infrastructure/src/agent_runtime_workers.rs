@@ -1380,6 +1380,7 @@ mod tests {
             "turn-before-admission",
         ));
         let transcript = DriverTranscript {
+            current_thread_name: None,
             earliest_available: agentdash_agent_runtime_contract::EventSequence(1),
             latest_available: agentdash_agent_runtime_contract::EventSequence(4),
             active_compaction_source_end: None,

@@ -46,10 +46,11 @@ pub mod codex_app_server_protocol {
         PlanDeltaNotification, ReasoningSummaryPartAddedNotification,
         ReasoningSummaryTextDeltaNotification, ReasoningTextDeltaNotification, RequestId,
         ServerRequestResolvedNotification, TerminalInteractionNotification,
-        ThreadStatusChangedNotification, ThreadTokenUsage, ThreadTokenUsageUpdatedNotification,
-        TokenUsageBreakdown, Turn, TurnCompletedNotification, TurnDiffUpdatedNotification,
-        TurnError, TurnModerationMetadataNotification, TurnPlanStep, TurnPlanStepStatus,
-        TurnPlanUpdatedNotification, TurnStartedNotification, TurnStatus, WarningNotification,
+        ThreadNameUpdatedNotification, ThreadStatusChangedNotification, ThreadTokenUsage,
+        ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown, Turn, TurnCompletedNotification,
+        TurnDiffUpdatedNotification, TurnError, TurnModerationMetadataNotification, TurnPlanStep,
+        TurnPlanStepStatus, TurnPlanUpdatedNotification, TurnStartedNotification, TurnStatus,
+        WarningNotification,
     };
     pub use crate::generated::codex_v2::thread_item::*;
     pub use crate::generated::codex_v2::tool_request_user_input_params::ToolRequestUserInputParams;
@@ -263,6 +264,33 @@ mod tests {
         assert_eq!(
             serde_json::to_value(event).expect("serialize backbone fixture"),
             fixture
+        );
+    }
+
+    #[test]
+    fn thread_name_updated_preserves_set_and_clear_semantics() {
+        use super::codex_app_server_protocol::ThreadNameUpdatedNotification;
+
+        let set = BackboneEvent::ThreadNameUpdated(ThreadNameUpdatedNotification {
+            thread_id: "thread-1".to_string(),
+            thread_name: Some("会话名称".to_string()),
+        });
+        let set_value = serde_json::to_value(&set).expect("serialize thread name set");
+        assert_eq!(set_value["type"], "thread_name_updated");
+        assert_eq!(set_value["payload"]["threadId"], "thread-1");
+        assert_eq!(set_value["payload"]["threadName"], "会话名称");
+
+        let clear = BackboneEvent::ThreadNameUpdated(ThreadNameUpdatedNotification {
+            thread_id: "thread-1".to_string(),
+            thread_name: None,
+        });
+        let clear_value = serde_json::to_value(&clear).expect("serialize thread name clear");
+        assert_eq!(clear_value["type"], "thread_name_updated");
+        assert_eq!(clear_value["payload"]["threadId"], "thread-1");
+        assert!(clear_value["payload"].get("threadName").is_none());
+        assert_eq!(
+            serde_json::from_value::<BackboneEvent>(clear_value).expect("deserialize clear"),
+            clear
         );
     }
 }

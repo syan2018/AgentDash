@@ -128,6 +128,13 @@ impl LlmBridge for RecordingBridge {
 
 struct RecordingResolver(Arc<RecordingBridge>);
 
+fn is_naming_request(request: &BridgeRequest) -> bool {
+    request
+        .system_prompt
+        .as_deref()
+        .is_some_and(|prompt| prompt.contains("会话标题"))
+}
+
 #[async_trait]
 impl NativeBridgeResolver for RecordingResolver {
     async fn resolve(
@@ -359,6 +366,30 @@ async fn wait_for_turn_terminal(sink: &Sink) {
     .expect("Native turn terminal timeout");
 }
 
+async fn wait_for_thread_name(sink: &Sink) {
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            let named = sink.0.lock().await.iter().any(|event| {
+                event.facts.iter().any(|fact| {
+                    matches!(
+                        fact,
+                        RuntimeJournalFact::Presentation(ImmutablePresentationEvent {
+                            event: agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(_),
+                            ..
+                        })
+                    )
+                })
+            });
+            if named {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Native thread name timeout");
+}
+
 struct FailingSink;
 
 #[async_trait]
@@ -506,6 +537,7 @@ async fn driver_fixture() -> (Arc<dyn AgentRuntimeDriver>, DriverBinding) {
     driver_fixture_with(
         Arc::new(Resolver),
         DriverTranscript {
+            current_thread_name: None,
             earliest_available: EventSequence(1),
             latest_available: EventSequence(0),
             active_compaction_source_end: None,
@@ -688,6 +720,7 @@ async fn native_cold_start_replays_durable_tool_history_without_duplicating_curr
         }],
     ));
     let transcript = DriverTranscript {
+        current_thread_name: None,
         earliest_available: EventSequence(1),
         latest_available: EventSequence(4),
         active_compaction_source_end: None,
@@ -821,6 +854,7 @@ async fn native_cold_start_replays_post_admission_tail_once_after_active_compact
         "presentation-turn-tail",
     ));
     let transcript = DriverTranscript {
+        current_thread_name: None,
         earliest_available: EventSequence(1),
         latest_available: EventSequence(6),
         active_compaction_source_end: Some(EventSequence(2)),
@@ -985,6 +1019,7 @@ async fn native_turn_interrupt_emits_one_interrupted_terminal_without_losing_bin
     let (driver, binding) = driver_fixture_with(
         Arc::new(BlockingResolver(bridge.clone())),
         DriverTranscript {
+            current_thread_name: None,
             earliest_available: EventSequence(1),
             latest_available: EventSequence(0),
             active_compaction_source_end: None,
@@ -1068,6 +1103,7 @@ async fn native_terminal_observer_can_dispatch_the_next_turn_without_waiting() {
     let (driver, binding) = driver_fixture_with(
         Arc::new(RecordingResolver(bridge.clone())),
         DriverTranscript {
+            current_thread_name: None,
             earliest_available: EventSequence(1),
             latest_available: EventSequence(0),
             active_compaction_source_end: None,
@@ -1125,7 +1161,53 @@ async fn native_terminal_observer_can_dispatch_the_next_turn_without_waiting() {
         .expect("terminal callback outcome sender")
         .expect("Native must be idle before terminal becomes observable");
     wait_for_turn_terminal(next_sink.as_ref()).await;
-    assert_eq!(bridge.requests.lock().await.len(), 2);
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if bridge
+                .requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| is_naming_request(request))
+                .count()
+                == 1
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("single background naming request");
+    let requests = bridge.requests.lock().await;
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| !is_naming_request(request))
+            .count(),
+        2
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| is_naming_request(request))
+            .count(),
+        1
+    );
+    let naming_request = requests
+        .iter()
+        .find(|request| is_naming_request(request))
+        .expect("naming request");
+    assert!(naming_request.tools.is_empty());
+    assert_eq!(
+        naming_request
+            .messages
+            .iter()
+            .filter_map(AgentMessage::first_text)
+            .collect::<Vec<_>>(),
+        vec!["first", "restored response"],
+        "naming uses only this turn's canonical user input and final assistant text"
+    );
 }
 
 #[tokio::test]
@@ -1161,12 +1243,58 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
         .expect("native turn");
 
     wait_for_turn_terminal(sink.as_ref()).await;
+    wait_for_thread_name(sink.as_ref()).await;
     let events = sink.0.lock().await;
+    let terminal_event_index = events
+        .iter()
+        .position(|event| {
+            event.facts.iter().any(|fact| {
+                matches!(
+                    fact,
+                    RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal { .. })
+                )
+            })
+        })
+        .expect("turn terminal envelope");
+    let thread_name_event_index = events
+        .iter()
+        .position(|event| {
+            event.facts.iter().any(|fact| {
+                matches!(
+                    fact,
+                    RuntimeJournalFact::Presentation(ImmutablePresentationEvent {
+                        event: agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(_),
+                        ..
+                    })
+                )
+            })
+        })
+        .expect("thread name envelope");
+    assert!(
+        terminal_event_index < thread_name_event_index,
+        "the main turn terminal must become observable before background naming"
+    );
     assert!(events.iter().all(|event| {
-        event
-            .operation_id
-            .as_ref()
-            .is_some_and(|operation_id| operation_id.as_str() == "operation-turn-1")
+        if event.facts.iter().any(|fact| {
+            matches!(
+                fact,
+                RuntimeJournalFact::Presentation(ImmutablePresentationEvent {
+                    event: agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(_),
+                    ..
+                })
+            )
+        }) {
+            event.operation_id.is_none()
+                && event.source_turn_id.is_none()
+                && event.source_item_id.is_none()
+                && event.source_request_id.is_none()
+                && event.source_entry_index.is_none()
+        } else {
+            event
+                .operation_id
+                .as_ref()
+                .is_some_and(|operation_id| operation_id.as_str() == "operation-turn-1")
+        }
     }));
     let internal = events
         .iter()
@@ -1218,6 +1346,12 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
         .flat_map(|event| event.facts.iter())
         .filter_map(|fact| match fact {
             RuntimeJournalFact::Presentation(presentation) => {
+                if matches!(
+                    presentation.event,
+                    agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(_)
+                ) {
+                    return None;
+                }
                 let value = serde_json::to_value(&presentation.event)
                     .expect("serialize native protected presentation body");
                 value
@@ -1274,6 +1408,68 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
             ..
         }
     ));
+}
+
+#[tokio::test]
+async fn native_cold_bind_with_current_thread_name_does_not_generate_another_name() {
+    let bridge = Arc::new(RecordingBridge::default());
+    let (driver, binding) = driver_fixture_with(
+        Arc::new(RecordingResolver(bridge.clone())),
+        DriverTranscript {
+            current_thread_name: Some("已有会话名".to_string()),
+            earliest_available: EventSequence(1),
+            latest_available: EventSequence(0),
+            active_compaction_source_end: None,
+            completed_presentation_item_ids: Vec::new(),
+            records: Vec::new(),
+        },
+    )
+    .await;
+    let sink = Arc::new(Sink::default());
+
+    driver
+        .dispatch(
+            DriverCommandEnvelope {
+                request_id: id("request-existing-name"),
+                operation_id: id("operation-existing-name"),
+                presentation_thread_id: id("presentation-thread-1"),
+                binding_id: id("binding-1"),
+                generation: RuntimeDriverGeneration(4),
+                source_thread_id: binding.source_thread_id,
+                runtime_turn_id: Some(id("turn-existing-name")),
+                presentation_turn_id: Some(id("presentation-turn-existing-name")),
+                command: thread_start(
+                    "presentation-turn-existing-name",
+                    vec![RuntimeInput::text("hello".to_string())],
+                ),
+            },
+            sink.clone(),
+        )
+        .await
+        .expect("native turn with existing name");
+
+    wait_for_turn_terminal(sink.as_ref()).await;
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        sink.0
+            .lock()
+            .await
+            .iter()
+            .all(|event| event.facts.iter().all(|fact| !matches!(
+                fact,
+                RuntimeJournalFact::Presentation(ImmutablePresentationEvent {
+                    event: agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(_),
+                    ..
+                })
+            )))
+    );
+    assert_eq!(
+        bridge.requests.lock().await.len(),
+        1,
+        "only the main provider request is allowed"
+    );
 }
 
 #[tokio::test]

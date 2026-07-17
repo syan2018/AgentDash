@@ -11,6 +11,11 @@ pub struct CodexRuntimeIntegration;
 
 pub fn codex_runtime_contribution() -> AgentRuntimeDriverContribution;
 
+enum BackboneEvent {
+    ThreadNameUpdated(ThreadNameUpdatedNotification),
+    // ...other pinned Codex-shaped and AgentDash variants...
+}
+
 impl AgentRuntimeDriver for CodexRuntimeDriver {
     async fn bind(&self, request: DriverBindRequest)
         -> Result<DriverBinding, DriverError>;
@@ -27,6 +32,13 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
 Codex Rust protocol、npm package与Integration protocol revision必须使用同一个已审计版本；当前基线为`0.144.1 / revision 144`。Adapter所有vendor DTO、进程与artifact细节封装在`agentdash-integration-codex`或workspace protocol codegen工具；其它production crate只消费generated AgentDash-owned类型。
 
 ## 3. Contracts
+
+- Codex live `thread/name/updated` 通过 pinned owned DTO strict transcode 为标准 durable
+  `BackboneEvent::ThreadNameUpdated`；`threadName` 的字符串、显式 `null` 与原始空白语义在
+  adapter 边界保持不变，由 Runtime reducer统一裁决。
+- bind/start presentation 从 `/thread/name` 读取同一标准事件：string 生成 `Some(raw)`，
+  显式 null 生成 `None`，字段缺失不生成事实。bind 与 live 共用同一 reducer，原因是冷恢复
+  和运行中更新必须得到相同 projection 与校验结果。
 
 - Codex通过Integration contribution/factory进入Driver Host；Application/Executor不硬编码构造Codex connector。旧`codex_bridge`不能与新adapter并存。
 - JSON-RPC frame可先保留`method + params` transport形态，但admission必须按method把params依次反序列化为vendor typed params与generated owned params。未知method返回typed `UnsupportedMethod`；刻意忽略的hook notification也必须显式admit为typed no-op。
@@ -68,6 +80,8 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 | active dynamic tool触发SurfaceAdopt | ContextFrame exactly-once先落journal；tool完成并继续final assistant后Codex full adopt生效 |
 | terminal presentation sink失败 | 不提前遗忘active operation；BindingLost收敛或保留duplicate terminal重试能力 |
 | sink返回`Terminalized` | 清理turn/interaction/waiter并停止pump；不补第二份`BindingLost` |
+| live `thread/name/updated`携带string/null/blank | string/null逐字段进入标准事件；blank也原样进入并由Runtime typed拒绝 |
+| bind/start `/thread/name`字段缺失 | 不生成名称事实；显式`null`必须生成标准clear事件 |
 | VendorStream dynamic tool | Codex presentation start/completed各一次，Broker internal lifecycle各一次，不生成第二张card |
 | native compact notification | Opaque observation，不推进managed head |
 | duplicate/concurrent hook callback | 返回相同decision，canonical callback执行一次 |
@@ -81,11 +95,16 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 
 **Bad case:** Adapter把`thread/compacted`当成PlatformExact checkpoint，或把RPC interrupt响应当turn terminal。这会制造虚假context和lifecycle事实，必须由fidelity与notification状态机阻止。
 
+**Thread name case:** live notification与bind/start presentation对string/null使用同一owned DTO和
+Runtime reducer；字段缺失只表示vendor没有提供该事实，不能被adapter猜成clear。
+
 ## 6. Tests Required
 
 - Contribution/version/profile测试覆盖真实0.144.1方法与未支持能力不声明。
 - 多binding process/session测试覆盖锁隔离、persistent stdout pump、Arc sink、EOF Lost与request idempotency。
 - Mapping覆盖start/resume/fork、turn/item全部terminal、source coordinates、typed inspect与error message。
+- Thread name mapping覆盖live与bind/start两条入口的string、显式null、字段缺失和原始blank，
+  断言owned notification逐字段保真且只有缺失字段不生成事实。
 - Input/context测试覆盖`text_elements`、image/local-image detail的absent/null/enum、Skill/Mention、Structured、instruction channels、workspace roots、sandbox与Resume/Fork完整参数。
 - Dynamic tool测试覆盖Broker coordinates、image output、denied/completed/interaction-required和unsupported cancellation。
 - production tracer覆盖dynamic tool -> active SurfaceAdopt/ContextFrame -> 同ID tool terminal -> final assistant -> idle full rebind，并断言全程single presentation producer。
@@ -114,4 +133,16 @@ let decision = callback.evaluate(invocation).await?;
 
 // Correct: binding-scoped cache按hook_run/request identity收敛重复与并发调用。
 let decision = decision_cache.get_or_evaluate(key, invocation, callback).await?;
+```
+
+```rust
+// Wrong: adapter把缺失、null与空白都归一化成“没有事件”。
+if notification.thread_name.as_deref().is_none_or(str::is_empty) {
+    return Ok(None);
+}
+
+// Correct: adapter保持vendor wire语义，Runtime统一决定clear与非法blank。
+return Ok(Some(BackboneEvent::ThreadNameUpdated(strict_transcode(
+    notification,
+)?)));
 ```

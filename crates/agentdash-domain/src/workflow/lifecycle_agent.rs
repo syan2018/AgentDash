@@ -153,29 +153,6 @@ impl LifecycleAgent {
     pub fn needs_bootstrap(&self) -> bool {
         self.bootstrap_status == bootstrap_status::PENDING
     }
-
-    /// Update workspace title if the new source has equal or higher priority.
-    /// Priority: user > source > auto.
-    pub fn update_workspace_title(&mut self, title: String, title_source: &str) -> bool {
-        let current_priority = title_source_priority(self.workspace_title_source.as_deref());
-        let new_priority = title_source_priority(Some(title_source));
-        if new_priority < current_priority {
-            return false;
-        }
-        self.workspace_title = Some(title);
-        self.workspace_title_source = Some(title_source.to_string());
-        self.updated_at = Utc::now();
-        true
-    }
-}
-
-fn title_source_priority(source: Option<&str>) -> u8 {
-    match source {
-        Some("user") => 2,
-        Some("source") => 1,
-        Some("auto") | None => 0,
-        _ => 0,
-    }
 }
 
 fn default_created_by_user_id() -> String {

@@ -9,6 +9,7 @@ use agentdash_agent_runtime_contract::{
     RuntimeSnapshotResult, RuntimeSubscribeError, RuntimeTerminalPresentationContext,
     RuntimeThreadId, RuntimeThreadStatus,
 };
+use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
 
 use crate::{
@@ -21,6 +22,7 @@ pub struct ManagedAgentRuntime<S> {
     store: Arc<S>,
     application_presentation_projector:
         Arc<dyn agentdash_agent_runtime_contract::RuntimeApplicationPresentationProjector>,
+    committed_presentation_observer: Arc<dyn crate::RuntimeCommittedPresentationObserver>,
     surface_validator: Option<Arc<dyn crate::RuntimeSurfaceReferenceValidator>>,
     driver_event_ingest: tokio::sync::Mutex<()>,
 }
@@ -35,6 +37,9 @@ impl<S> ManagedAgentRuntime<S> {
         Self {
             store,
             application_presentation_projector,
+            committed_presentation_observer: Arc::new(
+                crate::NoopRuntimeCommittedPresentationObserver,
+            ),
             surface_validator: None,
             driver_event_ingest: tokio::sync::Mutex::new(()),
         }
@@ -45,6 +50,14 @@ impl<S> ManagedAgentRuntime<S> {
         validator: Arc<dyn crate::RuntimeSurfaceReferenceValidator>,
     ) -> Self {
         self.surface_validator = Some(validator);
+        self
+    }
+
+    pub fn with_committed_presentation_observer(
+        mut self,
+        observer: Arc<dyn crate::RuntimeCommittedPresentationObserver>,
+    ) -> Self {
+        self.committed_presentation_observer = observer;
         self
     }
 
@@ -74,7 +87,10 @@ pub enum DriverEventAdmission {
 }
 
 enum PresentationPublication {
-    Durable(RuntimeJournalRecord),
+    Durable {
+        record: RuntimeJournalRecord,
+        projection_changed: bool,
+    },
     Transient {
         coordinate: RuntimePresentationCoordinate,
         event: agentdash_agent_runtime_contract::ImmutablePresentationEvent,
@@ -419,6 +435,27 @@ where
         }
 
         for fact in &source.facts {
+            if let RuntimeJournalFact::Presentation(event) = fact
+                && matches!(
+                    &event.event,
+                    agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(_)
+                )
+                && event.durability
+                    != agentdash_agent_runtime_contract::PresentationDurability::Durable
+            {
+                let message = "thread/name/updated must be a durable presentation fact".to_string();
+                return self
+                    .persist_protocol_violation(
+                        committed_state,
+                        source,
+                        DriverEventQuarantineReason::InvalidDriverFact {
+                            message: message.clone(),
+                        },
+                        RuntimeProtocolViolationCode::InvalidLifecycleTransition,
+                        message,
+                    )
+                    .await;
+            }
             if let RuntimeJournalFact::Internal(event) = fact
                 && let Some((reason, code, message)) = forbidden_driver_internal_fact(event)
             {
@@ -611,6 +648,7 @@ where
                 .map_or_else(crate::model::current_time_ms, |context| {
                     context.completed_at_ms
                 });
+            let thread_name_before = state.thread_name.clone();
             let record = match state.append_durable_fact(
                 fact.clone(),
                 recorded_at_ms,
@@ -626,7 +664,10 @@ where
                 }
             };
             if record.as_presentation().is_some() {
-                presentation_publication.push(PresentationPublication::Durable(record.clone()));
+                presentation_publication.push(PresentationPublication::Durable {
+                    record: record.clone(),
+                    projection_changed: state.thread_name != thread_name_before,
+                });
             }
             records.push(record);
 
@@ -848,8 +889,28 @@ where
 
         for publication in presentation_publication {
             match publication {
-                PresentationPublication::Durable(record) => {
-                    self.store.publish_durable_presentation(record).await;
+                PresentationPublication::Durable {
+                    record,
+                    projection_changed,
+                } => {
+                    self.store
+                        .publish_durable_presentation(record.clone())
+                        .await;
+                    if let Err(error) = self
+                        .committed_presentation_observer
+                        .observe(crate::CommittedDurablePresentation {
+                            record,
+                            projection_changed,
+                        })
+                        .await
+                    {
+                        diag!(
+                            Warn,
+                            Subsystem::AgentRun,
+                            error = %error,
+                            "Runtime durable presentation observer失败"
+                        );
+                    }
                 }
                 PresentationPublication::Transient { coordinate, event } => {
                     self.store
@@ -955,7 +1016,10 @@ where
                 }
                 terminal_presentation_record = Some(record.clone());
             }
-            presentation_publication.push(PresentationPublication::Durable(record.clone()));
+            presentation_publication.push(PresentationPublication::Durable {
+                record: record.clone(),
+                projection_changed: false,
+            });
             records.push(record);
         }
         let terminal_presentation_record =
@@ -1157,10 +1221,31 @@ where
             .await
             .map_err(store_execute_error)?;
         for publication in presentation_publication {
-            let PresentationPublication::Durable(record) = publication else {
+            let PresentationPublication::Durable {
+                record,
+                projection_changed,
+            } = publication
+            else {
                 unreachable!("terminal projection is durable");
             };
-            self.store.publish_durable_presentation(record).await;
+            self.store
+                .publish_durable_presentation(record.clone())
+                .await;
+            if let Err(error) = self
+                .committed_presentation_observer
+                .observe(crate::CommittedDurablePresentation {
+                    record,
+                    projection_changed,
+                })
+                .await
+            {
+                diag!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    error = %error,
+                    "Runtime durable presentation observer失败"
+                );
+            }
         }
         self.store.clear(&thread_id).await;
         Ok(DriverEventAdmission::Terminalized { sequence })
@@ -1782,6 +1867,7 @@ fn new_thread(command: &RuntimeCommand) -> Result<RuntimeThreadState, RuntimeExe
         binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
         driver_generation: *driver_generation,
         source_thread_id: source_thread_id.clone(),
+        thread_name: None,
         profile_digest: profile_digest.clone(),
         bound_profile: (**bound_profile).clone(),
         surface: (**surface).clone(),

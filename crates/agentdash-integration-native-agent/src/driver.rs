@@ -6,8 +6,8 @@ use std::{
 };
 
 use agentdash_agent::{
-    Agent, AgentConfig, AgentError, AgentEvent, AssistantStreamEvent, LlmBridge,
-    ToolResultRefContext,
+    Agent, AgentConfig, AgentError, AgentEvent, AgentMessage, AssistantStreamEvent,
+    ConversationNamer, ConversationNamingInput, LlmBridge, ToolResultRefContext,
 };
 use agentdash_agent_protocol::{TranscriptProjectionEvent, project_transcript};
 use agentdash_agent_runtime_contract::*;
@@ -376,12 +376,43 @@ struct NativeBinding {
 
 struct NativeThread {
     agent: Mutex<Agent>,
+    conversation_namer: ConversationNamer,
+    naming_state: Mutex<NativeThreadNamingState>,
     presentation_context: StreamMapperRuntimeContext,
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
     active_runtime_turn: Arc<RwLock<Option<RuntimeTurnId>>>,
     active_presentation_turn: Arc<RwLock<Option<PresentationTurnId>>>,
     context_revision: RwLock<ContextRevision>,
     tool_item_identities: Arc<RwLock<BTreeMap<(DriverTurnId, DriverItemId), RuntimeItemId>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NativeThreadNamingState {
+    Idle,
+    InFlight,
+    Present(String),
+}
+
+impl NativeThread {
+    async fn claim_naming(&self) -> bool {
+        let mut state = self.naming_state.lock().await;
+        if !matches!(*state, NativeThreadNamingState::Idle) {
+            return false;
+        }
+        *state = NativeThreadNamingState::InFlight;
+        true
+    }
+
+    async fn reset_naming(&self) {
+        let mut state = self.naming_state.lock().await;
+        if matches!(*state, NativeThreadNamingState::InFlight) {
+            *state = NativeThreadNamingState::Idle;
+        }
+    }
+
+    async fn finish_naming(&self, name: String) {
+        *self.naming_state.lock().await = NativeThreadNamingState::Present(name);
+    }
 }
 
 impl NativeAgentDriver {
@@ -560,6 +591,11 @@ impl NativeAgentDriver {
         }
         let thread = Arc::new(NativeThread {
             agent: Mutex::new(agent),
+            conversation_namer: ConversationNamer::new(self.bridge.clone()),
+            naming_state: Mutex::new(transcript.current_thread_name.clone().map_or(
+                NativeThreadNamingState::Idle,
+                NativeThreadNamingState::Present,
+            )),
             presentation_context: StreamMapperRuntimeContext {
                 model_context_window: Some(self.presentation_metadata.model_context_window),
                 reserve_tokens: self.presentation_metadata.reserve_tokens,
@@ -652,9 +688,13 @@ impl NativeAgentDriver {
         let envelope = envelope.clone();
         tokio::spawn(async move {
             let mut pending_terminal = None;
+            let mut naming_input = None;
             let stream_result = async {
                 while let Some(event) = events.next().await {
                     let terminal = matches!(event, AgentEvent::AgentEnd { .. });
+                    if let AgentEvent::AgentEnd { messages } = &event {
+                        naming_input = conversation_naming_input(messages);
+                    }
                     for mapped in mapper.map(event)? {
                         for fact in &mapped.facts {
                             if let RuntimeJournalFact::Internal(RuntimeEvent::ItemTerminal {
@@ -754,6 +794,15 @@ impl NativeAgentDriver {
             *thread.active_runtime_turn.write().await = None;
             *thread.active_presentation_turn.write().await = None;
             thread.agent.lock().await.set_tool_result_ref_context(None);
+            let claimed_naming_input = if result.is_ok()
+                && pending_terminal.is_some()
+                && naming_input.is_some()
+                && thread.claim_naming().await
+            {
+                naming_input
+            } else {
+                None
+            };
             // Runtime may admit the next turn as soon as it observes this
             // terminal. Publish it only after Agent Core and every Native
             // active fence have become idle.
@@ -763,6 +812,55 @@ impl NativeAgentDriver {
                 result =
                     emit_driver_event(&envelope, &binding.source_thread_id, terminal, sink.clone())
                         .await;
+            }
+            if result.is_err() && claimed_naming_input.is_some() {
+                thread.reset_naming().await;
+            }
+            if result.is_ok()
+                && let Some(input) = claimed_naming_input
+            {
+                let naming_thread = thread.clone();
+                let naming_envelope = envelope.clone();
+                let naming_source_thread_id = binding.source_thread_id.clone();
+                let naming_sink = sink.clone();
+                tokio::spawn(async move {
+                    let result = naming_thread.conversation_namer.generate(input).await;
+                    match result {
+                        Ok(name) => {
+                            let name = name.into_string();
+                            match emit_thread_name_updated(
+                                &naming_envelope,
+                                &naming_source_thread_id,
+                                name.clone(),
+                                naming_sink,
+                            )
+                            .await
+                            {
+                                Ok(()) => naming_thread.finish_naming(name).await,
+                                Err(error) => {
+                                    naming_thread.reset_naming().await;
+                                    diag!(
+                                        Warn,
+                                        Subsystem::AgentRun,
+                                        operation_id = %naming_envelope.operation_id,
+                                        error = %error,
+                                        "Native会话命名标准事件提交失败"
+                                    );
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            naming_thread.reset_naming().await;
+                            diag!(
+                                Warn,
+                                Subsystem::AgentRun,
+                                operation_id = %naming_envelope.operation_id,
+                                error = %error,
+                                "Native会话命名生成失败"
+                            );
+                        }
+                    }
+                });
             }
             if let Err(error) = result {
                 if matches!(error, DriverError::Terminalized { .. }) {
@@ -2013,6 +2111,36 @@ async fn emit_driver_event(
     .await
 }
 
+async fn emit_thread_name_updated(
+    command: &DriverCommandEnvelope,
+    source_thread_id: &DriverThreadId,
+    thread_name: String,
+    sink: Arc<dyn DriverEventSink>,
+) -> Result<(), DriverError> {
+    sink.emit(DriverEventEnvelope {
+        binding_id: command.binding_id.clone(),
+        generation: command.generation,
+        operation_id: None,
+        source_thread_id: source_thread_id.clone(),
+        source_turn_id: None,
+        source_item_id: None,
+        source_request_id: None,
+        source_entry_index: None,
+        facts: vec![RuntimeJournalFact::Presentation(
+            ImmutablePresentationEvent::new(
+                PresentationDurability::Durable,
+                agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(
+                    agentdash_agent_protocol::codex_app_server_protocol::ThreadNameUpdatedNotification {
+                        thread_id: source_thread_id.as_str().to_string(),
+                        thread_name: Some(thread_name),
+                    },
+                ),
+            ),
+        )],
+    })
+    .await
+}
+
 impl From<RuntimeEvent> for MappedEvent {
     fn from(event: RuntimeEvent) -> Self {
         Self {
@@ -2023,6 +2151,36 @@ impl From<RuntimeEvent> for MappedEvent {
             facts: vec![RuntimeJournalFact::Internal(event)],
         }
     }
+}
+
+fn conversation_naming_input(messages: &[AgentMessage]) -> Option<ConversationNamingInput> {
+    let assistant = messages.last().filter(|message| {
+        matches!(message, AgentMessage::Assistant { content, .. } if content.iter().any(
+            |part| matches!(
+                part,
+                agentdash_agent::ContentPart::Text { text } if !text.trim().is_empty()
+            )
+        )) && !message.is_error_or_aborted()
+    })?;
+    let mut candidate_messages = messages
+        .iter()
+        .filter(|message| match message {
+            AgentMessage::User { content, .. } => content.iter().any(|part| match part {
+                agentdash_agent::ContentPart::Text { text } => !text.trim().is_empty(),
+                agentdash_agent::ContentPart::Image { .. } => true,
+                agentdash_agent::ContentPart::Reasoning { .. } => false,
+            }),
+            _ => false,
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if candidate_messages.is_empty() {
+        return None;
+    }
+    candidate_messages.push(assistant.clone());
+    Some(ConversationNamingInput {
+        messages: candidate_messages,
+    })
 }
 
 fn profile_digest(profile: &RuntimeProfile) -> Result<ProfileDigest, DriverError> {
@@ -2272,6 +2430,55 @@ mod tests {
             .flat_map(|mapped| mapped.facts.iter())
             .filter_map(RuntimeJournalFact::as_presentation)
             .collect()
+    }
+
+    #[test]
+    fn naming_candidate_keeps_all_turn_users_and_requires_the_final_text_assistant() {
+        let messages = vec![
+            AgentMessage::user("初始需求"),
+            AgentMessage::assistant("中间回答"),
+            AgentMessage::user("补充 steer"),
+            AgentMessage::assistant("最终回答"),
+        ];
+        let input = conversation_naming_input(&messages).expect("valid naming candidate");
+        assert_eq!(
+            input
+                .messages
+                .iter()
+                .filter_map(AgentMessage::first_text)
+                .collect::<Vec<_>>(),
+            vec!["初始需求", "补充 steer", "最终回答"]
+        );
+
+        let reasoning_only = vec![
+            AgentMessage::user("需求"),
+            AgentMessage::Assistant {
+                content: vec![agentdash_agent::ContentPart::reasoning(
+                    "仅推理",
+                    None,
+                    None,
+                )],
+                tool_calls: Vec::new(),
+                stop_reason: None,
+                error_message: None,
+                usage: None,
+                timestamp: None,
+            },
+        ];
+        assert!(conversation_naming_input(&reasoning_only).is_none());
+
+        let aborted = vec![
+            AgentMessage::user("需求"),
+            AgentMessage::Assistant {
+                content: vec![agentdash_agent::ContentPart::text("不会成为标题候选")],
+                tool_calls: Vec::new(),
+                stop_reason: Some(agentdash_agent::StopReason::Aborted),
+                error_message: None,
+                usage: None,
+                timestamp: None,
+            },
+        ];
+        assert!(conversation_naming_input(&aborted).is_none());
     }
 
     #[test]
@@ -3162,6 +3369,7 @@ mod tests {
             ),
         );
         let transcript = DriverTranscript {
+            current_thread_name: None,
             earliest_available: EventSequence(1),
             latest_available: EventSequence(3),
             active_compaction_source_end: None,
@@ -3218,6 +3426,7 @@ mod tests {
     #[test]
     fn native_rejects_a_retention_gapped_durable_transcript() {
         let transcript = DriverTranscript {
+            current_thread_name: None,
             earliest_available: EventSequence(8),
             latest_available: EventSequence(12),
             active_compaction_source_end: None,
@@ -3246,6 +3455,7 @@ mod tests {
             ),
         );
         let transcript = DriverTranscript {
+            current_thread_name: None,
             earliest_available: EventSequence(9),
             latest_available: EventSequence(9),
             active_compaction_source_end: Some(EventSequence(8)),
@@ -3278,6 +3488,7 @@ mod tests {
     #[test]
     fn native_compacted_replay_rejects_a_gap_between_the_base_and_retained_tail() {
         let transcript = DriverTranscript {
+            current_thread_name: None,
             earliest_available: EventSequence(10),
             latest_available: EventSequence(12),
             active_compaction_source_end: Some(EventSequence(8)),

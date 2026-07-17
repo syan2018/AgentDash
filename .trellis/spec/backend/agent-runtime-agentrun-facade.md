@@ -39,6 +39,12 @@ pub async fn ProjectAgentRunListQuery::list(
     &self,
     input: ProjectAgentRunListInput<'_>,
 ) -> Result<ProjectAgentRunListPage, ApplicationError>;
+
+pub fn resolve_agent_run_display_title(
+    workspace_title: Option<&str>,
+    workspace_title_source: Option<&str>,
+    runtime_thread_name: Option<&str>,
+) -> AgentRunDisplayTitle;
 ```
 
 ```rust
@@ -97,7 +103,20 @@ Migration `0078_rebind_safe_runtime_outbox_coordinates.sql` persists each Runtim
 
 Migration `0079_reconcile_agent_run_mailbox_delivery.sql` removes the retired AgentRun/protocol turn reference columns and executor/backend second facts from mailbox rows, adds the typed lease-reconciliation fact and stable delivery digest, and links each product receipt to at most one exact mailbox message.
 
+Migration `0082_runtime_thread_name_projection.sql` adds an explicit nullable `thread_name` key to
+historical Runtime projection JSON and clears only Lifecycle titles whose provenance is
+`auto` or `codex`; user-authored titles and their source remain unchanged.
+
 ## 3. Contracts
+
+- AgentRun conversation display title 通过共享 resolver 计算：
+  nonblank explicit `workspace_title` > nonblank `RuntimeSnapshot.thread_name` > `新会话`。
+  list、workspace shell 与 lineage reference 复用该 resolver，Project Agent label 继续作为
+  身份信息单独展示，原因是身份名称与一次 conversation 的主题具有不同生命周期。
+- Runtime committed observer 只对 `projection_changed=true` 的标准
+  `ThreadNameUpdated` 发布现有 `agent_run_list/title_changed` project invalidation；它通过
+  runtime binding 与 LifecycleRun 解析 project/run/agent 坐标，不把 runtime 名称复制进
+  Lifecycle repository。
 
 - Application depends on the named `AgentRunRuntime` facade and owned Runtime contract. The facade maps product coordinates and commands; it does not own Thread/Turn/Item/Interaction state.
 - AgentRun详情产品投影由具名`AgentRunProductQuery`组合Lifecycle read model、current AgentFrame/model config与VFS surface；API route只负责鉴权、runtime projection adapter和generated DTO映射，不直接编排repository。
@@ -136,6 +155,11 @@ Migration `0079_reconcile_agent_run_mailbox_delivery.sql` removes the retired Ag
 | AgentRun has no durable Runtime binding | typed unavailable/not-found; no driver side effect |
 | 列表项没有Runtime binding | `runtime=None`；Lifecycle产品事实仍可列出 |
 | 列表项Runtime inspect失败 | 整个查询显式失败并携带run/agent坐标；不得静默伪装为idle |
+| explicit workspace title为nonblank | list/workspace/lineage统一使用其trim后值并保留其provenance |
+| explicit title为空且Runtime name为nonblank | 三个投影统一使用Runtime name，source=`runtime_thread` |
+| explicit title与Runtime name都为空 | 三个投影统一使用`新会话`，source=`pending`；Agent label不代替会话标题 |
+| committed名称重复或observer收到非名称event | 不发布`agent_run_list/title_changed` |
+| 名称真实变化但Lifecycle/binding无法定位 | Runtime事实保持成功；observer返回diagnostic，不写Lifecycle标题副本 |
 | lineage包含环、自环或悬空parent | 全局visited forest忽略无效边，并确保每个LifecycleAgent恰好投影一次；不得吞行、无限展开或重复制造子树 |
 | command absent from `command_availability` | typed rejected before mailbox/outbox dispatch |
 | duplicate client command | original receipt returned; no second outbox delivery |
@@ -173,6 +197,10 @@ Migration `0079_reconcile_agent_run_mailbox_delivery.sql` removes the retired Ag
 
 **Bad:** enabling submit/cancel from a top-level product status, branching on `Pi`/`Codex` in API composition, injecting a terminal Backbone event into the canonical snapshot，由API/Mailbox预生成active presentation坐标，或复用退役workspace shell为列表制造`delivery_status`，都会创建第二事实源。
 
+**Title projection case:** 用户显式标题优先；否则list、workspace与lineage从同一个
+`RuntimeSnapshot.thread_name` resolver得到自动标题。Runtime名称变化只发已有project
+invalidation，读取端refetch后重新组合，不向Lifecycle复制名称。
+
 ## 6. Tests Required
 
 - Facade tests assert product coordinate mapping, duplicate receipt replay, operation IDs and canonical command availability.
@@ -186,6 +214,10 @@ Migration `0079_reconcile_agent_run_mailbox_delivery.sql` removes the retired Ag
 - Contract generation, frontend typecheck/tests, workspace checks, Runtime crate tests and migration guard are required before completion.
 - Product query tests覆盖current Frame execution profile到`model_config`的resolved/model-required投影；前端state测试覆盖workspace/runtime两路独立失败与refresh保留。
 - Project列表测试覆盖run activity keyset cursor、canonical lineage递归/cycle/orphan下每个Agent恰好一次、无binding与Runtime summary；service/UI测试覆盖URL encoding及`thread_status + active_turn_id + lifecycle_status`展示映射。
+- 标题projection测试必须对list、workspace shell与lineage reference运行同一优先级表：显式标题、
+  Runtime名称、两者空白/缺失；observer测试覆盖真实变化、duplicate、clear、非名称event与通知失败。
+- `0082`真实PostgreSQL测试必须断言旧projection升级后strict load成功，并证明只清除
+  `workspace_title_source IN ('auto','codex')`，保留user/source标题。
 - Mailbox tests serialize the stored command and assert that no presentation turn/item identity is present; active Promote must steer, terminal-before-claim must launch the next turn, and stale admission must requeue the unchanged draft then replan successfully.
 - PostgreSQL tests assert Promote's conditional update cannot take a consuming claim, non-user row, terminal row, unknown delivery result or another AgentRun's message.
 - Facade parity fixtures compare launch/steer event payload families, content, source, submission kind and historical ID shape with `main-reference`, normalizing only dynamic identities.
@@ -226,6 +258,19 @@ let entries = build_agent_run_list_from_repositories(&state.repos).await?;
 
 // Correct: route完成鉴权后调用具名application query。
 let page = state.services.project_agent_run_list_query.list(input).await?;
+```
+
+```rust
+// Wrong: 把Project Agent身份名当作conversation title，或把Runtime name复制到Lifecycle。
+let title = lifecycle_agent.name.clone();
+lifecycle_agent.workspace_title = runtime_snapshot.thread_name.clone();
+
+// Correct: identity与conversation title分开；读取投影统一组合唯一事实。
+let title = resolve_agent_run_display_title(
+    lifecycle_agent.workspace_title.as_deref(),
+    lifecycle_agent.workspace_title_source.as_deref(),
+    runtime_snapshot.thread_name.as_deref(),
+);
 ```
 
 ```rust

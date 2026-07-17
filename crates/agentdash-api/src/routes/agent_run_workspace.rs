@@ -2,6 +2,7 @@ use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, workspace as app_workspace,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
 use agentdash_contracts::agent_run_mailbox::{MailboxMessageView, MailboxStateView};
 use agentdash_contracts::workflow::{
     AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
@@ -127,22 +128,24 @@ async fn lineage_ref(
             .map(|edge| 1 + descendants(edge.child_agent_id, edges))
             .sum()
     }
-    let project_agent_name = match agent.project_agent_id {
-        Some(project_agent_id) => state
-            .repos
-            .project_agent_repo
-            .get_by_project_and_id(agent.project_id, project_agent_id)
-            .await?
-            .map(|project_agent| project_agent.name),
-        None => None,
-    };
-    let display_title = agent
-        .workspace_title
-        .as_deref()
-        .filter(|title| !title.is_empty())
-        .map(ToOwned::to_owned)
-        .or(project_agent_name)
-        .unwrap_or_else(|| format!("AgentRun {}", agent.id));
+    let runtime = state
+        .services
+        .agent_run_runtime
+        .inspect(AgentRunRuntimeTarget {
+            run_id: agent.run_id,
+            agent_id: agent.id,
+        })
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let display_title = app_agent_run::resolve_agent_run_display_title(
+        agent.workspace_title.as_deref(),
+        agent.workspace_title_source.as_deref(),
+        runtime
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.thread_name.as_deref()),
+    )
+    .value;
     Ok(AgentRunLineageRef {
         run_id: agent.run_id.to_string(),
         agent_id: agent.id.to_string(),

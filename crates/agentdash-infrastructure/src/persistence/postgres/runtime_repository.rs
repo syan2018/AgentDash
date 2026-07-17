@@ -3746,6 +3746,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_thread_name_migration_upgrades_strict_projection_and_clears_only_legacy_titles()
+     {
+        let _serial = serial_test_guard().await;
+        let fixture = fixture("runtime thread name migration").await;
+        fixture
+            .runtime
+            .execute(start(&fixture))
+            .await
+            .expect("seed runtime thread projection");
+        let pool = fixture.store.pool();
+
+        sqlx::query(
+            "UPDATE agent_runtime_thread \
+             SET projection=projection - 'thread_name' \
+             WHERE id=$1",
+        )
+        .bind(fixture.thread_id.as_str())
+        .execute(pool)
+        .await
+        .expect("simulate pre-0082 runtime projection");
+        let strict_error = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect_err("strict projection must reject a missing thread_name field");
+        assert!(
+            strict_error.to_string().contains("thread_name"),
+            "{strict_error}"
+        );
+
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let project_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+        sqlx::query(
+            "INSERT INTO lifecycle_runs \
+             (id,project_id,topology,status,created_at,updated_at,last_activity_at) \
+             VALUES ($1,$2,'plain','ready',$3,$3,$3)",
+        )
+        .bind(&run_id)
+        .bind(&project_id)
+        .bind(now)
+        .execute(pool)
+        .await
+        .expect("seed lifecycle run for title migration");
+        for source in ["auto", "codex", "user", "source"] {
+            sqlx::query(
+                "INSERT INTO lifecycle_agents \
+                 (id,run_id,project_id,source,status,workspace_title,workspace_title_source) \
+                 VALUES ($1,$2,$3,'primary','active',$4,$5)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&run_id)
+            .bind(&project_id)
+            .bind(format!("{source}-title"))
+            .bind(source)
+            .execute(pool)
+            .await
+            .expect("seed lifecycle workspace title");
+        }
+
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/0082_runtime_thread_name_projection.sql"
+        ))
+        .execute(pool)
+        .await
+        .expect("apply runtime thread name projection migration");
+
+        let projection = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load migrated strict projection")
+            .expect("migrated runtime thread");
+        assert_eq!(projection.thread_name, None);
+        let titles: Vec<(Option<String>, Option<String>, String)> = sqlx::query_as(
+            "SELECT workspace_title_source,workspace_title,id \
+             FROM lifecycle_agents \
+             WHERE run_id=$1 \
+             ORDER BY workspace_title_source NULLS FIRST,id",
+        )
+        .bind(&run_id)
+        .fetch_all(pool)
+        .await
+        .expect("load migrated lifecycle titles");
+        assert_eq!(titles.len(), 4);
+        assert_eq!(
+            titles
+                .iter()
+                .filter(|(source, title, _)| source.is_none() && title.is_none())
+                .count(),
+            2,
+            "auto/codex titles must be cleared"
+        );
+        assert!(titles.iter().any(|(source, title, _)| {
+            source.as_deref() == Some("source") && title.as_deref() == Some("source-title")
+        }));
+        assert!(titles.iter().any(|(source, title, _)| {
+            source.as_deref() == Some("user") && title.as_deref() == Some("user-title")
+        }));
+    }
+
+    #[tokio::test]
     async fn migration_exposes_only_runtime_journal_record_columns() {
         let _serial = serial_test_guard().await;
         let database = runtime_test_database().await;

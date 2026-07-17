@@ -358,6 +358,7 @@ pub struct DriverTranscriptRequest {
 pub struct DriverTranscript {
     pub earliest_available: EventSequence,
     pub latest_available: EventSequence,
+    pub current_thread_name: Option<String>,
     /// Inclusive durable journal boundary represented by the active compacted
     /// context base. Records after this sequence must be replayed as the live
     /// transcript tail instead of being discarded with the compacted prefix.

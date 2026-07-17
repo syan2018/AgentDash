@@ -5,7 +5,7 @@ use std::{
 };
 
 use agentdash_agent_runtime_contract::RuntimeThreadStatus;
-use agentdash_application_agentrun::agent_run::AgentRunRuntime;
+use agentdash_application_agentrun::agent_run::{AgentRunRuntime, resolve_agent_run_display_title};
 use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
 use agentdash_domain::{
     agent::ProjectAgentRepository,
@@ -18,9 +18,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use crate::agent_run_projection::{
-    MAX_AGENT_LINEAGE_DEPTH, lifecycle_agent_title, project_agent_label,
-};
+use crate::agent_run_projection::{MAX_AGENT_LINEAGE_DEPTH, project_agent_label};
 
 const DEFAULT_PAGE_LIMIT: usize = 30;
 const MAX_PAGE_LIMIT: usize = 100;
@@ -91,6 +89,7 @@ pub struct AgentRunListChildModel {
 pub struct AgentRunListRuntimeSummaryModel {
     pub thread_status: RuntimeThreadStatus,
     pub active_turn_id: Option<String>,
+    pub thread_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -213,7 +212,6 @@ impl ProjectAgentRunListQuery {
         let project_agent_label = agent
             .project_agent_id
             .and_then(|id| project_agents.get(&id).cloned());
-        let title = lifecycle_agent_title(agent, project_agents);
         let runtime_view = self
             .runtime
             .inspect(AgentRunRuntimeTarget {
@@ -227,11 +225,21 @@ impl ProjectAgentRunListQuery {
                     run.id, agent.id
                 ))
             })?;
+        let title = resolve_agent_run_display_title(
+            agent.workspace_title.as_deref(),
+            agent.workspace_title_source.as_deref(),
+            runtime_view
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.thread_name.as_deref()),
+        )
+        .value;
         let runtime = runtime_view
             .snapshot
             .map(|snapshot| AgentRunListRuntimeSummaryModel {
                 thread_status: snapshot.status,
                 active_turn_id: snapshot.active_turn_id.map(|id| id.to_string()),
+                thread_name: snapshot.thread_name,
             });
         let subject = self
             .subject_repo
@@ -374,10 +382,10 @@ fn decode_cursor(cursor: &str) -> Option<(i64, Uuid)> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
     use super::*;
-    use agentdash_agent_runtime_contract::{
-        OperationReceipt, RuntimeContextView, RuntimeEventStream, RuntimePresentationAppendReceipt,
-    };
+    use agentdash_agent_runtime_contract::*;
     use agentdash_application_agentrun::agent_run::{
         AcceptAgentRunMessage, AgentRunMessageAdmission, AgentRunRuntimeError, AgentRunRuntimeView,
         ForkAgentRunRuntime, GuardedAgentRunCommand, ReadAgentRunEvents,
@@ -393,6 +401,7 @@ mod tests {
 
     struct FixtureRuntime {
         fail_inspect: bool,
+        thread_name: Option<String>,
     }
 
     #[async_trait]
@@ -414,7 +423,7 @@ mod tests {
             Ok(AgentRunRuntimeView {
                 target,
                 binding: None,
-                snapshot: None,
+                snapshot: self.thread_name.clone().map(runtime_snapshot),
                 binding_epoch: None,
                 recovery: agentdash_application_agentrun::agent_run::AgentRunRuntimeRecoverySummary::Active,
             })
@@ -495,6 +504,13 @@ mod tests {
     }
 
     fn query_fixture(fail_inspect: bool) -> QueryFixture {
+        query_fixture_with_thread_name(fail_inspect, None)
+    }
+
+    fn query_fixture_with_thread_name(
+        fail_inspect: bool,
+        thread_name: Option<&str>,
+    ) -> QueryFixture {
         let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
         let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
         let lineage_repo = Arc::new(MemoryAgentLineageRepository::default());
@@ -504,13 +520,92 @@ mod tests {
             lineage_repo: lineage_repo.clone(),
             subject_repo: Arc::new(MemoryLifecycleSubjectAssociationRepository::default()),
             project_agent_repo: Arc::new(MemoryProjectAgentRepository::default()),
-            runtime: Arc::new(FixtureRuntime { fail_inspect }),
+            runtime: Arc::new(FixtureRuntime {
+                fail_inspect,
+                thread_name: thread_name.map(str::to_string),
+            }),
         });
         QueryFixture {
             query,
             run_repo,
             agent_repo,
             lineage_repo,
+        }
+    }
+
+    fn runtime_snapshot(thread_name: String) -> RuntimeSnapshot {
+        RuntimeSnapshot {
+            thread_id: "thread-list-title".parse().expect("thread id"),
+            revision: RuntimeRevision(1),
+            latest_event_sequence: EventSequence(1),
+            captured_at_ms: 1,
+            status: RuntimeThreadStatus::Active,
+            thread_name: Some(thread_name),
+            active_turn_id: None,
+            active_presentation_turn_id: None,
+            binding_id: "binding-list-title".parse().expect("binding id"),
+            binding_epoch: BindingEpoch(1),
+            profile_digest: "profile-list-title".parse().expect("profile digest"),
+            bound_profile: RuntimeProfile {
+                reference_class: ReferenceRuntimeClass::ManagedThread,
+                input: InputProfile {
+                    modalities: BTreeSet::new(),
+                },
+                instruction: InstructionProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                tools: ToolProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                    cancellation: true,
+                },
+                workspace: WorkspaceProfile {
+                    capabilities: BTreeSet::new(),
+                    mechanism: DeliveryMechanism::Native,
+                },
+                interactions: InteractionProfile {
+                    kinds: BTreeSet::new(),
+                    durable_correlation: true,
+                },
+                lifecycle: BTreeSet::new(),
+                hooks: HookProfile {
+                    points: Vec::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                context: ContextProfile {
+                    capabilities: BTreeSet::new(),
+                    fidelity: ContextFidelity::Opaque,
+                    activation_idempotent: false,
+                },
+                telemetry_config: BTreeSet::new(),
+            },
+            surface: RuntimeSurfaceDescriptor {
+                source_frame_id: "frame-list-title".to_string(),
+                surface_revision: SurfaceRevision(1),
+                surface_digest: "surface-list-title".parse().expect("surface digest"),
+                vfs_digest: "vfs-list-title".to_string(),
+                context_recipe_revision: ContextRecipeRevision(1),
+                context_digest: "context-list-title".parse().expect("context digest"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                tool_set_digest: "tools-list-title".to_string(),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: "hook-list-title".parse().expect("hook digest"),
+                    entries: Vec::new(),
+                },
+                terminal_hook_effect_binding: None,
+            },
+            active_checkpoint_id: None,
+            context_revision: ContextRevision(0),
+            settings_revision: ThreadSettingsRevision(0),
+            tool_set_revision: ToolSetRevision(0),
+            pending_interactions: Vec::new(),
+            pending_interaction_details: Vec::new(),
+            command_availability: BTreeMap::new(),
+            transcript: Vec::new(),
+            transcript_fidelity: ContextFidelity::Opaque,
         }
     }
 
@@ -680,6 +775,62 @@ mod tests {
         assert_eq!(second.entries.len(), 1);
         assert_eq!(second.entries[0].run_id, older_run.id);
         assert!(second.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn query_uses_runtime_thread_name_without_falling_back_to_agent_identity() {
+        let fixture = query_fixture_with_thread_name(false, Some("Runtime 会话名"));
+        let project_id = Uuid::new_v4();
+        let run = LifecycleRun::new_plain(project_id);
+        let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
+        agent.workspace_title = None;
+        agent.workspace_title_source = None;
+        fixture.run_repo.create(&run).await.expect("run");
+        fixture.agent_repo.create(&agent).await.expect("agent");
+
+        let page = fixture
+            .query
+            .list(ProjectAgentRunListInput {
+                project_id,
+                limit: None,
+                cursor: None,
+            })
+            .await
+            .expect("AgentRun list");
+
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].title, "Runtime 会话名");
+        assert_eq!(
+            page.entries[0]
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.thread_name.as_deref()),
+            Some("Runtime 会话名")
+        );
+    }
+
+    #[tokio::test]
+    async fn query_keeps_explicit_workspace_title_above_runtime_name() {
+        let fixture = query_fixture_with_thread_name(false, Some("Runtime 会话名"));
+        let project_id = Uuid::new_v4();
+        let run = LifecycleRun::new_plain(project_id);
+        let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
+        agent.workspace_title = Some("显式会话名".to_string());
+        agent.workspace_title_source = Some("user".to_string());
+        fixture.run_repo.create(&run).await.expect("run");
+        fixture.agent_repo.create(&agent).await.expect("agent");
+
+        let page = fixture
+            .query
+            .list(ProjectAgentRunListInput {
+                project_id,
+                limit: None,
+                cursor: None,
+            })
+            .await
+            .expect("AgentRun list");
+
+        assert_eq!(page.entries[0].title, "显式会话名");
     }
 
     #[tokio::test]

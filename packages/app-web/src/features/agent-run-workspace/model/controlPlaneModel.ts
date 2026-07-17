@@ -186,6 +186,11 @@ export function planAgentRunSystemEvent(
   }
 
   switch (eventType) {
+    case "thread_name_updated":
+      return {
+        refreshWorkspaceState: true,
+        refreshAgentRunListReason: "thread_name_updated",
+      };
     case "hook_event":
     case "hook_action_resolved":
       return {

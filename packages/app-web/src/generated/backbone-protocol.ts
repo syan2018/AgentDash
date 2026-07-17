@@ -203,7 +203,7 @@ export type BackboneEnvelope = { event: BackboneEvent, sessionId: string, source
  * 不设"通用退化变体"。Codex 原生协议没有覆盖的 item 语义通过
  * `AgentDashThreadItem` 扩展，平台能力通过 `Platform` 扩展。
  */
-export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMessageDeltaNotification } | { "type": "reasoning_text_delta", "payload": ReasoningTextDeltaNotification } | { "type": "reasoning_summary_delta", "payload": ReasoningSummaryTextDeltaNotification } | { "type": "item_started", "payload": ItemStartedNotification } | { "type": "item_updated", "payload": ItemUpdatedNotification } | { "type": "item_completed", "payload": ItemCompletedNotification } | { "type": "auto_approval_review_started", "payload": ItemGuardianApprovalReviewStartedNotification } | { "type": "auto_approval_review_completed", "payload": ItemGuardianApprovalReviewCompletedNotification } | { "type": "command_output_delta", "payload": CommandExecutionOutputDeltaNotification } | { "type": "file_change_delta", "payload": FileChangeOutputDeltaNotification } | { "type": "mcp_tool_call_progress", "payload": McpToolCallProgressNotification } | { "type": "terminal_interaction", "payload": TerminalInteractionNotification } | { "type": "file_change_patch_updated", "payload": FileChangePatchUpdatedNotification } | { "type": "server_request_resolved", "payload": ServerRequestResolvedNotification } | { "type": "turn_started", "payload": TurnStartedNotification } | { "type": "turn_completed", "payload": TurnCompletedNotification } | { "type": "turn_diff_updated", "payload": TurnDiffUpdatedNotification } | { "type": "user_input_submitted", "payload": UserInputSubmittedNotification } | { "type": "turn_plan_updated", "payload": TurnPlanUpdatedNotification } | { "type": "plan_delta", "payload": PlanDeltaNotification } | { "type": "reasoning_summary_part_added", "payload": ReasoningSummaryPartAddedNotification } | { "type": "token_usage_updated", "payload": ThreadTokenUsageUpdatedNotification } | { "type": "thread_status_changed", "payload": ThreadStatusChangedNotification } | { "type": "executor_context_compacted", "payload": ContextCompactedNotification } | { "type": "model_rerouted", "payload": ModelReroutedNotification } | { "type": "model_verification", "payload": ModelVerificationNotification } | { "type": "turn_moderation_metadata", "payload": TurnModerationMetadataNotification } | { "type": "model_safety_buffering_updated", "payload": ModelSafetyBufferingUpdatedNotification } | { "type": "warning", "payload": WarningNotification } | { "type": "guardian_warning", "payload": GuardianWarningNotification } | { "type": "deprecation_notice", "payload": DeprecationNoticeNotification } | { "type": "config_warning", "payload": ConfigWarningNotification } | { "type": "approval_request", "payload": ApprovalRequest } | { "type": "error", "payload": ErrorNotification } | { "type": "platform", "payload": PlatformEvent };
+export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMessageDeltaNotification } | { "type": "reasoning_text_delta", "payload": ReasoningTextDeltaNotification } | { "type": "reasoning_summary_delta", "payload": ReasoningSummaryTextDeltaNotification } | { "type": "item_started", "payload": ItemStartedNotification } | { "type": "item_updated", "payload": ItemUpdatedNotification } | { "type": "item_completed", "payload": ItemCompletedNotification } | { "type": "auto_approval_review_started", "payload": ItemGuardianApprovalReviewStartedNotification } | { "type": "auto_approval_review_completed", "payload": ItemGuardianApprovalReviewCompletedNotification } | { "type": "command_output_delta", "payload": CommandExecutionOutputDeltaNotification } | { "type": "file_change_delta", "payload": FileChangeOutputDeltaNotification } | { "type": "mcp_tool_call_progress", "payload": McpToolCallProgressNotification } | { "type": "terminal_interaction", "payload": TerminalInteractionNotification } | { "type": "file_change_patch_updated", "payload": FileChangePatchUpdatedNotification } | { "type": "server_request_resolved", "payload": ServerRequestResolvedNotification } | { "type": "turn_started", "payload": TurnStartedNotification } | { "type": "turn_completed", "payload": TurnCompletedNotification } | { "type": "turn_diff_updated", "payload": TurnDiffUpdatedNotification } | { "type": "user_input_submitted", "payload": UserInputSubmittedNotification } | { "type": "turn_plan_updated", "payload": TurnPlanUpdatedNotification } | { "type": "plan_delta", "payload": PlanDeltaNotification } | { "type": "reasoning_summary_part_added", "payload": ReasoningSummaryPartAddedNotification } | { "type": "token_usage_updated", "payload": ThreadTokenUsageUpdatedNotification } | { "type": "thread_status_changed", "payload": ThreadStatusChangedNotification } | { "type": "thread_name_updated", "payload": ThreadNameUpdatedNotification } | { "type": "executor_context_compacted", "payload": ContextCompactedNotification } | { "type": "model_rerouted", "payload": ModelReroutedNotification } | { "type": "model_verification", "payload": ModelVerificationNotification } | { "type": "turn_moderation_metadata", "payload": TurnModerationMetadataNotification } | { "type": "model_safety_buffering_updated", "payload": ModelSafetyBufferingUpdatedNotification } | { "type": "warning", "payload": WarningNotification } | { "type": "guardian_warning", "payload": GuardianWarningNotification } | { "type": "deprecation_notice", "payload": DeprecationNoticeNotification } | { "type": "config_warning", "payload": ConfigWarningNotification } | { "type": "approval_request", "payload": ApprovalRequest } | { "type": "error", "payload": ErrorNotification } | { "type": "platform", "payload": PlatformEvent };
 
 /**
  *`ByteRange`
@@ -3040,7 +3040,7 @@ export type PlanDeltaNotification = { delta: string, itemId: string, threadId: s
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "context_frame_changed", "data": ContextFrameChanged } | { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "control_plane_projection_changed", "data": ControlPlaneProjectionChanged } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "pty_terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
+export type PlatformEvent = { "kind": "context_frame_changed", "data": ContextFrameChanged } | { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "control_plane_projection_changed", "data": ControlPlaneProjectionChanged } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "pty_terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
 
 export type ProjectGuidelineEntry = { path: string, content: string, };
 
@@ -4424,6 +4424,40 @@ status: CollabAgentToolCallStatus,
  *Name of the collab tool that was invoked.
  */
 tool: CollabAgentTool, } | { "type": "subAgentActivity", agentPath: string, agentThreadId: string, id: string, kind: SubAgentActivityKind, } | { "type": "webSearch", action?: WebSearchAction | null, id: string, query: string, } | { "type": "imageView", id: string, path: LegacyAppPathString, } | { "type": "sleep", durationMs: number, id: string, } | { "type": "imageGeneration", id: string, result: string, revisedPrompt?: string | null, savedPath?: AbsolutePathBuf | null, status: string, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, };
+
+/**
+ *`ThreadNameUpdatedNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ThreadNameUpdatedNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "threadId"
+ *  ],
+ *  "properties": {
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "threadName": {
+ *      "oneOf": [
+ *        {
+ *          "type": "string"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ThreadNameUpdatedNotification = { threadId: string, threadName?: string | null, };
 
 /**
  *`ThreadStatus`

@@ -1420,6 +1420,9 @@ pub struct AgentRunListRuntimeSummaryView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub active_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub thread_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]

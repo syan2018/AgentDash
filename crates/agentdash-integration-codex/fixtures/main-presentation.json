@@ -145,7 +145,7 @@
       "method": "thread/name/updated",
       "params": { "threadId": "source-thread", "threadName": "Codex Title" },
       "durability": "durable",
-      "event": { "type": "platform", "payload": { "kind": "source_session_title_updated", "data": { "executor_session_id": "source-thread", "title": "Codex Title", "source": "codex" } } }
+      "event": { "type": "thread_name_updated", "payload": { "threadId": "source-thread", "threadName": "Codex Title" } }
     },
     {
       "method": "thread/tokenUsage/updated",

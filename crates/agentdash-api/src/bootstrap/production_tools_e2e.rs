@@ -557,6 +557,9 @@ async fn real_agent_frame_task_and_workspace_tools_continue_to_final_assistant()
         application_presentation_projector: Arc::new(
             agentdash_application_agentrun::agent_run::AgentRunRuntimeApplicationPresentationProjector,
         ),
+        committed_presentation_observer: Arc::new(
+            agentdash_agent_runtime::NoopRuntimeCommittedPresentationObserver,
+        ),
         managed_compaction: None,
         node_id: "production-tools-e2e".to_string(),
     })

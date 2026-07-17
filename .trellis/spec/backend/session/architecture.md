@@ -115,6 +115,10 @@ pub struct RuntimeCarrierMetadata {
 - durable 与 ephemeral presentation 共享同一正文合同；durability 由 producer 显式声明，不从 cursor 或 item kind 推断。`Internal(RuntimeEvent)` 只服务执行状态机，不进入 session presentation stream。
 - source thread/turn/item/request ID 与 Runtime canonical ID 同时存在于不同层。carrier correlation 不替换正文中的 source identity，`PresentationThreadId` 则来自产品 delivery session 并贯穿 binding、outbox 与 driver dispatch。
 - Journal GET、initial stream、live、reconnect、refresh 与 fork inherited projection消费同一 `Presentation` facts。`features/session` 继续使用同一 reducer/renderer；仅 envelope unwrap seam 理解 carrier。
+- 标准 `ThreadNameUpdated` 是 durable presentation，同时由 Runtime reducer投影到
+  `RuntimeSnapshot.thread_name`。session stream 保留原事件用于 live UI invalidation，
+  snapshot 则提供可重启恢复的当前名称；两条读取路径共享同一 journal fact，因而不会形成
+  独立标题事实源。
 
 ### 8.4 Validation & Error Matrix
 
@@ -127,12 +131,17 @@ pub struct RuntimeCarrierMetadata {
 | journal读取到`Internal` fact | 从presentation查询中排除；API不得把它转换成会话事件 |
 | GET/stream/fork需要目标会话坐标 | 只改allowlisted carrier/envelope字段，受保护正文保持deep equality |
 | optional字段为显式`null` | 按owned protocol保留`null`；不得改成omitted、默认字符串或空数组 |
+| live `ThreadNameUpdated` | session正文保真，同时触发读取侧projection invalidation |
+| initial hydration包含历史名称事件 | reducer恢复presentation，但不重复执行页面refetch副作用 |
 
 ### 8.5 Good / Base / Bad Cases
 
 - Good：Codex/Native/tool/application producer提交完整typed event，Runtime原子保存，Journal重新包装后旧 `features/session` reducer得到与producer相同的event body。
+- Good：名称事件的`threadId + threadName(string|null)`在journal、GET与live stream中deep equal；
+  Runtime snapshot独立提供当前值，但二者来自同一commit。
 - Base：同一idempotency key携带完全相同的有序events时返回原receipt；reconnect从durable/transient cursor继续，不复制或改写正文。
 - Bad：producer只保存`role + text + tool_name`摘要，再由API按名称猜回ThreadItem；这会丢失协议variant、ID、timestamp、nullable语义与事件顺序。
+- Bad：前端用live payload直接patch一个标题缓存、同时list/workspace继续查询后端；这会产生两个优先级实现。
 
 ### 8.6 Tests Required
 
@@ -140,6 +149,8 @@ pub struct RuntimeCarrierMetadata {
 - memory/PostgreSQL tests覆盖ordered batch、idempotency conflict、durable/transient race、terminal fencing与commit→read→replay deep equality。
 - pinned Main parity tests对同一输入分别执行Main/current production path，只允许声明过的eventstream envelope差异；正文comparator不配置字段ignore list。
 - Journal parity覆盖GET、initial/live、reconnect/refresh、fork inherited、heartbeat、lagged与closed；frontend parity覆盖原reducer/renderer和无phantom tool card。
+- Thread name parity覆盖set/replace/clear的protected body deep equality，并断言live事件触发refetch、
+  hydration历史事件不触发refetch、refetch结果应用后端统一display-title resolver。
 
 ### 8.7 Wrong vs Correct
 
@@ -150,4 +161,14 @@ let event = project_summary_as_thread_item(record.summary)?;
 // Correct: producer-owned body is persisted once; read side only wraps it.
 let RuntimeJournalFact::Presentation(presentation) = record.fact() else { return None };
 let envelope = wrap_for_target(record.carrier(), presentation.event.clone());
+```
+
+```ts
+// Wrong: session reducer直接维护产品标题优先级。
+workspace.title = event.payload.threadName ?? "新会话";
+
+// Correct: live事件只invalidate；产品查询返回统一组合后的display title。
+if (isLive && event.type === "thread_name_updated") {
+  invalidateAgentRunWorkspaceAndList();
+}
 ```

@@ -20,6 +20,7 @@
     { "variant": "plan_delta", "main_owner": "Codex/Native stream mapper", "current_owner": "W4/W5", "fixture_id": "plan_and_diff" },
     { "variant": "token_usage_updated", "main_owner": "Codex/Native stream mapper", "current_owner": "W4/W5", "fixture_id": "usage_context" },
     { "variant": "thread_status_changed", "main_owner": "Codex/application status producer", "current_owner": "W4/W7", "fixture_id": "thread_status_title_compaction" },
+    { "variant": "thread_name_updated", "main_owner": "connector/title producer", "current_owner": "W4/W5/W7", "fixture_id": "thread_status_title_compaction" },
     { "variant": "executor_context_compacted", "main_owner": "Codex/Native compaction producer", "current_owner": "W4/W5", "fixture_id": "thread_status_title_compaction" },
     { "variant": "approval_request", "main_owner": "connector/tool interaction producer", "current_owner": "W4/W5/W6", "fixture_id": "interactions_main_comparable_connectors" },
     { "variant": "error", "main_owner": "connector/application error producer", "current_owner": "W4/W5/W7", "fixture_id": "provider_phases_error" },
@@ -27,7 +28,6 @@
   ],
   "platform_events": [
     { "variant": "executor_session_bound", "main_owner": "connector binding producer", "current_owner": "W4/W5/W7", "fixture_id": "thread_status_title_compaction" },
-    { "variant": "source_session_title_updated", "main_owner": "connector/title producer", "current_owner": "W4/W7", "fixture_id": "thread_status_title_compaction" },
     { "variant": "hook_trace", "main_owner": "hook trace producer", "current_owner": "W7", "fixture_id": "hook_terminal_pty_control_plane" },
     { "variant": "session_meta_update", "main_owner": "application session-meta producer", "current_owner": "W7", "fixture_id": "delivery_system_workflow_companion" },
     { "variant": "provider_attempt_status", "main_owner": "Native/application provider producer", "current_owner": "W5/W7", "fixture_id": "provider_phases_error" },

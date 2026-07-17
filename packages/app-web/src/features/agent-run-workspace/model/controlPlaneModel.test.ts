@@ -224,6 +224,35 @@ describe("AgentRun control-plane model", () => {
     });
   });
 
+  it("refreshes workspace and list after a standard thread name update", () => {
+    const plan = planAgentRunSystemEvent("thread_name_updated", {
+      type: "thread_name_updated",
+      payload: {
+        threadId: "native-thread-1",
+        threadName: "修复登录态刷新",
+      },
+    });
+
+    expect(plan).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "thread_name_updated",
+    });
+  });
+
+  it("uses the same refresh plan when the standard thread name is cleared", () => {
+    const plan = planAgentRunSystemEvent("thread_name_updated", {
+      type: "thread_name_updated",
+      payload: {
+        threadId: "native-thread-1",
+      },
+    });
+
+    expect(plan).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "thread_name_updated",
+    });
+  });
+
   it("plans resource surface and hook refresh from typed capability projection changes", () => {
     const plan = planAgentRunSystemEvent(
       "control_plane_projection_changed",

@@ -45,7 +45,7 @@ export type AgentRunListChildView = { run_ref: LifecycleRunRefDto, agent_ref: Ag
 
 export type AgentRunListEntryView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, title: string, lifecycle_status: string, last_activity_at: string, project_agent_label?: string, source: string, runtime?: AgentRunListRuntimeSummaryView, subagent_count: number, children: Array<AgentRunListChildView>, subject_ref?: SubjectRefDto, subject_label?: string, };
 
-export type AgentRunListRuntimeSummaryView = { thread_status: AgentRunListRuntimeThreadStatus, active_turn_id?: string, };
+export type AgentRunListRuntimeSummaryView = { thread_status: AgentRunListRuntimeThreadStatus, active_turn_id?: string, thread_name?: string, };
 
 export type AgentRunListRuntimeThreadStatus = "active" | "suspended" | "desynchronized" | "closed" | "lost";
 

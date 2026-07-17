@@ -2085,23 +2085,18 @@ fn bind_presentations(thread_id: &str, result: &Value) -> Vec<ImmutablePresentat
             },
         ),
     )];
-    let title = result
-        .pointer("/thread/name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|title| !title.is_empty());
-    let preview = result.pointer("/thread/preview").and_then(Value::as_str);
-    if let Some(title) =
-        title.filter(|title| preview.is_none_or(|preview| preview.trim() != *title))
-    {
+    let thread_name = match result.pointer("/thread/name") {
+        Some(Value::String(name)) => Some(Some(name.clone())),
+        Some(Value::Null) => Some(None),
+        _ => None,
+    };
+    if let Some(thread_name) = thread_name {
         presentations.push(ImmutablePresentationEvent::new(
             PresentationDurability::Durable,
-            agentdash_agent_protocol::BackboneEvent::Platform(
-                agentdash_agent_protocol::PlatformEvent::SourceSessionTitleUpdated {
-                    executor_session_id: Some(thread_id.to_string()),
-                    title: title.to_string(),
-                    preview: preview.map(str::to_string),
-                    source: "codex".to_string(),
+            agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(
+                agentdash_agent_protocol::codex_app_server_protocol::ThreadNameUpdatedNotification {
+                    thread_id: thread_id.to_string(),
+                    thread_name,
                 },
             ),
         ));
@@ -2688,7 +2683,7 @@ mod tests {
     }
 
     #[test]
-    fn bind_response_restores_main_binding_and_source_title_order() {
+    fn bind_response_restores_binding_and_standard_thread_name_order() {
         let presentations = bind_presentations(
             "source-thread",
             &json!({"thread":{"name":" Codex Title ","preview":"preview"}}),
@@ -2703,27 +2698,31 @@ mod tests {
             bodies[0]["payload"]["data"]["executor_session_id"],
             "source-thread"
         );
-        assert_eq!(
-            bodies[1],
-            json!({
-                "type":"platform",
-                "payload":{
-                    "kind":"source_session_title_updated",
-                    "data":{
-                        "executor_session_id":"source-thread",
-                        "title":"Codex Title",
-                        "preview":"preview",
-                        "source":"codex"
-                    }
-                }
-            })
-        );
+        assert_eq!(bodies[1]["type"], "thread_name_updated");
+        assert_eq!(bodies[1]["payload"]["threadId"], "source-thread");
+        assert_eq!(bodies[1]["payload"]["threadName"], " Codex Title ");
 
         let duplicate = bind_presentations(
             "source-thread",
             &json!({"thread":{"name":"same","preview":" same "}}),
         );
-        assert_eq!(duplicate.len(), 1, "preview-equivalent title is suppressed");
+        assert_eq!(
+            duplicate.len(),
+            2,
+            "thread.name is a first-class fact independent of preview"
+        );
+
+        let cleared = bind_presentations("source-thread", &json!({"thread":{"name":null}}));
+        assert_eq!(cleared.len(), 2);
+        let agentdash_agent_protocol::BackboneEvent::ThreadNameUpdated(notification) =
+            &cleared[1].event
+        else {
+            panic!("expected clear event");
+        };
+        assert_eq!(notification.thread_name, None);
+
+        let absent = bind_presentations("source-thread", &json!({"thread":{}}));
+        assert_eq!(absent.len(), 1, "absent name is not an observed fact");
     }
 
     #[test]

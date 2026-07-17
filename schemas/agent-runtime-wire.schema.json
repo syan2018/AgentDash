@@ -831,6 +831,22 @@
           ]
         },
         {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "thread_name_updated"
+            },
+            "payload": {
+              "$ref": "#/$defs/ThreadNameUpdatedNotification"
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ]
+        },
+        {
           "description": "外部 executor 自行完成的 compact 标记。该事件没有 AgentDash-owned\nsummary/boundary/replacement provenance，只能作为遥测与审计事实。",
           "type": "object",
           "properties": {
@@ -5853,6 +5869,24 @@
         "waitingOnUserInput"
       ]
     },
+    "ThreadNameUpdatedNotification": {
+      "description": "`ThreadNameUpdatedNotification`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"title\": \"ThreadNameUpdatedNotification\",\n \"type\": \"object\",\n \"required\": [\n   \"threadId\"\n ],\n \"properties\": {\n   \"threadId\": {\n     \"type\": \"string\"\n   },\n   \"threadName\": {\n     \"oneOf\": [\n       {\n         \"type\": \"string\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   }\n },\n \"$schema\": \"http://json-schema.org/draft-07/schema#\"\n}\n```\n</details>",
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "threadName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "threadId"
+      ]
+    },
     "ContextCompactedNotification": {
       "description": "Deprecated: Use `ContextCompaction` item type instead.\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"title\": \"ContextCompactedNotification\",\n \"description\": \"Deprecated: Use `ContextCompaction` item type instead.\",\n \"type\": \"object\",\n \"required\": [\n   \"threadId\",\n   \"turnId\"\n ],\n \"properties\": {\n   \"threadId\": {\n     \"type\": \"string\"\n   },\n   \"turnId\": {\n     \"type\": \"string\"\n   }\n },\n \"$schema\": \"http://json-schema.org/draft-07/schema#\"\n}\n```\n</details>",
       "type": "object",
@@ -7019,47 +7053,6 @@
               },
               "required": [
                 "executor_session_id"
-              ]
-            }
-          },
-          "required": [
-            "kind",
-            "data"
-          ]
-        },
-        {
-          "description": "来源执行器提供了已有会话标题（如 Codex `Thread.name`）。",
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "source_session_title_updated"
-            },
-            "data": {
-              "type": "object",
-              "properties": {
-                "executor_session_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "title": {
-                  "type": "string"
-                },
-                "preview": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "source": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "title",
-                "source"
               ]
             }
           },
@@ -11400,6 +11393,12 @@
         "status": {
           "$ref": "#/$defs/RuntimeThreadStatus"
         },
+        "thread_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "active_turn_id": {
           "type": [
             "string",
@@ -13584,6 +13583,12 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0
+        },
+        "current_thread_name": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "active_compaction_source_end": {
           "description": "Inclusive durable journal boundary represented by the active compacted\ncontext base. Records after this sequence must be replayed as the live\ntranscript tail instead of being discarded with the compacted prefix.",

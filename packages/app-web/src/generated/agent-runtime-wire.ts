@@ -93,7 +93,7 @@ export type DriverToolOutcome = { "kind": "completed", output: JsonValue, is_err
 
 export type DriverToolSurface = { revision: ToolSetRevision, digest: string, tools: Array<DriverToolDefinition>, };
 
-export type DriverTranscript = { earliest_available: EventSequence, latest_available: EventSequence,
+export type DriverTranscript = { earliest_available: EventSequence, latest_available: EventSequence, current_thread_name: string | null,
 /**
  * Inclusive durable journal boundary represented by the active compacted
  * context base. Records after this sequence must be replayed as the live

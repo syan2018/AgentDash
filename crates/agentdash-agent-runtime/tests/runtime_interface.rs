@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -480,6 +480,215 @@ fn session_meta_presentation(
             },
         ),
     )
+}
+
+fn thread_name_presentation(
+    thread_id: &str,
+    thread_name: Option<&str>,
+    durability: PresentationDurability,
+) -> ImmutablePresentationEvent {
+    ImmutablePresentationEvent::new(
+        durability,
+        BackboneEvent::ThreadNameUpdated(
+            agentdash_agent_protocol::codex_app_server_protocol::ThreadNameUpdatedNotification {
+                thread_id: thread_id.to_string(),
+                thread_name: thread_name.map(str::to_string),
+            },
+        ),
+    )
+}
+
+#[derive(Default)]
+struct RecordingCommittedPresentationObserver {
+    projection_changes: Mutex<Vec<bool>>,
+}
+
+#[async_trait::async_trait]
+impl agentdash_agent_runtime::RuntimeCommittedPresentationObserver
+    for RecordingCommittedPresentationObserver
+{
+    async fn observe(
+        &self,
+        presentation: agentdash_agent_runtime::CommittedDurablePresentation,
+    ) -> Result<(), String> {
+        self.projection_changes
+            .lock()
+            .expect("recording observer lock")
+            .push(presentation.projection_changed);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn standard_thread_name_projects_set_duplicate_and_clear_after_durable_commit() {
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let observer = Arc::new(RecordingCommittedPresentationObserver::default());
+    let runtime =
+        ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector))
+            .with_surface_validator(Arc::new(AllowSurface))
+            .with_committed_presentation_observer(observer.clone());
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("start Runtime thread")
+        .thread_id
+        .expect("thread id");
+    let replay_base = store
+        .load_thread(&thread_id)
+        .await
+        .expect("load replay base")
+        .expect("runtime thread");
+
+    for (name, expected) in [
+        (Some("修复登录态"), Some("修复登录态")),
+        (Some("修复登录态"), Some("修复登录态")),
+        (None, None),
+    ] {
+        assert!(matches!(
+            runtime
+                .ingest_driver_event(driver_facts(vec![RuntimeJournalFact::Presentation(
+                    thread_name_presentation("source-1", name, PresentationDurability::Durable,)
+                ),]))
+                .await
+                .expect("commit standard thread name"),
+            DriverEventAdmission::Durable { .. }
+        ));
+        assert_eq!(
+            thread_snapshot(&runtime, thread_id.clone())
+                .await
+                .thread_name
+                .as_deref(),
+            expected
+        );
+    }
+    let mut replayed = replay_base;
+    for record in store
+        .journal_records_after(&thread_id, None)
+        .await
+        .expect("load durable name journal")
+        .records
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.fact(),
+                RuntimeJournalFact::Presentation(ImmutablePresentationEvent {
+                    event: BackboneEvent::ThreadNameUpdated(_),
+                    ..
+                })
+            )
+        })
+    {
+        replayed
+            .apply_journal_record(record)
+            .expect("replay accepted thread name fact");
+    }
+    assert_eq!(
+        replayed.thread_name,
+        store
+            .load_thread(&thread_id)
+            .await
+            .expect("load committed state")
+            .expect("runtime thread")
+            .thread_name,
+        "durable journal replay must converge to the committed projection"
+    );
+
+    assert_eq!(
+        observer
+            .projection_changes
+            .lock()
+            .expect("recording observer lock")
+            .as_slice(),
+        &[true, false, true]
+    );
+}
+
+#[tokio::test]
+async fn invalid_thread_name_source_or_blank_rolls_back_staged_prefix_and_quarantines() {
+    for invalid in [
+        thread_name_presentation(
+            "another-source",
+            Some("valid-looking-title"),
+            PresentationDurability::Durable,
+        ),
+        thread_name_presentation("source-1", Some(" \n "), PresentationDurability::Durable),
+    ] {
+        let (store, runtime) = fixture();
+        let thread_id = runtime
+            .execute(start())
+            .await
+            .expect("start Runtime thread")
+            .thread_id
+            .expect("thread id");
+        let admission = runtime
+            .ingest_driver_event(driver_facts(vec![
+                RuntimeJournalFact::Internal(RuntimeEvent::ConversationError {
+                    turn_id: None,
+                    error: RuntimeConversationError {
+                        code: Some("staged-name-prefix".into()),
+                        message: "must roll back".into(),
+                        retryable: true,
+                        details: None,
+                    },
+                }),
+                RuntimeJournalFact::Presentation(invalid),
+            ]))
+            .await
+            .expect("persist critical invalid name violation");
+
+        assert!(matches!(
+            admission,
+            DriverEventAdmission::Terminalized { .. }
+        ));
+        let snapshot = thread_snapshot(&runtime, thread_id.clone()).await;
+        assert_eq!(snapshot.status, RuntimeThreadStatus::Lost);
+        assert_eq!(snapshot.thread_name, None);
+        assert_eq!(store.quarantined().await.len(), 1);
+        assert!(
+            store
+                .journal_records_after(&thread_id, None)
+                .await
+                .expect("journal after invalid name")
+                .records
+                .iter()
+                .all(|record| !matches!(
+                    record.fact(),
+                    RuntimeJournalFact::Internal(RuntimeEvent::ConversationError { error, .. })
+                        if error.code.as_deref() == Some("staged-name-prefix")
+                ))
+        );
+    }
+}
+
+#[tokio::test]
+async fn ephemeral_thread_name_is_a_critical_protocol_violation() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("start Runtime thread")
+        .thread_id
+        .expect("thread id");
+
+    let admission = runtime
+        .ingest_driver_event(driver_facts(vec![RuntimeJournalFact::Presentation(
+            thread_name_presentation(
+                "source-1",
+                Some("瞬时标题"),
+                PresentationDurability::Ephemeral,
+            ),
+        )]))
+        .await
+        .expect("persist critical ephemeral name violation");
+
+    assert!(matches!(
+        admission,
+        DriverEventAdmission::Terminalized { .. }
+    ));
+    let snapshot = thread_snapshot(&runtime, thread_id).await;
+    assert_eq!(snapshot.status, RuntimeThreadStatus::Lost);
+    assert_eq!(snapshot.thread_name, None);
+    assert_eq!(store.quarantined().await.len(), 1);
 }
 
 async fn thread_snapshot(

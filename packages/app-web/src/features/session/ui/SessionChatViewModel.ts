@@ -179,17 +179,21 @@ export function dispatchPlatformSideEffectEvents(
     }
     lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
     const bbEvent = event.notification.event;
-    if (bbEvent.type !== "platform") {
+    const isThreadNameUpdated = bbEvent.type === "thread_name_updated";
+    if (bbEvent.type !== "platform" && !isThreadNameUpdated) {
       continue;
     }
     if (
       isInitialProjection &&
       event.event_seq <= historyReplayBoundarySeq &&
-      bbEvent.payload.kind !== "control_plane_projection_changed"
+      !(bbEvent.type === "platform" &&
+        bbEvent.payload.kind === "control_plane_projection_changed")
     ) {
       continue;
     }
-    const eventType = extractPlatformEventType(bbEvent);
+    const eventType = isThreadNameUpdated
+      ? "thread_name_updated"
+      : extractPlatformEventType(bbEvent);
     if (!eventType) {
       continue;
     }

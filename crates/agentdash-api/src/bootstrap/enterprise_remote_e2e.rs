@@ -1028,6 +1028,9 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         application_presentation_projector: Arc::new(
             agentdash_application_agentrun::agent_run::AgentRunRuntimeApplicationPresentationProjector,
         ),
+        committed_presentation_observer: Arc::new(
+            agentdash_agent_runtime::NoopRuntimeCommittedPresentationObserver,
+        ),
         managed_compaction: Some(Arc::new(EnterpriseManagedCompactionEngine)),
         node_id: "enterprise-cloud-host".to_string(),
     })

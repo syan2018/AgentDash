@@ -52,6 +52,19 @@ enum DriverEventAdmission {
     Observed,
     Quarantined,
 }
+
+struct RuntimeThreadState {
+    // ...canonical thread/binding/lifecycle fields...
+    #[serde(deserialize_with = "deserialize_required_thread_name")]
+    thread_name: Option<String>,
+}
+
+trait RuntimeCommittedPresentationObserver {
+    async fn observe(
+        &self,
+        presentation: CommittedDurablePresentation,
+    ) -> Result<(), String>;
+}
 ```
 
 完整write-set：
@@ -85,6 +98,17 @@ struct RuntimeCommit {
 - Driver envelope归约同时保留immutable committed base与in-memory staged projection。只有完整fact batch、terminal projection与write-set校验全部成功后才以committed base revision提交staged projection；任一fact失败都从committed base重新构造critical violation commit，不能复用已推进的staged state。
 - critical violation若终结active Turn，必须在同一commit中写入canonical Lost、唯一durable terminal presentation、terminal application effect与quarantine，并返回`DriverEventAdmission::Terminalized`。event sink把该admission作为停止producer pump的flow-control；pump不得再追加第二份`BindingLost`。
 - presentation-only transient只通过transient publication进入live session stream，不生成语义重复的internal fact，也不推进`EventSequence`或`RuntimeRevision`。Driver adapter新增internal fact时必须与Runtime admission规则成对验证。
+- 标准 durable `ThreadNameUpdated` presentation 与 journal 在同一 commit 中投影到
+  `RuntimeThreadState.thread_name`；`Some` 表示设置/替换，`None` 表示清除。reducer 校验
+  payload source thread 等于当前 binding source 且非空白，原因是 snapshot、Driver
+  transcript 与 AgentRun 展示必须从同一 committed fact 恢复。该事件若被标记为 ephemeral
+  或违反 source/name 约束，按 critical protocol violation 从 committed base 原子收敛。
+- 持久 projection JSON 必须显式包含 `thread_name` 键，键值可以为 `null`。反序列化边界
+  不把缺失键解释为 `None`，原因是 schema migration 只有在旧 projection 不能绕过新字段时
+  才能证明所有持久实例已经收敛到同一可重放状态结构。
+- durable presentation observer 只在 commit 成功且 live publication 完成后收到
+  `RuntimeJournalRecord + projection_changed`。通知失败不逆转 Runtime commit，原因是下游
+  project refresh 是可丢失的 invalidation hint，而名称事实仍由 journal/projection 持有。
 - Completed Item携带authoritative final content；Failed、Cancelled、Lost不伪造final content。
 - composition root提供真实Thread/Binding/source mapping；测试用defaults不成为production ID allocation或binding admission事实源。
 
@@ -105,15 +129,23 @@ struct RuntimeCommit {
 | terminal重复、parent改变、terminal后delta | typed transition violation；critical入口按同一事务收敛 |
 | 同一Driver batch前置fact有效、后置fact非法 | 前置staged mutation零落地；从原committed revision原子写critical violation并返回`Terminalized` |
 | presentation-only Provider status/delta | 仅transient publication；不进入internal journal、revision或durable cursor |
+| `ThreadNameUpdated` source不匹配、标题空白或durability非durable | staged prefix零落地；critical violation + quarantine + Lost原子收敛 |
+| `ThreadNameUpdated.threadName = null` | durable journal保留标准clear事件；projection写`thread_name=null`并标记真实变化 |
+| 相同名称或重复clear | journal仍按canonical输入追加；`projection_changed=false`，不发送产品刷新提示 |
+| 持久projection缺少`thread_name`键 | strict deserialize失败；migration补出显式`null`后才能读取 |
+| committed observer失败 | commit、journal与live publication保持成功；记录diagnostic，不回滚名称事实 |
 
 ### 5. Good/Base/Bad Cases
 
 - Good：Command在revision 7被接受，事务同时写operation、revision 8 projection、连续events与outbox；Driver worker只在commit后消费outbox。
 - Good：两个并发Command都声明expected revision 7，仅一条commit成功；失败方不占用operation/event sequence。
 - Good：Driver batch在revision 18归约到临时revision 19后发现非法后置fact；Runtime丢弃整份staged projection，以expected revision 18提交唯一violation/Lost终态并停止pump。
+- Good：同一durable事件在事务内追加标准`ThreadNameUpdated` journal并把projection改为新名称；commit与live publish完成后，observer只收到一份`projection_changed=true`通知。
 - Base：客户端携带durable cursor与当前transient generation/sequence重连；Gateway去重replay后保持live连接，final durable item覆盖过程delta。
+- Base：重复设置当前名称仍保留可审计journal，但observer看到`projection_changed=false`，不会制造无意义的产品列表刷新。
 - Bad：先写operation再尝试写projection/outbox；数据库中间失败会留下无法完成或错误重放的acceptance。
 - Bad：把actor放进idempotency namespace；攻击者或另一主体可换actor复用同一Thread key绕过冲突检查。
+- Bad：用`#[serde(default)]`把旧projection缺失键解释为`None`；这会绕过数据库migration，使两种持久schema长期并存。
 
 ### 6. Tests Required
 
@@ -123,6 +155,8 @@ struct RuntimeCommit {
 - idempotency测试覆盖exact duplicate、same key/different actor、same key/different command与operation ID复用。
 - Driver ingress测试覆盖stale generation、source mismatch、duplicate terminal、runtime-owned event与critical violation Lost收敛。
 - Driver ingress组合测试覆盖`valid prefix -> invalid suffix`，断言prefix不入journal、column/projection/journal revision一致、唯一terminal presentation/effect/quarantine同事务落地，并使用真实PostgreSQL注入末阶段失败验证全写集回滚。
+- `ThreadNameUpdated`测试覆盖set、replace、clear、duplicate、source mismatch、blank、ephemeral与observer failure；逐项断言journal、projection、`projection_changed`、live publication及critical收敛。
+- PostgreSQL migration测试先写一份缺少`thread_name`的旧projection并证明strict load失败，再执行`0082_runtime_thread_name_projection.sql`，断言键被补为显式`null`且projection可读。
 - 每个Driver event pump（Native、Codex、Remote与durable worker）都必须覆盖`Terminalized`后停止且不补`BindingLost`；普通nonterminal sink error保持原有重试/保留语义。
 - Cursor测试覆盖normal tail、future cursor、retention gap、空retained journal、subscribe-before-replay race、generation切换、transient重复去重、Lagged重连、terminal reset与transient不推进durable cursor。
 - PostgreSQL adapter落地时必须复用以上behavior suite并增加真实并发transaction/migration测试；in-memory通过不代表数据库原子性已证明。
@@ -179,4 +213,15 @@ match reduce_all(&mut staged, facts) {
     Ok(write_set) => commit(committed.revision, staged, write_set).await?,
     Err(violation) => commit_violation(committed, violation).await?,
 }
+```
+
+```rust
+// Wrong: projection mutation成功前先通知产品层，或把通知失败当作事务失败。
+observer.observe(candidate).await?;
+unit_of_work.commit(commit).await?;
+
+// Correct: Runtime事实先完成commit与live publish，再发送可丢失的invalidation hint。
+unit_of_work.commit(commit).await?;
+publish_committed_presentations(&commit).await;
+observer.observe(committed_presentation).await.unwrap_or_else(record_diagnostic);
 ```

@@ -149,6 +149,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
+ "agentdash-diagnostics",
  "async-trait",
  "serde",
  "serde_json",

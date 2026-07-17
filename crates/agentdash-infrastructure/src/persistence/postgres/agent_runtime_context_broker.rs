@@ -82,12 +82,21 @@ impl AgentRuntimeContextBroker for PostgresAgentRuntimeContextBroker {
             .journal_records_after(&binding.thread_id, None)
             .await
             .map_err(map_runtime_error)?;
-        let completed_presentation_item_ids = self
+        let projection = self
             .runtime
             .load_thread(&binding.thread_id)
             .await
             .map_err(map_runtime_error)?
-            .ok_or(DriverContextError::NotFound)?
+            .ok_or(DriverContextError::NotFound)?;
+        if projection.thread_id != binding.thread_id
+            || projection.binding_id != binding.binding_id
+            || projection.driver_generation != binding.driver_generation
+            || projection.source_thread_id != binding.source_thread_id
+        {
+            return Err(DriverContextError::Stale);
+        }
+        let current_thread_name = projection.thread_name.clone();
+        let completed_presentation_item_ids = projection
             .presentation_transcript
             .into_iter()
             .map(|item| item.source_item_id)
@@ -142,6 +151,7 @@ impl AgentRuntimeContextBroker for PostgresAgentRuntimeContextBroker {
         Ok(DriverTranscript {
             earliest_available: batch.earliest_available,
             latest_available: batch.latest_available,
+            current_thread_name,
             active_compaction_source_end,
             completed_presentation_item_ids,
             records: batch.records,

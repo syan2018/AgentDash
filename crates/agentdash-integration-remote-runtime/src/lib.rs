@@ -1558,6 +1558,7 @@ mod tests {
         )
         .expect("valid transcript record");
         DriverTranscript {
+            current_thread_name: None,
             earliest_available: EventSequence(4),
             latest_available: EventSequence(4),
             active_compaction_source_end: None,

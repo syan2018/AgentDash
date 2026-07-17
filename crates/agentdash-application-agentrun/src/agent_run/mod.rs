@@ -5,6 +5,7 @@ mod control_effects;
 mod conversation_snapshot;
 mod delete_command;
 mod delivery_runtime_selection;
+mod display_title;
 mod execution_state;
 mod fork_command;
 pub mod frame;
@@ -23,6 +24,7 @@ pub mod runtime_facade;
 pub mod runtime_mailbox;
 pub mod runtime_session_boundary;
 mod runtime_surface_update;
+mod thread_name_projection;
 pub mod workspace;
 
 pub use context_projection::AgentRunContextCompactionArchive;
@@ -56,6 +58,7 @@ pub use delivery_runtime_selection::{
     DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionPolicy,
     DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
 };
+pub use display_title::{AgentRunDisplayTitle, resolve_agent_run_display_title};
 pub use message_submission::{
     AgentRunAcceptedProductResultKind, AgentRunBackendSelectionSemantic,
     AgentRunMessageDeliveryAttempt, AgentRunMessageDeliveryCoordinator,
@@ -195,3 +198,4 @@ pub use runtime_target::{AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget};
 pub use terminal_registry::{
     AgentRunKey, AgentRunTerminalRegistry, TerminalOutputSnapshot, TerminalState,
 };
+pub use thread_name_projection::AgentRunThreadNameProjectionNotifier;

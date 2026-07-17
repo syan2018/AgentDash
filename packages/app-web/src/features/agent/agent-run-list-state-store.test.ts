@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
+import type { ControlPlaneProjectionChangeReason } from "../../generated/backbone-protocol";
 import type { ProjectEventStreamEnvelope } from "../../generated/project-contracts";
 import { fetchProjectAgentRuns } from "../../services/lifecycle";
 import type { AgentRunListEntryView, ProjectAgentRunListView } from "../../types";
@@ -73,14 +74,17 @@ function projectStateChanged(projectId: string): ProjectEventStreamEnvelope {
   };
 }
 
-function agentRunListInvalidated(projectId: string): ProjectEventStreamEnvelope {
+function agentRunListInvalidated(
+  projectId: string,
+  reason: ControlPlaneProjectionChangeReason = "agent_run_lineage_changed",
+): ProjectEventStreamEnvelope {
   return {
     type: "ControlPlaneProjectionChanged",
     data: {
       project_id: projectId,
       change: {
         projection: "agent_run_list",
-        reason: "agent_run_lineage_changed",
+        reason,
         run_id: "run-1",
         agent_id: "agent-1",
         frame_id: null,
@@ -169,6 +173,31 @@ describe("agent-run list state store", () => {
     expect(
       useAgentRunListStateStore.getState().byProjectId["project-1"]?.entries[0]?.run_ref.run_id,
     ).toBe("run-child");
+  });
+
+  it("title_changed invalidation 只重新查询最新第一页", async () => {
+    const before = agentRunEntry("run-1", "agent-1", "新会话", "2026-06-25T01:00:00Z");
+    const after = agentRunEntry(
+      "run-1",
+      "agent-1",
+      "Runtime 会话名",
+      "2026-06-25T01:00:00Z",
+    );
+    mockedFetchProjectAgentRuns
+      .mockResolvedValueOnce(listView([before], "cursor-before"))
+      .mockResolvedValueOnce(listView([after], "cursor-after"));
+
+    await useAgentRunListStateStore.getState().ensureFirstPage("project-1");
+    await invalidateAgentRunListStateForProjectEvent(
+      agentRunListInvalidated("project-1", "title_changed"),
+      "project-1",
+    );
+
+    expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(2);
+    expect(mockedFetchProjectAgentRuns).toHaveBeenLastCalledWith("project-1", { limit: 30 });
+    expect(
+      useAgentRunListStateStore.getState().byProjectId["project-1"]?.entries[0]?.title,
+    ).toBe("Runtime 会话名");
   });
 
   it("first-page refresh in-flight 时收到 AgentRunList invalidation 会串行补一次刷新", async () => {

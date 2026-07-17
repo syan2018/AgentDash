@@ -375,12 +375,17 @@ fn agent_run_list_child_to_contract(model: AgentRunListChildModel) -> AgentRunLi
 fn agent_run_list_runtime_to_contract(
     model: AgentRunListRuntimeSummaryModel,
 ) -> AgentRunListRuntimeSummaryView {
-    agent_run_runtime_summary_to_contract(model.thread_status, model.active_turn_id)
+    agent_run_runtime_summary_to_contract(
+        model.thread_status,
+        model.active_turn_id,
+        model.thread_name,
+    )
 }
 
 fn agent_run_runtime_summary_to_contract(
     thread_status: agentdash_agent_runtime_contract::RuntimeThreadStatus,
     active_turn_id: Option<String>,
+    thread_name: Option<String>,
 ) -> AgentRunListRuntimeSummaryView {
     AgentRunListRuntimeSummaryView {
         thread_status: match thread_status {
@@ -401,6 +406,7 @@ fn agent_run_runtime_summary_to_contract(
             }
         },
         active_turn_id,
+        thread_name,
     }
 }
 
@@ -4127,6 +4133,7 @@ mod composer_submission_http_tests {
                 latest_event_sequence: EventSequence(4),
                 captured_at_ms: 1_783_684_800_000,
                 status: RuntimeThreadStatus::Active,
+                thread_name: None,
                 active_turn_id: None,
                 active_presentation_turn_id: None,
                 binding_id: binding.binding_id.clone(),

@@ -1480,7 +1480,7 @@ latest_event_sequence: EventSequence,
 /**
  * Authoritative time at which this presentation baseline was materialized.
  */
-captured_at_ms: bigint, status: RuntimeThreadStatus, active_turn_id: RuntimeTurnId | null,
+captured_at_ms: bigint, status: RuntimeThreadStatus, thread_name: string | null, active_turn_id: RuntimeTurnId | null,
 /**
  * Main-compatible source-session turn identity paired with the canonical active turn.
  */

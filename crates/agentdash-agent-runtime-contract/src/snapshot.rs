@@ -23,6 +23,7 @@ pub struct RuntimeSnapshot {
     /// Authoritative time at which this presentation baseline was materialized.
     pub captured_at_ms: u64,
     pub status: RuntimeThreadStatus,
+    pub thread_name: Option<String>,
     pub active_turn_id: Option<RuntimeTurnId>,
     /// Main-compatible source-session turn identity paired with the canonical active turn.
     pub active_presentation_turn_id: Option<crate::PresentationTurnId>,

@@ -33,6 +33,7 @@ pub struct DeliveryRuntimeSelection {
     pub observed_at: DateTime<Utc>,
     pub address: AgentRunRuntimeAddress,
     pub message_stream: MessageStreamProjectionRef,
+    pub thread_name: Option<String>,
     execution_state: AgentRunExecutionState,
 }
 
@@ -174,6 +175,10 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
         }
         let runtime = self.runtime.inspect(target).await?;
         let (execution_state, observed_at) = runtime_state(&agent, runtime.snapshot.as_ref())?;
+        let thread_name = runtime
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.thread_name.clone());
         let runtime_session_id = binding.presentation_thread_id.to_string();
         let orchestration_coordinate =
             find_orchestration_coordinate(&run.orchestrations, &runtime_session_id);
@@ -198,6 +203,7 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
                 runtime_session_id,
                 trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
             },
+            thread_name,
             execution_state,
         })
     }

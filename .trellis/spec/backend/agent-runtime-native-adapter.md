@@ -26,6 +26,13 @@ impl AgentRuntimeDriver for NativeAgentDriver {
         -> Result<DriverInspectResult, DriverError>;
 }
 
+impl ConversationNamer {
+    pub async fn generate(
+        &self,
+        input: ConversationNamingInput,
+    ) -> Result<ConversationName, ConversationNamingError>;
+}
+
 DriverCommandEnvelope {
     request_id,
     binding_id,
@@ -72,6 +79,18 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - event sink返回`DriverError::Terminalized`表示Managed Runtime已原子提交critical terminal；Native accepted-turn pump必须立即停止并清理active-turn fence，不再发送后续terminal或fallback `BindingLost`。其它sink error继续按其原有失败语义传播。
 - Clean Agent Core只拥有provider-neutral inference/stream/tool loop。它不依赖Application、Domain、Codex/Backbone/vendor DTO、AgentDash lifecycle prompt、runtime compaction policy或repository。
 - Provider-specific DTO放在protocol/adapter；`ThinkingLevel`是provider-neutral Core type。Core不公开RuntimeCompactionDelegate，也不执行pre-provider/compact-only/manual AgentDash policy。
+- Native 会话命名复用独立 `ConversationNamer` 调用同一 provider bridge。首个成功 turn 的
+  candidate 包含该 `AgentEnd` 批次中全部 canonical User（包括 steer）以及最后一条非
+  Error/Aborted、含非空 Text 的 Assistant；reasoning-only terminal 不触发命名，原因是标题
+  必须概括用户目标与最终可见回答。
+- naming gate 在 canonical terminal sink 前原子 claim，只有 terminal sink 成功后才启动
+  后台命名；名称以 binding-level durable `ThreadNameUpdated` 回送，operation/turn/item/
+  request/entry 坐标全部为空。cold bind 从 `DriverTranscript.current_thread_name` 初始化 gate，
+  已有名称不会重复调用；名称清除后的 live binding 保持已命名状态，下一次 cold bind/rebind
+  再从 committed projection 决定是否命名，从而避免扫描 journal 与运行中竞态。
+- `ConversationNamer` 的模型请求不携带tools；输出依次去除空行、Markdown heading、成对
+  Markdown/引号包装并按Unicode scalar截断到22字符。空值或只含包装符的输出是
+  `InvalidOutput`，不能生成空白标准事件。
 - API旧Pi生产构造入口在Native阶段删除。Provider registry从legacy Pi源码抽离、Pi物理删除与runtime-session dead compaction SPI删除随WP08唯一cutover完成，不保留双轨或fallback。
 - Responses bridge以协议事件定义推理轮次终态。完整解析`response.completed`并归约usage后立即发送唯一`StreamChunk::Done`并停止读取transport；HTTP EOF只证明传输结束，不能替代协议terminal。
 - 命名的`response.*`/`error`事件必须是合法JSON。协议terminal之前的decoder/read错误保留原Provider分类；没有`response.completed`的EOF形成retryable `stream_disconnected`。无名keepalive/`[DONE]`仅作为transport sentinel忽略。
@@ -92,6 +111,11 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 | mapper/sink/Agent task失败 | error传播且active-turn fence清理 |
 | Provider retry/status | 仅一份ephemeral presentation；无internal fact、durable revision或binding loss |
 | sink返回`Terminalized` | accepted-turn pump停止并清理fence，不追加`BindingLost` |
+| 首个成功terminal后命名成功 | terminal先可观察；随后唯一binding-level durable名称事件 |
+| 命名provider或sink失败 | 主turn结果保持成功；gate回到可重试状态，后续成功turn可再次claim |
+| 命名输出为空、只有包装符或超过22个Unicode scalar | 空标题拒绝并允许后续重试；有效标题规范化并截断后发送 |
+| 已有`current_thread_name`的cold bind | gate初始化为Present；后续成功turn不调用命名模型 |
+| live binding收到名称clear | 当前NativeThread仍保持Present；只有下一次cold bind/rebind按projection重新判断 |
 | Turn命令缺少`runtime_turn_id` | side effect前critical protocol error |
 | Tool/Hook callback把source turn作为Runtime turn | Runtime transition拒绝；不得写第二套坐标 |
 | Native与Broker分别投影同一tool started payload | contract violation；只允许binding effective presentation route选中的owner提交 |
@@ -117,6 +141,9 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 
 **Provider terminal case:** `response.completed`到达后即使HTTP/2 body仍开放，Agent Core也取得完整assistant/tool-call/usage并继续tool loop或结束Turn；没有协议terminal的断流保持可诊断失败。
 
+**Conversation naming case:** 首个含可见final assistant文本的成功turn先提交terminal，再异步调用
+无tools命名请求并提交binding-level标准事件；reasoning-only terminal不产生候选，也不占用gate。
+
 ## 6. Tests Required
 
 - Native behavior覆盖contribution/factory、truthful descriptor、Start/Resume/Fork、exact checkpoint/digest、Turn/steer/interrupt/settings/idempotency。
@@ -131,6 +158,9 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - Agent Core dependency tree与source scan必须证明无Application/Domain/Codex/Backbone/repository依赖；Core/Native strict clippy与tests通过。
 - WP08必须验证provider registry抽离后legacy Pi与dead runtime-session compaction SPI物理删除、生产Host composition使用Native Integration。
 - Responses bridge测试覆盖terminal后transport挂起、terminal后decoder error、terminal前EOF/read error、命名非法JSON、合法`response.failed`，并断言content/reasoning/tool calls/usage与`Done` exactly-once。
+- Conversation naming测试覆盖同turn全部User（含steer）+最后可见Assistant候选、reasoning-only/
+  Error/Aborted排除、terminal-before-name时序、single in-flight、provider/sink失败重试、cold bind
+  已命名跳过、无tools请求、nested wrapper清理与22字符Unicode截断。
 
 ## 7. Wrong vs Correct
 
@@ -175,5 +205,19 @@ tx.send(StreamChunk::Done(state.into_response())).await?;
 // Correct: the provider protocol terminal ends logical production immediately.
 if reduce(event)? == ResponsesEventDisposition::Completed {
     return send_responses_done(state, tx).await;
+}
+```
+
+```rust
+// Wrong: 在主turn terminal前等待辅助命名，失败时连带turn失败。
+let name = namer.generate(candidate).await?;
+sink.emit(thread_name_updated(name)).await?;
+sink.emit(turn_terminal).await?;
+
+// Correct: claim只防并发；terminal成功后才分离辅助命名，失败只重置gate。
+let claimed = thread.claim_naming().await;
+sink.emit(turn_terminal).await?;
+if claimed {
+    spawn_background_naming(candidate);
 }
 ```

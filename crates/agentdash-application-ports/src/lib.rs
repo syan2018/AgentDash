@@ -28,4 +28,3 @@ pub mod vfs_surface_runtime;
 pub mod workflow_agent_frame_materialization;
 pub mod workflow_agent_run_delivery;
 pub mod workflow_graph_planning;
-pub mod workspace_title;

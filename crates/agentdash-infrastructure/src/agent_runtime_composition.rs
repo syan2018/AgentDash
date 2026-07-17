@@ -1912,6 +1912,8 @@ pub struct NativeAgentRuntimeCompositionInput {
     pub callback_factory: AgentRuntimeCallbackFactory,
     pub application_presentation_projector:
         Arc<dyn agentdash_agent_runtime_contract::RuntimeApplicationPresentationProjector>,
+    pub committed_presentation_observer:
+        Arc<dyn agentdash_agent_runtime::RuntimeCommittedPresentationObserver>,
     pub remote_definitions: Vec<agentdash_integration_api::AgentServiceDefinition>,
     pub remote_trust_manifests: Vec<agentdash_integration_api::AgentRuntimeTrustManifest>,
     pub remote_placements:
@@ -1928,6 +1930,8 @@ pub struct AgentRuntimeCompositionInput {
     pub callback_factory: AgentRuntimeCallbackFactory,
     pub application_presentation_projector:
         Arc<dyn agentdash_agent_runtime_contract::RuntimeApplicationPresentationProjector>,
+    pub committed_presentation_observer:
+        Arc<dyn agentdash_agent_runtime::RuntimeCommittedPresentationObserver>,
     pub managed_compaction:
         Option<Arc<dyn crate::agent_runtime_workers::ManagedCompactionPreparationEngine>>,
     pub node_id: String,
@@ -1975,13 +1979,13 @@ pub fn build_agent_runtime_composition(
         runtime_repository.clone(),
         composition_repository.clone(),
     ));
-    let runtime = Arc::new(
-        ManagedAgentRuntime::new(
-            runtime_repository.clone(),
-            input.application_presentation_projector,
-        )
-        .with_surface_validator(composition_repository.clone()),
-    );
+    let managed_runtime = ManagedAgentRuntime::new(
+        runtime_repository.clone(),
+        input.application_presentation_projector,
+    )
+    .with_surface_validator(composition_repository.clone())
+    .with_committed_presentation_observer(input.committed_presentation_observer);
+    let runtime = Arc::new(managed_runtime);
     let callbacks = (input.callback_factory)(runtime.clone());
     let verifier = Arc::new(TrustedDriverConformanceVerifier::new(
         TrustedDriverManifestRegistry::collect(input.trusted_manifests)
@@ -2197,6 +2201,7 @@ pub fn build_native_agent_runtime_composition(
         credential_broker: input.credential_broker,
         callback_factory: input.callback_factory,
         application_presentation_projector: input.application_presentation_projector,
+        committed_presentation_observer: input.committed_presentation_observer,
         managed_compaction: Some(managed_compaction),
         node_id: input.node_id,
     })
@@ -2376,6 +2381,9 @@ mod tests {
                 hooks: Arc::new(ContinueHooks),
             }),
             application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
+            committed_presentation_observer: Arc::new(
+                agentdash_agent_runtime::NoopRuntimeCommittedPresentationObserver,
+            ),
             managed_compaction: None,
             node_id: "terminalized-outbox-test".to_string(),
         })
@@ -3400,6 +3408,9 @@ mod tests {
                     hooks: Arc::new(ContinueHooks),
                 }),
                 application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
+                committed_presentation_observer: Arc::new(
+                    agentdash_agent_runtime::NoopRuntimeCommittedPresentationObserver,
+                ),
                 remote_definitions: Vec::new(),
                 remote_trust_manifests: Vec::new(),
                 remote_placements: Arc::new(NoRemotePlacements),
@@ -3615,6 +3626,9 @@ mod tests {
                 hooks: Arc::new(ContinueHooks),
             }),
             application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
+            committed_presentation_observer: Arc::new(
+                agentdash_agent_runtime::NoopRuntimeCommittedPresentationObserver,
+            ),
             managed_compaction: Some(Arc::new(TracerManagedCompactionEngine)),
             node_id: "native-production-tracer".to_string(),
         })
@@ -4281,6 +4295,9 @@ rl.on('line', line => {
                 hooks: Arc::new(ContinueHooks),
             }),
             application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
+            committed_presentation_observer: Arc::new(
+                agentdash_agent_runtime::NoopRuntimeCommittedPresentationObserver,
+            ),
             managed_compaction: None,
             node_id: "codex-production-tracer".to_string(),
         })

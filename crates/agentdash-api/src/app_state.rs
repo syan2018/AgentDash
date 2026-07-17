@@ -696,6 +696,13 @@ impl AppState {
                     application_presentation_projector: Arc::new(
                         agentdash_application_agentrun::agent_run::AgentRunRuntimeApplicationPresentationProjector,
                     ),
+                    committed_presentation_observer: Arc::new(
+                        agentdash_application_agentrun::agent_run::AgentRunThreadNameProjectionNotifier::new(
+                            repos.agent_run_runtime_binding_repo.clone(),
+                            repos.lifecycle_run_repo.clone(),
+                            project_projection_notifications.clone(),
+                        ),
+                    ),
                     remote_definitions: runtime_definition_registry.definitions(),
                     remote_trust_manifests: integration_registration.runtime_trust_manifests,
                     remote_placements: Arc::new(

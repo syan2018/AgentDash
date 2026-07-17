@@ -77,7 +77,7 @@ pub(super) struct ProjectAgentOwnerCompositionInput<'a> {
     pub active_workflow: Option<ActiveWorkflowProjection>,
     pub launch_path: super::OwnerPromptLaunchPath,
     pub identity: Option<&'a AuthIdentity>,
-    pub audit_session_key: Option<String>,
+    pub runtime_session_id: String,
 }
 
 pub(super) async fn compose(
@@ -114,7 +114,7 @@ pub(super) async fn compose(
             active_workflow,
             launch_path,
             identity: identity.as_ref(),
-            audit_session_key: Some(input.session_id.clone()),
+            runtime_session_id: input.session_id.clone(),
         },
     )
     .await?;
@@ -185,6 +185,17 @@ pub(super) async fn compose_project_agent_owner_frame(
     let subject_workspace = subject_assignment
         .as_ref()
         .and_then(|assignment| assignment.workspace.as_ref());
+    let lifecycle_address =
+        agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress {
+            run_id: input.run.id,
+            agent_id: input.agent.id,
+            frame_id: input.builder.frame_id(),
+        };
+    let lifecycle_message_stream =
+        agentdash_application_ports::lifecycle_surface_projection::MessageStreamProjectionRef {
+            runtime_session_id: input.runtime_session_id,
+            trace_kind: agentdash_application_ports::lifecycle_surface_projection::MessageStreamTraceKind::ConnectorRuntimeSession,
+        };
 
     context
         .owner_bootstrap_composer()
@@ -228,7 +239,8 @@ pub(super) async fn compose_project_agent_owner_frame(
                     .clone(),
                 active_workflow: input.active_workflow,
                 launch_path: input.launch_path,
-                audit_session_key: input.audit_session_key,
+                lifecycle_address,
+                lifecycle_message_stream,
                 audit_run_id: Some(input.run.id.to_string()),
                 audit_agent_id: Some(input.agent.id.to_string()),
                 caller_agent_id: Some(project_agent.id),

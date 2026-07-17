@@ -161,6 +161,9 @@ AgentRunCommandReceipt {
 ## 5. Workspace Module, Canvas and VFS
 
 - Workspace Module presentation payload 的 concrete URI 是 tab identity；浏览器不根据 view key 猜测资源 URI。
+- `workspace_module_presented` 是 durable presentation fact 与 live panel intent。前端把它
+  渲染为成功事件，并对 live event 立即按 concrete URI 打开 panel；present 不修改
+  AgentFrame/resource surface，因此打开动作不等待 Workspace state/catalog refresh。
 - Agent-facing operation 只来自 generated operation catalog。panel-only action 不自动成为 Agent tool。
 - Canvas runtime snapshot、VFS resource surface 与 Agent tool 使用同一当前 AgentFrame/Business Surface projection；Frame 是产品期望，不是 Runtime lifecycle authority。
 - Runtime-bound Canvas/extension invocation 以 `run_id + agent_id` 进入 API，后端通过 canonical `AgentRunRuntimeBinding` 获取 thread/binding coordinate。
@@ -185,7 +188,8 @@ AgentRunCommandReceipt {
 - Bad：前端调用已经没有后端实现的 fork/mailbox endpoint，或根据 `execution_status=running` 自行启用 cancel。
 - Bad：把Runtime `active`直接映射为running，或把`closed`直接映射为completed，会把thread lifecycle误当成turn/产品终态。
 - Bad：只保存durable cursor或在每次重连从transient sequence 0开始，导致同一delta重复追加。
-- Good：Canvas presentation 用 `canvas://{mount_id}` 打开 tab，并通过当前 AgentFrame surface刷新资源。
+- Good：Canvas presentation 用 `canvas://{mount_id}` 立即打开 tab；Canvas renderer 独立读取当前已
+  adopted AgentFrame surface，真实 surface 变化再通过对应 reason 触发刷新。
 - Bad：把 RuntimeWire frame转成 Backbone JSON 再由 UI 推导 Runtime terminal。
 
 ## 8. Wrong vs Correct

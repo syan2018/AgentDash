@@ -4,7 +4,6 @@ import type { WorkspaceModulePresentation } from "../../../generated/workspace-m
 export interface WorkspaceModulePresentedTabTarget {
   typeId: string;
   uri?: string;
-  refreshRuntime: boolean;
 }
 
 const CANVAS_PRESENTATION_SCHEME = "canvas://";
@@ -60,7 +59,6 @@ export function workspaceModulePresentationTabTarget(
     return {
       typeId: "canvas",
       uri: presentationUri,
-      refreshRuntime: true,
     };
   }
 
@@ -68,7 +66,6 @@ export function workspaceModulePresentationTabTarget(
   return {
     typeId: viewKey,
     uri: presentationUri || undefined,
-    refreshRuntime: false,
   };
 }
 

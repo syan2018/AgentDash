@@ -292,41 +292,6 @@ pub(crate) fn connector_internal(error: impl std::fmt::Display) -> ConnectorErro
     ConnectorError::Runtime(error.to_string())
 }
 
-pub(crate) async fn resolve_runtime_surface_refs(
-    repos: &RepositorySet,
-    runtime_session_id: &str,
-) -> Result<
-    Option<(
-        agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress,
-        agentdash_application_ports::lifecycle_surface_projection::MessageStreamProjectionRef,
-    )>,
-    String,
-> {
-    let Some((_binding, agent, frame)) =
-        agentdash_application_lifecycle::resolve_current_frame_from_delivery_trace_ref(
-            runtime_session_id,
-            repos.agent_run_runtime_binding_repo.as_ref(),
-            repos.lifecycle_agent_repo.as_ref(),
-            repos.agent_frame_repo.as_ref(),
-        )
-        .await
-        .map_err(|error| error.to_string())?
-    else {
-        return Ok(None);
-    };
-    Ok(Some((
-        agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress {
-            run_id: agent.run_id,
-            agent_id: agent.id,
-            frame_id: frame.id,
-        },
-        agentdash_application_ports::lifecycle_surface_projection::MessageStreamProjectionRef {
-            runtime_session_id: runtime_session_id.to_string(),
-            trace_kind: agentdash_application_ports::lifecycle_surface_projection::MessageStreamTraceKind::ConnectorRuntimeSession,
-        },
-    )))
-}
-
 /// 检查 frame surface 是否已就绪（executor_config + capability_state + working_directory 齐全）。
 pub(crate) fn frame_surface_ready(frame: &AgentFrame) -> bool {
     frame.typed_execution_profile().is_some()

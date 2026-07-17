@@ -212,7 +212,6 @@ describe("workspaceModulePresentedTabTarget", () => {
     }))).toEqual({
       typeId: "canvas",
       uri: "canvas://cvs-dashboard-a",
-      refreshRuntime: true,
     });
   });
 
@@ -271,7 +270,6 @@ describe("workspaceModulePresentedTabTarget", () => {
     }))).toEqual({
       typeId: "inspector",
       uri: "ext-demo://panel",
-      refreshRuntime: false,
     });
   });
 });

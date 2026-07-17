@@ -79,9 +79,11 @@ pub fn build_lifecycle_activation_surface(
 
 /// AgentFrame 的 builder，收束所有 runtime surface 输入为单次 revision。
 ///
-/// 每次 `build()` 创建一个新 revision 并持久化；调用方应在
-/// capability / context / VFS / MCP 任一维度变更时构造新 builder 并 build。
+/// 单个 builder 对应一个预分配 identity 的新 revision；`build()` /
+/// `build_uncommitted()` 会消费 builder。调用方在 capability / context / VFS /
+/// MCP 任一维度变更时构造新的 builder。
 pub struct AgentFrameBuilder {
+    frame_id: Uuid,
     agent_id: Uuid,
     context_slice: Option<serde_json::Value>,
     context_source_snapshot: Option<serde_json::Value>,
@@ -97,6 +99,7 @@ pub struct AgentFrameBuilder {
 impl AgentFrameBuilder {
     pub fn new(agent_id: Uuid) -> Self {
         Self {
+            frame_id: Uuid::new_v4(),
             agent_id,
             context_slice: None,
             context_source_snapshot: None,
@@ -116,6 +119,14 @@ impl AgentFrameBuilder {
     /// 后续 runtime surface 必须由 frame construction / lifecycle composer 写入。
     pub fn new_launch_anchor(agent_id: Uuid, created_by_id: Option<String>) -> Self {
         Self::new(agent_id).with_created_by("dispatch_launch_anchor", created_by_id)
+    }
+
+    /// 返回本次构造将持久化的稳定 Frame identity。
+    ///
+    /// Runtime surface 在 frame 写入前就需要引用该 identity，因此 builder 创建时
+    /// 预分配 ID，`build_uncommitted` 不得重新生成。
+    pub fn frame_id(&self) -> Uuid {
+        self.frame_id
     }
 
     pub fn with_context(mut self, context_slice: serde_json::Value) -> Self {
@@ -238,7 +249,7 @@ impl AgentFrameBuilder {
     /// 构建新 revision 并通过 repository 持久化。
     ///
     /// 从 repository 读取当前最新 revision number，递增后创建新 frame。
-    pub async fn build(&self, repo: &dyn AgentFrameRepository) -> Result<AgentFrame, DomainError> {
+    pub async fn build(self, repo: &dyn AgentFrameRepository) -> Result<AgentFrame, DomainError> {
         let frame = self.build_uncommitted(repo).await?;
         repo.create(&frame).await?;
         Ok(frame)
@@ -247,7 +258,7 @@ impl AgentFrameBuilder {
     /// 构建新 revision 但不写入仓储。Frame construction 用它把完整
     /// runtime surface 传给 connector，等 connector accepted 后再提交。
     pub async fn build_uncommitted(
-        &self,
+        self,
         repo: &dyn AgentFrameRepository,
     ) -> Result<AgentFrame, DomainError> {
         let current = repo.get_latest(self.agent_id).await?;
@@ -256,8 +267,12 @@ impl AgentFrameBuilder {
             None => 1,
         };
 
-        let mut frame =
-            AgentFrame::new_revision(self.agent_id, next_revision, &self.created_by_kind);
+        let mut frame = AgentFrame::new_revision_with_id(
+            self.frame_id,
+            self.agent_id,
+            next_revision,
+            &self.created_by_kind,
+        );
         frame.effective_capability_json = self.capability_surface.clone().or_else(|| {
             current
                 .as_ref()
@@ -318,6 +333,17 @@ mod tests {
     #[derive(Default)]
     struct FixtureFrameRepo {
         items: Mutex<Vec<AgentFrame>>,
+    }
+
+    #[tokio::test]
+    async fn preallocated_frame_identity_is_stable_through_build() {
+        let repo = FixtureFrameRepo::default();
+        let builder = AgentFrameBuilder::new_launch_anchor(Uuid::new_v4(), None);
+        let frame_id = builder.frame_id();
+
+        let frame = builder.build_uncommitted(&repo).await.expect("build frame");
+
+        assert_eq!(frame.id, frame_id);
     }
 
     fn mount(id: &str, provider: &str) -> Mount {

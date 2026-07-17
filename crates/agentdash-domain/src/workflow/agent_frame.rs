@@ -110,8 +110,17 @@ impl AgentFrame {
     }
 
     pub fn new_revision(agent_id: Uuid, revision: i32, created_by_kind: impl Into<String>) -> Self {
+        Self::new_revision_with_id(Uuid::new_v4(), agent_id, revision, created_by_kind)
+    }
+
+    pub fn new_revision_with_id(
+        id: Uuid,
+        agent_id: Uuid,
+        revision: i32,
+        created_by_kind: impl Into<String>,
+    ) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id,
             agent_id,
             revision,
             surface: None,

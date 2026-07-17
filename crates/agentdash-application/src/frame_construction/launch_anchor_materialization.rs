@@ -111,6 +111,8 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
                 "LifecycleAgent {agent_id} 与 LifecycleRun {run_id} 的 owner 坐标不一致"
             )));
         }
+        let runtime_session_id = runtime_session_id
+            .ok_or_else(|| construction_rejected("DispatchLaunchAnchor 缺少 runtime_session_id"))?;
 
         let executor_config_override = execution_profile
             .map(serde_json::from_value::<AgentConfig>)
@@ -135,7 +137,7 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
                 active_workflow: None,
                 launch_path: OwnerPromptLaunchPath::OwnerBootstrap,
                 identity: None,
-                audit_session_key: runtime_session_id.clone(),
+                runtime_session_id: runtime_session_id.clone(),
             },
         )
         .await
@@ -153,9 +155,7 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
                     frame_id: frame.id,
                 },
                 provenance: RuntimeAdapterProvenance::runtime_session(
-                    runtime_session_id
-                        .clone()
-                        .unwrap_or_else(|| format!("frame-construction-{}-{}", run.id, agent.id)),
+                    runtime_session_id.clone(),
                     None,
                     "agent_frame_hook_plan_construction",
                 ),
@@ -177,7 +177,7 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
             AgentRunFrameSurfaceCommandOutcome::new(AgentFrameWriteRole::FrameConstruction);
         outcome.frame_id = Some(frame.id);
         outcome.agent_id = Some(frame.agent_id);
-        outcome.runtime_session_id = runtime_session_id;
+        outcome.runtime_session_id = Some(runtime_session_id);
         outcome.wrote_frame_revision = true;
         Ok(outcome)
     }

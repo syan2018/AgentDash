@@ -21,6 +21,9 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
   if (platform.kind === "provider_attempt_status") return "provider_attempt_status";
   if (platform.kind === "session_rewound") return "session_rewound";
   if (platform.kind === "control_plane_projection_changed") {
+    if (platform.data.reason === "workspace_module_presented") {
+      return "workspace_module_presented";
+    }
     return "control_plane_projection_changed";
   }
 
@@ -91,6 +94,16 @@ export function extractPlatformEventMessage(event: BackboneEvent): string | null
 
   if (platform.kind === "session_rewound") {
     return platform.data.message ?? null;
+  }
+
+  if (
+    platform.kind === "control_plane_projection_changed" &&
+    platform.data.reason === "workspace_module_presented"
+  ) {
+    const presentation = platform.data.workspace_module_presentation;
+    if (!presentation) return null;
+    const label = presentation.title.trim() || presentation.module_id.trim();
+    return label ? `已展示「${label}」` : "Workspace Module 视图已展示";
   }
 
   if (platform.kind === "session_meta_update") {

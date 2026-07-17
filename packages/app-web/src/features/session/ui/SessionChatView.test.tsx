@@ -75,6 +75,34 @@ function platformMetaEvent(key: string, value: Record<string, JsonValue>): Backb
   };
 }
 
+function workspaceModulePresentedEvent(): BackboneEvent {
+  return {
+    type: "platform",
+    payload: {
+      kind: "control_plane_projection_changed",
+      data: {
+        projection: "resource_surface",
+        reason: "workspace_module_presented",
+        run_id: "run-1",
+        agent_id: "agent-1",
+        frame_id: "frame-1",
+        gate_id: null,
+        mailbox_message_id: null,
+        delivery_runtime_session_id: "runtime-1",
+        workspace_module_presentation: {
+          module_id: "canvas:cvs-canvas",
+          view_key: "preview",
+          renderer_kind: "canvas",
+          presentation_uri: "canvas://cvs-canvas",
+          title: "Canvas",
+          payload: null,
+          diagnostics: null,
+        },
+      },
+    },
+  };
+}
+
 function turnTerminalMetaEvent(terminalType: "turn_completed" | "turn_failed" | "turn_interrupted"): BackboneEvent {
   return platformMetaEvent("turn_terminal", {
     terminal_type: terminalType,
@@ -252,6 +280,16 @@ describe("collectRenderableSystemEvents", () => {
       "system_message",
       "unknown_meta",
     ]);
+  });
+
+  it("将 Workspace Module 展示成功事件收进可渲染会话流", () => {
+    const result = collectRenderableSystemEvents([
+      eventEnvelope(4, workspaceModulePresentedEvent()),
+    ], 0);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.eventType).toBe("workspace_module_presented");
+    expect(result.items[0]?.eventSeq).toBe(4);
   });
 
   it("全量 platform 收集函数可用历史边界跳过 hydrate 事件", () => {

@@ -426,6 +426,12 @@ async fn publish_skill_payload(
             "SkillAsset 不属于当前 Project".to_string(),
         ));
     }
+    if skill.is_builtin_seed() {
+        return Err(PublishLibraryAssetError::BadRequest(format!(
+            "SkillAsset `{}` 由平台 builtin catalog 管理",
+            skill.key
+        )));
+    }
     let mut files = Vec::with_capacity(skill.files.len());
     for file in skill.files {
         let Some(content) = file.text_content() else {

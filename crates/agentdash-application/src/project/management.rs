@@ -1,5 +1,6 @@
 use uuid::Uuid;
 
+use agentdash_application_skill::skill_asset::SkillAssetService;
 use agentdash_domain::context_container::{
     ContextContainerDefinition, validate_context_containers,
 };
@@ -68,6 +69,7 @@ pub async fn create_project_record(
         .create(&project)
         .await
         .map_err(ApplicationError::from)?;
+    provision_project_builtin_skills(repos, project.id).await?;
     sync_project_inline_files(repos, &project).await?;
     Ok(project)
 }
@@ -156,7 +158,18 @@ pub async fn clone_project_record(
         .create(&cloned_project)
         .await
         .map_err(ApplicationError::from)?;
+    provision_project_builtin_skills(repos, cloned_project.id).await?;
     Ok(cloned_project)
+}
+
+async fn provision_project_builtin_skills(
+    repos: &RepositorySet,
+    project_id: Uuid,
+) -> Result<(), ApplicationError> {
+    SkillAssetService::new(repos.skill_asset_repo.as_ref())
+        .provision_project_builtins(project_id, None)
+        .await?;
+    Ok(())
 }
 
 pub fn build_project(

@@ -99,5 +99,5 @@ export async function openUserCanvasModule({
   if (target?.typeId !== "canvas" || !target.uri) {
     throw new Error("当前 Canvas 没有可打开的 presentation。");
   }
-  openOrActivate(target.typeId, target.uri, target.refreshRuntime);
+  openOrActivate(target.typeId, target.uri, true);
 }

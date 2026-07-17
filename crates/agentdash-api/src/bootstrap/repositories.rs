@@ -8,6 +8,7 @@ use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::repository_set::{
     LifecycleProjectAgentLaunchAdapter, LifecycleProjectAgentLaunchDeps, RepositorySet,
 };
+use agentdash_application::skill_asset::SkillAssetService;
 use agentdash_application_agentrun::agent_run::frame::{
     AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
 };
@@ -22,6 +23,8 @@ use agentdash_application_shared_library::{
     BuiltinLibrarySeedProviderInput, IntegrationEmbeddedLibraryAssetSeed,
     SeedBuiltinLibraryAssetsInput, SharedLibraryService,
 };
+use agentdash_domain::project::ProjectRepository;
+use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
     PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,
@@ -49,6 +52,39 @@ pub(crate) struct RepositoryBootstrapOutput {
     pub auth_session_service: Arc<AuthSessionService>,
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
     pub lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProjectBuiltinSkillProvisioningSummary {
+    projects: usize,
+    assets: usize,
+}
+
+async fn reconcile_project_builtin_skill_assets(
+    project_repo: &dyn ProjectRepository,
+    skill_asset_repo: &dyn SkillAssetRepository,
+) -> Result<ProjectBuiltinSkillProvisioningSummary> {
+    let projects = project_repo.list_all().await.map_err(|error| {
+        anyhow::anyhow!("读取 Project builtin Skill provisioning 范围失败: {error}")
+    })?;
+    let service = SkillAssetService::new(skill_asset_repo);
+    let mut provisioned = 0usize;
+    for project in &projects {
+        let assets = service
+            .provision_project_builtins(project.id, None)
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "Project {} builtin Skill provisioning 失败: {error}",
+                    project.id
+                )
+            })?;
+        provisioned += assets.len();
+    }
+    Ok(ProjectBuiltinSkillProvisioningSummary {
+        projects: projects.len(),
+        assets: provisioned,
+    })
 }
 
 pub(crate) async fn build_repositories(
@@ -132,6 +168,20 @@ pub(crate) async fn build_repositories(
     let mcp_preset_repo = Arc::new(PostgresMcpPresetRepository::new(pool.clone()));
 
     let skill_asset_repo = Arc::new(PostgresSkillAssetRepository::new(pool.clone()));
+    {
+        let summary = reconcile_project_builtin_skill_assets(
+            project_repo.as_ref(),
+            skill_asset_repo.as_ref(),
+        )
+        .await?;
+        diag!(
+            Info,
+            Subsystem::Api,
+            projects = summary.projects,
+            assets = summary.assets,
+            "已同步 Project builtin Skill assets"
+        );
+    }
 
     let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool.clone()));
     let lifecycle_agent_repo = Arc::new(PostgresLifecycleAgentRepository::new(pool.clone()));
@@ -269,6 +319,7 @@ fn builtin_seed_provider_input() -> Result<BuiltinLibrarySeedProviderInput> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     use agentdash_application::context::{AuditFilter, ContextAuditBus, InMemoryContextAuditBus};
@@ -277,6 +328,9 @@ mod tests {
     };
     use agentdash_application::platform_config::PlatformConfig;
     use agentdash_application::repository_set::RepositorySet;
+    use agentdash_application::skill_asset::{
+        SkillAssetService, list_builtin_skill_asset_templates,
+    };
     use agentdash_application_agentrun::agent_run::frame::AgentFrameSurfaceExt;
     use agentdash_application_hooks::AppExecutionHookProvider;
     use agentdash_application_ports::agent_frame_hook_plan::SharedAgentFrameHookPlanCompiler;
@@ -284,7 +338,8 @@ mod tests {
     use agentdash_application_ports::agent_run_runtime::SharedAgentRunRuntimeProvisionerHandle;
     use agentdash_domain::agent::ProjectAgent;
     use agentdash_domain::backend::ProjectBackendAccess;
-    use agentdash_domain::project::Project;
+    use agentdash_domain::project::{Project, ProjectRepository};
+    use agentdash_domain::skill_asset::SkillAssetRepository;
     use agentdash_domain::story::Story;
     use agentdash_domain::workflow::{
         AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
@@ -297,11 +352,13 @@ mod tests {
     use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
     use agentdash_relay::CapabilitiesPayload;
     use agentdash_spi::AgentConfig;
+    use agentdash_test_support::skill::MemorySkillAssetRepository;
+    use agentdash_test_support::workspace_module::MemoryProjectRepository;
     use chrono::Utc;
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
-    use super::build_repositories;
+    use super::{build_repositories, reconcile_project_builtin_skill_assets};
     use crate::relay::registry::{BackendRegistry, ConnectedBackend};
 
     async fn migrated_runtime(name: &str) -> PostgresRuntime {
@@ -315,6 +372,48 @@ mod tests {
             .await
             .expect("migrations");
         runtime
+    }
+
+    #[tokio::test]
+    async fn startup_reconciliation_provisions_every_project_idempotently() {
+        let project_repo = MemoryProjectRepository::default();
+        let skill_asset_repo = MemorySkillAssetRepository::default();
+        let projects = [
+            Project::new("Project A".to_string(), String::new()),
+            Project::new("Project B".to_string(), String::new()),
+        ];
+        for project in &projects {
+            project_repo.create(project).await.expect("create project");
+        }
+
+        let first = reconcile_project_builtin_skill_assets(&project_repo, &skill_asset_repo)
+            .await
+            .expect("first reconciliation");
+        let catalog_size = list_builtin_skill_asset_templates().len();
+        assert_eq!(first.projects, projects.len());
+        assert_eq!(first.assets, projects.len() * catalog_size);
+        let first_ids = skill_asset_repo
+            .list_by_project(projects[0].id)
+            .await
+            .expect("first project assets")
+            .into_iter()
+            .map(|asset| asset.id)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(first_ids.len(), catalog_size);
+
+        let second = reconcile_project_builtin_skill_assets(&project_repo, &skill_asset_repo)
+            .await
+            .expect("second reconciliation");
+        let second_ids = skill_asset_repo
+            .list_by_project(projects[0].id)
+            .await
+            .expect("first project assets after reconciliation")
+            .into_iter()
+            .map(|asset| asset.id)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(second, first);
+        assert_eq!(second_ids, first_ids);
     }
 
     async fn register_backend(registry: &Arc<BackendRegistry>, backend_id: &str) {
@@ -342,6 +441,10 @@ mod tests {
             .create(&project)
             .await
             .expect("create project");
+        SkillAssetService::new(repos.skill_asset_repo.as_ref())
+            .provision_project_builtins(project.id, None)
+            .await
+            .expect("provision project builtin skills");
 
         if let Some(backend_id) = backend_id {
             let root_ref = "D:/Projects/AgentDash";
@@ -531,6 +634,27 @@ mod tests {
             "default mount must preserve canonical workspace binding coordinates"
         );
         assert!(!default_mount.capabilities.is_empty());
+        let lifecycle_mount = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "lifecycle")
+            .expect("first launch frame must contain lifecycle mount");
+        let projected_skill_keys = lifecycle_mount
+            .metadata
+            .get("skill_asset_keys")
+            .and_then(serde_json::Value::as_array)
+            .expect("lifecycle mount skill_asset_keys")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            projected_skill_keys,
+            vec![
+                "companion-system",
+                "canvas-system",
+                "workspace-module-system"
+            ]
+        );
         assert!(frame.typed_capability_state().is_some());
         assert!(frame.context_bundle_summary().is_some());
         assert_eq!(
@@ -582,7 +706,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("缺少可用的 workspace default mount"),
+                .contains("缺少 canonical runtime backend anchor"),
             "unexpected error: {error}"
         );
 

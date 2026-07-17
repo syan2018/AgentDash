@@ -111,16 +111,13 @@ function planWorkspaceModulePresented(
   );
   const target = workspaceModulePresentedTabTarget(data);
   if (!target) return {};
-  const refreshContent = target.typeId === "canvas" ? false : target.refreshRuntime;
   return {
-    refreshWorkspaceState: target.refreshRuntime,
-    refreshWorkspaceModuleCatalog: target.refreshRuntime,
     openWorkspacePanel: {
-      afterWorkspaceRefresh: target.refreshRuntime,
+      afterWorkspaceRefresh: false,
       target: {
         typeId: target.typeId,
         uri: target.uri,
-        options: { refreshContent },
+        options: { refreshContent: false },
       },
     },
   };
@@ -129,6 +126,10 @@ function planWorkspaceModulePresented(
 function planControlPlaneProjectionChanged(
   change: ControlPlaneProjectionChanged,
 ): AgentRunControlPlaneEffectPlan {
+  if (change.reason === "workspace_module_presented") {
+    return planWorkspaceModulePresented(change);
+  }
+
   const reason = projectionRefreshReason(change);
   const plan: AgentRunControlPlaneEffectPlan = {};
 
@@ -167,20 +168,6 @@ function planControlPlaneProjectionChanged(
     change.reason === "hook_auto_resume_queued"
   ) {
     plan.hookRuntimeRefresh = { reason };
-  }
-
-  if (change.workspace_module_presentation) {
-    const presentationPlan = planWorkspaceModulePresented(change);
-    return {
-      ...plan,
-      ...presentationPlan,
-      refreshWorkspaceState:
-        plan.refreshWorkspaceState || presentationPlan.refreshWorkspaceState || undefined,
-      refreshWorkspaceModuleCatalog:
-        plan.refreshWorkspaceModuleCatalog ||
-        presentationPlan.refreshWorkspaceModuleCatalog ||
-        undefined,
-    };
   }
 
   return plan;

@@ -442,12 +442,12 @@ pub enum BuiltinLifecycleSkill {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkillPolicy {
     PreserveProjected,
-    EnsureAndProject(Vec<BuiltinLifecycleSkill>),
+    Project(Vec<BuiltinLifecycleSkill>),
 }
 
 impl BuiltinLifecycleSkillPolicy {
-    pub fn ensure(skills: impl IntoIterator<Item = BuiltinLifecycleSkill>) -> Self {
-        Self::EnsureAndProject(skills.into_iter().collect())
+    pub fn project(skills: impl IntoIterator<Item = BuiltinLifecycleSkill>) -> Self {
+        Self::Project(skills.into_iter().collect())
     }
 }
 
@@ -465,13 +465,13 @@ impl AgentRunLifecycleSkillProjectionFacts {
         }
     }
 
-    pub fn ensure(
+    pub fn project(
         explicit_skill_asset_keys: Vec<String>,
         skills: impl IntoIterator<Item = BuiltinLifecycleSkill>,
     ) -> Self {
         Self {
             explicit_skill_asset_keys,
-            builtin_skills: BuiltinLifecycleSkillPolicy::ensure(skills),
+            builtin_skills: BuiltinLifecycleSkillPolicy::project(skills),
         }
     }
 }

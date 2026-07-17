@@ -1,6 +1,8 @@
 # Agent Runtime 状态机收敛研究
 
-> 研究状态：本文的现状 inventory、代码位置与状态重复分析继续有效；凡是把 Runtime journal 视为 canonical business truth 的目标结论，已由 `agent-boundary-and-journal-ownership.md` 与父任务 `design.md` 推翻。实施以 Hosted Agent / AgentSession ownership 为准。
+> 研究状态：本文的现状 inventory、代码位置与状态重复分析继续有效；目标状态结论以父
+> `design.md` 为准：统一 Managed Runtime 保留为所有 Agent 的平台外层，完整 Agent
+> 拥有自身 history/lifecycle，只有 history-maintained state 可以使用 Session 命名。
 
 ## 结论
 

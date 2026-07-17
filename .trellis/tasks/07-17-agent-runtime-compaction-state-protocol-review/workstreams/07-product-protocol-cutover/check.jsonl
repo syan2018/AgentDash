@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"检查 R5-R9 与 AC7/AC8/AC12/AC13。"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"检查 Application 不越过 Runtime。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查 Rust/API/generated TypeScript 一致。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 reducer/components typecheck 与 tests。"}

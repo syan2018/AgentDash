@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "检查AgentRun没有越过Hosted Agent seam。"}
-{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查App Server notification identity、ordering和replay。"}
-{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查Rust/API/generated TypeScript一致性。"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查frontend测试、lint与组件质量。"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查单一authoritative reducer与derived activity。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md", "reason": "核对compaction协议与UI生命周期。"}

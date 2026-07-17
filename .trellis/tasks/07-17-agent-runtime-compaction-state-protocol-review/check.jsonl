@@ -1,17 +1,30 @@
-{"file": ".trellis/spec/backend/architecture.md", "reason": "检查Hosted Agent边界、依赖方向与唯一业务owner。"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust实现、错误、测试与最终质量门禁。"}
-{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "检查Agent/driver/protocol payload保持typed。"}
-{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "检查domain port、adapter与transaction职责。"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查migration、constraint、CAS与PostgreSQL并发测试。"}
-{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "检查最终kernel spec与实现同步，并移除journal-centric前提。"}
-{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "检查最终persistence spec、schema与Journal删除。"}
-{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "检查worker/effect/binding/driver职责。"}
-{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "检查AgentRun只经过Hosted Agent seam。"}
-{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "检查typed context、compaction与replica convergence。"}
-{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查Agent Change、notification identity/order/reconnect。"}
-{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查Rust/API/generated TypeScript一致性。"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "frontend reducer/components的lint、typecheck与测试质量。"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查前端不复制状态机，只从snapshot/change派生。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "唯一事实源、Journal删除与driver observation验收依据。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md", "reason": "压缩状态、失败、Codex-shaped事件和typed replay验收依据。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/runtime-state-machine-convergence.md", "reason": "旧状态/schema/interface覆盖清单；目标结论以父design为准。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"逐项核对 R1-R11、C1-C9 与 AC1-AC21，无范围漂移。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"检查统一 Runtime、Complete Agent、Dash Agent/Core、history-only Session、ownership、crate DAG 与 migration 实现一致。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/transition-architecture.md","reason":"检查 Current → Target、S0–S6、activation-ready change set、S5 cutover、功能连续性和粗粒度内嵌 subagent 派发均被真实实现与独立验证。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/implement.md","reason":"检查工作包依赖、ownership、独立验证、删除门禁与最终命令均完成。"}
+{"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/design.md","reason":"确认 07-10 的统一 Runtime/Host/Surface/Binding 原始目标未被回退。"}
+{"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/target-crate-shape.md","reason":"检查 07-10 crate 清理目标已完成，并按父 design 补出 Dash Agent 中层/Agent service seam。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-runtime-fork-state-boundaries.md","reason":"核对当前 fork/Companion/Host/journal 缺口均有实现与回归覆盖。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/codex-session-history-runtime-boundaries.md","reason":"检查 Codex source authority、fork/compact/read/inspect 能力没有被平台 projection 取代。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/pi-mono-agentcore-crate-convergence.md","reason":"检查 AgentCore 纯度、Dash Agent 中层和目标 crate dependency direction。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/revised-plan-independent-review.md","reason":"复核独立 review 的 Major/Minor 均已在父 artifacts 与工作包关闭；Companion 决策按用户确认。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/revised-plan-resolution-audit.md","reason":"复核 M1-M5、m1-m3 的修订闭环，尤其 initial context package 的 typed contract、delivery fidelity 与 SubmitInput 边界。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md","reason":"检查 compaction tracer bullet、App Server event ordering 和失败语义。"}
+{"file":".trellis/spec/backend/architecture.md","reason":"检查跨 crate/layer 依赖方向、composition root 与 ownership。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Rust error、lint、test、并发与最终质量要求。"}
+{"file":".trellis/spec/backend/domain-payload-typing.md","reason":"检查 Runtime/Agent/history/effect/change payload 保持 typed。"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"检查 port/adapter/transaction 分层，无外部 Agent 假原子。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查 forward migration、constraint、CAS 和 PostgreSQL behavior tests。"}
+{"file":".trellis/spec/backend/agent-runtime-kernel.md","reason":"检查统一 Runtime 外层保留且不拥有 external Agent internal state。"}
+{"file":".trellis/spec/backend/agent-runtime-persistence.md","reason":"检查 Runtime platform change/outbox 与 RuntimeJournalFact 删除。"}
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"检查 service/offer/binding/effect/generation/recovery 独立 ownership。"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"检查 AgentRun 只依赖 Runtime Contract。"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"检查 Dash Agent context/compaction 与 Codex/native capability 边界。"}
+{"file":".trellis/spec/backend/agent-runtime-hooks.md","reason":"检查 HookPoint semantic strength、unique route 和 applied evidence。"}
+{"file":".trellis/spec/backend/agent-runtime-surface-tool-broker.md","reason":"检查 Surface/Offer/Bound/Applied 与 Tool Broker causal ownership。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"检查 Session 只用于完整状态可由 history 重建的对象。"}
+{"file":".trellis/spec/cross-layer/agent-runtime-wire-relay.md","reason":"检查 remote Complete Agent、wire ordering 与 Relay 纯 transport。"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"检查 Runtime change 到 App Server/UI 的 identity、ordering、reconnect。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查 Rust/API/generated TypeScript 一致和旧字段删除。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 frontend reducer/components 的 typecheck、lint 与测试。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"检查 UI 只消费 Runtime snapshot+change，不复制 Agent/Runtime 状态机。"}

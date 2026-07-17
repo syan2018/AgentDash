@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"Dash Agent、history-only AgentSession、lifecycle 与 AgentCore 目标。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/pi-mono-agentcore-crate-convergence.md","reason":"pi-like Core/Agent ownership 与 crate 拆分证据。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md","reason":"当前 compaction primitive、failure 与 A/B/C 证据。"}
+{"file":".trellis/spec/backend/domain-payload-typing.md","reason":"history entry、Core input/output 与 Dash state typed。"}

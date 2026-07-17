@@ -1,51 +1,61 @@
-# Hosted Agent 收敛工作包
+# Agent Runtime 收敛工作包
 
-本目录把父任务拆为七个可独立领取、检查和交接的工作包。它们共享父任务的需求与技术设计，但各自拥有明确的 scope、依赖和验收结果。
+本任务使用一个父 Trellis lifecycle，并在 `implement.md` 中维护九个可独立追踪、验证和
+交接的验收工作包。W1–W9 不等于九个 subagent，也不等于九个 stable checkpoint。此目录
+不创建虚假的子任务链接；真正的依赖、ownership、验证命令和交接模板均以父
+`implement.md` 为准，Current → Target 与 S0–S6 安全迁移边界以
+[`transition-architecture.md`](../transition-architecture.md) 为准。
 
-工作包没有 `task.json`，不形成第二套 Trellis lifecycle。父任务是唯一 branch、status、archive 单元；进度更新在父任务 `implement.md`。
-
-## 依赖
+## Dependency index
 
 ```mermaid
 flowchart TD
-    W1["01 Hosted Agent Contract"]
-    W2["02 AgentSession Aggregate & Persistence"]
-    W3["03 Execution Coordination"]
-    W4["04 Read / Change / Journal Decoupling"]
-    W5["05 Context / Compaction / Continuation"]
-    W6["06 Application / Protocol Cutover"]
-    W7["07 Recovery / Deletion / Integration"]
+    W1["W1 Contracts & Crate Skeleton"]
+    W2["W2 Dash Agent & AgentCore"]
+    W3["W3 Runtime State & Host Coordination"]
+    W4["W4 Surface / Tool / Hook"]
+    W5["W5 Native / Dash Adapter"]
+    W6["W6 Codex / Remote Adapters"]
+    W7["W7 Product & Protocol Cutover"]
+    W8["W8 Schema / Crate Hard Cut"]
+    W9["W9 Recovery & Final Conformance"]
 
     W1 --> W2
-    W2 --> W3
-    W2 --> W4
+    W1 --> W3
+    W1 --> W4
+    W2 --> W5
+    W3 --> W4
     W3 --> W5
     W4 --> W5
+    W1 --> W6
+    W3 --> W6
     W4 --> W6
-    W5 --> W6
-    W3 --> W7
-    W4 --> W7
     W5 --> W7
     W6 --> W7
+    W3 --> W7
+    W2 --> W8
+    W3 --> W8
+    W4 --> W8
+    W5 --> W8
+    W6 --> W8
+    W7 --> W8
+    W8 --> W9
 ```
 
-## 索引
+## Dispatch rules
 
-| 工作包 | 结果 |
-| --- | --- |
-| [01-hosted-agent-contract](01-hosted-agent-contract/prd.md) | Agent-owned contract、统一 gateway、driver observation 与 behavior suite |
-| [02-agent-session-aggregate-persistence](02-agent-session-aggregate-persistence/prd.md) | aggregate、transition kernel、in-memory/PostgreSQL 与 migration |
-| [03-execution-coordination](03-execution-coordination/prd.md) | binding/effect/delivery/inspect 与三个 adapter |
-| [04-read-change-journal-decoupling](04-read-change-journal-decoupling/prd.md) | authoritative snapshot、change tail、fork、Journal 降级 |
-| [05-context-compaction-continuation](05-context-compaction-continuation/prd.md) | typed context、manual/automatic compaction、A/B/C、cancel/failure/Lost |
-| [06-application-protocol-cutover](06-application-protocol-cutover/prd.md) | AgentRun/API/App Server/frontend hard cut |
-| [07-recovery-deletion-integration](07-recovery-deletion-integration/prd.md) | fault recovery、conformance、旧架构删除和最终门禁 |
-
-## 领取规则
-
-- 先读父任务 `prd.md`、`design.md`、`implement.md`，再读工作包 PRD 与两个 JSONL。
-- `Depends On` 未完成的工作包不得通过临时 compatibility绕开依赖。
-- 多 agent并行时必须声明文件/module ownership，不覆盖工作区已有修改。
-- 每个工作包先通过自己的定向测试并接受 check，再允许依赖方开始。
-- schema、contract 与 generated output由拥有该工作包的执行者统一修改，避免并行写同一生成文件。
-- 最终实现不保留 Runtime journal双写、旧 API fallback、旧 reducer或迁移数据兼容。
+- 领取前读取父任务 `prd.md`、`design.md`、`transition-architecture.md`、
+  `implement.md` 及 manifests。
+- 内嵌 subagent 按 Platform Runtime（W1/W3/W4）、Dash/Native（W2/W5）、External
+  Agents（W6）、Product/Protocol（W7）、Hard Cut（W8）和 Final Conformance（W9）
+  粗粒度 bundle 派发，不建立 Trellis channel。
+- implement/check 使用不同内嵌 subagent 以保持判断独立；check 发现问题后，经主会话确认
+  scope 可直接自修局部、确定的问题并复跑 affected gates，跨 bundle 或核心语义变更再
+  路由回 owner。
+- 每个 subagent 声明粗粒度 ownership zone，不覆盖并行会话修改；除共享热点外，可围绕
+  完整纵向结果自行调整文件与模块粒度。
+- Depends On 未完成时不以 compatibility/fallback 绕开。
+- Cargo/lockfile、正式 migration、production composition、canonical generated
+  contracts、breaking public contract 与最终 legacy deletion 使用串行 ownership。
+- bundle 通过定向 behavior/conformance tests 和独立 check 后才提供 target-ready 与
+  activation-ready handoff；只有满足完整 gate 的 S0–S6 checkpoint 可接入稳定分支。

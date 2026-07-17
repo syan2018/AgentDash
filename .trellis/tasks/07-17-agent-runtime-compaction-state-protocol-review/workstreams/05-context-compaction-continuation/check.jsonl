@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查compaction kernel、concurrency与fault tests。"}
-{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "检查typed context、checkpoint和adapter capability边界。"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查promotion、head CAS和terminal transaction原子性。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md", "reason": "核对Codex-shaped lifecycle与当前漏洞是否被覆盖。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "检查Journal/context ownership没有回退。"}

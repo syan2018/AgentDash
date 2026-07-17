@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"检查 R4-R5、R9、R11 与 AC5/AC6/AC12/AC14。"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"检查 Runtime/Host ports 与 adapter transaction。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查 CAS、constraints 与 PostgreSQL tests。"}
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"检查 Host 不吞 Runtime/Agent 状态。"}

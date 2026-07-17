@@ -1,348 +1,648 @@
-# Hosted Agent 状态机与压缩重构实施计划
+# Agent Runtime 最终架构收敛实施计划
 
 ## 0. 执行入口
 
-本文件是后续执行方的总控清单。开始实现前必须：
+本任务当前保持 `planning`。开始实现前必须：
 
-1. 审阅并接受父任务 `prd.md` 与 `design.md`；
-2. 确认当前分支包含本规划提交且工作区没有被本任务错误纳入的并行修改；
-3. 使用 `task.py start 07-17-agent-runtime-compaction-state-protocol-review` 将父任务从 `planning` 切到 `in_progress`；
-4. 每次只领取依赖已完成的工作包；
-5. 读取父任务和该工作包的 `prd.md`、`implement.jsonl`、`check.jsonl`；
-6. 先写/更新该切片的 behavior tests，再做 hard cut；
-7. 不建立 compatibility、双写、旧 reader 或 fallback。
+1. 用户审阅并批准 `prd.md`、`design.md`、`transition-architecture.md`、本文件与
+   manifests；
+2. PRD 完成 convergence pass，Open Questions 清零；
+3. `implement.jsonl`、`check.jsonl` 只保留最终设计适用的 context；
+4. 明确每个粗粒度 dispatch bundle 的 ownership zone 与共享热点；
+5. 由主会话运行 `task.py start`，再通过当前会话内嵌协作工具派发 implement/check
+   subagent，不建立 Trellis channel；
+6. 每个工作包以 behavior/conformance test 证明边界，不建立 compatibility、dual write、
+   fallback 或只改名的 facade。
 
-父任务是唯一 Trellis lifecycle/branch/archive 单元。`workstreams/` 是可独立领取、验证和交接的执行包，不创建额外 `task.json`。
+父任务是唯一 Trellis lifecycle/branch/archive 单元。`workstreams/README.md` 只提供并行
+验收索引；依赖关系以本文件为准，安全迁移边界和派发协议以
+`transition-architecture.md` 为准。
 
 ## 1. 依赖图
 
 ```mermaid
 flowchart TD
-    W1["W1 Hosted Agent Contract<br/>领域语言 · gateway · behavior contract"]
-    W2["W2 AgentSession Aggregate & Persistence<br/>kernel · repository · migration"]
-    W3["W3 Execution Coordination<br/>binding · effect · driver observation"]
-    W4["W4 Read / Change / Journal Decoupling<br/>snapshot · tail · fork · projector"]
-    W5["W5 Context / Compaction / Continuation<br/>typed context · queue · A/B/C"]
-    W6["W6 Application & Protocol Cutover<br/>AgentRun · API · App Server · UI"]
-    W7["W7 Recovery & Deletion Integration<br/>faults · conformance · remove legacy"]
+    W1["W1 Contracts & Crate Skeleton<br/>Runtime Contract · Agent Service API · profiles"]
+    W2["W2 Dash Agent & AgentCore<br/>history-maintained AgentSession · clean loop"]
+    W3["W3 Runtime State & Host Coordination<br/>operation · projection · effect · binding"]
+    W4["W4 Surface / Tool / Hook<br/>offer intersection · applied evidence · unique route"]
+    W5["W5 Native / Dash Adapter<br/>fork · compaction · service conformance"]
+    W6["W6 Codex / Remote Adapters<br/>native lifecycle · snapshot/change · inspect"]
+    W7["W7 Product & Protocol Cutover<br/>AgentRun · Companion · API · UI"]
+    W8["W8 Schema / Crate Hard Cut<br/>migration · deletion · dependency gates"]
+    W9["W9 Recovery & Final Conformance<br/>fault matrix · specs · final quality gate"]
 
     W1 --> W2
-    W2 --> W3
-    W2 --> W4
+    W1 --> W3
+    W1 --> W4
+    W2 --> W5
+    W3 --> W4
     W3 --> W5
     W4 --> W5
+    W1 --> W6
+    W3 --> W6
     W4 --> W6
-    W5 --> W6
-    W3 --> W7
-    W4 --> W7
     W5 --> W7
     W6 --> W7
+    W3 --> W7
+    W2 --> W8
+    W3 --> W8
+    W4 --> W8
+    W5 --> W8
+    W6 --> W8
+    W7 --> W8
+    W8 --> W9
 ```
 
-允许的并行度：
+并行原则：
 
-- W3 与 W4 可在 W2 完成后并行；
-- adapter conformance 可在 W3 内按 Native/Codex/Remote 分文件 ownership并行；
-- W6 的 frontend reducer 可在 API/protocol contract冻结后并行，但不得自行发明状态；
-- W7 必须在所有调用方已切换后执行最终删除与全链路检查。
+- W2 与 W3 可在 W1 contract freeze 后并行；
+- W4 可在 W1 profile 与 W3 ownership 稳定后开始；
+- W5/W6 的最终完成与独立 check 以 W1/W3/W4 通过为 gate；同一 Dash/Native bundle
+  可以在 contract milestone 后先完成 W2 和 contract-only W5 工作，但不得在 Platform
+  checked revision 之前产出 W5 activation-ready 结果；
+- W7 只在 Native/Codex contract 行为稳定后切产品路径；
+- W8 负责唯一 hard cut，不能在各工作包各保留一套旧入口；
+- W9 是独立检查与恢复验证，不承担未完成实现。
+
+### 1.1 Workstream、dispatch bundle 与 stable checkpoint
+
+W1–W9 是需求、依赖与验收清单，不要求一个 workstream 对应一个 subagent 或一次提交。
+实施按完整纵向结果粗粒度派发：
+
+| Dispatch bundle | Covered workstreams | Stable output |
+| --- | --- | --- |
+| Platform Runtime | W1 + W3 + W4 | contract milestone、Runtime/Host/Surface target lane、activation set |
+| Dash / Native | W2 + W5 | Dash Agent/Core/Native target lane、真实 fork/compaction、activation set |
+| External Agents | W6 | Codex/Remote complete-agent conformance、activation set |
+| Product / Protocol | W7 | AgentRun/Companion/API/App Server/UI target lane、activation set |
+| Hard Cut | W8 | S5 migration/composition/workspace/deletion integration |
+| Final Conformance | W9 | S6 fault matrix、negative gates、最终 specs |
+
+Platform Runtime 与 Dash/Native 可在 contract milestone 后并行；Dash/Native 的最终 check
+与 activation-ready 结果必须基于 Platform Runtime checker 固定的 revision。Product /
+Protocol 在 Native 与 External Agents 的 target contract 行为稳定后开始。
+
+Stable checkpoint 是可提交和交接的集成边界：
+
+| Checkpoint | Required state |
+| --- | --- |
+| S0 Baseline | 当前 direct/fork/Companion/compaction/tool-hook/reconnect 路径证据已记录 |
+| S1 Contract Freeze | additive contract、profile、wire 与 conformance skeleton 独立通过 |
+| S2 Target Domains Ready | Dash/Core、Runtime/Host、Surface target domains 在隔离 composition 可验证 |
+| S3 Complete Agent Lane | Native、Codex、Remote 均通过 Complete Agent conformance |
+| S4 Product Lane Ready | AgentRun、Companion、API/UI target caller 在隔离 composition 通过 |
+| S5 Atomic Hard Cut | caller、contract/crate、composition、schema、projection、deletion 一次切换 |
+| S6 Final Conformance | recovery、fault matrix、negative gates、最终 specs 全部通过 |
+
+S0–S4 不提前改变 production path。每个 bundle 把 production activation 部分保留为经过
+自身 checker 审阅的 activation-ready change set；S5 由原 bundle owner 维护自身领域
+修改，Hard Cut owner 串行集成 Cargo/lockfile、正式 migration、production composition、
+canonical generated contracts 和最终 legacy deletion。完整 wave、slot 和返工路由见
+`transition-architecture.md` §12。
 
 ## 2. 工作包总表
 
-| 状态 | 工作包 | 依赖 | 可验收输出 |
+| 状态 | 工作包 | Depends On | 独立验收输出 |
 | --- | --- | --- | --- |
-| [ ] | [W1 Hosted Agent Contract](workstreams/01-hosted-agent-contract/prd.md) | 无 | 领域 contract、统一 gateway/command/query/change、provider-neutral observation、behavior suite skeleton |
-| [ ] | [W2 AgentSession Aggregate & Persistence](workstreams/02-agent-session-aggregate-persistence/prd.md) | W1 | transition kernel、in-memory/PostgreSQL repository、hard-cut migration、数据库约束 |
-| [ ] | [W3 Execution Coordination](workstreams/03-execution-coordination/prd.md) | W1、W2 | binding/effect ledger、worker delivery、driver adapter observation conformance |
-| [ ] | [W4 Read / Change / Journal Decoupling](workstreams/04-read-change-journal-decoupling/prd.md) | W1、W2 | snapshot+tail、fork、outbox/projector、Journal no-op 删除测试 |
-| [ ] | [W5 Context / Compaction / Continuation](workstreams/05-context-compaction-continuation/prd.md) | W1、W2、W3、W4 | typed ContextRevision、manual/automatic A-B-C、cancel/failure/Lost、atomic queue promotion |
-| [ ] | [W6 Application & Protocol Cutover](workstreams/06-application-protocol-cutover/prd.md) | W4、W5 | AgentRun/API/App Server/frontend全量切换、真实 compaction lifecycle |
-| [ ] | [W7 Recovery & Deletion Integration](workstreams/07-recovery-deletion-integration/prd.md) | W1–W6 | fault/restart/conformance、negative gates、旧 journal/state/schema删除、最终质量门禁 |
+| [ ] | W1 Contracts & Crate Skeleton | 无 | dependency-light contracts、IDs、profile/fidelity、wire、conformance skeleton |
+| [ ] | W2 Dash Agent & AgentCore | W1 | history-only AgentSession、Dash lifecycle、pure Core、replay/fork/compaction tests |
+| [ ] | W3 Runtime State & Host Coordination | W1 | Runtime projection/change、operation/effect、Host binding/recovery、persistence ports |
+| [ ] | W4 Surface / Tool / Hook | W1、W3 | desired/offer/bound/applied、unique route、Tool Broker/Hook profile |
+| [ ] | W5 Native / Dash Adapter | W2、W3、W4 | Complete Agent conformance、真实 product fork、Dash compaction |
+| [ ] | W6 Codex / Remote Adapters | W1、W3、W4 | Codex native lifecycle、Remote proxy、snapshot/change/inspect conformance |
+| [ ] | W7 Product & Protocol Cutover | W3、W5、W6 | AgentRun/Fork/Companion/API/App Server/UI snapshot+change |
+| [ ] | W8 Schema / Crate Hard Cut | W2–W7 | forward migration、旧 crate/interface/schema 删除、最终 Cargo DAG |
+| [ ] | W9 Recovery & Final Conformance | W8 | crash/restart matrix、negative gates、spec 同步、最终门禁 |
 
 ### 2.1 需求追踪
 
-| 工作包 | 主要 Requirements | 主要 Acceptance Criteria |
+| Work | Requirements | Acceptance |
 | --- | --- | --- |
-| W1 | R8、R11–R13、R16、R23–R25 | AC2、AC7、AC11–AC13、AC16、AC23 |
-| W2 | R5–R7、R11–R19、R23、R25 | AC2、AC5、AC11–AC14、AC16–AC18 |
-| W3 | R4–R7、R14、R18–R19、R24 | AC4–AC5、AC11、AC16–AC18、AC21、AC23 |
-| W4 | R3、R6、R11、R13、R17、R23、R25 | AC3、AC5、AC11、AC13–AC18、AC22 |
-| W5 | R1–R5、R7、R9–R10、R13–R22 | AC1–AC5、AC9–AC21 |
-| W6 | R3、R6–R7、R9–R10、R13、R15、R17、R20–R25 | AC3、AC5、AC9–AC10、AC13–AC15、AC17、AC19–AC22 |
-| W7 | R1–R25 | AC1–AC23 |
+| W1 | R1–R3、R9–R10 | AC1–AC4、AC15–AC18 |
+| W2 | R1、R4、R7、R10 | AC2、AC6、AC9–AC10、AC18 |
+| W3 | R1、R4–R5、R9、R11 | AC5–AC6、AC12、AC14、AC19 |
+| W4 | R3、R8 | AC4、AC11 |
+| W5 | R2–R8 | AC3–AC11 |
+| W6 | R2–R5、R7–R9 | AC3–AC7、AC9、AC11–AC13 |
+| W7 | R5–R9 | AC7–AC8、AC12–AC13 |
+| W8 | R1、R9–R11 | AC12、AC14、AC17–AC19 |
+| W9 | R1–R11 | AC1–AC21 |
 
-## 3. W1 — Hosted Agent Contract
+## 3. W1 — Contracts & Crate Skeleton
 
-### 实施
+### Ownership
 
-- [ ] 冻结 `CONTEXT.md` 与 `design.md` 中的领域术语；禁止继续把 Hosted Agent、Runtime、driver、Journal互称。
-- [ ] 在 Agent-owned contract 中定义 stable IDs、Session/Operation/Queue/Turn/Item/Interaction/Context/Compaction/Effect/Change。
-- [ ] 定义 `HostedAgentGateway::execute/read/changes` 和 typed errors。
-- [ ] 定义 provider-neutral `AgentExecutionPort::dispatch/inspect`、receipt/observation 与 capability descriptor。
-- [ ] 定义 `agent_revision + ordinal` change ordering、cursor gap 与 snapshot query。
-- [ ] 定义 command fingerprint/idempotency语义。
-- [ ] 建立 repository-neutral behavior suite接口与 fixture DSL，供 W2–W5 共用。
-- [ ] 删除 contract/wire 中 driver-produced `RuntimeJournalFact` 的入口；允许暂时保留无法编译的调用方待相邻包同步切换，但不得增加 adapter。
+- `crates/agentdash-agent-runtime-contract/**`
+- new `crates/agentdash-agent-service-api/**`
+- `crates/agentdash-agent-runtime-wire/**`
+- `crates/agentdash-agent-runtime-test-support/**`
+- only the new contract/wire/test-support workspace Cargo entries and generated schemas
 
-### 检查
+### Implement
 
-- [ ] contract 不依赖 infrastructure、AgentRun、driver implementation 或 vendor DTO。
-- [ ] entity/change/observation type 的 owner 从命名和 module boundary 可判断。
-- [ ] behavior suite 能表达 active slot、queue、compaction、effect 与 change order。
+- [ ] 收窄 Runtime Contract 为 Application ↔ Managed Runtime command/read/change。
+- [ ] 建立 Complete Agent service API：
+  `describe/create/resume/fork/execute/read/changes/inspect/apply_surface/revoke_surface`。
+- [ ] 定义 stable Runtime/Agent/source/effect IDs，禁止 ID string 互换。
+- [ ] 定义 receipt、unknown outcome、snapshot、source change level、inspection。
+- [ ] 定义 per-facet capability/profile 与 semantic fidelity。
+- [ ] 定义 Fork cutoff kinds、compaction mode、Tool/Hook route。
+- [ ] 定义 `InitialAgentContextPackage` 的 typed variants、provenance/revision/digest、
+  create receipt/inspect evidence，以及 `TypedNative/CanonicalRendered/Unsupported`
+  fidelity；service API 不出现 Companion/Product/vendor DTO。
+- [ ] 定义 `AgentSurfaceSnapshot`、`RuntimeOffer`、`BoundAgentSurface`、
+  `AppliedAgentSurface` 的 contract ownership。
+- [ ] 定义 `AgentHostCallbacks::invoke_tool/invoke_hook` reverse contract，包含
+  binding generation、Turn/Item/effect identity、deadline、idempotency 与 typed
+  Hook decision。
+- [ ] Runtime Wire 定义 reverse callback request/result/decision、ack/replay 与
+  generation fence。
+- [ ] Runtime Wire 同时承载 Runtime gateway 与 remote Complete Agent frame，但 framing
+  与业务 DTO 分层。
+- [ ] 建立 Runtime repository、Agent service、adapter profile 的 conformance fixture。
+- [ ] 增加 dependency/feature negative tests。
 
-### 定向验证
+### Check
+
+- [ ] service API 不依赖 Application/Domain repository/Infrastructure/vendor DTO。
+- [ ] Runtime Contract 不依赖 service implementation、Host 或 transport。
+- [ ] snapshot mandatory、source changes capability-graded、platform changes mandatory。
+- [ ] exact requirement 不被 observed/approximation 满足。
+- [ ] Fork、Hook、Tool 不使用 bool capability。
+- [ ] Agent-native Tool/Hook 不需要 adapter-specific bypass API。
+
+### Verify
 
 ```powershell
 cargo test -p agentdash-agent-runtime-contract
+cargo test -p agentdash-agent-service-api
 cargo test -p agentdash-agent-runtime-wire
+cargo test -p agentdash-agent-runtime-test-support
 cargo run -p agentdash-agent-runtime-contract --bin generate_agent_runtime_contracts -- --check
 cargo run -p agentdash-agent-runtime-wire --bin generate_agent_runtime_wire -- --check
 ```
 
-## 4. W2 — AgentSession Aggregate 与 Persistence
+## 4. W2 — Dash Agent & AgentCore
 
-### 实施
+### Ownership
 
-- [ ] 实现少量正交 state types 与一个 AgentSession transition kernel。
-- [ ] 实现 command acceptance、operation、queue、Turn/Item/Interaction、revision 与 change outbox transaction。
-- [ ] 实现 active slot、terminal child、idempotency、queue order、context head CAS、compaction singleton等不变量。
-- [ ] 实现 in-memory repository，作为 behavior suite 的快速 adapter。
-- [ ] 建立 PostgreSQL normalized repository。
-- [ ] 增加实施时下一个 migration（设计预计 `0084_hosted_agent_session_cutover.sql`），创建最终表并删除 authoritative runtime event/state schema。
-- [ ] 更新 sqlx/query/generated schema 与 migration guard。
-- [ ] 为 PostgreSQL 并发事务建立真实数据库测试；使用隔离 data root 或串行 embedded PostgreSQL启动。
+- current `crates/agentdash-agent/**`
+- target `crates/agentdash-agent-core/**`
+- Dash Agent-specific tests
 
-### 检查
+W2 不修改 Runtime/Host/Application/adapter 生产代码。
+`agentdash-agent` → Core/Dash 的物理 move 由 W2 独占；W8 不再移动这两个 crate。
+`agentdash-agent-types` 仅作为 source inventory 读取，其最终目录删除由 W8 独占。
 
-- [ ] in-memory 与 PostgreSQL 跑同一 behavior suite。
-- [ ] active Turn、nonterminal compaction、operation/effect identity、change order有数据库约束或可证明的锁/CAS。
-- [ ] repository 读取不需要 Journal cursor。
-- [ ] migration 没有 backfill、兼容 view、双写 trigger 或旧 schema fallback。
+### Implement
 
-### 定向验证
+- [ ] 将当前低层 loop、provider/tool primitives、streaming、cancel 和纯 summarization
+  迁入 `agentdash-agent-core`。
+- [ ] AgentCore 所有状态由显式 input/context/callback/output 表达。
+- [ ] 新 `agentdash-agent` 建立 Dash Agent 中层。
+- [ ] 建立 ordered history tree、branch/head、entry identity 和 history fold。
+- [ ] `AgentSessionState = fold(AgentHistory)`；projection/index 可删除重建。
+- [ ] fresh create 在同一 `DashAgentCommit` 写入 `InitialContextInstalled` history
+  contribution 与 package digest；首个 `SubmitInput` 形成独立后续 history entry。
+- [ ] command inbox、execution/effect/retry ledger 位于 Session 外。
+- [ ] 实现 create/resume/fork/read/change 的 Dash public API。
+- [ ] 实现 history-derived Turn/Item/Interaction lifecycle。
+- [ ] 实现 Dash context materialization 与 compaction history transformation。
+- [ ] 实现 manual compaction 与 automatic A/B/C lifecycle。
+- [ ] 将 Core/Dash-owned 类型从 `agentdash-agent-types` 迁入最终 owner，但不建立
+  re-export/shim；其它 legacy consumers 由其所属工作包切换，W8 在零消费者后删除 crate。
+- [ ] 定义 `DashAgentCommit`，原子提交 command/effect settlement、history append/head
+  CAS、derived projection/change 与下一 continuation intent。
+- [ ] 删除 Runtime delegate、AgentRun/vendor DTO、platform tool result cache ownership。
+
+### Check
+
+- [ ] 清空 projection/index 后 history replay 得到等价 AgentSession。
+- [ ] 任一 Session field 都能指向产生它的 history entry/fold rule。
+- [ ] operation/mailbox/binding/effect/lease/platform fact 不存在于 Session schema。
+- [ ] Core 无 durable repository、Runtime Contract、Product Domain、Codex、Relay 依赖。
+- [ ] Dash Agent 不依赖 Managed Runtime/Host/Application/vendor crate。
+- [ ] A/B/C identity 和 terminal rules 符合 design §11。
+- [ ] crash 不会在 effect settlement 后丢失/重复 history contribution。
+
+### Verify
 
 ```powershell
-pnpm migration:guard
-cargo test -p agentdash-agent-runtime
-cargo test -p agentdash-infrastructure agent_session
-cargo test -p agentdash-infrastructure agent_runtime
+cargo test -p agentdash-agent-core
+cargo test -p agentdash-agent
+cargo tree -p agentdash-agent-core
+cargo tree -p agentdash-agent
 ```
 
-## 5. W3 — Execution Coordination
+## 5. W3 — Runtime State & Host Coordination
 
-### 实施
+### Ownership
 
-- [ ] 用统一 `agent_execution_binding` 和 `agent_execution_effect` 取代专用 driver/activation旁路状态。
-- [ ] worker 仅实现 claim/dispatch-or-inspect/submit-observation/ack-or-release。
-- [ ] transition kernel 决定 retryability、terminal与Session consistency。
-- [ ] 为 stale generation、duplicate receipt/observation、late result 建立 fence。
-- [ ] 把 Native、Codex、Remote adapter 切到 `AgentExecutionPort`。
-- [ ] 每个 adapter 声明 typed context、interaction、steer、cancel、inspect capability。
-- [ ] Native 不再 replay presentation typed item；Codex adapter 不再返回 Runtime/presentation facts。
-- [ ] 明确 stateful replica才使用 inspect/convergence；优先 explicit immutable context。
+- `crates/agentdash-agent-runtime/**`
+- `crates/agentdash-agent-runtime-host/**`
+- Runtime/Host persistence ports and their Infrastructure adapters
+- final schema/constraint specification；正式 migration 由 W8 独占
 
-### 检查
+### Implement
 
-- [ ] driver contract/wire/schema 中不存在 `RuntimeJournalFact`。
-- [ ] adapter 无 repository写入能力。
-- [ ] worker claim/retry 不作为 Session/Operation phase。
-- [ ] unknown external result收敛为 `Lost`，不猜测、不换 effect ID 重放。
+- [ ] 用 Runtime State 取代 universal AgentSession 设计。
+- [ ] 实现 platform operation、idempotency、expected revision、pending delivery。
+- [ ] 实现 authority-aware normalized projection、snapshot、durable change/outbox。
+- [ ] source change gap 通过 Complete Agent snapshot reconcile。
+- [ ] Host 保持 service instance/offer/binding/source coordinate/placement/generation/lease。
+- [ ] 实现 stable effect identity、dispatch、inspect、unknown outcome reconciliation。
+- [ ] worker claim/retry 只实现 delivery，不决定 Agent terminal。
+- [ ] Runtime/Host transaction 通过 stable identity 关联，不伪装跨 Agent 原子。
+- [ ] 拆分 `RuntimeJournalFact` internal/presentation usage，切到 owner-specific ports。
+- [ ] in-memory 跑完整 Runtime/Host behavior suite；PostgreSQL suite 由 W8/W9 在唯一
+  final migration 上运行。
+- [ ] 不新增会被 W8 重写/合并的正式 migration。
 
-### 定向验证
+### Check
+
+- [ ] Runtime table/type 不使用 Session 命名。
+- [ ] Runtime projection 不用于 external Agent resume/fork/context。
+- [ ] stale generation/duplicate/late observation 不能推进 projection。
+- [ ] Runtime transaction 只提交平台 facts；Host transaction 只提交 coordination。
+- [ ] snapshot+platform change 在 source snapshot-only 情况下仍可 reconnect。
+
+### Verify
 
 ```powershell
+cargo test -p agentdash-agent-runtime
 cargo test -p agentdash-agent-runtime-host
+```
+
+## 6. W4 — Surface / Tool / Hook
+
+### Ownership
+
+- Runtime Surface compiler modules
+- Host offer/apply evidence modules
+- Tool Broker modules
+- Hook plan/profile/materialization modules
+- corresponding product fact adapters
+
+### Implement
+
+- [ ] Product facts 编译 immutable `AgentSurfaceSnapshot`。
+- [ ] Agent descriptor/instance/transport 归一 `RuntimeOffer`。
+- [ ] 实现逐 contribution required/optional/route/fidelity intersection。
+- [ ] Host/adapter materialize 后记录 `AppliedAgentSurface` digest/evidence。
+- [ ] Complete Agent 只通过 `apply_surface/revoke_surface` materialize bound surface。
+- [ ] Agent-native Tool/Hook 只经 `AgentHostCallbacks` reverse channel；remote 路径使用
+  Runtime Wire request/decision/result。
+- [ ] command availability 依赖 applied revision。
+- [ ] Tool Broker 拥有平台 tool policy、permission、effect 和 callback。
+- [ ] Agent-native tool/hook 留在完整 Agent；Dash 通过 callback 注入 Core。
+- [ ] Hook 按 HookPoint/timing/blocking/mutation/effect 建模。
+- [ ] 每项 contribution 固定唯一 causal route。
+- [ ] 迁空 `agentdash-application-hooks` 的业务职责，为 W8 删除准备。
+
+### Check
+
+- [ ] required 缺失在 side effect 前 typed reject。
+- [ ] PromptOnly/Observed 不满足 Exact。
+- [ ] tool/hook effect 不会 Runtime/Agent 双执行。
+- [ ] Host 不编译 Product Surface，adapter 不重新解释 product policy。
+- [ ] applied ack revision/digest mismatch 时 command 不 available。
+- [ ] blocking/mutating Hook deadline、duplicate/replay、stale generation 有 typed behavior。
+
+### Verify
+
+```powershell
+cargo test -p agentdash-agent-runtime surface
+cargo test -p agentdash-agent-runtime tool
+cargo test -p agentdash-agent-runtime hook
+cargo test -p agentdash-agent-runtime-host offer
+cargo test -p agentdash-agent-runtime-host binding
+```
+
+## 7. W5 — Native / Dash Adapter
+
+### Ownership
+
+- `crates/agentdash-integration-native-agent/**`
+- Dash service adapter tests
+- Native-specific composition wiring
+
+### Implement
+
+- [ ] 将 Native adapter 从低层 Runtime driver 改为 Complete Agent service adapter。
+- [ ] 映射 Bound surface 到 Dash Agent tools/instructions/hooks/context。
+- [ ] Dash Agent history/snapshot/change 映射为 service contract。
+- [ ] fresh create 将 `InitialAgentContextPackage` 原子映射为 Dash Agent history，并
+  回执 applied digest/fidelity；package apply 前不暴露 active child。
+- [ ] 产品 fork 调用 Dash Agent exact history fork，返回 child coordinate/digest。
+- [ ] 删除“新 source binding + 空 history”的 product fork 路径。
+- [ ] manual/automatic compaction 由 Dash Agent 执行，Runtime 只观察/投影。
+- [ ] source effect inspect 支持 AlreadyApplied/NotApplied/Unknown。
+- [ ] Native adapter 不生成 Runtime entity/journal fact。
+- [ ] 完整运行 service conformance 与当前 fork regression。
+
+### Check
+
+- [ ] current fork 6/6 regression 继续通过。
+- [ ] child history 在 ancestor binding/journal 删除后独立恢复。
+- [ ] source projection 不存在第二套 history mapper。
+- [ ] AgentCore 不接触 Runtime/Host ID。
+- [ ] exact fork/compaction capability 均有 behavior evidence。
+
+### Verify
+
+```powershell
 cargo test -p agentdash-integration-native-agent
+cargo test -p agentdash-application-agentrun fork_
+cargo test -p agentdash-integration-native-agent native_fork
+cargo test -p agentdash-integration-native-agent compaction
+```
+
+## 8. W6 — Codex / Remote Adapters
+
+### Ownership
+
+- `crates/agentdash-integration-codex/**`
+- `crates/agentdash-integration-remote-runtime/**`
+- adapter-side `references/codex` alignment tests
+- Relay Runtime Wire usage, not Relay core ownership
+
+W5 与 W6 不共享 vendor DTO 或 adapter files。
+
+### Implement
+
+- [ ] Codex contribution 实现 Complete Agent service。
+- [ ] create/resume/fork/read/submit/steer/interrupt/compact/interaction 映射 App Server。
+- [ ] Codex ThreadStore/history 保持 source recovery authority。
+- [ ] exact context read/apply 不存在时 profile 标记 Opaque/Observed。
+- [ ] Codex/Remote 对 initial package 声明真实 `TypedNative/CanonicalRendered/
+  Unsupported` fidelity；多步 source create/apply 使用同一 stable effect 与 inspect，
+  不把普通首个 input 伪装成 package evidence。
+- [ ] `thread/fork(lastTurnId)` 返回 verified child coordinate/receipt。
+- [ ] App Server notification 映射 source change；重连 gap 使用 thread/read reconcile。
+- [ ] dynamic tools、Hook、configuration boundary 返回真实 applied evidence。
+- [ ] Remote proxy 通过 Runtime Wire 实现同一 service contract。
+- [ ] Relay 只处理 typed sequence/ack/replay/health。
+- [ ] 删除 adapter-produced `RuntimeJournalFact`。
+
+### Check
+
+- [ ] Codex DTO 不出 adapter crate。
+- [ ] Runtime 不复制 Codex context/head 作为 source truth。
+- [ ] SnapshotOnly/LiveStream/DurableTail profile 与真实行为一致。
+- [ ] EOF/断连/unknown result 不假 Completed。
+- [ ] remote duplicate replay 幂等，stale generation 被 fence。
+
+### Verify
+
+```powershell
 cargo test -p agentdash-integration-codex
 cargo test -p agentdash-integration-remote-runtime
-cargo test -p agentdash-infrastructure agent_runtime_worker
+cargo test -p agentdash-relay runtime_wire
+cargo test -p agentdash-agent-runtime-test-support codex
 ```
 
-## 6. W4 — Authoritative Read、Change 与 Journal 解耦
+## 9. W7 — Product & Protocol Cutover
 
-### 实施
+### Ownership
 
-- [ ] `HostedAgentGateway::read` 从 AgentSession repository返回 authoritative snapshot。
-- [ ] 建立与 Agent transaction 同提交的 `agent_change_outbox`。
-- [ ] 实现 `changes(after_revision)`、retention cutoff 与 typed cursor gap。
-- [ ] 实现 snapshot R + tail 的 reconnect contract。
-- [ ] 实现 stable Session revision/Turn/Item cutoff 的 Agent-owned fork。
-- [ ] Journal、protocol、audit/search consumer 改为只消费 Agent Change。
-- [ ] 产品级非 Agent events进入独立 feed，不提供 public `append_presentation` 绕过 Agent。
-- [ ] 增加 Journal no-op/delete architecture test。
+- `crates/agentdash-application-agentrun/**`
+- Companion modules
+- Agent Runtime API/routes/stream projection
+- generated frontend contracts and Agent UI state/components
 
-### 检查
+### Implement
 
-- [ ] read/resume/fork/context/terminal/admission不调用 journal。
-- [ ] consumer failure不回滚或阻塞已提交的 Agent transaction。
-- [ ] cursor gap 只触发 snapshot reread，不触发 journal全量 replay。
-- [ ] fork 不拼接 parent records、不截断或重编号 presentation sequence。
+- [ ] AgentRun 只通过 Runtime Contract execute/read/changes。
+- [ ] Application/AgentRun 建立唯一 durable `AgentRunForkSaga` repository/table/state
+  machine，预分配 child product IDs。
+- [ ] Fork 按 `Requested → RuntimeAdmitted → AgentForkApplied → RuntimeProvisioned →
+  ProductGraphCommitted → RuntimeActivated → Succeeded` 推进。
+- [ ] product graph、Host binding/source coordinate、Runtime provisioning/activation 分属
+  各自 transaction；saga 保存每阶段 identity/receipt。
+- [ ] post-dispatch unknown 只 inspect/reconcile 同一 effect；Lost 保存已知 child
+  coordinate 并禁止第二次 fork。
+- [ ] common exact cutoff 使用 completed Turn；Item/source cutoff 由 capability gate。
+- [ ] AgentRun lineage 保存 product lineage 与稳定 child Runtime/Agent mapping。
+- [ ] Companion `Full` 映射 exact `ForkParentHistory`；
+  `Compact/WorkflowOnly/ConstraintsOnly` 映射 `FreshWithContextPackage`。
+- [ ] Application 把 fresh slices 编译为平台中立 `InitialAgentContextPackage`：
+  compact summary/workflow context/constraint set 均携带 authority/revision/digest
+  provenance；Workspace/VFS/Tool/Hook/capability 仍走 Surface。
+- [ ] package 由 fresh create 原子携带，Runtime 验证 applied digest/fidelity 后才激活
+  child；派发任务随后作为首个普通 `SubmitInput`，两者使用不同 receipt/测试。
+- [ ] `adoption_mode` 只控制 child result 回传/等待，不改变 history 创建方式。
+- [ ] visible history 读取 child Runtime projection，不拼 ancestor current journal。
+- [ ] API 返回 operation receipt/availability，不推断 Agent internal phase。
+- [ ] App Server protocol 只从 Runtime committed change 投影。
+- [ ] UI 使用 Runtime snapshot + platform change tail。
+- [ ] compaction item 显示 started/completed/failed/lost。
+- [ ] cursor gap 重新读取 snapshot，不全量 journal replay。
 
-### 定向验证
+### Check
 
-```powershell
-cargo test -p agentdash-agent-runtime snapshot
-cargo test -p agentdash-application-agentrun session_read
-cargo test -p agentdash-application-agentrun fork
-cargo test -p agentdash-infrastructure agent_change_outbox
-```
+- [ ] Application 无 Host/service/Dash/Codex 依赖。
+- [ ] 需要 fork 的 product path admission 要求 exact fork。
+- [ ] Companion fork 与 fresh context 有不同 command/receipt/test。
+- [ ] 不允许 Complete Agent API 出现 Companion/Product DTO，不允许
+  `SubmitInput` 或不可追踪 prompt 代替 initial package apply evidence。
+- [ ] protocol identity/order 与 Runtime change commit 一致。
+- [ ] UI 不从 worker/journal/API timing 猜 activity。
+- [ ] 每个 Fork crash boundary 重启后继续同一 saga/child。
 
-## 7. W5 — Context、Compaction 与 Continuation
-
-### 实施
-
-- [ ] 每个 Agent Item commit 时写 typed `ModelContribution` 或明确 `NotModelVisible`。
-- [ ] materialize immutable `ContextRevision`，dispatch effect引用明确 revision。
-- [ ] 实现 `Preparing → Synchronizing? → Succeeded|Failed|Cancelled|Lost`。
-- [ ] 实现 queued manual compaction，不提前创建 Turn/Item。
-- [ ] 普通 Turn terminal transaction 原子选择 queued compaction并创建 B。
-- [ ] active compaction期间所有新 user message只进入 mailbox。
-- [ ] 实现 manual success → Idle，不创建 continuation。
-- [ ] 实现 automatic A LimitReached → durable continuation C blocked by B → B → 独立 promotion C。
-- [ ] 实现 clean Failed、Cancelled 与 Lost 对 continuation的 exactly-once terminal规则。
-- [ ] 实现 Preparing cancellation；Synchronizing通过 inspect收敛。
-- [ ] 实现 context capability gate，删除 `ContextActivationDispatch` presentation replay。
-
-### 检查
-
-- [ ] A/B/C ID、Operation、Turn与transaction边界全部独立。
-- [ ] B terminal transaction 不包含 C start。
-- [ ] queue entry `Queued` 没有 fake Turn/Item/change。
-- [ ] success 时 context head、Compaction/Item/Turn/Operation在一个 Agent transaction terminal。
-- [ ] clean failure后无 recovery loop，Lost 后全部 promotion阻塞。
-
-### 定向验证
-
-```powershell
-cargo test -p agentdash-agent-runtime compaction
-cargo test -p agentdash-agent-runtime continuation
-cargo test -p agentdash-infrastructure compaction
-cargo test -p agentdash-infrastructure context_revision
-```
-
-## 8. W6 — Application、App Server Protocol 与 Frontend Cutover
-
-### 实施
-
-- [ ] AgentRun 只通过 Hosted Agent execute/read/changes。
-- [ ] 删除 AgentRun journal feed/fork/context/terminal reconstruction。
-- [ ] API 返回 durable operation receipt/queued/terminal，不推断 compaction Turn是否已启动。
-- [ ] 从 Agent Change投影 Codex App Server `turn/started → item/started → item/completed/error → turn/completed`。
-- [ ] queued compaction只通过 operation/queue read model展示。
-- [ ] frontend reducer以 snapshot + change tail作为唯一 Session execution projection。
-- [ ] activity从 active Turn kind + Session consistency派生。
-- [ ] contextCompaction card展示 started/succeeded/failed/cancelled/lost。
-- [ ] cursor gap清空增量projection并重新 read snapshot。
-- [ ] 重新生成 Rust/TypeScript contracts，删除旧字段与消费者。
-
-### 检查
-
-- [ ] protocol notification只在 Agent commit后发布且幂等。
-- [ ] 同一 compaction Item 的 started/completed identity稳定。
-- [ ] UI 不从 API timing、worker status、journal gap或 item type猜业务状态。
-- [ ] manual success没有新 Agent Turn；automatic C只在独立 promotion后出现。
-
-### 定向验证
+### Verify
 
 ```powershell
 cargo test -p agentdash-application-agentrun
 cargo test -p agentdash-api agent_runtime
+cargo test -p agentdash-application companion
 pnpm contracts:generate
 pnpm contracts:check
 pnpm --filter app-web typecheck
 pnpm --filter app-web test -- sessionStreamReducer
 pnpm --filter app-web test -- useSessionFeed
-pnpm --filter app-web test -- SessionChatViewParts
 ```
 
-## 9. W7 — Recovery、Conformance、旧架构删除与最终集成
+前端现有文件名含 Session 时，只有其状态确由 history 维护才保留；否则在 W8 迁名。
 
-### 实施
+## 10. W8 — Schema / Crate Hard Cut
 
-- [ ] 注入 dispatch前崩溃、dispatch后无回包、observation提交前崩溃、lease reclaim、进程重启。
-- [ ] 验证 Applied/NotApplied/Unknown 与 generation变化的收敛。
-- [ ] 对 Native/Codex/Remote 跑同一 driver conformance。
-- [ ] 对 in-memory/PostgreSQL 跑同一 Agent behavior suite。
-- [ ] 运行 Journal no-op/delete test。
-- [ ] 删除所有旧 Runtime journal/state/interface/schema/protocol路径。
-- [ ] 删除 cutover残留类型、repository、migration-era SPI 与 generated字段。
-- [ ] 执行 negative search并逐个审计残留。
-- [ ] 做全链路 compaction tracer bullet，包括 UI snapshot/reconnect。
-- [ ] 更新 `.trellis/spec/`，把最终 contract 写成可执行原则。
+### Ownership
+
+- workspace `Cargo.toml` / lockfile
+- final migration and schema guard
+- W8-owned legacy crate directory deletions；不移动 W2-owned Agent/Core
+- composition roots
+- generated contracts after cutover
+
+### Implement
+
+- [ ] Consolidate final forward migration，建立 Product/Runtime/Host/Dash/external projection
+  分区、`agent_run_fork_saga`、DashAgentCommit 与 callback/effect constraints。
+- [ ] 生产 composition 切到唯一 final repositories/services。
+- [ ] 验证 W2 已完成 `agentdash-agent`/`agentdash-agent-core` 最终物理 shape；W8 不再
+  移动或重写其文件树。
+- [ ] 删除 `agentdash-agent-types`。
+- [ ] 删除拆分后的 `agentdash-agent-protocol`。
+- [ ] 删除 connector 版 `agentdash-executor`。
+- [ ] 将 `agentdash-spi` 清理/迁名为 `agentdash-platform-spi`。
+- [ ] 删除 `agentdash-application-hooks`。
+- [ ] `agentdash-application-runtime-session` 保持物理缺席；删除
+  `agentdash-application-ports`、API、contracts、SPI、Relay/gateway 中平台
+  `RuntimeSession*` delivery/live/capability/DTO/event 残留。
+- [ ] 迁名 `agentdash-application-runtime-gateway` 为 extension gateway。
+- [ ] `agentdash-integration-api` 的 Agent 模块依赖/re-export service API；Host/adapters
+  直接依赖 service API。
+- [ ] 保留 runtime-wire 的共享 framing/codegen 与 test-support 的跨 adapter conformance
+  harness；删除其中无消费者的旧 facade/module。
+- [ ] 删除旧 journal/state/context/connector/hook 表、字段、trait、generated DTO。
+- [ ] 更新 Cargo DAG 与 composition，无 temporary facade。
+
+### Check
+
+- [ ] 每个 crate 都有 design §1.3 的独立理由。
+- [ ] migration 无兼容 view、dual write、fallback 或旧数据 backfill。
+- [ ] W8 是唯一正式 migration owner；W2/W3 没有需要改写的历史 migration。
+- [ ] 生产代码只读取最终 schema。
+- [ ] `cargo metadata` 依赖方向符合 design §14。
+- [ ] old crate path/type/module 搜索为零或只存在 migration 删除语句。
+
+### Verify
+
+```powershell
+pnpm migration:guard
+pnpm test-support:guard
+cargo metadata --format-version 1
+cargo test -p agentdash-infrastructure migrations
+cargo test -p agentdash-infrastructure agent_runtime
+```
+
+## 11. W9 — Recovery & Final Conformance
+
+### Ownership
+
+- conformance/fault tests
+- dependency/negative gates
+- `.trellis/spec/` final contract updates
+- no new production feature ownership
+
+### Implement / Check
+
+- [ ] 注入 fork 各 durability boundary crash。
+- [ ] 注入 effect dispatch 前/后、receipt 丢失、inspect unknown、lease reclaim、restart。
+- [ ] Native/Codex/Remote 运行同一 Complete Agent conformance。
+- [ ] initial package conformance 覆盖 typed-native/canonical-rendered/unsupported
+  admission、digest/renderer version、unknown create outcome 与首个 input ordering。
+- [ ] Runtime in-memory/PostgreSQL 运行同一 behavior suite。
+- [ ] Dash Agent history replay/property/fork/compaction suite。
+- [ ] Tool/Hook unique route 与 applied evidence suite。
+- [ ] AgentHostCallbacks in-process/remote reverse call、deadline、duplicate、replay 与
+  stale generation suite。
+- [ ] Runtime snapshot/change cursor gap/reconcile suite。
+- [ ] AgentRun direct/fork/multi-fork/Companion/reconnect E2E。
+- [ ] App Server/UI compaction lifecycle E2E。
+- [ ] 更新 specs 只记录最终职责和选择依据。
+- [ ] 执行 negative search、定向门禁和一次最终综合门禁。
 
 ### Negative gates
 
 ```powershell
-rg -n "RuntimeJournalFact|RuntimeJournalRecord|journal_records_after|append_presentation|launched_compaction_turn|scheduled_next_turn" crates packages
-rg -n "context_compacted" crates packages
-rg -n "ContextActivationDispatch" crates packages
+rg -n "RuntimeJournalFact|RuntimeJournalRecord|journal_records_after|append_presentation" crates packages
+rg -n "AgentConnector|ConnectorCapabilities|ContextActivationDispatch" crates packages
+rg -n "agentdash-agent-types|agentdash-agent-protocol|agentdash-executor|agentdash-application-hooks" Cargo.toml crates
+rg -n "RuntimeSession|runtime_session" crates/agentdash-application-ports crates/agentdash-application crates/agentdash-api crates/agentdash-contracts crates/agentdash-spi crates/agentdash-relay crates/agentdash-application-runtime-gateway
+rg -n "Session" crates/agentdash-agent-runtime crates/agentdash-agent-runtime-host
 ```
 
-除 migration 删除语句或明确的历史测试 fixture 外，业务路径结果应为零。不得通过重命名 wrapper保留相同 ownership。
+`Session` 搜索只允许出现在 vendor/source 引用、迁移删除、历史 test fixture 或明确证明
+history-maintained semantics 的 Dash Agent 内部；Runtime/Host 业务类型结果应为零。
 
-### 最终定向门禁
+### Directed quality gate
 
 ```powershell
 pnpm migration:guard
 pnpm test-support:guard
 pnpm contracts:check
+cargo test -p agentdash-agent-core
+cargo test -p agentdash-agent
+cargo test -p agentdash-agent-service-api
 cargo test -p agentdash-agent-runtime-contract
 cargo test -p agentdash-agent-runtime
 cargo test -p agentdash-agent-runtime-host
-cargo test -p agentdash-infrastructure
-cargo test -p agentdash-application-agentrun
 cargo test -p agentdash-integration-native-agent
 cargo test -p agentdash-integration-codex
 cargo test -p agentdash-integration-remote-runtime
+cargo test -p agentdash-application-agentrun
+cargo test -p agentdash-infrastructure
 cargo test -p agentdash-api
 pnpm --filter app-web check
 ```
 
-只有上述定向门禁稳定后，才运行一次仓库既有的综合门禁：
+定向门禁稳定后只运行一次：
 
 ```powershell
 pnpm check:quick
 ```
 
-不要在小步迭代中反复运行 workspace 全量测试。若 VS Code/rust-analyzer持有 Cargo build directory锁，先观察并等待；不要终止并行会话。若 workspace `cargo fmt --all` 因本机 reference checkout 缺失而失败，对本任务 Rust 文件使用同 toolchain 的定向 `rustfmt --edition 2024`，并记录实际原因。
+VS Code/rust-analyzer 占用 Cargo lock 时等待共享缓存。若 `cargo fmt --all` 因本机缺失
+reference checkout 失败，对本任务文件使用同 toolchain 定向 rustfmt，并记录原因。
 
-## 10. 每个工作包的交接模板
+## 12. Bundle handoff
 
-领取者完成工作包时在本文件对应 checkbox 更新状态，并记录：
+每个 implement subagent 必须报告：
 
 ```text
-Workstream:
-Commit(s):
-Changed ownership/boundary:
-Behavior tests:
+Bundle:
+Covered workstreams:
+Base revision:
+Ownership zone:
+Shared hotspots touched:
+Boundary and data flow changed:
+Migration/schema:
+Behavior/conformance tests:
 Commands run:
-Known remaining dependency:
+Target-ready evidence:
+Activation-ready change set:
+Production route changed:
+Remaining dependency or finding:
 ```
 
-检查者必须重新读取父任务 `prd.md`、`design.md` 与该工作包 PRD，重点检查跨层 data flow，而不是只看局部测试通过。
+对应 check subagent 必须重新读取父 `prd.md`、`design.md`、
+`transition-architecture.md` 与所覆盖 workstream 条目，检查完整 data flow、
+dependency direction、state authority、stable checkpoint、activation set 和 deletion
+gates，而不仅是局部测试。Checker 保持独立判断；finding 先由主会话确认 scope，局部、
+确定且不改变跨 bundle 合同/状态权威的问题可由 checker 自修并复跑 affected gates，
+其余缺口路由回 owning bundle。
 
-## 11. 风险控制与恢复点
+## 13. Stable review checkpoints
 
-本项目不做 runtime兼容/rollback；“恢复点”只指 Git 上可审查的实现批次：
+本项目不做 runtime rollback。可接入父任务稳定分支的审查边界只有：
 
-1. W1 contract freeze；
-2. W2 authoritative repository/migration；
-3. W3 driver observation cut；
-4. W4 read/change cut；
-5. W5 compaction tracer bullet；
-6. W6 application cutover；
-7. W7 legacy deletion。
+1. S0 baseline；
+2. S1 additive contract freeze；
+3. S2 target domains ready；
+4. S3 complete Agent lane ready；
+5. S4 product lane ready；
+6. S5 atomic hard cut；
+7. S6 final conformance/spec。
 
-每一批必须在自己的 behavior test通过后提交。若后续发现设计缺陷，回到父任务 planning 修订契约，再修改尚未完成的包；不要重新引入旧 journal reader来临时保持运行。
+Target-ready 或 activation-ready 的 bundle 内部提交不自动成为稳定边界。每个 checkpoint
+必须只有一条 production route、一个事实 owner 和一套 canonical schema/contract，并在
+independent check 后重新运行真实 tracer bullets。发现缺陷时回到 owning bundle 修订；
+Hard Cut integrator 不修改其它 bundle 的核心实现来绕过 owner，也不重新引入旧
+reader/facade。
 
-## 12. 最终验收
+## 14. Final acceptance
 
-- [ ] `prd.md` AC1–AC23 均有测试或代码证据；
-- [ ] 七个工作包全部完成并经过独立 check；
-- [ ] Hosted Agent boundary 是 Application唯一会话 seam；
-- [ ] AgentSession repository 是唯一会话事实源；
-- [ ] driver/worker/Journal均通过删除或替身测试证明其边界；
-- [ ] manual、automatic A/B/C、queue、cancel、failure、Lost 与 reconnect均通过；
-- [ ] migration、generated contracts、Rust、frontend定向门禁通过；
-- [ ] negative gates无业务残留；
-- [ ] `.trellis/spec/` 已更新为最终设计；
-- [ ] 最后一次全范围 Trellis check通过后，才归档父任务。
+- [ ] PRD AC1–AC21 均有代码或测试证据；
+- [ ] 九个 workstream 的验收项、六个 dispatch bundle 的独立 check 和 S0–S6 稳定边界
+  均完成；
+- [ ] Runtime 是所有 Agent 的唯一平台外层；
+- [ ] Complete Agent service 是 Host 的唯一 Agent seam；
+- [ ] Dash Agent 与 AgentCore 物理、依赖和测试分层；
+- [ ] AgentSession 全状态由 history replay；
+- [ ] Fork/Companion/Compaction/Tool/Hook/Change/Recovery 通过矩阵；
+- [ ] RuntimeJournalFact 与旧 crates/interfaces/schema 删除；
+- [ ] migration/generated contract/Rust/frontend 门禁通过；
+- [ ] `.trellis/spec/` 与最终实现一致；
+- [ ] 用户审阅最终结果后才归档父任务。

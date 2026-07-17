@@ -1,7 +1,0 @@
-{"file": ".trellis/spec/backend/architecture.md", "reason": "约束 AgentSession 深模块与 repository adapter 边界。"}
-{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "指导 domain repository port 与 infrastructure implementation。"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "指导 PostgreSQL transaction、constraint、migration 与测试。"}
-{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "读取现有 kernel 基线并以父 design 的 Agent ownership 取代 journal-centric 部分。"}
-{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "读取现有 persistence 基线并执行 hard cut；不继承 authoritative journal 前提。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "实现 normalized Agent-owned state 与 Journal 删除边界。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/runtime-state-machine-convergence.md", "reason": "定位当前状态、表与 transaction；目标结论以父 design 为准。"}

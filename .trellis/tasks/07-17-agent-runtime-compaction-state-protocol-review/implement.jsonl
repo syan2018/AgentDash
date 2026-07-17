@@ -1,20 +1,27 @@
-{"file": ".trellis/spec/backend/architecture.md", "reason": "Hosted Agent深模块、application/domain/infrastructure依赖方向与ownership总约束。"}
-{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "Agent command/entity/change/driver observation必须使用typed payload。"}
-{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "AgentSession repository port、PostgreSQL adapter和transaction边界。"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "hard-cut migration、数据库约束、CAS、并发与真实PostgreSQL测试。"}
-{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "现有kernel基线；实施时必须按父design替换其中journal-centric ownership。"}
-{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "现有persistence基线；用于定位并删除authoritative Runtime journal。"}
-{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "binding/generation/effect delivery/driver host基线。"}
-{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "AgentRun/Application facade切到Hosted Agent boundary的基线。"}
-{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "typed ContextRevision、compaction与旧activation链的基线。"}
-{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Session read/fork/application边界。"}
-{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Agent Change、Codex App Server notification、identity与ordering。"}
-{"file": ".trellis/spec/cross-layer/agent-runtime-wire-relay.md", "reason": "effect/observation/change跨进程wire与relay约束。"}
-{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "API、generated contract与frontend hard cut同步。"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "authoritative snapshot+change reducer与derived activity。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "本任务第一性原理、目标ownership、Journal删除测试与目标schema。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md", "reason": "当前压缩链漏洞与references/codex源码级状态/事件证据。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/runtime-state-machine-convergence.md", "reason": "当前Runtime/AgentRun/binding/work状态inventory；其中journal权威结论已被父design supersede。"}
-{"file": ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/research/runtime-seam-options-comparison.md", "reason": "前序seam比较与重构范围；本任务纠正其journal权威前提。"}
-{"file": ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/research/agent-core-executor.md", "reason": "前序Agent core/executor边界研究，供execution adapter hard cut参考。"}
-{"file": ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/research/codex-app-server-l4-vocabulary.md", "reason": "Codex App Server vocabulary与presentation映射参考。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"本分支最终架构目标、第一性原理、术语、需求与验收；所有工作包的最高任务约束。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"统一 Runtime、Complete Agent seam、Dash Agent/AgentCore、状态权威、Fork/Compaction、crate DAG 与 schema 的最终技术设计。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/transition-architecture.md","reason":"Current → Target 全景、功能连续性、S0–S6 稳定边界、activation-ready change set、S5 hard cut 与粗粒度内嵌 subagent 派发的规范性迁移设计。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/implement.md","reason":"九个工作包的依赖、ownership、验证命令、hard-cut 与交接要求。"}
+{"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/design.md","reason":"07-10 已确认的 Managed Runtime、Driver Host、RuntimeOffer/AgentSurface/Binding 原始目标；只作为目标继承，不作为当前代码事实。"}
+{"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/target-crate-shape.md","reason":"07-10 物理 crate 收敛目标与迁移地图；本任务 design 对其增加 Dash Agent 中层和 Complete Agent seam 后为最终准则。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-runtime-fork-state-boundaries.md","reason":"当前分支统一 Runtime、Fork/Companion、journal、Host/persistence 真实接线与 6/6 聚焦测试证据。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/codex-session-history-runtime-boundaries.md","reason":"Codex ThreadStore/history/fork/compaction 权威边界与 Complete Agent service 所需合同。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/pi-mono-agentcore-crate-convergence.md","reason":"pi-like AgentCore、完整 Agent 中层和 crate DAG 的源码级边界证据。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/revised-plan-independent-review.md","reason":"独立 review 发现的 Fork saga、surface callback seam、crate ownership、RuntimeSession 残留与 migration/Dash commit 修订依据；已由父 design 收敛。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md","reason":"当前 compaction 链路、失败/协议时序与 references/codex 对照证据；具体 owner 以父 design 为准。"}
+{"file":".trellis/spec/backend/architecture.md","reason":"Application/domain/infrastructure 依赖方向和模块 ownership 总约束。"}
+{"file":".trellis/spec/backend/domain-payload-typing.md","reason":"Runtime command、Agent service、history、change、effect payload 必须 typed。"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"Runtime/Host/Dash Agent repository ports、adapter 与 transaction boundary。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"forward migration、约束、CAS、并发和真实 PostgreSQL 验证。"}
+{"file":".trellis/spec/backend/agent-runtime-kernel.md","reason":"当前 Managed Runtime kernel 实现基线；用于保留统一外层并按父 design 拆出 Agent internal authority。"}
+{"file":".trellis/spec/backend/agent-runtime-persistence.md","reason":"当前 Runtime journal/repository/outbox/recovery 基线和 hard-cut 范围。"}
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"RuntimeOffer、binding、generation、lease、effect 与 recovery 基线。"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"Application/AgentRun 只经 Runtime Contract 的边界基线。"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"当前 context/checkpoint/compaction 基线；实施时区分 Dash Agent internal 与 external Agent capability。"}
+{"file":".trellis/spec/backend/agent-runtime-hooks.md","reason":"HookPlan、HookPoint、effect 与 delivery route 基线。"}
+{"file":".trellis/spec/backend/agent-runtime-surface-tool-broker.md","reason":"AgentSurface、ToolCatalog、Tool Broker 与 applied evidence 基线。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"现有 AgentRun/历史/fork 产品边界；Session 命名必须按父 design 的 history-maintained 定义修订。"}
+{"file":".trellis/spec/cross-layer/agent-runtime-wire-relay.md","reason":"Complete Agent remote proxy、Runtime Wire 和 Relay placement transport 约束。"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"Runtime change 到 App Server/UI presentation 的 identity、ordering 与 projection 基线。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"Rust/API/generated TypeScript hard cut 与一致性要求。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Runtime snapshot+change reducer、cursor gap 与 derived availability。"}

@@ -1,5 +1,10 @@
 # Agent Boundary 与 Journal 权威性重评
 
+> 研究状态：本文对 `RuntimeJournalFact` 循环 ownership 的问题识别仍可作为历史证据；把
+> Runtime 降为内部协调、并由一个平台 Hosted Agent/AgentSession 拥有全部状态的目标结论
+> 已被父任务最终设计取代。实施只采用父 `prd.md` / `design.md` 的
+> Managed Runtime → Complete Agent → Dash Agent/AgentCore 边界。
+
 ## 结论
 
 当前“Managed Runtime journal 是 Thread/Turn/Item/Interaction/Context 的唯一事实源”这一前提应被推翻。

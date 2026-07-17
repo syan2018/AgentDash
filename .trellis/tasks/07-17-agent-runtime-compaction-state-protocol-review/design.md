@@ -1,948 +1,1291 @@
-# Hosted Agent 状态机、压缩与协议投影收敛设计
+# Agent Runtime 最终架构收敛设计
 
-## 0. 设计结论
+## 0. Review 结论
 
-本任务不在现有 Runtime journal 上继续修补状态，而是以破坏性 hard cut 建立一个平台拥有、内聚且可恢复的 `Hosted Agent` 深模块。
+当前 07-17 规划不能直接作为本分支的最终实施方案，但其问题定义和部分机制可以保留。
 
-最终只有 `AgentSession` aggregate 拥有会话业务事实：
-
-- Session identity、lifecycle 与 execution consistency；
-- Operation durable acceptance 与 idempotency；
-- Mailbox / queue admission、dependency 与 promotion；
-- Turn、Item、Interaction 生命周期；
-- model-visible ContextRevision、checkpoint 与 compaction；
-- active execution slot 与 command availability。
-
-Runtime、Host、durable worker、binding 与 effect ledger 都是 Hosted Agent 内部的 execution coordination。Native、Codex、Remote driver 都是 `AgentExecutionPort` 的 adapter，只返回 receipt/observation，不生产 Agent entity、presentation fact 或 journal fact。
-
-Journal、Codex App Server Protocol notification、audit、analytics 和搜索索引只消费 Agent 已提交的 `AgentChange`。它们可以持久化自己的投影，但不能参与 Session read、command admission、fork、context materialization、compaction、terminalization 或 recovery。
-
-本设计明确推翻当前分支中“`RuntimeJournalFact` 是 Thread/Turn/Item/Context 唯一事实源”的前提，也不把权威性转交给某个外部 driver。平台托管的 Agent 才是业务 owner。
-
-## 1. 第一性原理与不可删除事实
-
-### 1.1 基本事实
-
-| 编号 | 不可删除的事实 | 必须存在的机制 |
+| 设计部分 | 评估 | 最终处理 |
 | --- | --- | --- |
-| F1 | 一个 Session 的 active Turn、Item、模型上下文和 terminal 结果必须由同一个 owner 提交 | `AgentSession` aggregate + repository transaction |
-| F2 | 异步请求在进程退出后仍需知道是否已接受、排队或终结 | Operation 与 queue entry |
-| F3 | 外部 dispatch 可能超时、重复、进程崩溃或返回未知结果 | stable effect identity、delivery lease、inspect、generation fence、`Lost` |
-| F4 | 模型实际看到的历史必须在写入时具备 typed 语义 | `ContextRevision` 与 typed model contribution |
-| F5 | 压缩会替换未来执行所使用的上下文，但不会改写已经发生的业务历史 | immutable Session entities + 新 ContextRevision/head |
-| F6 | UI/协议既要断线恢复，也要实时增量 | authoritative snapshot revision + committed change tail |
-| F7 | 自动 overflow 后是否继续是一个独立、durable 的业务请求 | continuation queue entry 与 dependency |
-| F8 | driver 的 native session 可能是 stateful replica，但不是平台会话真相 | execution binding/replica convergence，不是第二套 transcript |
+| 07-10 统一 Managed Agent Runtime 外层 | 正确且当前分支已建立主要骨架 | 作为不可删除的顶层边界继续完成 |
+| RuntimeOffer / AgentSurface / Binding / Host | 正确 | 保留并扩展到完整 Agent service capability |
+| 将 Native、Codex、Remote 统一成低层 `AgentExecutionPort` | 抽象层级过低 | 提升为 Complete Agent Service seam |
+| 单一平台 `AgentSession` aggregate 拥有全部会话与协调事实 | 不满足 owner 边界 | 拆成 Runtime State、Host coordination、完整 Agent state |
+| typed Turn、effect identity、generation fence、snapshot/change/outbox | 机制正确 | 分配给 Runtime、Host 或 Dash Agent 的真实 owner |
+| 通用平台 context/compaction kernel | 只适用于 Dash Agent | 下放 Dash Agent；外部 Agent 通过能力合同接入 |
+| 删除 `RuntimeJournalFact` 事实混合 | 正确 | 改用 owner-specific state + Runtime platform change |
+| Fork 从 repository copy/journal cutoff 完成 | 不适用于完整外部 Agent | 改为 platform saga + native Agent fork |
+| crate 清理 | 07-10 尚未完成 | 纳入本任务最终验收 |
 
-### 1.2 可以删除的重复事实
+最终不是删除 Runtime，而是在 Runtime 下方补出此前缺失的完整 Agent 边界：
 
-以下状态都能从更基本的 durable fact 唯一派生，不应独立持久化：
-
-- UI 意义上的 `Idle`、`Running`、`Compacting`、`Blocked`；
-- 只为展示而持久化的 activity enum；
-- worker `Pending/Claimed/Retrying` 对应的业务 phase；
-- API 在请求返回时推断的 `launched_compaction_turn`；
-- 前端固定为 `completed` 的 context compaction status；
-- 通过 presentation journal 重新解释得到的 context transcript；
-- 通过 journal sequence 拼接和重新编号得到的 fork history。
-
-### 1.3 深模块目标
-
-Hosted Agent 的外部接口应隐藏 repository、worker、driver、compaction engine 与 protocol projection。Application 只需要回答三类问题：
-
-1. 执行一个 Agent command，并获得 durable operation receipt；
-2. 读取某个 revision 的 authoritative Agent state；
-3. 订阅某个 revision 之后的 committed change。
-
-模块越深，跨层调用越少，Application 越不需要知道 Runtime 的内部恢复阶段。
-
-## 2. 领域语言与所有权
-
-### 2.1 术语
-
-- **Hosted Agent**：平台托管 Agent 会话与执行的深模块。
-- **Agent Session**：Hosted Agent 的业务 aggregate；一个完整会话的唯一 owner。
-- **Agent Command**：请求 Agent 改变状态的 typed intent。
-- **Agent Operation**：Agent 对 command 的 durable acceptance、idempotency 与 terminal result。
-- **Mailbox Entry**：尚未获得 active execution slot 的 durable request；可表达 dependency。
-- **Agent Turn**：一次获得 Session active slot 的 typed activity，kind 至少为 `Agent` 或 `ContextCompaction`。
-- **Agent Item / Interaction**：Turn 下的业务实体。
-- **Context Revision**：某次执行使用的 immutable、typed、model-visible context。
-- **Compaction**：从一个 ContextRevision 生成并安装新 revision 的 Agent-owned transition。
-- **Execution Effect**：Agent transaction 产生、需由 driver/host 执行的稳定副作用。
-- **Execution Observation**：adapter 对 effect 的已应用、未应用、失败或未知观察。
-- **Agent Change**：Agent transaction 提交后发布的有序变更，不是 aggregate 的唯一存储。
-- **Journal**：消费 Agent Change 的投影模块；面向审计、搜索、分析或协议交付。
-
-### 2.2 权威性矩阵
-
-| 状态/事实 | 权威 owner | 权威存储 | 写入者 | 可读取者 | 明确不承担 |
-| --- | --- | --- | --- | --- | --- |
-| Session lifecycle | AgentSession | `agent_session` | Hosted Agent transition | Application、projector | driver、Journal 不可改变 |
-| execution consistency | AgentSession | `agent_session` | effect settlement/recovery transition | admission、UI projection | binding enum 不可替代 |
-| active Turn slot | AgentSession | `agent_session.active_turn_id` | admission/terminal transaction | command availability | worker claim 不代表 active |
-| Operation | Hosted Agent | `agent_session_operation` | command acceptance/terminal transition | API、queue、UI | protocol event 不代表 acceptance |
-| Mailbox/dependency | Hosted Agent | `agent_session_queue_entry` | acceptance/admission/terminal transition | scheduler、read model | API 内存队列不参与 |
-| Turn/Item/Interaction | AgentSession | normalized entity tables | Agent transition | Session read、context、projector | Journal/driver 不可直接写 |
-| Context head/revision | AgentSession | context tables | Agent transition | dispatch、fork、read | presentation replay 不参与 |
-| Compaction | AgentSession | `agent_session_compaction` | Agent transition | admission、read、projector | API/worker 不推断 phase |
-| Binding/generation | Hosted Agent 内部 Host | `agent_execution_binding` | binding transition | effect validation、diagnostics | 不表示 Session activity |
-| Effect delivery | Hosted Agent 内部 Runtime | `agent_execution_effect` | Agent transition + delivery settlement | worker、recovery | claim/lease 不是业务状态 |
-| Driver receipt/observation | execution adapter 输入 | settlement metadata/telemetry | adapter + Agent validator | transition kernel | 不直接形成 Agent entity |
-| Agent Change | Hosted Agent | `agent_change_outbox` | 与 Agent transaction 同提交 | protocol、Journal、analytics | 不用于重建权威 aggregate |
-| App Server notification | protocol projector | projection transport/store | change consumer | clients | 不参与 read/admission/recovery |
-| Audit/analytics/search | Journal/projector | 各自 projection store | change consumer | 产品/运维查询 | 不接管 Agent 业务 |
-
-## 3. 目标架构
-
-### 3.1 当前循环 ownership 与风险
-
-```mermaid
-flowchart LR
-    DRIVER["Driver notification<br/>native / Codex / remote"]
-    FACT["RuntimeJournalFact<br/>business + presentation + coordination"]
-    STORE["agent_runtime_event<br/>authoritative journal"]
-    READ["Runtime snapshot / AgentRun feed / fork"]
-    CONTEXT["Context broker<br/>presentation → model context"]
-    ACTIVATE["ContextActivationDispatch<br/>model context → native replay"]
-    UI["API / App Server / UI<br/>再次推断activity"]
-
-    DRIVER --> FACT
-    FACT --> STORE
-    STORE --> READ
-    STORE --> CONTEXT
-    CONTEXT --> ACTIVATE
-    ACTIVATE --> DRIVER
-    READ --> UI
-    STORE --> UI
-
-    R1["风险：driver被迫理解平台事实"]
-    R2["风险：Journal成为第二事实源"]
-    R3["风险：typed item在副作用末端才失败"]
-    R4["风险：queue / Turn / UI状态分叉"]
-
-    DRIVER -.-> R1
-    STORE -.-> R2
-    ACTIVATE -.-> R3
-    UI -.-> R4
+```text
+Application / AgentRun
+  -> Managed Agent Runtime
+  -> Agent Runtime Host
+  -> Complete Agent Service
+      -> Dash Agent -> AgentCore
+      -> Codex
+      -> pi-coding-agent / Enterprise Agent
+      -> Remote Agent proxy
 ```
 
-当前错误不是单一 mapper 漏了一个 variant，而是这条循环把 presentation 记录重新当成模型上下文，并在 activation side effect 边界才验证 typed item。任何局部补 variant 都会保留循环事实源和状态分叉。
+## 1. 第一性原理
 
-### 3.2 收敛后的边界
+### 1.1 必须存在的四类事实
 
-```mermaid
-flowchart LR
-    APP["Application / AgentRun / API"]
-    GATE["HostedAgentGateway<br/>execute · read · changes"]
+#### 平台产品事实
 
-    subgraph HA["Hosted Agent 深模块（唯一会话业务 owner）"]
-        KERNEL["AgentSession Transition Kernel<br/>admission · invariants · terminalization"]
-        REPO["AgentSession Repository<br/>Session · Operation · Queue · Turn · Item · Context · Compaction"]
-        EFFECT["Execution Coordination<br/>Binding · Effect Ledger · Delivery · Inspect"]
-        OUTBOX["Agent Change Outbox<br/>after-commit change"]
-        KERNEL <--> REPO
-        KERNEL --> EFFECT
-        KERNEL --> OUTBOX
-    end
+AgentRun、LifecycleRun/Agent、Frame、Companion relation、权限、Workflow、Task、Workspace
+等是 AgentDash 产品事实。它们不因底层 Agent 实现替换而改变。
 
-    subgraph ADAPTERS["Execution Adapters"]
-        NATIVE["Native"]
-        CODEX["Codex"]
-        REMOTE["Remote"]
-    end
+#### 平台 Runtime 事实
 
-    subgraph PROJ["派生消费者"]
-        ASP["Codex App Server<br/>snapshot + notification"]
-        JOURNAL["Journal<br/>audit · search · analytics"]
-        OBS["Observability"]
-    end
+平台需要一个跨所有 Agent 实现稳定的 command、operation、availability、
+normalized snapshot/change、surface admission 和 AgentRun mapping 合同。否则
+Application/UI 会重新依赖 vendor 分支。
 
-    APP --> GATE
-    GATE --> KERNEL
-    EFFECT --> NATIVE
-    EFFECT --> CODEX
-    EFFECT --> REMOTE
-    NATIVE -->|"receipt / observation"| EFFECT
-    CODEX -->|"receipt / observation"| EFFECT
-    REMOTE -->|"receipt / observation"| EFFECT
-    OUTBOX --> ASP
-    OUTBOX --> JOURNAL
-    OUTBOX --> OBS
-    ASP -->|"cursor gap: read snapshot"| GATE
+#### 完整 Agent 事实
+
+一个完整 Agent 必须能独立维护自己的 history、fork、context/compaction 和运行
+lifecycle。Codex、pi-coding-agent、Dash Agent 均属于此类；平台不能把它们降成一次
+provider call。
+
+#### Execution coordination 事实
+
+service instance、offer、binding、placement、generation、lease、effect delivery 和
+unknown-outcome recovery 是 Host coordination。它们既不是产品状态，也不是 Agent
+history。
+
+### 1.2 Session 定义
+
+`Session` 只表示完整状态由有序 history 唯一维护和重建的对象。
+
+```text
+AgentSessionState = fold(AgentHistory)
 ```
 
-这张图表达三个关键边界：
+- 输入通过形成 history contribution 改变 Session；
+- fork 是 history tree 分叉；
+- compaction 是保留 provenance 的 history 变换；
+- resume 是从 history 恢复；
+- active/terminal 等 Session 内状态只有在 history 中存在对应事实时才成立；
+- projection/index 只用于读取性能，可删除后从 history 重建。
 
-1. Application 不再调用 Runtime journal、worker repository 或 driver；
-2. driver observation 必须经过 Agent transition kernel 才能成为业务提交；
-3. Journal 与协议都在提交之后消费 change，删除它们不会破坏 Agent。
+operation、mailbox、surface、binding、credential、placement、lease、effect、
+recovery ledger 和平台业务状态不能进入 Session，也不能使用 Session 命名。
 
-## 4. 外部与内部接口
+### 1.3 最小复杂度原则
 
-### 4.1 Application 唯一 seam
+新增模块只允许由以下理由产生：
+
+1. 需要阻止错误依赖方向；
+2. 是可替换实现的稳定 seam；
+3. 需要独立生成/传输协议；
+4. 是 infrastructure adapter 边界；
+5. 拥有独立事务或恢复事实。
+
+无法满足其中任一条件的 pass-through crate/module 应被相邻 owner 吸收。
+
+## 2. 目标架构
+
+```mermaid
+flowchart TB
+    APP["Application / AgentRun<br/>product authorization · workflow · companion"]
+    CONTRACT["Runtime Contract<br/>command · snapshot · change · availability"]
+    RUNTIME["Managed Agent Runtime<br/>operation · admission · projection · outbox"]
+    SURFACE["Business Agent Surface<br/>desired tools · hooks · instructions · workspace"]
+    HOST["Agent Runtime Host<br/>service · offer · binding · placement · effect · recovery"]
+    SERVICE["Complete Agent Service Contract<br/>describe · command · read · changes · inspect"]
+    DASH["Dash Agent<br/>history-maintained AgentSession · lifecycle · fork · compaction"]
+    CORE["AgentCore<br/>stateless provider/tool loop"]
+    CODEX["Codex complete Agent"]
+    PI["pi-coding-agent / Enterprise Agent"]
+    REMOTE["Remote proxy"]
+    INFRA["Infrastructure<br/>PostgreSQL · process · IPC · artifacts · secrets"]
+    RELAY["Relay<br/>placement transport only"]
+    PROTOCOL["App Server / UI projection"]
+
+    APP --> CONTRACT
+    CONTRACT --> RUNTIME
+    SURFACE --> RUNTIME
+    RUNTIME --> HOST
+    HOST --> SERVICE
+    SERVICE --> DASH
+    DASH --> CORE
+    SERVICE --> CODEX
+    SERVICE --> PI
+    SERVICE --> REMOTE
+    REMOTE --> RELAY
+    INFRA -. "implements repositories/effects" .-> RUNTIME
+    INFRA -. "implements host adapters" .-> HOST
+    RUNTIME --> PROTOCOL
+```
+
+### 2.1 Application / AgentRun
+
+Application 负责：
+
+- AgentRun 与产品 graph；
+- 权限、Workflow、Task、Workspace、Companion 产品关系；
+- product command receipt；
+- 为 Runtime Surface 提供 typed product facts。
+
+Application 不读取 Agent 内部 repository，不选择 concrete Agent，不解析 vendor event。
+
+### 2.2 Managed Agent Runtime
+
+Runtime 是所有 Agent 实现的统一平台外层，负责：
+
+- Runtime command 与 operation；
+- idempotency、expected revision、availability；
+- `AgentSurfaceSnapshot` 编译与 admission；
+- AgentRun ↔ Runtime ↔ opaque Agent coordinate mapping；
+- durable command delivery intent；
+- normalized platform snapshot/change/outbox；
+- platform consistency 和 recovery orchestration；
+- Tool Broker 的平台 policy/effect 路由。
+
+Runtime 不拥有外部 Agent 的 history/context，不实现所有 Agent 共用的 compaction
+algorithm。
+
+### 2.3 Agent Runtime Host
+
+Host 负责：
+
+- trusted service definition/contribution；
+- service instance、credential reference、health；
+- `RuntimeOffer`；
+- sticky `RuntimeBinding`；
+- placement、driver generation、source coordinate；
+- `BoundAgentSurface` materialization 与 `AppliedAgentSurface` evidence；
+- lease、effect delivery、inspect/reconcile。
+
+Host 不编译产品 Surface，不解释 Agent history，也不写 Runtime projection entity。
+
+### 2.4 Complete Agent Service
+
+这是完整 Agent 的可替换边界。Dash Agent、Codex、企业 Agent 和 remote proxy 均实现同一
+有限合同，但通过 capability/fidelity 表达支持程度。
+
+### 2.5 Dash Agent
+
+Dash Agent 是 AgentDash 自有完整 Agent，负责：
+
+- history-maintained `AgentSession`；
+- history tree、resume、fork、navigation；
+- input/turn/tool/history lifecycle；
+- context construction、compaction、retry/continuation；
+- 与 AgentCore 的调用；
+- 自己可证明的 snapshot/change。
+
+Dash Agent 不是 Managed Agent Runtime。它与 Codex 是 Complete Agent seam 下的同级
+实现。
+
+### 2.6 AgentCore
+
+AgentCore 接受显式 context、tools、provider、callbacks、cancel token 和一次输入，产生
+typed stream/output。每次调用的完整状态由参数和返回值表达；它不访问 durable
+repository。
+
+## 3. Ownership 矩阵
+
+| Fact | Write owner | Durable source | Runtime 权限 | Read projection |
+| --- | --- | --- | --- | --- |
+| AgentRun / Frame / Companion | Application | product tables | typed product fact read | Application query |
+| Runtime operation/idempotency | Managed Runtime | runtime operation tables | owner | Runtime snapshot/change |
+| Runtime pending delivery | Managed Runtime | runtime command/effect intent | owner | operation availability |
+| desired Agent Surface | Managed Runtime | immutable surface snapshot | owner | bound/applied surface view |
+| service offer/binding/placement | Host | host tables | admission/reconcile request | Runtime binding view |
+| effect/lease/generation | Host | host ledger | correlate by stable ID | health/recovery view |
+| external Agent history/context | concrete Agent | Agent-native store | finite command + read | normalized projection |
+| Dash AgentSession | Dash Agent | ordered Agent history | Complete Agent command/read | Dash snapshot/change |
+| Dash command queue/execution saga | Dash Agent service, outside Session | Dash execution tables/history-linked ledger | inspect only | Agent activity/receipt |
+| AgentCore loop state | AgentCore invocation | none beyond explicit input/output | none | typed output stream |
+| normalized conversation | Managed Runtime | projection tables + source revision | owner of platform projection only | Application/UI snapshot |
+| platform change tail/outbox | Managed Runtime | change/outbox tables | owner | SSE/App Server/UI |
+| protocol notification/feed | projection adapter | rebuildable/read-side store | read only | client payload |
+
+### 3.1 Authority tags
+
+Runtime projection 中每个 section 必须带 authority/fidelity：
 
 ```rust
-#[async_trait]
-pub trait HostedAgentGateway {
+enum ProjectionAuthority {
+    PlatformOwned,
+    AgentAuthoritative,
+    Derived,
+}
+
+struct ProjectionSource {
+    authority: ProjectionAuthority,
+    source_revision: Option<String>,
+    fidelity: SemanticFidelity,
+    observed_at: Timestamp,
+}
+```
+
+`AgentAuthoritative` 表示该 section 来自完整 Agent；平台持久化它是为了稳定产品读取，并
+不获得反向写权限。
+
+## 4. 公共合同
+
+### 4.1 Application ↔ Runtime Contract
+
+`agentdash-agent-runtime-contract` 只定义平台公共语言：
+
+```rust
+trait AgentRuntimeGateway {
     async fn execute(
         &self,
-        command: AgentCommandEnvelope,
-    ) -> Result<AgentOperationReceipt, AgentExecuteError>;
+        command: RuntimeCommandEnvelope,
+    ) -> Result<RuntimeCommandReceipt, RuntimeError>;
 
     async fn read(
         &self,
-        query: AgentQuery,
-    ) -> Result<AgentReadResult, AgentReadError>;
+        query: RuntimeReadQuery,
+    ) -> Result<RuntimeSnapshot, RuntimeError>;
 
     async fn changes(
         &self,
-        subscription: AgentChangeSubscription,
-    ) -> Result<AgentChangeStream, AgentSubscribeError>;
+        after: RuntimeChangeCursor,
+    ) -> Result<RuntimeChangePage, RuntimeError>;
 }
 ```
 
-语义约束：
+Runtime command 表达 AgentDash 产品意图，不包含 vendor source ID、driver generation
+或 AgentCore callback。
 
-- `execute` 成功只表示 Agent transaction 已 durable acceptance，不承诺 effect 已完成；
-- 同一 `operation_id` + 同一 command fingerprint 幂等返回原 receipt；
-- 同一 `operation_id` + 不同 fingerprint 返回 typed conflict；
-- `read` 只读取 Agent repository，并返回 `agent_revision`；
-- `changes` 只返回已提交的 change；它不能推进状态；
-- change cursor gap 返回 typed gap，调用方必须重新 `read`；
-- Application 不得到 repository、worker command、driver command 或 native thread handle。
+### 4.2 Host ↔ Complete Agent Service Contract
 
-### 4.2 Agent command
-
-首期 command 至少包括：
-
-```text
-CreateSession
-StartAgentTurn
-SteerActiveAgentTurn
-CancelOperation
-RequestContextCompaction
-SubmitInteractionResponse
-CloseSession
-ForkSession
-```
-
-内部 observation/timeout/recovery 不伪装成外部 command，使用受保护的 transition entry：
-
-```text
-SettleExecutionObservation
-SettleEffectDeliveryFailure
-InspectExecutionEffect
-PromoteMailbox
-RecoverSession
-```
-
-所有 entry 最终进入同一个 transition kernel，共享 revision CAS、generation fence 和不变量验证。
-
-### 4.3 Driver port
+建立 dependency-light 的 `agentdash-agent-service-api`：
 
 ```rust
-#[async_trait]
-pub trait AgentExecutionPort {
-    async fn dispatch(
+trait CompleteAgentService {
+    async fn describe(&self) -> Result<AgentServiceDescriptor, AgentServiceError>;
+
+    async fn create(
         &self,
-        effect: AgentExecutionEffect,
-    ) -> Result<AgentExecutionReceipt, AgentExecutionTransportError>;
+        command: CreateAgentCommand,
+    ) -> Result<AgentCommandReceipt, AgentServiceError>;
+
+    async fn resume(
+        &self,
+        command: ResumeAgentCommand,
+    ) -> Result<AgentCommandReceipt, AgentServiceError>;
+
+    async fn fork(
+        &self,
+        command: ForkAgentCommand,
+    ) -> Result<ForkAgentReceipt, AgentServiceError>;
+
+    async fn execute(
+        &self,
+        command: AgentCommandEnvelope,
+    ) -> Result<AgentCommandReceipt, AgentServiceError>;
+
+    async fn read(
+        &self,
+        query: AgentReadQuery,
+    ) -> Result<AgentSnapshot, AgentServiceError>;
+
+    async fn changes(
+        &self,
+        query: AgentChangesQuery,
+    ) -> Result<AgentChangePage, AgentServiceError>;
 
     async fn inspect(
         &self,
-        query: AgentExecutionInspection,
-    ) -> Result<AgentExecutionObservation, AgentExecutionTransportError>;
+        identity: AgentEffectIdentity,
+    ) -> Result<AgentEffectInspection, AgentServiceError>;
+
+    async fn apply_surface(
+        &self,
+        command: ApplyBoundAgentSurface,
+    ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError>;
+
+    async fn revoke_surface(
+        &self,
+        command: RevokeBoundAgentSurface,
+    ) -> Result<AgentCommandReceipt, AgentServiceError>;
 }
 ```
 
-adapter 返回 provider-neutral observation：
+这里的 trait 是逻辑合同；同进程实现可直接调用，Remote 经 wire transport 实现。合同
+要求 snapshot read 和 effect inspect；ordered change tail 根据 profile 可选。
 
-```text
-Accepted { source_operation_id? }
-Applied { source_revision?, outputs... }
-NotApplied
-Rejected { typed_reason }
-Failed { typed_reason, retryability }
-Unknown { evidence }
+`execute` command vocabulary 至少包括：
+
+- `SubmitInput`
+- `Steer`
+- `Interrupt`
+- `RequestCompaction`
+- `ResolveInteraction`
+- `Close`
+
+create/resume/fork 独立是因为它们改变 source coordinate/binding，不能伪装成已绑定
+对象上的普通 dispatch。
+
+Fresh create 可携带 `Option<InitialAgentContextPackage>`。这是 create effect 的一部分，
+不是创建后的普通 input；receipt 与 `inspect(effect_id)` 必须返回 applied package
+digest、delivery fidelity 和 source Agent coordinate。若 external Agent 需要多次 native
+调用才能完成 create + context apply，adapter 在 Complete Agent seam 内持久化同一
+create effect 的小型 saga，直到 package 可验证后才返回 applied。Runtime 不观察或编排
+这些 vendor steps。
+
+### 4.3 Agent ↔ Host reverse callbacks
+
+Agent-native Tool/Hook 必须仍穿过 Complete Agent seam：
+
+```rust
+trait AgentHostCallbacks {
+    async fn invoke_tool(
+        &self,
+        call: AgentToolInvocation,
+    ) -> Result<AgentToolResult, AgentHostCallbackError>;
+
+    async fn invoke_hook(
+        &self,
+        call: AgentHookInvocation,
+    ) -> Result<AgentHookDecision, AgentHostCallbackError>;
+}
 ```
 
-source session/turn/item IDs 只是 binding coordinate。adapter 不返回 `RuntimeJournalFact`、不构造 Agent Turn/Item、不决定 operation terminal，也不写 repository。
+`ApplyBoundAgentSurface` 固定 callback route/endpoint、binding generation、tool/hook
+revision 与 semantic deadline。每个 reverse call 携带 stable effect identity、
+Runtime/Agent Turn/Item coordinate、idempotency key 和 deadline。Blocking/mutating Hook
+的 decision 是 typed allow/deny/replace/effect，不使用 observation 模拟。
 
-## 5. AgentSession aggregate 与正交状态
+Remote proxy 将 callback 编码为双向 Runtime Wire request/response；request sequence、
+ack/replay、duplicate result 和 generation fence 与正向 command 使用同一 transport
+guarantee。
 
-### 5.1 Session 根状态
-
-```text
-AgentSessionLifecycle = Open | Closed
-AgentExecutionConsistency = Synchronized | Desynchronized | Lost
-active_turn_id = Option<TurnId>
-agent_revision = monotonic u64
-context_head_revision_id = ContextRevisionId
-```
-
-不新增 persisted `Ready/Idle/Running/Compacting`。Application activity 由根状态与 active Turn kind 派生：
-
-| 条件 | 派生 activity |
-| --- | --- |
-| `Closed` | `Closed` |
-| `Lost` 或 `Desynchronized` | `Blocked` |
-| `active_turn=None` 且可 admission | `Idle` |
-| active Turn kind=`Agent` | `Running` |
-| active Turn kind=`ContextCompaction` | `Compacting` |
-
-### 5.2 Turn 与子实体
+### 4.4 Receipt 与 observation
 
 ```text
-AgentTurnKind = Agent | ContextCompaction
-AgentTurnStatus = Active | Succeeded | Failed | Cancelled | Lost
-AgentItemStatus = Started | Completed | Failed | Cancelled | Lost
-InteractionStatus = Pending | Submitted | Expired | Cancelled
+Runtime Operation
+  -> Host EffectIdentity
+  -> Agent CommandReceipt(Accepted | Rejected | AlreadyApplied | Unknown)
+  -> Agent Snapshot/Change/Inspection
+  -> Runtime Operation terminal
 ```
 
-Turn terminal 时必须满足：
+Agent receipt 只证明 Agent 接受了什么；Runtime 只有在观察到满足合同的 terminal 或
+inspect 结果后才能提交相应 platform terminal。
 
-- 不存在 `Started` item；
-- 不存在 `Pending` interaction；
-- operation terminal 与 Turn terminal 在同一 transaction 对齐；
-- `active_turn_id` 在同一 transaction 清除或交给被选中的下一个 Turn；
-- terminal change 排在子 Item terminal change 之后。
+### 4.5 Snapshot 与 source change
 
-### 5.3 Operation
+所有 Complete Agent 必须提供可对账 snapshot。source change 支持分为：
+
+- `OrderedDurableTail`：可按稳定 cursor 追增量；
+- `OrderedLiveStream`：进程活跃期间有序，重启后需 snapshot reconcile；
+- `SnapshotOnly`：Runtime 周期/命令后读取 snapshot；
+- `ObservationOnly`：只能作为低保真 telemetry，不能驱动 required canonical field。
+
+Runtime 自己始终提供 durable platform change tail。source change 等级只影响 Runtime
+如何更新 projection，不改变 Application reconnect 合同。
+
+## 5. Capability 与 Surface
+
+### 5.1 四个对象
+
+| Object | Owner | Purpose |
+| --- | --- | --- |
+| `AgentSurfaceSnapshot` | Runtime Surface compiler | 平台期望交付的 immutable requirements |
+| `RuntimeOffer` | Host | 某 service instance 的实际能力与约束 |
+| `BoundAgentSurface` | Runtime admission | 逐项求交后的 route/fidelity/revision |
+| `AppliedAgentSurface` | Agent adapter + Host evidence | 实际 materialize 的 digest/ack/status |
+
+### 5.2 Profile facets
+
+Profile 至少按以下 facet 独立描述：
+
+- lifecycle：create/resume/close；
+- input：text/structured/multimodal；
+- fork：cutoff kinds、lineage、native durability；
+- command：submit/steer/interrupt/interaction；
+- context：opaque/read snapshot/typed revision/exact apply，以及 initial package 的
+  contribution kinds、delivery fidelity 与 applied-digest evidence；
+- compaction：Agent-owned/native、exact managed、observed、unsupported；
+- tools：prompt declaration、broker callback、native dynamic update；
+- hooks：逐 HookPoint 的 timing/blocking/mutation/effect；
+- changes：durable tail/live/snapshot-only；
+- telemetry/config。
+
+### 5.3 Semantic strength
+
+不同 facet 使用适合自身的 typed strength，而不是一个万能 bool。公共比较关系只表达
+“能否满足 requirement”：
 
 ```text
-AgentOperationStatus =
-    Accepted
-  | Queued
-  | Running
-  | Succeeded
-  | Failed
-  | Cancelled
-  | Lost
-  | Rejected
+Unsupported < Observed < Approximation < Exact
 ```
 
-Operation 记录 accepted command、fingerprint、request actor、created revision、terminal result，并可关联 queue entry 与 Turn。它不重复保存 compaction phase 或 effect delivery phase。
+并非所有 facet 都允许中间等级。例如 fork required 时只接受与 cutoff contract 匹配的
+Exact；PromptOnly/Approximation 不能形成 fork lineage。
 
-`Rejected` 只用于需要 durable idempotent 记录的 command rejection；纯校验错误可以不建立 operation。具体规则在 contract 工作包中统一。
-
-### 5.4 Queue / mailbox
-
-```text
-QueueEntryStatus = Pending | Promoted | Succeeded | Failed | Cancelled | Lost
-QueueEntryKind = AgentTurnRequest | ContextCompactionRequest | ContinuationRequest
-Dependency = None | BlockedByCompaction(CompactionId)
-```
-
-Queue 只回答“哪个已接受请求尚未获得执行权”。一旦 promotion，真实业务生命周期由 Turn/Compaction/Operation 接管。`Queued` 不创建伪 Turn 或伪 Item。
-
-### 5.5 Compaction
-
-```text
-CompactionStatus =
-    Preparing
-  | Synchronizing
-  | Succeeded
-  | Failed
-  | Cancelled
-  | Lost
-```
-
-- `Preparing`：读取 typed ContextRevision、生成候选、新 revision 与必要 effect；尚未产生不可逆外部 apply；
-- `Synchronizing`：仅 stateful driver replica 需要；apply 已发出或可能已发出，必须通过 observation/inspect 收敛；
-- terminal：`Succeeded | Failed | Cancelled | Lost`。
-
-排队状态属于 Operation/Queue，不重复出现在 Compaction。只有 promotion 并创建真实 ContextCompaction Turn 后才创建 Compaction entity。
-
-### 5.6 Binding 与 effect
-
-```text
-BindingStatus = Unbound | Active | Desynchronized | Lost | Closed
-EffectDeliveryStatus = Pending | Leased | AwaitingObservation | Settled
-EffectSettlement = Applied | NotApplied | Failed | Unknown
-```
-
-Binding 描述 execution replica；Session consistency 描述业务 admission。二者不合并，但 transition kernel 强制：
-
-- active effect 的 generation 必须等于 current binding generation；
-- stale observation 只记录 telemetry，不能写 Agent entity；
-- binding `Lost` 必须使 Session consistency 进入 `Lost`；
-- binding `Desynchronized` 在恢复成功前阻止新 promotion；
-- worker lease/attempt 只影响 delivery，不自动改变 Agent operation。
-
-## 6. 组合不变量
-
-每次 Agent transaction 必须验证：
-
-1. 一个 Open Session 最多一个 `active_turn_id`；
-2. active Turn 必须存在、属于同一 Session 且 status=`Active`；
-3. 一个 Session 最多一个 nonterminal Compaction，包括 queued request 与 active Compaction；
-4. queued compaction 不存在 Turn/Item；active compaction 必须有 `Turn(kind=ContextCompaction)` 和一个同 ID 语义关联的 `ContextCompaction` item；
-5. active Agent Turn 不接受 steer 到 compaction Turn；compaction Turn 不可 steer；
-6. context head 只能从 command acceptance 时冻结的 expected revision CAS 到候选 revision；
-7. Compaction `Succeeded`、context head、Item/Turn/Operation terminal 在同一 transaction；
-8. stateful replica 仍可能未知时不得把 Compaction 标为 `Succeeded` 或 `Failed`，只能 `Synchronizing` 或 `Lost`；
-9. operation、queue entry、Turn、Compaction 与 effect identity 均有稳定唯一键，重复 settlement 不复制实体；
-10. Session `Desynchronized|Lost|Closed` 时不 promotion mailbox；
-11. automatic continuation 只能在依赖的 Compaction `Succeeded` 后成为 eligible；
-12. manual Compaction success 不创建 continuation；
-13. Compaction terminal transaction 不创建后继 Agent Turn；
-14. Turn terminal 与下一 queue promotion 必须在同一 Session revision 串行决策，不能暴露无保护的空窗；
-15. `AgentChange` 与 state mutation 同 transaction 写 outbox，change order 由 `agent_revision + ordinal` 唯一决定。
-
-## 7. Command admission 与排队
-
-### 7.1 StartAgentTurn
-
-- Session healthy 且无 active Turn：同 transaction 创建 Running operation、Agent Turn、初始 user Item、typed ContextRevision reference 和 dispatch effect；
-- 有 active Agent Turn：
-  - 若 command 明确是 steer 且 driver capability 允许，形成 steer effect；
-  - 否则 durable 进入 mailbox；
-- 有 active ContextCompaction Turn：只能进入 mailbox，不可 steer；
-- `Desynchronized|Lost|Closed`：typed rejected/blocked。
-
-### 7.2 RequestContextCompaction
-
-- 无 active Turn、Session healthy：同 transaction 创建 operation、ContextCompaction Turn/Item、Compaction=`Preparing`，并产生 preparation work/effect；
-- active Agent Turn：创建 operation + queue entry=`Pending`，receipt=`Queued`；
-- active ContextCompaction 或已有 queued compaction：
-  - 相同 operation/idempotency key 返回原 receipt；
-  - 不同请求返回 typed `CompactionAlreadyPending`；
-- `Desynchronized|Lost|Closed`：typed rejected；
-- queued 阶段不发布 `turn/started`、`item/started`。
-
-### 7.3 Turn terminal 与 promotion
-
-普通 Turn terminal transaction 的决策顺序固定：
-
-1. terminalize child Item/Interaction；
-2. terminalize Turn 与 operation；
-3. 计算 automatic overflow continuation/compaction；
-4. 选择唯一 eligible queue entry；
-5. 若选中 queued compaction，在同一 transaction 创建 ContextCompaction Turn/Item/Compaction 与 preparation effect；
-6. 否则保持 active slot 空闲；
-7. 写 ordered AgentChange。
-
-任何 worker 或 API 都不能在步骤 2 与 5 之间单独抢占。
-
-## 8. 普通 Agent Turn
-
-普通 Turn 的主链：
-
-```text
-command accepted
-  → Operation Running
-  → Turn(kind=Agent, Active)
-  → initial Item committed
-  → execution effect dispatched
-  → observations become Agent Items/Interactions
-  → all child entities terminal
-  → Turn + Operation terminal
-  → queue admission decision
-```
-
-driver stream 不能直接推送 presentation fact给前端。每个 observation 先通过 transition kernel：
-
-1. 校验 session/binding/generation/effect；
-2. 将 provider payload 映射为 Agent-owned typed entity；
-3. 在一个 Agent transaction 中写 entity、effect settlement 和 change；
-4. projector 再生成 Codex-shaped notification。
-
-未知 typed observation 在边界立即 typed fail 或进入 capability mismatch terminal，不可保存为通用 presentation 后再由 context replay 猜测。
-
-## 9. 压缩 tracer bullet
-
-### 9.1 压缩生命周期
+### 5.4 Admission
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Queued: active Agent Turn 时接受请求
-    [*] --> Preparing: idle 时立即 promotion
-    Queued --> Preparing: 当前 Turn terminal 的同一 transaction
-    Queued --> Cancelled: 尚未 promotion
-    Preparing --> Cancelled: 外部 apply 尚未发出
-    Preparing --> Failed: typed preparation/capability error
-    Preparing --> Succeeded: immutable-context driver，无 replica apply
-    Preparing --> Synchronizing: stateful replica apply 已发出或可能已发出
-    Synchronizing --> Succeeded: inspect/observation = Applied
-    Synchronizing --> Failed: 确认 NotApplied 或 clean rejection
-    Synchronizing --> Lost: 结果无法验证
-    Succeeded --> [*]
-    Failed --> [*]
-    Cancelled --> [*]
-    Lost --> [*]
+flowchart LR
+    FACTS["Product facts"] --> DESIRED["AgentSurfaceSnapshot"]
+    AGENT["Agent describe"] --> OFFER["RuntimeOffer"]
+    DESIRED --> MATCH["Runtime admission"]
+    OFFER --> MATCH
+    MATCH --> BOUND["BoundAgentSurface"]
+    BOUND --> APPLY["Agent materialization"]
+    APPLY --> ACK["AppliedAgentSurface"]
+    ACK --> AVAILABLE["Command availability"]
 ```
 
-图中的 `Queued` 是 Operation/Queue 状态，不是 `agent_session_compaction.status`。Compaction entity 从 `Preparing` 才存在。
+required contribution 不满足时，Runtime 在任何 Agent side effect 前返回 typed
+incompatibility。只有 applied evidence 与 bound revision/digest 一致后，对应 command
+才进入 available。
 
-### 9.2 typed ContextRevision
+### 5.5 Tool 与 Hook causal route
 
-每个 committed Agent Item 在写入时必须具有以下二选一分类：
+每个 contribution 只能选择一个 route：
+
+- Runtime Tool Broker；
+- Agent-native callback/tool registry；
+- Host lifecycle effect；
+- immutable prompt/context delivery；
+- observation only。
+
+Bound surface 固定 route。工具调用或 Hook 触发不得广播给多个 owner 后再去重。
+
+## 6. Managed Runtime State
+
+### 6.1 Runtime aggregate
+
+Runtime aggregate 使用 `Runtime State`/`Runtime Thread` 命名，不使用 Session：
 
 ```text
-ModelContribution::Typed(...)
-ModelContribution::NotModelVisible { reason }
+RuntimeState
+  identity
+  product_mapping
+  desired_surface_revision
+  bound_surface_revision
+  binding_ref + generation
+  operations
+  pending_delivery
+  normalized_projection
+  projection_source_revision
+  consistency
+  change_revision
 ```
 
-`ContextRevision` 保存按稳定 Item/Interaction identity 组成的 materialized model input，不从 App Server presentation item 反向解析。所有 driver 在 dispatch 之前声明 capability；无法表示的 typed contribution 在 preparation/dispatch 边界立即失败，不允许拖到 Native activation replay。
+### 6.2 正交状态机
 
-压缩输入固定为 `source_context_revision_id`，输出为新的 immutable `candidate_context_revision_id`。成功只 CAS 更新 `context_head_revision_id`，原业务 Turn/Item 不被删除或改写。
+#### Operation
 
-### 9.3 stateless / explicit-context driver
+```text
+Accepted -> DispatchPending -> AgentAccepted -> Succeeded
+                                     \-> Failed
+                                     \-> Lost
+Accepted -> Rejected
+```
 
-优先让每个 execution effect 显式携带 immutable `ContextRevision`。此时：
+#### Delivery effect
 
-1. preparation 生成 candidate revision；
-2. Agent transaction CAS context head；
-3. terminalize Compaction Item/Turn/Operation；
-4. 写 changes；
-5. 下一次独立 Turn dispatch 使用新 revision。
+```text
+Pending -> Claimed -> Applied
+                  \-> Retryable
+                  \-> Unknown -> Inspecting -> Applied | Retryable | Lost
+```
 
-不需要持久化 `Activating` 或 driver transcript replay。
+#### Projection consistency
 
-### 9.4 stateful replica driver
+```text
+Current | Reconciling | Stale | Lost
+```
 
-只有 driver 必须维护 native conversation replica 时才进入 `Synchronizing`：
+#### Binding
 
-1. Agent 创建 stable `ApplyContextRevision` effect；
-2. delivery 可能返回 accepted，但这不等于业务成功；
-3. `Applied` observation 触发 Agent terminal transaction；
-4. timeout/crash 后用相同 effect identity `inspect`；
-5. `Applied` → Succeeded；
-6. `NotApplied` / clean rejection → Failed；
-7. 永远无法验证 → Lost，并阻断 Session。
+```text
+Unbound | Binding | Active | Rebinding | Lost | Closed
+```
 
-不创建第二套 transcript mapper。adapter 接收 Agent-owned typed context，负责一次性编码为 native request；adapter 的 native history 只作为 replica。
+这些状态通过 stable ID 相关联，但不合并为巨型 enum。Agent 内部 active Turn 不由 Runtime
+worker claim 推断；它来自 Agent snapshot/change 并带 source fidelity。
 
-### 9.5 手动压缩
+### 6.3 Runtime transaction
 
-- active Agent Turn 时允许 durable `Queued`；
-- promotion 后创建独立 Compaction Turn B；
-- success 只释放 active slot；
-- 不创建 continuation；
-- 若无其他 eligible mailbox，Session 派生为 Idle；
-- 后续用户请求由新的 command 独立创建 Turn。
+一次 Runtime 事务只原子提交平台事实：
 
-### 9.6 automatic overflow：A / B / C
+- operation transition；
+- pending delivery/effect intent；
+- normalized projection change；
+- Runtime change/outbox；
+- platform mapping/consistency。
+
+它不试图与外部 Agent repository 原子提交。跨边界通过 idempotent identity +
+inspect/reconcile 收敛。
+
+## 7. Host coordination
+
+### 7.1 RuntimeOffer
+
+Host 把 service descriptor、instance config、credential availability、health、placement
+transport 和 host policy 归一为 `RuntimeOffer`。Offer 记录 provenance，不接受 adapter
+自报后未经验证的能力。
+
+### 7.2 Binding
+
+`RuntimeBinding` 固定：
+
+- Runtime coordinate；
+- service definition/instance；
+- source Agent coordinate；
+- placement；
+- driver generation；
+- offer/profile digest；
+- Bound/Applied surface revision/digest；
+- lifecycle state。
+
+Binding 默认 sticky。health 变化不自动换 Agent；rebind 是显式 recovery operation。
+
+### 7.3 Effect ledger
+
+Effect identity 至少包含 Runtime operation、binding、generation、command kind 和 stable
+attempt family。相同 identity 重投必须返回 AlreadyApplied/同一 receipt；新 generation
+不得接受旧 observation。
+
+### 7.4 Remote
+
+Remote proxy 实现 Complete Agent Service；Relay 只传输 typed command/receipt/change/
+inspect frame、sequence、ack 和 replay。Relay 不拥有 Agent identity、history 或 surface
+policy。
+
+## 8. Dash Agent 设计
+
+### 8.1 内部分层
+
+```text
+Dash Agent
+  agent_session/        # history + fold + fork/compaction history semantics
+  lifecycle/            # command admission、queue、continuation、execution saga
+  context/              # history -> provider context materialization
+  tools/                # bound tool callback integration
+  service/              # Dash public API / adapter-facing boundary
+  -> AgentCore
+```
+
+`lifecycle` 与 `service` 属于完整 Agent，但不是 `AgentSession`。它们可以持久化 command
+ledger、queue、effect 和 retry state；这些状态不得改变 Session 内容，只有形成新的
+history entry 后才改变 Session projection。
+
+### 8.2 Agent history
+
+Dash Agent history 使用 append-only tree：
+
+```text
+AgentHistory
+  root
+  branches
+  head
+  entries:
+    InitialContextInstalled
+    InputAccepted
+    TurnStarted
+    ItemStarted / ItemCompleted
+    AgentOutput
+    ToolCall / ToolResult
+    InteractionRequested / Resolved
+    CompactionStarted / Applied / Failed
+    TurnCompleted / Failed / Interrupted
+    Closed
+```
+
+确切 entry vocabulary 可在实现时收窄，但所有 `AgentSession` 状态都必须由 history fold
+产生。history entry 与 Runtime platform change 是不同事实域。
+
+### 8.3 AgentCore API
+
+```rust
+async fn run_agent_loop(
+    input: CoreInput,
+    context: CoreContext,
+    tools: ToolCallbacks,
+    provider: Provider,
+    callbacks: CoreCallbacks,
+    cancel: CancellationToken,
+) -> Result<CoreOutput, CoreError>;
+```
+
+Core 不持有 `Agent` mutex、queue、session ID、Runtime delegate、AgentDash summary policy
+或 durable tool result cache。调用者负责把 Core output 写成 history。
+
+### 8.4 Core 替换
+
+Dash Agent 对 AgentCore 的依赖通过窄 loop interface。未来替换其它 AgentCore 时，只要
+满足显式输入/输出/tool callback/cancel 语义，就不影响 Runtime 或 AgentRun。
+
+## 9. Codex 与其它完整 Agent
+
+### 9.1 Codex
+
+Codex adapter 映射：
+
+- Runtime create/resume/fork → Codex thread lifecycle；
+- submit/steer/interrupt/compact → Codex command；
+- thread/read → Agent snapshot；
+- App Server notification → Agent change/observation；
+- source ThreadId/TurnId → Host source coordinate；
+- capability/config/plugin/dynamic tools → Applied surface evidence。
+
+Codex ThreadStore/history 是 source recovery authority。Runtime projection 只服务
+AgentDash 产品读取。当前没有 exact context read/apply 时，profile 必须声明
+Opaque/Observed，不得复用 Dash Agent ContextRevision。
+
+### 9.2 pi-coding-agent / Enterprise Agent
+
+它们直接作为 Complete Agent 实现接入，不经过 Dash Agent 或 AgentCore。pi-mono 本次是
+ownership 参考，不在本任务新增 adapter。
+
+### 9.3 Native/Dash adapter
+
+`agentdash-integration-native-agent` 是 Runtime service contract 与平台中立 Dash Agent
+API 的 anti-corruption adapter。它负责 source coordinate、surface translation 和
+service profile，不拥有第二套 history。
+
+## 10. Fork
+
+### 10.1 Common cutoff
+
+公共保证以 completed Turn boundary 为最低 exact cutoff，因为它可以与 Codex
+`lastTurnId` 和 Dash Agent history Turn 对齐。Item/entry/source cursor cutoff 是独立
+capability；UI/API 只能提供 Bound surface 声明 Exact 的 cutoff，不做向前/向后取整。
+
+```rust
+enum AgentForkPoint {
+    Head,
+    CompletedTurn { turn_id: AgentTurnId },
+    Item { item_id: AgentItemId },
+    SourceCursor { value: OpaqueCursor, digest: Digest },
+}
+```
+
+### 10.2 Fork saga
+
+Fork saga 的唯一 durable owner 是 Application/AgentRun。`AgentRunForkSaga` 预分配
+child LifecycleRun/Agent/Frame/AgentRun IDs，并保存 product command ID、source、
+immutable cutoff、Runtime operation/effect identity、Agent child coordinate、Host
+binding、Runtime child coordinate 和每阶段 receipt。
+
+```text
+Requested
+  -> RuntimeAdmitted
+  -> AgentForkPending
+  -> AgentForkApplied
+  -> RuntimeProvisioned
+  -> ProductGraphCommitted
+  -> RuntimeActivated
+  -> Succeeded
+
+Requested..RuntimeProvisioned -> Failed
+any post-dispatch uncertain phase -> Reconciling -> next phase | Lost
+```
 
 ```mermaid
 sequenceDiagram
-    participant A as "Agent Turn A"
-    participant S as "AgentSession"
-    participant B as "Compaction Turn B"
-    participant Q as "Continuation C（queue entry）"
-    participant C as "Agent Turn C"
+    participant A as Application
+    participant R as Runtime
+    participant H as Host
+    participant G as Complete Agent
 
-    A->>S: terminal observation = LimitReached
-    S->>S: terminalize A
-    S->>Q: create durable continuation blocked_by B
-    S->>B: create independent ContextCompaction Turn
-    B->>S: Succeeded + install new context
-    Note over S,Q: B terminal commit 不创建 C
-    S->>Q: dependency becomes eligible
-    Q->>S: independent mailbox promotion
-    S->>C: create new operation / Turn / context revision
+    A->>A: persist saga + stable child product IDs + accepted receipt
+    A->>R: ForkAgent(command_id, child IDs, source, cutoff)
+    R->>R: persist operation + admission + stable effect intent
+    R-->>A: runtime operation/effect identity
+    A->>A: phase = RuntimeAdmitted
+    R->>H: dispatch stable fork effect
+    H->>G: fork(effect_id, source_coordinate, cutoff)
+    G-->>H: accepted / existing child coordinate
+    H->>G: inspect/read child
+    G-->>H: verified fork receipt + snapshot
+    H->>H: persist child source coordinate + provisioning binding
+    H-->>R: verified observation
+    R->>R: commit provisioning child mapping + projection + change
+    R-->>A: RuntimeProvisioned receipt
+    A->>A: commit product child graph + lineage + AgentRun binding
+    A->>R: activate provisioning child
+    R->>R: commit active state + change
+    R-->>A: activated receipt
+    A->>A: terminalize saga + product receipt
 ```
 
-Identity 与 transaction 要求：
+Host 只在 Runtime effect intent durable 后调用 Agent。Application 调用 Runtime
+返回未知时，以 deterministic command ID/read operation 找回同一 effect；Agent fork
+返回未知时，Host 只 inspect 同一 effect identity。已创建 child 但平台尚未映射时，
+inspect 必须返回相同 child coordinate。
 
-- A、B、C 的 Turn ID 全部不同；
-- continuation C 在 B 开始前已 durable 存在；
-- B 的 terminal commit 只 terminalize B 并解除 dependency；
-- 只有单独的 mailbox promotion transaction 才创建 C；
-- manual compaction 永远没有 C；
-- 不使用“压缩成功自动开 Turn”的通用 hook。
+Product graph 在 Agent/Host/Runtime provisioning 均可验证后才对产品提交；Runtime child
+在 product graph commit 后显式激活。任意 restart 由 Application saga worker读取 phase
+和各 owner 的 inspect/read 继续，不执行同步 delete compensation。
 
-### 9.7 automatic failure
+无法验证的 post-dispatch 结果进入 `Lost`，并保留已知 Agent child coordinate、
+effect identity、Runtime/Host references 和预分配 product IDs；相同 product command
+不得创建第二个 child。
 
-- B 在外部 apply 前 clean `Failed`：
-  - B Item/Turn/Operation terminal；
-  - 与 B 绑定的 continuation C exactly-once terminalize `Failed`；
-  - 不创建 Agent Turn C；
-  - Session consistency 保持 `Synchronized`；
-  - 其他没有 dependency 的 mailbox entry 可继续。
-- B `Cancelled`：
-  - automatic continuation exactly-once `Cancelled`；
-  - manual compaction没有 continuation。
-- B `Lost`：
-  - continuation进入 `Lost`/blocked；
-  - Session consistency=`Lost`（或先 `Desynchronized`，最终 recovery 决策为 Lost）；
-  - 所有 mailbox promotion 阻塞；
-  - 必须由明确 recovery/repair command 解除，不自动重试旧 context。
+### 10.3 Dash Agent fork
 
-## 10. 取消、迟到结果与 Lost
+Dash Agent fork 从 immutable history cutoff 创建独立 child branch/head，并返回
+source/child history digest。当前 Native 产品 fork 必须接入此路径，不能只创建空
+binding。
 
-| 当前阶段 | Cancel 结果 | 原因 |
-| --- | --- | --- |
-| Operation/Queue=`Queued` | 原子移除 eligibility，Operation/Queue=`Cancelled` | 尚无 Turn/effect |
-| Compaction=`Preparing` 且 apply 未发出 | Item/Turn/Compaction/Operation=`Cancelled` | 无不可逆外部结果 |
-| Compaction=`Synchronizing` | 不直接 terminalize；返回 `CancellationPendingSettlement` | apply 可能已经生效 |
-| terminal | 幂等返回既有 terminal | 防止重复终结 |
+### 10.4 Companion
 
-进入 `Synchronizing` 后收到 cancel：
+Companion command 必须显式选择：
 
-1. 标记 cancellation intent 供 UI 展示，但不改变 compaction truth；
-2. inspect effect；
-3. `Applied` 仍以 Succeeded 收敛；
-4. `NotApplied` 可 Cancelled；
-5. Unknown 最终 Lost。
+- `CompanionSliceMode::Full` → `ForkParentHistory`：调用完整 Agent exact fork；
+- `Compact / WorkflowOnly / ConstraintsOnly` → `FreshWithContextPackage`：创建新
+  Agent 并提交相应 typed context package。
 
-所有 observation 带 stable effect identity、binding generation 与 expected Agent revision。迟到/重复/stale observation 不覆盖新 generation，也不复制 Item。它们只能幂等返回已 settlement 或记录 telemetry。
+`FreshWithContextPackage` 在 Complete Agent seam 上编译为平台中立合同：
 
-## 11. Effect delivery 与恢复
+```rust
+struct InitialAgentContextPackage {
+    package_id: AgentContextPackageId,
+    schema_version: AgentContextSchemaVersion,
+    mode: InitialContextMode,
+    contributions: Vec<InitialContextContribution>,
+    digest: Digest,
+}
 
-### 11.1 Effect ledger
+enum InitialContextMode {
+    Compact,
+    WorkflowOnly,
+    ConstraintsOnly,
+}
 
-`agent_execution_effect` 至少保存：
+enum InitialContextContribution {
+    CompactSummary {
+        summary: ContextSummary,
+        provenance: ContextProvenance,
+    },
+    WorkflowContext {
+        state: WorkflowContextPayload,
+        provenance: ContextProvenance,
+    },
+    ConstraintSet {
+        constraints: ConstraintSetPayload,
+        provenance: ContextProvenance,
+    },
+}
 
-- `effect_id`、`session_id`、`operation_id`、`turn_id`；
-- `effect_kind` 与 immutable payload/reference；
-- `binding_id`、`binding_generation`；
-- delivery status、attempt、lease owner/deadline；
-- receipt coordinate；
-- settlement、last observation、created/updated revision。
+struct ContextProvenance {
+    authority: ContextAuthorityKind,
+    source: ContextSourceCoordinate,
+    revision: ContextSourceRevision,
+    digest: Digest,
+}
+```
 
-业务 retryability 由 transition kernel决定并写入 effect settlement decision。durable worker 只执行：
+Application 负责把 Companion slice 编译成该通用 package；service API 不出现
+`Companion`、AgentRun ID 或 vendor DTO。`ContextSourceCoordinate` 是 service-owned
+opaque typed coordinate，`authority` 至少区分 Agent history/snapshot、Workflow 与
+Constraint，避免把平台 projection revision 冒充 Agent history revision。
+
+Package 不携带 Workspace/VFS、Tool、Hook、credential 或 capability grant；这些属于
+`AgentSurfaceSnapshot -> BoundAgentSurface -> AppliedAgentSurface`。Complete Agent
+profile 对每个 contribution kind 声明：
+
+- `TypedNative`：Agent 原生保留 typed contribution 与 provenance；
+- `CanonicalRendered`：adapter 用版本化 canonical renderer 安装 immutable initial
+  context，并回执 renderer version + rendered digest；
+- `Unsupported`。
+
+产品 surface 为每个 slice 声明允许的最低 fidelity。`CanonicalRendered` 只能在该
+requirement 明确允许时 admission，不能冒充 typed native state。
+
+`CreateAgentCommand.initial_context` 原子携带 package；create receipt/inspect 返回
+package digest、applied fidelity 和 source coordinate。Runtime 在 evidence 到达前保持
+child provisioning、不可激活。Companion 派发任务随后作为首个 `SubmitInput`；它只表示
+交互输入，不能承担 initial context 安装。Dash Agent 把 package 写为首批
+`InitialContextInstalled` history contribution；external adapter 必须在自己的 source
+authority 中提供等价、可 inspect 的 create effect。
+
+`adoption_mode` 只控制 child result 的回传/等待方式，与 history 创建正交。Runtime
+不从 prompt 文本推断 fork，也不允许裁剪模式先继承完整 history 再隐藏。
+
+## 11. Compaction
+
+### 11.1 Complete Agent capability
 
 ```text
-claim → dispatch/inspect → submit observation → ack/release/dead-letter
+CompactionCapability
+  AgentOwnedNative
+  ExactContextRevision
+  ObservedOnly
+  Unsupported
 ```
 
-worker 不根据 transport error 自行 terminalize operation，也不把 claim state投影为 Session phase。
+- `AgentOwnedNative`：Runtime 发 command，Agent 自己维护 history/context replacement；
+- `ExactContextRevision`：Agent 接受并可验证 typed candidate/apply；
+- `ObservedOnly`：只投影 Agent 自发 compaction，不支持平台 command；
+- `Unsupported`：admission 不提供 compaction。
 
-### 11.2 Recovery decision
+### 11.2 Dash Agent history semantics
 
-重启或 lease 到期后：
-
-| 证据 | 决策 |
-| --- | --- |
-| effect 尚未 dispatch | 使用相同 effect ID 重新 dispatch |
-| driver receipt 证明 accepted，结果可 inspect | inspect 后 settlement |
-| observation 证明 Applied | 幂等提交 Agent terminal/state change |
-| observation 证明 NotApplied | 按 typed failure/cancel policy terminal |
-| generation stale | 丢弃对 Agent state 的写入，保留诊断 |
-| driver 不支持 inspect 且 dispatch 是否应用未知 | Session/operation/turn=`Lost` |
-
-禁止“为了继续运行”猜测成功、重放不同 effect ID 或回退旧 context。
-
-## 12. Agent Change、Journal 与 App Server Protocol
-
-### 12.1 Agent Change
-
-每个 Agent transaction 增加 `agent_revision`，并写零到多个 ordered change：
+Dash Agent compaction 把旧 history prefix 变换为带 provenance 的 summary/history entry：
 
 ```text
-SessionChanged
-OperationAccepted / OperationQueued / OperationTerminal
-TurnStarted / TurnCompleted
-ItemStarted / ItemCompleted
-InteractionRequested / InteractionResolved
-ContextHeadChanged
-ExecutionConsistencyChanged
+source history revision
+  -> CompactionStarted
+  -> candidate(summary + retained suffix + provenance)
+  -> CompactionApplied(new history revision)
+  -> CompactionCompleted
 ```
 
-Change payload 包含稳定 entity identity 和足以构造增量 notification 的数据，但不承担完整 aggregate replay。outbox retention/gap 是正常情况。
+AgentSession 的新状态仍由新 history 唯一重建。candidate generation、provider effect、
+retry/unknown outcome 属于 Dash lifecycle/effect ledger，不是 Session field。
 
-### 12.2 reconnect
+### 11.3 Manual compaction
 
-客户端/AgentRun reconnect 流程：
+- idle 时可开始独立 maintenance activity；
+- normal Turn active 时 command durable queued；
+- queued 不创建 Turn/Item；
+- 当前 Turn terminal 后由 Dash lifecycle 原子选择下一 command；
+- compaction active 时新输入进入 Dash command inbox，不 steer 进 maintenance Turn；
+- success 后保持 idle，不隐式创建 Agent Turn。
 
-1. `read(SessionSnapshot)` 得到 revision R 与完整 authoritative entity snapshot；
-2. 订阅 `changes(after_revision=R)`；
-3. change 按 `(agent_revision, ordinal)` 应用；
-4. cursor gap、retention cutoff 或 reducer mismatch 时丢弃局部 projection，重新读取 snapshot；
-5. 不扫描 Runtime journal 补洞。
+### 11.4 Automatic overflow A/B/C
 
-### 12.3 fork
+```text
+A: Agent Turn fails with recoverable context overflow
+B: independent ContextCompaction activity
+C: independent continuation input/Turn
+```
 
-`ForkSession` 以稳定 Session revision 或 Turn/Item cutoff 为输入，由 Agent repository 创建新 Session：
+- A、B、C ID 独立；
+- A 创建 durable continuation intent；
+- B terminal commit 只解除/终结 dependency，不创建 C；
+- lifecycle 独立 promotion 后才形成 C history entries；
+- B clean Failed 时 C exactly-once Failed，其他无依赖 command 可继续；
+- B Lost 时 C blocked/Lost，Dash execution consistency 阻塞 promotion；
+- duplicate effect、reclaim、restart 不复制 B/C。
 
-- 复制/引用 immutable entity/context revision；
-- 保留 canonical IDs 或明确记录 lineage；
-- 创建新的 Session identity 与 revision；
-- 不拼接 presentation records；
-- 不重新编号 visible sequence；
-- fork operation 与新 Session 创建在可验证 transaction 中。
+### 11.5 Codex compaction
 
-### 12.4 Codex App Server Protocol 投影
+Codex 自己执行 native compaction。Adapter 映射可证明的
+`ContextCompaction item/started → item/completed`、Turn terminal 和 read snapshot。
+Runtime 不安装平台生成的 ContextRevision，除非未来 Codex profile 提供 exact apply。
 
-平台 Agent item vocabulary 与 Codex v2 语义同构，但不是 vendor DTO 的类型别名。projector 映射 Agent Change：
+### 11.6 Protocol projection
 
-| Agent commit | App Server notification |
-| --- | --- |
-| Compaction Turn 创建 | `turn/started` |
-| ContextCompaction Item 创建 | `item/started` |
-| Context head + Item terminal | `item/completed` |
-| Turn terminal | `turn/completed` |
-| typed failure/lost | error notification + failed/lost `turn/completed` |
-
-顺序要求：
+App Server protocol 使用同一 item identity：
 
 ```text
 turn/started
-  < item/started
-  < item/completed 或 error
-  < turn/completed
+item/started(ContextCompaction)
+item/completed(ContextCompaction)
+turn/completed
 ```
 
-queued compaction 没有 fake Turn notification，可通过 operation/queue read model展示“已排队”。所有 notification 都在 Agent commit 之后发布；重复投递使用 `(session_id, agent_revision, ordinal, projection_kind)` 幂等。
+失败时输出 error + failed/lost terminal。前端从 item lifecycle 展示 running/succeeded/
+failed，不固定 completed。
 
-`ContextCompaction` item 的进行中/终态来自 Agent entity wrapper/父 Turn status。不要为了增加状态而修改 upstream Codex item payload，也不要让前端把 item type 固定解释为 completed。
+## 12. Change、Journal 与 reconnect
 
-### 12.5 Journal 删除测试
+### 12.1 Runtime platform change
 
-架构测试必须能替换 Journal consumer 为 no-op，然后证明：
-
-- Session read/resume/fork；
-- command admission/availability；
-- typed context materialization；
-- compaction与 continuation recovery；
-- snapshot + live protocol projection；
-
-全部正常。对代码执行 negative search，Session 业务路径不得调用 `journal_records_after`、`RuntimeJournalRecord` 或 presentation cursor。
-
-## 13. 最终持久化模型
-
-通过单个 forward migration（预计 `0084_hosted_agent_session_cutover.sql`）直接到达最终 schema：
-
-| 表 | 关键职责/约束 |
-| --- | --- |
-| `agent_session` | lifecycle、consistency、active_turn_id、context_head、revision；active FK/一致性由 transaction验证 |
-| `agent_session_operation` | operation ID/fingerprint 唯一、command、status、terminal result |
-| `agent_session_queue_entry` | pending request、priority/order、dependency、promotion status |
-| `agent_session_turn` | session + turn ID 唯一、kind、status、operation link、context revision |
-| `agent_session_item` | stable item identity、typed payload、model contribution、status、ordinal |
-| `agent_session_interaction` | interaction lifecycle 与 response |
-| `agent_session_context_revision` | immutable typed materialization、parent/source、token metadata |
-| `agent_session_context_checkpoint` | context revision 与 stable entity cutoff |
-| `agent_session_compaction` | source/candidate revision、active phase、terminal、turn/operation link |
-| `agent_execution_binding` | adapter/session coordinate、generation、replica consistency |
-| `agent_execution_effect` | stable effect、delivery、receipt、settlement |
-| `agent_change_outbox` | revision-ordered after-commit publication |
-
-数据库约束至少包括：
-
-- operation idempotency uniqueness；
-- 每 Session 一个 active Turn；
-- 每 Session 一个 nonterminal queued/active compaction；
-- queue order 与 dependency FK；
-- effect identity uniqueness；
-- context revision immutable 与 head FK；
-- change `(session_id, revision, ordinal)` uniqueness；
-- terminal status所需 timestamp/result consistency；
-- binding generation monotonic。
-
-PostgreSQL 与 in-memory repository 必须实现同一 behavior suite，不允许为了测试便利省略 transaction/invariant。
-
-### 13.1 migration 策略
-
-项目未上线，采用 hard cut：
-
-1. 新建最终表和约束；
-2. 删除 `agent_runtime_event` 及其 authoritative journal reader/writer；
-3. 删除由旧 projection 驱动的 context、fork、terminal 与 API state 表/列；
-4. 删除旧 compaction/runtime state 残留；
-5. 更新 sqlx query/generated schema；
-6. 不 backfill 历史开发数据，不双写，不保留兼容 view/read path；
-7. migration 测试从前一 migration版本升级并验证最终约束。
-
-若 migration 编号在实施前已被其他工作占用，使用实施时的下一个编号，但仍保持单次 hard cut。
-
-## 14. 各层改造边界
-
-### 14.1 Contract / wire
-
-- 用 Agent-owned command/query/change/entity contract 替换 Runtime journal contract；
-- 删除 `RuntimeJournalFact`、`RuntimeJournalRecord`、driver facts envelope；
-- 为 execution observation、effect inspection、typed model contribution 建立 provider-neutral contract；
-- wire 只承载 command/receipt/observation/change，不承载 adapter-produced presentation。
-
-### 14.2 Hosted Agent kernel
-
-- 建立 `AgentSession` aggregate、transition kernel 与统一 admission；
-- 把 operation、queue、Turn/Item/Interaction、Context/Compaction 放在同一 revision/transaction；
-- 建立 in-memory behavior reference implementation；
-- 删除业务层对 worker claim/journal sequence 的依赖。
-
-### 14.3 Infrastructure / Runtime Host
-
-- PostgreSQL repository 和 migration；
-- effect ledger、binding generation、durable delivery/inspect；
-- driver event ingress 只提交 observation；
-- worker 只按 settlement decision处理 delivery。
-
-### 14.4 Native/Codex/Remote adapter
-
-- 实现同一 `AgentExecutionPort` conformance；
-- 声明 typed context/interaction/steer/cancel/inspect capability；
-- Codex adapter 复用 App Server native session能力时仍不向上暴露 vendor truth；
-- Native replay 不再读取 presentation item，接受 Agent typed ContextRevision；
-- unknown typed contribution 在 dispatch前失败。
-
-### 14.5 AgentRun / API / App protocol
-
-- AgentRun 通过 `HostedAgentGateway` execute/read/changes；
-- feed、fork、terminal、context read model 不再读取 Runtime journal；
-- API receipt 明确 Accepted/Queued/Running/terminal，不推断 launched Turn；
-- projector从 Agent Change 输出 Codex-shaped lifecycle；
-- product/application events 若不是 Agent Session 事实，保留在独立产品 feed。
-
-### 14.6 Frontend
-
-- snapshot + change tail 驱动统一 session reducer；
-- activity 从 active Turn kind/consistency 派生；
-- queued compaction、active compaction、failed/lost 都有明确状态；
-- `contextCompaction` card 不再固定 completed；
-- cursor gap 重新读取 snapshot；
-- 移除从 API timing、journal gap 或 item type 猜测状态的逻辑。
-
-## 15. 直接删除或替换清单
-
-实施不得为以下旧结构建立 compatibility facade：
-
-- authoritative `RuntimeJournalFact` / `RuntimeJournalRecord`；
-- driver envelope 中的 `facts: Vec<RuntimeJournalFact>`；
-- `agent_runtime_event` 作为 Session 事实存储；
-- `journal_records_after` 驱动 Session/context/fork/terminal；
-- `AgentRunJournalService` 对 parent prefix 的拼接与 sequence 重编号；
-- `SessionMetaUpdate("context_compacted")` 驱动 context projection；
-- prior journal scan 驱动 terminal rewind；
-- `ContextActivationDispatch` 对 presentation typed item 的二次 replay；
-- API `scheduled_next_turn` / `launched_compaction_turn` timing inference；
-- persisted duplicate activity state；
-- worker release/reclaim 推断业务 retry；
-- stale `SessionCompactionStatus` 与已删除 schema 对应 SPI；
-- 前端 `contextCompaction => completed` 固定映射；
-- producer public `append_presentation` 越过 Agent boundary 写 Session feed；
-- Runtime/AgentRun/workspace conversation 各自维护的重叠 execution status。
-
-删除前以新 behavior tests 锁定最终语义，删除后通过 compile error 驱动所有调用方完成 hard cut。
-
-## 16. 失败与风险矩阵
-
-| 风险 | 目标收敛 | 验证 |
-| --- | --- | --- |
-| unsupported typed item 直到 activation 才失败 | commit 时 typed contribution；dispatch前 capability gate | cross-adapter parity suite |
-| compaction accepted 后普通 Turn 抢占 | active slot + queue promotion同一 Agent transaction | PostgreSQL 并发测试 |
-| worker 无限 release/reclaim | transition先写 retry/terminal decision | crash/reclaim test |
-| effect 已应用但数据库未知 | stable effect + inspect；不可验证即 Lost | fault injection |
-| journal consumer 延迟/丢失 | snapshot + change tail；gap reread | reconnect/gap test |
-| duplicate/stale driver event 改写实体 | effect/generation/revision fence | conformance test |
-| B success 自动创建 C | continuation独立 promotion transaction | A/B/C identity + transaction test |
-| clean failure 形成 recovery loop | continuation exactly-once Failed，无旧 context promotion | automatic failure test |
-| binding 与 Session health 分叉 | transition kernel组合不变量 | state matrix test |
-| hard cut 跨 crate 爆炸半迁移 | 工作包依赖、negative gate、最终集成包 | compile/test/rg gate |
-
-## 17. 验证设计
-
-### 17.1 Contract behavior suite
-
-同一组用例运行在 in-memory 与 PostgreSQL：
-
-- operation idempotency/fingerprint conflict；
-- active slot exclusivity；
-- queue order、dependency 与 atomic promotion；
-- compaction singleton；
-- context head CAS；
-- effect identity/generation fence；
-- child-before-parent terminal；
-- change order 与 revision；
-- cancellation、duplicate/late observation；
-- Lost 后 admission block。
-
-### 17.2 Compaction tracer bullet
-
-覆盖：
-
-1. idle manual success → B terminal → Idle，无后续 Turn；
-2. active Turn + manual request → Queued，无伪事件；
-3. Turn terminal transaction 原子 promotion B；
-4. active B 时新消息只进 mailbox；
-5. automatic A `LimitReached` → B → independent C；
-6. B clean Failed → continuation Failed exactly once，无 Turn C；
-7. B Lost → continuation Lost/blocked，全部 promotion 停止；
-8. Preparing cancel 与 Synchronizing cancel/inspect；
-9. duplicate worker claim、重启、stale observation 不复制实体。
-
-### 17.3 协议顺序
-
-对 snapshot 和 notification 同时断言：
-
-- `turn/started < item/started < item/completed/error < turn/completed`；
-- 所有通知只在 commit 后可见；
-- duplicate outbox delivery不重复 reducer entity；
-- cursor gap 后 snapshot 与持续 tail收敛；
-- queued compaction没有 fake Turn；
-- failed/lost contextCompaction card保持真实终态。
-
-### 17.4 删除与 negative gate
-
-实施结束时应使以下搜索在业务路径归零：
+Runtime transaction 写 normalized state 后产生 `RuntimeChange`：
 
 ```text
-RuntimeJournalFact
-RuntimeJournalRecord
-journal_records_after
-append_presentation
-launched_compaction_turn
-scheduled_next_turn
+RuntimeChange
+  runtime_coordinate
+  revision
+  operation_id?
+  source_revision?
+  authority
+  typed delta
+  recorded_at
 ```
 
-若某个名称仅存在于 migration 删除语句或历史测试说明，应逐项人工确认，不用兼容 wrapper 消除 compile error。
+change 是平台 state commit 的结果，不是把所有 Agent 内部 event 重新命名后的 universal
+journal。
 
-## 18. 被拒绝的替代方案
+### 12.2 RuntimeJournalFact cutover
 
-### 18.1 只增加 `Compacting` Thread enum
+`RuntimeJournalFact` 拆分：
 
-拒绝。它把短期 activity、长期 lifecycle 与 execution consistency压进一个枚举，仍无法解决 queue、Turn/Item、context、effect 和 journal ownership。
+- platform operation/binding/projection → normalized Runtime tables/change；
+- Host delivery/recovery → Host ledger；
+- Dash Agent history → Dash history repository；
+- external Agent history → source Agent；
+- UI/App protocol presentation → Runtime change 下游 projection；
+- analytics/audit/search → 独立消费者。
 
-### 18.2 Runtime journal event sourcing
+### 12.3 reconnect
 
-拒绝。当前 union 同时包含 Agent business、presentation 和 execution coordination，导致 write owner 不唯一，并让 context/fork/read依赖投影。
+```text
+client(cursor)
+  -> Runtime changes(after cursor)
+  -> if available: apply
+  -> if gap: Runtime snapshot(revision) + changes(after revision)
+```
 
-### 18.3 Agent state 与 authoritative Journal 双写
+source Agent change gap 由 Runtime/Host 通过 Agent snapshot reconcile，产生新的 platform
+projection revision。Application 不直接处理 vendor cursor。
 
-拒绝。双重事实源需要 conflict resolution；Journal failure 还会反向影响已经完成的 Agent transaction。
+### 12.4 normalized projection
 
-### 18.4 driver-owned conversation
+projection 可持久化完整 Turn/Item/Interaction 以支持 UI、search、AgentRun feed 和稳定
+ID，但：
 
-拒绝。Codex/Remote native session 可作为 replica，但不同 adapter不能分别定义平台 command admission、continuation和failure semantics。
+- 标注 source revision/fidelity；
+- 不用于外部 Agent resume/fork/context；
+- 不把未验证 observation 提升为 authoritative；
+- source reconcile 可以 rebased platform projection，但必须产生 typed change。
 
-### 18.5 在现有 journal 上包 Agent facade
+## 13. Persistence 与事务
 
-拒绝。只要 read/context/fork/recovery 仍需 journal replay，facade 就没有改变 seam。
+### 13.1 目标 schema 分区
 
-### 18.6 保留旧接口逐步双轨迁移
+#### Product
 
-拒绝。项目未上线且本分支本来就是重构分支。双写、fallback reader、兼容 DTO 和旧 schema view只会延长状态机并存时间。
+```text
+agent_run
+agent_run_lineage
+agent_run_fork_saga
+lifecycle_*
+agent_frame
+companion_*
+```
 
-### 18.7 Compaction success 自动启动 continuation
+#### Managed Runtime
 
-拒绝。B terminal 与 C start 是两个不同请求、Operation 与 Turn；耦合会错误影响 manual compaction，并破坏队列公平性与可观察 transaction边界。
+```text
+agent_runtime_thread
+agent_runtime_operation
+agent_runtime_pending_command
+agent_runtime_projection
+agent_runtime_turn_projection
+agent_runtime_item_projection
+agent_runtime_interaction_projection
+agent_runtime_change
+agent_runtime_outbox
+agent_runtime_surface_snapshot
+```
 
-## 19. Hard-cut 实施顺序
+#### Host
 
-1. 冻结领域语言、Agent contract、transition invariants 与 behavior suite；
-2. 建立 AgentSession aggregate、in-memory/PostgreSQL repository 和 forward migration；
-3. 建立 effect/binding/observation coordination，切断 driver facts；
-4. 建立 authoritative read/change/fork，并把 Journal降为 consumer；
-5. 完成 typed ContextRevision、compaction、queue/continuation tracer bullet；
-6. 切换 AgentRun/API/App Server/frontend，删除旧 projection推断；
-7. 做 recovery、conformance、negative deletion 与全链路集成。
+```text
+agent_service_instance
+agent_runtime_offer
+agent_runtime_binding
+agent_runtime_source_coordinate
+agent_runtime_effect
+agent_runtime_lease
+```
 
-工作包 3（execution coordination）和工作包 4（read/change/journal decoupling）在 contract/repository落地后可并行；compaction依赖 execution coordination，应用切换依赖 authoritative read/change 与 compaction；最终清理必须在所有调用方切换后执行。
+#### Dash Agent
 
-## 20. 完成定义
+```text
+dash_agent_session
+dash_agent_history_entry
+dash_agent_history_branch
+dash_agent_command
+dash_agent_effect
+dash_agent_change
+```
 
-本架构只有在以下条件同时满足时才算收敛：
+`dash_agent_session` 名称合法，因为其业务状态只由 history fold 维护；command/effect 表
+显式位于 Session 外。
 
-- Application 只通过 Hosted Agent boundary执行、读取和订阅；
-- AgentSession repository 是唯一 Session 业务权威；
-- driver 只提交 receipt/observation；
-- worker 只负责 effect delivery；
-- Journal 删除测试通过；
-- PostgreSQL 与 in-memory behavior suite一致；
-- compaction A/B/C、manual、failure、cancel、Lost 全部有确定 terminal；
-- App Server snapshot + notification在断线、重复与 gap下收敛；
-- 旧 Runtime journal/state/projection接口与 schema 已删除；
-- 不存在兼容、双写、fallback 或第二套会话状态机。
+#### External Agent projection
+
+不复制 vendor internal schema。Runtime projection 表记录 normalized view、source
+coordinate、revision、fidelity 和 observation evidence。
+
+### 13.2 Transaction boundaries
+
+| Transaction | Atomic facts |
+| --- | --- |
+| Product fork request | saga + preallocated child IDs + accepted product receipt |
+| Product fork commit | child graph + product lineage + AgentRun binding + saga phase |
+| Runtime | operation/pending intent/projection/change/outbox |
+| Host | binding/source coordinate/effect/lease/generation |
+| DashAgentCommit | command/effect settlement + history append/head CAS + derived projection/change + next continuation intent |
+| External Agent | vendor/native transaction，不与平台 DB 假装原子 |
+
+跨 transaction 使用 stable identity、receipt、inspect 与 reconciliation。数据库外 effect
+永远在 durable intent 之后发生。
+
+### 13.3 Migration
+
+项目未上线，由 W8 独占一个正式 forward migration 完成 hard cut。W2/W3 在此之前只提交
+domain/repository contract、in-memory behavior 和最终 schema/constraint specification，
+不创建随后需要 W8 重写的正式 migration。
+
+最终 migration：
+
+1. 创建最终分区表与约束；
+2. 切换 Runtime/Host/Dash Agent repository；
+3. 切换 adapters 与 projection；
+4. 切换 Application/API/UI；
+5. 删除旧 journal、connector、SPI、duplicate context/session 表；
+6. 验证生产 composition 只引用最终路径。
+
+不迁移无法证明 provenance/fidelity 的旧开发状态；预研数据可清理。
+
+## 14. Crate 目标拓扑
+
+```text
+crates/
+  agentdash-agent-core/                  # pure loop
+  agentdash-agent/                       # Dash Agent middle layer
+  agentdash-agent-service-api/           # Complete Agent seam/profile/receipt/snapshot
+
+  agentdash-agent-runtime-contract/      # Application <-> Runtime
+  agentdash-agent-runtime/               # unified platform Runtime
+  agentdash-agent-runtime-host/          # service/binding/placement/effect
+  agentdash-agent-runtime-wire/          # cross-process runtime/service framing
+  agentdash-agent-runtime-test-support/  # conformance harness
+
+  agentdash-integration-api/              # broader trusted integration API; reuses service API
+  agentdash-integration-native-agent/     # Dash Agent adapter
+  agentdash-integration-codex/            # Codex adapter
+  agentdash-integration-remote-runtime/   # Complete Agent remote proxy
+  agentdash-first-party-integrations/     # contribution aggregation
+
+  agentdash-application-agentrun/
+  agentdash-application/
+  agentdash-domain/
+  agentdash-platform-spi/
+  agentdash-infrastructure/
+  agentdash-relay/
+  agentdash-contracts/
+  agentdash-api/
+  agentdash-local/
+```
+
+### 14.1 依赖 DAG
+
+```mermaid
+flowchart LR
+    APP["application-agentrun"] --> RC["runtime-contract"]
+    RT["agent-runtime"] --> RC
+    RT --> SA["agent-service-api"]
+    HOST["runtime-host"] --> SA
+    HOST --> RC
+    WIRE["runtime-wire"] --> RC
+    WIRE --> SA
+    DASHAD["integration-native-agent"] --> SA
+    DASHAD --> DASH["agent"]
+    DASH --> CORE["agent-core"]
+    CODEX["integration-codex"] --> SA
+    REMOTE["integration-remote-runtime"] --> SA
+    REMOTE --> WIRE
+    RELAY["relay"] --> WIRE
+    INTAPI["integration-api"] --> SA
+    INFRA["infrastructure"] -. "implements" .-> RT
+    INFRA -. "implements" .-> HOST
+```
+
+### 14.2 Crate actions
+
+| Current | Action | Reason |
+| --- | --- | --- |
+| `agentdash-agent` | 内容清理为 Core 后迁到 `agentdash-agent-core`；名称留给新 Dash Agent 中层 | 恢复 Core/Agent 两层 |
+| `agentdash-agent-types` | 删除并按 owner 拆分 | 当前是跨层类型桶 |
+| `agentdash-agent-service-api` | 新建 | Host 与完整 Agent 的稳定替换 seam |
+| `agentdash-agent-runtime-contract` | 保留并收窄 | Application ↔ Runtime 合同 |
+| `agentdash-agent-runtime` | 保留 | 统一平台 Runtime |
+| `agentdash-agent-runtime-host` | 保留 | 独立 coordination/recovery owner |
+| `agentdash-agent-runtime-wire` | 保留；framing/codegen 共享，Runtime/Agent 业务 DTO 分 module | Relay 与 Remote Complete Agent 有真实跨进程消费者 |
+| `agentdash-integration-api` | 保留 broader enterprise contract；Agent runtime 部分改依赖/re-export service API | 仍有 auth/directory/external/integration 扩展点 |
+| `agentdash-agent-protocol` | 拆分后删除 | 混合 Backbone/vendor/product/runtime vocabulary |
+| `agentdash-executor` | 迁空后删除 | Host 与 adapters 已拥有执行职责 |
+| `agentdash-spi` | 移出 Agent 内容并迁名 `agentdash-platform-spi` | 只保留非 Agent 平台 SPI |
+| `agentdash-application-hooks` | 迁空后删除 | Surface/Tool Broker/Agent-native hook 各有 owner |
+| `agentdash-application-runtime-session` | crate 已删除；清理 Application/API/contracts/SPI/Relay/gateway 中残留 `RuntimeSession*` 语义 | platform state 不满足 history-maintained Session 定义 |
+| `agentdash-application-runtime-gateway` | 迁名 extension gateway | 避免与 Agent Runtime seam 混淆 |
+| `agentdash-agent-runtime-test-support` | 保留并收窄为共享 conformance harness | Native/Codex/Remote 共用行为测试是独立理由 |
+
+### 14.3 Negative dependency gates
+
+- Core 不得依赖 `agentdash-*` 的 Runtime/Product/Infrastructure crate；
+- Dash Agent 不得依赖 Runtime/Host/Application/vendor crate；
+- service API 不得依赖 Application/Domain repository/Infrastructure/vendor DTO；
+- Runtime 不得依赖具体 Agent/adapter/Relay；
+- Host 不得依赖 Product Domain；
+- Application 不得依赖 service API、Host、Dash Agent、Codex；
+- vendor DTO 只能存在对应 integration crate；
+- composition root 以外不得同时依赖 Runtime concrete、Host concrete 和 adapter concrete。
+
+## 15. 实施切片
+
+本任务采用“合同与物理边界先行，target lane 独立验证，最后原子 hard cut”的顺序。
+Current → Target 全景图、功能连续性矩阵、S0–S6 gate 和完整派发流程以
+[`transition-architecture.md`](transition-architecture.md) 为规范性迁移设计。
+
+1. 固定 Runtime Contract、Complete Agent Service API、profile 与 conformance；
+2. 拆出 AgentCore，建立 Dash Agent history-maintained AgentSession；
+3. 收敛 Runtime platform state/change 与 Host effect/binding；
+4. Native adapter 切到 Dash Agent，补全真实 Fork/Compaction；
+5. Codex/Remote 切到 complete Agent seam；
+6. Surface/Tool/Hook 逐项 capability/apply；
+7. AgentRun/Fork/Companion/API/UI 切到新 snapshot/change；
+8. schema hard cut、删除旧 crates/interfaces；
+9. dependency/conformance/recovery/E2E 总验收。
+
+实施过程区分三种互不等价的结构：
+
+| Structure | Purpose | Unit |
+| --- | --- | --- |
+| Workstream | 需求、依赖和验收追踪 | W1–W9 |
+| Dispatch bundle | 粗粒度 subagent ownership 和纵向交付 | Platform Runtime、Dash/Native、External Agents、Product/Protocol、Hard Cut、Final Conformance |
+| Stable checkpoint | 可提交、可交接且真实功能路径成立的集成状态 | S0–S6 |
+
+```mermaid
+flowchart LR
+    S0["S0 Baseline"]
+    S1["S1 Contract Freeze"]
+    S2["S2 Target Domains Ready"]
+    S3["S3 Complete Agent Lane"]
+    S4["S4 Product Lane Ready"]
+    S5["S5 Atomic Hard Cut"]
+    S6["S6 Final Conformance"]
+
+    S0 --> S1 --> S2 --> S3 --> S4 --> S5 --> S6
+```
+
+S0–S4 中的 target code 通过 direct tests、conformance harness 和隔离 composition
+验证。任何会改变默认 caller、crate identity、production composition、正式
+repository/schema、canonical generated contract 或 legacy deletion 的修改，均由原
+bundle owner 形成经过独立检查的 activation-ready change set，并在 S5 一次集成。
+
+S5 的 integration ownership 不取代领域 owner：Platform Runtime 负责最终
+contract/Runtime/Host/Surface，Dash/Native 负责 Dash Agent/Core/Native，External
+Agents 负责 Codex/Remote，Product/Protocol 负责 AgentRun/Companion/API/UI；Hard Cut
+只拥有 migration、workspace/composition、集成与删除热点。S5 稳定结果中只有一条
+production path、一个事实 owner 和一套 canonical schema/contract。
+
+实施只使用主会话内嵌 subagent 工具，不建立 Trellis channel。除 Cargo/lockfile、正式
+migration、production composition、canonical generated contracts、breaking public
+contracts 和最终 legacy deletion 等共享热点需要串行 ownership 外，各 bundle 可围绕
+完整纵向结果自行调整模块粒度。详细 context、验证命令、handoff 和 finding 路由见
+`implement.md`。
+
+## 16. 验证设计
+
+### 16.1 Contract
+
+- command/ID 类型不可混用；
+- capability requirement/offer 求交；
+- required apply ack；
+- surface apply/update/revoke；
+- Agent-native Tool/Hook reverse callback、deadline、decision 与 remote replay；
+- unsupported/approximation 不冒充 exact；
+- receipt/inspect unknown outcome；
+- snapshot-only 与 durable change tail profile。
+
+### 16.2 Runtime/Host
+
+- operation/effect idempotency；
+- stale generation quarantine；
+- bind/rebind/lease/recovery；
+- platform snapshot+change reconnect；
+- source snapshot reconcile；
+- projection authority/fidelity；
+- effect 任意 crash point。
+- Fork provisioning/activation 与 Application saga inspect。
+
+### 16.3 Dash Agent/Core
+
+- AgentSession 全状态由 history replay 重建；
+- 删除 projection/index 后 replay 等价；
+- command/effect/mailbox 字段不会进入 Session；
+- DashAgentCommit 原子提交 effect settlement、history append/head/change 与 continuation；
+- Core 无 repository/Runtime/Product 依赖；
+- fork branch digest；
+- manual/automatic compaction A/B/C；
+- tool loop/cancel/streaming。
+
+### 16.4 Adapter
+
+- Dash/Codex/Remote 同一 Complete Agent contract conformance；
+- Codex thread/read/fork/compact/interrupt/interaction；
+- Native 产品 fork 真实继承 history；
+- source change gap/snapshot reconcile；
+- capability descriptor 有行为证据。
+
+### 16.5 Product/Protocol/UI
+
+- AgentRun direct/fork/reconnect；
+- Companion fork vs fresh context；
+- Fork saga 每个 phase/crash boundary；
+- ancestor retention；
+- completed Turn 与 optional Item cutoff；
+- App Server Turn/Item/Compaction 顺序；
+- UI cursor gap、availability、running/failed compaction；
+- 不读取 presentation journal 推导 command/recovery。
+
+### 16.6 Deletion
+
+通过 `cargo metadata`、`rg` 和 schema inspection 证明：
+
+- 旧 crate/trait/table/field 无生产引用；
+- RuntimeJournalFact 不存在；
+- AgentConnector/default capability 不存在；
+- platform `RuntimeSession*` delivery/live/capability/DTO/event 残留不存在；
+- Application 不依赖 Agent implementation；
+- Core 可独立构建测试；
+- 生产 composition 只有最终路径。
+
+## 17. 风险与控制
+
+| Risk | Control |
+| --- | --- |
+| Runtime projection 被误作外部 Agent source truth | authority/fidelity 字段 + adapter conformance + negative tests |
+| platform DB 与 Agent native state 无法原子 | stable effect identity + inspect/reconcile |
+| fork 创建 orphan child | Application-owned durable saga + preallocated IDs + provisioning/activation + native inspect |
+| Native fork 继续空历史 | Dash history fork integration test |
+| Session 再次成为状态桶 | history replay property test + schema/module ownership gate |
+| capability bool 失真 | per-facet profile + applied evidence |
+| tool/hook 双执行 | unique Bound route + effect identity |
+| compaction 被平台统一算法绑死 | Agent-owned capability + Dash/Codex separate conformance |
+| crate 重命名只做 facade | dependency negative gates + old crate deletion |
+| journal 删除导致 UI/reconnect 回归 | Runtime snapshot/change tracer bullet before cutover |
+
+## 18. 被拒绝的边界
+
+### 单一 Hosted AgentSession
+
+平台状态和外部 Agent 内部状态具有不同写 owner、事务和恢复事实，不能由同一 repository
+transaction 统一。
+
+### Driver-only seam
+
+Codex/pi-coding-agent 是完整 Agent，不是无状态 provider executor。低层 driver seam 会迫使
+Runtime 复制其 history/context。
+
+### Runtime owns all compaction
+
+只有 Dash Agent 能保证 exact ContextRevision apply；外部完整 Agent 应保留自己的
+history transformation。
+
+### Runtime projection reconstructs Agent
+
+normalized projection 的 fidelity 取决于 Agent capability，无法替代 Agent-native store。
+
+### 一个 universal capability enum
+
+Fork cutoff、Hook blocking、Tool callback、change durability 的语义不可用同一 bool/level
+准确表达，必须按 facet 建模。
+
+## 19. 完成定义
+
+本分支只有在以下条件全部成立时完成架构收敛：
+
+1. 统一 Runtime 外层覆盖所有 Agent；
+2. Complete Agent service seam 成为 Host 唯一执行边界；
+3. Dash Agent 与 AgentCore 物理分层；
+4. `AgentSession` 只包含 history-maintained state；
+5. Runtime/Host/Agent/Application 各有唯一事实 owner；
+6. Fork、Compaction、Tool、Hook、Change 通过 capability 和 conformance 证明；
+7. RuntimeJournalFact 与旧 connector/SPI/protocol/crate 完成删除；
+8. Application/UI 只依赖 Runtime Contract；
+9. migration 后只有最终 schema；
+10. Native、Codex、Remote、Fork/Companion、Compaction、reconnect 和 recovery 验收通过。

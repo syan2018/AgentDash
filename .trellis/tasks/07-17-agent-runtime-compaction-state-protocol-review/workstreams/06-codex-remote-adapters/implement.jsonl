@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"Codex/Remote Complete Agent mapping 与 source authority。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/codex-session-history-runtime-boundaries.md","reason":"Codex ThreadStore/history/fork/compaction/read/change 证据。"}
+{"file":".trellis/spec/cross-layer/agent-runtime-wire-relay.md","reason":"Remote proxy 与 Relay transport 边界。"}
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"source coordinate、generation 与 inspect/recovery。"}

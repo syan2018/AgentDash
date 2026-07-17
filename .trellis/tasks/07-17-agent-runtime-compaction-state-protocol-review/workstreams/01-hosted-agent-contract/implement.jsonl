@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/backend/architecture.md", "reason": "约束 backend 深模块、application/domain/infrastructure 依赖方向。"}
-{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "约束 Agent entity、command 与 observation 的 typed payload。"}
-{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "约束跨层事件 vocabulary、identity 与生成协议。"}
-{"file": ".trellis/spec/cross-layer/agent-runtime-wire-relay.md", "reason": "读取当前 Runtime wire/relay contract 基线并按 Hosted Agent seam 替换。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "理解 Agent、driver、Runtime 与 Journal 的目标 ownership。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/runtime-state-machine-convergence.md", "reason": "用于现有状态与接口 inventory；其中 journal 作为权威的旧结论已被父 design supersede。"}

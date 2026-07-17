@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"检查 Codex/Remote 相关 R2-R9 与 AC3-AC13。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/codex-session-history-runtime-boundaries.md","reason":"检查平台 projection 未取代 Codex source authority。"}
+{"file":".trellis/spec/cross-layer/agent-runtime-wire-relay.md","reason":"检查 ordered replay、generation 与 Relay 纯 transport。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 protocol/error/conformance test 质量。"}

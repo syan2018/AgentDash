@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 worker/adapter实现与测试质量。"}
-{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "检查 host/binding职责是否内聚且未越权。"}
-{"file": ".trellis/spec/cross-layer/agent-runtime-wire-relay.md", "reason": "检查 effect/observation wire identity与fence。"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查 retry、failure与Lost决策是否typed。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "检查 driver与Journal解耦边界。"}

@@ -1,7 +1,0 @@
-{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "读取 driver host、binding 与 placement 基线并按内部 execution coordination 收敛。"}
-{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "指导 Native adapter capability和执行边界。"}
-{"file": ".trellis/spec/backend/agent-runtime-codex-adapter.md", "reason": "指导 Codex adapter与 App Server/native session交互边界。"}
-{"file": ".trellis/spec/cross-layer/agent-runtime-wire-relay.md", "reason": "约束 execution effect/observation跨进程 wire。"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "定义 transport、typed rejection、retryability 与 Lost 的错误边界。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "确保 driver只产生observation且Runtime不成为第二事实源。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-compaction-state-and-codex-reference.md", "reason": "定位现有 activation/replay、worker与Codex行为。"}

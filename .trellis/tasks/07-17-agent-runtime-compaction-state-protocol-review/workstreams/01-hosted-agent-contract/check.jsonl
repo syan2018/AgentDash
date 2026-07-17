@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/architecture.md", "reason": "检查 contract 是否保持领域与基础设施依赖方向。"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 Rust contract、测试与错误模型质量。"}
-{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "检查 payload 是否 typed 且没有 stringly/vendor leakage。"}
-{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查 wire/change identity、ordering 与跨层一致性。"}
-{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-boundary-and-journal-ownership.md", "reason": "检查 seam 和 ownership 是否符合第一性原理结论。"}

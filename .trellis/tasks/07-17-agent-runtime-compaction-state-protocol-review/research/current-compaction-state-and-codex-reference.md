@@ -1,6 +1,9 @@
 # Agent Runtime 压缩状态与 Codex Reference 对照研究
 
-> 研究状态：本文对当前压缩链与 `references/codex` 的源码证据继续有效；目标状态的 owner 已进一步收敛为 Hosted Agent / AgentSession，而不是独立 Runtime journal。实施以父任务 `design.md` 为准。
+> 研究状态：本文对当前压缩链与 `references/codex` 的源码证据继续有效；目标 owner
+> 已由父设计重新划分：Dash Agent 拥有自己的 history/compaction，Codex 拥有 native
+> compaction，Managed Runtime 只维护平台 operation/projection/change。实施以父任务
+> `design.md` 为准。
 
 ## 1. 结论摘要
 

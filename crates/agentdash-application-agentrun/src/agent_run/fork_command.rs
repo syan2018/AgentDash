@@ -66,12 +66,12 @@ mod tests {
 
     use super::*;
 
-    struct FakeGraphStore {
+    struct RecordingGraphStore {
         calls: Mutex<Vec<&'static str>>,
     }
 
     #[async_trait]
-    impl AgentRunForkGraphStore for FakeGraphStore {
+    impl AgentRunForkGraphStore for RecordingGraphStore {
         async fn create_graph(&self, _graph: &AgentRunForkGraph) -> Result<(), String> {
             self.calls.lock().expect("calls").push("create");
             Ok(())
@@ -99,7 +99,7 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_failure_compensates_the_complete_child_graph() {
-        let graph_store = FakeGraphStore {
+        let graph_store = RecordingGraphStore {
             calls: Mutex::new(Vec::new()),
         };
         let service = AgentRunForkCommandService::new(&graph_store, &FailingRuntime);

@@ -1010,12 +1010,9 @@ impl CompanionGateControlService {
                 ApplicationError::NotFound(format!("gate frame 不存在: {frame_id}"))
             })?
         } else if let Some(agent_id) = gate.agent_id {
-            self.frame_repo
-                .get_latest(agent_id)
-                .await?
-                .ok_or_else(|| {
-                    ApplicationError::NotFound(format!("gate agent 没有当前 frame: {agent_id}"))
-                })?
+            self.frame_repo.get_latest(agent_id).await?.ok_or_else(|| {
+                ApplicationError::NotFound(format!("gate agent 没有当前 frame: {agent_id}"))
+            })?
         } else {
             return Err(ApplicationError::Conflict(format!(
                 "gate 缺少 agent/frame owner: {}",

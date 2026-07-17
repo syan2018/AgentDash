@@ -4,9 +4,6 @@ description = "Shared behavioral conformance harness for AgentDash Agent Runtime
 version.workspace = true
 edition.workspace = true
 
-[features]
-pinned-main-capture = []
-
 [lib]
 path = "src/lib.rs"
 
@@ -17,18 +14,3 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-
-[dev-dependencies]
-agentdash-agent = { workspace = true }
-agentdash-agent-protocol = { workspace = true }
-agentdash-agent-types = { package = "oracle-agentdash-agent-types", path = "shims/agentdash-agent-types" }
-agentdash-diagnostics = { workspace = true }
-agentdash-spi = { workspace = true }
-agentdash-relay = { workspace = true }
-codex-app-server-protocol = { package = "oracle-codex-app-server-protocol", path = "shims/codex-app-server-protocol" }
-sha2 = { workspace = true }
-base64 = { workspace = true }
-flate2 = { workspace = true }
-
-[build-dependencies]
-sha2 = { workspace = true }

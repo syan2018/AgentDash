@@ -3,7 +3,7 @@
   "name": "agent-runtime-compaction-state-protocol-review",
   "title": "Agent Runtime 最终架构收敛与状态协议重构",
   "description": "继承 07-10 尚未完成的目标，从第一性原理收敛统一 Agent Runtime、完整 Agent service seam、Dash Agent、AgentCore、状态权威、compaction、fork、协议投影与 crate 拓扑。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": "refactor",
   "scope": "agent-runtime",
   "package": null,

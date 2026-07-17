@@ -3,7 +3,7 @@
 use agentdash_domain::common::AgentBackendRequirement;
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun, SubjectRef};
 use agentdash_domain::workspace::{Workspace, WorkspaceBinding};
-use agentdash_spi::{AgentConfig, AuthIdentity, ConnectorError, Vfs};
+use agentdash_spi::{AgentConfig, ConnectorError, Vfs};
 
 use crate::agent_run::frame::{
     AgentFrameBuilder, AgentFrameSurfaceExt, FrameLaunchEnvelope,
@@ -52,7 +52,6 @@ impl<'a> ProjectAgentOwnerCompositionContext<'a> {
     fn owner_bootstrap_composer(&self) -> super::OwnerBootstrapComposer<'_> {
         let composer = super::OwnerBootstrapComposer::new(
             self.vfs_service,
-            self.repos.canvas_repo.as_ref(),
             self.availability,
             self.repos,
             self.platform_config,
@@ -73,10 +72,8 @@ pub(super) struct ProjectAgentOwnerCompositionInput<'a> {
     pub executor_config_override: Option<AgentConfig>,
     pub user_input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub existing_vfs: Option<Vfs>,
-    pub visible_canvas_mount_ids: Vec<String>,
     pub active_workflow: Option<ActiveWorkflowProjection>,
     pub launch_path: super::OwnerPromptLaunchPath,
-    pub identity: Option<&'a AuthIdentity>,
     pub runtime_session_id: String,
 }
 
@@ -91,7 +88,6 @@ pub(super) async fn compose(
         svc.prompt_launch_path(frame.typed_execution_profile().as_ref(), input),
     );
     let user_input = required_user_input(input.command.prompt())?;
-    let identity = input.command.identity();
     let active_workflow = resolve_active_workflow_projection_from_message_stream_trace(
         input.session_id.as_str(),
         &svc.repos,
@@ -110,10 +106,8 @@ pub(super) async fn compose(
             executor_config_override: input.command.prompt().executor_config.clone(),
             user_input,
             existing_vfs: frame.typed_vfs(),
-            visible_canvas_mount_ids: frame.visible_canvas_mount_ids(),
             active_workflow,
             launch_path,
-            identity: identity.as_ref(),
             runtime_session_id: input.session_id.clone(),
         },
     )
@@ -209,7 +203,6 @@ pub(super) async fn compose_project_agent_owner_frame(
                     agent_display_name: agent_context.display_name.clone(),
                     preset_name: agent_context.preset_name.clone(),
                 },
-                identity: input.identity,
                 subject_context_contributions,
                 subject_owner_ctx,
                 subject_workspace,
@@ -232,8 +225,7 @@ pub(super) async fn compose_project_agent_owner_frame(
                     .unwrap_or_default(),
                 request_mcp_servers: Vec::new(),
                 existing_vfs: input.existing_vfs,
-                visible_canvas_mount_ids: input.visible_canvas_mount_ids,
-                visible_workspace_module_refs: agent_context
+                workspace_module_policy_refs: agent_context
                     .preset_config
                     .visible_workspace_module_refs
                     .clone(),

@@ -129,6 +129,7 @@ interface WorkspaceTabState {
 }
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let layoutRestoreRevision = 0;
 const PERSIST_DEBOUNCE_MS = 1500;
 
 export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
@@ -139,10 +140,12 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   initialize: (workspaceKey, saved, options) => {
     // 尝试加载已保存的布局（异步，不阻塞初始化）
     if (!saved && workspaceKey) {
+      const restoreRevision = layoutRestoreRevision;
       void loadWorkspaceTabLayout(workspaceKey)
         .then((loaded) => {
           if (
             loaded
+            && restoreRevision === layoutRestoreRevision
             && get().workspaceKey === workspaceKey
             && get().tabs.every((t) => t.pinned)
           ) {
@@ -328,6 +331,8 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   },
 
   pruneInvalidTabs: (options) => {
+    // 当前投影已经到达；任何更早发起的异步布局恢复都不得再覆盖这次校验。
+    layoutRestoreRevision += 1;
     const state = get();
     const nextTabs = state.tabs.filter(
       (tab) => tab.pinned || canUseTabUri(tab.typeId, tab.uri, options),
@@ -370,6 +375,7 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   },
 
   reset: () => {
+    layoutRestoreRevision += 1;
     if (persistTimer) {
       clearTimeout(persistTimer);
       persistTimer = null;

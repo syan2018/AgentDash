@@ -77,7 +77,9 @@ pub struct AgentPresetConfig {
     /// 此 Agent 可见的 Workspace Module ref 白名单（形如 `ext:{key}` / `canvas:{canvas_mount_id}`）。
     ///
     /// 事实源为 ProjectAgent 定义，frame construction 据此填充
-    /// `AgentFrame.visible_workspace_module_refs_json`。`None`/空 → 全集可见；非空 → 仅白名单。
+    /// ProjectAgent 声明式 workspace module 授权输入。启动时编译进
+    /// `CapabilityState.workspace_module`；运行期当前 Canvas 由 canonical VFS mount 表达，
+    /// 不复制这份配置列表。`None`/空 → 全集可见；非空 → 仅白名单。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub visible_workspace_module_refs: Option<Vec<String>>,
 }

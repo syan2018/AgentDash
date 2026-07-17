@@ -204,7 +204,6 @@ describe("AgentRun control-plane model", () => {
     });
     expect(planAgentRunWorkspaceModuleOpened()).toEqual({
       refreshWorkspaceState: true,
-      refreshWorkspaceModuleCatalog: true,
       hookRuntimeRefresh: { reason: "workspace_module_user_opened" },
     });
   });
@@ -264,7 +263,6 @@ describe("AgentRun control-plane model", () => {
 
     expect(plan).toEqual({
       refreshWorkspaceState: true,
-      refreshWorkspaceModuleCatalog: true,
       hookRuntimeRefresh: {
         reason: "control_plane:resource_surface:capability_state_changed",
       },
@@ -291,12 +289,20 @@ describe("AgentRun control-plane model", () => {
 
     expect(plan).toEqual({
       refreshWorkspaceState: true,
-      refreshWorkspaceModuleCatalog: true,
       hookRuntimeRefresh: {
         reason: "control_plane:resource_surface:capability_state_changed",
       },
       openWorkspacePanel: {
-        afterWorkspaceRefresh: false,
+        afterWorkspaceRefresh: true,
+        presentation: {
+          module_id: "canvas:canvas-1",
+          view_key: "preview",
+          renderer_kind: "canvas",
+          presentation_uri: "canvas://canvas-1",
+          title: "Canvas Preview",
+          payload: null,
+          diagnostics: null,
+        },
         target: {
           typeId: "canvas",
           uri: "canvas://canvas-1",
@@ -326,7 +332,6 @@ describe("AgentRun control-plane model", () => {
 
     expect(plan).toEqual({
       refreshWorkspaceState: true,
-      refreshWorkspaceModuleCatalog: true,
       hookRuntimeRefresh: {
         reason: "control_plane:resource_surface:capability_state_changed",
       },

@@ -1,5 +1,8 @@
 import type { JsonValue } from "../../../generated/common-contracts";
-import type { WorkspaceModulePresentation } from "../../../generated/workspace-module-contracts";
+import type {
+  WorkspaceModuleDescriptor,
+  WorkspaceModulePresentation,
+} from "../../../generated/workspace-module-contracts";
 
 export interface WorkspaceModuleTabTarget {
   typeId: string;
@@ -67,4 +70,26 @@ export function workspaceModulePresentationTabTarget(
     typeId: viewKey,
     uri: presentationUri || undefined,
   };
+}
+
+export function isWorkspaceModulePresentationCurrent(
+  presentation: WorkspaceModulePresentation,
+  modules: readonly WorkspaceModuleDescriptor[],
+): boolean {
+  const moduleId = presentation.module_id.trim();
+  const viewKey = presentation.view_key.trim();
+  const rendererKind = presentation.renderer_kind.trim();
+  const presentationUri = presentation.presentation_uri.trim();
+  if (!moduleId || !viewKey || !rendererKind) return false;
+
+  const module = modules.find((candidate) =>
+    candidate.summary.module_id === moduleId
+    && candidate.summary.status.kind === "ready"
+  );
+  if (!module) return false;
+  return module.ui_entries.some((entry) =>
+    entry.view_key === viewKey
+    && entry.renderer_kind === rendererKind
+    && (entry.presentation_uri?.trim() ?? "") === presentationUri
+  );
 }

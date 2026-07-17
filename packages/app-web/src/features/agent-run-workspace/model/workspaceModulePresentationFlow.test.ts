@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { AgentRunWorkspaceView } from "../../../generated/workflow-contracts";
 import type { SessionEventEnvelope } from "../../session/model/types";
 import { dispatchPlatformSideEffectEvents } from "../../session/ui/SessionChatViewModel";
 import { planAgentRunSystemEvent } from "./controlPlaneModel";
@@ -59,11 +60,57 @@ function workspaceModulePresentedEvent(): BackboneEvent {
   };
 }
 
+function agentRunWorkspace(
+  workspaceModules: AgentRunWorkspaceView["workspace_modules"],
+): AgentRunWorkspaceView {
+  return {
+    run_ref: { run_id: "run-1" },
+    agent_ref: { run_id: "run-1", agent_id: "agent-1" },
+    project_id: "project-1",
+    shell: {
+      display_title: "Run",
+      title_source: "runtime",
+      delivery_status: "ready",
+      last_activity_at: "2026-07-17T06:18:29.136Z",
+    },
+    control_plane: {
+      status: "ready",
+      ownership: {
+        run_created_by_user_id: "user-1",
+        agent_created_by_user_id: "user-1",
+        current_user_controls_run: true,
+      },
+    },
+    workspace_modules: workspaceModules,
+    subject_associations: [],
+    children: [],
+  };
+}
+
 describe("Workspace Module presentation frontend flow", () => {
-  it("replays the typed control-plane projection through the page executor and opens its renderer target", () => {
+  it("refreshes the current AgentRun projection before replaying a presentation target", async () => {
     const openWorkspacePanel = vi.fn();
-    const refreshAgentRunWorkspaceState = vi.fn(async () => undefined);
-    const refreshWorkspaceModuleCatalog = vi.fn();
+    const refreshAgentRunWorkspaceState = vi.fn(async () => agentRunWorkspace([
+      {
+        summary: {
+          module_id: "canvas:cvs-canvas",
+          kind: "canvas",
+          title: "临时 Canvas 展示测试",
+          description: "",
+          source: "cvs-canvas",
+          operation_summary: [],
+          permission_summary: [],
+          status: { kind: "ready" },
+        },
+        ui_entries: [{
+          view_key: "preview",
+          renderer_kind: "canvas",
+          presentation_uri: "canvas://cvs-canvas",
+          title: "临时 Canvas 展示测试",
+        }],
+        operations: [],
+      },
+    ]));
     const scheduleHookRuntimeRefresh = vi.fn();
     const refreshAgentRunList = vi.fn();
 
@@ -107,7 +154,6 @@ describe("Workspace Module presentation frontend flow", () => {
           planAgentRunSystemEvent(eventType, event),
           {
             refreshAgentRunWorkspaceState,
-            refreshWorkspaceModuleCatalog,
             openWorkspacePanel,
             scheduleHookRuntimeRefresh,
             refreshAgentRunList,
@@ -117,11 +163,38 @@ describe("Workspace Module presentation frontend flow", () => {
     );
 
     expect(lastSeenSeq).toBe(97);
-    expect(openWorkspacePanel).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(refreshAgentRunWorkspaceState).toHaveBeenCalledTimes(1);
+      expect(openWorkspacePanel).toHaveBeenCalledTimes(1);
+    });
     expect(openWorkspacePanel).toHaveBeenCalledWith({
       typeId: "canvas",
       uri: "canvas://cvs-canvas",
       options: { refreshContent: false },
     });
   });
+
+  it("does not replay a historical presentation after its Canvas left the current projection", async () => {
+    const refreshAgentRunWorkspaceState = vi.fn(async () => agentRunWorkspace([]));
+    const openWorkspacePanel = vi.fn();
+
+    applyAgentRunControlPlaneEffectPlan(
+      planAgentRunSystemEvent(
+        "control_plane_projection_changed",
+        workspaceModulePresentedEvent(),
+      ),
+      {
+        refreshAgentRunWorkspaceState,
+        openWorkspacePanel,
+        scheduleHookRuntimeRefresh: vi.fn(),
+        refreshAgentRunList: vi.fn(),
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(refreshAgentRunWorkspaceState).toHaveBeenCalledTimes(1);
+    });
+    expect(openWorkspacePanel).not.toHaveBeenCalled();
+  });
+
 });

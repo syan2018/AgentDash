@@ -8,18 +8,16 @@ use std::collections::BTreeSet;
 use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::agent::ProjectAgent;
-use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::{AgentConfig, ProjectVfsMountExposureGrant};
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{AuthIdentity, CapabilityScopeCtx};
+use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::AgentFrameBuilder;
-use crate::canvas::project_visible_canvas_mounts;
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
     ContextContributionSource, ContextContributions, McpCandidates, ToolContribution,
@@ -105,7 +103,6 @@ impl<'a> OwnerScope<'a> {
 /// Owner bootstrap compose 的完整输入。
 pub(crate) struct OwnerBootstrapSpec<'a> {
     pub owner: OwnerScope<'a>,
-    pub identity: Option<&'a AuthIdentity>,
     /// `LifecycleSubjectAssociation` 动态解析出的 subject 上下文。
     ///
     /// ProjectAgent 仍以 Project owner 启动；Story/Task 作为 subject profile 在这里叠加，
@@ -120,11 +117,10 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     pub project_vfs_mount_exposure_grants: Vec<ProjectVfsMountExposureGrant>,
     pub request_mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
     pub existing_vfs: Option<Vfs>,
-    pub visible_canvas_mount_ids: Vec<String>,
     /// ProjectAgent preset 声明的 workspace module 可见性白名单。
     ///
     /// `None` / `Some([])` 代表全集可见，非空列表代表 allowlist。
-    pub visible_workspace_module_refs: Option<Vec<String>>,
+    pub workspace_module_policy_refs: Option<Vec<String>>,
     pub active_workflow: Option<ports_lifecycle_surface::ActiveWorkflowProjection>,
     pub launch_path: OwnerPromptLaunchPath,
     pub lifecycle_address: ports_agent_run_surface::AgentRunRuntimeAddress,
@@ -155,7 +151,6 @@ enum OwnerAuditLaunchPath {
 
 pub(crate) struct OwnerBootstrapComposer<'a> {
     pub vfs_service: &'a VfsService,
-    pub canvas_repo: &'a dyn CanvasRepository,
     pub availability: &'a dyn BackendAvailability,
     pub repos: &'a RepositorySet,
     pub platform_config: &'a PlatformConfig,
@@ -167,7 +162,6 @@ pub(crate) struct OwnerBootstrapComposer<'a> {
 impl<'a> OwnerBootstrapComposer<'a> {
     pub(crate) fn new(
         vfs_service: &'a VfsService,
-        canvas_repo: &'a dyn CanvasRepository,
         availability: &'a dyn BackendAvailability,
         repos: &'a RepositorySet,
         platform_config: &'a PlatformConfig,
@@ -175,7 +169,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
     ) -> Self {
         Self {
             vfs_service,
-            canvas_repo,
             availability,
             repos,
             platform_config,
@@ -224,7 +217,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         let backend_bound_surface = vfs_has_runtime_backend_anchor(vfs.as_ref());
         apply_owner_backend_surface_capabilities(
             &mut cap_output,
-            spec.visible_workspace_module_refs.as_deref(),
+            spec.workspace_module_policy_refs.as_deref(),
             backend_bound_surface,
         );
         let runtime_mcp_servers = normalize_owner_bootstrap_mcp_projection(
@@ -356,7 +349,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             );
         }
 
-        let mut vfs = if matches!(spec.owner, OwnerScope::Project { .. }) {
+        let vfs = if matches!(spec.owner, OwnerScope::Project { .. }) {
             let builtin_skills =
                 ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::Project(vec![
                     ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
@@ -411,18 +404,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
         } else {
             ports_lifecycle_surface::project_active_workflow_lifecycle_vfs(vfs, active_workflow)
         };
-        if let Some(space) = vfs.as_mut() {
-            project_visible_canvas_mounts(
-                self.canvas_repo,
-                project_id,
-                space,
-                &spec.visible_canvas_mount_ids,
-                spec.identity,
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        }
-
         Ok(vfs)
     }
 
@@ -865,13 +846,13 @@ fn normalize_owner_bootstrap_mcp_projection(
 
 fn apply_owner_backend_surface_capabilities(
     capability_state: &mut CapabilityState,
-    visible_workspace_module_refs: Option<&[String]>,
+    workspace_module_policy_refs: Option<&[String]>,
     include_backend_bound_surface: bool,
 ) {
     if include_backend_bound_surface {
         capability_state.workspace_module =
             crate::agent_run::runtime_capability::project_workspace_module_dimension(
-                visible_workspace_module_refs,
+                workspace_module_policy_refs,
             );
         return;
     }

@@ -212,7 +212,6 @@ fn test_invocation_surface(
         current_surface_frame_id: frame_id,
         surface_revision: i32::try_from(revision.0).expect("test surface revision"),
         capability_state: agentdash_spi::CapabilityState::default(),
-        visible_workspace_module_refs: Vec::new(),
         vfs: agentdash_spi::Vfs::default(),
         vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy::default(),
         mcp_servers: Vec::new(),
@@ -1400,8 +1399,6 @@ fn compiled_binding_matches(
         && existing.surface.current_surface_frame_id == binding.surface.current_surface_frame_id
         && existing.surface.surface_revision == binding.surface.surface_revision
         && existing.surface.capability_state == binding.surface.capability_state
-        && existing.surface.visible_workspace_module_refs
-            == binding.surface.visible_workspace_module_refs
         && existing.surface.vfs == binding.surface.vfs
         && existing.surface.vfs_access_policy == binding.surface.vfs_access_policy
         && existing.surface.mcp_servers == binding.surface.mcp_servers
@@ -2491,7 +2488,6 @@ mod tests {
             current_surface_frame_id: frame_id,
             surface_revision: i32::try_from(revision).unwrap(),
             capability_state: CapabilityState::default(),
-            visible_workspace_module_refs: Vec::new(),
             vfs: agentdash_spi::Vfs::default(),
             vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy::default(),
             mcp_servers: Vec::new(),
@@ -2633,7 +2629,6 @@ mod tests {
                 frame_id: current_surface_frame_id,
             };
         surface.launch_evidence_frame_id = launch_evidence_frame_id;
-        surface.visible_workspace_module_refs = vec!["workspace.module.fixture".to_string()];
         surface.provenance.launch_evidence_frame_id = launch_evidence_frame_id;
         surface.provenance.current_surface_frame_id = current_surface_frame_id;
         surface.provenance.orchestration_id = Some(orchestration_id);
@@ -2695,10 +2690,6 @@ mod tests {
             assert_eq!(
                 recovered.surface.current_surface_frame_id,
                 current_surface_frame_id
-            );
-            assert_eq!(
-                recovered.surface.visible_workspace_module_refs,
-                ["workspace.module.fixture"]
             );
             assert_eq!(
                 recovered.surface.provenance.orchestration_id,

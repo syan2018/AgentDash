@@ -8,6 +8,7 @@ use ts_rs::TS;
 use crate::agent_run_mailbox::{MailboxMessageView, MailboxStateView};
 use crate::shared_library::InstalledAssetSourceDto;
 use crate::vfs::ResolvedVfsSurface;
+use crate::workspace_module::WorkspaceModuleDescriptor;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1330,6 +1331,8 @@ pub struct AgentRunWorkspaceView {
     pub project_id: String,
     pub shell: AgentRunWorkspaceShell,
     pub control_plane: AgentRunWorkspaceControlPlaneView,
+    #[serde(default)]
+    pub workspace_modules: Vec<WorkspaceModuleDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub agent: Option<AgentRunView>,

@@ -1,16 +1,32 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
-use agentdash_contracts::workspace_module::WorkspaceModuleDescriptor;
+use agentdash_application_vfs::PROVIDER_CANVAS_FS;
+use agentdash_contracts::workspace_module::{WorkspaceModuleDescriptor, WorkspaceModuleKind};
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
-use agentdash_spi::WorkspaceModuleDimension;
+use agentdash_spi::{Vfs, WorkspaceModuleDimension};
 use uuid::Uuid;
 
 use crate::extension_runtime::extension_runtime_projection_from_installations;
 use crate::workspace_module::{
     WorkspaceModuleOperationContext, build_workspace_modules_with_operation_context,
 };
+
+#[derive(Debug, Clone, Copy)]
+pub struct WorkspaceModuleVisibilityInput<'a> {
+    pub base_visibility: &'a WorkspaceModuleDimension,
+    pub runtime_vfs: &'a Vfs,
+}
+
+impl<'a> From<&'a AgentRunEffectiveCapabilityView> for WorkspaceModuleVisibilityInput<'a> {
+    fn from(view: &'a AgentRunEffectiveCapabilityView) -> Self {
+        Self {
+            base_visibility: &view.capability_state.workspace_module,
+            runtime_vfs: &view.vfs_surface,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceModuleVisibilityDiagnostic {
@@ -23,21 +39,34 @@ pub struct WorkspaceModuleVisibilityDiagnostic {
 pub struct WorkspaceModuleVisibilityProjection {
     pub modules: Vec<WorkspaceModuleDescriptor>,
     pub base_visibility: WorkspaceModuleDimension,
-    pub runtime_refs: Vec<String>,
     pub diagnostics: Vec<WorkspaceModuleVisibilityDiagnostic>,
+}
+
+fn runtime_canvas_module_refs(vfs: &Vfs) -> Vec<String> {
+    let mut refs = vfs
+        .mounts
+        .iter()
+        .filter(|mount| mount.provider == PROVIDER_CANVAS_FS)
+        .map(|mount| mount.id.trim())
+        .filter(|mount_id| !mount_id.is_empty())
+        .map(|mount_id| format!("canvas:{mount_id}"))
+        .collect::<Vec<_>>();
+    refs.sort();
+    refs.dedup();
+    refs
 }
 
 pub async fn resolve_workspace_module_visibility(
     installation_repo: &Arc<dyn ProjectExtensionInstallationRepository>,
     canvas_repo: &Arc<dyn CanvasRepository>,
     project_id: Uuid,
-    view: &AgentRunEffectiveCapabilityView,
+    input: WorkspaceModuleVisibilityInput<'_>,
 ) -> Result<WorkspaceModuleVisibilityProjection, String> {
     resolve_workspace_module_visibility_with_operation_context(
         installation_repo,
         canvas_repo,
         project_id,
-        view,
+        input,
         &WorkspaceModuleOperationContext::default(),
     )
     .await
@@ -47,7 +76,7 @@ pub async fn resolve_workspace_module_visibility_with_operation_context(
     installation_repo: &Arc<dyn ProjectExtensionInstallationRepository>,
     canvas_repo: &Arc<dyn CanvasRepository>,
     project_id: Uuid,
-    view: &AgentRunEffectiveCapabilityView,
+    input: WorkspaceModuleVisibilityInput<'_>,
     operation_context: &WorkspaceModuleOperationContext,
 ) -> Result<WorkspaceModuleVisibilityProjection, String> {
     let installations = installation_repo
@@ -63,41 +92,62 @@ pub async fn resolve_workspace_module_visibility_with_operation_context(
         .await
         .map_err(|error| error.to_string())?;
 
-    let base_visibility = view.capability_state.workspace_module.clone();
-    let runtime_refs = view.visible_workspace_module_refs.clone();
-    let mut diagnostics = Vec::new();
     let modules =
         build_workspace_modules_with_operation_context(&projection, &canvases, operation_context);
+    Ok(project_workspace_module_visibility(modules, input))
+}
+
+pub fn project_workspace_module_visibility(
+    modules: Vec<WorkspaceModuleDescriptor>,
+    input: WorkspaceModuleVisibilityInput<'_>,
+) -> WorkspaceModuleVisibilityProjection {
+    let base_visibility = input.base_visibility.clone();
+    let runtime_canvas_refs = runtime_canvas_module_refs(input.runtime_vfs);
+    let mut diagnostics = Vec::new();
     let visible_modules = modules
         .into_iter()
         .filter(|module| {
             base_visibility.allows(&module.summary.module_id)
-                || runtime_refs
+                || runtime_canvas_refs
                     .iter()
                     .any(|module_ref| module_ref == &module.summary.module_id)
         })
         .collect::<Vec<_>>();
 
-    for module_ref in runtime_refs.iter().filter(|module_ref| {
+    for module_ref in runtime_canvas_refs.iter().filter(|module_ref| {
         !visible_modules
             .iter()
             .any(|module| module.summary.module_id == **module_ref)
     }) {
         diagnostics.push(WorkspaceModuleVisibilityDiagnostic {
-            code: "runtime_ref_not_found".to_string(),
+            code: "mounted_canvas_not_found".to_string(),
             message: format!(
-                "runtime workspace module ref `{module_ref}` is not backed by an enabled module"
+                "mounted Canvas workspace module `{module_ref}` is not backed by a current project asset"
             ),
             module_ref: Some(module_ref.clone()),
         });
     }
 
-    Ok(WorkspaceModuleVisibilityProjection {
+    WorkspaceModuleVisibilityProjection {
         modules: visible_modules,
         base_visibility,
-        runtime_refs,
         diagnostics,
-    })
+    }
+}
+
+pub fn project_agent_run_workspace_module_visibility(
+    modules: Vec<WorkspaceModuleDescriptor>,
+    input: WorkspaceModuleVisibilityInput<'_>,
+) -> WorkspaceModuleVisibilityProjection {
+    let runtime_canvas_refs = runtime_canvas_module_refs(input.runtime_vfs);
+    let mut projection = project_workspace_module_visibility(modules, input);
+    projection.modules.retain(|module| {
+        module.summary.kind != WorkspaceModuleKind::Canvas
+            || runtime_canvas_refs
+                .iter()
+                .any(|module_ref| module_ref == &module.summary.module_id)
+    });
+    projection
 }
 
 #[cfg(test)]
@@ -107,6 +157,7 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::canvas::{Canvas, CanvasRepository};
+    use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionRuntimeActionDefinition,
@@ -344,12 +395,33 @@ mod tests {
         (install_repo, canvas_repo, project_id)
     }
 
+    fn canvas_vfs(mount_ids: impl IntoIterator<Item = impl Into<String>>) -> Vfs {
+        Vfs {
+            mounts: mount_ids
+                .into_iter()
+                .map(|mount_id| Mount {
+                    id: mount_id.into(),
+                    provider: PROVIDER_CANVAS_FS.to_string(),
+                    backend_id: String::new(),
+                    root_ref: String::new(),
+                    capabilities: vec![MountCapability::Read],
+                    default_write: false,
+                    display_name: String::new(),
+                    metadata: serde_json::json!({}),
+                })
+                .collect(),
+            ..Vfs::default()
+        }
+    }
+
     fn view(
         workspace_module: WorkspaceModuleDimension,
-        runtime_refs: Vec<String>,
+        runtime_canvas_mount_ids: Vec<String>,
     ) -> AgentRunEffectiveCapabilityView {
         let mut state = CapabilityState::from_clusters([ToolCluster::WorkspaceModule]);
         state.workspace_module = workspace_module;
+        let runtime_vfs = canvas_vfs(runtime_canvas_mount_ids);
+        state.vfs.active = Some(runtime_vfs.clone());
         AgentRunEffectiveCapabilityView {
             target: AgentFrameRuntimeTarget {
                 frame_id: Uuid::new_v4(),
@@ -359,10 +431,9 @@ mod tests {
                 .unwrap(),
             },
             visible_capabilities: state.tool.capabilities.clone(),
-            vfs_surface: state.vfs.active.clone().unwrap_or_default(),
+            vfs_surface: runtime_vfs,
             mcp_surface: Vec::new(),
             capability_state: state,
-            visible_workspace_module_refs: runtime_refs,
         }
     }
 
@@ -373,7 +444,10 @@ mod tests {
             &install_repo,
             &canvas_repo,
             project_id,
-            &view(WorkspaceModuleDimension::all(), Vec::new()),
+            WorkspaceModuleVisibilityInput::from(&view(
+                WorkspaceModuleDimension::all(),
+                Vec::new(),
+            )),
         )
         .await
         .expect("resolve visibility");
@@ -389,7 +463,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_refs_extend_allowlist_from_agent_run_view() {
+    async fn mounted_canvas_extends_allowlist_from_agent_run_view() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let base = WorkspaceModuleDimension {
             mode: WorkspaceModuleVisibilityMode::Allowlist,
@@ -399,7 +473,7 @@ mod tests {
             &install_repo,
             &canvas_repo,
             project_id,
-            &view(base, vec!["canvas:cvs-dashboard-a".to_string()]),
+            WorkspaceModuleVisibilityInput::from(&view(base, vec!["cvs-dashboard-a".to_string()])),
         )
         .await
         .expect("resolve visibility");
@@ -412,14 +486,10 @@ mod tests {
         assert_eq!(module_ids.len(), 2);
         assert!(module_ids.contains(&"ext:demo"));
         assert!(module_ids.contains(&"canvas:cvs-dashboard-a"));
-        assert_eq!(
-            projection.runtime_refs,
-            vec!["canvas:cvs-dashboard-a".to_string()]
-        );
     }
 
     #[tokio::test]
-    async fn missing_runtime_ref_reports_diagnostic_without_fabricating_module() {
+    async fn missing_mounted_canvas_reports_diagnostic_without_fabricating_module() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let base = WorkspaceModuleDimension {
             mode: WorkspaceModuleVisibilityMode::Allowlist,
@@ -429,17 +499,56 @@ mod tests {
             &install_repo,
             &canvas_repo,
             project_id,
-            &view(base, vec!["canvas:missing".to_string()]),
+            WorkspaceModuleVisibilityInput::from(&view(base, vec!["missing".to_string()])),
         )
         .await
         .expect("resolve visibility");
 
         assert!(projection.modules.is_empty());
         assert_eq!(projection.diagnostics.len(), 1);
-        assert_eq!(projection.diagnostics[0].code, "runtime_ref_not_found");
+        assert_eq!(projection.diagnostics[0].code, "mounted_canvas_not_found");
         assert_eq!(
             projection.diagnostics[0].module_ref.as_deref(),
             Some("canvas:missing")
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_run_projection_only_exposes_canvases_in_canonical_vfs() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+        let all = WorkspaceModuleDimension::all();
+        let runtime_vfs = Vfs::default();
+        let modules = resolve_workspace_module_visibility(
+            &install_repo,
+            &canvas_repo,
+            project_id,
+            WorkspaceModuleVisibilityInput {
+                base_visibility: &all,
+                runtime_vfs: &runtime_vfs,
+            },
+        )
+        .await
+        .expect("resolve project visibility")
+        .modules;
+        let projection = project_agent_run_workspace_module_visibility(
+            modules,
+            WorkspaceModuleVisibilityInput {
+                base_visibility: &all,
+                runtime_vfs: &runtime_vfs,
+            },
+        );
+
+        assert!(
+            projection
+                .modules
+                .iter()
+                .any(|module| module.summary.module_id == "ext:demo")
+        );
+        assert!(
+            projection
+                .modules
+                .iter()
+                .all(|module| module.summary.module_id != "canvas:cvs-dashboard-a")
         );
     }
 }

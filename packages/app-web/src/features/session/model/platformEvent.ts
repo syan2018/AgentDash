@@ -20,6 +20,7 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
   if (platform.kind === "hook_trace") return "hook_event";
   if (platform.kind === "provider_attempt_status") return "provider_attempt_status";
   if (platform.kind === "session_rewound") return "session_rewound";
+  if (platform.kind === "context_frame_changed") return "context_frame_changed";
   if (platform.kind === "control_plane_projection_changed") {
     if (platform.data.workspace_module_presentation) {
       return "workspace_module_presented";

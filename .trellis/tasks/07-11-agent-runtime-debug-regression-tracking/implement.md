@@ -163,3 +163,16 @@
 - [x] 增加Canvas present零surface mutation、presentation identity normalization与normalized delta回归。
 - [x] 运行Tool Broker、Runtime projection、Workspace Module、Native Integration、Canvas前端测试、typecheck/lint与diff检查。
 - [x] 使用`pnpm dev`真实Canvas create/write/present确认工具唯一terminal、用户可打开Canvas且后续对话不进入Lost。
+
+## ARD-017
+
+- [x] 增加回归测试：AgentRun workspace projection必须包含current VFS已挂载且仍有backing asset的Canvas，删除asset后该项消失。
+- [x] 增加回归测试：live `ContextFrameChanged`进入通用workspace refresh；presentation必须等待refresh完成。
+- [x] 增加回归测试：菜单与presentation共同消费AgentRun `workspace_modules`；旧Project catalog缓存不能影响列表，历史presentation不能打开current projection不存在的URI。
+- [x] 将Workspace Module visibility resolver输入收敛为visibility dimension与canonical VFS，并复用于AgentRun workspace query。
+- [x] 将generated `AgentRunWorkspaceView`扩展为携带runtime-scoped `workspace_modules`，同步API mapper与TypeScript contract。
+- [x] 删除AgentRun WorkspacePanel对Project Workspace Module store及前端resource-surface二次求交的依赖。
+- [x] 删除AgentFrame/Runtime Surface/Platform Tool owner中的Canvas/module ref副本及VFS重建入口，并以migration删除数据库列和surface JSON key。
+- [x] 以current `workspace_modules`清理持久化Canvas tab，并阻止更早发起的异步layout restore覆盖currentness校验。
+- [x] 将`ContextFrameChanged`接入页面control-plane invalidation；presentation执行改为refresh后current projection校验。
+- [x] 运行定向Rust、contract generation/check、前端测试/typecheck/lint及真实`pnpm dev`产品链验证。

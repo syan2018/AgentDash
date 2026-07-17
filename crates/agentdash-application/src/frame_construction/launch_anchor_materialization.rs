@@ -133,10 +133,8 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
                 executor_config_override,
                 user_input: Vec::new(),
                 existing_vfs: None,
-                visible_canvas_mount_ids: Vec::new(),
                 active_workflow: None,
                 launch_path: OwnerPromptLaunchPath::OwnerBootstrap,
-                identity: None,
                 runtime_session_id: runtime_session_id.clone(),
             },
         )

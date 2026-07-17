@@ -14,6 +14,7 @@ import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type {
   AgentRunWorkspaceState,
 } from "../../workspace-panel/model/useAgentRunWorkspaceState";
+import { isWorkspaceModulePresentationCurrent } from "../../workspace-module/model/presentation";
 import {
   planAgentRunMessageSent,
   planAgentRunSystemEvent,
@@ -45,7 +46,7 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
   draftProjectAgent: ProjectAgentSummary | null;
   isProjectAgentDraft: boolean;
   agentRunWorkspaceState: AgentRunWorkspaceState;
-  refreshAgentRunWorkspaceState: () => Promise<unknown>;
+  refreshAgentRunWorkspaceState: () => Promise<AgentRunWorkspaceView | null>;
   refreshAgentRunHookRuntime: () => Promise<unknown>;
   traceExecutorHint?: string | null;
   taskExecutorSummary?: TaskSessionExecutorSummary | null;
@@ -57,7 +58,6 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
   onDraftStarted: (response: ProjectAgentRunStartResult) => void;
   onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
   refreshAgentRunList: (reason: string) => void;
-  refreshWorkspaceModuleCatalog: () => void;
   openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
 }
 
@@ -75,8 +75,7 @@ interface UseAgentRunWorkspaceControlPlaneResult {
 }
 
 export interface AgentRunControlPlaneEffectExecutor {
-  refreshAgentRunWorkspaceState: () => Promise<unknown>;
-  refreshWorkspaceModuleCatalog: () => void;
+  refreshAgentRunWorkspaceState: () => Promise<AgentRunWorkspaceView | null>;
   openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
   scheduleHookRuntimeRefresh: (reason: string, immediate?: boolean) => void;
   refreshAgentRunList: (reason: string) => void;
@@ -89,20 +88,24 @@ export function applyAgentRunControlPlaneEffectPlan(
   const openPlan = plan.openWorkspacePanel;
   if (openPlan?.afterWorkspaceRefresh) {
     void (async () => {
+      let workspace: AgentRunWorkspaceView | null = null;
       if (plan.refreshWorkspaceState) {
-        await executor.refreshAgentRunWorkspaceState().catch(() => {});
+        workspace = await executor.refreshAgentRunWorkspaceState().catch(() => null);
       }
-      if (plan.refreshWorkspaceModuleCatalog) {
-        executor.refreshWorkspaceModuleCatalog();
+      if (
+        !workspace
+        || !isWorkspaceModulePresentationCurrent(
+          openPlan.presentation,
+          workspace.workspace_modules,
+        )
+      ) {
+        return;
       }
       executor.openWorkspacePanel(openPlan.target);
     })();
   } else {
     if (plan.refreshWorkspaceState) {
       void executor.refreshAgentRunWorkspaceState().catch(() => {});
-    }
-    if (plan.refreshWorkspaceModuleCatalog) {
-      executor.refreshWorkspaceModuleCatalog();
     }
     if (openPlan) {
       executor.openWorkspacePanel(openPlan.target);
@@ -136,7 +139,6 @@ export function useAgentRunWorkspaceControlPlane({
   onDraftStarted,
   onAgentRunRedirect,
   refreshAgentRunList,
-  refreshWorkspaceModuleCatalog,
   openWorkspacePanel,
 }: UseAgentRunWorkspaceControlPlaneOptions): UseAgentRunWorkspaceControlPlaneResult {
   const fetchAndIngestLifecycleRun = useLifecycleStore((state) => state.fetchAndIngestLifecycleRun);
@@ -377,7 +379,6 @@ export function useAgentRunWorkspaceControlPlane({
   const applyControlPlaneEffectPlan = useCallback((plan: AgentRunControlPlaneEffectPlan) => {
     applyAgentRunControlPlaneEffectPlan(plan, {
       refreshAgentRunWorkspaceState,
-      refreshWorkspaceModuleCatalog,
       openWorkspacePanel,
       scheduleHookRuntimeRefresh,
       refreshAgentRunList,
@@ -386,7 +387,6 @@ export function useAgentRunWorkspaceControlPlane({
     openWorkspacePanel,
     refreshAgentRunList,
     refreshAgentRunWorkspaceState,
-    refreshWorkspaceModuleCatalog,
     scheduleHookRuntimeRefresh,
   ]);
 

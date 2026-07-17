@@ -161,6 +161,10 @@ AgentRunCommandReceipt {
 ## 5. Workspace Module, Canvas and VFS
 
 - Workspace Module presentation payload 的 concrete URI 是 tab identity；浏览器不根据 view key 猜测资源 URI。
+- `AgentRunWorkspaceView.workspace_modules` 是 AgentRun 页面当前可见 Workspace Module 的唯一
+  UI 投影。后端按当前精确 AgentFrame 的 runtime module refs 与已授权 Project 资产组合该
+  字段；菜单、展示事件校验和 renderer 都消费这一份响应，原因是它们必须对“当前可打开资源”
+  得出相同结论。
 - `workspace_module_presentation` 是 durable、可回放的 control-plane projection。前端把
   携带该 typed payload 的事件渲染为成功事件，并在 hydration/live 两条路径上交给同一个
   Workspace Module target mapper。payload 是否存在是 presentation intent 的判据；
@@ -192,6 +196,11 @@ workspaceModulePresentationTabTarget(
   data: WorkspaceModulePresentation | null,
 ): WorkspaceModuleTabTarget | null;
 
+isWorkspaceModulePresentationCurrent(
+  presentation: WorkspaceModulePresentation,
+  modules: readonly WorkspaceModuleDescriptor[],
+): boolean;
+
 openOrActivateInWorkspace(
   workspaceKey: string | null,
   typeId: string,
@@ -200,17 +209,36 @@ openOrActivateInWorkspace(
 ): string;
 ```
 
+```text
+GET /agent-runs/{run_id}/agents/{agent_id}/workspace
+  -> AgentRunWorkspaceView {
+       ...,
+       workspace_modules: WorkspaceModuleDescriptor[],
+     }
+```
+
 #### 3. Contracts
 
+- backend 从 workspace snapshot 定位当前精确 AgentFrame，读取该 frame 的
+  `visible_workspace_module_refs`，再与当前用户可访问的 Project Workspace Module 资产组合
+  `workspace_modules`。Canvas 只有同时具备 Project 资产与精确 runtime ref 才进入 AgentRun
+  投影；Project 中已删除的 Canvas 不会由历史 frame ref 重新制造出来。
+- `WorkspacePanel` 的“可打开 Canvas”菜单直接选择
+  `AgentRunWorkspaceView.workspace_modules` 中 ready 的 Canvas entry，不再建立页面级 Project
+  catalog 缓存或在浏览器中与 resource surface 二次求交。这样刷新完成即得到一个原子版本的
+  模块 identity、状态、view、renderer 与 URI。
 - backend 在 canonical AgentRun journal 中持久化 typed
   `ControlPlaneProjectionChanged.workspace_module_presentation`；payload 携带
   `module_id`、`view_key`、`renderer_kind`、`presentation_uri`、`title` 与 `payload`。
 - 初次 hydration 回放边界内的 typed control-plane projection；普通 Hook/meta 的一次性
   副作用仍从 `historyReplayBoundarySeq` 之后开始。后续 live event 继续使用同一 cursor 和
   dispatcher。
-- mapper 只按 typed payload 与 concrete presentation URI 生成 registry tab target。
-  打开动作不等待 Workspace state/catalog refresh，原因是 present 不修改 AgentFrame 或
-  resource surface。
+- `context_frame_changed` 是 current workspace projection 的 canonical invalidation event；
+  页面收到后刷新 workspace state，使 SurfaceAdopt 产生的新 module refs 同步进入列表。
+- mapper 先按 typed payload 与 concrete presentation URI 生成 registry tab target；executor
+  随后等待 workspace refresh，并要求 `module_id + view_key + renderer_kind +
+  presentation_uri` 精确匹配当前 ready descriptor 后才打开。durable presentation 描述的是
+  历史意图，而当前 workspace 投影决定该资源现在是否仍可打开。
 - imperative UI owner 必须携带当前 AgentRun workspace key；tab store 在打开前原子切换到
   该 scope。WorkspacePanel 首次 effect 从 store 读取最新 workspace key，使 hydration 与
   mount effect 的先后顺序不影响最终 active tab。
@@ -219,9 +247,14 @@ openOrActivateInWorkspace(
 
 | Condition | Required behavior |
 | --- | --- |
-| typed presentation 位于 `seq <= historyReplayBoundarySeq` | 进入通用 control-plane executor 并按 URI 打开目标 |
+| typed presentation 位于 `seq <= historyReplayBoundarySeq` | 进入通用 executor；刷新 current workspace 后仅在精确 descriptor 仍存在时打开 |
 | 普通 Hook/meta 位于 hydration 边界内 | 重建展示状态，但不重复执行一次性页面副作用 |
-| `workspace_module_presentation` 存在且 `reason` 为其他刷新原因 | 同时执行该 reason 的通用 refresh plan 与 presentation open |
+| 收到 `context_frame_changed` | invalidate/refetch AgentRun workspace，列表从新 `workspace_modules` 原子更新 |
+| `workspace_module_presentation` 存在且 `reason` 为其他刷新原因 | 合并为一次 workspace refresh，校验 current descriptor 后执行 presentation open |
+| runtime ref 存在但 Project Canvas 资产已删除 | `workspace_modules` 不含该 Canvas；菜单不可见，历史 presentation 不打开 |
+| 当前 module/view/renderer/URI 任一不匹配事件 payload | 保留审计事件，不执行 tab open |
+| 当前 module status 不是 `ready` | 菜单不提供入口，presentation 不打开 |
+| workspace refresh 失败 | 不执行 presentation open；错误由 workspace state owner 呈现 |
 | Canvas `presentation_uri` 为空或仅为 `canvas://` | mapper 拒绝生成无资源 identity 的 Canvas target |
 | tab store 当前 workspace 与命令目标不同 | 先初始化目标 workspace，再打开并激活 tab |
 | presentation 先于 WorkspacePanel 首次 effect | effect 识别已绑定的 workspace，保留刚打开的 tab |
@@ -229,35 +262,52 @@ openOrActivateInWorkspace(
 #### 5. Good / Base / Bad Cases
 
 - Good：canonical seq 94 的 Canvas presentation 在 seq 97 tool completion 已进入 hydration
-  boundary 时仍打开 `canvas://{mount_id}`，侧栏展开、tab 激活且 renderer 可见。
+  boundary 时，workspace refresh 返回同一 ready descriptor，随后打开
+  `canvas://{mount_id}`，侧栏展开、tab 激活且 renderer 可见。
 - Base：live presentation 走同一 dispatcher、planner、imperative owner 与 scoped store，
-  不需要单独的 Canvas handler。
-- Bad：planner 回归只断言 `openWorkspacePanel` 被调用，却没有验证随后 WorkspacePanel mount
-  effect 后 active tab 仍然存在；这无法证明用户可见闭环。
+  `context_frame_changed` 走通用 workspace invalidation，不需要单独的 Canvas handler。
+- Bad：事件 URI 可以打开、菜单却从另一份 Project cache 计算为空；两者无法共享同一版本，
+  因而不能证明用户可见闭环。
 
 #### 6. Tests Required
 
 - hydration dispatcher 回归：typed projection 在 boundary 内执行一次，普通历史 meta 不执行。
-- payload-based planner 回归：presentation 与任意通用 refresh reason 可组合，不按 reason
-  分叉。
+- payload-based planner 回归：presentation 先等待 workspace refresh，再精确匹配 current
+  descriptor；空投影不会打开历史 Canvas。
+- control-plane 回归：`context_frame_changed` 必须刷新 AgentRun workspace。
+- backend visibility 回归：Canvas 只有同时存在 Project asset 与 runtime ref 时进入
+  `workspace_modules`。
 - scoped tab store 回归：presentation 先执行、WorkspacePanel 初始化后执行，目标 tab 保持
   active。
-- production 页面验证：同一真实 journal 上同时断言成功事件、侧栏展开、concrete active tab
-  与 renderer 内容。
+- production 页面验证：同一真实 journal 上同时断言成功事件、菜单 entry、侧栏展开、
+  concrete active tab 与 renderer 内容；删除资产后旧事件不能重新打开该 URI。
 
 #### 7. Wrong vs Correct
 
 ```ts
-// Wrong: 首帧捕获的旧 scope 可在 presentation 之后重置 tab。
-if (capturedWorkspaceKey !== workspaceKey) {
-  store.initialize(workspaceKey);
+// Wrong: 事件与菜单分别消费不同版本的事实，无法判断资源当前是否仍存在。
+const target = workspaceModulePresentationTabTarget(event.presentation);
+if (target) {
+  store.openOrActivate(target.typeId, target.uri);
 }
-store.openOrActivate(typeId, uri);
 
-// Correct: 命令绑定 owner scope，mount effect 再读取最新 store。
-store.openOrActivateInWorkspace(workspaceKey, typeId, uri, options);
-if (useWorkspaceTabStore.getState().workspaceKey !== workspaceKey) {
-  useWorkspaceTabStore.getState().initialize(workspaceKey);
+// Correct: 刷新唯一 current projection，精确校验后原子绑定 owner scope。
+const currentTarget = workspaceModulePresentationTabTarget(event.presentation);
+const workspace = await refreshAgentRunWorkspaceState();
+if (
+  currentTarget
+  &&
+  workspace
+  && isWorkspaceModulePresentationCurrent(
+    event.presentation,
+    workspace.workspace_modules,
+  )
+) {
+  store.openOrActivateInWorkspace(
+    workspaceKey,
+    currentTarget.typeId,
+    currentTarget.uri,
+  );
 }
 ```
 
@@ -279,8 +329,8 @@ if (useWorkspaceTabStore.getState().workspaceKey !== workspaceKey) {
 - Bad：前端调用已经没有后端实现的 fork/mailbox endpoint，或根据 `execution_status=running` 自行启用 cancel。
 - Bad：把Runtime `active`直接映射为running，或把`closed`直接映射为completed，会把thread lifecycle误当成turn/产品终态。
 - Bad：只保存durable cursor或在每次重连从transient sequence 0开始，导致同一delta重复追加。
-- Good：Canvas presentation 用 `canvas://{mount_id}` 立即打开 tab；Canvas renderer 独立读取当前已
-  adopted AgentFrame surface，真实 surface 变化再通过对应 reason 触发刷新。
+- Good：Canvas presentation 先刷新 `AgentRunWorkspaceView.workspace_modules`，精确匹配
+  `canvas://{mount_id}` 后打开 tab；同一响应同时驱动“可打开 Canvas”菜单。
 - Bad：把 RuntimeWire frame转成 Backbone JSON 再由 UI 推导 Runtime terminal。
 
 ## 8. Wrong vs Correct

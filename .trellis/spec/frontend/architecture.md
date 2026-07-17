@@ -10,7 +10,12 @@ Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecyc
 - `AgentRuntimeFeed`等平行renderer不存在；AgentRun workspace只提供Runtime target、inspect、command availability与product projection，不拥有第二套会话UI。
 - Workspace Module/Canvas tab以concrete presentation URI为identity；layout按AgentRun product key持久化。
 - VFS/resource surface来自current AgentFrame/Business Surface；Runtime binding只提供typed execution coordinate。
-- Canvas用户可打开项由ready Workspace Module catalog与durable `ResolvedVfsSurface`中`purpose=canvas`的mount求交；`runtimeStatus`只控制执行命令可用性，Lost/terminal不得隐藏已经adopted的资源。
+- Canvas 用户可打开项直接来自 `AgentRunWorkspaceView.workspace_modules` 的 ready Canvas
+  entries。该服务端投影已经组合当前 canonical VFS Canvas mounts、workspace-module授权与可访问Project资产，
+  因此菜单和 presentation validation 不再各自拼装事实；`runtimeStatus` 只控制执行命令
+  可用性，Lost/terminal 不隐藏仍在该 current projection 中的资源。
+- 持久化的Canvas tab只是布局偏好，不是资源事实。current `workspace_modules` ready后按
+  concrete presentation URI清理失效tab；异步布局恢复不得覆盖这次currentness校验。
 - UI intent必须对应真实API/facade command；无canonical endpoint的按钮、service与contract必须一起删除。
 - errors保持typed code/diagnostic；stale command触发inspect refresh，不静默retry不同语义命令。
 
@@ -32,4 +37,5 @@ React intent
 - session presentation parity覆盖message/reasoning/plan/tool/context/Companion/usage/error/interaction、item terminal与transient generation切换。
 - service URL/encoding、Draft create/composer/cancel/context/approval tests。
 - Workspace presentation、Canvas/VFS surface与Runtime Lost UI tests。
-- Canvas资源测试必须覆盖Runtime Lost但resource surface仍包含Canvas mount时，用户入口和既有tab保持可打开。
+- Canvas 资源测试必须覆盖 Runtime Lost 但 current `workspace_modules` 仍含 Canvas 时用户入口
+  和既有 tab 保持可打开，以及 Project 资产删除后历史 presentation 不重新打开该 Canvas。

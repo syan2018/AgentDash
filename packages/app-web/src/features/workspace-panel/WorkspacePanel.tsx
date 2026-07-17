@@ -23,13 +23,9 @@ import type { WorkspaceTabLayoutOptions } from "../../stores/workspaceTabStore";
 import {
   canvasMountIdFromPresentationUri,
   openUserCanvasModule,
-  selectCanvasModuleOpenOptionsFromRuntimeSurface,
+  selectCanvasModuleOpenOptions,
   type CanvasModuleOpenOption,
 } from "./model/canvasModuleOpen";
-import {
-  useWorkspaceModuleStore,
-} from "../workspace-module/model/workspaceModuleStore";
-import { idleProjectWorkspaceModulesState } from "../workspace-module/model/types";
 
 registerBuiltinTabTypes();
 
@@ -46,13 +42,15 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     const activeTabId = useWorkspaceTabStore((s) => s.activeTabId);
     const storeWorkspaceKey = useWorkspaceTabStore((s) => s.workspaceKey);
     const registrySnapshot = useTabTypeRegistrySnapshot();
-    const fetchWorkspaceModules = useWorkspaceModuleStore((s) => s.fetchProject);
-    const storedWorkspaceModuleState = useWorkspaceModuleStore(
-      useCallback((s) => projectId ? s.byProjectId[projectId] ?? null : null, [projectId]),
-    );
     const [canvasOpenBusyKey, setCanvasOpenBusyKey] = useState<string | null>(null);
     const [canvasOpenError, setCanvasOpenError] = useState<string | null>(null);
+    const canvasOptions = useMemo(
+      () => selectCanvasModuleOpenOptions(runtimeData.workspaceModules),
+      [runtimeData.workspaceModules],
+    );
 
+    // 命令式打开只校验 URI 形态；对应 module/view/renderer 的当前性已由 workspace
+    // presentation contract 校验。这样刚完成 refresh 的新 Canvas 不依赖 React 重渲染时序。
     const tabLayoutOptions: WorkspaceTabLayoutOptions = useMemo(() => ({
       tabTypes: registrySnapshot.map((type) => ({
         typeId: type.typeId,
@@ -70,35 +68,42 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       },
     }), [registrySnapshot]);
 
+    const restorableTabLayoutOptions: WorkspaceTabLayoutOptions = useMemo(() => {
+      if (runtimeData.runtimeStatus !== "ready") return tabLayoutOptions;
+      const currentCanvasUris = new Set(
+        canvasOptions.map((option) => option.presentation_uri),
+      );
+      return {
+        ...tabLayoutOptions,
+        tabTypes: tabLayoutOptions.tabTypes.map((type) => (
+          type.typeId === "canvas"
+            ? {
+              ...type,
+              canCreateUri: (uri: string) => currentCanvasUris.has(uri),
+            }
+            : type
+        )),
+      };
+    }, [canvasOptions, runtimeData.runtimeStatus, tabLayoutOptions]);
+
     // 首次挂载或 AgentRun workspace 切换时初始化 Tab 状态
     useEffect(() => {
       const store = useWorkspaceTabStore.getState();
       if (store.workspaceKey !== workspaceKey) {
-        store.initialize(workspaceKey, null, tabLayoutOptions);
+        store.initialize(workspaceKey, null, restorableTabLayoutOptions);
       }
-    }, [tabLayoutOptions, workspaceKey]);
+    }, [restorableTabLayoutOptions, workspaceKey]);
 
     useEffect(() => {
       if (storeWorkspaceKey !== workspaceKey) return;
-      useWorkspaceTabStore.getState().pruneInvalidTabs(tabLayoutOptions);
-    }, [storeWorkspaceKey, tabLayoutOptions, workspaceKey]);
-
-    const workspaceModuleState = useMemo(() => {
-      if (storedWorkspaceModuleState) return storedWorkspaceModuleState;
-      if (!projectId) return idleProjectWorkspaceModulesState();
-      return {
-        project_id: projectId,
-        status: "idle" as const,
-        modules: [],
-        error: null,
-      };
-    }, [projectId, storedWorkspaceModuleState]);
-
-    useEffect(() => {
-      if (!projectId) return;
-      if (workspaceModuleState.status !== "idle") return;
-      void fetchWorkspaceModules(projectId);
-    }, [fetchWorkspaceModules, projectId, workspaceModuleState.status]);
+      if (runtimeData.runtimeStatus !== "ready") return;
+      useWorkspaceTabStore.getState().pruneInvalidTabs(restorableTabLayoutOptions);
+    }, [
+      restorableTabLayoutOptions,
+      runtimeData.runtimeStatus,
+      storeWorkspaceKey,
+      workspaceKey,
+    ]);
 
     useEffect(() => {
       if (
@@ -149,14 +154,6 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       useWorkspaceTabStore.getState().addTab(typeId, undefined, true, tabLayoutOptions);
     }, [tabLayoutOptions]);
 
-    const canvasOptions = useMemo(
-      () => selectCanvasModuleOpenOptionsFromRuntimeSurface(
-        workspaceModuleState.modules,
-        runtimeData.runtimeSurface,
-      ),
-      [runtimeData.runtimeSurface, workspaceModuleState.modules],
-    );
-
     const handleOpenCanvasModule = useCallback(async (option: CanvasModuleOpenOption) => {
       const busyKey = `${option.module_id}:${option.view_key}`;
       setCanvasOpenBusyKey(busyKey);
@@ -167,7 +164,7 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
           openOrActivate: (typeId, uri, refreshContent) => {
             const tabId = useWorkspaceTabStore
               .getState()
-              .openOrActivate(typeId, uri, tabLayoutOptions);
+              .openOrActivateInWorkspace(workspaceKey, typeId, uri, tabLayoutOptions);
             if (tabId && refreshContent) {
               useWorkspaceTabStore.getState().refreshTab(tabId);
             }
@@ -184,6 +181,7 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     }, [
       onWorkspaceModuleOpened,
       tabLayoutOptions,
+      workspaceKey,
     ]);
 
     const handleActivate = useCallback((tabId: string) => {
@@ -254,7 +252,7 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
             onReorder={handleReorder}
             onAddTab={handleAddTab}
             canvasOptions={canvasOptions}
-            canvasOptionsStatus={workspaceModuleState.status}
+            canvasOptionsStatus={runtimeData.runtimeStatus}
             canvasOpenBusyKey={canvasOpenBusyKey}
             canvasOpenError={canvasOpenError}
             onOpenCanvasModule={handleOpenCanvasModule}

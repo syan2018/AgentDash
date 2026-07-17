@@ -340,7 +340,6 @@ fn execution_context_for_owner(
                 presentation_thread_id: presentation_thread_id
                     .parse()
                     .expect("presentation thread"),
-                visible_workspace_module_refs: Vec::new(),
                 invocation: Some(agentdash_spi::PlatformToolInvocationCoordinates {
                     runtime_turn_id: "turn-production-catalog".parse().expect("runtime turn"),
                     runtime_item_id: "item-production-catalog".parse().expect("runtime item"),

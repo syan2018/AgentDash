@@ -762,6 +762,30 @@ fn main() {
         },
     );
 
+    // --- workspace-module-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "workspace-module-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<WorkspaceModuleKind>(dir);
+            export_all::<WorkspaceModuleStatusKind>(dir);
+            export_all::<WorkspaceModuleStatus>(dir);
+            export_all::<WorkspaceModuleSummary>(dir);
+            export_all::<WorkspaceModuleUiEntry>(dir);
+            export_all::<WorkspaceModuleCanvasHostAction>(dir);
+            export_all::<WorkspaceModuleOperationVisibility>(dir);
+            export_all::<WorkspaceModuleOperationDispatch>(dir);
+            export_all::<WorkspaceModuleOperationReadinessKind>(dir);
+            export_all::<WorkspaceModuleOperationReadiness>(dir);
+            export_all::<WorkspaceModuleOperation>(dir);
+            export_all::<WorkspaceModuleDescriptor>(dir);
+            export_all::<WorkspaceModulePresentRequest>(dir);
+            export_all::<WorkspaceModulePresentation>(dir);
+        },
+    );
+
     // --- workflow-contracts.ts ---
     let workflow_footer = workflow_contracts_footer();
     emit_domain_with_footer(
@@ -967,30 +991,6 @@ fn main() {
             export_all::<ExtensionBackendServiceDiagnosticResponse>(dir);
             export_all::<ExtensionRuntimeInvokeBackendServiceResponse>(dir);
             export_all::<UninstallExtensionInstallationResponse>(dir);
-        },
-    );
-
-    // --- workspace-module-contracts.ts ---
-    emit_domain(
-        &generated_dir,
-        "workspace-module-contracts.ts",
-        &mut upstream,
-        check,
-        |dir| {
-            export_all::<WorkspaceModuleKind>(dir);
-            export_all::<WorkspaceModuleStatusKind>(dir);
-            export_all::<WorkspaceModuleStatus>(dir);
-            export_all::<WorkspaceModuleSummary>(dir);
-            export_all::<WorkspaceModuleUiEntry>(dir);
-            export_all::<WorkspaceModuleCanvasHostAction>(dir);
-            export_all::<WorkspaceModuleOperationVisibility>(dir);
-            export_all::<WorkspaceModuleOperationDispatch>(dir);
-            export_all::<WorkspaceModuleOperationReadinessKind>(dir);
-            export_all::<WorkspaceModuleOperationReadiness>(dir);
-            export_all::<WorkspaceModuleOperation>(dir);
-            export_all::<WorkspaceModuleDescriptor>(dir);
-            export_all::<WorkspaceModulePresentRequest>(dir);
-            export_all::<WorkspaceModulePresentation>(dir);
         },
     );
 

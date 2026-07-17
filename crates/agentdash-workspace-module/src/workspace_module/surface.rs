@@ -54,7 +54,8 @@ use crate::workspace_module::runtime_bridge::{
 use crate::workspace_module::{
     ResolvedInvocationBackend, WorkspaceModuleOperationContext,
     WorkspaceModuleRuntimeActionCatalog, WorkspaceModuleRuntimeContext,
-    build_canvas_workspace_module, build_workspace_module_presentation,
+    WorkspaceModuleVisibilityInput, build_canvas_workspace_module,
+    build_workspace_module_presentation,
     resolve_workspace_module_visibility_with_operation_context, validate_input_against_schema,
 };
 
@@ -451,7 +452,7 @@ impl WorkspaceModuleAgentSurface {
             context.installation_repo,
             context.canvas_repo,
             context.project_id,
-            &view,
+            WorkspaceModuleVisibilityInput::from(&view),
             &operation_context,
         )
         .await
@@ -1783,7 +1784,6 @@ mod tests {
             vfs_surface: state.vfs.active.clone().unwrap_or_default(),
             mcp_surface: Vec::new(),
             capability_state: state,
-            visible_workspace_module_refs: Vec::new(),
         }
     }
 

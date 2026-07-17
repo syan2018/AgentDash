@@ -578,7 +578,6 @@ mod surface_closure_tests {
             current_surface_frame_id: current_frame_id,
             surface_revision: 7,
             capability_state: agentdash_spi::CapabilityState::default(),
-            visible_workspace_module_refs: vec!["canvas:dashboard".to_string()],
             vfs: Vfs {
                 mounts: vec![Mount {
                     id: "workspace".to_string(),
@@ -657,10 +656,6 @@ mod surface_closure_tests {
         assert_eq!(owner.orchestration_id, Some(orchestration_id));
         assert_eq!(owner.node_path.as_deref(), Some("root/tool"));
         assert_eq!(owner.node_attempt, Some(4));
-        assert_eq!(
-            owner.visible_workspace_module_refs,
-            vec!["canvas:dashboard".to_string()]
-        );
         assert_eq!(invocation.runtime_turn_id, turn_id);
         assert_eq!(invocation.runtime_item_id, item_id);
         assert_eq!(
@@ -713,7 +708,6 @@ fn execution_context_for_surface(
                 runtime_thread_id: RuntimeThreadId::new(surface.runtime_session_id.clone())
                     .map_err(|error| error.to_string())?,
                 presentation_thread_id: surface.presentation_thread_id.clone(),
-                visible_workspace_module_refs: surface.visible_workspace_module_refs.clone(),
                 invocation: coordinates.map(|coordinates| PlatformToolInvocationCoordinates {
                     runtime_turn_id: coordinates.turn_id.clone(),
                     runtime_item_id: coordinates.item_id.clone(),

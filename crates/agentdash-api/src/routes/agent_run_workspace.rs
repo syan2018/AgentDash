@@ -1,5 +1,5 @@
 use agentdash_application_agentrun::agent_run::{
-    self as app_agent_run, workspace as app_workspace,
+    self as app_agent_run, project_capability_state_from_frame, workspace as app_workspace,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
@@ -18,11 +18,18 @@ use agentdash_contracts::workflow::{
     LifecycleSubjectAssociationDto, RuntimeSessionRefDto, SubjectRefDto, ValidationSeverity,
 };
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
+use agentdash_workspace_module::workspace_module::{
+    WorkspaceModuleVisibilityInput, project_agent_run_workspace_module_visibility,
+};
 use uuid::Uuid;
 
 use crate::{
     app_state::AppState,
-    routes::{lifecycle_agents::mailbox_message_contract, vfs_surfaces::dto as vfs_surface_dto},
+    auth::project_authorization_context,
+    routes::{
+        lifecycle_agents::mailbox_message_contract, vfs_surfaces::dto as vfs_surface_dto,
+        workspace_module::load_project_workspace_modules,
+    },
     rpc::ApiError,
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
@@ -31,7 +38,7 @@ pub(crate) async fn load(
     state: &AppState,
     run: LifecycleRun,
     agent: LifecycleAgent,
-    viewer_user_id: &str,
+    current_user: &agentdash_spi::AuthIdentity,
 ) -> Result<AgentRunWorkspaceView, ApiError> {
     let runtime_projection = ApiVfsSurfaceRuntimeProjection::new(
         state.services.backend_registry.clone(),
@@ -69,11 +76,46 @@ pub(crate) async fn load(
         .resolve(app_workspace::AgentRunWorkspaceQueryInput {
             run,
             agent,
-            viewer_user_id: Some(viewer_user_id.to_string()),
+            viewer_user_id: Some(current_user.user_id.clone()),
         })
         .await
         .map_err(ApiError::from)?;
-    Ok(workspace_to_contract(snapshot))
+    let workspace_modules = match snapshot.frame_runtime.as_ref() {
+        Some(frame_runtime) => {
+            let frame_id = Uuid::parse_str(&frame_runtime.frame_ref.frame_id).map_err(|_| {
+                ApiError::Internal(format!(
+                    "AgentRun workspace frame id is invalid: {}",
+                    frame_runtime.frame_ref.frame_id
+                ))
+            })?;
+            let frame = state
+                .repos
+                .agent_frame_repo
+                .get(frame_id)
+                .await?
+                .ok_or_else(|| {
+                    ApiError::NotFound(format!("AgentFrame `{frame_id}` does not exist"))
+                })?;
+            let capability_state = project_capability_state_from_frame(&frame);
+            let runtime_vfs = capability_state.vfs.active.clone().unwrap_or_default();
+            let project_modules = load_project_workspace_modules(
+                state,
+                &project_authorization_context(current_user),
+                snapshot.run.project_id,
+            )
+            .await?;
+            project_agent_run_workspace_module_visibility(
+                project_modules,
+                WorkspaceModuleVisibilityInput {
+                    base_visibility: &capability_state.workspace_module,
+                    runtime_vfs: &runtime_vfs,
+                },
+            )
+            .modules
+        }
+        None => Vec::new(),
+    };
+    Ok(workspace_to_contract(snapshot, workspace_modules))
 }
 
 pub(crate) async fn resolve_lineage(
@@ -158,6 +200,7 @@ async fn lineage_ref(
 
 fn workspace_to_contract(
     snapshot: app_workspace::AgentRunWorkspaceSnapshot,
+    workspace_modules: Vec<agentdash_contracts::workspace_module::WorkspaceModuleDescriptor>,
 ) -> AgentRunWorkspaceView {
     let mailbox = mailbox_state_to_contract(snapshot.mailbox);
     let mailbox_messages = snapshot
@@ -184,6 +227,7 @@ fn workspace_to_contract(
             last_activity_at: snapshot.shell.last_activity_at,
         },
         control_plane: workspace_control_plane(&conversation),
+        workspace_modules,
         agent: snapshot.agent_view.map(|agent| AgentRunView {
             agent_ref: AgentRunRefDto {
                 run_id: agent.agent_ref.run_id,

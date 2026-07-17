@@ -6,6 +6,7 @@ import type { AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, Convers
 import type { ConversationEffectiveExecutorConfigView, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 import type { ResolvedVfsSurface } from "./vfs-contracts";
+import type { WorkspaceModuleDescriptor } from "./workspace-module-contracts";
 
 export type ActiveRuntimeNodeRefDto = { run_id: string, orchestration_id: string, node_path: string, attempt: number, status: string, };
 
@@ -73,7 +74,7 @@ export type AgentRunWorkspaceControlPlaneView = { status: AgentRunWorkspaceContr
 
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
-export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot, parent?: AgentRunLineageRef, children: Array<AgentRunLineageRef>, };
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, control_plane: AgentRunWorkspaceControlPlaneView, workspace_modules: Array<WorkspaceModuleDescriptor>, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot, parent?: AgentRunLineageRef, children: Array<AgentRunLineageRef>, };
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 

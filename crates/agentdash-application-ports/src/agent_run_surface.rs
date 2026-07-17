@@ -54,7 +54,6 @@ pub struct AgentRunRuntimeSurface {
     pub current_surface_frame_id: Uuid,
     pub surface_revision: i32,
     pub capability_state: CapabilityState,
-    pub visible_workspace_module_refs: Vec<String>,
     pub vfs: Vfs,
     pub vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy,
     pub mcp_servers: Vec<RuntimeMcpServer>,
@@ -237,7 +236,6 @@ pub struct AgentRunEffectiveCapabilityView {
     pub visible_capabilities: BTreeSet<ToolCapability>,
     pub vfs_surface: Vfs,
     pub mcp_surface: Vec<RuntimeMcpServer>,
-    pub visible_workspace_module_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -197,7 +197,6 @@ pub fn effective_capability_view_from_context(
             .or_else(|| context.session.vfs.clone())
             .unwrap_or_default(),
         mcp_surface: context.session.mcp_servers.clone(),
-        visible_workspace_module_refs: owner.visible_workspace_module_refs.clone(),
     })
 }
 
@@ -463,7 +462,6 @@ mod tests {
             presentation_thread_id: "presentation-typed-owner"
                 .parse()
                 .expect("presentation thread"),
-            visible_workspace_module_refs: vec!["canvas:dashboard".to_string()],
             invocation: None,
             launch_evidence_frame_id: Uuid::new_v4(),
             current_surface_frame_id: frame_id,
@@ -479,10 +477,6 @@ mod tests {
         );
         let view = effective_capability_view_from_context(&context).unwrap();
         assert_eq!(view.target.frame_id, frame_id);
-        assert_eq!(
-            view.visible_workspace_module_refs,
-            vec!["canvas:dashboard".to_string()]
-        );
     }
 
     #[test]

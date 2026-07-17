@@ -65,8 +65,8 @@ impl AgentRunForkGraphStore for PostgresAgentRunForkGraphStore {
         let surface = frame.surface_document();
         sqlx::query(
             "INSERT INTO agent_frames \
-             (id,agent_id,revision,surface,effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,visible_canvas_mount_ids_json,visible_workspace_module_refs_json,execution_profile_json,hook_plan,created_by_kind,created_by_id,created_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
+             (id,agent_id,revision,surface,effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,execution_profile_json,hook_plan,created_by_kind,created_by_id,created_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
@@ -76,8 +76,6 @@ impl AgentRunForkGraphStore for PostgresAgentRunForkGraphStore {
         .bind(surface.context_slice)
         .bind(surface.vfs_surface)
         .bind(surface.mcp_surface)
-        .bind(surface.visible_canvas_mount_ids)
-        .bind(surface.visible_workspace_module_refs)
         .bind(surface.execution_profile)
         .bind(surface.hook_plan)
         .bind(&frame.created_by_kind)

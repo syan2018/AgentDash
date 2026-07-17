@@ -19,13 +19,12 @@ import type {
 import type { AgentRunWorkspaceListEntry, ProjectAgentSummary } from "../types";
 import { collectCompanionSubagentRefs } from "./AgentRunWorkspacePage.companionRefs";
 import {
-  activeCanvasMountIdsFromRuntimeSurface,
   openUserCanvasModule,
   selectCanvasModuleOpenOptions,
-  selectCanvasModuleOpenOptionsFromRuntimeSurface,
 } from "../features/workspace-panel/model/canvasModuleOpen";
 import {
   isConcreteCanvasPresentationUri,
+  isWorkspaceModulePresentationCurrent,
   workspaceModulePresentationFromPlatformEventData,
   workspaceModulePresentationTabTarget,
 } from "./AgentRunWorkspacePage.workspaceModulePresentation";
@@ -55,6 +54,7 @@ function workspaceView(
       status: controlStatus === "running" ? "running" : controlStatus === "ready" ? "ready" : "terminal",
       ownership,
     },
+    workspace_modules: [],
     agent: {
       agent_ref: { run_id: "run-1", agent_id: "agent-1" },
       project_id: "project-1",
@@ -271,6 +271,22 @@ describe("workspaceModulePresentationTabTarget", () => {
       typeId: "inspector",
       uri: "ext-demo://panel",
     });
+  });
+
+  it("只让仍存在于 current AgentRun projection 的精确 presentation 生效", () => {
+    const module = canvasModule("canvas:cvs-dashboard-a", "canvas://cvs-dashboard-a");
+    const current = presentation({
+      module_id: "canvas:cvs-dashboard-a",
+      renderer_kind: "canvas",
+      presentation_uri: "canvas://cvs-dashboard-a",
+    });
+
+    expect(isWorkspaceModulePresentationCurrent(current, [module])).toBe(true);
+    expect(isWorkspaceModulePresentationCurrent({
+      ...current,
+      presentation_uri: "canvas://deleted",
+    }, [module])).toBe(false);
+    expect(isWorkspaceModulePresentationCurrent(current, [])).toBe(false);
   });
 });
 
@@ -547,6 +563,30 @@ describe("workspaceTabStore Canvas tab identity", () => {
 
     useWorkspaceTabStore.getState().reset();
   });
+
+  it("prunes a persisted Canvas tab that is absent from the current workspace projection", () => {
+    useWorkspaceTabStore.getState().reset();
+    useWorkspaceTabStore.getState().initialize("agentrun:run-1:agent-1", {
+      tabs: [{
+        type_id: "canvas",
+        uri: "canvas://cvs-deleted",
+        title: "Deleted Canvas",
+        pinned: false,
+      }],
+      active_tab_uri: "canvas://cvs-deleted",
+    }, canvasLayoutOptions);
+
+    useWorkspaceTabStore.getState().pruneInvalidTabs({
+      ...canvasLayoutOptions,
+      tabTypes: [{
+        ...canvasLayoutOptions.tabTypes[0],
+        canCreateUri: (uri) => uri === "canvas://cvs-current",
+      }],
+    });
+
+    expect(useWorkspaceTabStore.getState().tabs).toEqual([]);
+    useWorkspaceTabStore.getState().reset();
+  });
 });
 
 function canvasModule(
@@ -596,53 +636,16 @@ describe("Canvas workspace module selector and user-open flow", () => {
     }]);
   });
 
-  it("filters Canvas menu options to the current runtime surface", () => {
-    const activeCanvasMountIds = activeCanvasMountIdsFromRuntimeSurface({
-      surface_ref: "session_runtime:session-1",
-      source: { source_type: "session_runtime", session_id: "session-1" },
-      mounts: [{
-        id: "cvs-mount-a",
-        display_name: "Canvas A",
-        provider: "canvas_fs",
-        backend_id: "",
-        capabilities: ["read"],
-        default_write: false,
-        purpose: "canvas",
-        edit_capabilities: { create: true, delete: true, rename: true },
-      }],
-    });
+  it("uses the backend workspace module projection without a second surface join", () => {
     const options = selectCanvasModuleOpenOptions([
       canvasModule("canvas:cvs-mount-a", "canvas://cvs-mount-a"),
       canvasModule("canvas:cvs-mount-b", "canvas://cvs-mount-b"),
-    ], activeCanvasMountIds);
+    ]);
 
-    expect(options.map((option) => option.presentation_uri)).toEqual(["canvas://cvs-mount-a"]);
-  });
-
-  it("keeps an adopted Canvas openable from the resource surface after Runtime execution is lost", () => {
-    const options = selectCanvasModuleOpenOptionsFromRuntimeSurface(
-      [canvasModule("canvas:cvs-mount-a", "canvas://cvs-mount-a")],
-      {
-        surface_ref: "agent-run:run-1:agent-1",
-        source: {
-          source_type: "agent_run",
-          run_id: "run-1",
-          agent_id: "agent-1",
-        },
-        mounts: [{
-          id: "cvs-mount-a",
-          display_name: "Canvas A",
-          provider: "canvas_fs",
-          backend_id: "",
-          capabilities: ["read"],
-          default_write: false,
-          purpose: "canvas",
-          edit_capabilities: { create: true, delete: true, rename: true },
-        }],
-      },
-    );
-
-    expect(options.map((option) => option.presentation_uri)).toEqual(["canvas://cvs-mount-a"]);
+    expect(options.map((option) => option.presentation_uri)).toEqual([
+      "canvas://cvs-mount-a",
+      "canvas://cvs-mount-b",
+    ]);
   });
 
   it("opens an already active Canvas from the canonical project presentation URI", async () => {

@@ -558,7 +558,6 @@ impl BusinessFrameSurfaceQuery {
                 mcp_field_present: frame.mcp_surface_json.is_some(),
             },
             capability_state,
-            visible_workspace_module_refs: frame.visible_workspace_module_refs(),
             vfs,
         };
         Ok(BusinessFrameSurfaceProjection { surface, frame })
@@ -1077,7 +1076,6 @@ fn effective_view(
         visible_capabilities: capability_state.tool.capabilities.clone(),
         vfs_surface: capability_state.vfs.active.clone().unwrap_or_default(),
         mcp_surface: capability_state.tool.mcp_servers.clone(),
-        visible_workspace_module_refs: frame.visible_workspace_module_refs(),
         capability_state,
     }
 }

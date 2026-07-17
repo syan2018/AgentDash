@@ -57,8 +57,9 @@ pub use tools::{
     WorkspaceModuleOperateTool, WorkspaceModulePresentTool,
 };
 pub use visibility::{
-    WorkspaceModuleVisibilityDiagnostic, WorkspaceModuleVisibilityProjection,
-    resolve_workspace_module_visibility,
+    WorkspaceModuleVisibilityDiagnostic, WorkspaceModuleVisibilityInput,
+    WorkspaceModuleVisibilityProjection, project_agent_run_workspace_module_visibility,
+    project_workspace_module_visibility, resolve_workspace_module_visibility,
     resolve_workspace_module_visibility_with_operation_context,
 };
 

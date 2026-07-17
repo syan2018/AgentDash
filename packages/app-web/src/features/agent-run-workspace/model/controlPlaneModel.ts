@@ -2,6 +2,7 @@ import type {
   BackboneEvent,
   ControlPlaneProjectionChanged,
 } from "../../../generated/backbone-protocol";
+import type { WorkspaceModulePresentation } from "../../../generated/workspace-module-contracts";
 import {
   workspaceModulePresentationFromPlatformEventData,
   workspaceModulePresentationTabTarget,
@@ -20,11 +21,11 @@ export interface AgentRunWorkspacePanelTarget {
 export interface AgentRunWorkspacePanelOpenPlan {
   target: AgentRunWorkspacePanelTarget;
   afterWorkspaceRefresh: boolean;
+  presentation: WorkspaceModulePresentation;
 }
 
 export interface AgentRunControlPlaneEffectPlan {
   refreshWorkspaceState?: boolean;
-  refreshWorkspaceModuleCatalog?: boolean;
   refreshAgentRunListReason?: string;
   hookRuntimeRefresh?: {
     reason: string;
@@ -86,7 +87,6 @@ export function planAgentRunTurnEnded(): AgentRunControlPlaneEffectPlan {
 export function planAgentRunWorkspaceModuleOpened(): AgentRunControlPlaneEffectPlan {
   return {
     refreshWorkspaceState: true,
-    refreshWorkspaceModuleCatalog: true,
     hookRuntimeRefresh: { reason: "workspace_module_user_opened" },
   };
 }
@@ -109,11 +109,13 @@ function planWorkspaceModulePresentation(
   const data = workspaceModulePresentationFromPlatformEventData(
     change.workspace_module_presentation,
   );
+  if (!data) return {};
   const target = workspaceModulePresentationTabTarget(data);
   if (!target) return {};
   return {
     openWorkspacePanel: {
-      afterWorkspaceRefresh: false,
+      afterWorkspaceRefresh: true,
+      presentation: data,
       target: {
         typeId: target.typeId,
         uri: target.uri,
@@ -143,7 +145,6 @@ function planControlPlaneProjectionChanged(
       break;
     case "resource_surface":
       plan.refreshWorkspaceState = true;
-      plan.refreshWorkspaceModuleCatalog = true;
       break;
     case "hook_runtime":
       plan.hookRuntimeRefresh = { reason };
@@ -155,7 +156,6 @@ function planControlPlaneProjectionChanged(
     change.reason === "context_frame_changed"
   ) {
     plan.refreshWorkspaceState = true;
-    plan.refreshWorkspaceModuleCatalog = true;
     plan.hookRuntimeRefresh = { reason };
   }
 
@@ -183,6 +183,12 @@ export function planAgentRunSystemEvent(
   const controlPlaneChange = extractControlPlaneProjectionChanged(event);
   if (controlPlaneChange) {
     return planControlPlaneProjectionChanged(controlPlaneChange);
+  }
+  if (event.type === "platform" && event.payload.kind === "context_frame_changed") {
+    return {
+      refreshWorkspaceState: true,
+      hookRuntimeRefresh: { reason: "context_frame_changed" },
+    };
   }
 
   switch (eventType) {

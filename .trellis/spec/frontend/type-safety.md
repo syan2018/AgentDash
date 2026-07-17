@@ -176,7 +176,7 @@ AgentRun workspace panel、context overview与VFS tab以`resource_surface: Resol
 
 Project/Story/Task/Agent knowledge预览使用`ResolvedVfsSurfaceSource`；AgentRun入口消费current resource surface。两类入口共享browser组件但source显式分型。
 
-AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 state 以 `run_id + agent_id + frame/runtime projection key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities 或 context snapshot。`capability_state_changed`、`context_frame_changed` 等真实 surface 变化触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。`workspace_module_presented` 是独立 presentation intent：Canvas 打开动作直接读取 generated event payload 的 `presentation_uri` 并立即执行，不等待 Workspace refetch；值为 `canvas://{canvas_mount_id}`。`view_key`、`module_id` 与 `{canvas_mount_id}://...` 分别保留 UI entry selection、module ref 与 VFS authoring URI 语义。
+AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 state 以 `run_id + agent_id + frame/runtime projection key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities、context snapshot 或 `workspace_modules`。`capability_state_changed`、`context_frame_changed` 等真实 surface 变化触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。`AgentRunWorkspaceView.workspace_modules` 是菜单、presentation validation与持久化tab恢复校验的generated wire事实源：Canvas打开事件先读取generated payload的`module_id`、`view_key`、`renderer_kind`与`presentation_uri`，再等待Workspace refetch并与当前ready descriptor精确匹配；布局恢复在该projection ready后清理不存在的Canvas URI，且更早发起的异步恢复不能覆盖currentness校验。`presentation_uri=canvas://{canvas_mount_id}` 是 tab identity；`view_key`、`module_id` 与 `{canvas_mount_id}://...` 分别保留 UI entry selection、module ref 与 VFS authoring URI 语义。
 
 ## Scenario: AgentRun Product Projection 与 Runtime Command 分权
 

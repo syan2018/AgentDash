@@ -190,8 +190,6 @@ struct FrameRow {
     mcp_surface_json: Option<Value>,
     execution_profile_json: Option<Value>,
     hook_plan: Option<Value>,
-    visible_canvas_mount_ids_json: Option<Value>,
-    visible_workspace_module_refs_json: Option<Value>,
     created_by_kind: String,
     created_by_id: Option<String>,
     created_at: DateTime<Utc>,
@@ -218,8 +216,6 @@ impl TryFrom<FrameRow> for AgentFrame {
             mcp_surface_json: row.mcp_surface_json,
             execution_profile_json: row.execution_profile_json,
             hook_plan: row.hook_plan,
-            visible_canvas_mount_ids_json: row.visible_canvas_mount_ids_json,
-            visible_workspace_module_refs_json: row.visible_workspace_module_refs_json,
             created_by_kind: row.created_by_kind,
             created_by_id: row.created_by_id,
             created_at: row.created_at,
@@ -238,12 +234,10 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
                 (id, agent_id, revision,
                  surface,
                  effective_capability_json, context_slice_json, vfs_surface_json, mcp_surface_json,
-                 visible_canvas_mount_ids_json,
-                 visible_workspace_module_refs_json,
                  execution_profile_json,
                  hook_plan,
                  created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
@@ -264,14 +258,6 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .bind(to_optional_jsonb(
             surface.mcp_surface.as_ref(),
             "agent_frames.mcp_surface_json",
-        )?)
-        .bind(to_optional_jsonb(
-            surface.visible_canvas_mount_ids.as_ref(),
-            "agent_frames.visible_canvas_mount_ids_json",
-        )?)
-        .bind(to_optional_jsonb(
-            surface.visible_workspace_module_refs.as_ref(),
-            "agent_frames.visible_workspace_module_refs_json",
         )?)
         .bind(to_optional_jsonb(
             surface.execution_profile.as_ref(),
@@ -295,8 +281,6 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,
                       surface,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      visible_canvas_mount_ids_json,
-                      visible_workspace_module_refs_json,
                       execution_profile_json,
                       hook_plan,
                       created_by_kind,created_by_id,created_at
@@ -315,8 +299,6 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,
                       surface,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      visible_canvas_mount_ids_json,
-                      visible_workspace_module_refs_json,
                       execution_profile_json,
                       hook_plan,
                       created_by_kind,created_by_id,created_at
@@ -335,8 +317,6 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,
                       surface,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      visible_canvas_mount_ids_json,
-                      visible_workspace_module_refs_json,
                       execution_profile_json,
                       hook_plan,
                       created_by_kind,created_by_id,created_at
@@ -1145,8 +1125,6 @@ mod tests {
             mcp_surface_json: None,
             execution_profile_json: None,
             hook_plan: None,
-            visible_canvas_mount_ids_json: None,
-            visible_workspace_module_refs_json: None,
             created_by_kind: "test".to_string(),
             created_by_id: Some("tester".to_string()),
             created_at: Utc::now(),
@@ -1157,12 +1135,10 @@ mod tests {
     fn frame_row_projects_surface_document_as_canonical_source() {
         let mut row = frame_row_with_surface(Some(json!({
             "capability_state": {"canonical": true},
-            "vfs_surface": {"mounts": ["canonical"]},
-            "visible_canvas_mount_ids": ["canvas:canonical"]
+            "vfs_surface": {"mounts": ["canonical"]}
         })));
         row.effective_capability_json = Some(json!({"stale": true}));
         row.vfs_surface_json = Some(json!({"mounts": ["stale"]}));
-        row.visible_canvas_mount_ids_json = Some(json!(["canvas:stale"]));
 
         let frame = AgentFrame::try_from(row).expect("frame row should map");
 
@@ -1173,10 +1149,6 @@ mod tests {
         assert_eq!(
             frame.vfs_surface_json,
             Some(json!({"mounts": ["canonical"]}))
-        );
-        assert_eq!(
-            frame.visible_canvas_mount_ids_json,
-            Some(json!(["canvas:canonical"]))
         );
     }
 

@@ -77,7 +77,6 @@ mod tests {
                     frame_id: Uuid::new_v4(),
                     runtime_thread_id: runtime_id("session-1"),
                     presentation_thread_id: "presentation-1".parse().expect("presentation thread"),
-                    visible_workspace_module_refs: Vec::new(),
                     invocation: Some(agentdash_spi::PlatformToolInvocationCoordinates {
                         runtime_turn_id: runtime_id("turn-1"),
                         runtime_item_id: runtime_id("item-1"),

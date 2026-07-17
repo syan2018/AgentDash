@@ -7,7 +7,6 @@ use agentdash_domain::canvas::{
     CanvasRuntimeViewport,
 };
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
-use agentdash_workspace_module::canvas::canvas_module_id;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
@@ -207,24 +206,15 @@ fn ensure_canvas_visible_in_frame(
     frame: &AgentFrame,
     canvas_mount_id: &str,
 ) -> Result<(), ApplicationError> {
-    let module_ref = canvas_module_id(canvas_mount_id);
-    let listed_as_canvas = frame
-        .visible_canvas_mount_ids()
-        .iter()
-        .any(|mount_id| mount_id == canvas_mount_id);
-    let listed_as_module = frame
-        .visible_workspace_module_refs()
-        .iter()
-        .any(|module| module == &module_ref);
     let mounted_in_vfs = frame.typed_vfs().is_some_and(|vfs| {
         vfs.mounts
             .iter()
             .any(|mount| mount.id == canvas_mount_id && mount.provider == PROVIDER_CANVAS_FS)
     });
-    if listed_as_canvas || listed_as_module || mounted_in_vfs {
+    if mounted_in_vfs {
         return Ok(());
     }
     Err(ApplicationError::Forbidden(format!(
-        "Canvas {canvas_mount_id} 不在当前 AgentRun delivery frame 的可见 Canvas/module surface 中"
+        "Canvas {canvas_mount_id} 不在当前 AgentRun delivery frame 的 canonical VFS 中"
     )))
 }

@@ -240,7 +240,6 @@ pub struct PlatformToolExecutionContext {
     pub runtime_thread_id: RuntimeThreadId,
     /// Product delivery/presentation thread used by workflow and transcript associations.
     pub presentation_thread_id: PresentationThreadId,
-    pub visible_workspace_module_refs: Vec<String>,
     /// Present only for a callable invocation. Definition/schema materialization retains the
     /// exact owner surface but has no fabricated per-call coordinates.
     pub invocation: Option<PlatformToolInvocationCoordinates>,

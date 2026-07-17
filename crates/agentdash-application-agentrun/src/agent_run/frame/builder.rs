@@ -302,12 +302,6 @@ impl AgentFrameBuilder {
             .hook_plan
             .clone()
             .or_else(|| current.as_ref().and_then(|frame| frame.hook_plan.clone()));
-        frame.visible_canvas_mount_ids_json = current
-            .as_ref()
-            .and_then(|frame| frame.visible_canvas_mount_ids_json.clone());
-        frame.visible_workspace_module_refs_json = current
-            .as_ref()
-            .and_then(|frame| frame.visible_workspace_module_refs_json.clone());
         frame.created_by_id = self.created_by_id.clone();
         let mut surface = frame.surface_document();
         surface.context_source_snapshot = self.context_source_snapshot.clone().or_else(|| {
@@ -470,14 +464,12 @@ mod tests {
         let repo = FixtureFrameRepo::default();
         let agent_id = Uuid::new_v4();
 
-        let mut frame1 = AgentFrameBuilder::new(agent_id)
+        let frame1 = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("session-1")
             .with_execution_profile_raw(serde_json::json!({"executor": "local"}))
             .build(&repo)
             .await
             .expect("frame1");
-        frame1.visible_canvas_mount_ids_json = Some(serde_json::json!(["cvs-demo"]));
-        repo.items.lock().unwrap()[0] = frame1.clone();
 
         let frame2 = AgentFrameBuilder::new(agent_id)
             .with_capability(serde_json::json!({"tools": []}))
@@ -489,35 +481,6 @@ mod tests {
         assert_eq!(
             frame2.execution_profile_json,
             Some(serde_json::json!({"executor": "local"}))
-        );
-        assert_eq!(
-            frame2.visible_canvas_mount_ids(),
-            vec!["cvs-demo".to_string()]
-        );
-    }
-
-    #[tokio::test]
-    async fn build_revision_carries_forward_visible_workspace_module_refs() {
-        let repo = FixtureFrameRepo::default();
-        let agent_id = Uuid::new_v4();
-
-        let mut frame1 = AgentFrameBuilder::new(agent_id)
-            .build(&repo)
-            .await
-            .expect("frame1");
-        frame1.visible_workspace_module_refs_json =
-            Some(serde_json::json!(["canvas:cvs-dashboard-a"]));
-        repo.items.lock().unwrap()[0] = frame1.clone();
-
-        let frame2 = AgentFrameBuilder::new(agent_id)
-            .with_capability(serde_json::json!({"tools": []}))
-            .build(&repo)
-            .await
-            .expect("frame2");
-
-        assert_eq!(
-            frame2.visible_workspace_module_refs(),
-            vec!["canvas:cvs-dashboard-a".to_string()]
         );
     }
 

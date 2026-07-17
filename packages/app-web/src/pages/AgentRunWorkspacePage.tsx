@@ -36,7 +36,6 @@ import {
   type ProjectBackendAccess,
 } from "../services/backendAccess";
 import type { BackendSelectionRequestDto } from "../generated/agent-run-mailbox-contracts";
-import { useWorkspaceModuleStore } from "../features/workspace-module";
 import type {
   BackendConfig,
   RuntimeTraceAgentContext,
@@ -90,7 +89,6 @@ export function AgentRunWorkspacePage({
   const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
-  const fetchWorkspaceModules = useWorkspaceModuleStore((state) => state.fetchProject);
 
   const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
     story_id: string;
@@ -250,10 +248,6 @@ export function AgentRunWorkspacePage({
     ?? ownerStory?.project_id
     ?? draftProjectIdValue
     ?? null;
-  const refreshWorkspaceModuleCatalog = useCallback(() => {
-    if (!ownerProjectId) return;
-    void fetchWorkspaceModules(ownerProjectId);
-  }, [fetchWorkspaceModules, ownerProjectId]);
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
@@ -456,7 +450,6 @@ export function AgentRunWorkspacePage({
     onDraftStarted: handleDraftAgentRunStarted,
     onAgentRunRedirect: handleAgentRunRedirect,
     refreshAgentRunList,
-    refreshWorkspaceModuleCatalog,
     openWorkspacePanel: ({ typeId, uri, options }) => {
       expandWorkspacePanel(typeId, uri, options);
     },
@@ -510,6 +503,7 @@ export function AgentRunWorkspacePage({
       : "返回 Story";
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
+    workspaceModules: workspaceControl?.workspace_modules ?? [],
     agentRunRuntimeTarget,
     lifecycleRun: null,
     lifecycleAgent: workspaceControl?.agent ?? null,

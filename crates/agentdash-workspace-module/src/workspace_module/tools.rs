@@ -1132,7 +1132,8 @@ mod tests {
         WorkspaceModuleAgentRunBridge,
     };
     use crate::workspace_module::{
-        WorkspaceModuleRuntimeToolProvider, resolve_workspace_module_visibility,
+        WorkspaceModuleRuntimeToolProvider, WorkspaceModuleVisibilityInput,
+        resolve_workspace_module_visibility,
     };
 
     fn manifest(extension_id: &str) -> ExtensionTemplatePayload {
@@ -1241,11 +1242,11 @@ mod tests {
     impl WorkspaceModuleAgentRunBridge for FakeAgentRunBridge {
         async fn effective_capability_view_for_agent_run_delivery(
             &self,
-            runtime_thread_id: &str,
+            _runtime_thread_id: &str,
         ) -> Result<AgentRunEffectiveCapabilityView, String> {
             Ok(test_effective_capability_view(
                 WorkspaceModuleDimension::all(),
-                vec![runtime_thread_id.to_string()],
+                Vec::new(),
             ))
         }
 
@@ -1647,10 +1648,31 @@ mod tests {
 
     fn test_effective_capability_view(
         workspace_module: WorkspaceModuleDimension,
-        runtime_refs: Vec<String>,
+        canvas_module_refs: Vec<String>,
     ) -> AgentRunEffectiveCapabilityView {
         let mut capability_state = CapabilityState::from_clusters([ToolCluster::WorkspaceModule]);
         capability_state.workspace_module = workspace_module;
+        let runtime_vfs = Vfs {
+            mounts: canvas_module_refs
+                .into_iter()
+                .filter_map(|module_ref| {
+                    module_ref.strip_prefix("canvas:").map(|mount_id| {
+                        agentdash_domain::common::Mount {
+                            id: mount_id.to_string(),
+                            provider: agentdash_application_vfs::PROVIDER_CANVAS_FS.to_string(),
+                            backend_id: String::new(),
+                            root_ref: String::new(),
+                            capabilities: Vec::new(),
+                            default_write: false,
+                            display_name: String::new(),
+                            metadata: serde_json::json!({}),
+                        }
+                    })
+                })
+                .collect(),
+            ..Vfs::default()
+        };
+        capability_state.vfs.active = Some(runtime_vfs.clone());
         AgentRunEffectiveCapabilityView {
             target: AgentFrameRuntimeTarget {
                 frame_id: Uuid::new_v4(),
@@ -1660,10 +1682,9 @@ mod tests {
                 .unwrap(),
             },
             visible_capabilities: capability_state.tool.capabilities.clone(),
-            vfs_surface: capability_state.vfs.active.clone().unwrap_or_default(),
+            vfs_surface: runtime_vfs,
             mcp_surface: Vec::new(),
             capability_state,
-            visible_workspace_module_refs: runtime_refs,
         }
     }
 
@@ -1885,10 +1906,14 @@ mod tests {
         };
         let view =
             test_effective_capability_view(visibility, vec!["canvas:cvs-dashboard-a".to_string()]);
-        let projection =
-            resolve_workspace_module_visibility(&install_repo, &canvas_repo, project_id, &view)
-                .await
-                .expect("resolve modules");
+        let projection = resolve_workspace_module_visibility(
+            &install_repo,
+            &canvas_repo,
+            project_id,
+            WorkspaceModuleVisibilityInput::from(&view),
+        )
+        .await
+        .expect("resolve modules");
         let module_ids = projection
             .modules
             .iter()
@@ -2277,7 +2302,6 @@ mod tests {
                     presentation_thread_id: "presentation-workspace-module-fixture"
                         .parse()
                         .expect("presentation thread"),
-                    visible_workspace_module_refs: Vec::new(),
                     invocation: None,
                     launch_evidence_frame_id: Uuid::new_v4(),
                     current_surface_frame_id: Uuid::new_v4(),

@@ -34,6 +34,7 @@ const workspace: AgentRunWorkspaceView = {
       current_user_controls_run: true,
     },
   },
+  workspace_modules: [],
   agent: {
     agent_ref: { run_id: "run-1", agent_id: "agent-1" },
     project_id: "project-1",

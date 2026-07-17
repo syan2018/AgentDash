@@ -427,7 +427,7 @@ async fn get_agent_run_workspace(
         state.as_ref(),
         context.run.clone(),
         context.agent.clone(),
-        &current_user.user_id,
+        &current_user,
     )
     .await?;
     let (parent, children) =
@@ -455,7 +455,7 @@ async fn get_agent_run_runtime_control(
         state.as_ref(),
         context.run.clone(),
         context.agent.clone(),
-        &current_user.user_id,
+        &current_user,
     )
     .await?;
     let (parent, children) =
@@ -3099,7 +3099,7 @@ async fn validate_agent_run_product_command(
         state,
         context.run.clone(),
         context.agent.clone(),
-        &current_user.user_id,
+        current_user,
     )
     .await?;
     let expected = workspace

@@ -380,7 +380,6 @@ async fn seed_agent_frame_surface(
         mcp_surface: Some(json!([])),
         execution_profile: Some(serde_json::to_value(executor).unwrap()),
         hook_plan: Some(serde_json::to_value(hook_plan).unwrap()),
-        visible_workspace_module_refs: Some(json!([])),
         ..Default::default()
     });
     frame.apply_surface_projection();

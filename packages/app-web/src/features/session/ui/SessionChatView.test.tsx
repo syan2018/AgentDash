@@ -111,6 +111,47 @@ function turnTerminalMetaEvent(terminalType: "turn_completed" | "turn_failed" | 
   });
 }
 
+function contextFrameChangedEvent(): BackboneEvent {
+  return {
+    type: "platform",
+    payload: {
+      kind: "context_frame_changed",
+      data: {
+        frame: {
+          id: "surface-frame-2",
+          kind: "capability_state_delta",
+          source: "runtime_context_update",
+          delivery_status: "accepted",
+          delivery_channel: "continuation",
+          message_role: "context",
+          delivery_metadata: {
+            delivery_phase: "run_state",
+            delivery_order: 0,
+            cache_policy: "runtime_state_digest",
+            model_channel: "audit_only",
+            agent_consumption: {
+              target: "runtime",
+              mode: "audit_only",
+              reason: "surface adopted",
+            },
+            frontend_label: "VFS UPDATE",
+            connector_profile: {
+              profile_id: "managed-runtime",
+            },
+          },
+          rendered_text: "Canvas mount added",
+          sections: [{
+            kind: "vfs_delta",
+            vfs_mounts_added: ["cvs-canvas"],
+            vfs_mounts_removed: [],
+          }],
+          created_at_ms: 1n,
+        },
+      },
+    },
+  };
+}
+
 describe("computeProjectionRefreshKey", () => {
   it("普通 delta event 不推进 projection refresh key", () => {
     const events = [
@@ -330,6 +371,21 @@ describe("collectRenderableSystemEvents", () => {
     expect(lastSeenSeq).toBe(97);
     expect(onSystemEvent).toHaveBeenCalledTimes(1);
     expect(onSystemEvent.mock.calls[0]?.[0]).toBe("workspace_module_presented");
+  });
+
+  it("将 live ContextFrameChanged 作为 AgentRun workspace 当前投影失效信号", () => {
+    const onSystemEvent = vi.fn();
+
+    const lastSeenSeq = dispatchPlatformSideEffectEvents(
+      [eventEnvelope(51, contextFrameChangedEvent())],
+      50,
+      50,
+      onSystemEvent,
+    );
+
+    expect(lastSeenSeq).toBe(51);
+    expect(onSystemEvent).toHaveBeenCalledTimes(1);
+    expect(onSystemEvent.mock.calls[0]?.[0]).toBe("context_frame_changed");
   });
 
   it("全量 platform 收集函数可用历史边界跳过 hydrate 事件", () => {

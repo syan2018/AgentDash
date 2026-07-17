@@ -2,18 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "../../../generated/common-contracts";
 import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
+import { historyReplayBoundaryAfterCompletedLoad } from "../model/useSessionStream";
 import {
   computeProjectionRefreshKey,
-  dispatchPlatformSideEffectEvents,
+  dispatchLiveSessionEvents,
   extractTurnLifecycleEventType,
   isAgentRunWorkspaceActionRunning,
   rawEventsBelongToRuntimeStreamTarget,
 } from "./SessionChatViewModel";
-import {
-  collectAllPlatformEvents,
-  collectRenderableSystemEvents,
-  collectTurnLifecycleEvents,
-} from "./SessionChatViewModel";
+import { collectRenderableSystemEvents } from "./SessionChatViewModel";
 import {
   isSessionComposerSubmitDisabled,
   isSessionModelRequirementSatisfied,
@@ -29,6 +26,16 @@ const completedTurn: Turn = {
   completedAt: null,
   durationMs: null,
 };
+
+describe("history replay boundary lifecycle", () => {
+  it("establishes the boundary on the first completed load after a StrictMode setup was cancelled", () => {
+    expect(historyReplayBoundaryAfterCompletedLoad(null, 116)).toBe(116);
+  });
+
+  it("preserves the original hydration boundary when the same target reconnects", () => {
+    expect(historyReplayBoundaryAfterCompletedLoad(57, 116)).toBe(57);
+  });
+});
 
 function eventEnvelope(eventSeq: number, event: BackboneEvent, sessionId = "session-1"): SessionEventEnvelope {
   return {
@@ -76,29 +83,19 @@ function platformMetaEvent(key: string, value: Record<string, JsonValue>): Backb
   };
 }
 
-function workspaceModulePresentedEvent(): BackboneEvent {
+function workspaceModulePresentationRequestedEvent(): BackboneEvent {
   return {
     type: "platform",
     payload: {
-      kind: "control_plane_projection_changed",
+      kind: "workspace_module_presentation_requested",
       data: {
-        projection: "resource_surface",
-        reason: "workspace_module_presented",
-        run_id: "run-1",
-        agent_id: "agent-1",
-        frame_id: "frame-1",
-        gate_id: null,
-        mailbox_message_id: null,
-        delivery_runtime_session_id: "runtime-1",
-        workspace_module_presentation: {
-          module_id: "canvas:cvs-canvas",
-          view_key: "preview",
-          renderer_kind: "canvas",
-          presentation_uri: "canvas://cvs-canvas",
-          title: "Canvas",
-          payload: null,
-          diagnostics: null,
-        },
+        module_id: "canvas:cvs-canvas",
+        view_key: "preview",
+        renderer_kind: "canvas",
+        presentation_uri: "canvas://cvs-canvas",
+        title: "Canvas",
+        payload: null,
+        diagnostics: null,
       },
     },
   };
@@ -308,41 +305,25 @@ describe("collectRenderableSystemEvents", () => {
     expect(result.items[0]?.eventType).toBe("system_message");
   });
 
-  it("全量 platform 收集函数保留不可渲染事件入口", () => {
-    const events = [
-      eventEnvelope(1, platformMetaEvent("system_message", { message: "需要用户确认" })),
-      eventEnvelope(2, platformMetaEvent("unknown_meta", { message: "静默" })),
-      eventEnvelope(3, agentDeltaEvent("assistant-1")),
-    ];
-
-    const result = collectAllPlatformEvents(events, 0);
-
-    expect(result.lastSeenSeq).toBe(3);
-    expect(result.items.map((item) => item.eventType)).toEqual([
-      "system_message",
-      "unknown_meta",
-    ]);
-  });
-
-  it("将 Workspace Module 展示成功事件收进可渲染会话流", () => {
+  it("将 Workspace Module 展示请求作为审计事实收进可渲染会话流", () => {
     const result = collectRenderableSystemEvents([
-      eventEnvelope(4, workspaceModulePresentedEvent()),
+      eventEnvelope(4, workspaceModulePresentationRequestedEvent()),
     ], 0);
 
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]?.eventType).toBe("workspace_module_presented");
+    expect(result.items[0]?.eventType).toBe("workspace_module_presentation_requested");
     expect(result.items[0]?.eventSeq).toBe(4);
   });
 
-  it("初次连接时将 hydration 边界内的 control-plane projection 交给页面副作用入口", () => {
-    const onSystemEvent = vi.fn();
+  it("history hydration 只恢复事实，不执行命令式页面动作", () => {
+    const onLiveEvent = vi.fn();
 
-    const lastSeenSeq = dispatchPlatformSideEffectEvents(
+    const lastSeenSeq = dispatchLiveSessionEvents(
       [
         eventEnvelope(93, platformMetaEvent("system_message", {
           message: "hydrated message",
         })),
-        eventEnvelope(94, workspaceModulePresentedEvent()),
+        eventEnvelope(94, workspaceModulePresentationRequestedEvent()),
         eventEnvelope(97, {
           type: "item_completed",
           payload: {
@@ -365,85 +346,32 @@ describe("collectRenderableSystemEvents", () => {
       ],
       null,
       97,
-      onSystemEvent,
+      onLiveEvent,
     );
 
     expect(lastSeenSeq).toBe(97);
-    expect(onSystemEvent).toHaveBeenCalledTimes(1);
-    expect(onSystemEvent.mock.calls[0]?.[0]).toBe("workspace_module_presented");
+    expect(onLiveEvent).not.toHaveBeenCalled();
   });
 
-  it("将 live ContextFrameChanged 作为 AgentRun workspace 当前投影失效信号", () => {
-    const onSystemEvent = vi.fn();
+  it("在同一入口按 sequence 分发所有 live 事件", () => {
+    const onLiveEvent = vi.fn();
+    const presentation = workspaceModulePresentationRequestedEvent();
+    const contextFrame = contextFrameChangedEvent();
 
-    const lastSeenSeq = dispatchPlatformSideEffectEvents(
-      [eventEnvelope(51, contextFrameChangedEvent())],
+    const lastSeenSeq = dispatchLiveSessionEvents(
+      [
+        eventEnvelope(51, presentation),
+        eventEnvelope(52, contextFrame),
+      ],
       50,
       50,
-      onSystemEvent,
+      onLiveEvent,
     );
 
-    expect(lastSeenSeq).toBe(51);
-    expect(onSystemEvent).toHaveBeenCalledTimes(1);
-    expect(onSystemEvent.mock.calls[0]?.[0]).toBe("context_frame_changed");
-  });
-
-  it("全量 platform 收集函数可用历史边界跳过 hydrate 事件", () => {
-    const events = [
-      eventEnvelope(9, platformMetaEvent("workspace_module_presented", {
-        module_id: "canvas:history",
-        view_key: "preview",
-        renderer_kind: "canvas",
-        presentation_uri: "canvas://history",
-        title: "History Canvas",
-      })),
-      eventEnvelope(10, platformMetaEvent("session_meta_updated", { title: "历史标题" })),
-      eventEnvelope(11, platformMetaEvent("workspace_module_presented", {
-        module_id: "canvas:live",
-        view_key: "preview",
-        renderer_kind: "canvas",
-        presentation_uri: "canvas://live",
-        title: "Live Canvas",
-      })),
-      eventEnvelope(12, platformMetaEvent("session_meta_updated", { title: "新标题" })),
-    ];
-
-    const result = collectAllPlatformEvents(events, 10);
-
-    expect(result.lastSeenSeq).toBe(12);
-    expect(result.items.map((item) => item.eventType)).toEqual([
-      "workspace_module_presented",
-      "session_meta_updated",
-    ]);
-    expect(result.items.map((item) => item.eventSeq)).toEqual([11, 12]);
-  });
-});
-
-describe("collectTurnLifecycleEvents", () => {
-  it("按边界只收集 live turn lifecycle 并推进 lastSeenSeq", () => {
-    const events = [
-      eventEnvelope(8, {
-        type: "turn_completed",
-        payload: { threadId: "thread-1", turn: completedTurn },
-      }),
-      eventEnvelope(10, turnTerminalMetaEvent("turn_completed")),
-      eventEnvelope(11, {
-        type: "turn_started",
-        payload: {
-          threadId: "thread-1",
-          turn: { ...completedTurn, id: "turn-2", status: "inProgress" },
-        },
-      }),
-      eventEnvelope(12, turnTerminalMetaEvent("turn_failed")),
-    ];
-
-    const result = collectTurnLifecycleEvents(events, 10);
-
-    expect(result.lastSeenSeq).toBe(12);
-    expect(result.items.map((item) => item.eventSeq)).toEqual([11, 12]);
-    expect(result.items.map((item) => item.eventType)).toEqual([
-      "turn_started",
-      "turn_failed",
+    expect(lastSeenSeq).toBe(52);
+    expect(onLiveEvent.mock.calls.map(([event]) => event)).toEqual([
+      presentation,
+      contextFrame,
     ]);
   });
 });

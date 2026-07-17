@@ -5,6 +5,11 @@
 - Project/Story/Task/Lifecycle stores保存产品read model。
 - AgentRun workspace state按`run_id + agent_id`保存当前产品shell、AgentFrame resource surface与Runtime inspect结果。
 - Runtime feed hook保存snapshot baseline、durable/transient cursor与连接状态；它不复制后端state machine。Snapshot entries标记为durable，live transient按generation lane聚合。
+- Runtime feed的`historyReplayBoundarySeq`由当前target第一次成功完成journal history load时建立，
+  并在同target重连期间保持不变。source state是否需要reset只决定read model隔离，不决定
+  history load是否已经成功；这样React StrictMode取消第一次effect setup后，第二次真正完成的
+  load仍会发布boundary。boundary以内只恢复feed/read model，boundary以后才进入唯一的
+  typed live-event副作用dispatcher。
 - Workspace tab/layout store按AgentRun product key持久化用户布局，concrete presentation URI作为tab identity。
 - 命令式 Tab 展示必须携带目标 workspace key，并通过
   `openOrActivateInWorkspace(workspaceKey, typeId, uri, options)` 在一次 store 操作中先绑定
@@ -26,7 +31,10 @@
 - mailbox只显示queued intent与accepted Runtime operation；没有canonical endpoint的管理动作不进入model/intents。
 
 必须测试target切换、stale snapshot、cursor replay、availability、presentation URI与layout稳定性；
-命令式 presentation 还必须覆盖“先打开 Tab、后执行 WorkspacePanel 首次初始化”的顺序。
+命令式 presentation 还必须覆盖“历史request不打开”“live request先刷新current projection”
+与“先打开 Tab、后执行 WorkspacePanel 首次初始化”的顺序。
+Runtime feed生命周期测试还必须覆盖StrictMode的`setup → cleanup → setup`：第一次load被取消、
+第二次同target load完成时boundary从`null`变为该次`lastAppliedSeq`；后续重连继续保留原boundary。
 
 ## Scenario: Runtime conversation name invalidation
 

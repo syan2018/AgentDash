@@ -63,6 +63,8 @@ RuntimeWire 通过 `RuntimeWireEnvelope` 透明承载 Driver command/event/respo
 ## 5. Good / Base / Bad Cases
 
 - Good：Driver event 经 adapter 进入 Managed Runtime journal；UI Runtime feed 读取 canonical cursor，同时 Workspace Module presentation 作为独立 Backbone 产品通知打开面板。
+- Good：`WorkspaceModulePresentationRequested` 使用独立 typed discriminant。journal replay恢复
+  审计事实，live observer消费命令式展示意图；`ControlPlaneProjectionChanged`只触发投影刷新。
 - Good：Native与Codex都提交`ThreadNameUpdatedNotification`，session、Runtime projection与产品
   invalidation共享同一个event discriminant。
 - Base：本机 PTY 退出只更新终端卡片，Agent Runtime turn 继续由 Runtime snapshot/events 表达。

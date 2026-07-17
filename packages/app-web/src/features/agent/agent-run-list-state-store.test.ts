@@ -91,7 +91,6 @@ function agentRunListInvalidated(
         gate_id: null,
         mailbox_message_id: null,
         delivery_runtime_session_id: null,
-        workspace_module_presentation: null,
       },
     },
   };
@@ -111,7 +110,6 @@ function mailboxInvalidated(projectId: string): ProjectEventStreamEnvelope {
         gate_id: null,
         mailbox_message_id: null,
         delivery_runtime_session_id: null,
-        workspace_module_presentation: null,
       },
     },
   };

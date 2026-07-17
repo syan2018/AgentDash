@@ -205,6 +205,10 @@ current adopted AgentFrame
 
 SurfaceAdopt已经原子产生`ContextFrameChanged`，该事件进入通用AgentRun workspace invalidation即可；不再追加一条表达相同变化的Canvas control-plane事件。Project-scoped module store继续服务Project资产页面，不进入AgentRun WorkspacePanel。
 
-Presentation intent不拥有资源存在性。hydration或live收到presentation后，控制面先刷新AgentRun workspace view，再以`module_id + view_key + renderer_kind + presentation_uri`精确匹配`workspace_modules`；匹配成功才切换workspace scope、展开侧栏并打开tab。这样迟到/历史presentation天然受current projection约束，删除资产或移除runtime visibility后不会复活旧URI。
+Presentation intent不拥有资源存在性，也不属于projection invalidation。协议使用独立typed `WorkspaceModulePresentationRequested`记录“请求曾发生”；journal replay只恢复feed审计事实，live observer才执行短命UI命令。`ControlPlaneProjectionChanged`只携带projection与reason，用于invalidate/refetch read model。
+
+Runtime feed以当前target第一次成功完成的journal history load建立`historyReplayBoundarySeq`，并在同target重连期间保持该值。boundary completion与source reset分开建模，原因是React StrictMode可能取消第一次effect setup；第二次setup虽然复用同一source state，仍是首个真正完成的history load。页面以一个cursor分发boundary之后的完整typed `BackboneEvent`，AgentRun planner统一裁决turn、task、projection与presentation副作用，不再由多个effect把协议压成字符串后重复扫描。
+
+live presentation planner先刷新AgentRun workspace view，再以`module_id + view_key + renderer_kind + presentation_uri`精确匹配`workspace_modules`；匹配成功才切换workspace scope、展开侧栏并打开tab。这样展示命令与当前资源事实保持一致，历史审计事件也不会改变重新进入页面的用户布局。
 
 AgentFrame、surface document、Runtime Surface与Platform Tool owner不保存Canvas/module ref副本；数据库迁移删除对应列与surface JSON key。Canvas attach/create/copy只更新canonical VFS，visibility resolver按需派生module ref。WorkspacePanel在current projection ready后清理不再存在的持久化Canvas tab，并使更早发起的异步布局恢复失效。

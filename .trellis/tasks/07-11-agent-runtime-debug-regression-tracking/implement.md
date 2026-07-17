@@ -175,4 +175,7 @@
 - [x] 删除AgentFrame/Runtime Surface/Platform Tool owner中的Canvas/module ref副本及VFS重建入口，并以migration删除数据库列和surface JSON key。
 - [x] 以current `workspace_modules`清理持久化Canvas tab，并阻止更早发起的异步layout restore覆盖currentness校验。
 - [x] 将`ContextFrameChanged`接入页面control-plane invalidation；presentation执行改为refresh后current projection校验。
+- [x] 将history replay boundary改为由首个成功load幂等建立，覆盖StrictMode取消首次setup与同target重连保持原boundary。
+- [x] 将Workspace Module展示请求从`ControlPlaneProjectionChanged`拆为独立typed Backbone事件，生成Rust/TypeScript/schema合同。
+- [x] 删除turn/platform/task多组raw-event副作用扫描，统一以boundary后的完整typed event进入AgentRun live planner；历史request仅渲染审计卡片。
 - [x] 运行定向Rust、contract generation/check、前端测试/typecheck/lint及真实`pnpm dev`产品链验证。

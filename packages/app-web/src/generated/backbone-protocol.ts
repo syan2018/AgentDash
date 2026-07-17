@@ -1047,11 +1047,9 @@ export type ContextUsageSource = "provider" | "providerPlusEstimate" | "localEst
 
 export type ControlPlaneProjection = "workspace" | "agent_run_list" | "mailbox" | "waiting" | "delivery" | "hook_runtime" | "resource_surface" | "title";
 
-export type ControlPlaneProjectionChangeReason = "agent_run_lineage_changed" | "agent_run_shell_changed" | "agent_run_activity_changed" | "mailbox_state_changed" | "wait_resolved" | "delivery_terminal" | "companion_result" | "hook_effect_applied" | "hook_auto_resume_queued" | "workspace_module_presented" | "capability_state_changed" | "context_frame_changed" | "title_changed";
+export type ControlPlaneProjectionChangeReason = "agent_run_lineage_changed" | "agent_run_shell_changed" | "agent_run_activity_changed" | "mailbox_state_changed" | "wait_resolved" | "delivery_terminal" | "companion_result" | "hook_effect_applied" | "hook_auto_resume_queued" | "capability_state_changed" | "context_frame_changed" | "title_changed";
 
-export type ControlPlaneProjectionChanged = { projection: ControlPlaneProjection, reason: ControlPlaneProjectionChangeReason, run_id: string, agent_id: string, frame_id: string | null, gate_id: string | null, mailbox_message_id: string | null, delivery_runtime_session_id: string | null, workspace_module_presentation: ControlPlaneWorkspaceModulePresentation | null, };
-
-export type ControlPlaneWorkspaceModulePresentation = { module_id: string, view_key: string, renderer_kind: string, presentation_uri: string, title: string, payload: JsonValue | null, diagnostics: JsonValue | null, };
+export type ControlPlaneProjectionChanged = { projection: ControlPlaneProjection, reason: ControlPlaneProjectionChangeReason, run_id: string, agent_id: string, frame_id: string | null, gate_id: string | null, mailbox_message_id: string | null, delivery_runtime_session_id: string | null, };
 
 /**
  *`DeprecationNoticeNotification`
@@ -3040,7 +3038,7 @@ export type PlanDeltaNotification = { delta: string, itemId: string, threadId: s
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "context_frame_changed", "data": ContextFrameChanged } | { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "control_plane_projection_changed", "data": ControlPlaneProjectionChanged } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "pty_terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
+export type PlatformEvent = { "kind": "context_frame_changed", "data": ContextFrameChanged } | { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "control_plane_projection_changed", "data": ControlPlaneProjectionChanged } | { "kind": "workspace_module_presentation_requested", "data": WorkspaceModulePresentationRequested } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "pty_terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
 
 export type ProjectGuidelineEntry = { path: string, content: string, };
 
@@ -5486,3 +5484,5 @@ threadId?: string | null, };
  * </details>
  */
 export type WebSearchAction = { "type": "search", queries?: Array<string> | null, query?: string | null, } | { "type": "openPage", url?: string | null, } | { "type": "findInPage", pattern?: string | null, url?: string | null, } | { "type": "other" };
+
+export type WorkspaceModulePresentationRequested = { module_id: string, view_key: string, renderer_kind: string, presentation_uri: string, title: string, payload: JsonValue | null, diagnostics: JsonValue | null, };

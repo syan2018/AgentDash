@@ -38,10 +38,9 @@
 15. **producer与admission各自正确但组合非法**：新增Driver/internal/presentation fact或sink admission结果时，必须同时审计producer mapper、Runtime允许集合、全部Native/Codex/Remote pump和outbox settlement；单包测试不能证明跨层闭环
 16. **把sink flow-control当作canonical状态**：`Terminalized`等返回值只能控制producer停止；work ack、业务终态与binding收敛必须二次读取durable Runtime事实
 17. **把准入版本扩张成生命周期版本**：catalog/surface revision证明新调用在哪个快照上被接纳；canonical Item建立后，稳定owner identity与generation负责后续收敛。工具自身推进surface时旧revision自然过期，因此跨层审计要区分admission fence与accepted entity lifecycle fence
-18. **持久展示意图止步于局部执行器**：后端 journal、前端 mapper 与 planner 分别正确仍不等于
-    用户可见；必须继续验证 hydration/live dispatcher、命令式 UI owner、workspace-scoped store
-    初始化与最终 renderer。presentation 在 sibling mount effect 之间执行时，scope 与 mutation
-    必须原子提交，避免后续被动初始化覆盖结果
+18. **把审计事实与命令式意图混为一谈**：journal可持久化“展示请求曾发生”供审计，但历史
+    hydrate不应重放短命UI命令。跨层事件要显式区分projection invalidation与imperative intent，
+    再验证live dispatcher、命令式UI owner、workspace-scoped store初始化与最终renderer。
 
 ---
 
@@ -60,7 +59,9 @@
 - [ ] 若工具能更新AgentFrame/surface，明确canonical mutation、ContextFrame提交与connector idle同步的先后关系
 - [ ] 若 durable event 会驱动命令式 UI，画出 persistence → hydration/live dispatcher →
   effect planner → UI owner → scoped store → renderer 全链路，并明确命令在首次 mount effect
-  前后都保持相同结果
+  前后都保持相同结果；同时明确durable审计事实是否真的具有历史重放语义
+- [ ] 若hydration boundary控制副作用，分别验证“source target是否reset”和“history load是否成功”
+  两个状态；在StrictMode的`setup → cleanup → setup`中，首个真正完成的load必须发布boundary
 - [ ] 若工具返回可续接handle，确认owner、route registry与retained state owner在返回前同时建立，并覆盖跨owner拒绝及短命令完成后的保留窗口
 - [ ] 若新增Driver fact或sink admission枚举，建立“所有producer × Runtime admission × 所有pump/worker consumer”矩阵，并至少增加一条真实persistence组合回归
 - [ ] 若工具执行中可能更新catalog/surface，分别列出新调用准入坐标与已accept调用的progress/approval/terminal坐标，并覆盖“发起更新的调用完成 + 更新后的新调用按新revision准入”

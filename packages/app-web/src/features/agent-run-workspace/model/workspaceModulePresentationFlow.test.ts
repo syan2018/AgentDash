@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { AgentRunWorkspaceView } from "../../../generated/workflow-contracts";
 import type { SessionEventEnvelope } from "../../session/model/types";
-import { dispatchPlatformSideEffectEvents } from "../../session/ui/SessionChatViewModel";
-import { planAgentRunSystemEvent } from "./controlPlaneModel";
+import { dispatchLiveSessionEvents } from "../../session/ui/SessionChatViewModel";
+import { planAgentRunLiveEvent } from "./controlPlaneModel";
 import { applyAgentRunControlPlaneEffectPlan } from "./useAgentRunWorkspaceControlPlane";
 
 function eventEnvelope(eventSeq: number, event: BackboneEvent): SessionEventEnvelope {
@@ -32,29 +32,19 @@ function eventEnvelope(eventSeq: number, event: BackboneEvent): SessionEventEnve
   };
 }
 
-function workspaceModulePresentedEvent(): BackboneEvent {
+function workspaceModulePresentationRequestedEvent(): BackboneEvent {
   return {
     type: "platform",
     payload: {
-      kind: "control_plane_projection_changed",
+      kind: "workspace_module_presentation_requested",
       data: {
-        projection: "resource_surface",
-        reason: "workspace_module_presented",
-        run_id: "run-1",
-        agent_id: "agent-1",
-        frame_id: "frame-1",
-        gate_id: null,
-        mailbox_message_id: null,
-        delivery_runtime_session_id: "runtime-1",
-        workspace_module_presentation: {
-          module_id: "canvas:cvs-canvas",
-          view_key: "preview",
-          renderer_kind: "canvas",
-          presentation_uri: "canvas://cvs-canvas",
-          title: "临时 Canvas 展示测试",
-          payload: { reason: "smoke-test" },
-          diagnostics: null,
-        },
+        module_id: "canvas:cvs-canvas",
+        view_key: "preview",
+        renderer_kind: "canvas",
+        presentation_uri: "canvas://cvs-canvas",
+        title: "临时 Canvas 展示测试",
+        payload: { reason: "smoke-test" },
+        diagnostics: null,
       },
     },
   };
@@ -88,7 +78,7 @@ function agentRunWorkspace(
 }
 
 describe("Workspace Module presentation frontend flow", () => {
-  it("refreshes the current AgentRun projection before replaying a presentation target", async () => {
+  it("refreshes the current AgentRun projection before applying a live presentation target", async () => {
     const openWorkspacePanel = vi.fn();
     const refreshAgentRunWorkspaceState = vi.fn(async () => agentRunWorkspace([
       {
@@ -114,7 +104,7 @@ describe("Workspace Module presentation frontend flow", () => {
     const scheduleHookRuntimeRefresh = vi.fn();
     const refreshAgentRunList = vi.fn();
 
-    const lastSeenSeq = dispatchPlatformSideEffectEvents(
+    const lastSeenSeq = dispatchLiveSessionEvents(
       [
         eventEnvelope(93, {
           type: "platform",
@@ -126,7 +116,7 @@ describe("Workspace Module presentation frontend flow", () => {
             },
           },
         }),
-        eventEnvelope(94, workspaceModulePresentedEvent()),
+        eventEnvelope(94, workspaceModulePresentationRequestedEvent()),
         eventEnvelope(97, {
           type: "item_completed",
           payload: {
@@ -148,10 +138,11 @@ describe("Workspace Module presentation frontend flow", () => {
         }),
       ],
       null,
-      97,
-      (eventType, event) => {
+      93,
+      (event) => {
+        const plan = planAgentRunLiveEvent(event);
         applyAgentRunControlPlaneEffectPlan(
-          planAgentRunSystemEvent(eventType, event),
+          plan.effects,
           {
             refreshAgentRunWorkspaceState,
             openWorkspacePanel,
@@ -179,10 +170,7 @@ describe("Workspace Module presentation frontend flow", () => {
     const openWorkspacePanel = vi.fn();
 
     applyAgentRunControlPlaneEffectPlan(
-      planAgentRunSystemEvent(
-        "control_plane_projection_changed",
-        workspaceModulePresentedEvent(),
-      ),
+      planAgentRunLiveEvent(workspaceModulePresentationRequestedEvent()).effects,
       {
         refreshAgentRunWorkspaceState,
         openWorkspacePanel,
@@ -195,6 +183,20 @@ describe("Workspace Module presentation frontend flow", () => {
       expect(refreshAgentRunWorkspaceState).toHaveBeenCalledTimes(1);
     });
     expect(openWorkspacePanel).not.toHaveBeenCalled();
+  });
+
+  it("does not execute a historical presentation request as an imperative UI action", () => {
+    const onLiveEvent = vi.fn();
+
+    const cursor = dispatchLiveSessionEvents(
+      [eventEnvelope(94, workspaceModulePresentationRequestedEvent())],
+      null,
+      94,
+      onLiveEvent,
+    );
+
+    expect(cursor).toBe(94);
+    expect(onLiveEvent).not.toHaveBeenCalled();
   });
 
 });

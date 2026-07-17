@@ -86,7 +86,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   approval_requested:              "等待审批",
   approval_resolved:               "审批结果",
   hook_action_resolved:            "事项已结案",
-  workspace_module_presented:      "Workspace Module 展示成功",
+  workspace_module_presentation_requested: "Workspace Module 展示请求已提交",
   workspace_module_present_failed: "Workspace Module 展示失败",
   context_frame:          "Agent 上下文",
   session_branch_forked:           "会话已分叉",
@@ -109,7 +109,7 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   approval_requested:              "当前工具调用正在等待审批",
   approval_resolved:               "当前工具调用审批已完成",
   hook_action_resolved:            "一项流程干预已被结案",
-  workspace_module_presented:      "Workspace Module 视图已展示",
+  workspace_module_presentation_requested: "宿主已收到 Workspace Module 展示请求",
   workspace_module_present_failed: "后端未找到可展示的 Workspace Module 视图",
   context_frame:          "Agent 上下文已更新",
   session_branch_forked:           "已从父会话分叉出当前会话",
@@ -307,7 +307,8 @@ export function SessionSystemEventCard({ event, contextFrame }: SessionSystemEve
   }
 
   // ── 通用系统事件 ──
-  const severity = eventType === "workspace_module_presented" ? "success" : "info";
+  const severity =
+    eventType === "workspace_module_presentation_requested" ? "success" : "info";
   const badge = SEVERITY_BADGE[severity] ?? DEFAULT_BADGE;
   const typeLabel = EVENT_TYPE_LABELS[eventType] ?? eventType;
   const message = eventMessage ?? EVENT_TYPE_DEFAULT_MESSAGES[eventType] ?? "系统事件";
@@ -567,18 +568,15 @@ function buildGenericDetailLines(eventType: string, data: Record<string, unknown
     return lines;
   }
 
-  if (eventType === "workspace_module_presented") {
-    const presentation = isRecord(data.workspace_module_presentation)
-      ? data.workspace_module_presentation
+  if (eventType === "workspace_module_presentation_requested") {
+    const moduleId = typeof data.module_id === "string"
+      ? data.module_id
       : null;
-    const moduleId = presentation && typeof presentation.module_id === "string"
-      ? presentation.module_id
+    const viewKey = typeof data.view_key === "string"
+      ? data.view_key
       : null;
-    const viewKey = presentation && typeof presentation.view_key === "string"
-      ? presentation.view_key
-      : null;
-    const rendererKind = presentation && typeof presentation.renderer_kind === "string"
-      ? presentation.renderer_kind
+    const rendererKind = typeof data.renderer_kind === "string"
+      ? data.renderer_kind
       : null;
     if (moduleId) lines.push(`模块：${moduleId}`);
     if (viewKey) lines.push(`视图：${viewKey}`);

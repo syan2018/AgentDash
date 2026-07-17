@@ -28,9 +28,8 @@ import {
   SessionChatStream,
 } from "./SessionChatViewParts";
 import {
-  collectTurnLifecycleEvents,
   computeProjectionRefreshKey,
-  dispatchPlatformSideEffectEvents,
+  dispatchLiveSessionEvents,
   isAgentRunWorkspaceActionRunning,
   rawEventsBelongToRuntimeStreamTarget,
   resolveExecutorFromHint,
@@ -62,9 +61,7 @@ export function SessionChatView({
   model,
   intents,
   onMessageSent,
-  onTurnEnd,
-  onSystemEvent,
-  onTaskPlanChanged,
+  onLiveEvent,
   headerSlot,
   inputPrefix,
   inputToolbarSlot,
@@ -312,79 +309,21 @@ export function SessionChatView({
     executionStatus: commandState.executionStatus,
   });
 
-  const onTurnEndRef = useRef(onTurnEnd);
-  useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
-  const onSystemEventRef = useRef(onSystemEvent);
-  const lastSystemEventSeqRef = useRef<number | null>(null);
-  useEffect(() => { onSystemEventRef.current = onSystemEvent; }, [onSystemEvent]);
-  const onTaskPlanChangedRef = useRef(onTaskPlanChanged);
-  const lastTaskToolEventSeqRef = useRef<number | null>(null);
-  const lastTurnLifecycleEventSeqRef = useRef<number | null>(null);
-  useEffect(() => { onTaskPlanChangedRef.current = onTaskPlanChanged; }, [onTaskPlanChanged]);
+  const onLiveEventRef = useRef(onLiveEvent);
+  const lastLiveEventSeqRef = useRef<number | null>(null);
+  useEffect(() => { onLiveEventRef.current = onLiveEvent; }, [onLiveEvent]);
   useEffect(() => {
-    lastSystemEventSeqRef.current = null;
-    lastTaskToolEventSeqRef.current = null;
-    lastTurnLifecycleEventSeqRef.current = null;
+    lastLiveEventSeqRef.current = null;
   }, [agentRunTargetKey]);
 
   useEffect(() => {
-    if (!hasRuntimeStreamTarget || !rawEventsBelongToCurrentSession || rawEvents.length === 0) return;
-    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? 0;
-    lastTurnLifecycleEventSeqRef.current = afterSeq;
-    const result = collectTurnLifecycleEvents(rawEvents, afterSeq);
-    lastTurnLifecycleEventSeqRef.current = result.lastSeenSeq;
-    let terminalSeen = false;
-    for (const item of result.items) {
-      if (item.eventType === "turn_started") {
-        continue;
-      } else {
-        terminalSeen = true;
-      }
-    }
-    if (terminalSeen) {
-      onTurnEndRef.current?.();
-    }
-  }, [
-    agentRunTarget,
-    hasRuntimeStreamTarget,
-    historyReplayBoundarySeq,
-    rawEvents,
-    rawEventsBelongToCurrentSession,
-  ]);
-
-  useEffect(() => {
     if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    lastSystemEventSeqRef.current = dispatchPlatformSideEffectEvents(
+    lastLiveEventSeqRef.current = dispatchLiveSessionEvents(
       rawEvents,
-      lastSystemEventSeqRef.current,
+      lastLiveEventSeqRef.current,
       historyReplayBoundarySeq,
-      (eventType, event) => onSystemEventRef.current?.(eventType, event),
+      (event) => onLiveEventRef.current?.(event),
     );
-  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
-
-  useEffect(() => {
-    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    const afterSeq = lastTaskToolEventSeqRef.current ?? historyReplayBoundarySeq;
-    lastTaskToolEventSeqRef.current = afterSeq;
-    let lastSeenSeq = afterSeq;
-    let changed = false;
-    for (const event of rawEvents) {
-      if (!event || event.event_seq <= afterSeq) continue;
-      lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-      const bbEvent = event.notification.event;
-      if (bbEvent.type !== "item_completed") continue;
-      const item = bbEvent.payload.item;
-      if (
-        item.type === "dynamicToolCall"
-        && item.tool === "task_write"
-        && item.status === "completed"
-        && item.success !== false
-      ) {
-        changed = true;
-      }
-    }
-    lastTaskToolEventSeqRef.current = lastSeenSeq;
-    if (changed) onTaskPlanChangedRef.current?.();
   }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────

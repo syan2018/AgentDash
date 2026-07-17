@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::{
-    BackboneEvent, ControlPlaneProjection, ControlPlaneProjectionChangeReason,
-    ControlPlaneProjectionChanged, ControlPlaneWorkspaceModulePresentation, PlatformEvent,
+    BackboneEvent, PlatformEvent, WorkspaceModulePresentationRequested,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_ports::agent_frame_materialization::{
@@ -946,17 +945,10 @@ async fn present(
             }
         };
 
-    let value = serde_json::to_value(&presentation).map_err(|error| {
-        WorkspaceModuleSurfaceError::ExecutionFailed(format!(
-            "failed to serialize workspace module presentation: {error}"
-        ))
-    })?;
-
-    let (binding, event) = match build_present_projection_event(
+    let (binding, event) = match build_present_request_event(
         command.runtime_binding_repo.as_ref(),
         command.runtime_context.runtime_thread_id(),
         &presentation,
-        value.clone(),
     )
     .await
     {
@@ -970,7 +962,7 @@ async fn present(
         .append_presentation_event(
             &binding,
             command.turn_id,
-            "workspace_module_presented",
+            "workspace_module_presentation_requested",
             event,
         )
         .await
@@ -1582,34 +1574,23 @@ fn build_present_event(key: &str, value: serde_json::Value) -> BackboneEvent {
     })
 }
 
-async fn build_present_projection_event(
+async fn build_present_request_event(
     runtime_binding_repo: &dyn AgentRunRuntimeBindingRepository,
     runtime_thread_id: &str,
     presentation: &WorkspaceModulePresentation,
-    payload: serde_json::Value,
 ) -> Result<(AgentRunRuntimeBinding, BackboneEvent), WorkspaceModuleCommandDiagnostic> {
     let binding = current_binding(runtime_binding_repo, runtime_thread_id).await?;
-    let event = BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(Box::new(
-        ControlPlaneProjectionChanged {
-            projection: ControlPlaneProjection::ResourceSurface,
-            reason: ControlPlaneProjectionChangeReason::WorkspaceModulePresented,
-            run_id: binding.target.run_id.to_string(),
-            agent_id: binding.target.agent_id.to_string(),
-            frame_id: Some(binding.surface.source_frame_id.clone()),
-            gate_id: None,
-            mailbox_message_id: None,
-            delivery_runtime_session_id: Some(binding.presentation_thread_id.to_string()),
-            workspace_module_presentation: Some(ControlPlaneWorkspaceModulePresentation {
-                module_id: presentation.module_id.clone(),
-                view_key: presentation.view_key.clone(),
-                renderer_kind: presentation.renderer_kind.clone(),
-                presentation_uri: presentation.presentation_uri.clone(),
-                title: presentation.title.clone(),
-                payload: Some(payload),
-                diagnostics: None,
-            }),
-        },
-    )));
+    let event = BackboneEvent::Platform(PlatformEvent::WorkspaceModulePresentationRequested(
+        Box::new(WorkspaceModulePresentationRequested {
+            module_id: presentation.module_id.clone(),
+            view_key: presentation.view_key.clone(),
+            renderer_kind: presentation.renderer_kind.clone(),
+            presentation_uri: presentation.presentation_uri.clone(),
+            title: presentation.title.clone(),
+            payload: presentation.payload.clone(),
+            diagnostics: presentation.diagnostics.clone(),
+        }),
+    ));
     Ok((binding, event))
 }
 
@@ -2217,7 +2198,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn current_workspace_module_control_projection_matches_pinned_main_body_exactly() {
+    async fn workspace_module_presentation_request_uses_its_own_typed_event() {
         let mut binding = runtime_binding(
             "session-control-0001",
             Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
@@ -2231,25 +2212,27 @@ mod tests {
             renderer_kind: "canvas".to_string(),
             presentation_uri: "agentdash://workspace-module/module-dashboard/dashboard".to_string(),
             title: "Dashboard".to_string(),
-            payload: None,
+            payload: Some(serde_json::json!({
+                "blocks": [{"kind": "text", "text": "ready"}],
+                "revision": 7
+            })),
             diagnostics: None,
         };
-        let payload = serde_json::json!({
-            "blocks": [{"kind": "text", "text": "ready"}],
-            "revision": 7
-        });
-        let (_, event) =
-            build_present_projection_event(&repo, "session-control-0001", &presentation, payload)
-                .await
-                .expect("current workspace module projection");
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json"
-        ))
-        .expect("pinned Main platform fixture");
+        let (_, event) = build_present_request_event(&repo, "session-control-0001", &presentation)
+            .await
+            .expect("workspace module presentation request");
+        let value =
+            serde_json::to_value(event).expect("serialize workspace module presentation request");
         assert_eq!(
-            serde_json::to_value(event).expect("serialize current control projection"),
-            fixture["cases"]["workspace_module_presented"],
+            value["payload"]["kind"],
+            "workspace_module_presentation_requested"
         );
+        assert_eq!(value["payload"]["data"]["module_id"], "module-dashboard");
+        assert_eq!(
+            value["payload"]["data"]["presentation_uri"],
+            "agentdash://workspace-module/module-dashboard/dashboard"
+        );
+        assert_eq!(value["payload"]["data"]["payload"]["revision"], 7);
     }
 
     #[tokio::test]
@@ -2339,34 +2322,18 @@ mod tests {
             0,
             "present is a presentation intent and must not mutate AgentFrame"
         );
-        let BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(changed)) =
+        let BackboneEvent::Platform(PlatformEvent::WorkspaceModulePresentationRequested(request)) =
             &requests[0].events[0].event.event
         else {
-            panic!("present must append the Main control-plane projection event")
+            panic!("present must append a typed workspace module presentation request")
         };
-        assert_eq!(changed.projection, ControlPlaneProjection::ResourceSurface);
-        assert_eq!(
-            changed.reason,
-            ControlPlaneProjectionChangeReason::WorkspaceModulePresented
-        );
-        assert_eq!(changed.frame_id.as_deref(), Some("frame-workspace-module"));
-        assert!(changed.gate_id.is_none());
-        assert!(changed.mailbox_message_id.is_none());
-        assert_eq!(
-            changed.delivery_runtime_session_id.as_deref(),
-            Some("presentation-session-a")
-        );
-        let control = changed
-            .workspace_module_presentation
-            .as_ref()
-            .expect("workspace module presentation");
-        assert_eq!(control.module_id, "canvas:cvs-dashboard-a");
-        assert_eq!(control.view_key, "preview");
-        assert_eq!(control.renderer_kind, "canvas");
-        assert_eq!(control.presentation_uri, "canvas://cvs-dashboard-a");
-        assert_eq!(control.title, "Dashboard A");
-        assert!(control.payload.is_some());
-        assert!(control.diagnostics.is_none());
+        assert_eq!(request.module_id, "canvas:cvs-dashboard-a");
+        assert_eq!(request.view_key, "preview");
+        assert_eq!(request.renderer_kind, "canvas");
+        assert_eq!(request.presentation_uri, "canvas://cvs-dashboard-a");
+        assert_eq!(request.title, "Dashboard A");
+        assert!(request.payload.is_none());
+        assert!(request.diagnostics.is_none());
     }
 
     #[tokio::test]

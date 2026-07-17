@@ -16,9 +16,8 @@ import type {
 } from "../../workspace-panel/model/useAgentRunWorkspaceState";
 import { isWorkspaceModulePresentationCurrent } from "../../workspace-module/model/presentation";
 import {
+  planAgentRunLiveEvent,
   planAgentRunMessageSent,
-  planAgentRunSystemEvent,
-  planAgentRunTurnEnded,
   planAgentRunWorkspaceModuleOpened,
   resolveAgentRunSubmitCommand,
   type AgentRunControlPlaneEffectPlan,
@@ -68,9 +67,7 @@ interface UseAgentRunWorkspaceControlPlaneResult {
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
   refreshAgentRunHookRuntime: () => Promise<unknown>;
   handleMessageSent: () => void;
-  handleTurnEnd: () => void;
-  handleTaskPlanChanged: () => void;
-  handleSystemEvent: (eventType: string, event: BackboneEvent) => void;
+  handleLiveEvent: (event: BackboneEvent) => void;
   handleWorkspaceModuleOpened: () => void;
 }
 
@@ -403,18 +400,13 @@ export function useAgentRunWorkspaceControlPlane({
     }
   }, [currentAgentId, currentRunId]);
 
-  const handleTurnEnd = useCallback(() => {
-    applyControlPlaneEffectPlan(planAgentRunTurnEnded());
-    refreshStatusBarTasks();
+  const handleLiveEvent = useCallback((event: BackboneEvent) => {
+    const plan = planAgentRunLiveEvent(event);
+    applyControlPlaneEffectPlan(plan.effects);
+    if (plan.refreshTaskPlan) {
+      refreshStatusBarTasks();
+    }
   }, [applyControlPlaneEffectPlan, refreshStatusBarTasks]);
-
-  const handleTaskPlanChanged = useCallback(() => {
-    refreshStatusBarTasks();
-  }, [refreshStatusBarTasks]);
-
-  const handleSystemEvent = useCallback((eventType: string, event: BackboneEvent) => {
-    applyControlPlaneEffectPlan(planAgentRunSystemEvent(eventType, event));
-  }, [applyControlPlaneEffectPlan]);
 
   const handleWorkspaceModuleOpened = useCallback(() => {
     applyControlPlaneEffectPlan(planAgentRunWorkspaceModuleOpened());
@@ -427,9 +419,7 @@ export function useAgentRunWorkspaceControlPlane({
     refreshAgentRunWorkspaceState,
     refreshAgentRunHookRuntime,
     handleMessageSent,
-    handleTurnEnd,
-    handleTaskPlanChanged,
-    handleSystemEvent,
+    handleLiveEvent,
     handleWorkspaceModuleOpened,
   };
 }

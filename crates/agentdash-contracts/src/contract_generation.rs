@@ -202,9 +202,8 @@ function isControlPlaneProjectionChanged(value: unknown): boolean {
   if (!(isOptionalString(value.frame_id) || value.frame_id === null)) return false;
   if (!(isOptionalString(value.gate_id) || value.gate_id === null)) return false;
   if (!(isOptionalString(value.mailbox_message_id) || value.mailbox_message_id === null)) return false;
-  return value.workspace_module_presentation === undefined ||
-    value.workspace_module_presentation === null ||
-    isRecord(value.workspace_module_presentation);
+  return isOptionalString(value.delivery_runtime_session_id) ||
+    value.delivery_runtime_session_id === null;
 }
 "#,
     );

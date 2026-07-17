@@ -18,7 +18,7 @@ import {
   projectAgentRunChatCommandState,
   projectAgentRunChatMailboxModel,
 } from "../features/agent-run-workspace/model/conversationCommandState";
-import { planAgentRunSystemEvent } from "../features/agent-run-workspace/model/controlPlaneModel";
+import { planAgentRunLiveEvent } from "../features/agent-run-workspace/model/controlPlaneModel";
 import {
   forkAgentRunFromMessageRef,
 } from "../features/agent-run-workspace/model/useAgentRunWorkspaceCommands";
@@ -90,7 +90,7 @@ interface AgentRunOuterFixture {
   mailbox_input: Parameters<typeof projectAgentRunChatMailboxModel>[1];
   system_event: {
     event_type: string;
-    event: Parameters<typeof planAgentRunSystemEvent>[1];
+    event: Parameters<typeof planAgentRunLiveEvent>[0];
   };
   fork: {
     run_id: string;
@@ -103,7 +103,7 @@ interface AgentRunOuterFixture {
     command_ids: string[];
     compact_command_id: string;
     mailbox: Record<string, unknown>;
-    system_effect: ReturnType<typeof planAgentRunSystemEvent>;
+    system_effect: ReturnType<typeof planAgentRunLiveEvent>["effects"];
     fork_request: { run_id: string; agent_id: string; request: unknown };
     redirect: { runId: string; agentId: string };
     lineage: Record<string, unknown>;
@@ -576,7 +576,7 @@ describe("W11 Main frontend parity evidence", () => {
       promote_command_id: mailbox.promoteAction?.command_id,
       delete_command_id: mailbox.deleteAction?.command_id,
     }).toEqual(fixture.expected.mailbox);
-    expect(planAgentRunSystemEvent(fixture.system_event.event_type, fixture.system_event.event))
+    expect(planAgentRunLiveEvent(fixture.system_event.event).effects)
       .toEqual(fixture.expected.system_effect);
 
     const forkService = vi.fn<ForkCall["forkService"]>().mockResolvedValue(fixture.fork.response);
@@ -614,7 +614,7 @@ describe("W11 Main frontend parity evidence", () => {
       .toEqual(fixture.expected.status_target);
   });
 
-  it("keeps the Main session UI ledger at 85 byte-identical files plus twenty explicit seams", () => {
+  it("keeps the Main session UI ledger at 83 byte-identical files plus twenty-two explicit seams", () => {
     const currentRoot = resolve(repositoryRoot, "packages/app-web/src/features/session");
     const mainRoot = resolve(
       repositoryRoot,
@@ -628,6 +628,7 @@ describe("W11 Main frontend parity evidence", () => {
       "model/companionSubagentDispatch.ts",
       "model/platformEvent.test.ts",
       "model/platformEvent.ts",
+      "model/sessionPlatformEventDispatcher.test.ts",
       "model/sessionStreamReducer.test.ts",
       "model/sessionStreamReducer.ts",
       "model/systemEventPolicy.ts",
@@ -638,6 +639,7 @@ describe("W11 Main frontend parity evidence", () => {
       "ui/SessionChatView.tsx",
       "ui/SessionChatViewModel.ts",
       "ui/SessionChatViewParts.tsx",
+      "ui/SessionChatViewTypes.ts",
       "ui/SessionEntry.tsx",
       "ui/SessionSystemEventCard.test.tsx",
       "ui/SessionSystemEventCard.tsx",
@@ -658,6 +660,6 @@ describe("W11 Main frontend parity evidence", () => {
     expect(mainFiles).toHaveLength(105);
     expect(currentFiles).toHaveLength(105);
     expect([...differing].sort()).toEqual([...allowlistedSeams].sort());
-    expect(mainFiles.length - differing.length).toBe(85);
+    expect(mainFiles.length - differing.length).toBe(83);
   });
 });

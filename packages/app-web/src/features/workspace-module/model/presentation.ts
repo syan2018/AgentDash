@@ -44,7 +44,7 @@ export function isWorkspaceModulePresentation(value: unknown): value is Workspac
 }
 
 export function workspaceModulePresentationFromPlatformEventData(
-  data: Record<string, unknown> | null,
+  data: unknown,
 ): WorkspaceModulePresentation | null {
   return isWorkspaceModulePresentation(data) ? data : null;
 }

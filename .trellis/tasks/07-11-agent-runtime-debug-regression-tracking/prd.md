@@ -202,11 +202,14 @@
 - 现象：`workspace_module_operate(operation="canvas.create")` 已产生 canonical `ContextFrameChanged`，其中明确包含新增 Canvas VFS mount；后续 `workspace_module_present` 也能打开具体 Canvas tab，但 WorkspacePanel 的“+”菜单仍显示“无可打开 Canvas”。删除 Canvas 后，历史 presentation 还可能重新打开已不存在的 URI。
 - 已确认直接根因：AgentRun tab 直接消费 durable presentation intent；菜单却在浏览器内把 Project-scoped Workspace Module catalog 缓存与 AgentRun resource surface再次求交。SurfaceAdopt 的 `ContextFrameChanged`没有进入页面控制面刷新，catalog refresh又是fire-and-forget，因此两个入口观察不同时间点的不同读模型。
 - 已确认架构根因：AgentFrame/Surface/Platform Tool owner另存visible Canvas/module ref，前端又自行拼接Project catalog、Runtime surface、tab history和presentation event，导致同一Canvas当前性被多处复制并独立恢复。
+- 已确认直接消费根因：Runtime feed把`historyReplayBoundarySeq`的建立绑定到当前effect是否执行source reset。React StrictMode第一次setup认领source后被cleanup取消，第二次真正完成history load时不会再reset source，导致durable事件可以渲染但boundary永久为`null`，live-event dispatcher因此无法执行workspace refresh、侧栏展开与tab激活。
+- 已确认事件架构根因：presentation被嵌入`ControlPlaneProjectionChanged`，前端又把typed union压成字符串伪类型，并由turn、platform、task三组effect重复扫描raw events。投影失效、审计事实和短命UI命令因此没有明确的类型与消费边界，历史回放例外会把一次性展示请求重新执行。
 - AgentRun workspace view必须直接携带当前Workspace Module projection。ProjectAgent preset只提供`WorkspaceModuleDimension`授权，current adopted Frame的canonical VFS只提供当前Canvas mounts，资产仓储确认Canvas/Extension仍存在；前端列表不再读取Project catalog store或自行推断运行时可见性。
 - Canonical `ContextFrameChanged`是SurfaceAdopt的通用投影失效信号。前端收到live事件后刷新整个AgentRun workspace view；不新增Canvas专属control-plane事件。
-- `workspace_module_presentation`只表达短命的展示意图。执行展示前必须等待current AgentRun workspace projection刷新，并要求payload中的module/view/renderer/URI仍精确存在于该投影；历史事件不能重新打开已删除或已移出当前surface的资源。
+- 独立typed `WorkspaceModulePresentationRequested`只表达短命的展示意图。journal持久化该事实供审计卡片展示；仅live事件执行命令。执行展示前必须等待current AgentRun workspace projection刷新，并要求payload中的module/view/renderer/URI仍精确存在于该投影。
+- 前端只保留一条typed live-event入口：按journal seq分发完整`BackboneEvent`，再由AgentRun planner统一裁决turn、task、projection与presentation副作用。`ControlPlaneProjectionChanged`只负责投影失效，不携带展示请求。
 - AgentFrame/Surface/Runtime Tool context不保存Canvas/module ref副本；数据库列与surface JSON key必须由migration物理删除。持久化tab仅为布局偏好，在current projection ready后按URI清理，不能恢复已不存在的Canvas。
-- 验收必须覆盖：Canvas create的ContextFrameChanged触发workspace refresh；刷新后的单一projection同时驱动菜单与presentation；presentation执行严格晚于刷新；已删除Canvas不在projection中且历史presentation不打开tab。
+- 验收必须覆盖：Canvas create的ContextFrameChanged触发workspace refresh；刷新后的单一projection同时驱动菜单与presentation；live presentation执行严格晚于刷新；StrictMode取消首次history setup后下一次成功load仍建立replay boundary；历史request只展示审计卡片且不打开tab。
 
 ## Acceptance Criteria
 
@@ -266,6 +269,8 @@
 - [x] ARD-017 AgentRun workspace contract直接携带runtime-scoped Workspace Module projection，WorkspacePanel不再拼接Project catalog store与resource surface。
 - [x] ARD-017 canonical ContextFrameChanged进入通用workspace refresh，Canvas create挂载后列表无需等待present即可出现。
 - [x] ARD-017 presentation等待workspace refresh并以current projection校验module/view/renderer/URI；已删除Canvas的历史presentation不会重新打开。
+- [x] ARD-017 Runtime feed在首个成功history load建立稳定replay boundary，StrictMode双effect不再造成“事件已渲染、页面副作用未消费”。
+- [x] ARD-017 presentation从control-plane projection拆为独立typed request，前端收敛为单一live-event dispatcher与typed AgentRun planner；历史request只恢复审计卡片。
 - [x] ARD-017 通过定向Rust/contract/frontend测试及真实`pnpm dev`链验证列表、侧栏展开、active Canvas renderer与删除失效一致。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
@@ -294,7 +299,7 @@
 | ARD-014 | diagnosed | blocker | Responses等待HTTP EOF导致可见回复与canonical终态分裂；Promote跨层改policy却保留预生成presentation坐标，立即发送确定性失败 |
 | ARD-015 | fixed | blocker | exact candidate坐标已贯穿compiler/adopter，Managed Runtime snapshot成为唯一adopted head，latest persisted repository路径已完成语义改名与隔离；待真实Canvas产品链复验 |
 | ARD-016 | verified | blocker | 真实`pnpm dev`验证create仅产生VFS mount delta，present不写Frame且成功终态，用户可打开Canvas，工具卡展示5行typed摘要而非单行JSON |
-| ARD-017 | verified | blocker | workspace contract统一输出授权dimension、canonical VFS mounts与当前资产闭包；菜单、presentation和持久化tab恢复共用该投影，重复Frame/Runtime字段及数据库列已删除 |
+| ARD-017 | verified | blocker | workspace contract统一输出当前资产闭包；typed presentation request与projection invalidation职责分离，单一live-event planner经current projection校验后驱动侧栏与renderer |
 
 ## Verification Record
 
@@ -334,3 +339,5 @@
 - ARD-017 定向验证通过：`agentdash-api` cargo check、Workspace Module canonical VFS visibility 4项、AgentRun runtime surface 12项、前端95文件601项、TypeScript、本次前端ESLint、migration guard及三个项目内generated contract check均通过；全量contract wrapper仍先被既有Codex upstream protocol drift阻断。
 - ARD-017 真实`pnpm dev`升级至schema 83；`agent_frames`中两个旧projection列为0个，surface旧key为0行。latest两个AgentRun API均返回`canvas:cvs-canvas -> canvas://cvs-canvas`，已删除Dash资产的旧Run返回空projection。
 - ARD-017 浏览器产品验证：latest Run的“+”菜单显示“Canvas 编辑展示测试”，active Canvas iframe显示预览运行中；切换到已删除Dash Run后旧`canvas://cvs-dash-canvas` tab未恢复，数据库持久化layout已收敛为仅`context://overview`与`inspector://session`。
+- ARD-017 StrictMode根因复验：真实Run `b6e67f18-9e2a-4f44-969b-5a4c4d0b9635` 的journal seq 105已进入feed且current `workspace_modules`精确匹配，但修复前`historyReplayBoundarySeq`仍为`null`；首个成功history load独立建立boundary后，后续live dispatcher可稳定消费新事件。
+- ARD-017 最终产品验证：从真实消息产生新的typed presentation request后，成功审计事件、Workspace Module列表、侧栏自动展开、active Canvas tab与renderer同时可见；手动收起后刷新页面，历史request只恢复审计卡片，不重复打开侧栏。

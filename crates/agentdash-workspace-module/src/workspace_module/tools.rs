@@ -916,8 +916,7 @@ pub struct WorkspaceModulePresentParams {
 
 /// `workspace_module_present`：best-effort 请求宿主向前端 panel 展示某 module 的 UI 入口。
 ///
-/// 通过 `ControlPlaneProjectionChanged(reason=workspace_module_presented)` 触发
-/// AgentRun workspace/resource-surface refresh。
+/// 通过 typed `WorkspaceModulePresentationRequested` 事件表达一次性展示意图。
 /// 无可展示目标（module 不可见 / view_key 不存在）时返回**可操作诊断**结构化错误（R4）。
 #[derive(Clone)]
 pub struct WorkspaceModulePresentTool {

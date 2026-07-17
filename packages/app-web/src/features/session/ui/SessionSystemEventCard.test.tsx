@@ -10,37 +10,27 @@ import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
 type JsonObject = { [key: string]: JsonValue | undefined };
 
 describe("SessionSystemEventCard", () => {
-  it("以成功卡片渲染 Workspace Module 展示事件", () => {
+  it("以成功卡片渲染 Workspace Module 展示请求审计事件", () => {
     const event: BackboneEvent = {
       type: "platform",
       payload: {
-        kind: "control_plane_projection_changed",
+        kind: "workspace_module_presentation_requested",
         data: {
-          projection: "resource_surface",
-          reason: "workspace_module_presented",
-          run_id: "run-1",
-          agent_id: "agent-1",
-          frame_id: "frame-1",
-          gate_id: null,
-          mailbox_message_id: null,
-          delivery_runtime_session_id: "runtime-1",
-          workspace_module_presentation: {
-            module_id: "canvas:cvs-canvas",
-            view_key: "preview",
-            renderer_kind: "canvas",
-            presentation_uri: "canvas://cvs-canvas",
-            title: "临时 Canvas 展示测试",
-            payload: { reason: "smoke-test" },
-            diagnostics: null,
-          },
+          module_id: "canvas:cvs-canvas",
+          view_key: "preview",
+          renderer_kind: "canvas",
+          presentation_uri: "canvas://cvs-canvas",
+          title: "临时 Canvas 展示测试",
+          payload: { reason: "smoke-test" },
+          diagnostics: null,
         },
       },
     };
 
     expect(isRenderableSystemEventUpdate(event)).toBe(true);
     const markup = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
-    expect(markup).toContain("Workspace Module 展示成功");
-    expect(markup).toContain("已展示「临时 Canvas 展示测试」");
+    expect(markup).toContain("Workspace Module 展示请求已提交");
+    expect(markup).toContain("已请求展示「临时 Canvas 展示测试」");
     expect(markup).toContain("text-success");
   });
 

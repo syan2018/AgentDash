@@ -13,10 +13,10 @@ pub use backbone::item::{
 };
 pub use backbone::platform::{
     ControlPlaneProjection, ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged,
-    ControlPlaneWorkspaceModulePresentation, HookTraceCompletion, HookTraceData,
-    HookTraceDiagnostic, HookTraceInjection, HookTracePayload, HookTraceSeverity, HookTraceTrigger,
-    PlatformEvent, ProviderAttemptPhase, ProviderAttemptStatus, RuntimeTerminalDiagnostic,
-    SessionRewindReason, SessionRewound,
+    HookTraceCompletion, HookTraceData, HookTraceDiagnostic, HookTraceInjection, HookTracePayload,
+    HookTraceSeverity, HookTraceTrigger, PlatformEvent, ProviderAttemptPhase,
+    ProviderAttemptStatus, RuntimeTerminalDiagnostic, SessionRewindReason, SessionRewound,
+    WorkspaceModulePresentationRequested,
 };
 pub use backbone::usage::{
     ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
@@ -76,7 +76,7 @@ mod tests {
     use super::{
         BackboneEnvelope, BackboneEvent, ContextDeliveryMetadata, ContextFrame,
         ControlPlaneProjection, ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged,
-        PlatformEvent,
+        PlatformEvent, WorkspaceModulePresentationRequested,
     };
 
     #[test]
@@ -111,7 +111,6 @@ mod tests {
                 gate_id: Some("gate-1".to_string()),
                 mailbox_message_id: Some("mailbox-1".to_string()),
                 delivery_runtime_session_id: None,
-                workspace_module_presentation: None,
             }),
         ));
 
@@ -126,6 +125,32 @@ mod tests {
         assert_eq!(value["payload"]["data"]["frame_id"], "frame-1");
         assert_eq!(value["payload"]["data"]["gate_id"], "gate-1");
         assert_eq!(value["payload"]["data"]["mailbox_message_id"], "mailbox-1");
+    }
+
+    #[test]
+    fn workspace_module_presentation_request_has_its_own_typed_discriminant() {
+        let event = BackboneEvent::Platform(PlatformEvent::WorkspaceModulePresentationRequested(
+            Box::new(WorkspaceModulePresentationRequested {
+                module_id: "canvas:cvs-canvas".to_string(),
+                view_key: "preview".to_string(),
+                renderer_kind: "canvas".to_string(),
+                presentation_uri: "canvas://cvs-canvas".to_string(),
+                title: "Canvas".to_string(),
+                payload: Some(serde_json::json!({ "reason": "smoke-test" })),
+                diagnostics: None,
+            }),
+        ));
+
+        let value =
+            serde_json::to_value(event).expect("serialize workspace module presentation request");
+        assert_eq!(
+            value["payload"]["kind"],
+            "workspace_module_presentation_requested"
+        );
+        assert_eq!(
+            value["payload"]["data"]["presentation_uri"],
+            "canvas://cvs-canvas"
+        );
     }
 
     #[test]

@@ -7174,6 +7174,23 @@
           ]
         },
         {
+          "description": "Best-effort request for the observing workspace UI to open one module presentation.\n\nThis is an imperative presentation intent, not a resource-surface projection change.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "workspace_module_presentation_requested"
+            },
+            "data": {
+              "$ref": "#/$defs/WorkspaceModulePresentationRequested"
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
           "description": "交互式终端输出流数据（路由到前端 xterm.js，不作为 chat entry 展示）。",
           "type": "object",
           "properties": {
@@ -8969,16 +8986,6 @@
             "string",
             "null"
           ]
-        },
-        "workspace_module_presentation": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ControlPlaneWorkspaceModulePresentation"
-            },
-            {
-              "type": "null"
-            }
-          ]
         }
       },
       "required": [
@@ -9013,13 +9020,12 @@
         "companion_result",
         "hook_effect_applied",
         "hook_auto_resume_queued",
-        "workspace_module_presented",
         "capability_state_changed",
         "context_frame_changed",
         "title_changed"
       ]
     },
-    "ControlPlaneWorkspaceModulePresentation": {
+    "WorkspaceModulePresentationRequested": {
       "type": "object",
       "properties": {
         "module_id": {

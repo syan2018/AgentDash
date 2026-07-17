@@ -34,6 +34,11 @@ pub enum PlatformEvent {
     /// AgentRun control-plane projection invalidation hint.
     ControlPlaneProjectionChanged(Box<ControlPlaneProjectionChanged>),
 
+    /// Best-effort request for the observing workspace UI to open one module presentation.
+    ///
+    /// This is an imperative presentation intent, not a resource-surface projection change.
+    WorkspaceModulePresentationRequested(Box<WorkspaceModulePresentationRequested>),
+
     /// 交互式终端输出流数据（路由到前端 xterm.js，不作为 chat entry 展示）。
     TerminalOutput { terminal_id: String, data: String },
 
@@ -80,8 +85,6 @@ pub struct ControlPlaneProjectionChanged {
     pub mailbox_message_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery_runtime_session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_module_presentation: Option<ControlPlaneWorkspaceModulePresentation>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
@@ -109,7 +112,6 @@ pub enum ControlPlaneProjectionChangeReason {
     CompanionResult,
     HookEffectApplied,
     HookAutoResumeQueued,
-    WorkspaceModulePresented,
     CapabilityStateChanged,
     ContextFrameChanged,
     TitleChanged,
@@ -117,7 +119,7 @@ pub enum ControlPlaneProjectionChangeReason {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub struct ControlPlaneWorkspaceModulePresentation {
+pub struct WorkspaceModulePresentationRequested {
     pub module_id: String,
     pub view_key: String,
     pub renderer_kind: String,

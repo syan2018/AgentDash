@@ -485,18 +485,6 @@
       "partial_scenarios": ["hook_terminal_pty_control_plane"]
     },
     {
-      "id": "control_current_workspace_projection_chain",
-      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json",
-      "fixture_sha256": "fd8d3b23546270b6d2793519b1b28d13dcb75aeb4866e9d52dbbebe83f77c08d",
-      "main_capture": "fixture_provenance",
-      "test_source": "crates/agentdash-workspace-module/src/workspace_module/surface.rs",
-      "test_function": "current_workspace_module_control_projection_matches_pinned_main_body_exactly",
-      "strength": "strict_current_production_to_pinned_main_body",
-      "cargo_args": ["test", "-p", "agentdash-workspace-module", "current_workspace_module_control_projection_matches_pinned_main_body_exactly"],
-      "complete_scenarios": [],
-      "partial_scenarios": ["hook_terminal_pty_control_plane"]
-    },
-    {
       "id": "terminal_pty_current_production_projection",
       "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json",
       "fixture_sha256": "fd8d3b23546270b6d2793519b1b28d13dcb75aeb4866e9d52dbbebe83f77c08d",

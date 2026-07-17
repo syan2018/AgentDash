@@ -75,20 +75,22 @@ NDJSON envelope属于cross-layer contract，类型与validator由Rust Runtime co
 ### Platform 事件可见性
 
 `Platform(HookTrace)` 和 `Platform(SessionMetaUpdate)` 不一律静默，交由 `SessionTaskEventGuard` 和 `SessionSystemEventGuard` 判定。
-携带 `workspace_module_presentation` 的
-`Platform(ControlPlaneProjectionChanged)` 是可渲染的成功事件；同一 typed body
-既提供聊天审计事实，也提供 live workspace panel intent。`reason` 继续表达 projection
-刷新原因，不作为 presentation dispatcher 的第二套 discriminator。
+`Platform(WorkspaceModulePresentationRequested)` 是可渲染的展示请求审计事件。它使用独立
+discriminant，原因是 presentation intent 与 projection invalidation 具有不同的消费时机；
+`ControlPlaneProjectionChanged` 只表达 read model 需要刷新。
 
 ### History Hydrate 与 Live 副作用边界
 
-`useSessionStream` 暴露的历史事件用于重建 feed、turn segment、projection refresh key 等本地展示状态。初次 hydration 中的 typed `ControlPlaneProjectionChanged` 也必须交给页面 control-plane executor，原因是路由与 stream 建立期间已经提交的 projection 仍表达当前 UI 状态；若一律从 `historyReplayBoundarySeq` 后开始消费，页面会永久漏掉同一轮较早提交的 projection。普通 Hook/meta、task refresh 等一次性副作用仍只消费边界后的 live 事件。
+`useSessionStream` 暴露的历史事件用于重建 feed、turn segment 与审计卡片；
+`historyReplayBoundarySeq` 后到达的事件才进入页面命令式副作用入口。页面只建立一个
+live-event cursor，并把完整 typed `BackboneEvent` 交给 AgentRun planner；turn terminal、
+task mutation、projection invalidation 与 presentation request 由该 planner 按协议
+discriminant 分类，避免多个 effect 独立扫描同一事件数组。
 
-`workspace_module_presentation` 携带完整 `presentation_uri`，但 durable event 只证明展示意图
-曾经发生。control-plane executor 必须先刷新 AgentRun workspace，再用
+`WorkspaceModulePresentationRequested` 携带完整 `presentation_uri`。live executor 必须先刷新 AgentRun workspace，再用
 `module_id + view_key + renderer_kind + presentation_uri` 精确匹配当前 ready
-`workspace_modules`；匹配成功才打开 panel。这样 hydration 不会用旧事件复活已删除资源，
-菜单与展示也消费同一当前事实。事件和用户打开动作共同调用唯一的 Workspace Module
+`workspace_modules`；匹配成功才打开 panel。历史 request 只恢复审计卡片，不强制改变当前
+观察者的布局；菜单与展示消费同一 current projection。事件和用户打开动作共同调用唯一的 Workspace Module
 presentation target mapper；renderer kind 只参与 registry target 选择，不建立 Canvas 专用
 事件链。命令式打开必须把当前 AgentRun workspace key 一并提交给 tab store，使 workspace
 scope 与 tab mutation 原子完成。

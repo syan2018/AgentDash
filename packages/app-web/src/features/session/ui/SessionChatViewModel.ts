@@ -130,47 +130,13 @@ export function collectRenderableSystemEvents(
 
 export const collectNewSystemEvents = collectRenderableSystemEvents;
 
-export function collectAllPlatformEvents(
-  rawEvents: SessionEventEnvelope[],
-  afterSeq: number,
-): {
-  items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }>;
-  lastSeenSeq: number;
-} {
-  const items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }> = [];
-  let lastSeenSeq = afterSeq;
-
-  for (const event of rawEvents) {
-    if (event.event_seq <= afterSeq) {
-      continue;
-    }
-    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-    const bbEvent = event.notification.event;
-    if (bbEvent.type !== "platform") {
-      continue;
-    }
-    const eventType = extractPlatformEventType(bbEvent);
-    if (!eventType) {
-      continue;
-    }
-    items.push({
-      eventSeq: event.event_seq,
-      eventType,
-      event: bbEvent,
-    });
-  }
-
-  return { items, lastSeenSeq };
-}
-
-export function dispatchPlatformSideEffectEvents(
+export function dispatchLiveSessionEvents(
   rawEvents: SessionEventEnvelope[],
   afterSeq: number | null,
   historyReplayBoundarySeq: number,
-  onSystemEvent: (eventType: string, event: BackboneEvent) => void,
+  onLiveEvent: (event: BackboneEvent) => void,
 ): number {
-  const isInitialProjection = afterSeq == null;
-  const cursor = afterSeq ?? 0;
+  const cursor = afterSeq ?? historyReplayBoundarySeq;
   let lastSeenSeq = cursor;
 
   for (const event of rawEvents) {
@@ -178,59 +144,10 @@ export function dispatchPlatformSideEffectEvents(
       continue;
     }
     lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-    const bbEvent = event.notification.event;
-    const isThreadNameUpdated = bbEvent.type === "thread_name_updated";
-    if (bbEvent.type !== "platform" && !isThreadNameUpdated) {
-      continue;
-    }
-    if (
-      isInitialProjection &&
-      event.event_seq <= historyReplayBoundarySeq &&
-      !(bbEvent.type === "platform" &&
-        bbEvent.payload.kind === "control_plane_projection_changed")
-    ) {
-      continue;
-    }
-    const eventType = isThreadNameUpdated
-      ? "thread_name_updated"
-      : extractPlatformEventType(bbEvent);
-    if (!eventType) {
-      continue;
-    }
-    onSystemEvent(eventType, bbEvent);
+    onLiveEvent(event.notification.event);
   }
 
   return lastSeenSeq;
-}
-
-export function collectTurnLifecycleEvents(
-  rawEvents: SessionEventEnvelope[],
-  afterSeq: number,
-): {
-  items: Array<{ eventSeq: number; eventType: SessionTurnLifecycleEventType; event: BackboneEvent }>;
-  lastSeenSeq: number;
-} {
-  const items: Array<{ eventSeq: number; eventType: SessionTurnLifecycleEventType; event: BackboneEvent }> = [];
-  let lastSeenSeq = afterSeq;
-
-  for (const event of rawEvents) {
-    if (event.event_seq <= afterSeq) {
-      continue;
-    }
-    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-    const bbEvent = event.notification.event;
-    const eventType = extractTurnLifecycleEventType(bbEvent);
-    if (!eventType) {
-      continue;
-    }
-    items.push({
-      eventSeq: event.event_seq,
-      eventType,
-      event: bbEvent,
-    });
-  }
-
-  return { items, lastSeenSeq };
 }
 
 function isCompactionSummaryFrame(event: BackboneEvent): boolean {

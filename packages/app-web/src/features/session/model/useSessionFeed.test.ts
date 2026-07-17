@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { aggregateEntries, mergeThinkingIntoDisplayItems, segmentByTurn } from "./useSessionFeed";
-import type { ProviderActivityState } from "./sessionStreamReducer";
 import type {
   SessionDisplayEntry,
   AggregatedEntryGroup,
@@ -293,11 +292,24 @@ function rawTurnTerminal(
   }, turnId);
 }
 
-function providerActivities(
-  activity: Omit<ProviderActivityState, "eventSeq">,
+function rawProviderAttemptStatus(
+  eventSeq: number,
+  value: Record<string, unknown>,
   turnId = "u1",
-): ReadonlyMap<string, ProviderActivityState> {
-  return new Map([[turnId, { eventSeq: 2, ...activity }]]);
+): SessionEventEnvelope {
+  return rawEvent(eventSeq, {
+    type: "platform",
+    payload: {
+      kind: "session_meta_update",
+      data: {
+        key: "provider_attempt_status",
+        value: {
+          turn_id: turnId,
+          ...value,
+        },
+      },
+    },
+  }, turnId);
 }
 
 function mkProviderStatusEntry(id: string): SessionDisplayEntry {
@@ -841,7 +853,7 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[2] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c2", "c3"]);
   });
 
-  it("T23: provider retry status remains out of the feed and creates turn activity", () => {
+  it("T23: provider retry status is only visible in verbose mode and does not create turn activity", () => {
     const statusEntry = mkProviderStatusEntry("provider-status");
     const aggregated = aggregateEntries([statusEntry]);
     expect(aggregated).toHaveLength(0);
@@ -850,24 +862,17 @@ describe("aggregateEntries — tool burst", () => {
     expect(verboseAggregated).toHaveLength(1);
     expect((verboseAggregated[0] as SessionDisplayEntry).id).toBe("provider-status");
 
-    const segments = segmentByTurn(
-      [],
-      [rawTurnStarted(1)],
-      undefined,
-      providerActivities({
+    const segments = segmentByTurn([], [
+      rawTurnStarted(1),
+      rawProviderAttemptStatus(2, {
         phase: "retrying",
         attempt: 2,
-        maxAttempts: 3,
-        willRetry: true,
+        max_attempts: 3,
+        will_retry: true,
       }),
-    );
+    ]);
 
-    expect(segments).toHaveLength(1);
-    expect(segments[0]?.activity).toMatchObject({
-      kind: "reconnecting",
-      attempt: 2,
-      maxAttempts: 3,
-    });
+    expect(segments).toHaveLength(0);
   });
 
   it("T24: active turn without provider waiting does not create turn-level thinking", () => {
@@ -928,21 +933,18 @@ describe("aggregateEntries — tool burst", () => {
     expect(segments[0]?.status).toBe("completed");
   });
 
-  it("T26: retry exhausted creates a status-only turn segment", () => {
-    const segments = segmentByTurn(
-      [],
-      [rawTurnStarted(1)],
-      undefined,
-      providerActivities({
+  it("T26: retry exhausted does not create a status-only turn segment", () => {
+    const segments = segmentByTurn([], [
+      rawTurnStarted(1),
+      rawProviderAttemptStatus(2, {
         phase: "failed",
         attempt: 3,
-        maxAttempts: 3,
-        willRetry: false,
+        max_attempts: 3,
+        will_retry: false,
       }),
-    );
+    ]);
 
-    expect(segments).toHaveLength(1);
-    expect(segments[0]?.activity?.kind).toBe("retry_exhausted");
+    expect(segments).toHaveLength(0);
   });
 
   it("T27: provider waiting creates a streaming thinking card without reasoning text", () => {
@@ -995,17 +997,56 @@ describe("aggregateEntries — tool burst", () => {
 
   it("T29: agent message removes empty provider thinking placeholder", () => {
     const agent = mkMessageEntry("m1", "正式输出");
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([agent]), providerWaitingSeqs(1));
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([agent]), new Map());
 
     expect(display).toHaveLength(1);
     expect(isThinkingGroup(display[0])).toBe(false);
     expect((display[0] as SessionDisplayEntry).id).toBe("m1");
   });
 
+  it("T29b: a later provider wait creates a new thinking placeholder after prior output", () => {
+    const agent = mkMessageEntry("m1", "先执行工具");
+    const tool = mkCmdEntry("c1", "ls");
+    const display = mergeThinkingIntoDisplayItems(
+      aggregateEntries([agent, tool]),
+      providerWaitingSeqs(3),
+    );
+
+    expect(display).toHaveLength(3);
+    expect((display[0] as SessionDisplayEntry).id).toBe("m1");
+    expect((display[1] as SessionDisplayEntry).id).toBe("c1");
+    expect(isThinkingGroup(display[2])).toBe(true);
+    const group = display[2] as AggregatedThinkingGroup;
+    expect(group.entries).toHaveLength(0);
+    expect(group.isStreamingThinking).toBe(true);
+  });
+
+  it("T29c: a later provider wait preserves historical reasoning in place", () => {
+    const reasoning = mkReasoningEntryWithText("r1", "第一轮分析");
+    const agent = mkMessageEntry("m1", "先执行工具");
+    const tool = mkCmdEntry("c1", "ls");
+    const display = mergeThinkingIntoDisplayItems(
+      aggregateEntries([reasoning, agent, tool]),
+      providerWaitingSeqs(4),
+    );
+
+    expect(display).toHaveLength(4);
+    expect(isThinkingGroup(display[0])).toBe(true);
+    const historicalGroup = display[0] as AggregatedThinkingGroup;
+    expect(historicalGroup.entries.map((entry) => entry.id)).toEqual(["r1"]);
+    expect(historicalGroup.isStreamingThinking).toBe(false);
+    expect((display[1] as SessionDisplayEntry).id).toBe("m1");
+    expect((display[2] as SessionDisplayEntry).id).toBe("c1");
+    expect(isThinkingGroup(display[3])).toBe(true);
+    const liveGroup = display[3] as AggregatedThinkingGroup;
+    expect(liveGroup.entries).toHaveLength(0);
+    expect(liveGroup.isStreamingThinking).toBe(true);
+  });
+
   it("T30: reasoning stays as historical thinking once agent message arrives", () => {
     const reasoning = mkReasoningEntryWithText("r1", "分析中");
     const agent = mkMessageEntry("m1", "正式输出");
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning, agent]), providerWaitingSeqs(1));
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning, agent]), new Map());
 
     expect(display).toHaveLength(2);
     expect(isThinkingGroup(display[0])).toBe(true);
@@ -1021,7 +1062,7 @@ describe("aggregateEntries — tool burst", () => {
     const agent = mkMessageEntry("m1", "正式输出");
     const display = mergeThinkingIntoDisplayItems(
       aggregateEntries([user, reasoning, agent]),
-      providerWaitingSeqs(2),
+      new Map(),
     );
 
     expect(display).toHaveLength(3);

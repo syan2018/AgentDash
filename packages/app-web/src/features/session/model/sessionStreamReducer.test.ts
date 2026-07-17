@@ -644,11 +644,6 @@ describe("sessionStreamReducer", () => {
     expect(state.rawEvents).toHaveLength(0);
     expect(state.entries).toHaveLength(0);
     expect(state.providerWaitingSeqs.get("turn-1")).toBe(1);
-    expect(state.providerActivities.get("turn-1")).toMatchObject({
-      phase: "connected_waiting_first_delta",
-      attempt: 1,
-      maxAttempts: 3,
-    });
     expect(state.lastAppliedSeq).toBe(0);
     expect(state.lastEphemeralSeq).toBe(1);
   });
@@ -662,7 +657,6 @@ describe("sessionStreamReducer", () => {
     ]);
 
     expect(cleared.providerWaitingSeqs.size).toBe(0);
-    expect(cleared.providerActivities.size).toBe(0);
     expect(cleared.rawEvents).toHaveLength(0);
     expect(cleared.entries).toHaveLength(0);
     expect(cleared.lastEphemeralSeq).toBe(2);
@@ -675,7 +669,6 @@ describe("sessionStreamReducer", () => {
     const cleared = reduceStreamState(waiting, [turnTerminal(2)]);
 
     expect(cleared.providerWaitingSeqs.size).toBe(0);
-    expect(cleared.providerActivities.size).toBe(0);
     expect(cleared.rawEvents.map((event) => event.event_seq)).toEqual([2]);
     expect(cleared.lastAppliedSeq).toBe(2);
   });

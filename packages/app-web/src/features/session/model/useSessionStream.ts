@@ -24,7 +24,6 @@ import {
   resetEphemeralCursor,
   shouldFlushStreamEventImmediately,
   extractTerminalTurnId,
-  type ProviderActivityState,
   type SessionStreamState,
 } from "./sessionStreamReducer";
 import {
@@ -46,7 +45,6 @@ export interface UseSessionStreamResult {
   rawEvents: SessionEventEnvelope[];
   historyReplayBoundarySeq: number | null;
   providerWaitingSeqs: ReadonlyMap<string, number>;
-  providerActivities: ReadonlyMap<string, ProviderActivityState>;
   isConnected: boolean;
   isLoading: boolean;
   isReceiving: boolean;
@@ -365,7 +363,6 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     rawEvents: streamState.rawEvents,
     historyReplayBoundarySeq,
     providerWaitingSeqs: streamState.providerWaitingSeqs,
-    providerActivities: streamState.providerActivities,
     isConnected,
     isLoading,
     isReceiving,

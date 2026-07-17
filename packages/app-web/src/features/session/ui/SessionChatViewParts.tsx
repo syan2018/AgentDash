@@ -411,7 +411,7 @@ function TurnSection({
 }) {
   const isTerminal = segment.status !== "active";
   const terminalLabel = terminalTurnLabel(segment.status);
-  const headerLabel = terminalLabel ?? (segment.turnId ? "执行中" : null);
+  const headerLabel = segment.turnId ? (terminalLabel ?? "执行中") : null;
   const activeElapsedMs = useActiveTurnElapsedMs(segment.startedAtMs, segment.status === "active");
   const displayDurationMs = segment.durationMs ?? activeElapsedMs;
   const [collapsed, setCollapsed] = useState(false);

@@ -8,7 +8,6 @@
 import { useMemo } from "react";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import { useSessionStream } from "./useSessionStream";
-import type { ProviderActivityState } from "./sessionStreamReducer";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
@@ -345,6 +344,23 @@ function createThinkingGroup(state: TurnThinkingState): AggregatedThinkingGroup 
   };
 }
 
+function createFollowUpWaitingGroup(state: TurnThinkingState): AggregatedThinkingGroup | null {
+  if (state.waitingSeq == null || !state.hasAgentMessage) {
+    return null;
+  }
+
+  const groupKey = `thinking:${state.turnId}:waiting:${state.waitingSeq}`;
+  return {
+    type: "aggregated_thinking",
+    entries: [],
+    id: groupKey,
+    groupKey,
+    turnId: state.turnId,
+    eventSeq: state.waitingSeq,
+    isStreamingThinking: true,
+  };
+}
+
 function mergeThinkingIntoDisplayItems(
   displayItems: SessionDisplayItem[],
   providerWaitingSeqs: ReadonlyMap<string, number>,
@@ -400,15 +416,27 @@ function mergeThinkingIntoDisplayItems(
   const thinkingGroups = new Map<number, AggregatedThinkingGroup[]>();
   for (const state of thinkingStates.values()) {
     const group = createThinkingGroup(state);
-    if (!group) continue;
-    const insertionIndex = group.isStreamingThinking
-      ? state.liveInsertionIndex ?? nonThinkingItems.length
-      : state.reasoningInsertionIndex ?? nonThinkingItems.length;
-    const groups = thinkingGroups.get(insertionIndex);
-    if (groups) {
-      groups.push(group);
-    } else {
-      thinkingGroups.set(insertionIndex, [group]);
+    if (group) {
+      const insertionIndex = group.isStreamingThinking
+        ? state.liveInsertionIndex ?? nonThinkingItems.length
+        : state.reasoningInsertionIndex ?? nonThinkingItems.length;
+      const groups = thinkingGroups.get(insertionIndex);
+      if (groups) {
+        groups.push(group);
+      } else {
+        thinkingGroups.set(insertionIndex, [group]);
+      }
+    }
+
+    const followUpWaitingGroup = createFollowUpWaitingGroup(state);
+    if (followUpWaitingGroup) {
+      const liveInsertionIndex = state.liveInsertionIndex ?? nonThinkingItems.length;
+      const liveGroups = thinkingGroups.get(liveInsertionIndex);
+      if (liveGroups) {
+        liveGroups.push(followUpWaitingGroup);
+      } else {
+        thinkingGroups.set(liveInsertionIndex, [followUpWaitingGroup]);
+      }
     }
   }
 
@@ -706,43 +734,10 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
   };
 }
 
-function providerActivityStatus(status: ProviderActivityState): TurnActivityStatus {
-  if (status.phase === "retry_scheduled" || status.phase === "retrying") {
-    return {
-      kind: "reconnecting",
-      label: status.message ?? `正在重新连接（${status.attempt}/${status.maxAttempts}）…`,
-      phase: status.phase,
-      attempt: status.attempt,
-      maxAttempts: status.maxAttempts,
-    };
-  }
-  if (status.phase === "failed") {
-    return {
-      kind: status.willRetry ? "reconnecting" : "retry_exhausted",
-      label: status.message ?? (status.willRetry ? "连接异常，准备重试…" : "连接失败，已停止重试"),
-      phase: status.phase,
-      attempt: status.attempt,
-      maxAttempts: status.maxAttempts,
-    };
-  }
-  return {
-    kind: "connecting",
-    label: status.message ?? (
-      status.phase === "connected_waiting_first_delta"
-        ? "已连接，等待响应…"
-        : "正在连接模型…"
-    ),
-    phase: status.phase,
-    attempt: status.attempt,
-    maxAttempts: status.maxAttempts,
-  };
-}
-
 export function segmentByTurn(
   displayItems: SessionDisplayItem[],
   rawEvents: SessionEventEnvelope[],
   activeTurnId?: string | null,
-  providerActivities: ReadonlyMap<string, ProviderActivityState> = new Map(),
 ): TurnSegment[] {
   const turnMeta = new Map<string, TurnMeta>();
 
@@ -765,13 +760,6 @@ export function segmentByTurn(
       });
     }
 
-  }
-
-  for (const [turnId, status] of providerActivities) {
-    updateTurnMeta(turnMeta, turnId, status.eventSeq, {
-      status: "active",
-      activity: providerActivityStatus(status),
-    });
   }
 
   if (displayItems.length === 0) {
@@ -887,7 +875,6 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     rawEvents,
     historyReplayBoundarySeq,
     providerWaitingSeqs,
-    providerActivities,
     isConnected,
     isLoading,
     isReceiving,
@@ -910,8 +897,8 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
   }, [entries, providerWaitingSeqs, enableAggregation, prefs.hookVerbose]);
 
   const turnSegments = useMemo(
-    () => segmentByTurn(displayItems, rawEvents, activeTurnId, providerActivities),
-    [activeTurnId, displayItems, providerActivities, rawEvents],
+    () => segmentByTurn(displayItems, rawEvents, activeTurnId),
+    [activeTurnId, displayItems, rawEvents],
   );
 
   const streamingEntryId = useMemo(() => {

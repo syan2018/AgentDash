@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionDisplayEntry } from "./types";
-import type { TurnSegment } from "./useSessionFeed";
+import type { AgentRunRuntimeTurnSegment } from "../../agent-run-runtime";
 import {
   buildRoundActionModel,
   lastAgentReplyText,
@@ -32,7 +32,10 @@ function agentEntry(params: {
   };
 }
 
-function segment(items: SessionDisplayEntry[], status: TurnSegment["status"] = "completed"): TurnSegment {
+function segment(
+  items: SessionDisplayEntry[],
+  status: AgentRunRuntimeTurnSegment["status"] = "completed",
+): AgentRunRuntimeTurnSegment {
   return {
     turnId: "turn-1",
     status,

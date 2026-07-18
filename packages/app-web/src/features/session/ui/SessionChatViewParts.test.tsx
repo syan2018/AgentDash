@@ -1,12 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { TurnSegment } from "../model/useSessionFeed";
+import type { AgentRunRuntimeTurnSegment } from "../../agent-run-runtime";
 import { SessionChatStream } from "./SessionChatViewParts";
 
 describe("SessionChatStream turn headers", () => {
   it("does not render a completed turn header for an unscoped trailing segment", () => {
-    const turnSegments: TurnSegment[] = [
+    const turnSegments: AgentRunRuntimeTurnSegment[] = [
       {
         turnId: "turn-1",
         status: "completed",

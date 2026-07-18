@@ -14,10 +14,11 @@ vi.mock("../api/client", () => ({
 
 import {
   compactAgentRunContext,
-  fetchAgentRunRuntimeContext,
-  fetchAgentRunRuntimeInspect,
+  fetchManagedRuntimeChangePage,
+  fetchManagedRuntimeSnapshot,
   respondAgentRunInteraction,
 } from "./agentRunRuntime";
+import { managedRuntimeTestFixtures } from "../features/agent-run-runtime/model/managedRuntimeTestFixtures";
 
 describe("AgentRun runtime service", () => {
   beforeEach(() => {
@@ -56,20 +57,40 @@ describe("AgentRun runtime service", () => {
     );
   });
 
-  it("loads the canonical Runtime inspect projection from the AgentRun target", async () => {
-    mocks.apiGetMock.mockResolvedValue({ target: {}, binding: null, snapshot: null });
-    await fetchAgentRunRuntimeInspect({ runId: "run/1", agentId: "agent/1" });
+  it("loads the canonical Managed Runtime snapshot from the AgentRun target", async () => {
+    mocks.apiGetMock.mockResolvedValue(
+      managedRuntimeTestFixtures.snapshots.started,
+    );
+    await expect(
+      fetchManagedRuntimeSnapshot({ runId: "run/1", agentId: "agent/1" }),
+    ).resolves.toBe(managedRuntimeTestFixtures.snapshots.started);
     expect(mocks.apiGetMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/runtime",
+      "/agent-runs/run%2F1/agents/agent%2F1/runtime/snapshot",
     );
   });
 
-  it("loads the canonical Runtime context without a legacy projection fallback", async () => {
-    mocks.apiGetMock.mockResolvedValue({ thread_id: "thread-1", head: null, checkpoint: null, blocks: [], fidelity: "opaque" });
-    await fetchAgentRunRuntimeContext({ runId: "run/1", agentId: "agent/1" });
+  it("loads canonical committed changes after the durable cursor", async () => {
+    mocks.apiGetMock.mockResolvedValue(managedRuntimeTestFixtures.changePage);
+    await expect(
+      fetchManagedRuntimeChangePage(
+        { runId: "run/1", agentId: "agent/1" },
+        8,
+      ),
+    ).resolves.toBe(managedRuntimeTestFixtures.changePage);
     expect(mocks.apiGetMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/runtime/context",
+      "/agent-runs/run%2F1/agents/agent%2F1/runtime/changes?limit=256&after=8",
     );
+  });
+
+  it("rejects a response that is not the canonical Runtime projection", async () => {
+    mocks.apiGetMock.mockResolvedValue({
+      session_id: "legacy-session",
+      events: [],
+    });
+
+    await expect(
+      fetchManagedRuntimeSnapshot({ runId: "run/1", agentId: "agent/1" }),
+    ).rejects.toThrow("canonical contract");
   });
 
   it("responds to a typed Runtime interaction", async () => {

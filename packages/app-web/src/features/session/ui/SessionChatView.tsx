@@ -9,7 +9,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSessionFeed } from "../model";
+import {
+  computeAgentRunRuntimeProjectionRefreshKey,
+  isAgentRunWorkspaceActionRunning,
+  resolveExecutorFromHint,
+  toExecutorConfigSource,
+  useAgentRunRuntimeFeed,
+} from "../../agent-run-runtime";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,
@@ -27,14 +33,6 @@ import {
   SessionChatStatusBar,
   SessionChatStream,
 } from "./SessionChatViewParts";
-import {
-  computeProjectionRefreshKey,
-  dispatchLiveSessionEvents,
-  isAgentRunWorkspaceActionRunning,
-  rawEventsBelongToRuntimeStreamTarget,
-  resolveExecutorFromHint,
-  toExecutorConfigSource,
-} from "./SessionChatViewModel";
 import type { SessionChatCommandModel, SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
 import { SessionStatusBar } from "../../agent-run-workspace/ui";
@@ -61,7 +59,7 @@ export function SessionChatView({
   model,
   intents,
   onMessageSent,
-  onLiveEvent,
+  onRuntimeChanges,
   headerSlot,
   inputPrefix,
   inputToolbarSlot,
@@ -275,56 +273,45 @@ export function SessionChatView({
     displayItems,
     turnSegments,
     rawEntries,
-    rawEvents,
-    historyReplayBoundarySeq,
+    changes,
     isConnected,
     isLoading,
     error: wsError,
     reconnect,
     streamingEntryId,
     tokenUsage,
-  } = useSessionFeed({
+  } = useAgentRunRuntimeFeed({
     agentRunTarget,
-    activeTurnId: commandState.activeTurnId ?? null,
     enabled: hasRuntimeStreamTarget,
   });
 
   const projectionRefreshKey = useMemo(
-    () => computeProjectionRefreshKey(rawEvents),
-    [rawEvents],
+    () => computeAgentRunRuntimeProjectionRefreshKey(changes),
+    [changes],
   );
-  const rawEventsBelongToCurrentSession = useMemo(
-    () => rawEventsBelongToRuntimeStreamTarget({ rawEvents, agentRunTarget }),
-    [agentRunTarget, rawEvents],
-  );
-  const canApplyLiveEventSideEffects =
-    hasRuntimeStreamTarget &&
-    rawEventsBelongToCurrentSession &&
-    rawEvents.length > 0 &&
-    historyReplayBoundarySeq != null;
+  const dispatchedRuntimeTargetRef = useRef<string | null>(null);
+  const dispatchedRuntimeSequenceRef = useRef(0);
+  useEffect(() => {
+    if (dispatchedRuntimeTargetRef.current !== agentRunTargetKey) {
+      dispatchedRuntimeTargetRef.current = agentRunTargetKey;
+      dispatchedRuntimeSequenceRef.current = 0;
+    }
+    if (!onRuntimeChanges) return;
+    const pending = changes.filter(
+      (change) => change.sequence > dispatchedRuntimeSequenceRef.current,
+    );
+    if (pending.length === 0) return;
+    dispatchedRuntimeSequenceRef.current =
+      pending[pending.length - 1]?.sequence
+      ?? dispatchedRuntimeSequenceRef.current;
+    onRuntimeChanges(pending);
+  }, [agentRunTargetKey, changes, onRuntimeChanges]);
 
   // ─── Action running 检测 ──────────────────────────────
 
   const isActionRunning = isAgentRunWorkspaceActionRunning({
     executionStatus: commandState.executionStatus,
   });
-
-  const onLiveEventRef = useRef(onLiveEvent);
-  const lastLiveEventSeqRef = useRef<number | null>(null);
-  useEffect(() => { onLiveEventRef.current = onLiveEvent; }, [onLiveEvent]);
-  useEffect(() => {
-    lastLiveEventSeqRef.current = null;
-  }, [agentRunTargetKey]);
-
-  useEffect(() => {
-    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    lastLiveEventSeqRef.current = dispatchLiveSessionEvents(
-      rawEvents,
-      lastLiveEventSeqRef.current,
-      historyReplayBoundarySeq,
-      (event) => onLiveEventRef.current?.(event),
-    );
-  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────
 

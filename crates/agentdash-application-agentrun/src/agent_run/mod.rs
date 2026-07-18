@@ -15,6 +15,7 @@ mod message_submission;
 mod permission;
 mod presentation_read_model;
 mod product_command;
+mod product_projection_gateway;
 pub mod product_protocol;
 mod project_agent_context;
 mod project_agent_start;
@@ -25,6 +26,7 @@ pub mod runtime_facade;
 pub mod runtime_mailbox;
 pub mod runtime_session_boundary;
 mod runtime_surface_update;
+pub mod terminal_projection_protocol;
 mod thread_name_projection;
 pub mod workspace;
 
@@ -159,6 +161,9 @@ pub use presentation_read_model::{
     RuntimeSessionTraceReadModel,
 };
 pub use product_command::{AgentRunProductCommandClaim, AgentRunProductCommandService};
+pub use product_projection_gateway::{
+    AgentRunProductProjectionError, AgentRunProductProjectionGateway,
+};
 pub use project_agent_context::{
     PROJECT_AGENT_BINDING_LABEL_PREFIX, ResolvedProjectAgentContext, build_project_agent_context,
     resolve_project_workspace,

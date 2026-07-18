@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-contracts";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type {
   BackendSelectionRequestDto,
@@ -121,11 +121,8 @@ export interface SessionChatViewProps {
   /** 消息发送成功后回调（父组件可刷新列表等） */
   onMessageSent?: () => void;
 
-  /**
-   * 当前观察者在 history hydration 完成后收到的新事件。
-   * 父层通过 generated Backbone union 规划产品副作用。
-   */
-  onLiveEvent?: (event: BackboneEvent) => void;
+  /** 当前 target snapshot baseline 之后提交的 canonical Runtime changes。 */
+  onRuntimeChanges?: (changes: readonly ManagedRuntimePlatformChange[]) => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 

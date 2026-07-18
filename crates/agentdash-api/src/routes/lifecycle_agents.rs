@@ -7,7 +7,8 @@ use crate::routes::runtime_traces;
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_runtime_contract::{
     EventSequence, InteractionResponse, OperationReceipt, PresentationThreadId, RuntimeActor,
-    RuntimeContextView, RuntimeEventEnvelope, RuntimeInput, RuntimeInteractionId, RuntimeSnapshot,
+    RuntimeChangeSequence, RuntimeContextView, RuntimeEventEnvelope, RuntimeInput,
+    RuntimeInteractionId, RuntimeSnapshot,
 };
 use agentdash_application::agent_run_list::{
     AgentRunListChildModel, AgentRunListEntryModel, AgentRunListRuntimeSummaryModel,
@@ -136,6 +137,12 @@ pub struct AgentRunListQuery {
     pub cursor: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct ManagedRuntimeChangesQuery {
+    pub after: Option<u64>,
+    pub limit: Option<u32>,
+}
+
 fn agent_run_journal_live_receive_action(
     error: tokio::sync::broadcast::error::RecvError,
 ) -> AgentRunJournalLiveReceiveAction {
@@ -202,6 +209,14 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime",
             axum::routing::get(inspect_agent_run_runtime),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/snapshot",
+            axum::routing::get(get_managed_runtime_snapshot),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/changes",
+            axum::routing::get(get_managed_runtime_changes),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/control",
@@ -2236,6 +2251,82 @@ async fn inspect_agent_run_runtime(
         binding_epoch,
         recovery,
     }))
+}
+
+async fn get_managed_runtime_snapshot(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<agentdash_agent_runtime_contract::ManagedRuntimeSnapshot>, ApiError> {
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let target = agent_run_runtime_target(&context);
+    let binding = state
+        .repos
+        .agent_run_runtime_binding_repo
+        .load(&target)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            ApiError::Conflict(format!(
+                "AgentRun {} / {} 尚未建立 committed Runtime binding",
+                target.run_id, target.agent_id
+            ))
+        })?;
+    state
+        .services
+        .agent_run_runtime_projection
+        .load_snapshot(&binding.thread_id)
+        .await
+        .map(Json)
+        .map_err(ApiError::Internal)
+}
+
+async fn get_managed_runtime_changes(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<ManagedRuntimeChangesQuery>,
+) -> Result<Json<agentdash_agent_runtime_contract::ManagedRuntimeChangePage>, ApiError> {
+    if query.limit.unwrap_or(256) != 256 {
+        return Err(ApiError::BadRequest(
+            "Managed Runtime change page limit 必须为 canonical 256".to_string(),
+        ));
+    }
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let target = agent_run_runtime_target(&context);
+    let binding = state
+        .repos
+        .agent_run_runtime_binding_repo
+        .load(&target)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            ApiError::Conflict(format!(
+                "AgentRun {} / {} 尚未建立 committed Runtime binding",
+                target.run_id, target.agent_id
+            ))
+        })?;
+    state
+        .services
+        .agent_run_runtime_projection
+        .load_changes(&binding.thread_id, query.after.map(RuntimeChangeSequence))
+        .await
+        .map(Json)
+        .map_err(ApiError::Internal)
 }
 
 async fn read_agent_run_runtime_context(

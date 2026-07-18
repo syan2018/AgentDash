@@ -64,7 +64,6 @@ import type {
   NormalizedContextUsage,
   ContextUsageSource,
 } from "../../../generated/backbone-protocol";
-import type { SessionEventResponse } from "../../../generated/session-contracts";
 import type { ContextFrame } from "./contextFrame";
 import { resolveKind } from "./threadItemKind";
 
@@ -366,11 +365,6 @@ export function partitionUserInputs(input: readonly UserInput[]): PartitionedUse
 }
 
 // ==================== 前端扩展类型 ====================
-
-export type SessionEventEnvelope = SessionEventResponse & {
-  /** 进度态事件标记：仅 live 显示，不写入可重放 rawEvents backlog。 */
-  ephemeral?: boolean;
-};
 
 /** UI 时间线顺序来源：durable 与 ephemeral progress 使用不同坐标。 */
 export type TimelineOrder =

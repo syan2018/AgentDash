@@ -318,6 +318,9 @@ impl agentdash_integration_api::AgentRuntimeCredentialBroker
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
 pub struct ServiceSet {
     pub agent_run_runtime: Arc<dyn AgentRunRuntime>,
+    pub agent_run_runtime_projection: Arc<
+        dyn agentdash_application_agentrun::agent_run::product_protocol::AgentRunRuntimeProjectionPort,
+    >,
     pub agent_run_journal: Arc<AgentRunJournalService>,
     pub agent_run_product_delivery: Arc<dyn AgentRunProductDeliveryPort>,
     pub(crate) terminal_application_effect_worker:
@@ -766,6 +769,13 @@ impl AppState {
                 ),
             )),
         );
+        let agent_run_runtime_projection: Arc<
+            dyn agentdash_application_agentrun::agent_run::product_protocol::AgentRunRuntimeProjectionPort,
+        > = Arc::new(
+            agentdash_application_agentrun::agent_run::product_protocol::ProductAgentRunRuntimeProjectionAdapter::new(
+                runtime_composition.gateway.clone(),
+            ),
+        );
         let agent_run_journal = Arc::new(AgentRunJournalService::new(
             repos.agent_run_lineage_repo.clone(),
             Arc::new(CanonicalAgentRunJournalBindingResolver {
@@ -949,6 +959,7 @@ impl AppState {
             repos,
             services: ServiceSet {
                 agent_run_runtime,
+                agent_run_runtime_projection,
                 agent_run_journal,
                 agent_run_product_delivery,
                 terminal_application_effect_worker,

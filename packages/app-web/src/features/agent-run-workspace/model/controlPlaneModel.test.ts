@@ -11,11 +11,13 @@ import type {
   ConversationCommandView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
+import type { ProjectEventStreamEnvelope } from "../../../generated/project-contracts";
 import type {
   ConversationCommandKind,
   ConversationCommandStaleGuardView,
 } from "../../../generated/agent-run-mailbox-contracts";
 import type { ProjectAgentSummary } from "../../../types";
+import { managedRuntimeTestFixtures } from "../../agent-run-runtime/model/managedRuntimeTestFixtures";
 import {
   type AgentRunChatSubmitIntent,
   buildAgentRunConversationCommandState,
@@ -24,6 +26,8 @@ import {
 import {
   planAgentRunLiveEvent,
   planAgentRunMessageSent,
+  planAgentRunProjectEvent,
+  planAgentRunRuntimeChanges,
   planAgentRunTurnEnded,
   planAgentRunWorkspaceModuleOpened,
   resolveAgentRunSubmitCommand,
@@ -347,5 +351,87 @@ describe("AgentRun control-plane model", () => {
       },
       refreshTaskPlan: true,
     });
+  });
+
+  it("refreshes product projections from committed Runtime snapshot changes", () => {
+    expect(
+      planAgentRunRuntimeChanges(
+        managedRuntimeTestFixtures.changePage.changes,
+      ),
+    ).toEqual({
+      effects: {
+        refreshWorkspaceState: true,
+        refreshAgentRunListReason: "managed_runtime_projection_changed",
+      },
+      refreshTaskPlan: true,
+    });
+  });
+
+  it("maps a Runtime surface change to workspace and hook projection refresh", () => {
+    expect(
+      planAgentRunRuntimeChanges([
+        {
+          thread_id: "runtime-thread",
+          sequence: 12,
+          revision: 8,
+          delta: {
+            kind: "source_projection_changed",
+            source_change_sequence: 12,
+            source_projection_revision: 8,
+            observation_digest: "sha256:observation",
+            section: "surface",
+            section_digest: "sha256:surface",
+            delta: {
+              kind: "surface_changed",
+              applied_surface_revision: 7,
+            },
+          },
+        },
+      ]),
+    ).toEqual({
+      effects: {
+        refreshWorkspaceState: true,
+        refreshAgentRunListReason: "managed_runtime_projection_changed",
+        hookRuntimeRefresh: {
+          reason: "managed_runtime_surface_changed",
+        },
+      },
+      refreshTaskPlan: false,
+    });
+  });
+
+  it("refreshes the exact AgentRun workspace from the typed title invalidation", () => {
+    const event: ProjectEventStreamEnvelope = {
+      type: "ControlPlaneProjectionChanged",
+      data: {
+        project_id: "project-1",
+        change: {
+          projection: "agent_run_list",
+          reason: "title_changed",
+          run_id: "run-1",
+          agent_id: "agent-1",
+          frame_id: null,
+          gate_id: null,
+          mailbox_message_id: null,
+          delivery_runtime_session_id: null,
+        },
+      },
+    };
+
+    expect(
+      planAgentRunProjectEvent(event, {
+        runId: "run-1",
+        agentId: "agent-1",
+      }),
+    ).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "title_changed",
+    });
+    expect(
+      planAgentRunProjectEvent(event, {
+        runId: "run-1",
+        agentId: "another-agent",
+      }),
+    ).toEqual({});
   });
 });

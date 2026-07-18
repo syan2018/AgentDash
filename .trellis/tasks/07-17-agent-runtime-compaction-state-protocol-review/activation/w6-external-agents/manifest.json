@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "component": "w6_external_complete_agents",
+  "frozen_base": "fc26d3ff",
+  "wire_revision": {
+    "current_production": 3,
+    "complete_agent_target": 4,
+    "cutover_result": 4
+  },
+  "owned_registrations": [
+    {
+      "crate": "agentdash-integration-codex",
+      "type": "CodexCompleteAgentRegistration",
+      "service": "CodexCompleteAgentService",
+      "transport": "CodexProcessTransport",
+      "authority": "codex_thread_store"
+    },
+    {
+      "crate": "agentdash-integration-remote-runtime",
+      "type": "RemoteCompleteAgentRegistration",
+      "service": "RemoteCompleteAgentService",
+      "endpoint": "RuntimeWireAgentServiceEndpoint",
+      "authority": "remote_complete_agent"
+    }
+  ],
+  "removed_owned_routes": [
+    "agentdash-integration-codex::CodexRuntimeIntegration",
+    "agentdash-integration-codex::codex_runtime_contribution",
+    "agentdash-integration-codex::CodexRuntimeDriverFactory",
+    "agentdash-integration-codex::RuntimeJournalFact mapping",
+    "agentdash-integration-remote-runtime::remote_runtime_contribution",
+    "agentdash-integration-remote-runtime::RemoteRuntimeDriverFactory",
+    "agentdash-integration-remote-runtime::RuntimeWireDriverEndpoint",
+    "agentdash-integration-remote-runtime::RuntimeWireHostPortRouter",
+    "agentdash-integration-remote-runtime::DriverContextActivation"
+  ],
+  "atomic_cross_owner_cutover": [
+    {
+      "owner": "platform_runtime_w8",
+      "path": "crates/agentdash-integration-api/src/integration.rs",
+      "remove": [
+        "AgentDashIntegration::agent_runtime_drivers",
+        "AgentDashIntegration::agent_runtime_trust_manifests"
+      ],
+      "add": [
+        "Complete Agent service registration collection backed by agentdash-agent-service-api"
+      ]
+    },
+    {
+      "owner": "platform_runtime_w8",
+      "path": "crates/agentdash-integration-api/src/agent_runtime.rs",
+      "remove": [
+        "AgentRuntimeDriverContribution",
+        "AgentRuntimeDriverFactory",
+        "AgentRuntimeDriver",
+        "driver-era RuntimeDriverHostPorts and ContextActivation contracts"
+      ],
+      "add": []
+    },
+    {
+      "owner": "product_protocol_w8",
+      "path": "crates/agentdash-first-party-integrations/src/lib.rs",
+      "remove": [
+        "CodexRuntimeIntegration construction and driver contribution test"
+      ],
+      "add": [
+        "Codex Complete Agent instance configuration passed to production runtime bootstrap"
+      ]
+    },
+    {
+      "owner": "platform_runtime_w8",
+      "path": "crates/agentdash-infrastructure/src/agent_runtime_composition.rs",
+      "remove": [
+        "codex_runtime_contribution_with_launcher",
+        "remote_runtime_contribution",
+        "IntegrationDriverHost registration",
+        "driver journal/context HostPort composition"
+      ],
+      "add": [
+        "CodexCompleteAgentRegistration::spawn",
+        "RemoteCompleteAgentRegistration::new",
+        "CompleteAgentHost::register_service",
+        "Runtime/Host callback routes and durable Complete Agent bindings"
+      ]
+    },
+    {
+      "owner": "product_protocol_w8",
+      "path": "crates/agentdash-api/src/integrations.rs",
+      "remove": [
+        "HostIntegrationRegistration.runtime_driver_contributions",
+        "driver contribution and trust-manifest matching"
+      ],
+      "add": [
+        "Complete Agent registration inputs with duplicate instance and descriptor fail-fast"
+      ]
+    },
+    {
+      "owner": "platform_runtime_w8",
+      "path": "crates/agentdash-local/src/agent_runtime_host.rs",
+      "remove": [
+        "AgentRuntimeDriver contribution collection",
+        "RuntimeWireHostPortRouter"
+      ],
+      "add": [
+        "Complete Agent endpoint resolution by service instance, binding generation, and host incarnation"
+      ]
+    },
+    {
+      "owner": "platform_runtime_w8",
+      "path": "crates/agentdash-api/src/relay/runtime_wire.rs",
+      "remove": [
+        "driver-era Runtime Wire HostPort and driver endpoint routing"
+      ],
+      "add": [
+        "Runtime Wire revision 4 Complete Agent request/response/change/callback routing"
+      ]
+    }
+  ],
+  "single_route_gates": [
+    {
+      "pattern": "AgentRuntimeDriver|RuntimeJournalFact|DriverContextActivation|agent_runtime_drivers",
+      "scope": "Cargo.toml crates",
+      "expected_matches": 0
+    },
+    {
+      "pattern": "RUNTIME_WIRE_PROTOCOL_REVISION|RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION",
+      "scope": "production Runtime Wire composition",
+      "expected_unique_revision": 4
+    },
+    {
+      "behavior": "Codex and Remote production instances are registered exactly once in CompleteAgentHost"
+    },
+    {
+      "behavior": "Relay never synthesizes Agent service definition or instance identity"
+    }
+  ],
+  "required_checks": [
+    "cargo test -p agentdash-integration-codex",
+    "cargo test -p agentdash-integration-remote-runtime",
+    "cargo test -p agentdash-agent-runtime-wire",
+    "cargo test -p agentdash-relay runtime_wire",
+    "cargo test -p agentdash-agent-runtime-host --test complete_agent_target",
+    "cargo test -p agentdash-infrastructure agent_runtime_composition",
+    "pnpm contracts:check",
+    "pnpm migration:guard"
+  ]
+}

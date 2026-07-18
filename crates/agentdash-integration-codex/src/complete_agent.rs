@@ -29,9 +29,8 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
-use crate::contribution::CODEX_PROTOCOL_REVISION;
-
 pub const CODEX_INITIAL_CONTEXT_RENDERER_VERSION: &str = "agentdash.codex.initial-context.v1";
+pub const CODEX_APP_SERVER_PROTOCOL_REVISION: u32 = 144;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexCompleteAgentTransportError {
@@ -78,7 +77,7 @@ pub enum CodexAppServerObservation {
 }
 
 impl CodexAppServerObservation {
-    fn sequence(&self) -> u64 {
+    pub(crate) fn sequence(&self) -> u64 {
         match self {
             Self::Notification { sequence, .. } | Self::ServerRequest { sequence, .. } => *sequence,
         }
@@ -174,11 +173,10 @@ struct CodexCompleteAgentState {
     effects: BTreeMap<AgentEffectIdentity, RecordedReceipt>,
 }
 
-/// Complete Agent target lane for Codex App Server.
+/// Complete Agent service for Codex App Server.
 ///
 /// Codex ThreadStore remains the history/resume/fork/compaction authority. This adapter keeps only
 /// command idempotency evidence, applied surface evidence, and live interaction correlation.
-/// Production registration remains on the legacy driver until the S5 cutover.
 pub struct CodexCompleteAgentService {
     config: CodexCompleteAgentConfig,
     transport: Arc<dyn CodexAppServerTransport>,
@@ -208,7 +206,7 @@ impl CodexCompleteAgentService {
         AgentServiceDescriptor {
             definition_id: self.config.definition_id.clone(),
             title: self.config.title.clone(),
-            protocol_revision: CODEX_PROTOCOL_REVISION,
+            protocol_revision: CODEX_APP_SERVER_PROTOCOL_REVISION,
             profile: AgentCapabilityProfile {
                 lifecycle: BTreeSet::from([
                     AgentLifecycleCapability::Create,
@@ -277,7 +275,7 @@ impl CodexCompleteAgentService {
             },
             profile_digest: AgentProfileDigest::new(format!(
                 "codex-complete-agent-profile-v{}",
-                CODEX_PROTOCOL_REVISION
+                CODEX_APP_SERVER_PROTOCOL_REVISION
             ))
             .expect("static profile digest"),
             configuration_boundary: AgentConfigurationBoundary::Binding,
@@ -1066,7 +1064,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
             {
                 return Err(service_error(
                     AgentServiceErrorCode::Unsupported,
-                    "Codex target lane accepts only exact immutable surface contributions",
+                    "Codex accepts only exact immutable surface contributions",
                     false,
                 ));
             }

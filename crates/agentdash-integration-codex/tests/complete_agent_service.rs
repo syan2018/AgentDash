@@ -9,18 +9,18 @@ use agentdash_agent_service_api::{
     AgentContextSourceCoordinate, AgentContextSourceRevision, AgentEffectIdentity,
     AgentEffectInspectionState, AgentForkCutoffKind, AgentForkPoint, AgentIdempotencyKey,
     AgentInput, AgentInputContent, AgentPayloadDigest, AgentReadQuery, AgentReceiptState,
-    AgentServiceDefinitionId, AgentServiceErrorCode, AgentSourceCoordinate, AgentSurfaceDigest,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentToolDelivery, AgentToolName,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnId, AppliedInitialContextEvidence,
-    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind,
-    ContextProvenance, CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
-    InitialContextContribution, InitialContextDeliveryFidelity, InitialContextMode,
-    RevokeBoundAgentSurface, SemanticFidelity,
+    AgentServiceDefinitionId, AgentServiceErrorCode, AgentServiceInstanceId, AgentSourceCoordinate,
+    AgentSurfaceDigest, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentToolDelivery,
+    AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnId,
+    AppliedInitialContextEvidence, BoundAgentSurface, BoundAgentSurfaceContribution,
+    CompleteAgentService, ContextAuthorityKind, ContextProvenance, CreateAgentCommand,
+    ForkAgentCommand, InitialAgentContextPackage, InitialContextContribution,
+    InitialContextDeliveryFidelity, InitialContextMode, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_codex::{
     CODEX_INITIAL_CONTEXT_RENDERER_VERSION, CodexAppServerObservation,
     CodexAppServerObservationPage, CodexAppServerTransport, CodexCompleteAgentConfig,
-    CodexCompleteAgentService, CodexCompleteAgentTransportError,
+    CodexCompleteAgentRegistration, CodexCompleteAgentService, CodexCompleteAgentTransportError,
 };
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -135,6 +135,38 @@ fn service(transport: Arc<RecordingTransport>) -> CodexCompleteAgentService {
         transport,
     )
     .expect("service")
+}
+
+#[tokio::test]
+async fn registration_exposes_one_complete_agent_instance_without_driver_contribution() {
+    let registration = CodexCompleteAgentRegistration::new(
+        AgentServiceInstanceId::new("codex-instance").expect("instance"),
+        CodexCompleteAgentConfig {
+            definition_id: AgentServiceDefinitionId::new("codex").expect("definition"),
+            title: "Codex".to_owned(),
+            cwd: std::env::current_dir().expect("cwd"),
+            model: None,
+            model_provider: None,
+            base_instructions: None,
+            developer_instructions: None,
+            runtime_workspace_roots: vec![std::env::current_dir().expect("root")],
+        },
+        Arc::new(RecordingTransport::default()),
+    )
+    .expect("registration");
+
+    assert_eq!(registration.instance_id().as_str(), "codex-instance");
+    let (instance_id, service) = registration.into_parts();
+    assert_eq!(instance_id.as_str(), "codex-instance");
+    assert_eq!(
+        service
+            .describe()
+            .await
+            .expect("descriptor")
+            .definition_id
+            .as_str(),
+        "codex"
+    );
 }
 
 fn meta(id: &str) -> AgentCommandMeta {

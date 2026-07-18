@@ -24,8 +24,8 @@ use agentdash_agent_service_api::{
     AgentToolName, AgentToolResult, AgentTurnId, CompleteAgentService,
 };
 use agentdash_integration_remote_runtime::{
-    RemoteCompleteAgentService, RemoteRuntimeTransportError, RuntimeWireAgentServiceEndpoint,
-    RuntimeWirePlacement, RuntimeWirePlacementEvent,
+    RemoteCompleteAgentRegistration, RemoteCompleteAgentService, RemoteRuntimeTransportError,
+    RuntimeWireAgentServiceEndpoint, RuntimeWirePlacement, RuntimeWirePlacementEvent,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -507,6 +507,28 @@ fn endpoint_tracer_with_callbacks(
         host_callbacks,
     );
     (source_service, endpoint, proxy)
+}
+
+#[tokio::test]
+async fn registration_preserves_caller_service_identity_and_complete_agent_target() {
+    let callbacks = Arc::new(RecordingCallbacks::default());
+    let source_service = Arc::new(EndpointTracerService::default());
+    let endpoint = Arc::new(RuntimeWireAgentServiceEndpoint::new(
+        target().service_instance_id,
+        AgentBindingGeneration(9),
+        source_service,
+    ));
+    let registration = RemoteCompleteAgentRegistration::new(
+        AgentServiceInstanceId::new("enterprise-agent").expect("instance"),
+        AgentBindingGeneration(3),
+        endpoint.target(),
+        endpoint,
+        callbacks,
+    );
+
+    assert_eq!(registration.instance_id().as_str(), "enterprise-agent");
+    let (instance_id, _) = registration.into_parts();
+    assert_eq!(instance_id.as_str(), "enterprise-agent");
 }
 
 async fn wait_until(mut predicate: impl FnMut() -> bool) {

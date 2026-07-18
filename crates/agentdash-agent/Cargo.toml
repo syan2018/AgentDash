@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+agentdash-agent-core = { workspace = true }
 # Agent 领域核心类型
 agentdash-agent-types = { workspace = true }
 # 异步运行时
@@ -33,6 +34,7 @@ walkdir = "2.5"
 regex = "1.11"
 globset = "0.4"
 jsonschema = "0.30"
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3.18"

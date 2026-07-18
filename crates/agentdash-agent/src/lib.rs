@@ -3,6 +3,7 @@ pub mod agent_loop;
 pub mod bridge;
 pub mod compaction;
 pub mod conversation_naming;
+pub mod dash;
 pub mod event_stream;
 pub mod tool_result_ref;
 pub mod tools;

@@ -1153,8 +1153,11 @@ flowchart LR
 
 S0–S4 中的 target code 通过 direct tests、conformance harness 和隔离 composition
 验证。任何会改变默认 caller、crate identity、production composition、正式
-repository/schema、canonical generated contract 或 legacy deletion 的修改，均由原
-bundle owner 形成经过独立检查的 activation-ready change set，并在 S5 一次集成。
+repository/schema、canonical generated contract 或 legacy deletion 的修改，先由原
+bundle owner形成经过独立检查的 activation component 和完整 consumer/deletion
+manifest；Wave 4 在同一冻结 revision 上组合跨 owner components 并签认为
+activation-ready change set，随后在 S5 一次集成。单个 component 不通过临时反向依赖或
+兼容 shim 冒充独立终态。
 
 S5 的 integration ownership 不取代领域 owner：Platform Runtime 负责最终
 contract/Runtime/Host/Surface，Dash/Native 负责 Dash Agent/Core/Native，External

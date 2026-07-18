@@ -1,0 +1,96 @@
+From e1abec31fd021b23799ccc7b62908548376d14d4 Mon Sep 17 00:00:00 2001
+From: syan2018 <18905928089@163.com>
+Date: Sat, 18 Jul 2026 16:20:50 +0800
+Subject: [PATCH 2/2] =?UTF-8?q?refactor(agent-runtime):=20=E6=B8=85?=
+ =?UTF-8?q?=E7=90=86=E6=97=A0=E6=95=88=20Agent=20=E7=B1=BB=E5=9E=8B?=
+ =?UTF-8?q?=E4=BE=9D=E8=B5=96?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 删除 contracts 中无调用者的 Core MessageRef 转换与依赖。
+- 删除 executor 未使用的 agent-types 直接依赖并更新 lockfile。
+- 固化剩余 Product caller 与 legacy boundary 的最终 owner、调用链和 S5 原子切换前置。
+- 明确本提交仅为 W2 activation component，待 W7 target caller 合入后完成旧 crate 与 serde bridge 删除。
+---
+ Cargo.lock                                        |  2 --
+ crates/agentdash-contracts/Cargo.toml             |  1 -
+ crates/agentdash-contracts/src/runtime/session.rs | 10 ----------
+ crates/agentdash-executor/Cargo.toml              |  1 -
+ 4 files changed, 14 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index f635ce9c..30362c84 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -601,7 +601,6 @@ name = "agentdash-contracts"
+ version = "0.1.0"
+ dependencies = [
+  "agentdash-agent-protocol",
+- "agentdash-agent-types",
+  "agentdash-domain",
+  "agentdash-spi",
+  "chrono",
+@@ -639,7 +638,6 @@ dependencies = [
+ name = "agentdash-executor"
+ version = "0.1.0"
+ dependencies = [
+- "agentdash-agent-types",
+  "agentdash-application-ports",
+  "agentdash-diagnostics",
+  "agentdash-domain",
+diff --git a/crates/agentdash-contracts/Cargo.toml b/crates/agentdash-contracts/Cargo.toml
+index 1f87e45c..a1a78216 100644
+--- a/crates/agentdash-contracts/Cargo.toml
++++ b/crates/agentdash-contracts/Cargo.toml
+@@ -12,7 +12,6 @@ name = "generate_contracts_ts"
+ path = "src/generate_ts.rs"
+ 
+ [dependencies]
+-agentdash-agent-types = { workspace = true }
+ agentdash-domain = { workspace = true }
+ agentdash-agent-protocol = { workspace = true }
+ agentdash-spi = { workspace = true }
+diff --git a/crates/agentdash-contracts/src/runtime/session.rs b/crates/agentdash-contracts/src/runtime/session.rs
+index 21ee5ed4..da5a3ed0 100644
+--- a/crates/agentdash-contracts/src/runtime/session.rs
++++ b/crates/agentdash-contracts/src/runtime/session.rs
+@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
+ use ts_rs::TS;
+ 
+ use agentdash_agent_protocol::BackboneEnvelope;
+-use agentdash_agent_types::MessageRef;
+ 
+ #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+ #[serde(rename_all = "snake_case")]
+@@ -264,15 +263,6 @@ pub struct SessionMessageRefDto {
+     pub entry_index: u32,
+ }
+ 
+-impl From<MessageRef> for SessionMessageRefDto {
+-    fn from(value: MessageRef) -> Self {
+-        Self {
+-            turn_id: value.turn_id,
+-            entry_index: value.entry_index,
+-        }
+-    }
+-}
+-
+ fn is_zero(value: &u64) -> bool {
+     *value == 0
+ }
+diff --git a/crates/agentdash-executor/Cargo.toml b/crates/agentdash-executor/Cargo.toml
+index cca44250..22233271 100644
+--- a/crates/agentdash-executor/Cargo.toml
++++ b/crates/agentdash-executor/Cargo.toml
+@@ -8,7 +8,6 @@ edition.workspace = true
+ agentdash-application-ports = { workspace = true }
+ agentdash-spi = { workspace = true }
+ agentdash-domain = { workspace = true }
+-agentdash-agent-types = { workspace = true }
+ agentdash-mcp = { workspace = true }
+ serde = { workspace = true }
+ serde_json = { workspace = true }
+-- 
+2.45.1.windows.1
+

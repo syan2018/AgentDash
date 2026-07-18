@@ -36,10 +36,10 @@
 | Task status | `in_progress` |
 | Branch | `codex/agent-runtime-final-convergence-plan` |
 | Planning base | `263b990e` |
-| Current wave | Wave 1 — Foundation bundles ready to dispatch |
-| Current checkpoint | S1 Contract Freeze — passed；checkpoint commit pending |
+| Current wave | Wave 2 — External Agents target lane |
+| Current checkpoint | S2 Target Domains Ready — ready to commit |
 | Production path | Current Runtime → Driver Host → Native/Codex driver |
-| Active implementation bundles | Platform Runtime、Dash / Native |
+| Active implementation bundles | External Agents；Platform Runtime Wire support |
 | Shared hotspot owner | main dispatcher |
 
 ## Checkpoint ledger
@@ -47,8 +47,8 @@
 | Checkpoint | Status | Commit | Evidence |
 | --- | --- | --- | --- |
 | S0 Baseline | committed | `32ecfd2c` | 5 AgentRun fork + 1 Native fork；Runtime 129 tests；ordinary send/reconnect；migration guard |
-| S1 Contract Freeze | passed | pending | final Service API 15 tests + clippy；Runtime admission 3；Host target 5；dependency/negative gates |
-| S2 Target Domains Ready | pending | — | — |
+| S1 Contract Freeze | committed | `09bff131` | final Service API 15 tests + clippy；Runtime admission 3；Host target 5；dependency/negative gates |
+| S2 Target Domains Ready | ready | amend pending | Platform/Runtime/Host/Dash/Core/Native target checks；W2 activation component signed；5+1 fork、ordinary send、reconnect tracers |
 | S3 Complete Agent Lane | pending | — | — |
 | S4 Product Lane Ready | pending | — | — |
 | S5 Atomic Hard Cut | pending | — | — |
@@ -58,12 +58,12 @@
 
 | Work | Status | Owning bundle | Notes |
 | --- | --- | --- | --- |
-| W1 | contract frozen | Platform Runtime | typed Service API and additive crate boundary independently checked |
-| W2 | in progress | Dash / Native | Wave 1 |
-| W3 | in progress | Platform Runtime | Wave 1 |
-| W4 | in progress | Platform Runtime | Wave 1 |
-| W5 | in progress | Dash / Native | contract milestone may unblock；waits for Platform checked revision before final check |
-| W6 | pending | External Agents | — |
+| W1 | completed | Platform Runtime | frozen at `09bff131` |
+| W2 | target + component ready | Dash / Native | independent target and activation-component checks passed；combined activation remains Wave 4 |
+| W3 | target ready | Platform Runtime | independent recheck passed；S5 repository/schema activation remains |
+| W4 | target ready | Platform Runtime | independent recheck passed；S5 production binding remains |
+| W5 | target ready | Dash / Native | Native Complete Agent target conformance passed；production activation remains |
+| W6 | in progress | External Agents | Codex/Remote target lane；Platform owner补齐 Complete Agent Runtime Wire |
 | W7 | pending | Product / Protocol | — |
 | W8 | pending | Hard Cut | unique migration/composition/deletion owner |
 | W9 | pending | Final Conformance | — |
@@ -111,13 +111,41 @@
 - Platform Runtime implement: W1/W3/W4；owns Runtime Contract、new Service API、
   Runtime/Host/Surface/Tool/Hook target lane. W1 contract frozen after final checker pass:
   Service API 15 tests、clippy、Runtime admission 3 tests、Host target 5 tests and
-  dependency/negative gates passed. W3/W4 target modules remain unstaged for S2.
+  dependency/negative gates passed. W3/W4 target modules passed their fix-and-recheck:
+  SnapshotOnly/ObservationOnly sync、typed active-turn changes、monotonic terminal effects、
+  Hook deadline intersection and the unified five-kind `AgentSurfaceCapabilityFacet` are covered.
+  Service API 15、Runtime 79 and Host 107 tests passed with target dependency/production-route
+  gates; modules remain unstaged for S2.
   Shared hotspots remain with main.
 - Dash / Native implement: W2/W5；owns Dash Agent/Core and Native adapter target lane.
-  AgentCore 2 tests and Dash ordered-history/fold/fork/compaction 7 tests passed.
-  It may consume current contract milestone, but final W5 check waits for Platform checked
-  revision.
+  The final independent recheck passed the Dash-owned repository/service/worker boundary,
+  `Native -> Dash -> Core`, command vocabulary, per-revision change cursor/digest, exact fork,
+  manual/automatic compaction and B/C failure/Lost recovery. AgentCore 2、Dash 72 and Native 73
+  tests passed, including 12 Native Complete Agent conformance tests. Production remains on the
+  current driver route.
+- S2 checked target code is frozen at candidate commit `9dc0c84b`. The W2 physical/API activation
+  set is being generated in the isolated worktree
+  `F:\Projects\AgentDash-s2-dash-activation` on branch
+  `codex/agent-runtime-s2-dash-activation`; it must not change the main worktree production route.
+- The first activation candidate `265155ea513e576b11897d531fe0279903627e7e` passed the physical
+  Agent/Core shape, dependency, test and production-route checks, but independent review rejected
+  it as activation-ready: `agentdash-agent-core` and `agentdash-agent-types` still defined the same
+  Core-owned types, and Infrastructure bridged them through a serde transcode. Dash/Native now
+  temporarily owns the bounded S5 consumer cut needed to move all remaining consumers to their
+  final owners, remove the transcode and delete `agentdash-agent-types` in the same activation set.
+- The corrected W2 activation component is frozen as code tip `e1abec31` with reviewed inventory
+  correction `7fbdd764`. Its two task-local patch files, SHA-256 digests, apply verification,
+  remaining nine-consumer matrix and Wave 4 prerequisites are recorded under
+  `activation/w2-dash-core/`. Independent recheck signed `component_ready: pass`.
+- The W7 readiness audit is recorded in
+  `research/current-w7-product-protocol-readiness.md`. It confirms the current graph-before-runtime
+  fork, prompt-slice Companion and journal/UI feed must be replaced by the target saga,
+  initial-package and Runtime snapshot/change lane before the combined hard cut.
 
 ## Known blockers
 
-None at task activation.
+- S2 has no remaining blocker. The current production checkpoint tracers passed:
+  AgentRun fork 5、Native fork 1、ordinary first send 1 and reconnect 1.
+- Complete combined `activation_ready` remains a Wave 4 gate: W7 must remove Product/Application
+  Core-tool and journal callers, then W8 and Dash/Native jointly remove the remaining legacy
+  consumers, serde transcode and `agentdash-agent-types` in one S5 set.

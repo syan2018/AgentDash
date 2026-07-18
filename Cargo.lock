@@ -88,6 +88,7 @@ dependencies = [
 name = "agentdash-agent"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-core",
  "agentdash-agent-types",
  "agentdash-diagnostics",
  "anyhow",
@@ -99,6 +100,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -162,6 +164,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
+ "agentdash-agent-service-api",
  "agentdash-diagnostics",
  "async-trait",
  "serde",
@@ -193,6 +196,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
+ "agentdash-agent-service-api",
  "agentdash-diagnostics",
  "agentdash-integration-api",
  "async-trait",
@@ -760,6 +764,7 @@ dependencies = [
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
+ "agentdash-agent-service-api",
  "agentdash-agent-types",
  "agentdash-diagnostics",
  "agentdash-integration-api",

@@ -9,6 +9,7 @@ license.workspace = true
 agentdash-agent = { workspace = true }
 agentdash-agent-types = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
+agentdash-agent-service-api = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }
 agentdash-diagnostics = { workspace = true }
 agentdash-integration-api = { workspace = true }

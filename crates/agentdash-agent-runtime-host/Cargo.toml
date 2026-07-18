@@ -8,6 +8,7 @@ edition.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+agentdash-agent-service-api = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }
 agentdash-diagnostics = { workspace = true }
 agentdash-integration-api = { workspace = true }

@@ -394,16 +394,20 @@ flowchart LR
 | Active production path | 仍为 current path |
 | 验证方式 | direct construction、in-memory repository、history replay/property、surface admission |
 | 稳定边界 | target code 不写 production DB，不被 production composition 选择 |
-| 物理 crate 注意 | W2 交付 target-domain code 与一份由 W2 拥有、已评审但尚未激活的 S5 crate/API activation patch |
+| 物理 crate 注意 | W2 交付 target-domain code、W2-owned physical/API activation component，以及冻结的跨 owner consumer/deletion manifest |
 
 W2 的完成需要区分两个状态：
 
 - `target_ready`：Dash Agent/Core 目标代码和独立测试完成，current production path 仍成立；
-- `activation_ready`：所有 Agent/Core physical move、public API cut 和 consumer impact
-  已冻结为 Dash/Native bundle-owned change set，可由 S5 原样集成。
+- `activation_component_ready`：Agent/Core physical move、public API cut、真实 Core
+  consumers 和所有其余 consumer 的最终 owner/deletion 要求已冻结；该 component 不用
+  临时 Application → Core 依赖维持独立可构建；
+- `activation_ready`：Wave 4 将 W2 component 与 W7 target caller、W8 legacy deletion
+  component 基于同一冻结 revision 组成不可拆分集合，并由对应 checkers 共同签认。
 
-W8 对 W2 的依赖表示这两个 deliverable 都已 ready，并不把 Agent/Core 文件 ownership
-移交给 W8，也不要求 activation patch 在 S2 提前进入 production path。
+S2 退出要求 `target_ready + activation_component_ready`。W8 对 W2 的依赖不把
+Agent/Core 文件 ownership 移交给 W8，也不要求完整 combined activation set 在 W7
+之前伪装成可独立激活；完整 `activation_ready` 是 Wave 4 进入 S5 的 gate。
 
 ### S3 — Complete Agent Lane Ready（W5 + W6）
 
@@ -472,7 +476,7 @@ S5 的稳定结果只有一种：所有 production callers 指向 final Runtime/
 | Work | 文件/职责 owner | 局部完成证据 | 可以独立形成 checkpoint 吗 | Production activation |
 | --- | --- | --- | --- | --- |
 | W1 | contracts/wire/test skeleton | contract、codegen、dependency tests | additive 部分可形成 S1 | final activation/legacy cleanup patch 在 S5 |
-| W2 | Dash Agent / AgentCore files | replay、fork、compaction、Core purity | target-ready 部分可形成 S2 | Dash/Native-owned crate/API activation set 在 S5 |
+| W2 | Dash Agent / AgentCore files | replay、fork、compaction、Core purity | target-ready + physical activation component 可形成 S2 | W2 component 与 W7 caller/W8 deletion 在 Wave 4 组成 activation set |
 | W3 | Runtime/Host target state | in-memory behavior、effect/recovery | target model 可独立验证 | final repository/schema 在 S5 |
 | W4 | Surface/Tool/Hook | admission、applied evidence、unique route | 可直接验证 | production binding 在 S5 |
 | W5 | Native/Dash adapter | Complete Agent + real fork conformance | test composition checkpoint | production registry 在 S5 |
@@ -830,8 +834,9 @@ Affected checkpoint:
 Commands verified:
 ```
 
-没有 `Activation-ready change set` 的 bundle 不能进入 S5 readiness；没有 independent
-check 的 change set 不能被 Hard Cut integration 接收。
+没有 owner-reviewed activation component 和完整 consumer/deletion manifest 的 bundle
+不能进入 Wave 4；没有在同一冻结 revision 上组成并经 independent check 的 combined
+`Activation-ready change set`，不能被 Hard Cut integration 接收。
 
 ### 12.7 Finding 与返工路由
 

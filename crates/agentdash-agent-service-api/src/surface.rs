@@ -345,7 +345,7 @@ pub struct AgentSurfaceSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeOfferContribution {
+pub struct AgentSurfaceCapabilityFacet {
     pub semantics: AgentSurfaceSemanticFacet,
     pub routes: BTreeSet<AgentSurfaceRoute>,
     pub fidelity: SemanticFidelity,
@@ -356,7 +356,7 @@ pub struct AgentRuntimeOfferContribution {
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeOffer {
     pub profile_digest: crate::AgentProfileDigest,
-    pub contributions: Vec<AgentRuntimeOfferContribution>,
+    pub contributions: Vec<AgentSurfaceCapabilityFacet>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

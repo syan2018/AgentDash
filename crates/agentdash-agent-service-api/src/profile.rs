@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{AgentProfileDigest, AgentSurfaceRoute, InitialContextContributionKind};
+use crate::{AgentProfileDigest, InitialContextContributionKind};
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
@@ -151,10 +151,7 @@ pub struct InitialContextProfile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentSurfaceProfile {
-    pub supported_routes: BTreeSet<AgentSurfaceRoute>,
-    pub tools: Vec<crate::AgentToolSemanticFacet>,
-    pub hooks: Vec<crate::AgentHookSemanticFacet>,
-    pub configuration_boundary: AgentConfigurationBoundary,
+    pub facets: Vec<crate::AgentSurfaceCapabilityFacet>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

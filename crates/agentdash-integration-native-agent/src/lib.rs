@@ -4,15 +4,19 @@
 //! provider/tool loop and never imports Runtime, Integration, repository, or vendor vocabulary.
 
 mod context;
+mod core_callbacks;
 mod driver;
 mod hook;
 mod mapping;
 mod presentation;
+mod service;
 mod tool;
 
+pub use core_callbacks::DashAgentCoreToolCallbacks;
 pub use driver::{
     NATIVE_STREAM_USAGE_RESERVE_TOKENS, NativeAgentDriver, NativeAgentDriverFactory,
     NativeAgentRuntimeIntegration, NativeAgentServiceConfig, NativeBridgeResolveError,
     NativeBridgeResolver, NativeCredentialScope, NativePresentationMetadata, ResolvedNativeBridge,
     native_agent_contribution, native_runtime_profile, native_runtime_trust_manifest,
 };
+pub use service::DashAgentCompleteService;

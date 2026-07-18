@@ -96,10 +96,12 @@ Stable checkpoint 是可提交和交接的集成边界：
 | S6 Final Conformance | recovery、fault matrix、negative gates、最终 specs 全部通过 |
 
 S0–S4 不提前改变 production path。每个 bundle 把 production activation 部分保留为经过
-自身 checker 审阅的 activation-ready change set；S5 由原 bundle owner 维护自身领域
-修改，Hard Cut owner 串行集成 Cargo/lockfile、正式 migration、production composition、
-canonical generated contracts 和最终 legacy deletion。完整 wave、slot 和返工路由见
-`transition-architecture.md` §12。
+自身 checker 审阅的 activation component 与 consumer/deletion manifest；Wave 4 在同一
+冻结 revision 上组合跨 owner components，形成完整 activation-ready change set。S5 由
+原 bundle owner维护自身领域修改，Hard Cut owner 串行集成 Cargo/lockfile、正式
+migration、production composition、canonical generated contracts 和最终 legacy
+deletion。单个 component 不引入只为独立编译存在的反向依赖或兼容 shim。完整 wave、
+slot 和返工路由见 `transition-architecture.md` §12。
 
 ## 2. 工作包总表
 

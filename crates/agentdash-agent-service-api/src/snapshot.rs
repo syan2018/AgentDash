@@ -157,6 +157,9 @@ pub enum AgentChangePayload {
     TurnChanged {
         turn: AgentTurnSnapshot,
     },
+    ActiveTurnChanged {
+        active_turn_id: Option<AgentTurnId>,
+    },
     ItemChanged {
         turn_id: AgentTurnId,
         item: AgentItemSnapshot,

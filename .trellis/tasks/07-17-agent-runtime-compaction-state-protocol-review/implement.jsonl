@@ -5,6 +5,8 @@
 {"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/design.md","reason":"07-10 已确认的 Managed Runtime、Driver Host、RuntimeOffer/AgentSurface/Binding 原始目标；只作为目标继承，不作为当前代码事实。"}
 {"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/target-crate-shape.md","reason":"07-10 物理 crate 收敛目标与迁移地图；本任务 design 对其增加 Dash Agent 中层和 Complete Agent seam 后为最终准则。"}
 {"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-runtime-fork-state-boundaries.md","reason":"当前分支统一 Runtime、Fork/Companion、journal、Host/persistence 真实接线与 6/6 聚焦测试证据。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-w7-product-protocol-readiness.md","reason":"实施期重新核对的 AgentRun fork、Companion、journal/API/UI 当前调用链、S4 隔离验证方法与 S5 caller/deletion inventory。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/agent-types-hard-cut-consumer-inventory.md","reason":"W2 physical activation component 的剩余 consumer 矩阵、最终 owner 与 W7/W8 原子删除前置条件。"}
 {"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/codex-session-history-runtime-boundaries.md","reason":"Codex ThreadStore/history/fork/compaction 权威边界与 Complete Agent service 所需合同。"}
 {"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/pi-mono-agentcore-crate-convergence.md","reason":"pi-like AgentCore、完整 Agent 中层和 crate DAG 的源码级边界证据。"}
 {"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/revised-plan-independent-review.md","reason":"独立 review 发现的 Fork saga、surface callback seam、crate ownership、RuntimeSession 残留与 migration/Dash commit 修订依据；已由父 design 收敛。"}

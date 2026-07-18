@@ -178,11 +178,18 @@ pub enum CoreError {
     #[error("达到 provider round 上限 {max_rounds}")]
     ProviderRoundLimit { max_rounds: u32 },
     #[error("provider 失败: {message}")]
-    Provider { message: String },
+    Provider { message: String, retryable: bool },
     #[error("tool callback 失败: {message}")]
-    Tool { message: String },
+    Tool { message: String, retryable: bool },
     #[error("core callback 失败: {message}")]
     Callback { message: String },
+    #[error("provider 请求 typed interaction {interaction_id}: {prompt}")]
+    InteractionRequired {
+        interaction_id: String,
+        prompt: String,
+    },
+    #[error("provider context overflow requires Agent-owned compaction")]
+    ContextOverflow,
 }
 
 #[async_trait]

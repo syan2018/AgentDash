@@ -23,6 +23,14 @@ effect 前先提交 dispatch marker；响应未知时只 inspect 同一 identity
 `AgentRunForkSagaRepository::commit_product_graph` 在一个事务提交。activation 只能发生在
 该事务之后。
 
+`PreparedAgentRunForkGraph` 是可序列化、构造后只读的 transaction payload，完整携带
+`LifecycleRun`、`LifecycleAgent`、`AgentFrame`、`AgentRunLineage`、presentation identity、
+Runtime child、Host binding 与 history digest。payload digest 覆盖全部 immutable rows。
+repository commit 同时接收 expected saga version、已经转移到
+`ProductGraphCommitted` 的 saga 和 prepared graph：CAS 冲突时二者均不可见；成功时二者
+同时可见；相同 request/payload 重放返回已提交 revision；同 request 的不同 payload
+返回冲突。
+
 ## Fresh Companion transaction
 
 `companion_fresh_saga` 以 `request_id` 为唯一请求键，以 `version` 做 CAS。持久行必须覆盖：

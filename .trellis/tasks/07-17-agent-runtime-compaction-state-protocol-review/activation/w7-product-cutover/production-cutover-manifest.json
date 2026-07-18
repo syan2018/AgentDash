@@ -39,72 +39,254 @@
   "w7_consumer_cut": [
     {
       "crate": "agentdash-api",
+      "owner": "Product / Protocol",
       "activation_roots": [
-        "crates/agentdash-api/src/routes/lifecycle_agents.rs::fork_agent_run",
-        "crates/agentdash-api/src/routes/lifecycle_agents.rs::get_agent_run_journal",
-        "crates/agentdash-api/src/routes/lifecycle_agents.rs::stream_agent_run_journal",
-        "crates/agentdash-api/src/app_state.rs::AppState"
+        "crates/agentdash-api/src/agent_run_terminal_control.rs",
+        "crates/agentdash-api/src/app_state.rs",
+        "crates/agentdash-api/src/bootstrap/agent_runtime_surface.rs",
+        "crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs",
+        "crates/agentdash-api/src/bootstrap/production_tools_e2e.rs",
+        "crates/agentdash-api/src/bootstrap/runtime_gateway.rs",
+        "crates/agentdash-api/src/bootstrap/vfs.rs",
+        "crates/agentdash-api/src/dto/session.rs",
+        "crates/agentdash-api/src/relay/registry.rs",
+        "crates/agentdash-api/src/routes/agent_run_workspace.rs",
+        "crates/agentdash-api/src/routes/lifecycle_agents.rs",
+        "crates/agentdash-api/src/routes/lifecycle_contracts.rs",
+        "crates/agentdash-api/src/routes/runtime_traces.rs",
+        "crates/agentdash-api/src/vfs_access/mod.rs"
       ],
-      "replace": "AgentRunJournalService + AgentRunForkCommandService + ApiAgentRunForkRuntimePort",
-      "with": "AgentRunForkFacade + AgentRunRuntimeProjectionPort + generated Managed Runtime DTO",
-      "breakpoint": "AppState 必须先获得 W8 PostgreSQL saga repository 与 Platform CompleteAgentHost adapter"
+      "symbols_remove": [
+        "AgentRunJournalService",
+        "AgentRunJournal",
+        "RuntimeJournalFact",
+        "RuntimeJournalRecord",
+        "RuntimeSession",
+        "RuntimeSessionMcpAccess",
+        "RuntimeToolProvider",
+        "DynAgentTool",
+        "AgentTool"
+      ],
+      "symbols_add": [
+        "AgentRunForkFacade",
+        "AgentRunRuntimeProjectionPort",
+        "ManagedRuntimeSnapshot",
+        "ManagedRuntimeChangePage"
+      ],
+      "replacement": "API fork/read/change/stream、bootstrap tool surface 与 AppState caller 改读 Product facade 和 Runtime Contract projection；不在 API 重建 journal 或 availability。",
+      "prerequisites": [
+        "W8 PostgreSQL saga repositories",
+        "Platform CompleteAgentHost production adapter",
+        "canonical Managed Runtime generated DTO"
+      ],
+      "activation_gate": "上述 14 个文件不再命中 legacy regex，API 三个 projection integration tests 通过。"
     },
     {
       "crate": "agentdash-application",
+      "owner": "Product / Protocol",
       "activation_roots": [
-        "crates/agentdash-application/src/companion/dispatch.rs::CompanionChildDispatchService::dispatch_child",
+        "crates/agentdash-application/src/companion/dispatch.rs",
+        "crates/agentdash-application/src/companion/mod.rs",
         "crates/agentdash-application/src/companion/runtime_tool_provider.rs",
-        "crates/agentdash-application/src/runtime_tools/provider.rs"
+        "crates/agentdash-application/src/companion/tool_context.rs",
+        "crates/agentdash-application/src/companion/tools.rs",
+        "crates/agentdash-application/src/frame_construction/classify.rs",
+        "crates/agentdash-application/src/frame_construction/composer_companion.rs",
+        "crates/agentdash-application/src/frame_construction/composer_project_agent.rs",
+        "crates/agentdash-application/src/frame_construction/composer_workflow_node.rs",
+        "crates/agentdash-application/src/frame_construction/mod.rs",
+        "crates/agentdash-application/src/frame_construction/request_assembler.rs",
+        "crates/agentdash-application/src/runtime_tools/mod.rs",
+        "crates/agentdash-application/src/runtime_tools/provider.rs",
+        "crates/agentdash-application/src/runtime_tools/vfs_provider.rs",
+        "crates/agentdash-application/src/task/mod.rs",
+        "crates/agentdash-application/src/task/runtime_tool_provider.rs",
+        "crates/agentdash-application/src/task/tools.rs",
+        "crates/agentdash-application/src/vfs_owner_providers.rs",
+        "crates/agentdash-application/src/wait_activity/mod.rs",
+        "crates/agentdash-application/src/wait_activity/provider.rs",
+        "crates/agentdash-application/src/wait_activity/service.rs",
+        "crates/agentdash-application/src/wait_activity/tests.rs",
+        "crates/agentdash-application/src/wait_activity/tool.rs"
       ],
-      "replace": "Lifecycle fresh launch + ContextPolicy + RuntimeToolProvider/AgentTool assembly",
-      "with": "CompanionDispatchCoordinator + typed Business Surface contribution",
-      "breakpoint": "Complete Agent exact fork/fresh create adapter 与 Tool Broker contribution route 必须已签认"
+      "symbols_remove": [
+        "AgentRunJournalService",
+        "AgentRunJournal",
+        "RuntimeSession",
+        "RuntimeToolProvider",
+        "DynAgentTool",
+        "AgentTool"
+      ],
+      "symbols_add": [
+        "CompanionDispatchCoordinator",
+        "CompanionDispatchTargetPlan",
+        "AgentSurfaceSnapshot",
+        "BoundAgentSurfaceContribution"
+      ],
+      "replacement": "Companion、frame、task、wait 与 VFS owner caller 编译 Product Companion target，并把 tool/context 作为 Complete Agent Business Surface contribution。",
+      "prerequisites": [
+        "CompleteAgentService create/fork/inspect adapter",
+        "PlatformToolBroker callback route",
+        "W8 Companion saga repository"
+      ],
+      "activation_gate": "上述 23 个文件不再命中 legacy regex，Companion Full/Fresh crash-window tests 通过。"
     },
     {
       "crate": "agentdash-application-agentrun",
+      "owner": "Product / Protocol",
       "activation_roots": [
-        "crates/agentdash-application-agentrun/src/agent_run/fork_command.rs::AgentRunForkCommandService",
-        "crates/agentdash-application-agentrun/src/agent_run/runtime_facade.rs::ManagedAgentRunRuntime::fork_runtime_inner",
-        "crates/agentdash-application-agentrun/src/agent_run/journal.rs::AgentRunJournalService",
-        "crates/agentdash-application-agentrun/src/agent_run/mod.rs"
+        "crates/agentdash-application-agentrun/src/agent_run/business_frame_surface_query.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/context_projection.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/context_sources.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/delivery_runtime_selection.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/frame/hook_runtime.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/frame/runtime_launch.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/frame/surface_service.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/journal.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/lifecycle_read_model_facade.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/mod.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/presentation_read_model.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/runtime_application_presentation.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/runtime_session_boundary.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/thread_name_projection.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/workspace/query.rs",
+        "crates/agentdash-application-agentrun/src/agent_run/workspace/types.rs"
       ],
-      "replace": "graph-before-runtime fork、ancestor journal 拼接、RuntimeSession boundary",
-      "with": "product_protocol durable saga 与 Runtime Contract snapshot/change/context",
-      "breakpoint": "旧 public re-export 必须与 API caller、W8 schema 删除同一提交移除"
+      "symbols_remove": [
+        "AgentRunJournalService",
+        "AgentRunJournal",
+        "RuntimeJournalFact",
+        "RuntimeJournalRecord",
+        "RuntimeSession",
+        "RuntimeSessionControlPort",
+        "RuntimeSessionCorePort",
+        "RuntimeSessionEventingPort",
+        "RuntimeSessionLaunchPort",
+        "RuntimeToolProvider",
+        "DynAgentTool",
+        "AgentTool"
+      ],
+      "symbols_add": [
+        "AgentRunForkFacade",
+        "AgentRunForkSagaRepository",
+        "AgentRunRuntimeProjectionPort",
+        "AgentRunRuntimeFeedReconnect",
+        "ManagedRuntimeSnapshot",
+        "ManagedRuntimeChangePage"
+      ],
+      "replacement": "AgentRun graph、context、workspace 与 presentation caller 切到 product_protocol durable saga 和 Runtime Contract canonical snapshot/change/context。",
+      "prerequisites": [
+        "W8 saga migration and repositories",
+        "Platform Complete Agent state repository",
+        "canonical Managed Runtime projection"
+      ],
+      "activation_gate": "上述 16 个文件不再命中 legacy regex，product_protocol restart matrix 通过。"
     },
     {
       "crate": "agentdash-application-lifecycle",
+      "owner": "Product / Protocol",
       "activation_roots": [
-        "crates/agentdash-application-lifecycle/src/lifecycle/tools/runtime_provider.rs",
+        "crates/agentdash-application-lifecycle/src/lifecycle/orchestrator.rs",
+        "crates/agentdash-application-lifecycle/src/lifecycle/projection.rs",
+        "crates/agentdash-application-lifecycle/src/lifecycle/run_view_builder.rs",
+        "crates/agentdash-application-lifecycle/src/lifecycle/session_association.rs",
+        "crates/agentdash-application-lifecycle/src/lifecycle/surface/journey/mod.rs",
+        "crates/agentdash-application-lifecycle/src/lifecycle/surface/journey/session_items.rs",
+        "crates/agentdash-application-lifecycle/src/lifecycle/surface/surface_projector.rs",
         "crates/agentdash-application-lifecycle/src/lifecycle/tools/advance_node.rs",
+        "crates/agentdash-application-lifecycle/src/lifecycle/tools/mod.rs",
+        "crates/agentdash-application-lifecycle/src/lifecycle/tools/runtime_provider.rs",
         "crates/agentdash-application-lifecycle/src/lifecycle/vfs_provider.rs"
       ],
-      "replace": "workflow AgentTool/RuntimeToolProvider 与 journal 读取",
-      "with": "workflow Business Surface contribution 与 Runtime history projection",
-      "breakpoint": "Platform Tool Broker descriptor/call route 和 Runtime history projection port 必须已存在"
+      "symbols_remove": [
+        "AgentRunJournal",
+        "RuntimeSession",
+        "RuntimeSessionCurrentFrame",
+        "RuntimeSessionPolicy",
+        "RuntimeToolProvider",
+        "DynAgentTool",
+        "AgentTool"
+      ],
+      "symbols_add": [
+        "AgentSurfaceSnapshot",
+        "BoundAgentSurfaceContribution",
+        "ManagedRuntimeSnapshot",
+        "ManagedRuntimeChangePage"
+      ],
+      "replacement": "Lifecycle workflow/session projection 改读 Runtime Contract，advance-node/VFS tools 改为 Business Surface contribution。",
+      "prerequisites": [
+        "PlatformToolBroker production binding",
+        "Runtime projection read/change ports"
+      ],
+      "activation_gate": "上述 11 个文件不再命中 legacy regex，workflow surface 与 projection tests 通过。"
     },
     {
       "crate": "agentdash-application-ports",
+      "owner": "Product / Protocol",
       "activation_roots": [
+        "crates/agentdash-application-ports/src/agent_run_surface.rs",
+        "crates/agentdash-application-ports/src/lifecycle_read_model.rs",
+        "crates/agentdash-application-ports/src/lifecycle_surface_projection.rs",
         "crates/agentdash-application-ports/src/mcp_discovery.rs",
         "crates/agentdash-application-ports/src/runtime_session_delivery.rs",
         "crates/agentdash-application-ports/src/runtime_session_live.rs"
       ],
-      "replace": "DynAgentTool 与 RuntimeSession live/delivery ports",
-      "with": "typed MCP descriptor、Tool Broker call route、Runtime Contract command/read/change ports",
-      "breakpoint": "ports crate 同时属于 W7 caller 与 W8 legacy deletion，不能留下 re-export/shim"
+      "symbols_remove": [
+        "RuntimeSessionDeliveryRef",
+        "RuntimeSessionEffectiveCapabilityPort",
+        "RuntimeSessionHookTargetPort",
+        "RuntimeSessionLivePortError",
+        "RuntimeSessionMailboxRuntimePort",
+        "RuntimeSessionTurnDeliveryPort",
+        "RuntimeSessionPolicy",
+        "DynAgentTool"
+      ],
+      "symbols_add": [
+        "AgentSurfaceSnapshot",
+        "AgentToolInvocation",
+        "AgentToolResult",
+        "ManagedRuntimeSnapshot",
+        "ManagedRuntimeChangePage"
+      ],
+      "replacement": "删除 RuntimeSession delivery/live 和 DynAgentTool ports；MCP/surface/read-model ports 使用 Complete Agent service/runtime contract typed vocabulary。",
+      "prerequisites": [
+        "Platform Runtime Contract ports",
+        "Complete Agent Host callback contract"
+      ],
+      "activation_gate": "上述 6 个文件不再命中 legacy regex，ports crate 不保留 re-export 或 shim。"
     },
     {
       "crate": "agentdash-application-vfs",
+      "owner": "Product / Protocol",
       "activation_roots": [
         "crates/agentdash-application-vfs/src/tools/factory.rs",
         "crates/agentdash-application-vfs/src/tools/common.rs",
-        "crates/agentdash-application-vfs/src/tools/fs",
+        "crates/agentdash-application-vfs/src/tools/fs/apply_patch.rs",
+        "crates/agentdash-application-vfs/src/tools/fs/glob.rs",
+        "crates/agentdash-application-vfs/src/tools/fs/grep.rs",
+        "crates/agentdash-application-vfs/src/tools/fs/read.rs",
+        "crates/agentdash-application-vfs/src/tools/fs/shell.rs",
         "crates/agentdash-application-vfs/src/tools/mounts.rs"
       ],
-      "replace": "AgentTool implementation 与 ToolProtocolProjector",
-      "with": "VFS Business Surface contribution 与 Tool Broker execution route",
-      "breakpoint": "最终 ToolContribution/ToolExecutionPort vocabulary 由 Platform owner 固定"
+      "symbols_remove": [
+        "AgentTool",
+        "AgentToolError",
+        "AgentToolResult",
+        "DynAgentTool"
+      ],
+      "symbols_add": [
+        "AgentSurfaceContributionPayload::Tool",
+        "BoundAgentSurfaceContribution",
+        "AgentHostCallbacks::invoke_tool",
+        "AgentToolInvocation",
+        "AgentToolResult"
+      ],
+      "replacement": "VFS factory/tools 输出 Complete Agent tool surface contribution，并由 Host callback Tool Broker 执行。",
+      "prerequisites": [
+        "PlatformToolBroker VFS executor",
+        "Complete Agent Host callback registration"
+      ],
+      "activation_gate": "上述 8 个文件不再命中 legacy regex，VFS descriptor/callback execution tests 通过。"
     }
   ],
   "shared_owner_dependencies": [
@@ -123,8 +305,10 @@
       "owner": "Dash / Native",
       "symbols": [
         "agentdash_agent_service_api::CompleteAgentService::fork",
+        "agentdash_agent_service_api::CompleteAgentService::create",
+        "agentdash_agent_service_api::CreateAgentCommand::initial_context",
         "agentdash_agent_service_api::CompleteAgentService::inspect",
-        "agentdash_agent_service_api::CompleteAgentService::apply_initial_context"
+        "agentdash_agent_service_api::AppliedInitialContextEvidence"
       ],
       "required_change": "exact history fork 返回 child coordinate/digest；Fresh 返回可核验 context evidence"
     },
@@ -149,16 +333,37 @@
       "fixture": "packages/app-web/src/features/session/model/fixtures/managedRuntimeProjection.json"
     },
     "api_roots": [
+      "crates/agentdash-api/src/agent_run_terminal_control.rs",
+      "crates/agentdash-api/src/app_state.rs",
+      "crates/agentdash-api/src/bootstrap/agent_runtime_surface.rs",
+      "crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs",
+      "crates/agentdash-api/src/bootstrap/production_tools_e2e.rs",
+      "crates/agentdash-api/src/bootstrap/runtime_gateway.rs",
+      "crates/agentdash-api/src/bootstrap/vfs.rs",
+      "crates/agentdash-api/src/dto/session.rs",
+      "crates/agentdash-api/src/relay/registry.rs",
+      "crates/agentdash-api/src/routes/agent_run_workspace.rs",
       "crates/agentdash-api/src/routes/lifecycle_agents.rs",
-      "crates/agentdash-api/src/dto/session.rs"
+      "crates/agentdash-api/src/routes/lifecycle_contracts.rs",
+      "crates/agentdash-api/src/routes/runtime_traces.rs",
+      "crates/agentdash-api/src/vfs_access/mod.rs"
     ],
     "frontend_roots": [
       "packages/app-web/src/services/agentRunRuntime.ts",
+      "packages/app-web/src/services/agentRunMailbox.ts",
+      "packages/app-web/src/features/session/model/agentRunJournalIdentity.ts",
       "packages/app-web/src/features/session/model/useSessionStream.ts",
       "packages/app-web/src/features/session/model/streamTransport.ts",
-      "packages/app-web/src/features/session/model/sessionStreamReducer.ts",
+      "packages/app-web/src/features/session/model/targetRuntimeFeed.ts",
+      "packages/app-web/src/features/session/model/types.ts",
       "packages/app-web/src/features/session/model/useSessionFeed.ts",
-      "packages/app-web/src/features/session/model/SessionChatViewModel.ts"
+      "packages/app-web/src/features/session/ui/SessionChatViewModel.ts"
+    ],
+    "generated_roots": [
+      "packages/app-web/src/generated/agent-runtime-contracts.ts",
+      "packages/app-web/src/generated/agent-runtime-wire.ts",
+      "packages/app-web/src/generated/session-contracts.ts",
+      "packages/app-web/src/generated/workflow-contracts.ts"
     ],
     "canonical_generator_owner": "W8 Hard Cut",
     "parity": [
@@ -193,7 +398,9 @@
     "rg -n \"pub mod target_product_protocol|^pub struct RecordingAgentRunForkSagaRepository|^pub struct RecordingCompanionFreshSagaRepository\" crates/agentdash-application-agentrun/src",
     "rg -n \"AgentRunForkCommandService|AgentRunJournalService|RuntimeSession|RuntimeToolProvider|DynAgentTool|AgentTool\" crates/agentdash-api/src crates/agentdash-application/src crates/agentdash-application-agentrun/src crates/agentdash-application-lifecycle/src crates/agentdash-application-ports/src crates/agentdash-application-vfs/src",
     "rg -n \"RuntimeJournalFact|RuntimeJournalRecord|journal_records_after|append_presentation\" crates packages",
-    "cargo run -p agentdash-contracts-codegen -- check",
+    "pnpm run contracts:check",
+    "powershell -File .trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w7-product-cutover/verify-caller-inventory.ps1",
+    "cargo tree -p agentdash-application-agentrun -e normal --depth 1",
     "pnpm --filter app-web typecheck"
   ]
 }

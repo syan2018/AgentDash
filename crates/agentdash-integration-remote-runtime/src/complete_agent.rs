@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -7,7 +7,7 @@ use std::{
 };
 
 use agentdash_agent_runtime_wire::{
-    RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAck, RuntimeWireAgentBindingTarget,
+    RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION, RuntimeWireAck, RuntimeWireAgentBindingTarget,
     RuntimeWireAgentChangeNotification, RuntimeWireAgentHostCallbackRequest,
     RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentServiceDescribeRequest,
     RuntimeWireAgentServiceRequest, RuntimeWireAgentServiceResponse, RuntimeWireEnvelope,
@@ -16,11 +16,13 @@ use agentdash_agent_runtime_wire::{
 };
 use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentChange, AgentChangePage, AgentChangesQuery, AgentCommandEnvelope,
-    AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection, AgentHostCallbacks,
+    AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection, AgentHookDecision,
+    AgentHookInvocation, AgentHostCallbackError, AgentHostCallbackErrorCode, AgentHostCallbacks,
     AgentReadQuery, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
-    AgentServiceInstanceId, AgentSnapshot, AgentSourceCoordinate, AppliedAgentSurfaceReceipt,
-    ApplyBoundAgentSurface, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
-    ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
+    AgentServiceInstanceId, AgentSnapshot, AgentSourceCoordinate, AgentToolInvocation,
+    AgentToolResult, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CompleteAgentService,
+    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand,
+    RevokeBoundAgentSurface,
 };
 use async_trait::async_trait;
 
@@ -43,7 +45,9 @@ pub struct RemoteCompleteAgentService {
     pending: tokio::sync::Mutex<HashMap<u64, PendingResponse>>,
     cached_effects:
         tokio::sync::Mutex<HashMap<AgentEffectIdentity, RuntimeWireAgentServiceResponse>>,
+    callback_effects: tokio::sync::Mutex<HashMap<AgentEffectIdentity, ProxyCallbackEffectState>>,
     pushed_changes: tokio::sync::Mutex<HashMap<AgentSourceCoordinate, Vec<AgentChange>>>,
+    pushed_gaps: tokio::sync::Mutex<HashSet<AgentSourceCoordinate>>,
     last_inbound_frame_id: tokio::sync::Mutex<Option<RuntimeWireFrameId>>,
     connection_lost: AtomicBool,
 }
@@ -63,7 +67,9 @@ impl RemoteCompleteAgentService {
             next_frame_id: AtomicU64::new(1),
             pending: tokio::sync::Mutex::new(HashMap::new()),
             cached_effects: tokio::sync::Mutex::new(HashMap::new()),
+            callback_effects: tokio::sync::Mutex::new(HashMap::new()),
             pushed_changes: tokio::sync::Mutex::new(HashMap::new()),
+            pushed_gaps: tokio::sync::Mutex::new(HashSet::new()),
             last_inbound_frame_id: tokio::sync::Mutex::new(None),
             connection_lost: AtomicBool::new(false),
         });
@@ -110,8 +116,11 @@ impl RemoteCompleteAgentService {
         });
     }
 
-    async fn handle_inbound(&self, envelope: RuntimeWireEnvelope) -> Result<(), AgentServiceError> {
-        if envelope.protocol_revision != RUNTIME_WIRE_PROTOCOL_REVISION {
+    async fn handle_inbound(
+        self: &Arc<Self>,
+        envelope: RuntimeWireEnvelope,
+    ) -> Result<(), AgentServiceError> {
+        if envelope.protocol_revision != RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION {
             return Err(protocol(
                 "remote Complete Agent used an unsupported Runtime Wire revision",
             ));
@@ -167,15 +176,22 @@ impl RemoteCompleteAgentService {
                         "remote Complete Agent stream received a foreign reverse request",
                     ));
                 };
-                let response = self.invoke_callback(*callback).await;
-                self.send_frame(
-                    true,
-                    RuntimeWireFrame::Response {
-                        request_frame_id: inbound_frame_id,
-                        response: RuntimeWireResponse::AgentHostCallback(response),
-                    },
-                )
-                .await?;
+                let service = Arc::clone(self);
+                tokio::spawn(async move {
+                    let response = service.invoke_callback_idempotent(*callback).await;
+                    if let Err(error) = service
+                        .send_frame(
+                            true,
+                            RuntimeWireFrame::Response {
+                                request_frame_id: inbound_frame_id,
+                                response: RuntimeWireResponse::AgentHostCallback(response),
+                            },
+                        )
+                        .await
+                    {
+                        service.fail_connection(error).await;
+                    }
+                });
             }
             RuntimeWireFrame::Ack(_) => return Ok(()),
             RuntimeWireFrame::Response { .. } => {
@@ -188,6 +204,76 @@ impl RemoteCompleteAgentService {
             self.send_ack(inbound_frame_id).await?;
         }
         Ok(())
+    }
+
+    async fn invoke_callback_idempotent(
+        &self,
+        callback: RuntimeWireAgentHostCallbackRequest,
+    ) -> RuntimeWireAgentHostCallbackResponse {
+        let effect_id = callback_effect_id(&callback);
+        let follower = {
+            let mut effects = self.callback_effects.lock().await;
+            match effects.get_mut(&effect_id) {
+                Some(ProxyCallbackEffectState::Settled { request, response }) => {
+                    return if request == &callback {
+                        response.clone()
+                    } else {
+                        callback_error_response(&callback, callback_duplicate_conflict())
+                    };
+                }
+                Some(ProxyCallbackEffectState::InFlight { request, waiters }) => {
+                    if request != &callback {
+                        return callback_error_response(&callback, callback_duplicate_conflict());
+                    }
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    waiters.push(tx);
+                    Some(rx)
+                }
+                None => {
+                    effects.insert(
+                        effect_id.clone(),
+                        ProxyCallbackEffectState::InFlight {
+                            request: callback.clone(),
+                            waiters: Vec::new(),
+                        },
+                    );
+                    None
+                }
+            }
+        };
+        if let Some(follower) = follower {
+            return follower.await.unwrap_or_else(|_| {
+                callback_error_response(
+                    &callback,
+                    host_callback_error(
+                        AgentHostCallbackErrorCode::Unavailable,
+                        "shared Host callback result correlation was lost",
+                        true,
+                    ),
+                )
+            });
+        }
+
+        let response = self.invoke_callback(callback.clone()).await;
+        let waiters = {
+            let mut effects = self.callback_effects.lock().await;
+            let waiters = match effects.remove(&effect_id) {
+                Some(ProxyCallbackEffectState::InFlight { waiters, .. }) => waiters,
+                _ => Vec::new(),
+            };
+            effects.insert(
+                effect_id,
+                ProxyCallbackEffectState::Settled {
+                    request: callback,
+                    response: response.clone(),
+                },
+            );
+            waiters
+        };
+        for waiter in waiters {
+            let _ = waiter.send(response.clone());
+        }
+        response
     }
 
     async fn invoke_callback(
@@ -209,18 +295,28 @@ impl RemoteCompleteAgentService {
                 }
             };
         }
+        let deadline = match callback_deadline(&callback) {
+            Ok(deadline) => deadline,
+            Err(error) => return callback_error_response(&callback, error),
+        };
         match callback {
             RuntimeWireAgentHostCallbackRequest::Tool(mut invocation) => {
                 invocation.meta.binding_generation = self.local_binding_generation;
-                RuntimeWireAgentHostCallbackResponse::Tool(
-                    self.callbacks.invoke_tool(invocation).await.map(Box::new),
-                )
+                let result =
+                    tokio::time::timeout(deadline, self.callbacks.invoke_tool(invocation)).await;
+                RuntimeWireAgentHostCallbackResponse::Tool(match result {
+                    Ok(result) => result.map(Box::new),
+                    Err(_) => Err(callback_deadline_error()),
+                })
             }
             RuntimeWireAgentHostCallbackRequest::Hook(mut invocation) => {
                 invocation.meta.binding_generation = self.local_binding_generation;
-                RuntimeWireAgentHostCallbackResponse::Hook(
-                    self.callbacks.invoke_hook(invocation).await.map(Box::new),
-                )
+                let result =
+                    tokio::time::timeout(deadline, self.callbacks.invoke_hook(invocation)).await;
+                RuntimeWireAgentHostCallbackResponse::Hook(match result {
+                    Ok(result) => result.map(Box::new),
+                    Err(_) => Err(callback_deadline_error()),
+                })
             }
         }
     }
@@ -235,12 +331,21 @@ impl RemoteCompleteAgentService {
             ));
         }
         let mut changes = self.pushed_changes.lock().await;
-        let source_changes = changes.entry(notification.source).or_default();
+        let source_changes = changes.entry(notification.source.clone()).or_default();
         if source_changes
             .iter()
             .any(|change| change.cursor == notification.change.cursor)
         {
             return Ok(());
+        }
+        if matches!(
+            &notification.change.payload,
+            agentdash_agent_service_api::AgentChangePayload::SnapshotInvalidated { .. }
+        ) {
+            self.pushed_gaps
+                .lock()
+                .await
+                .insert(notification.source.clone());
         }
         source_changes.push(notification.change);
         Ok(())
@@ -263,7 +368,7 @@ impl RemoteCompleteAgentService {
     ) -> Result<(), AgentServiceError> {
         self.placement
             .send(RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
                 frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
                 critical,
                 frame,
@@ -291,7 +396,7 @@ impl RemoteCompleteAgentService {
         if let Err(error) = self
             .placement
             .send(RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
                 frame_id,
                 critical: true,
                 frame: RuntimeWireFrame::Request(Box::new(RuntimeWireRequest::AgentService(
@@ -471,7 +576,8 @@ impl CompleteAgentService for RemoteCompleteAgentService {
     }
 
     async fn read(&self, query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError> {
-        match self
+        let source = query.source.clone();
+        let snapshot = match self
             .request(RuntimeWireAgentServiceRequest::Read {
                 target: self.target.clone(),
                 query,
@@ -480,13 +586,31 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         {
             RuntimeWireAgentServiceResponse::Read(result) => result.map(|value| *value),
             _ => Err(protocol("read received a mismatched response")),
-        }
+        }?;
+        self.pushed_gaps.lock().await.remove(&source);
+        self.pushed_changes.lock().await.remove(&source);
+        Ok(snapshot)
     }
 
     async fn changes(
         &self,
         query: AgentChangesQuery,
     ) -> Result<AgentChangePage, AgentServiceError> {
+        if self.pushed_gaps.lock().await.contains(&query.source) {
+            let next = self
+                .pushed_changes
+                .lock()
+                .await
+                .get(&query.source)
+                .and_then(|changes| changes.last())
+                .map(|change| change.cursor.clone());
+            return Ok(AgentChangePage {
+                source: query.source,
+                changes: Vec::new(),
+                next,
+                gap: true,
+            });
+        }
         let buffered = {
             let changes = self.pushed_changes.lock().await;
             changes.get(&query.source).cloned()
@@ -606,13 +730,224 @@ impl CompleteAgentService for RemoteCompleteAgentService {
     }
 }
 
+type PendingHostCallback = tokio::sync::oneshot::Sender<RuntimeWireAgentHostCallbackResponse>;
+
+enum HostCallbackEffectState {
+    InFlight {
+        request: RuntimeWireAgentHostCallbackRequest,
+        waiters: Vec<
+            tokio::sync::oneshot::Sender<
+                Result<RuntimeWireAgentHostCallbackResponse, AgentHostCallbackError>,
+            >,
+        >,
+    },
+    Settled {
+        request: RuntimeWireAgentHostCallbackRequest,
+        result: Result<RuntimeWireAgentHostCallbackResponse, AgentHostCallbackError>,
+    },
+}
+
+enum ProxyCallbackEffectState {
+    InFlight {
+        request: RuntimeWireAgentHostCallbackRequest,
+        waiters: Vec<tokio::sync::oneshot::Sender<RuntimeWireAgentHostCallbackResponse>>,
+    },
+    Settled {
+        request: RuntimeWireAgentHostCallbackRequest,
+        response: RuntimeWireAgentHostCallbackResponse,
+    },
+}
+
+/// Source-side reverse callback client backed by one Complete Agent Runtime Wire stream.
+#[derive(Clone)]
+pub struct RuntimeWireAgentHostCallbackClient {
+    target: RuntimeWireAgentBindingTarget,
+    next_frame_id: Arc<AtomicU64>,
+    pending: Arc<tokio::sync::Mutex<HashMap<u64, PendingHostCallback>>>,
+    effects: Arc<tokio::sync::Mutex<HashMap<AgentEffectIdentity, HostCallbackEffectState>>>,
+    outbound: Arc<tokio::sync::RwLock<tokio::sync::mpsc::UnboundedSender<RuntimeWireEnvelope>>>,
+}
+
+impl RuntimeWireAgentHostCallbackClient {
+    async fn invoke(
+        &self,
+        request: RuntimeWireAgentHostCallbackRequest,
+    ) -> Result<RuntimeWireAgentHostCallbackResponse, AgentHostCallbackError> {
+        if request.binding_generation() != self.target.binding_generation {
+            return Err(host_callback_error(
+                AgentHostCallbackErrorCode::StaleBindingGeneration,
+                "source callback carries a stale endpoint binding generation",
+                false,
+            ));
+        }
+
+        let effect_id = callback_effect_id(&request);
+        let follower = {
+            let mut effects = self.effects.lock().await;
+            match effects.get_mut(&effect_id) {
+                Some(HostCallbackEffectState::Settled {
+                    request: existing,
+                    result,
+                }) => {
+                    return if existing == &request {
+                        result.clone()
+                    } else {
+                        Err(callback_duplicate_conflict())
+                    };
+                }
+                Some(HostCallbackEffectState::InFlight {
+                    request: existing,
+                    waiters,
+                }) => {
+                    if existing != &request {
+                        return Err(callback_duplicate_conflict());
+                    }
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    waiters.push(tx);
+                    Some(rx)
+                }
+                None => {
+                    effects.insert(
+                        effect_id.clone(),
+                        HostCallbackEffectState::InFlight {
+                            request: request.clone(),
+                            waiters: Vec::new(),
+                        },
+                    );
+                    None
+                }
+            }
+        };
+        if let Some(follower) = follower {
+            return follower.await.map_err(|_| {
+                host_callback_error(
+                    AgentHostCallbackErrorCode::Unavailable,
+                    "shared callback result correlation was lost",
+                    true,
+                )
+            })?;
+        }
+
+        let result = self.request(request.clone()).await;
+        let waiters = {
+            let mut effects = self.effects.lock().await;
+            let waiters = match effects.remove(&effect_id) {
+                Some(HostCallbackEffectState::InFlight { waiters, .. }) => waiters,
+                _ => Vec::new(),
+            };
+            effects.insert(
+                effect_id,
+                HostCallbackEffectState::Settled {
+                    request,
+                    result: result.clone(),
+                },
+            );
+            waiters
+        };
+        for waiter in waiters {
+            let _ = waiter.send(result.clone());
+        }
+        result
+    }
+
+    async fn request(
+        &self,
+        request: RuntimeWireAgentHostCallbackRequest,
+    ) -> Result<RuntimeWireAgentHostCallbackResponse, AgentHostCallbackError> {
+        let deadline = callback_deadline(&request)?;
+        let frame_id = RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pending.lock().await.insert(frame_id.0, tx);
+        if self
+            .outbound
+            .read()
+            .await
+            .send(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+                frame_id,
+                critical: true,
+                frame: RuntimeWireFrame::Request(Box::new(RuntimeWireRequest::AgentHostCallback(
+                    Box::new(request),
+                ))),
+            })
+            .is_err()
+        {
+            self.pending.lock().await.remove(&frame_id.0);
+            return Err(host_callback_error(
+                AgentHostCallbackErrorCode::Unavailable,
+                "Complete Agent callback stream is closed",
+                true,
+            ));
+        }
+        match tokio::time::timeout(deadline, rx).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => Err(host_callback_error(
+                AgentHostCallbackErrorCode::Unavailable,
+                "Complete Agent callback response correlation was lost",
+                true,
+            )),
+            Err(_) => {
+                self.pending.lock().await.remove(&frame_id.0);
+                Err(callback_deadline_error())
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl AgentHostCallbacks for RuntimeWireAgentHostCallbackClient {
+    async fn invoke_tool(
+        &self,
+        call: AgentToolInvocation,
+    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+        match self
+            .invoke(RuntimeWireAgentHostCallbackRequest::Tool(call))
+            .await?
+        {
+            RuntimeWireAgentHostCallbackResponse::Tool(result) => result.map(|value| *value),
+            RuntimeWireAgentHostCallbackResponse::Hook(_) => Err(host_callback_error(
+                AgentHostCallbackErrorCode::Internal,
+                "tool callback received a hook response",
+                false,
+            )),
+        }
+    }
+
+    async fn invoke_hook(
+        &self,
+        call: AgentHookInvocation,
+    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+        match self
+            .invoke(RuntimeWireAgentHostCallbackRequest::Hook(call))
+            .await?
+        {
+            RuntimeWireAgentHostCallbackResponse::Hook(result) => result.map(|value| *value),
+            RuntimeWireAgentHostCallbackResponse::Tool(_) => Err(host_callback_error(
+                AgentHostCallbackErrorCode::Internal,
+                "hook callback received a tool response",
+                false,
+            )),
+        }
+    }
+}
+
+#[derive(Default)]
+struct PublishedChangeState {
+    last_sequence: Option<u64>,
+    cursors: HashSet<agentdash_agent_service_api::AgentSourceCursor>,
+}
+
 /// Local Runtime Wire terminator for one concrete Complete Agent implementation.
 pub struct RuntimeWireAgentServiceEndpoint {
     service_instance_id: AgentServiceInstanceId,
     binding_generation: AgentBindingGeneration,
     service: Arc<dyn CompleteAgentService>,
-    next_frame_id: AtomicU64,
-    outbound_tx: tokio::sync::mpsc::UnboundedSender<RuntimeWireEnvelope>,
+    next_frame_id: Arc<AtomicU64>,
+    pending_callbacks: Arc<tokio::sync::Mutex<HashMap<u64, PendingHostCallback>>>,
+    callback_effects:
+        Arc<tokio::sync::Mutex<HashMap<AgentEffectIdentity, HostCallbackEffectState>>>,
+    published_changes: tokio::sync::Mutex<HashMap<AgentSourceCoordinate, PublishedChangeState>>,
+    outbound_tx: Arc<tokio::sync::RwLock<tokio::sync::mpsc::UnboundedSender<RuntimeWireEnvelope>>>,
     outbound_rx: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<RuntimeWireEnvelope>>,
 }
 
@@ -627,10 +962,109 @@ impl RuntimeWireAgentServiceEndpoint {
             service_instance_id,
             binding_generation,
             service,
-            next_frame_id: AtomicU64::new(1),
-            outbound_tx,
+            next_frame_id: Arc::new(AtomicU64::new(1)),
+            pending_callbacks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            callback_effects: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            published_changes: tokio::sync::Mutex::new(HashMap::new()),
+            outbound_tx: Arc::new(tokio::sync::RwLock::new(outbound_tx)),
             outbound_rx: tokio::sync::Mutex::new(outbound_rx),
         }
+    }
+
+    pub fn host_callbacks(&self) -> Arc<dyn AgentHostCallbacks> {
+        Arc::new(RuntimeWireAgentHostCallbackClient {
+            target: self.target(),
+            next_frame_id: self.next_frame_id.clone(),
+            pending: self.pending_callbacks.clone(),
+            effects: self.callback_effects.clone(),
+            outbound: self.outbound_tx.clone(),
+        })
+    }
+
+    pub fn target(&self) -> RuntimeWireAgentBindingTarget {
+        RuntimeWireAgentBindingTarget {
+            service_instance_id: self.service_instance_id.clone(),
+            binding_generation: self.binding_generation,
+        }
+    }
+
+    /// Closes the current outbound stream so producers receive an explicit send failure.
+    pub async fn disconnect_outbound(&self) {
+        self.outbound_rx.lock().await.close();
+    }
+
+    /// Installs a fresh outbound stream after transport reconnection.
+    pub async fn reconnect_outbound(&self) {
+        let (outbound_tx, outbound_rx) = tokio::sync::mpsc::unbounded_channel();
+        *self.outbound_tx.write().await = outbound_tx;
+        *self.outbound_rx.lock().await = outbound_rx;
+    }
+
+    /// Publishes one source-owned ordered change.
+    ///
+    /// The sequence is adapter-owned and local to the source. A discontinuity emits one typed
+    /// snapshot invalidation instead of presenting the following change as a contiguous tail.
+    pub async fn publish_change(
+        &self,
+        source_sequence: u64,
+        source: AgentSourceCoordinate,
+        change: AgentChange,
+    ) -> Result<(), AgentServiceError> {
+        let mut states = self.published_changes.lock().await;
+        let state = states.entry(source.clone()).or_default();
+        if state.cursors.contains(&change.cursor) {
+            return if state.last_sequence == Some(source_sequence) {
+                Ok(())
+            } else {
+                Err(protocol(
+                    "Complete Agent source cursor was replayed at a different sequence",
+                ))
+            };
+        }
+        if let Some(last) = state.last_sequence
+            && source_sequence <= last
+        {
+            return Err(protocol(
+                "Complete Agent source change sequence moved backwards",
+            ));
+        }
+        let expected = state.last_sequence.map_or(1, |last| last + 1);
+        let change = if source_sequence == expected {
+            change
+        } else {
+            AgentChange {
+                cursor: change.cursor,
+                source_revision: change.source_revision,
+                occurred_at_ms: change.occurred_at_ms,
+                payload: agentdash_agent_service_api::AgentChangePayload::SnapshotInvalidated {
+                    reason: format!(
+                        "Complete Agent source change gap: expected {expected}, received {source_sequence}"
+                    ),
+                },
+            }
+        };
+        let cursor = change.cursor.clone();
+        self.outbound_tx
+            .read()
+            .await
+            .send(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+                frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
+                critical: true,
+                frame: RuntimeWireFrame::Notification(Box::new(
+                    RuntimeWireNotification::AgentChange(Box::new(
+                        RuntimeWireAgentChangeNotification {
+                            target: self.target(),
+                            source,
+                            change,
+                        },
+                    )),
+                )),
+            })
+            .map_err(|_| unavailable("Complete Agent change stream is closed", true))?;
+        state.last_sequence = Some(source_sequence);
+        state.cursors.insert(cursor);
+        Ok(())
     }
 
     fn response(
@@ -639,7 +1073,7 @@ impl RuntimeWireAgentServiceEndpoint {
         response: RuntimeWireAgentServiceResponse,
     ) -> RuntimeWireEnvelope {
         RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+            protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
             frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
             critical: true,
             frame: RuntimeWireFrame::Response {
@@ -672,14 +1106,28 @@ impl RuntimeWireAgentServiceEndpoint {
 #[async_trait]
 impl RuntimeWirePlacement for RuntimeWireAgentServiceEndpoint {
     async fn send(&self, envelope: RuntimeWireEnvelope) -> Result<(), RemoteRuntimeTransportError> {
-        if envelope.protocol_revision != RUNTIME_WIRE_PROTOCOL_REVISION {
+        if envelope.protocol_revision != RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION {
             return Err(RemoteRuntimeTransportError::Protocol {
-                reason: "unsupported Runtime Wire revision".to_owned(),
+                reason: "unsupported Complete Agent Runtime Wire target revision".to_owned(),
                 critical: true,
             });
         }
         match envelope.frame {
             RuntimeWireFrame::Ack(_) => return Ok(()),
+            RuntimeWireFrame::Response {
+                request_frame_id,
+                response: RuntimeWireResponse::AgentHostCallback(response),
+            } => {
+                if let Some(pending) = self
+                    .pending_callbacks
+                    .lock()
+                    .await
+                    .remove(&request_frame_id.0)
+                {
+                    let _ = pending.send(response);
+                }
+                Ok(())
+            }
             RuntimeWireFrame::Request(request) => {
                 let RuntimeWireRequest::AgentService(request) = *request else {
                     return Err(RemoteRuntimeTransportError::Protocol {
@@ -690,6 +1138,8 @@ impl RuntimeWirePlacement for RuntimeWireAgentServiceEndpoint {
                 };
                 let response = self.dispatch(*request).await;
                 self.outbound_tx
+                    .read()
+                    .await
                     .send(self.response(envelope.frame_id, response))
                     .map_err(|_| RemoteRuntimeTransportError::Unavailable {
                         reason: "Complete Agent endpoint receiver is closed".to_owned(),
@@ -697,8 +1147,9 @@ impl RuntimeWirePlacement for RuntimeWireAgentServiceEndpoint {
                     })
             }
             _ => Err(RemoteRuntimeTransportError::Protocol {
-                reason: "Complete Agent endpoint accepts requests and acknowledgements only"
-                    .to_owned(),
+                reason:
+                    "Complete Agent endpoint accepts service requests, callback responses, and acknowledgements only"
+                        .to_owned(),
                 critical: true,
             }),
         }
@@ -842,6 +1293,68 @@ fn response_succeeded(response: &RuntimeWireAgentServiceResponse) -> bool {
         RuntimeWireAgentServiceResponse::Inspect(result) => result.is_ok(),
         RuntimeWireAgentServiceResponse::ApplySurface(result) => result.is_ok(),
     }
+}
+
+fn callback_effect_id(request: &RuntimeWireAgentHostCallbackRequest) -> AgentEffectIdentity {
+    match request {
+        RuntimeWireAgentHostCallbackRequest::Tool(invocation) => invocation.meta.effect_id.clone(),
+        RuntimeWireAgentHostCallbackRequest::Hook(invocation) => invocation.meta.effect_id.clone(),
+    }
+}
+
+fn callback_deadline(
+    request: &RuntimeWireAgentHostCallbackRequest,
+) -> Result<std::time::Duration, AgentHostCallbackError> {
+    let deadline_at_ms = match request {
+        RuntimeWireAgentHostCallbackRequest::Tool(invocation) => invocation.meta.deadline_at_ms,
+        RuntimeWireAgentHostCallbackRequest::Hook(invocation) => invocation.meta.deadline_at_ms,
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64);
+    let remaining = deadline_at_ms.saturating_sub(now_ms);
+    if remaining == 0 {
+        return Err(callback_deadline_error());
+    }
+    Ok(std::time::Duration::from_millis(remaining))
+}
+
+fn callback_deadline_error() -> AgentHostCallbackError {
+    host_callback_error(
+        AgentHostCallbackErrorCode::DeadlineExceeded,
+        "Complete Agent Host callback deadline exceeded",
+        false,
+    )
+}
+
+fn callback_duplicate_conflict() -> AgentHostCallbackError {
+    host_callback_error(
+        AgentHostCallbackErrorCode::DuplicateConflict,
+        "callback effect identity was reused with a different request",
+        false,
+    )
+}
+
+fn callback_error_response(
+    request: &RuntimeWireAgentHostCallbackRequest,
+    error: AgentHostCallbackError,
+) -> RuntimeWireAgentHostCallbackResponse {
+    match request {
+        RuntimeWireAgentHostCallbackRequest::Tool(_) => {
+            RuntimeWireAgentHostCallbackResponse::Tool(Err(error))
+        }
+        RuntimeWireAgentHostCallbackRequest::Hook(_) => {
+            RuntimeWireAgentHostCallbackResponse::Hook(Err(error))
+        }
+    }
+}
+
+fn host_callback_error(
+    code: AgentHostCallbackErrorCode,
+    message: impl Into<String>,
+    retryable: bool,
+) -> AgentHostCallbackError {
+    AgentHostCallbackError::new(code, message, retryable)
 }
 
 fn stale_generation(message: impl Into<String>) -> AgentServiceError {

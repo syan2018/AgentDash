@@ -11,7 +11,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Schema root for the canonical Complete Agent transport vocabulary.
+/// Schema root for the Complete Agent transport vocabulary.
+///
+/// Complete Agent frames are part of the canonical Runtime Wire revision and remain independently
+/// schema-checkable without inventing parallel DTOs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireCompleteAgentSchema {
@@ -188,8 +191,12 @@ pub enum RuntimeWireAgentHostCallbackResponse {
 #[cfg(test)]
 mod tests {
     use agentdash_agent_service_api::{
-        AgentCallbackRouteId, AgentCommandId, AgentCommandMeta, AgentEffectIdentity,
-        AgentHostCallbackMeta, AgentIdempotencyKey, AgentItemId, AgentToolName, AgentTurnId,
+        AgentAppliedEffectOutcome, AgentCallbackRouteId, AgentCommandId, AgentCommandMeta,
+        AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkPoint,
+        AgentHostCallbackMeta, AgentIdempotencyKey, AgentItemId, AgentPayloadDigest,
+        AgentSnapshotRevision, AgentSurfaceDigest, AgentSurfaceRevision, AgentTerminalOutcome,
+        AgentToolName, AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface,
+        AppliedAgentSurfaceReceipt, AppliedForkAgentReceipt,
     };
     use serde_json::json;
 
@@ -270,6 +277,84 @@ mod tests {
                 received: AgentBindingGeneration(6),
             })
         );
+    }
+
+    #[test]
+    fn every_closed_applied_outcome_round_trips_on_revision_four() {
+        let command_id = id("command-inspect", AgentCommandId::new);
+        let effect_id = id("effect-inspect", AgentEffectIdentity::new);
+        let source = id("source-parent", AgentSourceCoordinate::new);
+        let command_receipt = AppliedAgentCommandReceipt {
+            command_id: command_id.clone(),
+            effect_id: effect_id.clone(),
+            source: source.clone(),
+            terminal: Some(AgentTerminalOutcome::Succeeded),
+            snapshot_revision: Some(AgentSnapshotRevision(7)),
+            initial_context: None,
+        };
+        let outcomes = [
+            AgentAppliedEffectOutcome::Create {
+                receipt: command_receipt.clone(),
+            },
+            AgentAppliedEffectOutcome::Resume {
+                receipt: command_receipt.clone(),
+            },
+            AgentAppliedEffectOutcome::Fork {
+                receipt: AppliedForkAgentReceipt {
+                    command_id: command_id.clone(),
+                    effect_id: effect_id.clone(),
+                    parent_source: source.clone(),
+                    child_source: id("source-child", AgentSourceCoordinate::new),
+                    cutoff: AgentForkPoint::Head,
+                    child_history_digest: id("sha256:history", AgentPayloadDigest::new),
+                    terminal: Some(AgentTerminalOutcome::Succeeded),
+                },
+            },
+            AgentAppliedEffectOutcome::Command {
+                receipt: command_receipt.clone(),
+            },
+            AgentAppliedEffectOutcome::SurfaceApply {
+                receipt: AppliedAgentSurfaceReceipt {
+                    command_id: command_id.clone(),
+                    effect_id: effect_id.clone(),
+                    source: source.clone(),
+                    applied: AppliedAgentSurface {
+                        revision: AgentSurfaceRevision(4),
+                        digest: id("sha256:surface", AgentSurfaceDigest::new),
+                        contributions: Vec::new(),
+                    },
+                },
+            },
+            AgentAppliedEffectOutcome::SurfaceRevoke {
+                receipt: command_receipt,
+            },
+        ];
+
+        for outcome in outcomes {
+            let inspection = AgentEffectInspection {
+                effect_id: effect_id.clone(),
+                command_id: Some(command_id.clone()),
+                state: AgentEffectInspectionState::Applied { outcome },
+            };
+            let envelope = RuntimeWireEnvelope {
+                protocol_revision: crate::RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(40),
+                critical: true,
+                frame: RuntimeWireFrame::Response {
+                    request_frame_id: RuntimeWireFrameId(39),
+                    response: crate::RuntimeWireResponse::AgentService(
+                        RuntimeWireAgentServiceResponse::Inspect(Ok(Box::new(inspection.clone()))),
+                    ),
+                },
+            };
+            let encoded = serde_json::to_vec(&envelope).expect("serialize inspection");
+            let decoded: RuntimeWireEnvelope =
+                serde_json::from_slice(&encoded).expect("deserialize inspection");
+
+            assert_eq!(decoded, envelope);
+            assert!(inspection.validate());
+            assert_eq!(decoded.protocol_revision, 4);
+        }
     }
 
     #[test]

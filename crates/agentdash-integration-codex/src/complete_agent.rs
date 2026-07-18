@@ -5,24 +5,25 @@ use std::{
 };
 
 use agentdash_agent_service_api::{
-    AgentCapabilityProfile, AgentChange, AgentChangePage, AgentChangePayload, AgentChangesQuery,
-    AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
-    AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
-    AgentEffectInspectionState, AgentEntityStatus, AgentForkCapability, AgentForkCutoffKind,
-    AgentForkPoint, AgentInput, AgentInputContent, AgentInteractionId, AgentInteractionKind,
-    AgentInteractionSnapshot, AgentItemContent, AgentItemId, AgentItemSnapshot,
-    AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest,
-    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
-    AgentServiceError, AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority,
-    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
-    AgentSourceCursor, AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload,
-    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
-    AgentTurnId, AgentTurnSnapshot, AppliedAgentSurface, AppliedAgentSurfaceContribution,
-    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedInitialContextEvidence,
-    ApplyBoundAgentSurface, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
-    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
-    InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
-    ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentAppliedEffectOutcome, AgentCapabilityProfile, AgentChange, AgentChangePage,
+    AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandCapability,
+    AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
+    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentEntityStatus,
+    AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentInput, AgentInputContent,
+    AgentInteractionId, AgentInteractionKind, AgentInteractionSnapshot, AgentItemContent,
+    AgentItemId, AgentItemSnapshot, AgentLifecycleCapability, AgentLifecycleStatus,
+    AgentPayloadDigest, AgentProfileDigest, AgentReadQuery, AgentReceiptState,
+    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
+    AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource,
+    AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor, AgentSurfaceCapabilityFacet,
+    AgentSurfaceContributionPayload, AgentSurfaceProfile, AgentSurfaceRoute,
+    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentTurnId, AgentTurnSnapshot,
+    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
+    AppliedInitialContextEvidence, ApplyBoundAgentSurface, CompleteAgentService,
+    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
+    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
+    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -30,6 +31,12 @@ use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 pub const CODEX_INITIAL_CONTEXT_RENDERER_VERSION: &str = "agentdash.codex.initial-context.v1";
+/// Canonical digest contract for the source-authoritative `thread/read(includeTurns)` fork view.
+///
+/// The digest proves the AgentDash-observable Codex lineage at the exact native fork cutoff. It
+/// does not claim ownership of, or a vendor signature over, Codex's private ThreadStore.
+pub const CODEX_CHILD_HISTORY_DIGEST_VERSION: &str =
+    "agentdash.codex.child-history.thread-turns.v1";
 pub const CODEX_APP_SERVER_PROTOCOL_REVISION: u32 = 144;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,10 +174,24 @@ struct PendingInteraction {
 
 #[derive(Debug, Clone)]
 enum RecordedReceipt {
-    Command(AgentCommandReceipt),
-    Fork(ForkAgentReceipt),
-    Surface(AppliedAgentSurfaceReceipt),
+    Command {
+        family: CommandEffectFamily,
+        receipt: AgentCommandReceipt,
+    },
+    Fork {
+        receipt: ForkAgentReceipt,
+        applied: AppliedForkAgentReceipt,
+    },
+    SurfaceApply(AppliedAgentSurfaceReceipt),
     Unknown(AgentEffectInspection),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandEffectFamily {
+    Create,
+    Resume,
+    Command,
+    SurfaceRevoke,
 }
 
 #[derive(Default)]
@@ -291,12 +312,15 @@ impl CodexCompleteAgentService {
     async fn replay_command(
         &self,
         effect_id: &AgentEffectIdentity,
+        expected_family: CommandEffectFamily,
     ) -> Result<Option<AgentCommandReceipt>, AgentServiceError> {
         let state = self.state.read().await;
         match state.effects.get(effect_id) {
-            Some(RecordedReceipt::Command(receipt)) => Ok(Some(receipt.clone())),
+            Some(RecordedReceipt::Command { family, receipt }) if *family == expected_family => {
+                Ok(Some(receipt.clone()))
+            }
             Some(RecordedReceipt::Unknown(_)) => Err(unknown_outcome_error()),
-            Some(RecordedReceipt::Fork(_) | RecordedReceipt::Surface(_)) => Err(service_error(
+            Some(_) => Err(service_error(
                 AgentServiceErrorCode::Conflict,
                 "effect identity was already used for another Codex command family",
                 false,
@@ -455,7 +479,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
         &self,
         command: CreateAgentCommand,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        if let Some(receipt) = self.replay_command(&command.meta.effect_id).await? {
+        if let Some(receipt) = self
+            .replay_command(&command.meta.effect_id, CommandEffectFamily::Create)
+            .await?
+        {
             return Ok(receipt);
         }
         let (params, initial_context) =
@@ -518,7 +545,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
         );
         state.effects.insert(
             command.meta.effect_id.clone(),
-            RecordedReceipt::Command(receipt.clone()),
+            RecordedReceipt::Command {
+                family: CommandEffectFamily::Create,
+                receipt: receipt.clone(),
+            },
         );
         Ok(receipt)
     }
@@ -527,7 +557,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
         &self,
         command: ResumeAgentCommand,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        if let Some(receipt) = self.replay_command(&command.meta.effect_id).await? {
+        if let Some(receipt) = self
+            .replay_command(&command.meta.effect_id, CommandEffectFamily::Resume)
+            .await?
+        {
             return Ok(receipt);
         }
         let mut params = self.base_thread_params();
@@ -581,7 +614,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
         );
         self.state.write().await.effects.insert(
             command.meta.effect_id,
-            RecordedReceipt::Command(receipt.clone()),
+            RecordedReceipt::Command {
+                family: CommandEffectFamily::Resume,
+                receipt: receipt.clone(),
+            },
         );
         Ok(receipt)
     }
@@ -590,7 +626,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
         {
             let state = self.state.read().await;
             match state.effects.get(&command.meta.effect_id) {
-                Some(RecordedReceipt::Fork(receipt)) => return Ok(receipt.clone()),
+                Some(RecordedReceipt::Fork { receipt, .. }) => return Ok(receipt.clone()),
                 Some(RecordedReceipt::Unknown(_)) => return Err(unknown_outcome_error()),
                 Some(_) => {
                     return Err(service_error(
@@ -698,6 +734,27 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 )
                 .await);
         }
+        if let Err(error) = verify_codex_fork_cutoff(&verified, &command.cutoff) {
+            return Err(self
+                .settle_post_dispatch_error(
+                    &command.meta.effect_id,
+                    &command.meta.command_id,
+                    error,
+                )
+                .await);
+        }
+        let child_history_digest = match codex_thread_history_digest(&verified) {
+            Ok(digest) => digest,
+            Err(error) => {
+                return Err(self
+                    .settle_post_dispatch_error(
+                        &command.meta.effect_id,
+                        &command.meta.command_id,
+                        error,
+                    )
+                    .await);
+            }
+        };
         let parent_state = self
             .state
             .read()
@@ -724,16 +781,27 @@ impl CompleteAgentService for CodexCompleteAgentService {
             effect_id: command.meta.effect_id.clone(),
             parent_source: command.source,
             child_source: Some(child.clone()),
-            cutoff: command.cutoff,
-            // thread/read is presentation/event projected, not an exact model-history digest.
-            child_history_digest: None,
+            cutoff: command.cutoff.clone(),
+            child_history_digest: Some(child_history_digest.clone()),
             state: AgentReceiptState::Terminal {
                 outcome: AgentTerminalOutcome::Succeeded,
             },
         };
+        let applied = AppliedForkAgentReceipt {
+            command_id: receipt.command_id.clone(),
+            effect_id: receipt.effect_id.clone(),
+            parent_source: receipt.parent_source.clone(),
+            child_source: child,
+            cutoff: command.cutoff,
+            child_history_digest,
+            terminal: Some(AgentTerminalOutcome::Succeeded),
+        };
         self.state.write().await.effects.insert(
             command.meta.effect_id,
-            RecordedReceipt::Fork(receipt.clone()),
+            RecordedReceipt::Fork {
+                receipt: receipt.clone(),
+                applied,
+            },
         );
         Ok(receipt)
     }
@@ -742,7 +810,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
         &self,
         command: AgentCommandEnvelope,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        if let Some(receipt) = self.replay_command(&command.meta.effect_id).await? {
+        if let Some(receipt) = self
+            .replay_command(&command.meta.effect_id, CommandEffectFamily::Command)
+            .await?
+        {
             return Ok(receipt);
         }
         let method;
@@ -838,7 +909,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 );
                 self.state.write().await.effects.insert(
                     command.meta.effect_id,
-                    RecordedReceipt::Command(receipt.clone()),
+                    RecordedReceipt::Command {
+                        family: CommandEffectFamily::Command,
+                        receipt: receipt.clone(),
+                    },
                 );
                 return Ok(receipt);
             }
@@ -873,7 +947,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
         };
         self.state.write().await.effects.insert(
             command.meta.effect_id,
-            RecordedReceipt::Command(receipt.clone()),
+            RecordedReceipt::Command {
+                family: CommandEffectFamily::Command,
+                receipt: receipt.clone(),
+            },
         );
         Ok(receipt)
     }
@@ -980,25 +1057,25 @@ impl CompleteAgentService for CodexCompleteAgentService {
     ) -> Result<AgentEffectInspection, AgentServiceError> {
         let state = self.state.read().await;
         Ok(match state.effects.get(&identity) {
-            Some(RecordedReceipt::Command(receipt)) => inspection_from_command(receipt),
-            Some(RecordedReceipt::Fork(receipt)) => AgentEffectInspection {
+            Some(RecordedReceipt::Command { family, receipt }) => {
+                inspection_from_command(receipt, *family)
+            }
+            Some(RecordedReceipt::Fork { receipt, applied }) => AgentEffectInspection {
                 effect_id: receipt.effect_id.clone(),
                 command_id: Some(receipt.command_id.clone()),
                 state: AgentEffectInspectionState::Applied {
-                    source: receipt.parent_source.clone(),
-                    terminal: receipt.state.terminal(),
-                    initial_context: None,
-                    child_source: receipt.child_source.clone(),
+                    outcome: AgentAppliedEffectOutcome::Fork {
+                        receipt: applied.clone(),
+                    },
                 },
             },
-            Some(RecordedReceipt::Surface(receipt)) => AgentEffectInspection {
+            Some(RecordedReceipt::SurfaceApply(receipt)) => AgentEffectInspection {
                 effect_id: receipt.effect_id.clone(),
                 command_id: Some(receipt.command_id.clone()),
                 state: AgentEffectInspectionState::Applied {
-                    source: receipt.source.clone(),
-                    terminal: Some(AgentTerminalOutcome::Succeeded),
-                    initial_context: None,
-                    child_source: None,
+                    outcome: AgentAppliedEffectOutcome::SurfaceApply {
+                        receipt: receipt.clone(),
+                    },
                 },
             },
             Some(RecordedReceipt::Unknown(inspection)) => inspection.clone(),
@@ -1017,7 +1094,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
         {
             let state = self.state.read().await;
             match state.effects.get(&command.effect_id) {
-                Some(RecordedReceipt::Surface(receipt)) => return Ok(receipt.clone()),
+                Some(RecordedReceipt::SurfaceApply(receipt)) => return Ok(receipt.clone()),
                 Some(RecordedReceipt::Unknown(_)) => return Err(unknown_outcome_error()),
                 Some(_) => {
                     return Err(service_error(
@@ -1168,9 +1245,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
             .expect("source existence checked before Codex side effect");
         source.revision += 1;
         source.applied_surface = Some(applied);
-        state
-            .effects
-            .insert(command.effect_id, RecordedReceipt::Surface(receipt.clone()));
+        state.effects.insert(
+            command.effect_id,
+            RecordedReceipt::SurfaceApply(receipt.clone()),
+        );
         Ok(receipt)
     }
 
@@ -1178,7 +1256,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
         &self,
         command: RevokeBoundAgentSurface,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        if let Some(receipt) = self.replay_command(&command.effect_id).await? {
+        if let Some(receipt) = self
+            .replay_command(&command.effect_id, CommandEffectFamily::SurfaceRevoke)
+            .await?
+        {
             return Ok(receipt);
         }
         let current = self
@@ -1237,11 +1318,13 @@ impl CompleteAgentService for CodexCompleteAgentService {
             revision,
             None,
         );
-        self.state
-            .write()
-            .await
-            .effects
-            .insert(command.effect_id, RecordedReceipt::Command(receipt.clone()));
+        self.state.write().await.effects.insert(
+            command.effect_id,
+            RecordedReceipt::Command {
+                family: CommandEffectFamily::SurfaceRevoke,
+                receipt: receipt.clone(),
+            },
+        );
         Ok(receipt)
     }
 }
@@ -1358,6 +1441,68 @@ fn response_thread_source(result: &Value) -> Result<AgentSourceCoordinate, Agent
         .and_then(Value::as_str)
         .ok_or_else(|| protocol_violation("Codex response misses thread.id"))?;
     AgentSourceCoordinate::new(thread_id).map_err(internal_error)
+}
+
+fn codex_thread_history_digest(result: &Value) -> Result<AgentPayloadDigest, AgentServiceError> {
+    let turns = result
+        .pointer("/thread/turns")
+        .and_then(Value::as_array)
+        .ok_or_else(|| protocol_violation("thread/read response misses thread.turns"))?;
+    let canonical = canonical_json(&json!({
+        "version": CODEX_CHILD_HISTORY_DIGEST_VERSION,
+        "turns": turns,
+    }))?;
+    AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(canonical)))
+        .map_err(internal_error)
+}
+
+fn verify_codex_fork_cutoff(
+    result: &Value,
+    cutoff: &AgentForkPoint,
+) -> Result<(), AgentServiceError> {
+    match cutoff {
+        AgentForkPoint::Head => Ok(()),
+        AgentForkPoint::CompletedTurn { turn_id } => {
+            let verified_turn_id = result
+                .pointer("/thread/turns")
+                .and_then(Value::as_array)
+                .and_then(|turns| turns.last())
+                .and_then(|turn| turn.get("id"))
+                .and_then(Value::as_str);
+            if verified_turn_id == Some(turn_id.as_str()) {
+                Ok(())
+            } else {
+                Err(protocol_violation(
+                    "thread/read child history does not end at the requested fork cutoff",
+                ))
+            }
+        }
+        AgentForkPoint::Item { .. } | AgentForkPoint::SourceCursor { .. } => Err(service_error(
+            AgentServiceErrorCode::Unsupported,
+            "Codex App Server cannot verify this fork cutoff",
+            false,
+        )),
+    }
+}
+
+fn canonical_json(value: &Value) -> Result<Vec<u8>, AgentServiceError> {
+    fn canonicalize(value: &Value) -> Value {
+        match value {
+            Value::Object(object) => {
+                let mut entries = object.iter().collect::<Vec<_>>();
+                entries.sort_by(|left, right| left.0.cmp(right.0));
+                let mut canonical = Map::new();
+                for (key, value) in entries {
+                    canonical.insert(key.clone(), canonicalize(value));
+                }
+                Value::Object(canonical)
+            }
+            Value::Array(items) => Value::Array(items.iter().map(canonicalize).collect()),
+            other => other.clone(),
+        }
+    }
+
+    serde_json::to_vec(&canonicalize(value)).map_err(internal_error)
 }
 
 fn map_thread_turns(
@@ -1639,7 +1784,10 @@ fn successful_command_receipt(
     }
 }
 
-fn inspection_from_command(receipt: &AgentCommandReceipt) -> AgentEffectInspection {
+fn inspection_from_command(
+    receipt: &AgentCommandReceipt,
+    family: CommandEffectFamily,
+) -> AgentEffectInspection {
     AgentEffectInspection {
         effect_id: receipt.effect_id.clone(),
         command_id: Some(receipt.command_id.clone()),
@@ -1647,12 +1795,28 @@ fn inspection_from_command(receipt: &AgentCommandReceipt) -> AgentEffectInspecti
             AgentReceiptState::Rejected { .. } => AgentEffectInspectionState::NotApplied,
             AgentReceiptState::Unknown => AgentEffectInspectionState::Unknown,
             _ => AgentEffectInspectionState::Applied {
-                source: receipt.source.clone(),
-                terminal: receipt.state.terminal(),
-                initial_context: receipt.initial_context.clone(),
-                child_source: None,
+                outcome: family.applied_outcome(receipt),
             },
         },
+    }
+}
+
+impl CommandEffectFamily {
+    fn applied_outcome(self, receipt: &AgentCommandReceipt) -> AgentAppliedEffectOutcome {
+        let receipt = AppliedAgentCommandReceipt {
+            command_id: receipt.command_id.clone(),
+            effect_id: receipt.effect_id.clone(),
+            source: receipt.source.clone(),
+            terminal: receipt.state.terminal(),
+            snapshot_revision: receipt.snapshot_revision,
+            initial_context: receipt.initial_context.clone(),
+        };
+        match self {
+            Self::Create => AgentAppliedEffectOutcome::Create { receipt },
+            Self::Resume => AgentAppliedEffectOutcome::Resume { receipt },
+            Self::Command => AgentAppliedEffectOutcome::Command { receipt },
+            Self::SurfaceRevoke => AgentAppliedEffectOutcome::SurfaceRevoke { receipt },
+        }
     }
 }
 
@@ -1714,4 +1878,41 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis() as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn child_history_digest_is_stable_across_repeated_read_key_order() {
+        let first = json!({
+            "thread": {
+                "id": "child",
+                "turns": [{
+                    "id": "turn-1",
+                    "status": "completed",
+                    "items": [{"type": "agentMessage", "text": "done"}]
+                }]
+            }
+        });
+        let repeated = serde_json::from_str::<Value>(
+            r#"{
+                "thread": {
+                    "turns": [{
+                        "items": [{"text": "done", "type": "agentMessage"}],
+                        "status": "completed",
+                        "id": "turn-1"
+                    }],
+                    "id": "child"
+                }
+            }"#,
+        )
+        .expect("repeated thread/read");
+
+        assert_eq!(
+            codex_thread_history_digest(&first).expect("first digest"),
+            codex_thread_history_digest(&repeated).expect("repeated digest")
+        );
+    }
 }

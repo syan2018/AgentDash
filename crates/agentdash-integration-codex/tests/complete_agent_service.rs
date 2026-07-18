@@ -4,15 +4,15 @@ use std::{
 };
 
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentChangesQuery, AgentCommand, AgentCommandEnvelope, AgentCommandId,
-    AgentCommandMeta, AgentContextPackageId, AgentContextSchemaVersion,
-    AgentContextSourceCoordinate, AgentContextSourceRevision, AgentEffectIdentity,
-    AgentEffectInspectionState, AgentForkCutoffKind, AgentForkPoint, AgentIdempotencyKey,
-    AgentInput, AgentInputContent, AgentPayloadDigest, AgentReadQuery, AgentReceiptState,
-    AgentServiceDefinitionId, AgentServiceErrorCode, AgentServiceInstanceId, AgentSourceCoordinate,
-    AgentSurfaceDigest, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentToolDelivery,
-    AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnId,
-    AppliedInitialContextEvidence, BoundAgentSurface, BoundAgentSurfaceContribution,
+    AgentAppliedEffectOutcome, AgentBindingGeneration, AgentChangesQuery, AgentCommand,
+    AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentContextPackageId,
+    AgentContextSchemaVersion, AgentContextSourceCoordinate, AgentContextSourceRevision,
+    AgentEffectIdentity, AgentEffectInspectionState, AgentForkCutoffKind, AgentForkPoint,
+    AgentIdempotencyKey, AgentInput, AgentInputContent, AgentPayloadDigest, AgentReadQuery,
+    AgentReceiptState, AgentServiceDefinitionId, AgentServiceErrorCode, AgentServiceInstanceId,
+    AgentSourceCoordinate, AgentSurfaceDigest, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
+    AgentToolDelivery, AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    AgentTurnId, AppliedInitialContextEvidence, BoundAgentSurface, BoundAgentSurfaceContribution,
     CompleteAgentService, ContextAuthorityKind, ContextProvenance, CreateAgentCommand,
     ForkAgentCommand, InitialAgentContextPackage, InitialContextContribution,
     InitialContextDeliveryFidelity, InitialContextMode, RevokeBoundAgentSurface, SemanticFidelity,
@@ -361,6 +361,17 @@ async fn create_installs_initial_package_as_rendered_configuration_before_first_
         })
         .await
         .expect("create");
+    let create_inspection = service
+        .inspect(receipt.effect_id.clone())
+        .await
+        .expect("inspect create");
+    assert!(create_inspection.validate());
+    assert!(matches!(
+        create_inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Create { .. }
+        }
+    ));
     let evidence = receipt.initial_context.expect("context evidence");
     assert_eq!(evidence.package_digest, package.digest);
     assert_eq!(
@@ -376,9 +387,11 @@ async fn create_installs_initial_package_as_rendered_configuration_before_first_
     transport
         .push_response("turn/start", json!({"turn": {"id": "turn-1"}}))
         .await;
+    let input_meta = meta("input");
+    let input_effect = input_meta.effect_id.clone();
     service
         .execute(AgentCommandEnvelope {
-            meta: meta("input"),
+            meta: input_meta,
             source: receipt.source,
             command: AgentCommand::SubmitInput {
                 input: AgentInput {
@@ -390,6 +403,17 @@ async fn create_installs_initial_package_as_rendered_configuration_before_first_
         })
         .await
         .expect("submit");
+    let command_inspection = service
+        .inspect(input_effect)
+        .await
+        .expect("inspect command");
+    assert!(command_inspection.validate());
+    assert!(matches!(
+        command_inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Command { .. }
+        }
+    ));
 
     let requests = transport.requests.lock().await;
     assert_eq!(requests[0].0, "thread/start");
@@ -414,7 +438,7 @@ async fn completed_turn_fork_uses_last_turn_id_and_verifies_the_child_with_threa
     transport
         .push_response(
             "thread/read",
-            json!({"thread": {"id": "thread-child", "turns": []}}),
+            json!({"thread": {"id": "thread-child", "turns": [{"id": "turn-7"}]}}),
         )
         .await;
 
@@ -437,7 +461,25 @@ async fn completed_turn_fork_uses_last_turn_id_and_verifies_the_child_with_threa
             .map(AgentSourceCoordinate::as_str),
         Some("thread-child")
     );
-    assert!(receipt.child_history_digest.is_none());
+    assert!(receipt.child_history_digest.is_some());
+    let inspection = service
+        .inspect(receipt.effect_id.clone())
+        .await
+        .expect("inspect fork");
+    assert!(inspection.validate());
+    match inspection.state {
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Fork { receipt: applied },
+        } => {
+            assert_eq!(applied.child_source.as_str(), "thread-child");
+            assert_eq!(applied.cutoff, receipt.cutoff);
+            assert_eq!(
+                Some(&applied.child_history_digest),
+                receipt.child_history_digest.as_ref()
+            );
+        }
+        other => panic!("unexpected fork inspection: {other:?}"),
+    }
     let requests = transport.requests.lock().await;
     assert_eq!(requests[1].0, "thread/fork");
     assert_eq!(requests[1].1["lastTurnId"], "turn-7");
@@ -470,6 +512,49 @@ async fn fork_child_verification_mismatch_becomes_unknown_and_is_not_retried() {
         .fork(command.clone())
         .await
         .expect_err("child mismatch");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+    assert!(matches!(
+        service.inspect(effect_id).await.expect("inspect").state,
+        AgentEffectInspectionState::Unknown
+    ));
+    service
+        .fork(command)
+        .await
+        .expect_err("unknown fork effect must not be retried");
+    assert_eq!(
+        transport.methods().await,
+        vec!["thread/start", "thread/fork", "thread/read"]
+    );
+}
+
+#[tokio::test]
+async fn fork_cutoff_verification_mismatch_becomes_unknown_and_is_not_retried() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport
+        .push_response("thread/fork", json!({"thread": {"id": "thread-child"}}))
+        .await;
+    transport
+        .push_response(
+            "thread/read",
+            json!({"thread": {"id": "thread-child", "turns": [{"id": "turn-6"}]}}),
+        )
+        .await;
+    let command = ForkAgentCommand {
+        meta: meta("fork-cutoff-unknown"),
+        source,
+        requested_child_source: None,
+        cutoff: AgentForkPoint::CompletedTurn {
+            turn_id: AgentTurnId::new("turn-7").expect("turn"),
+        },
+    };
+    let effect_id = command.meta.effect_id.clone();
+
+    let error = service
+        .fork(command.clone())
+        .await
+        .expect_err("child cutoff mismatch");
     assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
     assert!(matches!(
         service.inspect(effect_id).await.expect("inspect").state,
@@ -646,13 +731,26 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
     transport
         .push_response("thread/resume", json!({"thread": {"id": "thread-parent"}}))
         .await;
+    let resume_meta = meta("resume");
+    let resume_effect = resume_meta.effect_id.clone();
     service
         .resume(agentdash_agent_service_api::ResumeAgentCommand {
-            meta: meta("resume"),
+            meta: resume_meta,
             source: source.clone(),
         })
         .await
         .expect("resume");
+    let resume_inspection = service
+        .inspect(resume_effect)
+        .await
+        .expect("inspect resume");
+    assert!(resume_inspection.validate());
+    assert!(matches!(
+        resume_inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Resume { .. }
+        }
+    ));
 
     for (id, method, command) in [
         (
@@ -734,14 +832,26 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
     assert!(applied.applied.contributions.iter().all(|contribution| {
         contribution.status == agentdash_agent_service_api::AppliedContributionStatus::Applied
     }));
+    let apply_inspection = service
+        .inspect(applied.effect_id.clone())
+        .await
+        .expect("inspect surface apply");
+    assert!(apply_inspection.validate());
+    assert!(matches!(
+        apply_inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::SurfaceApply { .. }
+        }
+    ));
 
     transport
         .push_response("thread/resume", json!({"thread": {"id": "thread-parent"}}))
         .await;
+    let revoke_effect = AgentEffectIdentity::new("revoke-effect").expect("effect");
     service
         .revoke_surface(RevokeBoundAgentSurface {
             command_id: AgentCommandId::new("revoke-command").expect("command"),
-            effect_id: AgentEffectIdentity::new("revoke-effect").expect("effect"),
+            effect_id: revoke_effect.clone(),
             idempotency_key: AgentIdempotencyKey::new("revoke-idem").expect("idempotency"),
             binding_generation: AgentBindingGeneration(7),
             source: source.clone(),
@@ -749,6 +859,17 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
         })
         .await
         .expect("revoke surface");
+    let revoke_inspection = service
+        .inspect(revoke_effect)
+        .await
+        .expect("inspect surface revoke");
+    assert!(revoke_inspection.validate());
+    assert!(matches!(
+        revoke_inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::SurfaceRevoke { .. }
+        }
+    ));
 
     transport.push_response("thread/archive", json!({})).await;
     let closed = service

@@ -7,7 +7,7 @@ use std::{
 };
 
 use agentdash_agent_runtime_wire::{
-    RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION, RuntimeWireAck, RuntimeWireAgentBindingTarget,
+    RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAck, RuntimeWireAgentBindingTarget,
     RuntimeWireAgentChangeNotification, RuntimeWireAgentHostCallbackRequest,
     RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentServiceDescribeRequest,
     RuntimeWireAgentServiceRequest, RuntimeWireAgentServiceResponse, RuntimeWireEnvelope,
@@ -120,7 +120,7 @@ impl RemoteCompleteAgentService {
         self: &Arc<Self>,
         envelope: RuntimeWireEnvelope,
     ) -> Result<(), AgentServiceError> {
-        if envelope.protocol_revision != RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION {
+        if envelope.protocol_revision != RUNTIME_WIRE_PROTOCOL_REVISION {
             return Err(protocol(
                 "remote Complete Agent used an unsupported Runtime Wire revision",
             ));
@@ -368,7 +368,7 @@ impl RemoteCompleteAgentService {
     ) -> Result<(), AgentServiceError> {
         self.placement
             .send(RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
                 frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
                 critical,
                 frame,
@@ -396,7 +396,7 @@ impl RemoteCompleteAgentService {
         if let Err(error) = self
             .placement
             .send(RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
                 frame_id,
                 critical: true,
                 frame: RuntimeWireFrame::Request(Box::new(RuntimeWireRequest::AgentService(
@@ -661,16 +661,18 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         &self,
         effect_id: AgentEffectIdentity,
     ) -> Result<AgentEffectInspection, AgentServiceError> {
-        match self
+        let expected_effect_id = effect_id.clone();
+        let inspection = match self
             .request(RuntimeWireAgentServiceRequest::Inspect {
                 target: self.target.clone(),
                 effect_id,
             })
             .await?
         {
-            RuntimeWireAgentServiceResponse::Inspect(result) => result.map(|value| *value),
-            _ => Err(protocol("inspect received a mismatched response")),
-        }
+            RuntimeWireAgentServiceResponse::Inspect(result) => result.map(|value| *value)?,
+            _ => return Err(protocol("inspect received a mismatched response")),
+        };
+        validate_inspection(&expected_effect_id, inspection)
     }
 
     async fn apply_surface(
@@ -863,7 +865,7 @@ impl RuntimeWireAgentHostCallbackClient {
             .read()
             .await
             .send(RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
                 frame_id,
                 critical: true,
                 frame: RuntimeWireFrame::Request(Box::new(RuntimeWireRequest::AgentHostCallback(
@@ -1048,7 +1050,7 @@ impl RuntimeWireAgentServiceEndpoint {
             .read()
             .await
             .send(RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
                 frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
                 critical: true,
                 frame: RuntimeWireFrame::Notification(Box::new(
@@ -1073,7 +1075,7 @@ impl RuntimeWireAgentServiceEndpoint {
         response: RuntimeWireAgentServiceResponse,
     ) -> RuntimeWireEnvelope {
         RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+            protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
             critical: true,
             frame: RuntimeWireFrame::Response {
@@ -1106,7 +1108,7 @@ impl RuntimeWireAgentServiceEndpoint {
 #[async_trait]
 impl RuntimeWirePlacement for RuntimeWireAgentServiceEndpoint {
     async fn send(&self, envelope: RuntimeWireEnvelope) -> Result<(), RemoteRuntimeTransportError> {
-        if envelope.protocol_revision != RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION {
+        if envelope.protocol_revision != RUNTIME_WIRE_PROTOCOL_REVISION {
             return Err(RemoteRuntimeTransportError::Protocol {
                 reason: "unsupported Complete Agent Runtime Wire target revision".to_owned(),
                 critical: true,
@@ -1224,9 +1226,14 @@ impl RuntimeWireAgentServiceEndpoint {
                 )
             }
             RuntimeWireAgentServiceRequest::Inspect { effect_id, .. } => {
-                RuntimeWireAgentServiceResponse::Inspect(
-                    self.service.inspect(effect_id).await.map(Box::new),
-                )
+                let expected_effect_id = effect_id.clone();
+                let result = self
+                    .service
+                    .inspect(effect_id)
+                    .await
+                    .and_then(|inspection| validate_inspection(&expected_effect_id, inspection))
+                    .map(Box::new);
+                RuntimeWireAgentServiceResponse::Inspect(result)
             }
             RuntimeWireAgentServiceRequest::ApplySurface { command, .. } => {
                 RuntimeWireAgentServiceResponse::ApplySurface(
@@ -1240,6 +1247,18 @@ impl RuntimeWireAgentServiceEndpoint {
             }
         }
     }
+}
+
+fn validate_inspection(
+    expected_effect_id: &AgentEffectIdentity,
+    inspection: AgentEffectInspection,
+) -> Result<AgentEffectInspection, AgentServiceError> {
+    if &inspection.effect_id != expected_effect_id || !inspection.validate() {
+        return Err(protocol(
+            "remote Complete Agent returned an inconsistent effect inspection",
+        ));
+    }
+    Ok(inspection)
 }
 
 fn response_error(

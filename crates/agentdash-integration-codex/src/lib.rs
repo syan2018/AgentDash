@@ -8,8 +8,9 @@ mod process_transport;
 mod registration;
 
 pub use complete_agent::{
-    CODEX_APP_SERVER_PROTOCOL_REVISION, CODEX_INITIAL_CONTEXT_RENDERER_VERSION,
-    CodexAppServerObservation, CodexAppServerObservationPage, CodexAppServerTransport,
-    CodexCompleteAgentConfig, CodexCompleteAgentTransportError,
+    CODEX_APP_SERVER_PROTOCOL_REVISION, CODEX_CHILD_HISTORY_DIGEST_VERSION,
+    CODEX_INITIAL_CONTEXT_RENDERER_VERSION, CodexAppServerObservation,
+    CodexAppServerObservationPage, CodexAppServerTransport, CodexCompleteAgentConfig,
+    CodexCompleteAgentTransportError,
 };
 pub use registration::CodexCompleteAgentRegistration;

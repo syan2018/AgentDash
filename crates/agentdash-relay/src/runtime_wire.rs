@@ -486,6 +486,27 @@ mod tests {
     }
 
     #[test]
+    fn relay_negotiates_only_the_canonical_revision_four() {
+        assert_eq!(RUNTIME_WIRE_PROTOCOL_REVISION, 4);
+        let error = RuntimeRelayStream::negotiate(
+            RuntimeRelayOpen {
+                stream_id: RuntimeRelayStreamId("legacy-stream".to_owned()),
+                provenance: provenance(),
+                supported_protocol_revisions: vec![3],
+                resume_after_sequence: 0,
+                max_in_flight_frames: 4,
+            },
+            &descriptor(4),
+        )
+        .expect_err("revision three must not negotiate after the hard cut");
+
+        assert_eq!(
+            error,
+            RuntimeRelayTransportError::UnsupportedProtocolRevision
+        );
+    }
+
+    #[test]
     fn ack_replay_and_reconnect_preserve_unacknowledged_order() {
         let mut stream = stream(4);
         let first = stream.enqueue(envelope(11)).expect("first");

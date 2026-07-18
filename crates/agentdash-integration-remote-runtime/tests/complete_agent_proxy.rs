@@ -7,21 +7,22 @@ use std::{
 };
 
 use agentdash_agent_runtime_wire::{
-    RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION, RuntimeWireAgentBindingTarget,
+    RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAgentBindingTarget,
     RuntimeWireAgentChangeNotification, RuntimeWireAgentHostCallbackRequest,
     RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentServiceRequest,
     RuntimeWireAgentServiceResponse, RuntimeWireEnvelope, RuntimeWireFrame, RuntimeWireFrameId,
     RuntimeWireNotification, RuntimeWireRequest, RuntimeWireResponse,
 };
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentCallbackRouteId, AgentChange, AgentChangePayload,
-    AgentChangesQuery, AgentCommand, AgentCommandEnvelope, AgentCommandId, AgentCommandMeta,
-    AgentEffectIdentity, AgentHookAction, AgentHookDefinitionId, AgentHookInvocation,
-    AgentHookPoint, AgentHookTiming, AgentHostCallbackError, AgentHostCallbackMeta,
-    AgentHostCallbacks, AgentIdempotencyKey, AgentInput, AgentInputContent, AgentLifecycleStatus,
-    AgentReadQuery, AgentReceiptState, AgentServiceError, AgentServiceErrorCode,
-    AgentServiceInstanceId, AgentSourceCoordinate, AgentSourceCursor, AgentToolInvocation,
-    AgentToolName, AgentToolResult, AgentTurnId, CompleteAgentService,
+    AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentChange,
+    AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandEnvelope, AgentCommandId,
+    AgentCommandMeta, AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState,
+    AgentHookAction, AgentHookDefinitionId, AgentHookInvocation, AgentHookPoint, AgentHookTiming,
+    AgentHostCallbackError, AgentHostCallbackMeta, AgentHostCallbacks, AgentIdempotencyKey,
+    AgentInput, AgentInputContent, AgentLifecycleStatus, AgentReadQuery, AgentReceiptState,
+    AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId, AgentSourceCoordinate,
+    AgentSourceCursor, AgentToolInvocation, AgentToolName, AgentToolResult, AgentTurnId,
+    AppliedAgentCommandReceipt, CompleteAgentService,
 };
 use agentdash_integration_remote_runtime::{
     RemoteCompleteAgentRegistration, RemoteCompleteAgentService, RemoteRuntimeTransportError,
@@ -53,7 +54,7 @@ impl LoopbackPlacement {
 
     fn remote_envelope(&self, critical: bool, frame: RuntimeWireFrame) -> RuntimeWireEnvelope {
         RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+            protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(self.next_remote_frame_id.fetch_add(1, Ordering::Relaxed)),
             critical,
             frame,
@@ -93,32 +94,55 @@ impl RuntimeWirePlacement for LoopbackPlacement {
         let RuntimeWireRequest::AgentService(request) = *request else {
             return Ok(());
         };
-        if let RuntimeWireAgentServiceRequest::Execute { target, command } = *request {
-            self.execute_requests.fetch_add(1, Ordering::Relaxed);
-            assert_eq!(target.binding_generation, AgentBindingGeneration(9));
-            assert_eq!(
-                command.meta.binding_generation,
-                AgentBindingGeneration(9),
-                "proxy must rewrite only at the Runtime Wire boundary"
-            );
-            let response = RuntimeWireAgentServiceResponse::Execute(Ok(Box::new(
-                agentdash_agent_service_api::AgentCommandReceipt {
-                    command_id: command.meta.command_id,
-                    effect_id: command.meta.effect_id,
-                    source: command.source,
-                    state: AgentReceiptState::Accepted,
-                    snapshot_revision: None,
-                    initial_context: None,
-                },
-            )));
-            self.inject(
-                true,
-                RuntimeWireFrame::Response {
-                    request_frame_id: envelope.frame_id,
-                    response: RuntimeWireResponse::AgentService(response),
-                },
-            );
-        }
+        let response = match *request {
+            RuntimeWireAgentServiceRequest::Execute { target, command } => {
+                self.execute_requests.fetch_add(1, Ordering::Relaxed);
+                assert_eq!(target.binding_generation, AgentBindingGeneration(9));
+                assert_eq!(
+                    command.meta.binding_generation,
+                    AgentBindingGeneration(9),
+                    "proxy must rewrite only at the Runtime Wire boundary"
+                );
+                RuntimeWireAgentServiceResponse::Execute(Ok(Box::new(
+                    agentdash_agent_service_api::AgentCommandReceipt {
+                        command_id: command.meta.command_id,
+                        effect_id: command.meta.effect_id,
+                        source: command.source,
+                        state: AgentReceiptState::Accepted,
+                        snapshot_revision: None,
+                        initial_context: None,
+                    },
+                )))
+            }
+            RuntimeWireAgentServiceRequest::Inspect { effect_id, .. } => {
+                let command_id = AgentCommandId::new("inconsistent-command").expect("command");
+                RuntimeWireAgentServiceResponse::Inspect(Ok(Box::new(AgentEffectInspection {
+                    effect_id: effect_id.clone(),
+                    command_id: Some(command_id.clone()),
+                    state: AgentEffectInspectionState::Applied {
+                        outcome: AgentAppliedEffectOutcome::Command {
+                            receipt: AppliedAgentCommandReceipt {
+                                command_id,
+                                effect_id: AgentEffectIdentity::new("different-effect")
+                                    .expect("effect"),
+                                source: AgentSourceCoordinate::new("thread-1").expect("source"),
+                                terminal: None,
+                                snapshot_revision: None,
+                                initial_context: None,
+                            },
+                        },
+                    },
+                })))
+            }
+            _ => return Ok(()),
+        };
+        self.inject(
+            true,
+            RuntimeWireFrame::Response {
+                request_frame_id: envelope.frame_id,
+                response: RuntimeWireResponse::AgentService(response),
+            },
+        );
         Ok(())
     }
 
@@ -309,6 +333,7 @@ struct EndpointTracerService {
     callbacks: OnceLock<Arc<dyn AgentHostCallbacks>>,
     executions: AtomicU64,
     callback_results: Mutex<Vec<AgentToolResult>>,
+    inspection: Mutex<Option<AgentEffectInspection>>,
 }
 
 impl EndpointTracerService {
@@ -424,14 +449,31 @@ impl CompleteAgentService for EndpointTracerService {
                 )
             })?;
 
-        Ok(agentdash_agent_service_api::AgentCommandReceipt {
+        let receipt = agentdash_agent_service_api::AgentCommandReceipt {
             command_id: command.meta.command_id,
             effect_id: command.meta.effect_id,
             source: command.source,
             state: AgentReceiptState::Accepted,
             snapshot_revision: None,
             initial_context: None,
-        })
+        };
+        *self.inspection.lock().await = Some(AgentEffectInspection {
+            effect_id: receipt.effect_id.clone(),
+            command_id: Some(receipt.command_id.clone()),
+            state: AgentEffectInspectionState::Applied {
+                outcome: AgentAppliedEffectOutcome::Command {
+                    receipt: AppliedAgentCommandReceipt {
+                        command_id: receipt.command_id.clone(),
+                        effect_id: receipt.effect_id.clone(),
+                        source: receipt.source.clone(),
+                        terminal: None,
+                        snapshot_revision: None,
+                        initial_context: None,
+                    },
+                },
+            },
+        });
+        Ok(receipt)
     }
 
     async fn read(
@@ -455,9 +497,14 @@ impl CompleteAgentService for EndpointTracerService {
 
     async fn inspect(
         &self,
-        _: AgentEffectIdentity,
+        effect_id: AgentEffectIdentity,
     ) -> Result<agentdash_agent_service_api::AgentEffectInspection, AgentServiceError> {
-        Err(Self::unsupported())
+        self.inspection
+            .lock()
+            .await
+            .clone()
+            .filter(|inspection| inspection.effect_id == effect_id)
+            .ok_or_else(Self::unsupported)
     }
 
     async fn apply_surface(
@@ -545,14 +592,23 @@ async fn wait_until(mut predicate: impl FnMut() -> bool) {
 async fn real_endpoint_round_trips_tool_hook_and_replays_duplicate_callback_result() {
     let (source_service, endpoint, host_callbacks, proxy) = endpoint_tracer();
     let command = execute("endpoint-roundtrip", 3);
+    let effect_id = command.meta.effect_id.clone();
 
     let first = proxy
         .execute(command.clone())
         .await
         .expect("remote execute");
     let replay = proxy.execute(command).await.expect("remote execute replay");
+    let inspection = proxy.inspect(effect_id).await.expect("remote inspect");
 
     assert_eq!(first, replay);
+    assert!(inspection.validate());
+    assert!(matches!(
+        inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Command { .. }
+        }
+    ));
     assert_eq!(source_service.executions.load(Ordering::Relaxed), 1);
     assert_eq!(source_service.callback_results.lock().await.len(), 1);
     assert_eq!(
@@ -937,6 +993,24 @@ async fn stale_local_generation_is_fenced_before_remote_dispatch() {
 }
 
 #[tokio::test]
+async fn proxy_rejects_an_inconsistent_typed_inspection() {
+    let placement = LoopbackPlacement::new();
+    let proxy = RemoteCompleteAgentService::new(
+        AgentBindingGeneration(3),
+        target(),
+        placement,
+        Arc::new(RecordingCallbacks::default()),
+    );
+
+    let error = proxy
+        .inspect(AgentEffectIdentity::new("inspect-effect").expect("effect"))
+        .await
+        .expect_err("inconsistent inspection must be rejected");
+
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+}
+
+#[tokio::test]
 async fn pushed_change_replay_is_idempotent_and_frame_gap_loses_the_binding() {
     let placement = LoopbackPlacement::new();
     let proxy = RemoteCompleteAgentService::new(
@@ -986,7 +1060,7 @@ async fn pushed_change_replay_is_idempotent_and_frame_gap_loses_the_binding() {
     assert_eq!(page.changes.len(), 1);
 
     placement.inject_exact(RuntimeWireEnvelope {
-        protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+        protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
         frame_id: RuntimeWireFrameId(3),
         critical: true,
         frame: RuntimeWireFrame::Ack(agentdash_agent_runtime_wire::RuntimeWireAck {

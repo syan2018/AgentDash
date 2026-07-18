@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 agentdash-agent-runtime-wire = { workspace = true }
 agentdash-agent-service-api = { workspace = true }
+agentdash-integration-api = { workspace = true }
 async-trait.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

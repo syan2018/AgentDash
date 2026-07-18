@@ -1,7 +1,13 @@
 use std::sync::Arc;
 
 use agentdash_agent_service_api::{
-    AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId, CompleteAgentService,
+    AgentPayloadDigest, AgentServiceDefinitionId, AgentServiceError, AgentServiceErrorCode,
+    AgentServiceInstanceId, CompleteAgentService,
+};
+use agentdash_integration_api::{
+    AgentDashIntegration, CompleteAgentOfferProvenance, CompleteAgentPlacementRequirement,
+    CompleteAgentRegistrationContribution, CompleteAgentServiceFactory,
+    CompleteAgentServiceFactoryError,
 };
 use codex_app_server_protocol::{
     ClientInfo, InitializeCapabilities, InitializeParams, InitializeResponse,
@@ -13,6 +19,82 @@ use crate::{
     },
     process_transport::CodexProcessTransport,
 };
+
+pub const CODEX_COMPLETE_AGENT_DEFINITION_ID: &str = "builtin.codex-app-server";
+pub const CODEX_COMPLETE_AGENT_INSTANCE_ID: &str = "builtin.codex-app-server.default";
+pub const CODEX_COMPLETE_AGENT_CONFORMANCE_SUITE: &str = "codex-complete-agent-v1";
+
+struct CodexProcessCompleteAgentFactory;
+
+#[async_trait::async_trait]
+impl CompleteAgentServiceFactory for CodexProcessCompleteAgentFactory {
+    async fn materialize(
+        &self,
+    ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentServiceFactoryError> {
+        let cwd = std::env::current_dir().map_err(|error| {
+            CompleteAgentServiceFactoryError::InvalidConfiguration {
+                reason: format!("failed to resolve Codex working directory: {error}"),
+            }
+        })?;
+        let registration = CodexCompleteAgentRegistration::spawn(
+            AgentServiceInstanceId::new(CODEX_COMPLETE_AGENT_INSTANCE_ID)
+                .expect("static Codex Complete Agent instance id"),
+            CodexCompleteAgentConfig {
+                definition_id: AgentServiceDefinitionId::new(CODEX_COMPLETE_AGENT_DEFINITION_ID)
+                    .expect("static Codex Complete Agent definition id"),
+                title: "Codex App Server".to_owned(),
+                cwd,
+                model: None,
+                model_provider: None,
+                base_instructions: None,
+                developer_instructions: None,
+                runtime_workspace_roots: Vec::new(),
+            },
+        )
+        .await
+        .map_err(map_factory_error)?;
+        Ok(registration.service())
+    }
+}
+
+pub struct CodexCompleteAgentIntegration;
+
+impl AgentDashIntegration for CodexCompleteAgentIntegration {
+    fn name(&self) -> &str {
+        "builtin.codex_runtime"
+    }
+
+    fn complete_agent_registrations(&self) -> Vec<CompleteAgentRegistrationContribution> {
+        vec![codex_complete_agent_contribution()]
+    }
+}
+
+pub fn codex_complete_agent_contribution() -> CompleteAgentRegistrationContribution {
+    let expected_descriptor = CodexCompleteAgentService::descriptor_for(
+        AgentServiceDefinitionId::new(CODEX_COMPLETE_AGENT_DEFINITION_ID)
+            .expect("static Codex Complete Agent definition id"),
+        "Codex App Server",
+    );
+    CompleteAgentRegistrationContribution::new(
+        expected_descriptor.clone(),
+        AgentServiceInstanceId::new(CODEX_COMPLETE_AGENT_INSTANCE_ID)
+            .expect("static Codex Complete Agent instance id"),
+        CompleteAgentPlacementRequirement::InProcess,
+        CompleteAgentOfferProvenance {
+            publisher_integration: "builtin.codex_runtime".to_owned(),
+            service_version: crate::CODEX_APP_SERVER_PROTOCOL_REVISION.to_string(),
+            service_build_digest: AgentPayloadDigest::new(format!(
+                "codex-app-server:{}",
+                crate::CODEX_APP_SERVER_PROTOCOL_REVISION
+            ))
+            .expect("static Codex Complete Agent build digest"),
+            conformance_suite_revision: CODEX_COMPLETE_AGENT_CONFORMANCE_SUITE.to_owned(),
+            verified_profile_digest: expected_descriptor.profile_digest,
+        },
+        Arc::new(CodexProcessCompleteAgentFactory),
+    )
+    .expect("static Codex Complete Agent contribution")
+}
 
 /// Host-ready registration for one Codex App Server Complete Agent instance.
 ///
@@ -121,4 +203,49 @@ fn map_initialization_transport_error(
         error.message,
         error.retryable,
     )
+}
+
+fn map_factory_error(error: AgentServiceError) -> CompleteAgentServiceFactoryError {
+    match error.code {
+        AgentServiceErrorCode::InvalidArgument => {
+            CompleteAgentServiceFactoryError::InvalidConfiguration {
+                reason: error.message,
+            }
+        }
+        AgentServiceErrorCode::Unavailable => CompleteAgentServiceFactoryError::Unavailable {
+            reason: error.message,
+            retryable: error.retryable,
+        },
+        _ => CompleteAgentServiceFactoryError::Unhealthy {
+            reason: error.message,
+            retryable: error.retryable,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_contribution_exposes_complete_agent_definition_and_no_runtime_driver() {
+        let contribution = codex_complete_agent_contribution();
+
+        assert_eq!(
+            contribution.expected_descriptor.definition_id.as_str(),
+            CODEX_COMPLETE_AGENT_DEFINITION_ID
+        );
+        assert_eq!(
+            contribution.instance_id.as_str(),
+            CODEX_COMPLETE_AGENT_INSTANCE_ID
+        );
+        assert_eq!(
+            contribution.offer_provenance.verified_profile_digest,
+            contribution.expected_descriptor.profile_digest
+        );
+        assert!(matches!(
+            contribution.placement,
+            CompleteAgentPlacementRequirement::InProcess
+        ));
+    }
 }

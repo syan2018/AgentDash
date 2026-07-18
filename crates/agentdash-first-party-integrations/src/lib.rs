@@ -10,7 +10,7 @@ use agentdash_integration_api::{
     MemoryDiscoveryOutput, MemoryDiscoveryProvider, MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule,
     MemoryIndexStatus, MemorySourceFormat, MemorySourceScope, MemorySourceTrustLevel,
 };
-use agentdash_integration_codex::CodexRuntimeIntegration;
+use agentdash_integration_codex::CodexCompleteAgentIntegration;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -337,7 +337,7 @@ fn fixture_mcp_listing() -> MarketplaceAssetListing {
 pub fn builtin_integrations() -> Vec<Box<dyn AgentDashIntegration>> {
     vec![
         Box::new(PersonalAuthIntegration),
-        Box::new(CodexRuntimeIntegration),
+        Box::new(CodexCompleteAgentIntegration),
         Box::new(ConnectorCatalogIntegration),
         Box::new(ProjectAgentMemoryIntegration),
     ]
@@ -503,22 +503,23 @@ mod tests {
     }
 
     #[test]
-    fn codex_runtime_is_a_functional_driver_contribution() {
-        let integration = CodexRuntimeIntegration;
-        let contributions = integration.agent_runtime_drivers();
+    fn codex_runtime_is_a_complete_agent_registration_contribution() {
+        let integration = CodexCompleteAgentIntegration;
+        let contributions = integration.complete_agent_registrations();
         assert_eq!(contributions.len(), 1);
         assert_eq!(
-            contributions[0]
-                .definition
-                .provenance
-                .definition_id
-                .as_str(),
+            contributions[0].expected_descriptor.definition_id.as_str(),
             "builtin.codex-app-server"
         );
+        assert_eq!(contributions[0].expected_descriptor.protocol_revision, 144);
         assert_eq!(
-            contributions[0].definition.supported_protocol_revisions,
-            vec![144]
+            contributions[0].offer_provenance.verified_profile_digest,
+            contributions[0].expected_descriptor.profile_digest
         );
+        assert!(matches!(
+            contributions[0].placement,
+            agentdash_integration_api::CompleteAgentPlacementRequirement::InProcess
+        ));
     }
 
     #[test]

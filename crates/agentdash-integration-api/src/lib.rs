@@ -15,7 +15,7 @@
 //! |--------|-------|------|
 //! | 寻址空间 | `VfsProvider` | 新增可寻址资源类型 |
 //! | 来源解析器 | `SourceResolver` | 新增 ContextSourceKind 解析逻辑 |
-//! | Agent Runtime | `AgentRuntimeDriverContribution` | 接入受信 Agent service definition/factory |
+//! | Agent Runtime | `CompleteAgentRegistrationContribution` | 接入受信 Complete Agent service |
 //! | 认证/授权 | `AuthProvider` | 企业 SSO/LDAP 等 |
 //! | 外部服务 | `ExternalServiceClient` | 企业 KM、文档中心等只读内容源 |
 
@@ -26,6 +26,11 @@ pub mod external;
 pub mod integration;
 
 // 复用已有 trait，不重新定义
+pub use agentdash_agent_service_api;
+pub use agentdash_agent_service_api::{
+    AgentConfigurationBoundary, AgentPayloadDigest, AgentProfileDigest, AgentServiceDefinitionId,
+    AgentServiceDescriptor, AgentServiceInstanceId, CompleteAgentService,
+};
 pub use agentdash_domain::context_source::ContextSourceKind;
 pub use agentdash_spi::platform::marketplace_source;
 pub use agentdash_spi::platform::memory_discovery;

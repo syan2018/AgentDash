@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 agentdash-agent = { workspace = true }
 agentdash-agent-service-api = { workspace = true }
+agentdash-integration-api = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

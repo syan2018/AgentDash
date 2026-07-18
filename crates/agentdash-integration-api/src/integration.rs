@@ -51,16 +51,11 @@ pub trait AgentDashIntegration: Send + Sync {
     /// 集成名称（用于日志和诊断）
     fn name(&self) -> &str;
 
-    /// 贡献受信、编译期绑定的 Agent service definition 与 driver factory。
-    fn agent_runtime_drivers(&self) -> Vec<crate::AgentRuntimeDriverContribution> {
-        vec![]
-    }
-
-    /// 声明与 `agent_runtime_drivers` 一一对应的编译期信任清单。
+    /// 贡献受信的 Complete Agent definition、instance、placement requirement 与 factory。
     ///
-    /// 宿主只会激活同时拥有 driver contribution 与清单的 definition；清单中的 profile
-    /// 是集成完成 conformance 验证后的能力上界，而不是运行时自报能力。
-    fn agent_runtime_trust_manifests(&self) -> Vec<crate::AgentRuntimeTrustManifest> {
+    /// Factory 只产出最终 `CompleteAgentService` 边界；Host 在 composition root 中归一
+    /// placement、health、credential 与 offer evidence。集成不能声明默认成功或 fallback。
+    fn complete_agent_registrations(&self) -> Vec<crate::CompleteAgentRegistrationContribution> {
         vec![]
     }
 

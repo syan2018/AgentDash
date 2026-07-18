@@ -223,7 +223,10 @@ impl CodexCompleteAgentService {
         })
     }
 
-    fn descriptor(&self) -> AgentServiceDescriptor {
+    pub fn descriptor_for(
+        definition_id: AgentServiceDefinitionId,
+        title: impl Into<String>,
+    ) -> AgentServiceDescriptor {
         let immutable = |semantics| AgentSurfaceCapabilityFacet {
             semantics,
             routes: BTreeSet::from([AgentSurfaceRoute::ImmutableDelivery]),
@@ -231,8 +234,8 @@ impl CodexCompleteAgentService {
             configuration_boundary: AgentConfigurationBoundary::Binding,
         };
         AgentServiceDescriptor {
-            definition_id: self.config.definition_id.clone(),
-            title: self.config.title.clone(),
+            definition_id,
+            title: title.into(),
             protocol_revision: CODEX_APP_SERVER_PROTOCOL_REVISION,
             profile: AgentCapabilityProfile {
                 lifecycle: BTreeSet::from([
@@ -478,7 +481,10 @@ impl CodexCompleteAgentService {
 #[async_trait]
 impl CompleteAgentService for CodexCompleteAgentService {
     async fn describe(&self) -> Result<AgentServiceDescriptor, AgentServiceError> {
-        Ok(self.descriptor())
+        Ok(Self::descriptor_for(
+            self.config.definition_id.clone(),
+            self.config.title.clone(),
+        ))
     }
 
     async fn create(
@@ -1146,7 +1152,8 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 None => {}
             }
         }
-        let descriptor = self.descriptor();
+        let descriptor =
+            Self::descriptor_for(self.config.definition_id.clone(), self.config.title.clone());
         if command.bound_surface.offer_profile_digest != descriptor.profile_digest {
             return Err(service_error(
                 AgentServiceErrorCode::Conflict,

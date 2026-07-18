@@ -37,6 +37,11 @@ use agentdash_agent_service_api::{
     InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
     ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
+use agentdash_integration_api::{
+    AgentDashIntegration, CompleteAgentOfferProvenance, CompleteAgentPlacementRequirement,
+    CompleteAgentRegistrationContribution, CompleteAgentServiceFactory,
+    CompleteAgentServiceFactoryError,
+};
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
@@ -155,7 +160,7 @@ impl DashAgentCompleteService {
         }
     }
 
-    fn descriptor() -> AgentServiceDescriptor {
+    pub fn descriptor() -> AgentServiceDescriptor {
         AgentServiceDescriptor {
             definition_id: AgentServiceDefinitionId::new("dash-agent")
                 .expect("static definition id"),
@@ -993,9 +998,55 @@ impl CompleteAgentService for DashAgentCompleteService {
     }
 }
 
-pub struct NativeCompleteAgentRegistration {
-    pub instance_id: AgentServiceInstanceId,
-    pub service: Arc<dyn CompleteAgentService>,
+struct NativeCompleteAgentServiceFactory {
+    execution: DashExecutionDependencies,
+    host_callbacks: Arc<dyn AgentHostCallbacks>,
+    store: Arc<dyn DashCompleteAgentStore>,
+}
+
+#[async_trait]
+impl CompleteAgentServiceFactory for NativeCompleteAgentServiceFactory {
+    async fn materialize(
+        &self,
+    ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentServiceFactoryError> {
+        Ok(Arc::new(DashAgentCompleteService::with_host_callbacks(
+            self.execution.clone(),
+            self.host_callbacks.clone(),
+            self.store.clone(),
+        )))
+    }
+}
+
+pub struct NativeCompleteAgentIntegration {
+    registration: CompleteAgentRegistrationContribution,
+}
+
+impl NativeCompleteAgentIntegration {
+    pub fn new(
+        instance_id: AgentServiceInstanceId,
+        execution: DashExecutionDependencies,
+        host_callbacks: Arc<dyn AgentHostCallbacks>,
+        store: Arc<dyn DashCompleteAgentStore>,
+    ) -> Result<Self, agentdash_integration_api::CompleteAgentContributionError> {
+        Ok(Self {
+            registration: native_complete_agent_registration(
+                instance_id,
+                execution,
+                host_callbacks,
+                store,
+            )?,
+        })
+    }
+}
+
+impl AgentDashIntegration for NativeCompleteAgentIntegration {
+    fn name(&self) -> &str {
+        "builtin.dash_agent"
+    }
+
+    fn complete_agent_registrations(&self) -> Vec<CompleteAgentRegistrationContribution> {
+        vec![self.registration.clone()]
+    }
 }
 
 pub fn native_complete_agent_registration(
@@ -1003,15 +1054,32 @@ pub fn native_complete_agent_registration(
     execution: DashExecutionDependencies,
     host_callbacks: Arc<dyn AgentHostCallbacks>,
     store: Arc<dyn DashCompleteAgentStore>,
-) -> NativeCompleteAgentRegistration {
-    NativeCompleteAgentRegistration {
+) -> Result<
+    CompleteAgentRegistrationContribution,
+    agentdash_integration_api::CompleteAgentContributionError,
+> {
+    let expected_descriptor = DashAgentCompleteService::descriptor();
+    CompleteAgentRegistrationContribution::new(
+        expected_descriptor.clone(),
         instance_id,
-        service: Arc::new(DashAgentCompleteService::with_host_callbacks(
+        CompleteAgentPlacementRequirement::InProcess,
+        CompleteAgentOfferProvenance {
+            publisher_integration: "builtin.dash_agent".to_owned(),
+            service_version: env!("CARGO_PKG_VERSION").to_owned(),
+            service_build_digest: AgentPayloadDigest::new(format!(
+                "dash-complete-agent:{}",
+                env!("CARGO_PKG_VERSION")
+            ))
+            .expect("static Dash Complete Agent build digest"),
+            conformance_suite_revision: "dash-complete-agent-v1".to_owned(),
+            verified_profile_digest: expected_descriptor.profile_digest,
+        },
+        Arc::new(NativeCompleteAgentServiceFactory {
             execution,
             host_callbacks,
             store,
-        )),
-    }
+        }),
+    )
 }
 
 impl DashCompleteEffectRecord {

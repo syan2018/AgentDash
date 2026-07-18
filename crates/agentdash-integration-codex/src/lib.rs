@@ -13,4 +13,8 @@ pub use complete_agent::{
     CodexAppServerObservationPage, CodexAppServerTransport, CodexCompleteAgentConfig,
     CodexCompleteAgentTransportError,
 };
-pub use registration::CodexCompleteAgentRegistration;
+pub use registration::{
+    CODEX_COMPLETE_AGENT_CONFORMANCE_SUITE, CODEX_COMPLETE_AGENT_DEFINITION_ID,
+    CODEX_COMPLETE_AGENT_INSTANCE_ID, CodexCompleteAgentIntegration,
+    CodexCompleteAgentRegistration, codex_complete_agent_contribution,
+};

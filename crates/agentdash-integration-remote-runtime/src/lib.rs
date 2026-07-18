@@ -11,7 +11,10 @@ mod complete_agent;
 mod registration;
 
 pub use complete_agent::*;
-pub use registration::RemoteCompleteAgentRegistration;
+pub use registration::{
+    RemoteCompleteAgentIntegration, RemoteCompleteAgentRegistration,
+    remote_complete_agent_contribution,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RemoteRuntimeTransportError {

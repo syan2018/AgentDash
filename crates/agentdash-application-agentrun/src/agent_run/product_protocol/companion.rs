@@ -12,9 +12,8 @@ use uuid::Uuid;
 
 use super::{
     AgentRunForkParent, AgentRunForkRequestId, AgentRunForkSaga, AgentRunForkSagaRepository,
-    AgentRunForkSagaRepositoryError, InitialContextApplicationEvidence,
-    InitialContextDeliveryFidelity, PreallocatedAgentRunChild, RequiredInitialContextEvidence,
-    RuntimeAgentChildIdentity,
+    AgentRunForkSagaRepositoryError, CompiledContextApplication, CompiledContextDeliveryFidelity,
+    PreallocatedAgentRunChild, RequiredInitialContextEvidence, RuntimeAgentChildIdentity,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,34 +33,87 @@ pub enum CompanionAdoptionMode {
     FollowUpRequired,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompiledContextAuthority {
+    AgentHistory,
+    AgentSnapshot,
+    Workflow,
+    Constraint,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContextContributionProvenance {
-    pub authority: String,
+pub struct CompanionContextSourceDraft {
+    pub authority: CompiledContextAuthority,
     pub source_coordinate: String,
     pub source_revision: String,
     pub source_digest: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompiledFreshContextMode {
+    Compact,
+    WorkflowOnly,
+    ConstraintsOnly,
+}
+
+impl TryFrom<CompanionContextMode> for CompiledFreshContextMode {
+    type Error = CompanionTargetPlanError;
+
+    fn try_from(mode: CompanionContextMode) -> Result<Self, Self::Error> {
+        match mode {
+            CompanionContextMode::Compact => Ok(Self::Compact),
+            CompanionContextMode::WorkflowOnly => Ok(Self::WorkflowOnly),
+            CompanionContextMode::ConstraintsOnly => Ok(Self::ConstraintsOnly),
+            CompanionContextMode::Full => Err(CompanionTargetPlanError::FullModeHasNoFreshContext),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompiledContextProvenance {
+    pub authority: CompiledContextAuthority,
+    pub source: String,
+    pub revision: String,
+    pub digest: String,
+}
+
+impl From<CompanionContextSourceDraft> for CompiledContextProvenance {
+    fn from(draft: CompanionContextSourceDraft) -> Self {
+        Self {
+            authority: draft.authority,
+            source: draft.source_coordinate,
+            revision: draft.source_revision,
+            digest: draft.source_digest,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompiledTypedContextPayload {
+    pub schema: String,
+    pub value: Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum InitialAgentContextContribution {
+pub enum CompiledInitialContextContribution {
     CompactSummary {
         summary: String,
-        provenance: ContextContributionProvenance,
+        provenance: CompiledContextProvenance,
     },
     WorkflowContext {
-        schema: String,
-        value: Value,
-        provenance: ContextContributionProvenance,
+        payload: CompiledTypedContextPayload,
+        provenance: CompiledContextProvenance,
     },
     ConstraintSet {
-        schema: String,
-        value: Value,
-        provenance: ContextContributionProvenance,
+        payload: CompiledTypedContextPayload,
+        provenance: CompiledContextProvenance,
     },
 }
 
-impl InitialAgentContextContribution {
+impl CompiledInitialContextContribution {
     pub fn kind_name(&self) -> &'static str {
         match self {
             Self::CompactSummary { .. } => "compact_summary",
@@ -72,23 +124,23 @@ impl InitialAgentContextContribution {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct InitialAgentContextPackage {
+pub struct CompiledInitialContextPackage {
     pub package_id: Uuid,
-    pub schema_version: u32,
-    pub mode: CompanionContextMode,
-    pub contributions: Vec<InitialAgentContextContribution>,
+    pub schema_version: u64,
+    pub mode: CompiledFreshContextMode,
+    pub contributions: Vec<CompiledInitialContextContribution>,
     pub digest: String,
 }
 
-impl InitialAgentContextPackage {
+impl CompiledInitialContextPackage {
     fn calculate_digest(
         package_id: Uuid,
-        schema_version: u32,
-        mode: CompanionContextMode,
-        contributions: &[InitialAgentContextContribution],
+        schema_version: u64,
+        mode: CompiledFreshContextMode,
+        contributions: &[CompiledInitialContextContribution],
     ) -> String {
         let canonical = serde_json::to_vec(&(package_id, schema_version, mode, contributions))
-            .expect("typed initial context package must serialize");
+            .expect("compiled initial context package must serialize");
         format!("sha256:{:x}", Sha256::digest(canonical))
     }
 
@@ -122,14 +174,14 @@ pub enum CompanionRuntimePreparation {
         through_turn_id: String,
     },
     FreshCreate {
-        initial_context: InitialAgentContextPackage,
+        initial_context: CompiledInitialContextPackage,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompanionContextContributionRequirement {
     pub kind: String,
-    pub minimum_fidelity: InitialContextDeliveryFidelity,
+    pub minimum_fidelity: CompiledContextDeliveryFidelity,
     pub canonical_rendered_allowed: bool,
 }
 
@@ -146,7 +198,7 @@ pub struct CompanionDispatchTargetPlan {
     pub adoption_mode: CompanionAdoptionMode,
     pub first_submit_input: SubmitInput,
     /// Business Surface facts remain a separate target input. They are not
-    /// serialized into `InitialAgentContextPackage`.
+    /// serialized into `CompiledInitialContextPackage`.
     pub surface_facts: Value,
 }
 
@@ -155,9 +207,9 @@ pub struct CompanionContextSources {
     pub parent_source_coordinate: String,
     pub through_turn_id: Option<String>,
     pub package_id: Uuid,
-    pub compact_summary: Option<(String, ContextContributionProvenance)>,
-    pub workflow: Option<(String, Value, ContextContributionProvenance)>,
-    pub constraints: Option<(String, Value, ContextContributionProvenance)>,
+    pub compact_summary: Option<(String, CompanionContextSourceDraft)>,
+    pub workflow: Option<(String, Value, CompanionContextSourceDraft)>,
+    pub constraints: Option<(String, Value, CompanionContextSourceDraft)>,
     pub surface_facts: Value,
 }
 
@@ -165,6 +217,8 @@ pub struct CompanionContextSources {
 pub enum CompanionTargetPlanError {
     #[error("Full companion context requires an exact parent turn cutoff")]
     MissingParentTurnCutoff,
+    #[error("Full companion context uses exact fork and has no fresh context package")]
+    FullModeHasNoFreshContext,
     #[error("{mode:?} companion context has no typed contribution")]
     MissingTypedContribution { mode: CompanionContextMode },
     #[error("initial context package digest is invalid")]
@@ -180,8 +234,8 @@ pub enum CompanionTargetPlanError {
     #[error("{kind} context fidelity {actual:?} is below required {minimum:?}")]
     ContextFidelityBelowMinimum {
         kind: String,
-        minimum: InitialContextDeliveryFidelity,
-        actual: InitialContextDeliveryFidelity,
+        minimum: CompiledContextDeliveryFidelity,
+        actual: CompiledContextDeliveryFidelity,
     },
     #[error("CanonicalRendered delivery is not allowed for {kind}")]
     CanonicalRenderedNotAllowed { kind: String },
@@ -206,7 +260,7 @@ pub fn compile_companion_dispatch_target(
         CompanionContextMode::Compact => Some(CompanionContextApplicationRequirement {
             contribution_requirements: vec![CompanionContextContributionRequirement {
                 kind: "compact_summary".to_owned(),
-                minimum_fidelity: InitialContextDeliveryFidelity::CanonicalRendered,
+                minimum_fidelity: CompiledContextDeliveryFidelity::CanonicalRendered,
                 canonical_rendered_allowed: true,
             }],
             materialized_digest_required: true,
@@ -214,7 +268,7 @@ pub fn compile_companion_dispatch_target(
         CompanionContextMode::WorkflowOnly => Some(CompanionContextApplicationRequirement {
             contribution_requirements: vec![CompanionContextContributionRequirement {
                 kind: "workflow_context".to_owned(),
-                minimum_fidelity: InitialContextDeliveryFidelity::TypedNative,
+                minimum_fidelity: CompiledContextDeliveryFidelity::TypedNative,
                 canonical_rendered_allowed: false,
             }],
             materialized_digest_required: true,
@@ -222,7 +276,7 @@ pub fn compile_companion_dispatch_target(
         CompanionContextMode::ConstraintsOnly => Some(CompanionContextApplicationRequirement {
             contribution_requirements: vec![CompanionContextContributionRequirement {
                 kind: "constraint_set".to_owned(),
-                minimum_fidelity: InitialContextDeliveryFidelity::TypedNative,
+                minimum_fidelity: CompiledContextDeliveryFidelity::TypedNative,
                 canonical_rendered_allowed: false,
             }],
             materialized_digest_required: true,
@@ -242,29 +296,27 @@ pub fn compile_companion_dispatch_target(
                 CompanionContextMode::Compact => sources
                     .compact_summary
                     .map(|(summary, provenance)| {
-                        vec![InitialAgentContextContribution::CompactSummary {
+                        vec![CompiledInitialContextContribution::CompactSummary {
                             summary,
-                            provenance,
+                            provenance: provenance.into(),
                         }]
                     })
                     .unwrap_or_default(),
                 CompanionContextMode::WorkflowOnly => sources
                     .workflow
                     .map(|(schema, value, provenance)| {
-                        vec![InitialAgentContextContribution::WorkflowContext {
-                            schema,
-                            value,
-                            provenance,
+                        vec![CompiledInitialContextContribution::WorkflowContext {
+                            payload: CompiledTypedContextPayload { schema, value },
+                            provenance: provenance.into(),
                         }]
                     })
                     .unwrap_or_default(),
                 CompanionContextMode::ConstraintsOnly => sources
                     .constraints
                     .map(|(schema, value, provenance)| {
-                        vec![InitialAgentContextContribution::ConstraintSet {
-                            schema,
-                            value,
-                            provenance,
+                        vec![CompiledInitialContextContribution::ConstraintSet {
+                            payload: CompiledTypedContextPayload { schema, value },
+                            provenance: provenance.into(),
                         }]
                     })
                     .unwrap_or_default(),
@@ -274,17 +326,18 @@ pub fn compile_companion_dispatch_target(
                 return Err(CompanionTargetPlanError::MissingTypedContribution { mode });
             }
             let schema_version = 1;
-            let digest = InitialAgentContextPackage::calculate_digest(
+            let compiled_mode = mode.try_into()?;
+            let digest = CompiledInitialContextPackage::calculate_digest(
                 sources.package_id,
                 schema_version,
-                mode,
+                compiled_mode,
                 &contributions,
             );
             CompanionRuntimePreparation::FreshCreate {
-                initial_context: InitialAgentContextPackage {
+                initial_context: CompiledInitialContextPackage {
                     package_id: sources.package_id,
                     schema_version,
-                    mode,
+                    mode: compiled_mode,
                     contributions,
                     digest,
                 },
@@ -309,7 +362,7 @@ pub enum CompanionRuntimePreparationEvidence {
     },
     FreshCreate {
         child: RuntimeAgentChildIdentity,
-        context: Option<InitialContextApplicationEvidence>,
+        context: Option<CompiledContextApplication>,
     },
 }
 
@@ -341,7 +394,7 @@ pub fn verify_companion_activation(
             if !initial_context.digest_matches() {
                 return Err(CompanionTargetPlanError::InvalidPackageDigest);
             }
-            if actual.fidelity == InitialContextDeliveryFidelity::Unsupported {
+            if actual.fidelity == CompiledContextDeliveryFidelity::Unsupported {
                 return Err(CompanionTargetPlanError::UnsupportedContextFidelity);
             }
             let requirement = plan
@@ -351,7 +404,7 @@ pub fn verify_companion_activation(
             let expected = initial_context
                 .contributions
                 .iter()
-                .map(InitialAgentContextContribution::kind_name)
+                .map(CompiledInitialContextContribution::kind_name)
                 .collect::<Vec<_>>();
             let required = requirement
                 .contribution_requirements
@@ -366,7 +419,7 @@ pub fn verify_companion_activation(
             if expected != required
                 || expected != actual_kinds
                 || actual.contribution_fidelity.iter().any(|contribution| {
-                    contribution.fidelity == InitialContextDeliveryFidelity::Unsupported
+                    contribution.fidelity == CompiledContextDeliveryFidelity::Unsupported
                 })
             {
                 return Err(CompanionTargetPlanError::ContributionFidelityMismatch);
@@ -376,8 +429,8 @@ pub fn verify_companion_activation(
                 .iter()
                 .zip(&actual.contribution_fidelity)
             {
-                if (actual.fidelity == InitialContextDeliveryFidelity::CanonicalRendered
-                    || applied.fidelity == InitialContextDeliveryFidelity::CanonicalRendered)
+                if (actual.fidelity == CompiledContextDeliveryFidelity::CanonicalRendered
+                    || applied.fidelity == CompiledContextDeliveryFidelity::CanonicalRendered)
                     && !required.canonical_rendered_allowed
                 {
                     return Err(CompanionTargetPlanError::CanonicalRenderedNotAllowed {
@@ -400,9 +453,9 @@ pub fn verify_companion_activation(
                 }
             }
             let canonical_rendered = actual.fidelity
-                == InitialContextDeliveryFidelity::CanonicalRendered
+                == CompiledContextDeliveryFidelity::CanonicalRendered
                 || actual.contribution_fidelity.iter().any(|contribution| {
-                    contribution.fidelity == InitialContextDeliveryFidelity::CanonicalRendered
+                    contribution.fidelity == CompiledContextDeliveryFidelity::CanonicalRendered
                 });
             if canonical_rendered && actual.renderer_version.as_deref().is_none_or(str::is_empty) {
                 return Err(CompanionTargetPlanError::MissingRendererVersion);
@@ -489,7 +542,7 @@ pub struct CompanionFreshLost {
 pub enum CompanionFreshEffectEvidence {
     Created {
         child: RuntimeAgentChildIdentity,
-        context: InitialContextApplicationEvidence,
+        context: CompiledContextApplication,
         receipt: String,
     },
     Activated {
@@ -525,7 +578,7 @@ pub struct CompanionFreshSaga {
     version: u64,
     durable_dispatch: Option<CompanionFreshDurableDispatch>,
     child: Option<RuntimeAgentChildIdentity>,
-    context_evidence: Option<InitialContextApplicationEvidence>,
+    context_evidence: Option<CompiledContextApplication>,
     receipts: CompanionFreshReceipts,
     lost: Option<CompanionFreshLost>,
 }
@@ -594,7 +647,7 @@ impl CompanionFreshSaga {
         self.child.as_ref()
     }
 
-    pub fn context_evidence(&self) -> Option<&InitialContextApplicationEvidence> {
+    pub fn context_evidence(&self) -> Option<&CompiledContextApplication> {
         self.context_evidence.as_ref()
     }
 
@@ -1057,18 +1110,28 @@ mod tests {
 
     use crate::agent_run::product_protocol::{
         AgentRunForkOperationIdentity, AgentRunForkProductGraphPort, AgentRunForkRuntimePort,
-        AgentRunForkSagaPhase, AgentRunForkSagaWorker,
-        InitialContextContributionApplicationEvidence, ProductGraphCommitEvidence,
-        RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
+        AgentRunForkSagaPhase, AgentRunForkSagaWorker, CompiledContextContributionApplication,
+        PreparedAgentRunForkGraph, RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
+    };
+    use agentdash_agent_service_api as service_api;
+    use agentdash_application_ports::agent_run_fork::AgentRunForkGraph;
+    use agentdash_domain::workflow::{
+        AgentFrame, AgentRunLineage, AgentSource, LifecycleAgent, LifecycleRun,
     };
     use serde_json::json;
 
     use super::super::fork_saga::RecordingAgentRunForkSagaRepository;
     use super::*;
 
-    fn provenance(authority: &str) -> ContextContributionProvenance {
-        ContextContributionProvenance {
-            authority: authority.to_owned(),
+    fn provenance(authority: &str) -> CompanionContextSourceDraft {
+        CompanionContextSourceDraft {
+            authority: match authority {
+                "agent_history" => CompiledContextAuthority::AgentHistory,
+                "agent_snapshot" => CompiledContextAuthority::AgentSnapshot,
+                "workflow" => CompiledContextAuthority::Workflow,
+                "constraint" => CompiledContextAuthority::Constraint,
+                other => panic!("unknown test authority: {other}"),
+            },
             source_coordinate: "parent".to_owned(),
             source_revision: "rev-9".to_owned(),
             source_digest: "sha256:source".to_owned(),
@@ -1120,7 +1183,164 @@ mod tests {
         }
     }
 
-    fn applied_context(plan: &CompanionDispatchTargetPlan) -> InitialContextApplicationEvidence {
+    fn map_authority(authority: CompiledContextAuthority) -> service_api::ContextAuthorityKind {
+        match authority {
+            CompiledContextAuthority::AgentHistory => {
+                service_api::ContextAuthorityKind::AgentHistory
+            }
+            CompiledContextAuthority::AgentSnapshot => {
+                service_api::ContextAuthorityKind::AgentSnapshot
+            }
+            CompiledContextAuthority::Workflow => service_api::ContextAuthorityKind::Workflow,
+            CompiledContextAuthority::Constraint => service_api::ContextAuthorityKind::Constraint,
+        }
+    }
+
+    fn map_provenance(provenance: &CompiledContextProvenance) -> service_api::ContextProvenance {
+        service_api::ContextProvenance {
+            authority: map_authority(provenance.authority),
+            source: service_api::AgentContextSourceCoordinate::new(&provenance.source)
+                .expect("compiled source coordinate"),
+            revision: service_api::AgentContextSourceRevision::new(&provenance.revision)
+                .expect("compiled source revision"),
+            digest: service_api::AgentPayloadDigest::new(&provenance.digest)
+                .expect("compiled source digest"),
+        }
+    }
+
+    fn map_contribution(
+        contribution: &CompiledInitialContextContribution,
+    ) -> service_api::InitialContextContribution {
+        match contribution {
+            CompiledInitialContextContribution::CompactSummary {
+                summary,
+                provenance,
+            } => service_api::InitialContextContribution::CompactSummary {
+                summary: summary.clone(),
+                provenance: map_provenance(provenance),
+            },
+            CompiledInitialContextContribution::WorkflowContext {
+                payload,
+                provenance,
+            } => service_api::InitialContextContribution::WorkflowContext {
+                payload: service_api::TypedContextPayload {
+                    schema: payload.schema.clone(),
+                    value: payload.value.clone(),
+                },
+                provenance: map_provenance(provenance),
+            },
+            CompiledInitialContextContribution::ConstraintSet {
+                payload,
+                provenance,
+            } => service_api::InitialContextContribution::ConstraintSet {
+                payload: service_api::TypedContextPayload {
+                    schema: payload.schema.clone(),
+                    value: payload.value.clone(),
+                },
+                provenance: map_provenance(provenance),
+            },
+        }
+    }
+
+    fn map_initial_context(
+        package: &CompiledInitialContextPackage,
+    ) -> service_api::InitialAgentContextPackage {
+        let mode = match package.mode {
+            CompiledFreshContextMode::Compact => service_api::InitialContextMode::Compact,
+            CompiledFreshContextMode::WorkflowOnly => service_api::InitialContextMode::WorkflowOnly,
+            CompiledFreshContextMode::ConstraintsOnly => {
+                service_api::InitialContextMode::ConstraintsOnly
+            }
+        };
+        service_api::InitialAgentContextPackage {
+            package_id: service_api::AgentContextPackageId::new(package.package_id.to_string())
+                .expect("compiled package id"),
+            schema_version: service_api::AgentContextSchemaVersion(package.schema_version),
+            mode,
+            contributions: package.contributions.iter().map(map_contribution).collect(),
+            digest: service_api::AgentPayloadDigest::new(&package.digest)
+                .expect("compiled package digest"),
+        }
+    }
+
+    fn map_create_command(
+        identity: &CompanionFreshOperationIdentity,
+        package: &CompiledInitialContextPackage,
+    ) -> service_api::CreateAgentCommand {
+        service_api::CreateAgentCommand {
+            meta: service_api::AgentCommandMeta {
+                command_id: service_api::AgentCommandId::new(identity.request_id.0.to_string())
+                    .expect("request command id"),
+                effect_id: service_api::AgentEffectIdentity::new(identity.effect_id.to_string())
+                    .expect("create effect id"),
+                idempotency_key: service_api::AgentIdempotencyKey::new(format!(
+                    "{}:create",
+                    identity.request_id.0
+                ))
+                .expect("create idempotency key"),
+                binding_generation: service_api::AgentBindingGeneration(0),
+                expected_snapshot_revision: None,
+            },
+            requested_source: None,
+            initial_context: Some(map_initial_context(package)),
+        }
+    }
+
+    fn map_fidelity(
+        fidelity: service_api::InitialContextDeliveryFidelity,
+    ) -> CompiledContextDeliveryFidelity {
+        match fidelity {
+            service_api::InitialContextDeliveryFidelity::Unsupported => {
+                CompiledContextDeliveryFidelity::Unsupported
+            }
+            service_api::InitialContextDeliveryFidelity::CanonicalRendered => {
+                CompiledContextDeliveryFidelity::CanonicalRendered
+            }
+            service_api::InitialContextDeliveryFidelity::TypedNative => {
+                CompiledContextDeliveryFidelity::TypedNative
+            }
+        }
+    }
+
+    fn map_applied_context(
+        evidence: &service_api::AppliedInitialContextEvidence,
+        contribution_fidelity: &[(
+            service_api::InitialContextContributionKind,
+            service_api::InitialContextDeliveryFidelity,
+        )],
+    ) -> CompiledContextApplication {
+        CompiledContextApplication {
+            package_id: Uuid::parse_str(evidence.package_id.as_str())
+                .expect("Product package UUID"),
+            package_digest: evidence.package_digest.as_str().to_owned(),
+            fidelity: map_fidelity(evidence.fidelity),
+            contribution_fidelity: contribution_fidelity
+                .iter()
+                .map(|(kind, fidelity)| CompiledContextContributionApplication {
+                    kind: match kind {
+                        service_api::InitialContextContributionKind::CompactSummary => {
+                            "compact_summary"
+                        }
+                        service_api::InitialContextContributionKind::WorkflowContext => {
+                            "workflow_context"
+                        }
+                        service_api::InitialContextContributionKind::ConstraintSet => {
+                            "constraint_set"
+                        }
+                    }
+                    .to_owned(),
+                    fidelity: map_fidelity(*fidelity),
+                })
+                .collect(),
+            renderer_version: evidence.renderer_version.clone(),
+            materialized_digest: evidence
+                .materialized_digest
+                .as_ref()
+                .map(|digest| digest.as_str().to_owned()),
+        }
+    }
+
+    fn applied_context(plan: &CompanionDispatchTargetPlan) -> CompiledContextApplication {
         let CompanionRuntimePreparation::FreshCreate { initial_context } = &plan.preparation else {
             panic!("fresh");
         };
@@ -1129,21 +1349,19 @@ mod tests {
             .as_ref()
             .expect("fresh context requirement");
         let fidelity = requirement.contribution_requirements[0].minimum_fidelity;
-        InitialContextApplicationEvidence {
+        CompiledContextApplication {
             package_id: initial_context.package_id,
             package_digest: initial_context.digest.clone(),
             fidelity,
             contribution_fidelity: requirement
                 .contribution_requirements
                 .iter()
-                .map(
-                    |contribution| InitialContextContributionApplicationEvidence {
-                        kind: contribution.kind.clone(),
-                        fidelity,
-                    },
-                )
+                .map(|contribution| CompiledContextContributionApplication {
+                    kind: contribution.kind.clone(),
+                    fidelity,
+                })
                 .collect(),
-            renderer_version: (fidelity == InitialContextDeliveryFidelity::CanonicalRendered)
+            renderer_version: (fidelity == CompiledContextDeliveryFidelity::CanonicalRendered)
                 .then(|| "context-renderer-v1".to_owned()),
             materialized_digest: Some("sha256:materialized-context".to_owned()),
         }
@@ -1238,6 +1456,92 @@ mod tests {
     }
 
     #[test]
+    fn compiled_fresh_context_maps_losslessly_to_create_and_reuses_effect_for_inspect() {
+        let plan = fresh_plan();
+        let CompanionRuntimePreparation::FreshCreate { initial_context } = &plan.preparation else {
+            panic!("fresh context");
+        };
+        let identities = stable_fresh_identities();
+        let mut saga = CompanionFreshSaga::requested(identities, plan.clone()).expect("fresh saga");
+        let CompanionFreshStep::Dispatch(create_identity) = saga.next_step() else {
+            panic!("create dispatch");
+        };
+        let command = map_create_command(&create_identity, initial_context);
+        let canonical = command
+            .initial_context
+            .as_ref()
+            .expect("CreateAgentCommand.initial_context");
+
+        assert_eq!(
+            serde_json::to_value(canonical).expect("canonical package"),
+            serde_json::to_value(initial_context).expect("compiled package")
+        );
+        assert!(canonical.digest_matches());
+        assert_eq!(
+            canonical.package_id.as_str(),
+            initial_context.package_id.to_string()
+        );
+        assert_eq!(canonical.schema_version.0, initial_context.schema_version);
+        assert_eq!(
+            canonical.contributions[0].kind(),
+            service_api::InitialContextContributionKind::WorkflowContext
+        );
+
+        let canonical_evidence = service_api::AppliedInitialContextEvidence {
+            package_id: canonical.package_id.clone(),
+            package_digest: canonical.digest.clone(),
+            fidelity: service_api::InitialContextDeliveryFidelity::TypedNative,
+            renderer_version: None,
+            materialized_digest: Some(
+                service_api::AgentPayloadDigest::new("sha256:materialized")
+                    .expect("materialized digest"),
+            ),
+        };
+        assert_eq!(
+            canonical_evidence.guarantee(),
+            service_api::InitialContextAppliedEvidence::PackageAndMaterializedDigest
+        );
+        let mapped_evidence = map_applied_context(
+            &canonical_evidence,
+            &[(
+                service_api::InitialContextContributionKind::WorkflowContext,
+                service_api::InitialContextDeliveryFidelity::TypedNative,
+            )],
+        );
+        verify_companion_activation(
+            &plan,
+            &CompanionRuntimePreparationEvidence::FreshCreate {
+                child: RuntimeAgentChildIdentity {
+                    source_coordinate: "service:child".to_owned(),
+                    runtime_agent_id: "runtime-child".to_owned(),
+                },
+                context: Some(mapped_evidence),
+            },
+        )
+        .expect("canonical evidence preserves Product activation contract");
+
+        saga.mark_dispatched(create_identity.clone())
+            .expect("durable create dispatch");
+        let CompanionFreshStep::Inspect(inspect_identity) = saga.next_step() else {
+            panic!("inspect create");
+        };
+        assert_eq!(inspect_identity, create_identity);
+        assert_eq!(
+            command.meta.effect_id.as_str(),
+            inspect_identity.effect_id.to_string()
+        );
+        saga.record_outcome(
+            inspect_identity.clone(),
+            CompanionFreshEffectOutcome::Unknown,
+        )
+        .expect("unknown inspection");
+        assert_eq!(
+            saga.next_step(),
+            CompanionFreshStep::Inspect(inspect_identity)
+        );
+    }
+
+    #[test]
     fn full_is_an_exact_parent_history_fork() {
         let plan = compile_companion_dispatch_target(
             CompanionContextMode::Full,
@@ -1296,14 +1600,14 @@ mod tests {
                 CompanionContextMode::Compact => {
                     assert_eq!(
                         requirement.contribution_requirements[0].minimum_fidelity,
-                        InitialContextDeliveryFidelity::CanonicalRendered
+                        CompiledContextDeliveryFidelity::CanonicalRendered
                     );
                     assert!(requirement.contribution_requirements[0].canonical_rendered_allowed);
                 }
                 CompanionContextMode::WorkflowOnly | CompanionContextMode::ConstraintsOnly => {
                     assert_eq!(
                         requirement.contribution_requirements[0].minimum_fidelity,
-                        InitialContextDeliveryFidelity::TypedNative
+                        CompiledContextDeliveryFidelity::TypedNative
                     );
                     assert!(!requirement.contribution_requirements[0].canonical_rendered_allowed);
                 }
@@ -1366,16 +1670,14 @@ mod tests {
                 &plan,
                 &CompanionRuntimePreparationEvidence::FreshCreate {
                     child: child.clone(),
-                    context: Some(InitialContextApplicationEvidence {
+                    context: Some(CompiledContextApplication {
                         package_id: initial_context.package_id,
                         package_digest: initial_context.digest.clone(),
-                        fidelity: InitialContextDeliveryFidelity::Unsupported,
-                        contribution_fidelity: vec![
-                            InitialContextContributionApplicationEvidence {
-                                kind: "workflow_context".to_owned(),
-                                fidelity: InitialContextDeliveryFidelity::Unsupported,
-                            },
-                        ],
+                        fidelity: CompiledContextDeliveryFidelity::Unsupported,
+                        contribution_fidelity: vec![CompiledContextContributionApplication {
+                            kind: "workflow_context".to_owned(),
+                            fidelity: CompiledContextDeliveryFidelity::Unsupported,
+                        },],
                         renderer_version: None,
                         materialized_digest: None,
                     }),
@@ -1387,13 +1689,13 @@ mod tests {
             &plan,
             &CompanionRuntimePreparationEvidence::FreshCreate {
                 child,
-                context: Some(InitialContextApplicationEvidence {
+                context: Some(CompiledContextApplication {
                     package_id: initial_context.package_id,
                     package_digest: initial_context.digest.clone(),
-                    fidelity: InitialContextDeliveryFidelity::TypedNative,
-                    contribution_fidelity: vec![InitialContextContributionApplicationEvidence {
+                    fidelity: CompiledContextDeliveryFidelity::TypedNative,
+                    contribution_fidelity: vec![CompiledContextContributionApplication {
                         kind: "workflow_context".to_owned(),
-                        fidelity: InitialContextDeliveryFidelity::TypedNative,
+                        fidelity: CompiledContextDeliveryFidelity::TypedNative,
                     }],
                     renderer_version: None,
                     materialized_digest: Some("sha256:rendered".to_owned()),
@@ -1485,9 +1787,9 @@ mod tests {
             runtime_agent_id: "fresh-runtime-child".to_owned(),
         };
         let mut evidence = applied_context(&plan);
-        evidence.fidelity = InitialContextDeliveryFidelity::CanonicalRendered;
+        evidence.fidelity = CompiledContextDeliveryFidelity::CanonicalRendered;
         evidence.contribution_fidelity[0].fidelity =
-            InitialContextDeliveryFidelity::CanonicalRendered;
+            CompiledContextDeliveryFidelity::CanonicalRendered;
         evidence.renderer_version = Some("context-renderer-v1".to_owned());
         assert_eq!(
             verify_companion_activation(
@@ -1519,8 +1821,8 @@ mod tests {
             ),
             Err(CompanionTargetPlanError::ContextFidelityBelowMinimum {
                 kind: "workflow_context".to_owned(),
-                minimum: InitialContextDeliveryFidelity::TypedNative,
-                actual: InitialContextDeliveryFidelity::CanonicalRendered,
+                minimum: CompiledContextDeliveryFidelity::TypedNative,
+                actual: CompiledContextDeliveryFidelity::CanonicalRendered,
             })
         );
     }
@@ -1680,21 +1982,37 @@ mod tests {
         async fn prepare_child_graph_commit(
             &self,
             saga: &AgentRunForkSaga,
-        ) -> Result<ProductGraphCommitEvidence, String> {
-            Ok(ProductGraphCommitEvidence {
-                agent_run_id: saga.child().agent_run_id,
-                child_run_id: saga.child().run_id,
-                child_agent_id: saga.child().agent_id,
-                child_frame_id: saga.child().frame_id,
-                presentation_thread_id: saga.child().presentation_thread_id.clone(),
-                runtime_child: saga.runtime_child().cloned().expect("child"),
-                host_binding: saga.host_binding().expect("binding").to_owned(),
-                child_history_digest: saga
-                    .child_history_digest()
-                    .expect("history digest")
-                    .to_owned(),
-                commit_revision: 1,
-            })
+        ) -> Result<PreparedAgentRunForkGraph, String> {
+            let project_id = Uuid::new_v4();
+            let mut child_run = LifecycleRun::new_plain(project_id);
+            child_run.id = saga.child().run_id;
+            let mut child_agent =
+                LifecycleAgent::new_root(saga.child().run_id, project_id, AgentSource::Subagent);
+            child_agent.id = saga.child().agent_id;
+            let mut child_frame =
+                AgentFrame::new_revision(saga.child().agent_id, 1, "companion_full_fork");
+            child_frame.id = saga.child().frame_id;
+            let lineage = AgentRunLineage::new_fork(
+                saga.parent().run_id,
+                saga.parent().agent_id,
+                saga.child().run_id,
+                saga.child().agent_id,
+                None,
+                None,
+                "tester",
+                None,
+            )
+            .with_frame_baseline(Uuid::new_v4(), 1, saga.child().frame_id, 1);
+            PreparedAgentRunForkGraph::prepare(
+                saga,
+                AgentRunForkGraph {
+                    child_run,
+                    child_agent,
+                    child_frame,
+                    lineage,
+                },
+            )
+            .map_err(|error| error.to_string())
         }
     }
 

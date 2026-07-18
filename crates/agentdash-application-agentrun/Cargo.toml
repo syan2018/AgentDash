@@ -29,6 +29,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+agentdash-agent-service-api = { workspace = true }
 agentdash-test-support = { workspace = true }
 futures = { workspace = true }
 json-patch = "2.0"

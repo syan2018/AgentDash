@@ -1,8 +1,13 @@
 #[cfg(test)]
 use std::{collections::HashMap, sync::Arc};
 
+use agentdash_application_ports::agent_run_fork::AgentRunForkGraph;
+#[cfg(test)]
+use agentdash_domain::workflow::AgentSource;
+use agentdash_domain::workflow::{AgentFrame, AgentRunLineage, LifecycleAgent, LifecycleRun};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 #[cfg(test)]
 use tokio::sync::Mutex;
@@ -64,13 +69,13 @@ pub struct RuntimeAgentChildIdentity {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum InitialContextDeliveryFidelity {
+pub enum CompiledContextDeliveryFidelity {
     Unsupported,
     CanonicalRendered,
     TypedNative,
 }
 
-impl InitialContextDeliveryFidelity {
+impl CompiledContextDeliveryFidelity {
     pub fn satisfies(self, minimum: Self) -> bool {
         matches!(
             (self, minimum),
@@ -85,17 +90,17 @@ impl InitialContextDeliveryFidelity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InitialContextContributionApplicationEvidence {
+pub struct CompiledContextContributionApplication {
     pub kind: String,
-    pub fidelity: InitialContextDeliveryFidelity,
+    pub fidelity: CompiledContextDeliveryFidelity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InitialContextApplicationEvidence {
+pub struct CompiledContextApplication {
     pub package_id: Uuid,
     pub package_digest: String,
-    pub fidelity: InitialContextDeliveryFidelity,
-    pub contribution_fidelity: Vec<InitialContextContributionApplicationEvidence>,
+    pub fidelity: CompiledContextDeliveryFidelity,
+    pub contribution_fidelity: Vec<CompiledContextContributionApplication>,
     pub renderer_version: Option<String>,
     pub materialized_digest: Option<String>,
 }
@@ -111,7 +116,7 @@ pub struct RuntimeForkPhaseEvidence {
     pub child: Option<RuntimeAgentChildIdentity>,
     pub host_binding: Option<String>,
     pub child_history_digest: Option<String>,
-    pub context: Option<InitialContextApplicationEvidence>,
+    pub context: Option<CompiledContextApplication>,
     pub receipt: String,
 }
 
@@ -125,7 +130,188 @@ pub struct ProductGraphCommitEvidence {
     pub runtime_child: RuntimeAgentChildIdentity,
     pub host_binding: String,
     pub child_history_digest: String,
+    pub payload_digest: String,
     pub commit_revision: u64,
+}
+
+/// Product graph 的 immutable transaction payload。
+///
+/// W8 PostgreSQL adapter 直接从这里写入 LifecycleRun、LifecycleAgent、AgentFrame 与
+/// AgentRunLineage，并与 transitioned saga revision 在同一个 transaction 中提交。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreparedAgentRunForkGraph {
+    request_id: AgentRunForkRequestId,
+    agent_run_id: Uuid,
+    child_run: LifecycleRun,
+    child_agent: LifecycleAgent,
+    child_frame: AgentFrame,
+    lineage: AgentRunLineage,
+    presentation_thread_id: String,
+    runtime_child: RuntimeAgentChildIdentity,
+    host_binding: String,
+    child_history_digest: String,
+    payload_digest: String,
+}
+
+impl PreparedAgentRunForkGraph {
+    pub fn prepare(
+        saga: &AgentRunForkSaga,
+        graph: AgentRunForkGraph,
+    ) -> Result<Self, AgentRunForkSagaError> {
+        if saga.phase != AgentRunForkSagaPhase::RuntimeProvisioned {
+            return Err(AgentRunForkSagaError::ProductGraphOutOfOrder);
+        }
+        let runtime_child = saga
+            .runtime_child
+            .clone()
+            .ok_or(AgentRunForkSagaError::ProductGraphOutOfOrder)?;
+        let host_binding = saga
+            .host_binding
+            .clone()
+            .ok_or(AgentRunForkSagaError::ProductGraphOutOfOrder)?;
+        let child_history_digest = saga
+            .child_history_digest
+            .clone()
+            .ok_or(AgentRunForkSagaError::ProductGraphOutOfOrder)?;
+        let mut prepared = Self {
+            request_id: saga.request_id.clone(),
+            agent_run_id: saga.child.agent_run_id,
+            child_run: graph.child_run,
+            child_agent: graph.child_agent,
+            child_frame: graph.child_frame,
+            lineage: graph.lineage,
+            presentation_thread_id: saga.child.presentation_thread_id.clone(),
+            runtime_child,
+            host_binding,
+            child_history_digest,
+            payload_digest: String::new(),
+        };
+        prepared.validate_identities(saga)?;
+        prepared.payload_digest = prepared.calculate_digest();
+        Ok(prepared)
+    }
+
+    pub fn validate_for_saga(&self, saga: &AgentRunForkSaga) -> Result<(), AgentRunForkSagaError> {
+        self.validate_identities(saga)?;
+        if self.payload_digest != self.calculate_digest() {
+            return Err(AgentRunForkSagaError::PreparedGraphDigestMismatch);
+        }
+        Ok(())
+    }
+
+    pub fn validate_for_saga_transition(
+        &self,
+        saga: &AgentRunForkSaga,
+    ) -> Result<(), AgentRunForkSagaError> {
+        self.validate_identities(saga)?;
+        if saga.phase != AgentRunForkSagaPhase::ProductGraphCommitted
+            || saga
+                .graph_commit
+                .as_ref()
+                .is_none_or(|evidence| evidence.payload_digest != self.payload_digest)
+            || self.payload_digest != self.calculate_digest()
+        {
+            return Err(AgentRunForkSagaError::PreparedGraphDigestMismatch);
+        }
+        Ok(())
+    }
+
+    pub fn commit_evidence(&self, commit_revision: u64) -> ProductGraphCommitEvidence {
+        ProductGraphCommitEvidence {
+            agent_run_id: self.agent_run_id,
+            child_run_id: self.child_run.id,
+            child_agent_id: self.child_agent.id,
+            child_frame_id: self.child_frame.id,
+            presentation_thread_id: self.presentation_thread_id.clone(),
+            runtime_child: self.runtime_child.clone(),
+            host_binding: self.host_binding.clone(),
+            child_history_digest: self.child_history_digest.clone(),
+            payload_digest: self.payload_digest.clone(),
+            commit_revision,
+        }
+    }
+
+    pub fn graph(&self) -> AgentRunForkGraph {
+        AgentRunForkGraph {
+            child_run: self.child_run.clone(),
+            child_agent: self.child_agent.clone(),
+            child_frame: self.child_frame.clone(),
+            lineage: self.lineage.clone(),
+        }
+    }
+
+    pub fn request_id(&self) -> &AgentRunForkRequestId {
+        &self.request_id
+    }
+
+    pub fn agent_run_id(&self) -> Uuid {
+        self.agent_run_id
+    }
+
+    pub fn presentation_thread_id(&self) -> &str {
+        &self.presentation_thread_id
+    }
+
+    pub fn runtime_child(&self) -> &RuntimeAgentChildIdentity {
+        &self.runtime_child
+    }
+
+    pub fn host_binding(&self) -> &str {
+        &self.host_binding
+    }
+
+    pub fn child_history_digest(&self) -> &str {
+        &self.child_history_digest
+    }
+
+    pub fn payload_digest(&self) -> &str {
+        &self.payload_digest
+    }
+
+    fn validate_identities(&self, saga: &AgentRunForkSaga) -> Result<(), AgentRunForkSagaError> {
+        if !matches!(
+            saga.phase,
+            AgentRunForkSagaPhase::RuntimeProvisioned
+                | AgentRunForkSagaPhase::ProductGraphCommitted
+        ) || self.request_id != saga.request_id
+            || self.agent_run_id != saga.child.agent_run_id
+            || self.child_run.id != saga.child.run_id
+            || self.child_agent.id != saga.child.agent_id
+            || self.child_agent.run_id != saga.child.run_id
+            || self.child_agent.project_id != self.child_run.project_id
+            || self.child_frame.id != saga.child.frame_id
+            || self.child_frame.agent_id != saga.child.agent_id
+            || self.lineage.parent_run_id != saga.parent.run_id
+            || self.lineage.parent_agent_id != saga.parent.agent_id
+            || self.lineage.child_run_id != saga.child.run_id
+            || self.lineage.child_agent_id != saga.child.agent_id
+            || self.lineage.child_frame_id != Some(saga.child.frame_id)
+            || self.presentation_thread_id != saga.child.presentation_thread_id
+            || Some(&self.runtime_child) != saga.runtime_child.as_ref()
+            || Some(self.host_binding.as_str()) != saga.host_binding.as_deref()
+            || Some(self.child_history_digest.as_str()) != saga.child_history_digest.as_deref()
+        {
+            return Err(AgentRunForkSagaError::PreparedGraphIdentityMismatch);
+        }
+        Ok(())
+    }
+
+    fn calculate_digest(&self) -> String {
+        let canonical = serde_json::to_vec(&(
+            &self.request_id,
+            self.agent_run_id,
+            &self.child_run,
+            &self.child_agent,
+            &self.child_frame,
+            &self.lineage,
+            &self.presentation_thread_id,
+            &self.runtime_child,
+            &self.host_binding,
+            &self.child_history_digest,
+        ))
+        .expect("prepared AgentRun fork graph must serialize");
+        format!("sha256:{:x}", Sha256::digest(canonical))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,7 +353,7 @@ pub struct AgentRunForkSaga {
     host_binding: Option<String>,
     child_history_digest: Option<String>,
     required_initial_context: Option<RequiredInitialContextEvidence>,
-    initial_context_evidence: Option<InitialContextApplicationEvidence>,
+    initial_context_evidence: Option<CompiledContextApplication>,
     receipts: AgentRunForkSagaReceipts,
     graph_commit: Option<ProductGraphCommitEvidence>,
     failed: Option<AgentRunForkFailure>,
@@ -216,6 +402,10 @@ pub enum AgentRunForkSagaError {
     ChildHistoryDigestDrift,
     #[error("product graph commit does not match the preallocated child")]
     ProductGraphIdentityMismatch,
+    #[error("prepared product graph does not match the saga identities")]
+    PreparedGraphIdentityMismatch,
+    #[error("prepared product graph payload digest does not match its immutable rows")]
+    PreparedGraphDigestMismatch,
     #[error("product graph can only be committed after runtime provisioning")]
     ProductGraphOutOfOrder,
     #[error("saga can only succeed after runtime activation")]
@@ -329,7 +519,7 @@ impl AgentRunForkSaga {
         self.durable_runtime_dispatch.as_ref()
     }
 
-    pub fn initial_context_evidence(&self) -> Option<&InitialContextApplicationEvidence> {
+    pub fn initial_context_evidence(&self) -> Option<&CompiledContextApplication> {
         self.initial_context_evidence.as_ref()
     }
 
@@ -483,6 +673,7 @@ impl AgentRunForkSaga {
             || Some(&evidence.runtime_child) != self.runtime_child.as_ref()
             || Some(evidence.host_binding.as_str()) != self.host_binding.as_deref()
             || Some(evidence.child_history_digest.as_str()) != self.child_history_digest.as_deref()
+            || evidence.payload_digest.trim().is_empty()
         {
             return Err(AgentRunForkSagaError::ProductGraphIdentityMismatch);
         }
@@ -620,7 +811,7 @@ impl AgentRunForkSaga {
 
     fn ensure_initial_context_evidence(
         &self,
-        current: Option<&InitialContextApplicationEvidence>,
+        current: Option<&CompiledContextApplication>,
     ) -> Result<(), AgentRunForkSagaError> {
         let Some(required) = &self.required_initial_context else {
             return Ok(());
@@ -629,7 +820,7 @@ impl AgentRunForkSaga {
         if applied.is_some_and(|applied| {
             applied.package_id == required.package_id
                 && applied.package_digest == required.package_digest
-                && applied.fidelity != InitialContextDeliveryFidelity::Unsupported
+                && applied.fidelity != CompiledContextDeliveryFidelity::Unsupported
         }) {
             Ok(())
         } else {
@@ -648,6 +839,10 @@ pub enum AgentRunForkSagaRepositoryError {
     Conflict { expected: u64, actual: u64 },
     #[error("fork saga repository unavailable: {0}")]
     Unavailable(String),
+    #[error("prepared product graph payload conflicts with the committed request")]
+    GraphPayloadConflict,
+    #[error("prepared product graph payload is invalid: {0}")]
+    InvalidGraphPayload(String),
 }
 
 #[async_trait]
@@ -678,6 +873,7 @@ pub trait AgentRunForkSagaRepository: Send + Sync {
         &self,
         expected_version: u64,
         saga: AgentRunForkSaga,
+        graph: PreparedAgentRunForkGraph,
     ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError>;
 }
 
@@ -704,8 +900,25 @@ pub const AGENT_RUN_FORK_SAGA_SCHEMA_CONTRACT: AgentRunForkSagaSchemaContract =
 
 #[cfg(test)]
 #[derive(Default)]
+struct RecordingAgentRunForkSagaState {
+    sagas: HashMap<AgentRunForkRequestId, AgentRunForkSaga>,
+    graphs: HashMap<AgentRunForkRequestId, PreparedAgentRunForkGraph>,
+}
+
+#[cfg(test)]
+#[derive(Default)]
 pub(super) struct RecordingAgentRunForkSagaRepository {
-    sagas: Arc<Mutex<HashMap<AgentRunForkRequestId, AgentRunForkSaga>>>,
+    state: Arc<Mutex<RecordingAgentRunForkSagaState>>,
+}
+
+#[cfg(test)]
+impl RecordingAgentRunForkSagaRepository {
+    async fn load_graph(
+        &self,
+        request_id: &AgentRunForkRequestId,
+    ) -> Option<PreparedAgentRunForkGraph> {
+        self.state.lock().await.graphs.get(request_id).cloned()
+    }
 }
 
 #[cfg(test)]
@@ -715,12 +928,12 @@ impl AgentRunForkSagaRepository for RecordingAgentRunForkSagaRepository {
         &self,
         mut saga: AgentRunForkSaga,
     ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError> {
-        let mut sagas = self.sagas.lock().await;
-        if sagas.contains_key(&saga.request_id) {
+        let mut state = self.state.lock().await;
+        if state.sagas.contains_key(&saga.request_id) {
             return Err(AgentRunForkSagaRepositoryError::AlreadyExists);
         }
         saga.version = 1;
-        sagas.insert(saga.request_id.clone(), saga.clone());
+        state.sagas.insert(saga.request_id.clone(), saga.clone());
         Ok(saga)
     }
 
@@ -728,7 +941,7 @@ impl AgentRunForkSagaRepository for RecordingAgentRunForkSagaRepository {
         &self,
         request_id: &AgentRunForkRequestId,
     ) -> Result<Option<AgentRunForkSaga>, AgentRunForkSagaRepositoryError> {
-        Ok(self.sagas.lock().await.get(request_id).cloned())
+        Ok(self.state.lock().await.sagas.get(request_id).cloned())
     }
 
     async fn save(
@@ -736,8 +949,9 @@ impl AgentRunForkSagaRepository for RecordingAgentRunForkSagaRepository {
         expected_version: u64,
         mut saga: AgentRunForkSaga,
     ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError> {
-        let mut sagas = self.sagas.lock().await;
-        let current = sagas
+        let mut state = self.state.lock().await;
+        let current = state
+            .sagas
             .get(&saga.request_id)
             .ok_or(AgentRunForkSagaRepositoryError::NotFound)?;
         if current.version != expected_version {
@@ -747,16 +961,43 @@ impl AgentRunForkSagaRepository for RecordingAgentRunForkSagaRepository {
             });
         }
         saga.version = expected_version + 1;
-        sagas.insert(saga.request_id.clone(), saga.clone());
+        state.sagas.insert(saga.request_id.clone(), saga.clone());
         Ok(saga)
     }
 
     async fn commit_product_graph(
         &self,
         expected_version: u64,
-        saga: AgentRunForkSaga,
+        mut saga: AgentRunForkSaga,
+        graph: PreparedAgentRunForkGraph,
     ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError> {
-        self.save(expected_version, saga).await
+        let mut state = self.state.lock().await;
+        let current = state
+            .sagas
+            .get(&saga.request_id)
+            .ok_or(AgentRunForkSagaRepositoryError::NotFound)?;
+        if let Some(committed) = state.graphs.get(&saga.request_id) {
+            if committed.payload_digest != graph.payload_digest {
+                return Err(AgentRunForkSagaRepositoryError::GraphPayloadConflict);
+            }
+            graph.validate_for_saga_transition(&saga).map_err(|error| {
+                AgentRunForkSagaRepositoryError::InvalidGraphPayload(error.to_string())
+            })?;
+            return Ok(current.clone());
+        }
+        graph.validate_for_saga_transition(&saga).map_err(|error| {
+            AgentRunForkSagaRepositoryError::InvalidGraphPayload(error.to_string())
+        })?;
+        if current.version != expected_version {
+            return Err(AgentRunForkSagaRepositoryError::Conflict {
+                expected: expected_version,
+                actual: current.version,
+            });
+        }
+        saga.version = expected_version + 1;
+        state.graphs.insert(saga.request_id.clone(), graph);
+        state.sagas.insert(saga.request_id.clone(), saga.clone());
+        Ok(saga)
     }
 }
 
@@ -782,7 +1023,7 @@ pub trait AgentRunForkProductGraphPort: Send + Sync {
     async fn prepare_child_graph_commit(
         &self,
         saga: &AgentRunForkSaga,
-    ) -> Result<ProductGraphCommitEvidence, String>;
+    ) -> Result<PreparedAgentRunForkGraph, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -850,8 +1091,8 @@ impl<'a> AgentRunForkSagaWorker<'a> {
                 saga.record_runtime_outcome(identity, outcome)?;
             }
             AgentRunForkSagaStep::CommitProductGraph => {
-                let evidence = match self.product_graph.prepare_child_graph_commit(&saga).await {
-                    Ok(evidence) => evidence,
+                let graph = match self.product_graph.prepare_child_graph_commit(&saga).await {
+                    Ok(graph) => graph,
                     Err(reason) if saga.runtime_child.is_some() => {
                         let expected_version = saga.version;
                         saga.mark_known_child_lost(reason.clone())?;
@@ -862,11 +1103,13 @@ impl<'a> AgentRunForkSagaWorker<'a> {
                         return Err(AgentRunForkSagaWorkerError::ProductGraph(reason));
                     }
                 };
+                graph.validate_for_saga(&saga)?;
+                let evidence = graph.commit_evidence(saga.version + 1);
                 let expected_version = saga.version;
                 saga.record_product_graph_commit(evidence)?;
                 return Ok(self
                     .repository
-                    .commit_product_graph(expected_version, saga)
+                    .commit_product_graph(expected_version, saga, graph)
                     .await?);
             }
             AgentRunForkSagaStep::MarkSucceeded => saga.mark_succeeded()?,
@@ -1014,8 +1257,43 @@ mod tests {
             runtime_child: saga.runtime_child.clone().expect("runtime child"),
             host_binding: saga.host_binding.clone().expect("host binding"),
             child_history_digest: saga.child_history_digest.clone().expect("history digest"),
+            payload_digest: "sha256:prepared-graph".to_owned(),
             commit_revision: 1,
         }
+    }
+
+    fn prepared_graph(saga: &AgentRunForkSaga) -> PreparedAgentRunForkGraph {
+        let project_id = Uuid::new_v4();
+        let mut child_run = LifecycleRun::new_plain(project_id);
+        child_run.id = saga.child.run_id;
+        let mut child_agent =
+            LifecycleAgent::new_root(saga.child.run_id, project_id, AgentSource::Subagent);
+        child_agent.id = saga.child.agent_id;
+        let mut child_frame = AgentFrame::new_revision(saga.child.agent_id, 1, "agent_run_fork");
+        child_frame.id = saga.child.frame_id;
+        let lineage = AgentRunLineage::new_fork(
+            saga.parent.run_id,
+            saga.parent.agent_id,
+            saga.child.run_id,
+            saga.child.agent_id,
+            None,
+            Some(serde_json::json!({
+                "through_turn_id": saga.parent.through_turn_id,
+            })),
+            "tester",
+            None,
+        )
+        .with_frame_baseline(Uuid::new_v4(), 1, saga.child.frame_id, child_frame.revision);
+        PreparedAgentRunForkGraph::prepare(
+            saga,
+            AgentRunForkGraph {
+                child_run,
+                child_agent,
+                child_frame,
+                lineage,
+            },
+        )
+        .expect("prepared graph")
     }
 
     fn apply_runtime(saga: &mut AgentRunForkSaga) {
@@ -1266,9 +1544,104 @@ mod tests {
         async fn prepare_child_graph_commit(
             &self,
             saga: &AgentRunForkSaga,
-        ) -> Result<ProductGraphCommitEvidence, String> {
-            Ok(graph_evidence(saga))
+        ) -> Result<PreparedAgentRunForkGraph, String> {
+            Ok(prepared_graph(saga))
         }
+    }
+
+    async fn persisted_runtime_provisioned(
+        repository: &RecordingAgentRunForkSagaRepository,
+    ) -> AgentRunForkSaga {
+        let created = repository.create(saga()).await.expect("create");
+        let mut provisioned = created.clone();
+        apply_runtime(&mut provisioned);
+        apply_runtime(&mut provisioned);
+        apply_runtime(&mut provisioned);
+        repository
+            .save(created.version, provisioned)
+            .await
+            .expect("persist provisioned")
+    }
+
+    fn transitioned_graph_commit(
+        provisioned: &AgentRunForkSaga,
+        graph: &PreparedAgentRunForkGraph,
+    ) -> AgentRunForkSaga {
+        let mut transitioned = provisioned.clone();
+        transitioned
+            .record_product_graph_commit(graph.commit_evidence(provisioned.version + 1))
+            .expect("transition graph commit");
+        transitioned
+    }
+
+    #[tokio::test]
+    async fn graph_and_saga_commit_are_atomic_cas_and_idempotent() {
+        let repository = RecordingAgentRunForkSagaRepository::default();
+        let provisioned = persisted_runtime_provisioned(&repository).await;
+        let graph = prepared_graph(&provisioned);
+        let transitioned = transitioned_graph_commit(&provisioned, &graph);
+
+        assert!(
+            repository
+                .load_graph(provisioned.request_id())
+                .await
+                .is_none()
+        );
+
+        assert!(matches!(
+            repository
+                .commit_product_graph(provisioned.version - 1, transitioned.clone(), graph.clone(),)
+                .await,
+            Err(AgentRunForkSagaRepositoryError::Conflict { .. })
+        ));
+        assert!(
+            repository
+                .load_graph(provisioned.request_id())
+                .await
+                .is_none()
+        );
+        assert_eq!(
+            repository
+                .load(provisioned.request_id())
+                .await
+                .expect("load")
+                .expect("saga")
+                .phase(),
+            AgentRunForkSagaPhase::RuntimeProvisioned
+        );
+
+        let committed = repository
+            .commit_product_graph(provisioned.version, transitioned.clone(), graph.clone())
+            .await
+            .expect("commit graph and saga");
+        assert_eq!(
+            committed.phase(),
+            AgentRunForkSagaPhase::ProductGraphCommitted
+        );
+        assert_eq!(
+            repository
+                .load_graph(provisioned.request_id())
+                .await
+                .expect("graph")
+                .payload_digest,
+            graph.payload_digest
+        );
+
+        let replayed = repository
+            .commit_product_graph(provisioned.version, transitioned.clone(), graph.clone())
+            .await
+            .expect("idempotent replay");
+        assert_eq!(replayed, committed);
+
+        let mut conflicting = graph;
+        conflicting.child_run.created_by_user_id = "different-owner".to_owned();
+        conflicting.payload_digest = conflicting.calculate_digest();
+        assert_eq!(
+            repository
+                .commit_product_graph(provisioned.version, transitioned, conflicting)
+                .await,
+            Err(AgentRunForkSagaRepositoryError::GraphPayloadConflict)
+        );
     }
 
     #[tokio::test]
@@ -1477,7 +1850,7 @@ mod tests {
         async fn prepare_child_graph_commit(
             &self,
             _saga: &AgentRunForkSaga,
-        ) -> Result<ProductGraphCommitEvidence, String> {
+        ) -> Result<PreparedAgentRunForkGraph, String> {
             Err("Runtime child mapping could not be committed".to_owned())
         }
     }

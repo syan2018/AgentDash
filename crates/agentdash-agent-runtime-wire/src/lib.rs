@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 4;
+pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 3;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn unknown_critical_frame_is_a_protocol_violation() {
         let error = decode_frame(
-            br#"{"protocol_revision":4,"frame_id":7,"critical":true,"frame":{"kind":"future_control","payload":{}}}"#,
+            br#"{"protocol_revision":3,"frame_id":7,"critical":true,"frame":{"kind":"future_control","payload":{}}}"#,
         )
         .expect_err("critical frame must fail");
         assert!(matches!(
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn unknown_non_critical_frame_can_be_ignored() {
         let decoded = decode_frame(
-            br#"{"protocol_revision":4,"frame_id":7,"critical":false,"frame":{"kind":"future_hint","payload":{}}}"#,
+            br#"{"protocol_revision":3,"frame_id":7,"critical":false,"frame":{"kind":"future_hint","payload":{}}}"#,
         )
         .expect("non-critical frame may be ignored");
         assert!(matches!(

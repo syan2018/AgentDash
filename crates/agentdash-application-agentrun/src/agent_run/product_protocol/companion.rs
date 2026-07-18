@@ -1,7 +1,13 @@
 #[cfg(test)]
 use std::{collections::HashMap, sync::Arc};
 
-use agentdash_agent_runtime_contract::{RuntimeOperationId, RuntimeThreadId, RuntimeTurnId};
+use agentdash_agent_runtime_contract::{
+    ManagedRuntimeSourceBindingEvidence, RuntimeOperationId, RuntimeThreadId, RuntimeTurnId,
+};
+#[cfg(test)]
+use agentdash_agent_runtime_contract::{
+    RuntimeProjectionRevision, RuntimeSourceRef, SurfaceRevision,
+};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -538,6 +544,13 @@ pub struct CompanionFreshReceipts {
 pub struct CompanionFreshLost {
     pub identity: CompanionFreshOperationIdentity,
     pub known_child_runtime_thread_id: RuntimeThreadId,
+    pub child_binding: Option<ManagedRuntimeSourceBindingEvidence>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompanionFreshFailure {
+    pub identity: CompanionFreshOperationIdentity,
     pub reason: String,
 }
 
@@ -545,11 +558,13 @@ pub struct CompanionFreshLost {
 pub enum CompanionFreshEffectEvidence {
     Created {
         child_runtime_thread_id: RuntimeThreadId,
+        child_binding: ManagedRuntimeSourceBindingEvidence,
         context: CompiledContextApplication,
         receipt: AcceptedRuntimeOperation,
     },
     Activated {
         child_runtime_thread_id: RuntimeThreadId,
+        child_binding: ManagedRuntimeSourceBindingEvidence,
         receipt: AcceptedRuntimeOperation,
     },
     FirstInputSubmitted {
@@ -563,6 +578,7 @@ pub enum CompanionFreshEffectOutcome {
     Accepted(AcceptedRuntimeOperation),
     Applied(CompanionFreshEffectEvidence),
     Unknown,
+    Failed { reason: String },
     Lost { reason: String },
 }
 
@@ -581,8 +597,10 @@ pub struct CompanionFreshSaga {
     phase: CompanionFreshPhase,
     version: u64,
     durable_dispatch: Option<CompanionFreshDurableDispatch>,
+    child_binding: Option<ManagedRuntimeSourceBindingEvidence>,
     context_evidence: Option<CompiledContextApplication>,
     receipts: CompanionFreshReceipts,
+    failed: Option<CompanionFreshFailure>,
     lost: Option<CompanionFreshLost>,
 }
 
@@ -598,8 +616,18 @@ pub enum CompanionFreshSagaError {
     EffectIdentityDrift,
     #[error("fresh Companion child identity drifted")]
     ChildIdentityDrift,
+    #[error("fresh Companion Runtime child binding drifted")]
+    RuntimeBindingDrift,
+    #[error("a known fresh Companion child cannot terminalize as a clean failure")]
+    KnownChildCannotFail,
     #[error("fresh Companion Runtime receipt does not match the pending operation")]
     RuntimeReceiptIdentityDrift,
+    #[error(
+        "persisted fresh Companion saga version mismatch: expected {expected}, actual {actual}"
+    )]
+    PersistedVersionMismatch { expected: u64, actual: u64 },
+    #[error("persisted fresh Companion saga version overflow")]
+    PersistedVersionOverflow,
     #[error(transparent)]
     Preparation(#[from] CompanionTargetPlanError),
 }
@@ -621,18 +649,24 @@ impl CompanionFreshSaga {
             phase: CompanionFreshPhase::Requested,
             version: 0,
             durable_dispatch: None,
+            child_binding: None,
             context_evidence: None,
             receipts: CompanionFreshReceipts {
                 create: None,
                 activation: None,
                 first_input: None,
             },
+            failed: None,
             lost: None,
         })
     }
 
     pub fn request_id(&self) -> &CompanionFreshRequestId {
         &self.identities.request_id
+    }
+
+    pub fn identities(&self) -> &CompanionFreshStableIdentities {
+        &self.identities
     }
 
     pub fn runtime_thread_id(&self) -> &RuntimeThreadId {
@@ -651,8 +685,37 @@ impl CompanionFreshSaga {
         self.version
     }
 
+    /// Advances only the repository-owned persisted revision after compare-and-set.
+    pub fn advance_persisted_version(
+        mut self,
+        expected: u64,
+    ) -> Result<Self, CompanionFreshSagaError> {
+        if self.version != expected {
+            return Err(CompanionFreshSagaError::PersistedVersionMismatch {
+                expected,
+                actual: self.version,
+            });
+        }
+        self.version = expected
+            .checked_add(1)
+            .ok_or(CompanionFreshSagaError::PersistedVersionOverflow)?;
+        Ok(self)
+    }
+
     pub fn context_evidence(&self) -> Option<&CompiledContextApplication> {
         self.context_evidence.as_ref()
+    }
+
+    pub fn child_binding(&self) -> Option<&ManagedRuntimeSourceBindingEvidence> {
+        self.child_binding.as_ref()
+    }
+
+    pub fn durable_dispatch(&self) -> Option<&CompanionFreshDurableDispatch> {
+        self.durable_dispatch.as_ref()
+    }
+
+    pub fn failure(&self) -> Option<&CompanionFreshFailure> {
+        self.failed.as_ref()
     }
 
     pub fn receipts(&self) -> &CompanionFreshReceipts {
@@ -660,7 +723,10 @@ impl CompanionFreshSaga {
     }
 
     pub fn next_step(&self) -> CompanionFreshStep {
-        if self.lost.is_some() || self.phase == CompanionFreshPhase::Succeeded {
+        if self.failed.is_some()
+            || self.lost.is_some()
+            || self.phase == CompanionFreshPhase::Succeeded
+        {
             return CompanionFreshStep::Terminal;
         }
         if let Some(dispatch) = &self.durable_dispatch {
@@ -697,7 +763,10 @@ impl CompanionFreshSaga {
         identity: CompanionFreshOperationIdentity,
         outcome: CompanionFreshEffectOutcome,
     ) -> Result<(), CompanionFreshSagaError> {
-        if self.lost.is_some() || self.phase == CompanionFreshPhase::Succeeded {
+        if self.failed.is_some()
+            || self.lost.is_some()
+            || self.phase == CompanionFreshPhase::Succeeded
+        {
             return Err(CompanionFreshSagaError::Terminal);
         }
         if self
@@ -711,6 +780,13 @@ impl CompanionFreshSaga {
         }
         match outcome {
             CompanionFreshEffectOutcome::Unknown => {}
+            CompanionFreshEffectOutcome::Failed { reason } => {
+                if self.child_binding.is_some() {
+                    return Err(CompanionFreshSagaError::KnownChildCannotFail);
+                }
+                self.failed = Some(CompanionFreshFailure { identity, reason });
+                self.durable_dispatch = None;
+            }
             CompanionFreshEffectOutcome::Accepted(receipt) => {
                 self.ensure_receipt_identity(&receipt)?;
                 match identity.operation {
@@ -729,6 +805,7 @@ impl CompanionFreshSaga {
                 self.lost = Some(CompanionFreshLost {
                     identity,
                     known_child_runtime_thread_id: self.identities.runtime_thread_id.clone(),
+                    child_binding: self.child_binding.clone(),
                     reason,
                 });
                 self.durable_dispatch = None;
@@ -759,6 +836,7 @@ impl CompanionFreshSaga {
                 CompanionFreshOperation::CreateWithContextPackage,
                 CompanionFreshEffectEvidence::Created {
                     child_runtime_thread_id,
+                    child_binding,
                     context,
                     receipt,
                 },
@@ -772,6 +850,7 @@ impl CompanionFreshSaga {
                 )?;
                 self.ensure_child_thread(&child_runtime_thread_id)?;
                 self.ensure_receipt_identity(&receipt)?;
+                self.pin_provisioned_binding(&child_binding)?;
                 self.context_evidence = Some(context);
                 self.receipts.create = Some(receipt);
                 self.phase = CompanionFreshPhase::AgentCreated;
@@ -781,6 +860,7 @@ impl CompanionFreshSaga {
                 CompanionFreshOperation::Activate,
                 CompanionFreshEffectEvidence::Activated {
                     child_runtime_thread_id,
+                    child_binding,
                     receipt,
                 },
             ) if self.phase == CompanionFreshPhase::AgentCreated
@@ -788,6 +868,7 @@ impl CompanionFreshSaga {
             {
                 self.ensure_child_thread(&child_runtime_thread_id)?;
                 self.ensure_receipt_identity(&receipt)?;
+                self.pin_activated_binding(&child_binding)?;
                 self.receipts.activation = Some(receipt);
                 self.phase = CompanionFreshPhase::Activated;
                 Ok(())
@@ -826,6 +907,42 @@ impl CompanionFreshSaga {
         if receipt.operation_id != self.expected_identity().runtime_operation_id {
             return Err(CompanionFreshSagaError::RuntimeReceiptIdentityDrift);
         }
+        Ok(())
+    }
+
+    fn pin_provisioned_binding(
+        &mut self,
+        binding: &ManagedRuntimeSourceBindingEvidence,
+    ) -> Result<(), CompanionFreshSagaError> {
+        if binding.activated_at_revision.is_some() {
+            return Err(CompanionFreshSagaError::RuntimeBindingDrift);
+        }
+        if self.child_binding.as_ref().is_some_and(|current| {
+            current.source_ref != binding.source_ref
+                || current.committed_at_revision != binding.committed_at_revision
+                || current.applied_surface_revision != binding.applied_surface_revision
+        }) {
+            return Err(CompanionFreshSagaError::RuntimeBindingDrift);
+        }
+        self.child_binding = Some(binding.clone());
+        Ok(())
+    }
+
+    fn pin_activated_binding(
+        &mut self,
+        binding: &ManagedRuntimeSourceBindingEvidence,
+    ) -> Result<(), CompanionFreshSagaError> {
+        let Some(current) = self.child_binding.as_ref() else {
+            return Err(CompanionFreshSagaError::RuntimeBindingDrift);
+        };
+        if binding.activated_at_revision.is_none()
+            || current.source_ref != binding.source_ref
+            || current.committed_at_revision != binding.committed_at_revision
+            || current.applied_surface_revision != binding.applied_surface_revision
+        {
+            return Err(CompanionFreshSagaError::RuntimeBindingDrift);
+        }
+        self.child_binding = Some(binding.clone());
         Ok(())
     }
 
@@ -936,7 +1053,9 @@ impl CompanionFreshSagaRepository for RecordingCompanionFreshSagaRepository {
         if sagas.contains_key(saga.request_id()) {
             return Err(CompanionFreshRepositoryError::AlreadyExists);
         }
-        saga.version = 1;
+        saga = saga
+            .advance_persisted_version(0)
+            .map_err(|_| CompanionFreshRepositoryError::Conflict)?;
         sagas.insert(saga.request_id().clone(), saga.clone());
         Ok(saga)
     }
@@ -960,7 +1079,9 @@ impl CompanionFreshSagaRepository for RecordingCompanionFreshSagaRepository {
         if current.version != expected_version {
             return Err(CompanionFreshRepositoryError::Conflict);
         }
-        saga.version = expected_version + 1;
+        saga = saga
+            .advance_persisted_version(expected_version)
+            .map_err(|_| CompanionFreshRepositoryError::Conflict)?;
         sagas.insert(saga.request_id().clone(), saga.clone());
         Ok(saga)
     }
@@ -1232,6 +1353,92 @@ mod tests {
         }
     }
 
+    #[test]
+    fn repository_version_transition_is_checked_and_preserves_protocol_state() {
+        let initial =
+            CompanionFreshSaga::requested(stable_fresh_identities(), fresh_plan()).expect("saga");
+        let initial_phase = initial.phase();
+        let initial_request = initial.request_id().clone();
+
+        let persisted = initial
+            .clone()
+            .advance_persisted_version(0)
+            .expect("create 0 -> 1");
+
+        assert_eq!(persisted.version(), 1);
+        assert_eq!(persisted.phase(), initial_phase);
+        assert_eq!(persisted.request_id(), &initial_request);
+        assert_eq!(
+            persisted.clone().advance_persisted_version(0),
+            Err(CompanionFreshSagaError::PersistedVersionMismatch {
+                expected: 0,
+                actual: 1,
+            })
+        );
+        assert_eq!(
+            initial.advance_persisted_version(1),
+            Err(CompanionFreshSagaError::PersistedVersionMismatch {
+                expected: 1,
+                actual: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn persistence_accessors_expose_exact_identities_and_dispatch_without_mutating_phase() {
+        let identities = stable_fresh_identities();
+        let mut saga =
+            CompanionFreshSaga::requested(identities.clone(), fresh_plan()).expect("saga");
+        assert_eq!(saga.identities(), &identities);
+        assert!(saga.durable_dispatch().is_none());
+
+        let CompanionFreshStep::Dispatch(identity) = saga.next_step() else {
+            panic!("create");
+        };
+        let phase = saga.phase();
+        saga.mark_dispatched(identity.clone()).expect("dispatch");
+
+        assert_eq!(saga.identities(), &identities);
+        assert_eq!(
+            saga.durable_dispatch(),
+            Some(&CompanionFreshDurableDispatch { identity })
+        );
+        assert_eq!(saga.phase(), phase);
+    }
+
+    #[test]
+    fn fresh_activation_cannot_rebind_the_created_runtime_child() {
+        let mut saga =
+            CompanionFreshSaga::requested(stable_fresh_identities(), fresh_plan()).expect("saga");
+        let CompanionFreshStep::Dispatch(create) = saga.next_step() else {
+            panic!("create");
+        };
+        saga.mark_dispatched(create.clone()).expect("dispatch");
+        let created = fresh_evidence(&saga);
+        saga.record_outcome(create, CompanionFreshEffectOutcome::Applied(created))
+            .expect("created");
+
+        let CompanionFreshStep::Dispatch(activate) = saga.next_step() else {
+            panic!("activate");
+        };
+        saga.mark_dispatched(activate.clone()).expect("dispatch");
+        let mut rebound = fresh_binding(Some(4));
+        rebound.applied_surface_revision = SurfaceRevision(99);
+        let child_runtime_thread_id = saga.runtime_thread_id().clone();
+
+        assert_eq!(
+            saga.record_outcome(
+                activate.clone(),
+                CompanionFreshEffectOutcome::Applied(CompanionFreshEffectEvidence::Activated {
+                    child_runtime_thread_id,
+                    child_binding: rebound,
+                    receipt: fresh_accepted(&activate),
+                }),
+            ),
+            Err(CompanionFreshSagaError::RuntimeBindingDrift)
+        );
+    }
+
     fn map_authority(authority: CompiledContextAuthority) -> service_api::ContextAuthorityKind {
         match authority {
             CompiledContextAuthority::AgentHistory => {
@@ -1428,11 +1635,13 @@ mod tests {
         match saga.phase {
             CompanionFreshPhase::Requested => CompanionFreshEffectEvidence::Created {
                 child_runtime_thread_id,
+                child_binding: fresh_binding(None),
                 context: applied_context(&saga.plan),
                 receipt,
             },
             CompanionFreshPhase::AgentCreated => CompanionFreshEffectEvidence::Activated {
                 child_runtime_thread_id,
+                child_binding: fresh_binding(Some(4)),
                 receipt,
             },
             CompanionFreshPhase::Activated => CompanionFreshEffectEvidence::FirstInputSubmitted {
@@ -1442,6 +1651,15 @@ mod tests {
             CompanionFreshPhase::FirstInputSubmitted | CompanionFreshPhase::Succeeded => {
                 panic!("no Runtime effect")
             }
+        }
+    }
+
+    fn fresh_binding(activated_at_revision: Option<u64>) -> ManagedRuntimeSourceBindingEvidence {
+        ManagedRuntimeSourceBindingEvidence {
+            source_ref: RuntimeSourceRef::new("source:companion-child").expect("source"),
+            committed_at_revision: RuntimeProjectionRevision(2),
+            applied_surface_revision: SurfaceRevision(3),
+            activated_at_revision: activated_at_revision.map(RuntimeProjectionRevision),
         }
     }
 
@@ -2010,6 +2228,7 @@ mod tests {
             let evidence = match identity.operation {
                 AgentRunForkRuntimeOperation::Fork => RuntimeForkPhaseEvidence::ForkProvisioned {
                     child_thread_id: saga.child().runtime_thread_id.clone(),
+                    child_binding: fresh_binding(None),
                     child_history_digest:
                         agentdash_agent_runtime_contract::RuntimePayloadDigest::new(
                             "sha256:exact-child-history",
@@ -2020,6 +2239,7 @@ mod tests {
                 },
                 AgentRunForkRuntimeOperation::Activate => RuntimeForkPhaseEvidence::Activated {
                     child_thread_id: saga.child().runtime_thread_id.clone(),
+                    child_binding: fresh_binding(Some(4)),
                     context: None,
                     receipt,
                 },

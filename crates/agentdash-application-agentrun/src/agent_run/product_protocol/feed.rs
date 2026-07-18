@@ -164,6 +164,9 @@ pub fn consume_managed_runtime_snapshot(
             return Err(
                 ManagedRuntimeFeedContractError::AvailabilityRevisionMismatch {
                     command: match command {
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Create => "create",
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Resume => "resume",
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Activate => "activate",
                         agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::SubmitInput => "submit_input",
                         agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Steer => "steer",
                         agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Interrupt => "interrupt",
@@ -254,6 +257,7 @@ mod tests {
             items: Vec::new(),
             interactions: Vec::new(),
             operations: Vec::new(),
+            source_binding: None,
             authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
             fidelity: ManagedRuntimeProjectionFidelity::Exact,
             command_availability: BTreeMap::from([(
@@ -382,6 +386,32 @@ mod tests {
             consume_managed_runtime_snapshot(snapshot),
             Err(ManagedRuntimeFeedContractError::AvailabilityRevisionMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn every_managed_runtime_command_kind_has_an_explicit_availability_contract() {
+        let mut snapshot = snapshot(4);
+        snapshot.command_availability = ManagedRuntimeCommandKind::ALL
+            .into_iter()
+            .map(|command| {
+                (
+                    command,
+                    ManagedRuntimeCommandAvailability::Available {
+                        evidence: ManagedRuntimeAvailabilityEvidence {
+                            decided_at_revision: snapshot.revision,
+                            blocking_operation_id: None,
+                            bound_surface_revision: None,
+                            applied_surface_revision: None,
+                        },
+                    },
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            consume_managed_runtime_snapshot(snapshot.clone()).expect("all command kinds"),
+            snapshot
+        );
     }
 
     #[tokio::test]

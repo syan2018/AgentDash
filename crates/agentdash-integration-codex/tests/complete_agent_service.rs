@@ -32,6 +32,7 @@ struct RecordingTransport {
     responses: Mutex<VecDeque<(String, Result<Value, CodexCompleteAgentTransportError>)>>,
     observations: Mutex<VecDeque<CodexAppServerObservationPage>>,
     responses_to_server: Mutex<Vec<(Value, Value)>>,
+    server_response_results: Mutex<VecDeque<Result<(), CodexCompleteAgentTransportError>>>,
 }
 
 impl RecordingTransport {
@@ -56,6 +57,13 @@ impl RecordingTransport {
             .iter()
             .map(|(method, _)| method.clone())
             .collect()
+    }
+
+    async fn push_respond_error(&self, error: CodexCompleteAgentTransportError) {
+        self.server_response_results
+            .lock()
+            .await
+            .push_back(Err(error));
     }
 }
 
@@ -86,7 +94,11 @@ impl CodexAppServerTransport for RecordingTransport {
             .lock()
             .await
             .push((request_id, result));
-        Ok(())
+        self.server_response_results
+            .lock()
+            .await
+            .pop_front()
+            .unwrap_or(Ok(()))
     }
 
     async fn observations(
@@ -157,6 +169,47 @@ fn initial_package() -> InitialAgentContextPackage {
             std::slice::from_ref(&contribution),
         ),
         contributions: vec![contribution],
+    }
+}
+
+async fn immutable_surface_command(
+    service: &CodexCompleteAgentService,
+    source: AgentSourceCoordinate,
+    id: &str,
+) -> agentdash_agent_service_api::ApplyBoundAgentSurface {
+    let descriptor = service.describe().await.expect("descriptor");
+    agentdash_agent_service_api::ApplyBoundAgentSurface {
+        command_id: AgentCommandId::new(format!("surface-command-{id}")).expect("command"),
+        effect_id: AgentEffectIdentity::new(format!("surface-effect-{id}")).expect("effect"),
+        idempotency_key: AgentIdempotencyKey::new(format!("surface-idem-{id}"))
+            .expect("idempotency"),
+        source,
+        bound_surface: BoundAgentSurface {
+            revision: agentdash_agent_service_api::AgentSurfaceRevision(2),
+            digest: AgentSurfaceDigest::new(format!("surface-{id}")).expect("surface"),
+            offer_profile_digest: descriptor.profile_digest,
+            contributions: vec![BoundAgentSurfaceContribution {
+                key: "instruction".to_owned(),
+                required: true,
+                route: AgentSurfaceRoute::ImmutableDelivery,
+                fidelity: SemanticFidelity::Exact,
+                semantics: AgentSurfaceSemanticFacet::Instruction,
+                payload:
+                    agentdash_agent_service_api::AgentSurfaceContributionPayload::Instruction {
+                        channel: "developer".to_owned(),
+                        text: "bound instruction".to_owned(),
+                    },
+                payload_digest: AgentPayloadDigest::new(format!("sha256:instruction-{id}"))
+                    .expect("payload"),
+            }],
+        },
+        callbacks: agentdash_agent_service_api::AgentHostCallbackBinding {
+            route_id: agentdash_agent_service_api::AgentCallbackRouteId::new(format!("route-{id}"))
+                .expect("route"),
+            binding_generation: AgentBindingGeneration(7),
+            delivery: AgentSurfaceRoute::ImmutableDelivery,
+            default_deadline_ms: 1_000,
+        },
     }
 }
 
@@ -719,6 +772,296 @@ async fn unknown_create_outcome_is_inspectable_and_never_retried_with_same_effec
         .expect_err("must not retry unknown effect");
     assert_eq!(duplicate.code, AgentServiceErrorCode::Unavailable);
     assert_eq!(transport.methods().await, vec!["thread/start"]);
+}
+
+#[tokio::test]
+async fn malformed_create_and_fork_success_payloads_settle_unknown_without_retry() {
+    let create_transport = Arc::new(RecordingTransport::default());
+    create_transport
+        .push_response("thread/start", json!({}))
+        .await;
+    let create_service = service(create_transport.clone());
+    let create = CreateAgentCommand {
+        meta: meta("malformed-create"),
+        requested_source: None,
+        initial_context: None,
+    };
+    let create_effect = create.meta.effect_id.clone();
+
+    let error = create_service
+        .create(create.clone())
+        .await
+        .expect_err("malformed successful create response");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+    assert!(matches!(
+        create_service
+            .inspect(create_effect)
+            .await
+            .expect("inspect create")
+            .state,
+        AgentEffectInspectionState::Unknown
+    ));
+    create_service
+        .create(create)
+        .await
+        .expect_err("unknown create must not dispatch twice");
+    assert_eq!(create_transport.methods().await, vec!["thread/start"]);
+
+    let fork_transport = Arc::new(RecordingTransport::default());
+    let fork_service = service(fork_transport.clone());
+    let parent = create_source(&fork_service, &fork_transport).await;
+    fork_transport.push_response("thread/fork", json!({})).await;
+    let fork = ForkAgentCommand {
+        meta: meta("malformed-fork"),
+        source: parent,
+        requested_child_source: None,
+        cutoff: AgentForkPoint::Head,
+    };
+    let fork_effect = fork.meta.effect_id.clone();
+
+    let error = fork_service
+        .fork(fork.clone())
+        .await
+        .expect_err("malformed successful fork response");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+    assert!(matches!(
+        fork_service
+            .inspect(fork_effect)
+            .await
+            .expect("inspect fork")
+            .state,
+        AgentEffectInspectionState::Unknown
+    ));
+    fork_service
+        .fork(fork)
+        .await
+        .expect_err("unknown fork must not dispatch twice");
+    assert_eq!(
+        fork_transport.methods().await,
+        vec!["thread/start", "thread/fork"]
+    );
+}
+
+#[tokio::test]
+async fn malformed_surface_apply_and_revoke_settle_unknown_without_retry() {
+    let apply_transport = Arc::new(RecordingTransport::default());
+    let apply_service = service(apply_transport.clone());
+    let apply_source = create_source(&apply_service, &apply_transport).await;
+    let apply = immutable_surface_command(&apply_service, apply_source, "malformed-apply").await;
+    let apply_effect = apply.effect_id.clone();
+    apply_transport
+        .push_response("thread/resume", json!({}))
+        .await;
+
+    let error = apply_service
+        .apply_surface(apply.clone())
+        .await
+        .expect_err("malformed successful apply response");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+    assert!(matches!(
+        apply_service
+            .inspect(apply_effect)
+            .await
+            .expect("inspect apply")
+            .state,
+        AgentEffectInspectionState::Unknown
+    ));
+    apply_service
+        .apply_surface(apply)
+        .await
+        .expect_err("unknown apply must not dispatch twice");
+    assert_eq!(
+        apply_transport.methods().await,
+        vec!["thread/start", "thread/resume"]
+    );
+
+    let revoke_transport = Arc::new(RecordingTransport::default());
+    let revoke_service = service(revoke_transport.clone());
+    let revoke_source = create_source(&revoke_service, &revoke_transport).await;
+    let apply =
+        immutable_surface_command(&revoke_service, revoke_source.clone(), "before-revoke").await;
+    revoke_transport
+        .push_response("thread/resume", json!({"thread": {"id": "thread-parent"}}))
+        .await;
+    revoke_service
+        .apply_surface(apply)
+        .await
+        .expect("prepare applied surface");
+    let revoke = RevokeBoundAgentSurface {
+        command_id: AgentCommandId::new("revoke-malformed-command").expect("command"),
+        effect_id: AgentEffectIdentity::new("revoke-malformed-effect").expect("effect"),
+        idempotency_key: AgentIdempotencyKey::new("revoke-malformed-idem").expect("idempotency"),
+        binding_generation: AgentBindingGeneration(7),
+        source: revoke_source,
+        expected_revision: agentdash_agent_service_api::AgentSurfaceRevision(2),
+    };
+    let revoke_effect = revoke.effect_id.clone();
+    revoke_transport
+        .push_response("thread/resume", json!({"thread": {"id": "wrong-thread"}}))
+        .await;
+
+    let error = revoke_service
+        .revoke_surface(revoke.clone())
+        .await
+        .expect_err("mismatched successful revoke response");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+    assert!(matches!(
+        revoke_service
+            .inspect(revoke_effect)
+            .await
+            .expect("inspect revoke")
+            .state,
+        AgentEffectInspectionState::Unknown
+    ));
+    revoke_service
+        .revoke_surface(revoke)
+        .await
+        .expect_err("unknown revoke must not dispatch twice");
+    assert_eq!(
+        revoke_transport.methods().await,
+        vec!["thread/start", "thread/resume", "thread/resume"]
+    );
+}
+
+#[tokio::test]
+async fn unknown_interaction_response_outcome_enters_effect_ledger_and_is_not_retried() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone());
+    let source = create_source(&service, &transport).await;
+    transport
+        .observations
+        .lock()
+        .await
+        .push_back(CodexAppServerObservationPage {
+            observations: vec![CodexAppServerObservation::ServerRequest {
+                sequence: 3,
+                request_id: json!(44),
+                method: "item/commandExecution/requestApproval".to_owned(),
+                params: json!({
+                    "requestId": "approval-unknown",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "prompt": "approve?"
+                }),
+            }],
+            next_sequence: Some(3),
+            gap: false,
+        });
+    service
+        .changes(AgentChangesQuery {
+            source: source.clone(),
+            after: None,
+            limit: 16,
+        })
+        .await
+        .expect("interaction");
+    transport
+        .push_respond_error(CodexCompleteAgentTransportError::unavailable(
+            "response acknowledgement lost",
+            true,
+        ))
+        .await;
+    let command = AgentCommandEnvelope {
+        meta: meta("interaction-unknown"),
+        source,
+        command: AgentCommand::ResolveInteraction {
+            interaction_id: agentdash_agent_service_api::AgentInteractionId::new(
+                "approval-unknown",
+            )
+            .expect("interaction"),
+            response: agentdash_agent_service_api::AgentInteractionResponse::Approved,
+        },
+    };
+    let effect = command.meta.effect_id.clone();
+
+    service
+        .execute(command.clone())
+        .await
+        .expect_err("unknown interaction response");
+    assert!(matches!(
+        service.inspect(effect).await.expect("inspect").state,
+        AgentEffectInspectionState::Unknown
+    ));
+    service
+        .execute(command)
+        .await
+        .expect_err("unknown interaction effect must not respond twice");
+    assert_eq!(transport.responses_to_server.lock().await.len(), 1);
+}
+
+#[tokio::test]
+async fn missing_and_unknown_vendor_statuses_never_project_as_terminal() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone());
+    let source = create_source(&service, &transport).await;
+    transport
+        .push_response(
+            "thread/read",
+            json!({
+                "thread": {
+                    "id": "thread-parent",
+                    "turns": [
+                        {
+                            "id": "turn-missing",
+                            "items": [{"id": "item-missing", "type": "agentMessage", "text": "?"}]
+                        },
+                        {
+                            "id": "turn-future",
+                            "status": "futureState",
+                            "items": [{
+                                "id": "item-future",
+                                "type": "agentMessage",
+                                "text": "?",
+                                "status": "futureState"
+                            }]
+                        },
+                        {
+                            "id": "turn-completed",
+                            "status": "completed",
+                            "items": [{
+                                "id": "item-completed",
+                                "type": "agentMessage",
+                                "text": "done",
+                                "status": "completed"
+                            }]
+                        }
+                    ]
+                }
+            }),
+        )
+        .await;
+
+    let snapshot = service
+        .read(AgentReadQuery {
+            source,
+            at_revision: None,
+        })
+        .await
+        .expect("read");
+    assert_eq!(
+        snapshot.turns[0].status,
+        agentdash_agent_service_api::AgentEntityStatus::Accepted
+    );
+    assert_eq!(
+        snapshot.turns[0].items[0].status,
+        agentdash_agent_service_api::AgentEntityStatus::Accepted
+    );
+    assert_eq!(
+        snapshot.turns[1].status,
+        agentdash_agent_service_api::AgentEntityStatus::Accepted
+    );
+    assert_eq!(
+        snapshot.turns[1].items[0].status,
+        agentdash_agent_service_api::AgentEntityStatus::Accepted
+    );
+    assert_eq!(
+        snapshot.turns[2].status,
+        agentdash_agent_service_api::AgentEntityStatus::Completed
+    );
+    assert_eq!(
+        snapshot.turns[2].items[0].status,
+        agentdash_agent_service_api::AgentEntityStatus::Completed
+    );
 }
 
 #[allow(dead_code)]

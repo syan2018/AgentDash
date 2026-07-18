@@ -316,6 +316,17 @@ impl CodexCompleteAgentService {
         );
     }
 
+    async fn settle_post_dispatch_error(
+        &self,
+        effect_id: &AgentEffectIdentity,
+        command_id: &agentdash_agent_service_api::AgentCommandId,
+        error: AgentServiceError,
+    ) -> AgentServiceError {
+        self.mark_unknown(effect_id.clone(), command_id.clone())
+            .await;
+        error
+    }
+
     fn base_thread_params(&self) -> Map<String, Value> {
         let mut params = Map::new();
         params.insert(
@@ -453,15 +464,32 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 &command.meta.command_id,
             )
             .await?;
-        let source = response_thread_source(&result)?;
+        let source = match response_thread_source(&result) {
+            Ok(source) => source,
+            Err(error) => {
+                return Err(self
+                    .settle_post_dispatch_error(
+                        &command.meta.effect_id,
+                        &command.meta.command_id,
+                        error,
+                    )
+                    .await);
+            }
+        };
         if let Some(requested) = &command.requested_source
             && requested != &source
         {
-            return Err(service_error(
-                AgentServiceErrorCode::Conflict,
-                "Codex generated a source coordinate different from the requested coordinate",
-                false,
-            ));
+            return Err(self
+                .settle_post_dispatch_error(
+                    &command.meta.effect_id,
+                    &command.meta.command_id,
+                    service_error(
+                        AgentServiceErrorCode::Conflict,
+                        "Codex generated a source coordinate different from the requested coordinate",
+                        false,
+                    ),
+                )
+                .await);
         }
         let receipt = AgentCommandReceipt {
             command_id: command.meta.command_id.clone(),
@@ -511,11 +539,26 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 &command.meta.command_id,
             )
             .await?;
-        let source = response_thread_source(&result)?;
+        let source = match response_thread_source(&result) {
+            Ok(source) => source,
+            Err(error) => {
+                return Err(self
+                    .settle_post_dispatch_error(
+                        &command.meta.effect_id,
+                        &command.meta.command_id,
+                        error,
+                    )
+                    .await);
+            }
+        };
         if source != command.source {
-            return Err(protocol_violation(
-                "thread/resume returned a different source thread",
-            ));
+            return Err(self
+                .settle_post_dispatch_error(
+                    &command.meta.effect_id,
+                    &command.meta.command_id,
+                    protocol_violation("thread/resume returned a different source thread"),
+                )
+                .await);
         }
         let revision = self.next_revision(&source).await;
         let initial_context = self
@@ -584,15 +627,32 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 &command.meta.command_id,
             )
             .await?;
-        let child = response_thread_source(&result)?;
+        let child = match response_thread_source(&result) {
+            Ok(child) => child,
+            Err(error) => {
+                return Err(self
+                    .settle_post_dispatch_error(
+                        &command.meta.effect_id,
+                        &command.meta.command_id,
+                        error,
+                    )
+                    .await);
+            }
+        };
         if let Some(requested) = &command.requested_child_source
             && requested != &child
         {
-            return Err(service_error(
-                AgentServiceErrorCode::Conflict,
-                "Codex generated a child source different from the requested coordinate",
-                false,
-            ));
+            return Err(self
+                .settle_post_dispatch_error(
+                    &command.meta.effect_id,
+                    &command.meta.command_id,
+                    service_error(
+                        AgentServiceErrorCode::Conflict,
+                        "Codex generated a child source different from the requested coordinate",
+                        false,
+                    ),
+                )
+                .await);
         }
         // `thread/read` verifies that the returned child is materialized in Codex ThreadStore.
         let verified = match self
@@ -613,15 +673,26 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 return Err(map_transport_error(&error));
             }
         };
-        if response_thread_source(&verified)? != child {
-            self.mark_unknown(
-                command.meta.effect_id.clone(),
-                command.meta.command_id.clone(),
-            )
-            .await;
-            return Err(protocol_violation(
-                "thread/read verified a different fork child",
-            ));
+        let verified_child = match response_thread_source(&verified) {
+            Ok(source) => source,
+            Err(error) => {
+                return Err(self
+                    .settle_post_dispatch_error(
+                        &command.meta.effect_id,
+                        &command.meta.command_id,
+                        error,
+                    )
+                    .await);
+            }
+        };
+        if verified_child != child {
+            return Err(self
+                .settle_post_dispatch_error(
+                    &command.meta.effect_id,
+                    &command.meta.command_id,
+                    protocol_violation("thread/read verified a different fork child"),
+                )
+                .await);
         }
         let parent_state = self
             .state
@@ -731,10 +802,16 @@ impl CompleteAgentService for CodexCompleteAgentService {
                         )
                     })?;
                 let result = interaction_result(pending.interaction.kind, response)?;
-                self.transport
-                    .respond(pending.request_id, result)
-                    .await
-                    .map_err(|error| map_transport_error(&error))?;
+                if let Err(error) = self.transport.respond(pending.request_id, result).await {
+                    if error.outcome_unknown {
+                        self.mark_unknown(
+                            command.meta.effect_id.clone(),
+                            command.meta.command_id.clone(),
+                        )
+                        .await;
+                    }
+                    return Err(map_transport_error(&error));
+                }
                 if let Some(source) = self.state.write().await.sources.get_mut(&command.source) {
                     source.pending_interactions.remove(interaction_id);
                     source.revision += 1;
@@ -1052,10 +1129,22 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 &command.command_id,
             )
             .await?;
-        if response_thread_source(&result)? != command.source {
-            return Err(protocol_violation(
-                "surface application resumed a different Codex thread",
-            ));
+        let resumed_source = match response_thread_source(&result) {
+            Ok(source) => source,
+            Err(error) => {
+                return Err(self
+                    .settle_post_dispatch_error(&command.effect_id, &command.command_id, error)
+                    .await);
+            }
+        };
+        if resumed_source != command.source {
+            return Err(self
+                .settle_post_dispatch_error(
+                    &command.effect_id,
+                    &command.command_id,
+                    protocol_violation("surface application resumed a different Codex thread"),
+                )
+                .await);
         }
         let applied = AppliedAgentSurface {
             revision: command.bound_surface.revision,
@@ -1116,10 +1205,22 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 &command.command_id,
             )
             .await?;
-        if response_thread_source(&result)? != command.source {
-            return Err(protocol_violation(
-                "surface revoke resumed a different Codex thread",
-            ));
+        let resumed_source = match response_thread_source(&result) {
+            Ok(source) => source,
+            Err(error) => {
+                return Err(self
+                    .settle_post_dispatch_error(&command.effect_id, &command.command_id, error)
+                    .await);
+            }
+        };
+        if resumed_source != command.source {
+            return Err(self
+                .settle_post_dispatch_error(
+                    &command.effect_id,
+                    &command.command_id,
+                    protocol_violation("surface revoke resumed a different Codex thread"),
+                )
+                .await);
         }
         let revision = self.next_revision(&command.source).await;
         if let Some(source) = self.state.write().await.sources.get_mut(&command.source) {
@@ -1467,20 +1568,21 @@ fn interaction_result(
 }
 
 fn entity_status(value: Option<&Value>) -> AgentEntityStatus {
-    let status = value
-        .and_then(|value| {
-            value
-                .as_str()
-                .or_else(|| value.get("type").and_then(Value::as_str))
-        })
-        .unwrap_or("completed");
+    let status = value.and_then(|value| {
+        value
+            .as_str()
+            .or_else(|| value.get("type").and_then(Value::as_str))
+    });
     match status {
-        "accepted" | "pending" => AgentEntityStatus::Accepted,
-        "inProgress" | "running" => AgentEntityStatus::Running,
-        "failed" => AgentEntityStatus::Failed,
-        "interrupted" | "cancelled" => AgentEntityStatus::Interrupted,
-        "lost" => AgentEntityStatus::Lost,
-        _ => AgentEntityStatus::Completed,
+        Some("accepted" | "pending") => AgentEntityStatus::Accepted,
+        Some("inProgress" | "running") => AgentEntityStatus::Running,
+        Some("completed" | "succeeded") => AgentEntityStatus::Completed,
+        Some("failed") => AgentEntityStatus::Failed,
+        Some("interrupted" | "cancelled") => AgentEntityStatus::Interrupted,
+        Some("lost") => AgentEntityStatus::Lost,
+        // App Server projections are observed rather than authoritative. Missing or future vendor
+        // statuses must stay nonterminal until a terminal status is explicitly observed.
+        None | Some(_) => AgentEntityStatus::Accepted,
     }
 }
 

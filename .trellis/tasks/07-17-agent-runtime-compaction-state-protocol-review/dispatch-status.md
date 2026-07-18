@@ -37,7 +37,7 @@
 | Branch | `codex/agent-runtime-final-convergence-plan` |
 | Planning base | `263b990e` |
 | Current wave | Wave 2 — External Agents target lane |
-| Current checkpoint | S2 Target Domains Ready — ready to commit |
+| Current checkpoint | S3 Complete Agent Lane — in progress |
 | Production path | Current Runtime → Driver Host → Native/Codex driver |
 | Active implementation bundles | External Agents；Platform Runtime Wire support |
 | Shared hotspot owner | main dispatcher |
@@ -48,7 +48,7 @@
 | --- | --- | --- | --- |
 | S0 Baseline | committed | `32ecfd2c` | 5 AgentRun fork + 1 Native fork；Runtime 129 tests；ordinary send/reconnect；migration guard |
 | S1 Contract Freeze | committed | `09bff131` | final Service API 15 tests + clippy；Runtime admission 3；Host target 5；dependency/negative gates |
-| S2 Target Domains Ready | ready | amend pending | Platform/Runtime/Host/Dash/Core/Native target checks；W2 activation component signed；5+1 fork、ordinary send、reconnect tracers |
+| S2 Target Domains Ready | committed | `7b9f0ab4` | Platform/Runtime/Host/Dash/Core/Native target checks；W2 activation component signed；5+1 fork、ordinary send、reconnect tracers |
 | S3 Complete Agent Lane | pending | — | — |
 | S4 Product Lane Ready | pending | — | — |
 | S5 Atomic Hard Cut | pending | — | — |
@@ -123,8 +123,8 @@
   manual/automatic compaction and B/C failure/Lost recovery. AgentCore 2、Dash 72 and Native 73
   tests passed, including 12 Native Complete Agent conformance tests. Production remains on the
   current driver route.
-- S2 checked target code is frozen at candidate commit `9dc0c84b`. The W2 physical/API activation
-  set is being generated in the isolated worktree
+- S2 target code and activation artifacts are committed at `7b9f0ab4`. The W2 physical/API
+  component was generated in the isolated worktree
   `F:\Projects\AgentDash-s2-dash-activation` on branch
   `codex/agent-runtime-s2-dash-activation`; it must not change the main worktree production route.
 - The first activation candidate `265155ea513e576b11897d531fe0279903627e7e` passed the physical

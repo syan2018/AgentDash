@@ -6,7 +6,7 @@ import type {
 import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-contracts";
 import type { ProjectEventStreamEnvelope } from "../../../generated/project-contracts";
 import type { WorkspaceModulePresentation } from "../../../generated/workspace-module-contracts";
-import type { WorkspaceModulePresentationIntent } from "../../../types/agentRunProductProjections";
+import type { WorkspaceModulePresentationIntent } from "../../../generated/agent-run-product-projection-contracts";
 import {
   workspaceModulePresentationFromPlatformEventData,
   workspaceModulePresentationTabTarget,

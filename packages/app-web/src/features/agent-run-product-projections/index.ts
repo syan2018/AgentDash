@@ -13,3 +13,7 @@ export {
   projectAgentRunTerminalChanges,
   projectAgentRunTerminalSnapshot,
 } from "./model/terminalProjectionConsumer";
+export {
+  WorkspacePresentationPendingConsumer,
+  type WorkspacePresentationPendingConsumerDependencies,
+} from "./model/workspacePresentationPendingConsumer";

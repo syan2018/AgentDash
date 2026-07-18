@@ -10,7 +10,7 @@ import type {
   AgentRunTerminalSnapshot,
   WorkspaceModulePresentationChange,
   WorkspaceModulePresentationSnapshot,
-} from "../../../types/agentRunProductProjections";
+} from "../../../generated/agent-run-product-projection-contracts";
 import {
   connectProductProjectionFeed,
   type ProductProjectionFeedConnection,

@@ -1,5 +1,5 @@
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
-import type { AgentRunProjectionTarget } from "../../../types/agentRunProductProjections";
+import type { AgentRunProjectionTarget } from "../../../generated/agent-run-product-projection-contracts";
 
 export type ProductProjectionFeedLifecycle =
   | "connecting"
@@ -134,17 +134,25 @@ export function connectProductProjectionFeed<
     }
   };
 
-  const ready = (async () => {
+  const connect = async (): Promise<void> => {
     notifyLifecycle("connecting");
-    await loadSnapshot("initial");
-    if (closed) return;
-    notifyLifecycle("connected");
-    await poll();
-  })().catch((error: unknown) => {
-    if (closed) return;
-    observer.onError?.(normalizeError(error));
-    notifyLifecycle("reconnecting");
-  });
+    try {
+      await loadSnapshot(baselineLoaded ? "gap_reload" : "initial");
+      if (closed) return;
+      notifyLifecycle("connected");
+      await poll();
+    } catch (error) {
+      if (closed) return;
+      observer.onError?.(normalizeError(error));
+      notifyLifecycle("reconnecting");
+      scheduled = dependencies.schedule(() => {
+        scheduled = undefined;
+        void connect();
+      });
+    }
+  };
+
+  const ready = connect();
 
   return {
     ready,

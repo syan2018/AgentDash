@@ -18,6 +18,7 @@ import {
   connectWorkspacePresentationFeed,
   projectAgentRunTerminalChanges,
   projectAgentRunTerminalSnapshot,
+  WorkspacePresentationPendingConsumer,
 } from "../../agent-run-product-projections";
 import type {
   AgentRunWorkspaceState,
@@ -87,6 +88,7 @@ export interface AgentRunControlPlaneEffectExecutor {
   scheduleHookRuntimeRefresh: (reason: string, immediate?: boolean) => void;
   refreshAgentRunList: (reason: string) => void;
   workspacePanelOpened?: () => void;
+  workspacePanelOpenFailed?: (error: Error) => void;
 }
 
 export function applyAgentRunControlPlaneEffectPlan(
@@ -96,10 +98,14 @@ export function applyAgentRunControlPlaneEffectPlan(
   const openPlan = plan.openWorkspacePanel;
   if (openPlan?.afterWorkspaceRefresh) {
     void (async () => {
-      let workspace: AgentRunWorkspaceView | null = null;
-      if (plan.refreshWorkspaceState) {
-        workspace = await executor.refreshAgentRunWorkspaceState().catch(() => null);
-      }
+      const workspace = plan.refreshWorkspaceState
+        ? await executor.refreshAgentRunWorkspaceState().catch((error: unknown) => {
+            executor.workspacePanelOpenFailed?.(
+              error instanceof Error ? error : new Error("Workspace 刷新失败"),
+            );
+            return null;
+          })
+        : null;
       if (
         !workspace
         || !isWorkspaceModulePresentationCurrent(
@@ -107,10 +113,21 @@ export function applyAgentRunControlPlaneEffectPlan(
           workspace.workspace_modules,
         )
       ) {
+        if (workspace) {
+          executor.workspacePanelOpenFailed?.(
+            new Error("Workspace presentation currentness fence 尚未生效"),
+          );
+        }
         return;
       }
-      executor.openWorkspacePanel(openPlan.target);
-      executor.workspacePanelOpened?.();
+      try {
+        executor.openWorkspacePanel(openPlan.target);
+        executor.workspacePanelOpened?.();
+      } catch (error) {
+        executor.workspacePanelOpenFailed?.(
+          error instanceof Error ? error : new Error("Workspace 面板打开失败"),
+        );
+      }
     })();
   } else {
     if (plan.refreshWorkspaceState) {
@@ -389,6 +406,7 @@ export function useAgentRunWorkspaceControlPlane({
   const applyControlPlaneEffectPlan = useCallback((
     plan: AgentRunControlPlaneEffectPlan,
     workspacePanelOpened?: () => void,
+    workspacePanelOpenFailed?: (error: Error) => void,
   ) => {
     applyAgentRunControlPlaneEffectPlan(plan, {
       refreshAgentRunWorkspaceState,
@@ -396,6 +414,7 @@ export function useAgentRunWorkspaceControlPlane({
       scheduleHookRuntimeRefresh,
       refreshAgentRunList,
       workspacePanelOpened,
+      workspacePanelOpenFailed,
     });
   }, [
     openWorkspacePanel,
@@ -446,24 +465,27 @@ export function useAgentRunWorkspaceControlPlane({
   useEffect(() => {
     if (!currentRunId || !currentAgentId) return;
     const target = { runId: currentRunId, agentId: currentAgentId };
-    const workspacePresentationFeed = connectWorkspacePresentationFeed(target, {
-      // Snapshot 仅建立 durable cursor/currentness 基线；imperative open 只响应新 tail change。
-      onSnapshot: () => {},
-      onChanges: (changes) => {
-        for (const change of changes) {
-          if (change.status !== "pending") continue;
-          applyControlPlaneEffectPlan(
-            planWorkspaceModulePresentationIntent(change.intent),
-            () => {
-              void acknowledgeWorkspacePresentation(
-                target,
-                change.intent.intent_id,
-                change.sequence,
-              ).catch(() => {});
-            },
-          );
-        }
+    const pendingPresentationConsumer = new WorkspacePresentationPendingConsumer({
+      fulfill: (intent) =>
+        new Promise<void>((resolve, reject) => {
+          const plan = planWorkspaceModulePresentationIntent(intent);
+          if (!plan.openWorkspacePanel) {
+            reject(new Error("Workspace presentation intent 缺少可打开的 typed target"));
+            return;
+          }
+          applyControlPlaneEffectPlan(plan, resolve, reject);
+        }),
+      acknowledge: (intentId, observedChangeSequence) =>
+        acknowledgeWorkspacePresentation(target, intentId, observedChangeSequence),
+      scheduleRetry: (callback) => window.setTimeout(callback, 500),
+      cancelRetry: (handle) => window.clearTimeout(handle as number),
+      onError: (error) => {
+        console.error("Workspace presentation pending intent retry", error);
       },
+    });
+    const workspacePresentationFeed = connectWorkspacePresentationFeed(target, {
+      onSnapshot: (snapshot) => pendingPresentationConsumer.consumeSnapshot(snapshot),
+      onChanges: (changes) => pendingPresentationConsumer.consumeChanges(changes),
     });
     const terminalFeed = connectAgentRunTerminalFeed(target, {
       onSnapshot: projectAgentRunTerminalSnapshot,
@@ -472,6 +494,7 @@ export function useAgentRunWorkspaceControlPlane({
     return () => {
       workspacePresentationFeed.close();
       terminalFeed.close();
+      pendingPresentationConsumer.close();
     };
   }, [
     applyControlPlaneEffectPlan,

@@ -2,7 +2,7 @@ import type {
   AgentRunTerminalChange,
   AgentRunTerminalProjection,
   AgentRunTerminalSnapshot,
-} from "../../../types/agentRunProductProjections";
+} from "../../../generated/agent-run-product-projection-contracts";
 import { useTerminalStore } from "../../session/model/useTerminalStore";
 
 function registerTerminal(terminal: AgentRunTerminalProjection): void {

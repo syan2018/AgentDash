@@ -133,4 +133,48 @@ describe("connectProductProjectionFeed", () => {
     );
     connection.close();
   });
+
+  it("schedules a reconnect when the initial snapshot load fails", async () => {
+    const scheduled: Array<() => void> = [];
+    const fetchSnapshot = vi.fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce({
+        target: wireTarget,
+        latest_change_sequence: 4,
+        marker: "reconnected",
+      });
+    const onSnapshot = vi.fn();
+    const onError = vi.fn();
+    const connection = connectProductProjectionFeed<Snapshot, Change, Page>(
+      target,
+      { onSnapshot, onChanges: vi.fn(), onError },
+      {
+        fetchSnapshot,
+        fetchChanges: vi.fn(async () => ({
+          target: wireTarget,
+          changes: [],
+          next: 4,
+        })),
+        schedule: (callback) => {
+          scheduled.push(callback);
+          return callback;
+        },
+        cancel: vi.fn(),
+      },
+    );
+    await connection.ready;
+
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "offline" }),
+    );
+    expect(scheduled).toHaveLength(1);
+    scheduled.shift()?.();
+    await vi.waitFor(() => {
+      expect(onSnapshot).toHaveBeenCalledWith(
+        expect.objectContaining({ marker: "reconnected" }),
+        "initial",
+      );
+    });
+    connection.close();
+  });
 });

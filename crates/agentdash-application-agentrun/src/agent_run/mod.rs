@@ -163,6 +163,8 @@ pub use presentation_read_model::{
 pub use product_command::{AgentRunProductCommandClaim, AgentRunProductCommandService};
 pub use product_projection_gateway::{
     AgentRunProductProjectionError, AgentRunProductProjectionGateway,
+    AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
+    AgentRunProductRuntimeBindingRepository,
 };
 pub use project_agent_context::{
     PROJECT_AGENT_BINDING_LABEL_PREFIX, ResolvedProjectAgentContext, build_project_agent_context,

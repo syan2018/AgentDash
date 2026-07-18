@@ -23,6 +23,9 @@ use agentdash_contracts::agent_run_mailbox::{
     MailboxMessageOrigin, MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity,
     MailboxStateView, SteeringStopEffect,
 };
+use agentdash_contracts::agent_run_product_projection::{
+    AgentRunProductProjectionContractSchema, WorkspaceModulePresentationAcknowledgeRequest,
+};
 use agentdash_contracts::auth::{
     AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
     DirectoryGroupResolveResponse, DirectoryGroupSearchResponse, DirectoryResolveRequest,
@@ -783,6 +786,18 @@ fn main() {
             export_all::<WorkspaceModuleDescriptor>(dir);
             export_all::<WorkspaceModulePresentRequest>(dir);
             export_all::<WorkspaceModulePresentation>(dir);
+        },
+    );
+
+    // --- agent-run-product-projection-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "agent-run-product-projection-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<AgentRunProductProjectionContractSchema>(dir);
+            export_all::<WorkspaceModulePresentationAcknowledgeRequest>(dir);
         },
     );
 

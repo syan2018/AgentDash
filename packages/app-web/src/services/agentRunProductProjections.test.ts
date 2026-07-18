@@ -31,8 +31,13 @@ const presentationIntent = {
     runtime_item_id: "item-1",
   },
   currentness_fence: {
-    binding_id: "binding-1",
-    binding_generation: 1,
+    runtime_thread_id: "thread-1",
+    source_binding: {
+      source_ref: "source-1",
+      committed_at_revision: 1,
+      applied_surface_revision: 3,
+      activated_at_revision: 2,
+    },
     surface_revision: 3,
     module_id: "canvas:one",
     view_key: "preview",
@@ -64,7 +69,10 @@ describe("AgentRun Product projection service", () => {
       revision: 4,
       latest_change_sequence: 4,
       captured_at_ms: 10,
-      pending_intents: [presentationIntent],
+      pending_intents: [{
+        change_sequence: 4,
+        intent: presentationIntent,
+      }],
     };
     mocks.apiGetMock.mockResolvedValue(snapshot);
 
@@ -119,8 +127,12 @@ describe("AgentRun Product projection service", () => {
           terminal_owner_epoch_id: "epoch-1",
           target,
           runtime_thread_id: "thread-1",
-          binding_id: "binding-1",
-          binding_generation: 1,
+          source_binding: {
+            source_ref: "source-1",
+            committed_at_revision: 1,
+            applied_surface_revision: 3,
+            activated_at_revision: 2,
+          },
           backend_id: "backend-1",
         },
         mount_id: null,

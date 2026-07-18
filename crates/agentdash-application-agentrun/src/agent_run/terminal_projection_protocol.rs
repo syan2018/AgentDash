@@ -1,10 +1,12 @@
 use agentdash_agent_runtime_contract::{
-    RuntimeBindingId, RuntimeDriverGeneration, RuntimePayloadDigest, RuntimeThreadId,
+    ManagedRuntimeSourceBindingEvidence, RuntimePayloadDigest, RuntimeThreadId,
 };
 use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use agentdash_contracts::agent_run_product_projection as wire;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -88,6 +90,25 @@ pub struct AgentRunTerminalSourceSequence(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum AgentRunTerminalProductChangeKind {
+    BackendAvailability,
+    ControlCorrelation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentRunTerminalChangeOrigin {
+    SourceFact {
+        terminal_owner_epoch_id: AgentRunTerminalOwnerEpochId,
+        source_sequence: AgentRunTerminalSourceSequence,
+    },
+    ProductFact {
+        change_kind: AgentRunTerminalProductChangeKind,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentRunTerminalOutputStream {
     Stdout,
     Stderr,
@@ -155,8 +176,7 @@ pub struct AgentRunTerminalOwnerFence {
     pub terminal_owner_epoch_id: AgentRunTerminalOwnerEpochId,
     pub target: AgentRunRuntimeTarget,
     pub runtime_thread_id: RuntimeThreadId,
-    pub binding_id: RuntimeBindingId,
-    pub binding_generation: RuntimeDriverGeneration,
+    pub source_binding: ManagedRuntimeSourceBindingEvidence,
     pub backend_id: String,
 }
 
@@ -271,7 +291,7 @@ pub struct AgentRunTerminalChange {
     pub target: AgentRunRuntimeTarget,
     pub sequence: AgentRunTerminalChangeSequence,
     pub revision: AgentRunTerminalProjectionRevision,
-    pub source_sequence: AgentRunTerminalSourceSequence,
+    pub origin: AgentRunTerminalChangeOrigin,
     pub payload_digest: RuntimePayloadDigest,
     pub delta: AgentRunTerminalProjectionDelta,
 }
@@ -288,7 +308,7 @@ pub struct AgentRunTerminalOutboxEntry {
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunTerminalProjectionCommit {
     pub expected_revision: AgentRunTerminalProjectionRevision,
-    pub expected_source_sequence: AgentRunTerminalSourceSequence,
+    pub expected_source_sequence: Option<AgentRunTerminalSourceSequence>,
     pub expected_output_sequence: Option<AgentRunTerminalOutputSequence>,
     pub expected_terminal_state: Option<AgentRunTerminalLifecycleState>,
     pub change: AgentRunTerminalChange,
@@ -307,11 +327,6 @@ impl AgentRunTerminalProjectionCommit {
         if self.change.sequence != expected_sequence {
             return Err(AgentRunTerminalProtocolError::ChangeSequenceNotContiguous);
         }
-        let expected_source =
-            AgentRunTerminalSourceSequence(self.expected_source_sequence.0.saturating_add(1));
-        if self.change.source_sequence != expected_source {
-            return Err(AgentRunTerminalProtocolError::SourceSequenceNotContiguous);
-        }
         if self.change.target != self.change.delta.owner().target
             || self.outbox.target != self.change.target
         {
@@ -321,6 +336,51 @@ impl AgentRunTerminalProjectionCommit {
             || self.outbox.sequence != self.change.sequence
         {
             return Err(AgentRunTerminalProtocolError::OutboxMismatch);
+        }
+        let expects_source_fact = matches!(
+            self.change.delta,
+            AgentRunTerminalProjectionDelta::Registered { .. }
+                | AgentRunTerminalProjectionDelta::OutputAppended { .. }
+                | AgentRunTerminalProjectionDelta::OutputOmitted { .. }
+                | AgentRunTerminalProjectionDelta::StateChanged { .. }
+                | AgentRunTerminalProjectionDelta::Removed { .. }
+        );
+        match (&self.change.origin, self.expected_source_sequence) {
+            (
+                AgentRunTerminalChangeOrigin::SourceFact {
+                    terminal_owner_epoch_id,
+                    source_sequence,
+                },
+                Some(expected_source),
+            ) if expects_source_fact
+                && terminal_owner_epoch_id
+                    == &self.change.delta.owner().terminal_owner_epoch_id =>
+            {
+                if *source_sequence
+                    != AgentRunTerminalSourceSequence(expected_source.0.saturating_add(1))
+                {
+                    return Err(AgentRunTerminalProtocolError::SourceSequenceNotContiguous);
+                }
+            }
+            (
+                AgentRunTerminalChangeOrigin::ProductFact {
+                    change_kind: AgentRunTerminalProductChangeKind::BackendAvailability,
+                },
+                None,
+            ) if matches!(
+                self.change.delta,
+                AgentRunTerminalProjectionDelta::AvailabilityChanged { .. }
+            ) => {}
+            (
+                AgentRunTerminalChangeOrigin::ProductFact {
+                    change_kind: AgentRunTerminalProductChangeKind::ControlCorrelation,
+                },
+                None,
+            ) if matches!(
+                self.change.delta,
+                AgentRunTerminalProjectionDelta::ControlCorrelated { .. }
+            ) => {}
+            _ => return Err(AgentRunTerminalProtocolError::ChangeOriginMismatch),
         }
         match &self.change.delta {
             AgentRunTerminalProjectionDelta::OutputAppended {
@@ -394,6 +454,255 @@ pub struct AgentRunTerminalChangePage {
     pub changes: Vec<AgentRunTerminalChange>,
     pub next: AgentRunTerminalChangeSequence,
     pub gap: Option<AgentRunTerminalChangeGap>,
+}
+
+fn wire_target(target: AgentRunRuntimeTarget) -> wire::AgentRunProjectionTarget {
+    wire::AgentRunProjectionTarget {
+        run_id: target.run_id.to_string(),
+        agent_id: target.agent_id.to_string(),
+    }
+}
+
+impl From<AgentRunTerminalOwnerFence> for wire::AgentRunTerminalOwnerFence {
+    fn from(value: AgentRunTerminalOwnerFence) -> Self {
+        Self {
+            terminal_owner_epoch_id: value.terminal_owner_epoch_id.0,
+            target: wire_target(value.target),
+            runtime_thread_id: value.runtime_thread_id.to_string(),
+            source_binding: value.source_binding,
+            backend_id: value.backend_id,
+        }
+    }
+}
+
+fn wire_lifecycle(value: AgentRunTerminalLifecycleState) -> wire::AgentRunTerminalLifecycleState {
+    match value {
+        AgentRunTerminalLifecycleState::Starting => wire::AgentRunTerminalLifecycleState::Starting,
+        AgentRunTerminalLifecycleState::Running => wire::AgentRunTerminalLifecycleState::Running,
+        AgentRunTerminalLifecycleState::Exited => wire::AgentRunTerminalLifecycleState::Exited,
+        AgentRunTerminalLifecycleState::Killed => wire::AgentRunTerminalLifecycleState::Killed,
+        AgentRunTerminalLifecycleState::Lost => wire::AgentRunTerminalLifecycleState::Lost,
+    }
+}
+
+fn wire_availability(value: AgentRunTerminalAvailability) -> wire::AgentRunTerminalAvailability {
+    match value {
+        AgentRunTerminalAvailability::Online => wire::AgentRunTerminalAvailability::Online,
+        AgentRunTerminalAvailability::Offline => wire::AgentRunTerminalAvailability::Offline,
+        AgentRunTerminalAvailability::Reconciling => {
+            wire::AgentRunTerminalAvailability::Reconciling
+        }
+    }
+}
+
+impl From<AgentRunTerminalProjection> for wire::AgentRunTerminalProjection {
+    fn from(value: AgentRunTerminalProjection) -> Self {
+        Self {
+            terminal_id: value.terminal_id.0,
+            owner: value.owner.into(),
+            mount_id: value.mount_id,
+            cwd: value.cwd,
+            capability: match value.capability {
+                AgentRunTerminalCapability::Interactive => {
+                    wire::AgentRunTerminalCapability::Interactive
+                }
+                AgentRunTerminalCapability::ReadOnlyOutput => {
+                    wire::AgentRunTerminalCapability::ReadOnlyOutput
+                }
+            },
+            max_output_bytes: value.max_output_bytes,
+            state: wire_lifecycle(value.state),
+            availability: wire_availability(value.availability),
+            latest_source_sequence: value.latest_source_sequence.0,
+            exit_code: value.exit_code,
+            process_id: value.process_id,
+            created_at_ms: value.created_at_ms,
+            exited_at_ms: value.exited_at_ms,
+            output: wire::AgentRunTerminalOutputProjection {
+                next_sequence: value.output.next_sequence.0,
+                retained_output: value.output.retained_output,
+                truncated: value.output.truncated,
+                omitted_bytes: value.output.omitted_bytes,
+            },
+        }
+    }
+}
+
+impl From<AgentRunTerminalProjectionDelta> for wire::AgentRunTerminalProjectionDelta {
+    fn from(value: AgentRunTerminalProjectionDelta) -> Self {
+        match value {
+            AgentRunTerminalProjectionDelta::Registered { terminal } => Self::Registered {
+                terminal: terminal.into(),
+            },
+            AgentRunTerminalProjectionDelta::OutputAppended {
+                terminal_id,
+                owner,
+                output_sequence,
+                stream,
+                data,
+            } => Self::OutputAppended {
+                terminal_id: terminal_id.0,
+                owner: owner.into(),
+                output_sequence: output_sequence.0,
+                stream: match stream {
+                    AgentRunTerminalOutputStream::Stdout => {
+                        wire::AgentRunTerminalOutputStream::Stdout
+                    }
+                    AgentRunTerminalOutputStream::Stderr => {
+                        wire::AgentRunTerminalOutputStream::Stderr
+                    }
+                    AgentRunTerminalOutputStream::Pty => wire::AgentRunTerminalOutputStream::Pty,
+                },
+                data,
+            },
+            AgentRunTerminalProjectionDelta::OutputOmitted {
+                terminal_id,
+                owner,
+                output_sequence,
+                omitted_bytes,
+                retained_output,
+            } => Self::OutputOmitted {
+                terminal_id: terminal_id.0,
+                owner: owner.into(),
+                output_sequence: output_sequence.0,
+                omitted_bytes,
+                retained_output,
+            },
+            AgentRunTerminalProjectionDelta::StateChanged {
+                terminal_id,
+                owner,
+                state,
+                exit_code,
+                changed_at_ms,
+            } => Self::StateChanged {
+                terminal_id: terminal_id.0,
+                owner: owner.into(),
+                state: wire_lifecycle(state),
+                exit_code,
+                changed_at_ms,
+            },
+            AgentRunTerminalProjectionDelta::AvailabilityChanged {
+                terminal_id,
+                owner,
+                availability,
+                changed_at_ms,
+            } => Self::AvailabilityChanged {
+                terminal_id: terminal_id.0,
+                owner: owner.into(),
+                availability: wire_availability(availability),
+                changed_at_ms,
+            },
+            AgentRunTerminalProjectionDelta::ControlCorrelated {
+                terminal_id,
+                owner,
+                correlation_id,
+                control,
+                status,
+                diagnostic,
+            } => Self::ControlCorrelated {
+                terminal_id: terminal_id.0,
+                owner: owner.into(),
+                correlation_id: correlation_id.0,
+                control: match control {
+                    AgentRunTerminalControlKind::Input => wire::AgentRunTerminalControlKind::Input,
+                    AgentRunTerminalControlKind::Resize => {
+                        wire::AgentRunTerminalControlKind::Resize
+                    }
+                    AgentRunTerminalControlKind::Terminate => {
+                        wire::AgentRunTerminalControlKind::Terminate
+                    }
+                    AgentRunTerminalControlKind::Read => wire::AgentRunTerminalControlKind::Read,
+                    AgentRunTerminalControlKind::Status => {
+                        wire::AgentRunTerminalControlKind::Status
+                    }
+                },
+                status: match status {
+                    AgentRunTerminalControlStatus::Accepted => {
+                        wire::AgentRunTerminalControlStatus::Accepted
+                    }
+                    AgentRunTerminalControlStatus::Completed => {
+                        wire::AgentRunTerminalControlStatus::Completed
+                    }
+                    AgentRunTerminalControlStatus::Failed => {
+                        wire::AgentRunTerminalControlStatus::Failed
+                    }
+                },
+                diagnostic,
+            },
+            AgentRunTerminalProjectionDelta::Removed { terminal_id, owner } => Self::Removed {
+                terminal_id: terminal_id.0,
+                owner: owner.into(),
+            },
+        }
+    }
+}
+
+impl From<AgentRunTerminalChange> for wire::AgentRunTerminalChange {
+    fn from(value: AgentRunTerminalChange) -> Self {
+        Self {
+            change_id: value.change_id.0,
+            target: wire_target(value.target),
+            sequence: value.sequence.0,
+            revision: value.revision.0,
+            origin: match value.origin {
+                AgentRunTerminalChangeOrigin::SourceFact {
+                    terminal_owner_epoch_id,
+                    source_sequence,
+                } => wire::AgentRunTerminalChangeOrigin::SourceFact {
+                    terminal_owner_epoch_id: terminal_owner_epoch_id.0,
+                    source_sequence: source_sequence.0,
+                },
+                AgentRunTerminalChangeOrigin::ProductFact { change_kind } => {
+                    wire::AgentRunTerminalChangeOrigin::ProductFact {
+                        change_kind: match change_kind {
+                            AgentRunTerminalProductChangeKind::BackendAvailability => {
+                                wire::AgentRunTerminalProductChangeKind::BackendAvailability
+                            }
+                            AgentRunTerminalProductChangeKind::ControlCorrelation => {
+                                wire::AgentRunTerminalProductChangeKind::ControlCorrelation
+                            }
+                        },
+                    }
+                }
+            },
+            payload_digest: value.payload_digest.to_string(),
+            delta: value.delta.into(),
+        }
+    }
+}
+
+impl From<AgentRunTerminalSnapshot> for wire::AgentRunTerminalSnapshot {
+    fn from(value: AgentRunTerminalSnapshot) -> Self {
+        Self {
+            target: wire_target(value.target),
+            revision: value.revision.0,
+            latest_change_sequence: value.latest_change_sequence.0,
+            captured_at_ms: value.captured_at_ms,
+            terminals: value.terminals.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<AgentRunTerminalChangeGap> for wire::AgentRunTerminalChangeGap {
+    fn from(value: AgentRunTerminalChangeGap) -> Self {
+        Self {
+            requested_after: value.requested_after.map(|sequence| sequence.0),
+            earliest_available: value.earliest_available.0,
+            latest_available: value.latest_available.0,
+            snapshot_revision: value.snapshot_revision.0,
+        }
+    }
+}
+
+impl From<AgentRunTerminalChangePage> for wire::AgentRunTerminalChangePage {
+    fn from(value: AgentRunTerminalChangePage) -> Self {
+        Self {
+            target: wire_target(value.target),
+            changes: value.changes.into_iter().map(Into::into).collect(),
+            next: value.next.0,
+            gap: value.gap.map(Into::into),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -546,6 +855,8 @@ pub enum AgentRunTerminalProtocolError {
     ChangeSequenceNotContiguous,
     #[error("terminal source sequence is not contiguous for its owner epoch")]
     SourceSequenceNotContiguous,
+    #[error("terminal change origin does not match its source or Product delta")]
+    ChangeOriginMismatch,
     #[error("terminal owner fence differs across the atomic write set")]
     OwnerFenceMismatch,
     #[error("terminal outbox identity differs from the committed change")]
@@ -588,7 +899,7 @@ pub const AGENT_RUN_TERMINAL_PERSISTENCE_CONSTRAINTS: &[&str] = &[
     "unique(terminal_owner_epoch_id, source_sequence)",
     "unique(terminal_id, output_sequence)",
     "unique(change_id)",
-    "owner epoch, target, Runtime thread, binding, generation, and backend are immutable",
+    "owner epoch, target, Runtime thread, source binding evidence, and backend are immutable",
     "process state and backend availability are independent projection dimensions",
     "retained output uses the spawn max_output_bytes and over-cap writes emit typed OutputOmitted",
     "terminal and AgentRun retention policies own cleanup; the projection adds no hidden TTL",
@@ -609,8 +920,17 @@ mod tests {
                 agent_id: Uuid::max(),
             },
             runtime_thread_id: RuntimeThreadId::new("thread-1").expect("thread"),
-            binding_id: RuntimeBindingId::new("binding-1").expect("binding"),
-            binding_generation: RuntimeDriverGeneration(2),
+            source_binding: ManagedRuntimeSourceBindingEvidence {
+                source_ref: agentdash_agent_runtime_contract::RuntimeSourceRef::new("source-1")
+                    .expect("source"),
+                committed_at_revision: agentdash_agent_runtime_contract::RuntimeProjectionRevision(
+                    1,
+                ),
+                applied_surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(2),
+                activated_at_revision: Some(
+                    agentdash_agent_runtime_contract::RuntimeProjectionRevision(2),
+                ),
+            },
             backend_id: "backend-1".to_string(),
         }
     }
@@ -620,7 +940,7 @@ mod tests {
         let change_id = AgentRunTerminalChangeId::new("terminal-change-3").expect("change");
         AgentRunTerminalProjectionCommit {
             expected_revision: AgentRunTerminalProjectionRevision(2),
-            expected_source_sequence: AgentRunTerminalSourceSequence(6),
+            expected_source_sequence: Some(AgentRunTerminalSourceSequence(6)),
             expected_output_sequence: Some(AgentRunTerminalOutputSequence(7)),
             expected_terminal_state: None,
             change: AgentRunTerminalChange {
@@ -628,7 +948,10 @@ mod tests {
                 target: owner.target.clone(),
                 sequence: AgentRunTerminalChangeSequence(3),
                 revision: AgentRunTerminalProjectionRevision(3),
-                source_sequence: AgentRunTerminalSourceSequence(7),
+                origin: AgentRunTerminalChangeOrigin::SourceFact {
+                    terminal_owner_epoch_id: owner.terminal_owner_epoch_id.clone(),
+                    source_sequence: AgentRunTerminalSourceSequence(7),
+                },
                 payload_digest: RuntimePayloadDigest::new("sha256:terminal-output-7")
                     .expect("digest"),
                 delta: AgentRunTerminalProjectionDelta::OutputAppended {
@@ -689,6 +1012,10 @@ mod tests {
         let mut commit = output_commit();
         let owner = owner();
         commit.expected_output_sequence = None;
+        commit.expected_source_sequence = None;
+        commit.change.origin = AgentRunTerminalChangeOrigin::ProductFact {
+            change_kind: AgentRunTerminalProductChangeKind::BackendAvailability,
+        };
         commit.change.delta = AgentRunTerminalProjectionDelta::AvailabilityChanged {
             terminal_id: AgentRunTerminalId::new("terminal-1").expect("terminal"),
             owner,
@@ -701,7 +1028,10 @@ mod tests {
     #[test]
     fn source_sequence_cannot_skip_within_owner_epoch() {
         let mut commit = output_commit();
-        commit.change.source_sequence = AgentRunTerminalSourceSequence(9);
+        commit.change.origin = AgentRunTerminalChangeOrigin::SourceFact {
+            terminal_owner_epoch_id: owner().terminal_owner_epoch_id,
+            source_sequence: AgentRunTerminalSourceSequence(9),
+        };
         assert_eq!(
             commit.validate(),
             Err(AgentRunTerminalProtocolError::SourceSequenceNotContiguous)
@@ -719,5 +1049,22 @@ mod tests {
             retained_output: "retained tail".to_string(),
         };
         commit.validate().expect("typed omission preserves fences");
+    }
+
+    #[test]
+    fn product_availability_change_does_not_consume_agent_source_sequence() {
+        let mut commit = output_commit();
+        commit.expected_output_sequence = None;
+        commit.expected_source_sequence = None;
+        commit.change.origin = AgentRunTerminalChangeOrigin::ProductFact {
+            change_kind: AgentRunTerminalProductChangeKind::BackendAvailability,
+        };
+        commit.change.delta = AgentRunTerminalProjectionDelta::AvailabilityChanged {
+            terminal_id: AgentRunTerminalId::new("terminal-1").expect("terminal"),
+            owner: owner(),
+            availability: AgentRunTerminalAvailability::Offline,
+            changed_at_ms: 11,
+        };
+        commit.validate().expect("Product-only change");
     }
 }

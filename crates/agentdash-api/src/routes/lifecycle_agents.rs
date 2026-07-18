@@ -14,6 +14,7 @@ use agentdash_application::agent_run_list::{
     AgentRunListChildModel, AgentRunListEntryModel, AgentRunListRuntimeSummaryModel,
     ProjectAgentRunListInput, ProjectAgentRunListPage,
 };
+use agentdash_application_agentrun::agent_run::terminal_projection_protocol::AgentRunTerminalChangeSequence;
 use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use agentdash_application_agentrun::agent_run::{
     AgentRunAcceptedProductResultKind, AgentRunBackendSelectionSemantic, AgentRunCommandGuard,
@@ -44,6 +45,7 @@ use agentdash_contracts::agent_run_mailbox::{
     MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
     SteeringStopEffect,
 };
+use agentdash_contracts::agent_run_product_projection as product_projection_contract;
 use agentdash_contracts::session::{
     SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
 };
@@ -56,6 +58,10 @@ use agentdash_contracts::workflow::{
 use agentdash_domain::workflow::{
     AgentRunAcceptedRefs as DomainAgentRunAcceptedRefs, AgentRunCommandKind, AgentRunCommandStatus,
     AgentRunLineage, LifecycleAgent, LifecycleRun,
+};
+use agentdash_workspace_module::workspace_module::presentation_protocol::{
+    WorkspaceModulePresentationAcknowledgeRequest, WorkspaceModulePresentationChangeSequence,
+    WorkspaceModulePresentationIntentId,
 };
 use async_trait::async_trait;
 use axum::{
@@ -143,6 +149,12 @@ pub struct ManagedRuntimeChangesQuery {
     pub limit: Option<u32>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct ProductProjectionChangesQuery {
+    pub after: Option<u64>,
+    pub limit: Option<usize>,
+}
+
 fn agent_run_journal_live_receive_action(
     error: tokio::sync::broadcast::error::RecvError,
 ) -> AgentRunJournalLiveReceiveAction {
@@ -217,6 +229,26 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/changes",
             axum::routing::get(get_managed_runtime_changes),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/snapshot",
+            axum::routing::get(get_workspace_presentation_snapshot),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/changes",
+            axum::routing::get(get_workspace_presentation_changes),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/{intent_id}/ack",
+            axum::routing::post(acknowledge_workspace_presentation),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/snapshot",
+            axum::routing::get(get_agent_run_terminal_snapshot),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/changes",
+            axum::routing::get(get_agent_run_terminal_changes),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/control",
@@ -2266,26 +2298,13 @@ async fn get_managed_runtime_snapshot(
         ProjectPermission::Use,
     )
     .await?;
-    let target = agent_run_runtime_target(&context);
-    let binding = state
-        .repos
-        .agent_run_runtime_binding_repo
-        .load(&target)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .ok_or_else(|| {
-            ApiError::Conflict(format!(
-                "AgentRun {} / {} 尚未建立 committed Runtime binding",
-                target.run_id, target.agent_id
-            ))
-        })?;
     state
         .services
-        .agent_run_runtime_projection
-        .load_snapshot(&binding.thread_id)
+        .agent_run_product_projection
+        .runtime_snapshot(&agent_run_runtime_target(&context))
         .await
         .map(Json)
-        .map_err(ApiError::Internal)
+        .map_err(agent_run_product_projection_error)
 }
 
 async fn get_managed_runtime_changes(
@@ -2307,26 +2326,178 @@ async fn get_managed_runtime_changes(
         ProjectPermission::Use,
     )
     .await?;
-    let target = agent_run_runtime_target(&context);
-    let binding = state
-        .repos
-        .agent_run_runtime_binding_repo
-        .load(&target)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .ok_or_else(|| {
-            ApiError::Conflict(format!(
-                "AgentRun {} / {} 尚未建立 committed Runtime binding",
-                target.run_id, target.agent_id
-            ))
-        })?;
     state
         .services
-        .agent_run_runtime_projection
-        .load_changes(&binding.thread_id, query.after.map(RuntimeChangeSequence))
+        .agent_run_product_projection
+        .runtime_changes(
+            &agent_run_runtime_target(&context),
+            query.after.map(RuntimeChangeSequence),
+        )
         .await
         .map(Json)
-        .map_err(ApiError::Internal)
+        .map_err(agent_run_product_projection_error)
+}
+
+fn product_projection_limit(limit: Option<usize>) -> Result<usize, ApiError> {
+    let limit = limit.unwrap_or(256);
+    if !(1..=256).contains(&limit) {
+        return Err(ApiError::BadRequest(
+            "Product projection change page limit 必须位于 1..=256".to_string(),
+        ));
+    }
+    Ok(limit)
+}
+
+async fn get_workspace_presentation_snapshot(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<product_projection_contract::WorkspaceModulePresentationSnapshot>, ApiError> {
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    state
+        .services
+        .agent_run_product_projection
+        .workspace_presentation_snapshot(&agent_run_runtime_target(&context))
+        .await
+        .map(product_projection_contract::WorkspaceModulePresentationSnapshot::from)
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
+}
+
+async fn get_workspace_presentation_changes(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<ProductProjectionChangesQuery>,
+) -> Result<Json<product_projection_contract::WorkspaceModulePresentationChangePage>, ApiError> {
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    state
+        .services
+        .agent_run_product_projection
+        .workspace_presentation_changes(
+            &agent_run_runtime_target(&context),
+            query.after.map(WorkspaceModulePresentationChangeSequence),
+            product_projection_limit(query.limit)?,
+        )
+        .await
+        .map(product_projection_contract::WorkspaceModulePresentationChangePage::from)
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
+}
+
+async fn acknowledge_workspace_presentation(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, intent_id)): Path<(String, String, String)>,
+    Json(body): Json<product_projection_contract::WorkspaceModulePresentationAcknowledgeRequest>,
+) -> Result<Json<product_projection_contract::WorkspaceModulePresentationChange>, ApiError> {
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let request = WorkspaceModulePresentationAcknowledgeRequest {
+        target: agent_run_runtime_target(&context),
+        intent_id: WorkspaceModulePresentationIntentId::new(intent_id)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        observed_change_sequence: WorkspaceModulePresentationChangeSequence(
+            body.observed_change_sequence,
+        ),
+    };
+    state
+        .services
+        .agent_run_product_projection
+        .acknowledge_workspace_presentation(request)
+        .await
+        .map(product_projection_contract::WorkspaceModulePresentationChange::from)
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
+}
+
+async fn get_agent_run_terminal_snapshot(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<product_projection_contract::AgentRunTerminalSnapshot>, ApiError> {
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    state
+        .services
+        .agent_run_product_projection
+        .terminal_snapshot(&agent_run_runtime_target(&context))
+        .await
+        .map(product_projection_contract::AgentRunTerminalSnapshot::from)
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
+}
+
+async fn get_agent_run_terminal_changes(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<ProductProjectionChangesQuery>,
+) -> Result<Json<product_projection_contract::AgentRunTerminalChangePage>, ApiError> {
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    state
+        .services
+        .agent_run_product_projection
+        .terminal_changes(
+            &agent_run_runtime_target(&context),
+            query.after.map(AgentRunTerminalChangeSequence),
+            product_projection_limit(query.limit)?,
+        )
+        .await
+        .map(product_projection_contract::AgentRunTerminalChangePage::from)
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
+}
+
+fn agent_run_product_projection_error(
+    error: agentdash_application_agentrun::agent_run::AgentRunProductProjectionError,
+) -> ApiError {
+    use agentdash_application_agentrun::agent_run::AgentRunProductProjectionError as Error;
+    match error {
+        Error::TargetNotBound => {
+            ApiError::Conflict("AgentRun 尚未建立 committed Runtime binding".to_string())
+        }
+        Error::Binding(message)
+        | Error::Runtime(message)
+        | Error::Workspace(message)
+        | Error::Terminal(message) => ApiError::Internal(message),
+        Error::RuntimeThreadMismatch
+        | Error::RuntimeSourceBindingMismatch
+        | Error::TargetMismatch => ApiError::Internal(error.to_string()),
+    }
 }
 
 async fn read_agent_run_runtime_context(

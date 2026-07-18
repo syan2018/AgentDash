@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type {
   AgentRunTerminalChange,
   AgentRunTerminalSnapshot,
-} from "../../../types/agentRunProductProjections";
+} from "../../../generated/agent-run-product-projection-contracts";
 import { useTerminalStore } from "../../session/model/useTerminalStore";
 import {
   projectAgentRunTerminalChanges,
@@ -15,8 +15,12 @@ const owner = {
   terminal_owner_epoch_id: "epoch-1",
   target,
   runtime_thread_id: "thread-1",
-  binding_id: "binding-1",
-  binding_generation: 1,
+  source_binding: {
+    source_ref: "source-1",
+    committed_at_revision: 1,
+    applied_surface_revision: 3,
+    activated_at_revision: 2,
+  },
   backend_id: "backend-1",
 };
 
@@ -61,7 +65,10 @@ describe("terminal Product projection consumer", () => {
       target,
       sequence: 4,
       revision: 4,
-      source_sequence: 8,
+      origin: {
+        kind: "product_fact",
+        change_kind: "backend_availability",
+      },
       payload_digest: "sha256:offline",
       delta: {
         kind: "availability_changed",
@@ -87,7 +94,11 @@ describe("terminal Product projection consumer", () => {
       target,
       sequence: 1,
       revision: 1,
-      source_sequence: 1,
+      origin: {
+        kind: "source_fact",
+        terminal_owner_epoch_id: "epoch-1",
+        source_sequence: 1,
+      },
       payload_digest: "sha256:one",
       delta: {
         kind: "output_appended",
@@ -109,7 +120,11 @@ describe("terminal Product projection consumer", () => {
       target,
       sequence: 2,
       revision: 2,
-      source_sequence: 2,
+      origin: {
+        kind: "source_fact",
+        terminal_owner_epoch_id: "epoch-1",
+        source_sequence: 2,
+      },
       payload_digest: "sha256:omitted",
       delta: {
         kind: "output_omitted",

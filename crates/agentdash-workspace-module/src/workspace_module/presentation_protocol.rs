@@ -1,12 +1,14 @@
 use agentdash_agent_runtime_contract::{
-    RuntimeBindingId, RuntimeDriverGeneration, RuntimeItemId, RuntimeOperationId,
-    RuntimePayloadDigest, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
+    ManagedRuntimeSourceBindingEvidence, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
+    RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
 use agentdash_contracts::workspace_module::WorkspaceModulePresentation;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use agentdash_contracts::agent_run_product_projection as wire;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -111,8 +113,8 @@ pub struct WorkspaceModulePresentationActor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkspaceModulePresentationCurrentnessFence {
-    pub binding_id: RuntimeBindingId,
-    pub binding_generation: RuntimeDriverGeneration,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub source_binding: ManagedRuntimeSourceBindingEvidence,
     pub surface_revision: SurfaceRevision,
     pub module_id: String,
     pub view_key: String,
@@ -167,6 +169,15 @@ impl WorkspaceModulePresentationIntent {
             return Err(WorkspaceModulePresentationProtocolError::EmptyIdentity(
                 "actor_id",
             ));
+        }
+        if self.cause.runtime_thread_id != self.currentness_fence.runtime_thread_id
+            || self
+                .currentness_fence
+                .source_binding
+                .applied_surface_revision
+                != self.currentness_fence.surface_revision
+        {
+            return Err(WorkspaceModulePresentationProtocolError::BindingFenceMismatch);
         }
         if !self.currentness_fence.matches(&self.presentation) {
             return Err(WorkspaceModulePresentationProtocolError::CurrentnessFenceMismatch);
@@ -259,7 +270,14 @@ pub struct WorkspaceModulePresentationSnapshot {
     pub latest_change_sequence: WorkspaceModulePresentationChangeSequence,
     pub captured_at_ms: u64,
     /// 只返回仍需 UI 履行的 pending intent；fulfilled intent 不会再次触发打开。
-    pub pending_intents: Vec<WorkspaceModulePresentationIntent>,
+    pub pending_intents: Vec<WorkspaceModulePresentationPendingIntent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkspaceModulePresentationPendingIntent {
+    pub change_sequence: WorkspaceModulePresentationChangeSequence,
+    pub intent: WorkspaceModulePresentationIntent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +296,135 @@ pub struct WorkspaceModulePresentationChangePage {
     pub changes: Vec<WorkspaceModulePresentationChange>,
     pub next: WorkspaceModulePresentationChangeSequence,
     pub gap: Option<WorkspaceModulePresentationChangeGap>,
+}
+
+fn wire_target(target: AgentRunRuntimeTarget) -> wire::AgentRunProjectionTarget {
+    wire::AgentRunProjectionTarget {
+        run_id: target.run_id.to_string(),
+        agent_id: target.agent_id.to_string(),
+    }
+}
+
+impl From<WorkspaceModulePresentationIntent> for wire::WorkspaceModulePresentationIntent {
+    fn from(value: WorkspaceModulePresentationIntent) -> Self {
+        Self {
+            intent_id: value.intent_id.0,
+            effect_id: value.effect_id.0,
+            target: wire_target(value.target),
+            actor: wire::WorkspaceModulePresentationActor {
+                kind: match value.actor.kind {
+                    WorkspaceModulePresentationActorKind::AgentTool => {
+                        wire::WorkspaceModulePresentationActorKind::AgentTool
+                    }
+                    WorkspaceModulePresentationActorKind::User => {
+                        wire::WorkspaceModulePresentationActorKind::User
+                    }
+                    WorkspaceModulePresentationActorKind::System => {
+                        wire::WorkspaceModulePresentationActorKind::System
+                    }
+                },
+                actor_id: value.actor.actor_id,
+            },
+            cause: wire::WorkspaceModulePresentationCause {
+                runtime_thread_id: value.cause.runtime_thread_id.to_string(),
+                runtime_operation_id: value
+                    .cause
+                    .runtime_operation_id
+                    .map(|identity| identity.to_string()),
+                runtime_turn_id: value.cause.runtime_turn_id.to_string(),
+                runtime_item_id: value.cause.runtime_item_id.to_string(),
+            },
+            currentness_fence: wire::WorkspaceModulePresentationCurrentnessFence {
+                runtime_thread_id: value.currentness_fence.runtime_thread_id.to_string(),
+                source_binding: value.currentness_fence.source_binding,
+                surface_revision: value.currentness_fence.surface_revision.0,
+                module_id: value.currentness_fence.module_id,
+                view_key: value.currentness_fence.view_key,
+                renderer_kind: value.currentness_fence.renderer_kind,
+                presentation_uri: value.currentness_fence.presentation_uri,
+            },
+            presentation_digest: value.presentation_digest.to_string(),
+            presentation: value.presentation,
+            committed_at_ms: value.committed_at_ms,
+        }
+    }
+}
+
+impl From<WorkspaceModulePresentationAcknowledgement>
+    for wire::WorkspaceModulePresentationAcknowledgement
+{
+    fn from(value: WorkspaceModulePresentationAcknowledgement) -> Self {
+        Self {
+            ack_id: value.ack_id.0,
+            target: wire_target(value.target),
+            intent_id: value.intent_id.0,
+            effect_id: value.effect_id.0,
+            acknowledged_change_sequence: value.acknowledged_change_sequence.0,
+            fulfilled_at_ms: value.fulfilled_at_ms,
+        }
+    }
+}
+
+impl From<WorkspaceModulePresentationChange> for wire::WorkspaceModulePresentationChange {
+    fn from(value: WorkspaceModulePresentationChange) -> Self {
+        Self {
+            change_id: value.change_id.0,
+            target: wire_target(value.target),
+            sequence: value.sequence.0,
+            revision: value.revision.0,
+            status: match value.status {
+                WorkspaceModulePresentationIntentStatus::Pending => {
+                    wire::WorkspaceModulePresentationIntentStatus::Pending
+                }
+                WorkspaceModulePresentationIntentStatus::Fulfilled => {
+                    wire::WorkspaceModulePresentationIntentStatus::Fulfilled
+                }
+            },
+            intent: value.intent.into(),
+            acknowledgement: value.acknowledgement.map(Into::into),
+        }
+    }
+}
+
+impl From<WorkspaceModulePresentationSnapshot> for wire::WorkspaceModulePresentationSnapshot {
+    fn from(value: WorkspaceModulePresentationSnapshot) -> Self {
+        Self {
+            target: wire_target(value.target),
+            revision: value.revision.0,
+            latest_change_sequence: value.latest_change_sequence.0,
+            captured_at_ms: value.captured_at_ms,
+            pending_intents: value
+                .pending_intents
+                .into_iter()
+                .map(|pending| wire::WorkspaceModulePresentationPendingIntent {
+                    change_sequence: pending.change_sequence.0,
+                    intent: pending.intent.into(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<WorkspaceModulePresentationChangeGap> for wire::WorkspaceModulePresentationChangeGap {
+    fn from(value: WorkspaceModulePresentationChangeGap) -> Self {
+        Self {
+            requested_after: value.requested_after.map(|sequence| sequence.0),
+            earliest_available: value.earliest_available.0,
+            latest_available: value.latest_available.0,
+            snapshot_revision: value.snapshot_revision.0,
+        }
+    }
+}
+
+impl From<WorkspaceModulePresentationChangePage> for wire::WorkspaceModulePresentationChangePage {
+    fn from(value: WorkspaceModulePresentationChangePage) -> Self {
+        Self {
+            target: wire_target(value.target),
+            changes: value.changes.into_iter().map(Into::into).collect(),
+            next: value.next.0,
+            gap: value.gap.map(Into::into),
+        }
+    }
 }
 
 #[async_trait]
@@ -330,6 +477,8 @@ pub enum WorkspaceModulePresentationProtocolError {
     EmptyIdentity(&'static str),
     #[error("presentation currentness fence does not match its typed payload")]
     CurrentnessFenceMismatch,
+    #[error("presentation Runtime cause differs from its committed source binding fence")]
+    BindingFenceMismatch,
     #[error("presentation revision is not contiguous")]
     RevisionNotContiguous,
     #[error("presentation change sequence is not contiguous")]
@@ -402,8 +551,17 @@ mod tests {
                 runtime_item_id: RuntimeItemId::new("item-1").expect("item"),
             },
             currentness_fence: WorkspaceModulePresentationCurrentnessFence {
-                binding_id: RuntimeBindingId::new("binding-1").expect("binding"),
-                binding_generation: RuntimeDriverGeneration(2),
+                runtime_thread_id: RuntimeThreadId::new("thread-1").expect("thread"),
+                source_binding: ManagedRuntimeSourceBindingEvidence {
+                    source_ref: agentdash_agent_runtime_contract::RuntimeSourceRef::new("source-1")
+                        .expect("source"),
+                    committed_at_revision:
+                        agentdash_agent_runtime_contract::RuntimeProjectionRevision(2),
+                    applied_surface_revision: SurfaceRevision(3),
+                    activated_at_revision: Some(
+                        agentdash_agent_runtime_contract::RuntimeProjectionRevision(3),
+                    ),
+                },
                 surface_revision: SurfaceRevision(3),
                 module_id: presentation.module_id.clone(),
                 view_key: presentation.view_key.clone(),

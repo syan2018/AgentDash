@@ -9,7 +9,7 @@ import type {
   WorkspaceModulePresentationChangePage,
   WorkspaceModulePresentationIntent,
   WorkspaceModulePresentationSnapshot,
-} from "../types/agentRunProductProjections";
+} from "../generated/agent-run-product-projection-contracts";
 import {
   agentRunScopedPath,
   type AgentRunRuntimeTarget,
@@ -29,13 +29,22 @@ function isProjectionTarget(value: unknown): value is AgentRunProjectionTarget {
     && typeof value.agent_id === "string";
 }
 
+function isSourceBinding(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.source_ref === "string"
+    && isNonNegativeInteger(value.committed_at_revision)
+    && isNonNegativeInteger(value.applied_surface_revision)
+    && (value.activated_at_revision === null
+      || value.activated_at_revision === undefined
+      || isNonNegativeInteger(value.activated_at_revision));
+}
+
 function isOwnerFence(value: unknown): value is AgentRunTerminalOwnerFence {
   return isRecord(value)
     && typeof value.terminal_owner_epoch_id === "string"
     && isProjectionTarget(value.target)
     && typeof value.runtime_thread_id === "string"
-    && typeof value.binding_id === "string"
-    && isNonNegativeInteger(value.binding_generation)
+    && isSourceBinding(value.source_binding)
     && typeof value.backend_id === "string";
 }
 
@@ -55,8 +64,8 @@ function isPresentationIntent(value: unknown): value is WorkspaceModulePresentat
       || typeof value.cause.runtime_operation_id === "string")
     && typeof value.cause.runtime_turn_id === "string"
     && typeof value.cause.runtime_item_id === "string"
-    && typeof value.currentness_fence.binding_id === "string"
-    && isNonNegativeInteger(value.currentness_fence.binding_generation)
+    && typeof value.currentness_fence.runtime_thread_id === "string"
+    && isSourceBinding(value.currentness_fence.source_binding)
     && isNonNegativeInteger(value.currentness_fence.surface_revision)
     && typeof value.currentness_fence.module_id === "string"
     && typeof value.currentness_fence.view_key === "string"
@@ -65,6 +74,19 @@ function isPresentationIntent(value: unknown): value is WorkspaceModulePresentat
     && typeof value.presentation_digest === "string"
     && isWorkspaceModulePresentation(value.presentation)
     && isNonNegativeInteger(value.committed_at_ms);
+}
+
+function isTerminalChangeOrigin(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.kind === "source_fact") {
+    return typeof value.terminal_owner_epoch_id === "string"
+      && isNonNegativeInteger(value.source_sequence);
+  }
+  if (value.kind === "product_fact") {
+    return value.change_kind === "backend_availability"
+      || value.change_kind === "control_correlation";
+  }
+  return false;
 }
 
 function isTerminalProjection(value: unknown): value is AgentRunTerminalProjection {
@@ -129,7 +151,11 @@ export function isWorkspaceModulePresentationSnapshot(
     && isNonNegativeInteger(value.latest_change_sequence)
     && isNonNegativeInteger(value.captured_at_ms)
     && Array.isArray(value.pending_intents)
-    && value.pending_intents.every(isPresentationIntent);
+    && value.pending_intents.every((pending) =>
+      isRecord(pending)
+      && isNonNegativeInteger(pending.change_sequence)
+      && isPresentationIntent(pending.intent)
+    );
 }
 
 export function isWorkspaceModulePresentationChangePage(
@@ -195,7 +221,7 @@ export function isAgentRunTerminalChangePage(
       && isProjectionTarget(change.target)
       && isNonNegativeInteger(change.sequence)
       && isNonNegativeInteger(change.revision)
-      && isNonNegativeInteger(change.source_sequence)
+      && isTerminalChangeOrigin(change.origin)
       && typeof change.payload_digest === "string"
       && isTerminalDelta(change.delta)
     )

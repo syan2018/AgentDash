@@ -487,6 +487,162 @@
       ]
     },
     {
+      "id": "api_integration_complete_agent_collection",
+      "owner": "product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-api/src/integrations.rs"
+      ],
+      "remove_symbols": [
+        "HostIntegrationRegistration.runtime_driver_contributions",
+        "AgentRuntimeDriverContribution and AgentRuntimeTrustManifest imports",
+        "AgentDashIntegration::agent_runtime_drivers collection",
+        "driver contribution factory-key and trust-manifest matching"
+      ],
+      "add_symbols": [
+        "Complete Agent service registration inputs from the frozen Integration API collection",
+        "service instance and descriptor duplicate fail-fast validation",
+        "Codex, Native and Remote registration inputs passed once to AppState bootstrap"
+      ],
+      "prerequisites": [
+        "integration_api_service_collection",
+        "first_party_codex_registration",
+        "Native and Remote activation registrations are frozen on the same S5 revision"
+      ],
+      "gates": [
+        "HostIntegrationRegistration contains no driver contribution or trust-manifest collection",
+        "API integration collection exposes each Complete Agent service instance exactly once",
+        "duplicate instance or descriptor identity fails before production Host registration"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-api integrations --locked",
+        "cargo check -p agentdash-api --tests --locked"
+      ]
+    },
+    {
+      "id": "api_remote_complete_agent_inventory",
+      "owner": "product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-api/src/relay/runtime_inventory.rs"
+      ],
+      "remove_symbols": [
+        "IntegrationDriverHost inventory owner",
+        "AgentDashIntegration::agent_runtime_drivers definition lookup",
+        "RuntimeServiceInstanceId driver proxy activation",
+        "sourceDriverGeneration and driver profile activation vocabulary"
+      ],
+      "add_symbols": [
+        "CompleteAgentHost-backed remote service instance inventory",
+        "AgentServiceInstanceId + AgentBindingGeneration + host incarnation source identity",
+        "RemoteCompleteAgentRegistration placement input with service descriptor provenance"
+      ],
+      "prerequisites": [
+        "api_relay_complete_agent_placement",
+        "relay_runtime_wire_revision_4",
+        "CompleteAgentHost durable registration and binding repository are active"
+      ],
+      "gates": [
+        "remote inventory never constructs IntegrationDriverHost or driver proxy offers",
+        "withdraw and reconnect preserve Complete Agent instance/generation/incarnation identity",
+        "Relay advertisement cannot synthesize a service definition"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-api runtime_inventory --locked",
+        "cargo check -p agentdash-api --tests --locked"
+      ]
+    },
+    {
+      "id": "local_complete_agent_host_bootstrap",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-local/src/agent_runtime_host.rs"
+      ],
+      "remove_symbols": [
+        "AgentRuntimeDriverContribution inputs",
+        "IntegrationDriverHost construction",
+        "AgentDashIntegration::agent_runtime_drivers collection",
+        "RuntimeWireHostPortRouter",
+        "driver factory and credential-broker activation path"
+      ],
+      "add_symbols": [
+        "Local CompleteAgentHost construction",
+        "Complete Agent service registrations collected by stable instance identity",
+        "RuntimeWireAgentServiceEndpoint and AgentHostCallbacks route binding",
+        "local host incarnation and binding-generation endpoint resolution"
+      ],
+      "prerequisites": [
+        "integration_api_service_collection",
+        "local_complete_agent_endpoint",
+        "final CompleteAgentHost repository and registration contract are frozen"
+      ],
+      "gates": [
+        "Local host constructs no IntegrationDriverHost or RuntimeWireHostPortRouter",
+        "each Local Complete Agent registration is applied exactly once",
+        "stale generation or host incarnation cannot resolve an endpoint"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-local agent_runtime_host --locked",
+        "cargo check -p agentdash-local --tests --locked"
+      ]
+    },
+    {
+      "id": "local_runtime_complete_agent_inputs",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-local/src/runtime.rs"
+      ],
+      "remove_symbols": [
+        "LocalRuntimeConfig.runtime_driver_contributions",
+        "LocalRuntimeConfig::with_runtime_driver_contributions",
+        "AgentRuntimeDriverContribution transport into local host bootstrap"
+      ],
+      "add_symbols": [
+        "Complete Agent registration inputs using service-api identities",
+        "async ready registration propagation into Local CompleteAgentHost bootstrap"
+      ],
+      "prerequisites": [
+        "api_integration_complete_agent_collection",
+        "local_complete_agent_host_bootstrap",
+        "Codex registration ready handshake is mandatory"
+      ],
+      "gates": [
+        "LocalRuntimeConfig exposes no driver contribution field or builder",
+        "Local runtime startup fails before service visibility when a ready registration fails"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-local runtime --locked",
+        "cargo check -p agentdash-local --tests --locked"
+      ]
+    },
+    {
+      "id": "local_handler_complete_agent_exports",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-local/src/handlers/mod.rs"
+      ],
+      "remove_symbols": [
+        "HostRuntimeDriverEndpointResolver re-export",
+        "RuntimeDriverEndpointResolver re-export",
+        "driver-era Runtime offer advertisement surface"
+      ],
+      "add_symbols": [
+        "CompleteAgentEndpointResolver re-export",
+        "RuntimeWireCommandHandler revision 4 Complete Agent surface",
+        "service-api based Complete Agent offer advertisement surface"
+      ],
+      "prerequisites": [
+        "local_complete_agent_endpoint",
+        "relay_runtime_wire_revision_4"
+      ],
+      "gates": [
+        "Local handlers export no AgentRuntimeDriver endpoint resolver",
+        "advertised offers use Complete Agent service identity and binding generation"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-local handlers::runtime_wire --locked",
+        "cargo check -p agentdash-local --tests --locked"
+      ]
+    },
+    {
       "id": "generic_context_activation_removal",
       "owner": "platform_runtime_product_protocol_and_w8_hard_cut",
       "paths": [

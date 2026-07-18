@@ -50,8 +50,13 @@ removed/added symbols, prerequisite, gate and build command:
 | Integration API | Platform + W8 | Complete Agent registration collection |
 | First-party Codex | Product + W8 | Ready Codex registration input |
 | Infrastructure composition | Platform + W8 | `CompleteAgentHost` registrations and durable bindings |
+| API integration collection | Product + W8 | Complete Agent inputs with duplicate fail-fast |
 | API AppState / relay module / registry / placement | Product + W8 | Revision 4 Cloud placement |
+| API Remote inventory | Product + W8 | Complete Agent instance/generation/incarnation inventory |
 | Enterprise Remote E2E | Product + W8 | Complete Agent callback/change/reconnect tracer |
+| Local Complete Agent Host | Platform + W8 | One Host registration per service instance |
+| Local Runtime inputs | Platform + W8 | Ready Complete Agent registrations only |
+| Local handler exports | Platform + W8 | Complete Agent endpoint resolver and offers |
 | Local Runtime Wire handler | Platform + W8 | Complete Agent endpoint resolution |
 | Relay Runtime Wire | Platform + W8 | Service API provenance and revision 4 transport |
 | Generic context activation | Platform/Product + W8 | Complete Agent-native context lifecycle only |

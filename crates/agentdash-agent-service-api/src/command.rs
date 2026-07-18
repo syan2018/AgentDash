@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::{
     AgentBindingGeneration, AgentCommandId, AgentContextPackageId, AgentEffectIdentity,
@@ -9,7 +10,7 @@ use crate::{
     AppliedAgentSurfaceReceipt, AppliedInitialContextEvidence, InitialAgentContextPackage,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentCommandMeta {
     pub command_id: AgentCommandId,
@@ -19,7 +20,7 @@ pub struct AgentCommandMeta {
     pub expected_snapshot_revision: Option<AgentSnapshotRevision>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentInputContent {
     Text {
@@ -41,13 +42,13 @@ pub enum AgentInputContent {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentInput {
     pub content: Vec<AgentInputContent>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateAgentCommand {
     pub meta: AgentCommandMeta,
@@ -55,14 +56,14 @@ pub struct CreateAgentCommand {
     pub initial_context: Option<InitialAgentContextPackage>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ResumeAgentCommand {
     pub meta: AgentCommandMeta,
     pub source: AgentSourceCoordinate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentForkPoint {
     Head,
@@ -78,7 +79,7 @@ pub enum AgentForkPoint {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ForkAgentCommand {
     pub meta: AgentCommandMeta,
@@ -87,7 +88,7 @@ pub struct ForkAgentCommand {
     pub cutoff: AgentForkPoint,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentInteractionResponse {
     Approved,
@@ -97,7 +98,7 @@ pub enum AgentInteractionResponse {
     McpElicitation { response: Value },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentCommand {
     SubmitInput {
@@ -118,7 +119,7 @@ pub enum AgentCommand {
     Close,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentCommandEnvelope {
     pub meta: AgentCommandMeta,
@@ -127,7 +128,7 @@ pub struct AgentCommandEnvelope {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentTerminalOutcome {
@@ -138,7 +139,7 @@ pub enum AgentTerminalOutcome {
     Lost,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentReceiptState {
     Accepted,
@@ -155,7 +156,7 @@ pub enum AgentReceiptState {
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentCommandReceipt {
     pub command_id: AgentCommandId,
@@ -166,7 +167,7 @@ pub struct AgentCommandReceipt {
     pub initial_context: Option<AppliedInitialContextEvidence>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ForkAgentReceipt {
     pub command_id: AgentCommandId,
@@ -178,7 +179,7 @@ pub struct ForkAgentReceipt {
     pub state: AgentReceiptState,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AppliedAgentCommandReceipt {
     pub command_id: AgentCommandId,
@@ -189,7 +190,7 @@ pub struct AppliedAgentCommandReceipt {
     pub initial_context: Option<AppliedInitialContextEvidence>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AppliedForkAgentReceipt {
     pub command_id: AgentCommandId,
@@ -201,7 +202,7 @@ pub struct AppliedForkAgentReceipt {
     pub terminal: Option<AgentTerminalOutcome>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentAppliedEffectOutcome {
     Create { receipt: AppliedAgentCommandReceipt },
@@ -247,7 +248,7 @@ impl AgentAppliedEffectOutcome {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEffectInspectionState {
     NotApplied,
@@ -256,7 +257,7 @@ pub enum AgentEffectInspectionState {
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentEffectInspection {
     pub effect_id: AgentEffectIdentity,
@@ -278,7 +279,7 @@ impl AgentEffectInspection {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentCreateEvidence {
     pub source: AgentSourceCoordinate,

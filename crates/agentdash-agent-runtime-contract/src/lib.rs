@@ -12,3 +12,44 @@ pub mod managed_projection;
 pub use gateway::*;
 pub use ids::*;
 pub use managed_projection::*;
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::Path};
+
+    use ts_rs::TS;
+
+    use super::*;
+
+    #[test]
+    fn runtime_typescript_root_uses_json_safe_number_vocabulary() {
+        let temp = tempfile::tempdir().expect("create TypeScript export directory");
+        ManagedRuntimeContractSchema::export_all_to(temp.path())
+            .expect("export Managed Runtime contracts");
+        let typescript = read_typescript(temp.path());
+
+        assert!(!typescript.contains("bigint"));
+        for declaration in [
+            "export type SurfaceRevision = number;",
+            "export type RuntimeProjectionRevision = number;",
+            "export type RuntimeChangeSequence = number;",
+            "captured_at_ms: number",
+            "source_change_sequence: number",
+        ] {
+            assert!(typescript.contains(declaration), "missing {declaration}");
+        }
+    }
+
+    fn read_typescript(directory: &Path) -> String {
+        let mut output = String::new();
+        for entry in fs::read_dir(directory).expect("read TypeScript export directory") {
+            let path = entry.expect("read TypeScript export entry").path();
+            if path.is_dir() {
+                output.push_str(&read_typescript(&path));
+            } else if path.extension().is_some_and(|extension| extension == "ts") {
+                output.push_str(&fs::read_to_string(path).expect("read TypeScript export"));
+            }
+        }
+        output
+    }
+}

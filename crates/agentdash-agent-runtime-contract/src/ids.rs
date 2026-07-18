@@ -98,6 +98,7 @@ macro_rules! revision {
         )]
         #[serde(transparent)]
         #[schemars(transparent)]
+        #[ts(type = "number")]
         pub struct $name(pub u64);
     };
 }

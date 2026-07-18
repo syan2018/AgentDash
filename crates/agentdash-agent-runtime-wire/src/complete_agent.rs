@@ -10,12 +10,13 @@ use agentdash_agent_service_api::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use ts_rs::TS;
 
 /// Schema root for the Complete Agent transport vocabulary.
 ///
 /// Complete Agent frames are part of the canonical Runtime Wire revision and remain independently
 /// schema-checkable without inventing parallel DTOs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireCompleteAgentSchema {
     pub request: RuntimeWireAgentServiceRequest,
@@ -30,20 +31,20 @@ pub struct RuntimeWireCompleteAgentSchema {
 /// The instance identity routes the frame to one registered service. The generation fences every
 /// binding-scoped request and notification; it must agree with the generation carried by command
 /// or callback metadata when that metadata is present.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireAgentBindingTarget {
     pub service_instance_id: AgentServiceInstanceId,
     pub binding_generation: AgentBindingGeneration,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireAgentServiceDescribeRequest {
     pub service_instance_id: AgentServiceInstanceId,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "operation", content = "request", rename_all = "snake_case")]
 pub enum RuntimeWireAgentServiceRequest {
     Describe(RuntimeWireAgentServiceDescribeRequest),
@@ -129,7 +130,7 @@ impl RuntimeWireAgentServiceRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS, Error)]
 #[error("stale Complete Agent binding generation: expected {expected:?}, received {received:?}")]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireGenerationFenceError {
@@ -137,7 +138,7 @@ pub struct RuntimeWireGenerationFenceError {
     pub received: AgentBindingGeneration,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "operation", content = "result", rename_all = "snake_case")]
 pub enum RuntimeWireAgentServiceResponse {
     Describe(Result<Box<AgentServiceDescriptor>, AgentServiceError>),
@@ -157,7 +158,7 @@ pub enum RuntimeWireAgentServiceResponse {
 /// `AgentChange.cursor` is the source-owned ordering coordinate. Runtime Wire frame identity and
 /// ack provide transport replay; `binding_generation` prevents an old placement from advancing the
 /// current binding after reconnect.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireAgentChangeNotification {
     pub target: RuntimeWireAgentBindingTarget,
@@ -165,7 +166,7 @@ pub struct RuntimeWireAgentChangeNotification {
     pub change: AgentChange,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "callback", content = "request", rename_all = "snake_case")]
 pub enum RuntimeWireAgentHostCallbackRequest {
     Tool(AgentToolInvocation),
@@ -181,7 +182,7 @@ impl RuntimeWireAgentHostCallbackRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "callback", content = "result", rename_all = "snake_case")]
 pub enum RuntimeWireAgentHostCallbackResponse {
     Tool(Result<Box<AgentToolResult>, AgentHostCallbackError>),

@@ -356,6 +356,7 @@ pub struct ManagedRuntimeSnapshot {
     pub thread_id: RuntimeThreadId,
     pub revision: RuntimeProjectionRevision,
     pub latest_change_sequence: RuntimeChangeSequence,
+    #[ts(type = "number")]
     pub captured_at_ms: u64,
     pub lifecycle: ManagedRuntimeLifecycleStatus,
     pub active_turn_id: Option<RuntimeTurnId>,
@@ -421,6 +422,7 @@ pub enum ManagedRuntimeSourceProjectionDelta {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ManagedRuntimeChangeDelta {
     SourceObservationApplied {
+        #[ts(type = "number")]
         source_change_sequence: u64,
         source_projection_revision: RuntimeProjectionRevision,
         source_identity_digest: RuntimePayloadDigest,
@@ -430,6 +432,7 @@ pub enum ManagedRuntimeChangeDelta {
         changed_sections: BTreeSet<ManagedRuntimeProjectionSection>,
     },
     SourceProjectionChanged {
+        #[ts(type = "number")]
         source_change_sequence: u64,
         source_projection_revision: RuntimeProjectionRevision,
         observation_digest: RuntimePayloadDigest,

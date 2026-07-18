@@ -21,6 +21,7 @@ pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 4;
 )]
 #[serde(transparent)]
 #[schemars(transparent)]
+#[ts(type = "number")]
 pub struct RuntimeWireFrameId(pub u64);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -50,9 +51,7 @@ pub enum RuntimeWireRequest {
     RuntimeExecute(ManagedRuntimeCommandEnvelope),
     RuntimeRead(ManagedRuntimeReadRequest),
     RuntimeChanges(ManagedRuntimeChangesRequest),
-    #[ts(skip)]
     AgentService(Box<RuntimeWireAgentServiceRequest>),
-    #[ts(skip)]
     AgentHostCallback(Box<RuntimeWireAgentHostCallbackRequest>),
 }
 
@@ -62,9 +61,7 @@ pub enum RuntimeWireResponse {
     RuntimeExecute(Box<RuntimeWireExecuteResult>),
     RuntimeRead(RuntimeWireReadResult),
     RuntimeChanges(RuntimeWireChangesResult),
-    #[ts(skip)]
     AgentService(RuntimeWireAgentServiceResponse),
-    #[ts(skip)]
     AgentHostCallback(RuntimeWireAgentHostCallbackResponse),
 }
 
@@ -93,7 +90,6 @@ pub enum RuntimeWireChangesResult {
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum RuntimeWireNotification {
     RuntimeChange(Box<ManagedRuntimePlatformChange>),
-    #[ts(skip)]
     AgentChange(Box<RuntimeWireAgentChangeNotification>),
     Heartbeat {
         last_received_frame_id: RuntimeWireFrameId,
@@ -174,6 +170,10 @@ pub fn decode_frame(bytes: &[u8]) -> Result<DecodedRuntimeWireFrame, RuntimeProt
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::Path};
+
+    use ts_rs::TS;
+
     use super::*;
 
     #[test]
@@ -221,5 +221,54 @@ mod tests {
         assert!(!schema.contains("driver_dispatch"));
         assert!(!schema.contains("journal_fact"));
         assert!(!schema.contains("host_port"));
+    }
+
+    #[test]
+    fn rev4_typescript_root_exports_complete_remote_seam_without_bigint() {
+        let temp = tempfile::tempdir().expect("create TypeScript export directory");
+        RuntimeWireEnvelope::export_all_to(temp.path()).expect("export Runtime Wire contracts");
+        let typescript = read_typescript(temp.path());
+
+        assert!(!typescript.contains("bigint"));
+        for contract in [
+            "RuntimeWireFrameId",
+            "RuntimeWireAgentServiceRequest",
+            "RuntimeWireAgentServiceResponse",
+            "RuntimeWireAgentHostCallbackRequest",
+            "RuntimeWireAgentHostCallbackResponse",
+            "RuntimeWireAgentChangeNotification",
+            "AgentAppliedEffectOutcome",
+            "AgentEffectInspection",
+        ] {
+            assert!(typescript.contains(contract), "missing {contract}");
+        }
+        for variant in [
+            "\"agent_service\"",
+            "\"agent_host_callback\"",
+            "\"agent_change\"",
+            "\"inspect\"",
+            "\"create\"",
+            "\"resume\"",
+            "\"fork\"",
+            "\"command\"",
+            "\"surface_apply\"",
+            "\"surface_revoke\"",
+        ] {
+            assert!(typescript.contains(variant), "missing variant {variant}");
+        }
+        assert!(typescript.contains("export type RuntimeWireFrameId = number;"));
+    }
+
+    fn read_typescript(directory: &Path) -> String {
+        let mut output = String::new();
+        for entry in fs::read_dir(directory).expect("read TypeScript export directory") {
+            let path = entry.expect("read TypeScript export entry").path();
+            if path.is_dir() {
+                output.push_str(&read_typescript(&path));
+            } else if path.extension().is_some_and(|extension| extension == "ts") {
+                output.push_str(&fs::read_to_string(path).expect("read TypeScript export"));
+            }
+        }
+        output
     }
 }

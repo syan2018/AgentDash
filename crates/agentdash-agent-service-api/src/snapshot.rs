@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::{
     AgentInteractionId, AgentItemId, AgentPayloadDigest, AgentSnapshotRevision,
@@ -8,7 +9,7 @@ use crate::{
 };
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSnapshotAuthority {
@@ -17,17 +18,18 @@ pub enum AgentSnapshotAuthority {
     Derived,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentSnapshotSource {
     pub authority: AgentSnapshotAuthority,
     pub source_revision: Option<AgentSourceRevision>,
     pub fidelity: SemanticFidelity,
+    #[ts(type = "number")]
     pub observed_at_ms: u64,
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentLifecycleStatus {
@@ -39,7 +41,7 @@ pub enum AgentLifecycleStatus {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentEntityStatus {
@@ -51,7 +53,7 @@ pub enum AgentEntityStatus {
     Lost,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentItemContent {
     UserInput {
@@ -80,7 +82,7 @@ pub enum AgentItemContent {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentItemSnapshot {
     pub id: AgentItemId,
@@ -89,7 +91,7 @@ pub struct AgentItemSnapshot {
     pub content_digest: AgentPayloadDigest,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentTurnSnapshot {
     pub id: AgentTurnId,
@@ -98,7 +100,7 @@ pub struct AgentTurnSnapshot {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentInteractionKind {
@@ -108,7 +110,7 @@ pub enum AgentInteractionKind {
     DynamicTool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentInteractionSnapshot {
     pub id: AgentInteractionId,
@@ -119,7 +121,7 @@ pub struct AgentInteractionSnapshot {
     pub resolved: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentSnapshot {
     pub source: AgentSourceCoordinate,
@@ -133,14 +135,14 @@ pub struct AgentSnapshot {
     pub initial_context: Option<crate::AppliedInitialContextEvidence>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentReadQuery {
     pub source: AgentSourceCoordinate,
     pub at_revision: Option<AgentSnapshotRevision>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentChangesQuery {
     pub source: AgentSourceCoordinate,
@@ -148,7 +150,7 @@ pub struct AgentChangesQuery {
     pub limit: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentChangePayload {
     LifecycleChanged {
@@ -175,16 +177,17 @@ pub enum AgentChangePayload {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentChange {
     pub cursor: AgentSourceCursor,
     pub source_revision: Option<AgentSourceRevision>,
+    #[ts(type = "number")]
     pub occurred_at_ms: u64,
     pub payload: AgentChangePayload,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentChangePage {
     pub source: AgentSourceCoordinate,

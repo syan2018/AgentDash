@@ -19,7 +19,7 @@ use agentdash_agent_runtime_contract::{
     RuntimeChangeSequence, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
     RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
 };
-use agentdash_application_agentrun::agent_run::target_product_protocol::{
+use agentdash_application_agentrun::agent_run::product_protocol::{
     consume_managed_runtime_change_page, consume_managed_runtime_snapshot,
     managed_runtime_change_page_requires_snapshot_reload,
 };

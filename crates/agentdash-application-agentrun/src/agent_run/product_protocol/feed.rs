@@ -6,7 +6,7 @@ use agentdash_agent_runtime_contract::{
 };
 use thiserror::Error;
 
-use super::AgentRunTargetSnapshotPort;
+use super::AgentRunRuntimeProjectionPort;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ManagedRuntimeFeedContractError {
@@ -60,12 +60,12 @@ pub enum ManagedRuntimeReconnectOutcome {
     },
 }
 
-pub struct AgentRunTargetFeedReconnect<'a> {
-    snapshot_port: &'a dyn AgentRunTargetSnapshotPort,
+pub struct AgentRunRuntimeFeedReconnect<'a> {
+    snapshot_port: &'a dyn AgentRunRuntimeProjectionPort,
 }
 
-impl<'a> AgentRunTargetFeedReconnect<'a> {
-    pub fn new(snapshot_port: &'a dyn AgentRunTargetSnapshotPort) -> Self {
+impl<'a> AgentRunRuntimeFeedReconnect<'a> {
+    pub fn new(snapshot_port: &'a dyn AgentRunRuntimeProjectionPort) -> Self {
         Self { snapshot_port }
     }
 
@@ -319,7 +319,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl AgentRunTargetSnapshotPort for RecordingSnapshotPort {
+    impl AgentRunRuntimeProjectionPort for RecordingSnapshotPort {
         async fn load_snapshot(
             &self,
             thread_id: &RuntimeThreadId,
@@ -390,7 +390,7 @@ mod tests {
         let page = change_page(&thread_id, 9, 6);
         let port = RecordingSnapshotPort::with_results(Vec::new(), vec![page.clone()]);
 
-        let outcome = AgentRunTargetFeedReconnect::new(&port)
+        let outcome = AgentRunRuntimeFeedReconnect::new(&port)
             .reconnect(&thread_id, Some(RuntimeChangeSequence(8)))
             .await
             .expect("continuous reconnect");
@@ -415,7 +415,7 @@ mod tests {
         let port = RecordingSnapshotPort::with_results(Vec::new(), vec![page]);
 
         assert_eq!(
-            AgentRunTargetFeedReconnect::new(&port)
+            AgentRunRuntimeFeedReconnect::new(&port)
                 .reconnect(&thread_id, Some(RuntimeChangeSequence(8)))
                 .await,
             Err(ManagedRuntimeFeedContractError::ChangePageThreadMismatch)
@@ -441,7 +441,7 @@ mod tests {
         let port = RecordingSnapshotPort::with_results(Vec::new(), vec![gap_page]);
 
         assert_eq!(
-            AgentRunTargetFeedReconnect::new(&port)
+            AgentRunRuntimeFeedReconnect::new(&port)
                 .reconnect(&thread_id, Some(RuntimeChangeSequence(4)))
                 .await,
             Err(ManagedRuntimeFeedContractError::ChangePageThreadMismatch)
@@ -476,7 +476,7 @@ mod tests {
             vec![gap_page, tail.clone()],
         );
 
-        let outcome = AgentRunTargetFeedReconnect::new(&port)
+        let outcome = AgentRunRuntimeFeedReconnect::new(&port)
             .reconnect(&thread_id, Some(RuntimeChangeSequence(4)))
             .await
             .expect("gap reconnect");
@@ -523,7 +523,7 @@ mod tests {
         let port = RecordingSnapshotPort::with_results(vec![snapshot], vec![gap_page, tail]);
 
         assert_eq!(
-            AgentRunTargetFeedReconnect::new(&port)
+            AgentRunRuntimeFeedReconnect::new(&port)
                 .reconnect(&thread_id, Some(RuntimeChangeSequence(4)))
                 .await,
             Err(ManagedRuntimeFeedContractError::ChangePageThreadMismatch)
@@ -558,7 +558,7 @@ mod tests {
         );
 
         assert_eq!(
-            AgentRunTargetFeedReconnect::new(&port)
+            AgentRunRuntimeFeedReconnect::new(&port)
                 .reconnect(&thread_id, Some(RuntimeChangeSequence(4)))
                 .await,
             Err(ManagedRuntimeFeedContractError::ReloadedSnapshotRevisionStale)

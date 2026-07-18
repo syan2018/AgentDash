@@ -15,6 +15,7 @@ mod message_submission;
 mod permission;
 mod presentation_read_model;
 mod product_command;
+pub mod product_protocol;
 mod project_agent_context;
 mod project_agent_start;
 mod runtime_application_presentation;
@@ -24,7 +25,6 @@ pub mod runtime_facade;
 pub mod runtime_mailbox;
 pub mod runtime_session_boundary;
 mod runtime_surface_update;
-pub mod target_product_protocol;
 mod thread_name_projection;
 pub mod workspace;
 

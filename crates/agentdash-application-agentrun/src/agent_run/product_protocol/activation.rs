@@ -199,7 +199,7 @@ pub const AGENT_RUN_TARGET_S5_ACTIVATION_GATES: &[AgentRunS5ActivationGate] = &[
         owner: AgentRunActivationOwner::RuntimeContract,
         evidence: "managed_projection snapshot/change/availability schema and typed gap tests",
         negative_gate: Some(
-            "Product target contains no concrete Runtime or service-api source identity",
+            "Product protocol contains no concrete Runtime or service-api source identity",
         ),
     },
     AgentRunS5ActivationGate {
@@ -220,7 +220,7 @@ pub const AGENT_RUN_TARGET_S5_ACTIVATION_GATES: &[AgentRunS5ActivationGate] = &[
         order: 4,
         prerequisite: AgentRunS5Prerequisite::ProductCallerCutoverTests,
         owner: AgentRunActivationOwner::BusinessSurface,
-        evidence: "all six W7 consumer entries pass target caller tests",
+        evidence: "all six W7 consumer entries pass production caller tests",
         negative_gate: Some("W7 callers contain no Core AgentTool or RuntimeToolProvider assembly"),
     },
     AgentRunS5ActivationGate {
@@ -235,9 +235,7 @@ pub const AGENT_RUN_TARGET_S5_ACTIVATION_GATES: &[AgentRunS5ActivationGate] = &[
         prerequisite: AgentRunS5Prerequisite::AtomicProductionComposition,
         owner: AgentRunActivationOwner::ProductCaller,
         evidence: "Business Surface, Tool Broker, Host callbacks, and Runtime read ports bind together",
-        negative_gate: Some(
-            "target-only activation boundary has no earlier production constructor",
-        ),
+        negative_gate: Some("production constructor requires every final port explicitly"),
     },
     AgentRunS5ActivationGate {
         order: 7,
@@ -249,7 +247,7 @@ pub const AGENT_RUN_TARGET_S5_ACTIVATION_GATES: &[AgentRunS5ActivationGate] = &[
 ];
 
 #[async_trait]
-pub trait AgentRunTargetBusinessSurfacePort: Send + Sync {
+pub trait AgentRunBusinessSurfacePort: Send + Sync {
     async fn apply_business_surface(
         &self,
         child: &RuntimeAgentChildIdentity,
@@ -258,12 +256,12 @@ pub trait AgentRunTargetBusinessSurfacePort: Send + Sync {
 }
 
 #[async_trait]
-pub trait AgentRunTargetToolBrokerPort: Send + Sync {
+pub trait AgentRunToolBrokerPort: Send + Sync {
     async fn bind_tool_broker(&self, child: &RuntimeAgentChildIdentity) -> Result<String, String>;
 }
 
 #[async_trait]
-pub trait AgentRunTargetHostCallbacksPort: Send + Sync {
+pub trait AgentRunHostCallbacksPort: Send + Sync {
     async fn submit_input(
         &self,
         child: &RuntimeAgentChildIdentity,
@@ -272,7 +270,7 @@ pub trait AgentRunTargetHostCallbacksPort: Send + Sync {
 }
 
 #[async_trait]
-pub trait AgentRunTargetSnapshotPort: Send + Sync {
+pub trait AgentRunRuntimeProjectionPort: Send + Sync {
     async fn load_snapshot(
         &self,
         thread_id: &RuntimeThreadId,
@@ -285,14 +283,14 @@ pub trait AgentRunTargetSnapshotPort: Send + Sync {
     ) -> Result<ManagedRuntimeChangePage, String>;
 }
 
-/// Explicit composition boundary for S5. Constructing this value is the only
-/// intended way to activate the target lane; S4 leaves it unconstructed.
-pub struct AgentRunTargetActivation<'a> {
+/// S5 显式 composition boundary。生产 constructor 必须完整注入这些 final ports，
+/// 不存在 legacy/default 分支。
+pub struct AgentRunProductProtocolPorts<'a> {
     pub runtime: &'a dyn AgentRunForkRuntimePort,
-    pub business_surface: &'a dyn AgentRunTargetBusinessSurfacePort,
-    pub tool_broker: &'a dyn AgentRunTargetToolBrokerPort,
-    pub host_callbacks: &'a dyn AgentRunTargetHostCallbacksPort,
-    pub snapshot_owner: &'a dyn AgentRunTargetSnapshotPort,
+    pub business_surface: &'a dyn AgentRunBusinessSurfacePort,
+    pub tool_broker: &'a dyn AgentRunToolBrokerPort,
+    pub host_callbacks: &'a dyn AgentRunHostCallbacksPort,
+    pub runtime_projection: &'a dyn AgentRunRuntimeProjectionPort,
 }
 
 #[cfg(test)]

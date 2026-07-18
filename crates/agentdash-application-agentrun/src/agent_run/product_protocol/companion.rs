@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
@@ -5,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+#[cfg(test)]
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -775,6 +777,8 @@ pub enum CompanionFreshRepositoryError {
     NotFound,
     #[error("fresh Companion saga revision conflict")]
     Conflict,
+    #[error("fresh Companion saga repository unavailable: {0}")]
+    Unavailable(String),
 }
 
 #[async_trait]
@@ -794,11 +798,35 @@ pub trait CompanionFreshSagaRepository: Send + Sync {
     ) -> Result<CompanionFreshSaga, CompanionFreshRepositoryError>;
 }
 
+/// Product owner 冻结的 Fresh Companion durable shape；W8 持有该合同唯一的 migration
+/// 与 PostgreSQL adapter。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompanionFreshSagaSchemaContract {
+    pub table: &'static str,
+    pub request_key: &'static str,
+    pub optimistic_revision: &'static str,
+    pub durable_dispatch_identity: &'static str,
+    pub context_evidence: &'static str,
+    pub first_input_receipt: &'static str,
+}
+
+pub const COMPANION_FRESH_SAGA_SCHEMA_CONTRACT: CompanionFreshSagaSchemaContract =
+    CompanionFreshSagaSchemaContract {
+        table: "companion_fresh_saga",
+        request_key: "request_id",
+        optimistic_revision: "version",
+        durable_dispatch_identity: "durable_dispatch",
+        context_evidence: "context_application_evidence",
+        first_input_receipt: "first_input_receipt",
+    };
+
+#[cfg(test)]
 #[derive(Default)]
-pub struct RecordingCompanionFreshSagaRepository {
+pub(super) struct RecordingCompanionFreshSagaRepository {
     sagas: Arc<Mutex<HashMap<CompanionFreshRequestId, CompanionFreshSaga>>>,
 }
 
+#[cfg(test)]
 #[async_trait]
 impl CompanionFreshSagaRepository for RecordingCompanionFreshSagaRepository {
     async fn create(
@@ -1027,14 +1055,15 @@ impl<'a> CompanionDispatchCoordinator<'a> {
 mod tests {
     use std::collections::HashSet;
 
-    use crate::agent_run::target_product_protocol::{
+    use crate::agent_run::product_protocol::{
         AgentRunForkOperationIdentity, AgentRunForkProductGraphPort, AgentRunForkRuntimePort,
         AgentRunForkSagaPhase, AgentRunForkSagaWorker,
         InitialContextContributionApplicationEvidence, ProductGraphCommitEvidence,
-        RecordingAgentRunForkSagaRepository, RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
+        RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
     };
     use serde_json::json;
 
+    use super::super::fork_saga::RecordingAgentRunForkSagaRepository;
     use super::*;
 
     fn provenance(authority: &str) -> ContextContributionProvenance {
@@ -1399,6 +1428,22 @@ mod tests {
     }
 
     #[test]
+    fn fresh_persistence_contract_keeps_context_and_first_input_evidence_durable() {
+        assert_eq!(
+            COMPANION_FRESH_SAGA_SCHEMA_CONTRACT.table,
+            "companion_fresh_saga"
+        );
+        assert_eq!(
+            COMPANION_FRESH_SAGA_SCHEMA_CONTRACT.context_evidence,
+            "context_application_evidence"
+        );
+        assert_eq!(
+            COMPANION_FRESH_SAGA_SCHEMA_CONTRACT.first_input_receipt,
+            "first_input_receipt"
+        );
+    }
+
+    #[test]
     fn canonical_rendered_evidence_requires_renderer_and_exact_contributions() {
         let plan = fresh_plan_for(CompanionContextMode::Compact);
         let child = RuntimeAgentChildIdentity {
@@ -1632,7 +1677,7 @@ mod tests {
 
     #[async_trait]
     impl AgentRunForkProductGraphPort for ExactProductGraph {
-        async fn commit_child_graph(
+        async fn prepare_child_graph_commit(
             &self,
             saga: &AgentRunForkSaga,
         ) -> Result<ProductGraphCommitEvidence, String> {

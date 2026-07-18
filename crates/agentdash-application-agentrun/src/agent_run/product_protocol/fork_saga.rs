@@ -1,8 +1,10 @@
+#[cfg(test)]
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+#[cfg(test)]
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -644,10 +646,14 @@ pub enum AgentRunForkSagaRepositoryError {
     NotFound,
     #[error("fork saga revision conflict: expected {expected}, actual {actual}")]
     Conflict { expected: u64, actual: u64 },
+    #[error("fork saga repository unavailable: {0}")]
+    Unavailable(String),
 }
 
 #[async_trait]
 pub trait AgentRunForkSagaRepository: Send + Sync {
+    /// 在一个 durable transaction 中物化请求并保留完整 child identity。
+    /// 重复请求返回 `AlreadyExists`，caller 随后比较已持久化的 immutable request。
     async fn create(
         &self,
         saga: AgentRunForkSaga,
@@ -663,13 +669,46 @@ pub trait AgentRunForkSagaRepository: Send + Sync {
         expected_version: u64,
         saga: AgentRunForkSaga,
     ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError>;
+
+    /// 在一个 transaction 中提交 Product graph 与 saga phase。
+    ///
+    /// transaction 与 schema 由 W8 PostgreSQL adapter 持有。匹配的
+    /// `ProductGraphCommitted` saga revision 可见前，graph row 不能对外可见。
+    async fn commit_product_graph(
+        &self,
+        expected_version: u64,
+        saga: AgentRunForkSaga,
+    ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError>;
 }
 
+/// Product owner 冻结的持久化 shape；W8 是唯一 migration 与 PostgreSQL adapter owner。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentRunForkSagaSchemaContract {
+    pub table: &'static str,
+    pub request_key: &'static str,
+    pub optimistic_revision: &'static str,
+    pub durable_dispatch_identity: &'static str,
+    pub known_child_coordinate: &'static str,
+    pub graph_commit_revision: &'static str,
+}
+
+pub const AGENT_RUN_FORK_SAGA_SCHEMA_CONTRACT: AgentRunForkSagaSchemaContract =
+    AgentRunForkSagaSchemaContract {
+        table: "agent_run_fork_saga",
+        request_key: "request_id",
+        optimistic_revision: "version",
+        durable_dispatch_identity: "durable_runtime_dispatch",
+        known_child_coordinate: "runtime_child",
+        graph_commit_revision: "graph_commit_revision",
+    };
+
+#[cfg(test)]
 #[derive(Default)]
-pub struct RecordingAgentRunForkSagaRepository {
+pub(super) struct RecordingAgentRunForkSagaRepository {
     sagas: Arc<Mutex<HashMap<AgentRunForkRequestId, AgentRunForkSaga>>>,
 }
 
+#[cfg(test)]
 #[async_trait]
 impl AgentRunForkSagaRepository for RecordingAgentRunForkSagaRepository {
     async fn create(
@@ -711,6 +750,14 @@ impl AgentRunForkSagaRepository for RecordingAgentRunForkSagaRepository {
         sagas.insert(saga.request_id.clone(), saga.clone());
         Ok(saga)
     }
+
+    async fn commit_product_graph(
+        &self,
+        expected_version: u64,
+        saga: AgentRunForkSaga,
+    ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError> {
+        self.save(expected_version, saga).await
+    }
 }
 
 #[async_trait]
@@ -730,7 +777,9 @@ pub trait AgentRunForkRuntimePort: Send + Sync {
 
 #[async_trait]
 pub trait AgentRunForkProductGraphPort: Send + Sync {
-    async fn commit_child_graph(
+    /// 构造并校验 graph commit evidence，但不发布 graph。
+    /// `AgentRunForkSagaRepository` 将持久化与 saga phase transition 放进同一 transaction。
+    async fn prepare_child_graph_commit(
         &self,
         saga: &AgentRunForkSaga,
     ) -> Result<ProductGraphCommitEvidence, String>;
@@ -801,7 +850,7 @@ impl<'a> AgentRunForkSagaWorker<'a> {
                 saga.record_runtime_outcome(identity, outcome)?;
             }
             AgentRunForkSagaStep::CommitProductGraph => {
-                let evidence = match self.product_graph.commit_child_graph(&saga).await {
+                let evidence = match self.product_graph.prepare_child_graph_commit(&saga).await {
                     Ok(evidence) => evidence,
                     Err(reason) if saga.runtime_child.is_some() => {
                         let expected_version = saga.version;
@@ -813,13 +862,95 @@ impl<'a> AgentRunForkSagaWorker<'a> {
                         return Err(AgentRunForkSagaWorkerError::ProductGraph(reason));
                     }
                 };
+                let expected_version = saga.version;
                 saga.record_product_graph_commit(evidence)?;
+                return Ok(self
+                    .repository
+                    .commit_product_graph(expected_version, saga)
+                    .await?);
             }
             AgentRunForkSagaStep::MarkSucceeded => saga.mark_succeeded()?,
             AgentRunForkSagaStep::Terminal => return Ok(saga),
         }
         let expected_version = saga.version;
         Ok(self.repository.save(expected_version, saga).await?)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterializeAgentRunFork {
+    pub request_id: AgentRunForkRequestId,
+    pub parent: AgentRunForkParent,
+    pub child: PreallocatedAgentRunChild,
+    pub required_initial_context: Option<RequiredInitialContextEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum AgentRunForkFacadeError {
+    #[error(transparent)]
+    Repository(#[from] AgentRunForkSagaRepositoryError),
+    #[error(transparent)]
+    Worker(#[from] AgentRunForkSagaWorkerError),
+    #[error("existing fork request drifted from its immutable parent or child identity")]
+    ExistingRequestDrift,
+}
+
+/// durable AgentRun fork 的 Product 生产入口。
+///
+/// constructor 必须显式注入三个最终 port，不提供 default、recording repository、
+/// legacy runtime facade 或 graph-first 分支。
+pub struct AgentRunForkFacade<'a> {
+    repository: &'a dyn AgentRunForkSagaRepository,
+    worker: AgentRunForkSagaWorker<'a>,
+}
+
+impl<'a> AgentRunForkFacade<'a> {
+    pub fn new(
+        repository: &'a dyn AgentRunForkSagaRepository,
+        runtime: &'a dyn AgentRunForkRuntimePort,
+        product_graph: &'a dyn AgentRunForkProductGraphPort,
+    ) -> Self {
+        Self {
+            repository,
+            worker: AgentRunForkSagaWorker::new(repository, runtime, product_graph),
+        }
+    }
+
+    pub async fn materialize(
+        &self,
+        command: MaterializeAgentRunFork,
+    ) -> Result<AgentRunForkSaga, AgentRunForkFacadeError> {
+        let requested = AgentRunForkSaga::requested_with_initial_context(
+            command.request_id.clone(),
+            command.parent,
+            command.child,
+            command.required_initial_context,
+        );
+        match self.repository.create(requested.clone()).await {
+            Ok(saga) => Ok(saga),
+            Err(AgentRunForkSagaRepositoryError::AlreadyExists) => {
+                let existing = self
+                    .repository
+                    .load(&command.request_id)
+                    .await?
+                    .ok_or(AgentRunForkSagaRepositoryError::NotFound)?;
+                if existing.parent() != requested.parent()
+                    || existing.child() != requested.child()
+                    || existing.required_initial_context != requested.required_initial_context
+                {
+                    return Err(AgentRunForkFacadeError::ExistingRequestDrift);
+                }
+                Ok(existing)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn advance(
+        &self,
+        request_id: &AgentRunForkRequestId,
+    ) -> Result<AgentRunForkSaga, AgentRunForkFacadeError> {
+        Ok(self.worker.advance(request_id).await?)
     }
 }
 
@@ -1132,12 +1263,63 @@ mod tests {
 
     #[async_trait]
     impl AgentRunForkProductGraphPort for MatchingProductGraph {
-        async fn commit_child_graph(
+        async fn prepare_child_graph_commit(
             &self,
             saga: &AgentRunForkSaga,
         ) -> Result<ProductGraphCommitEvidence, String> {
             Ok(graph_evidence(saga))
         }
+    }
+
+    #[tokio::test]
+    async fn production_facade_materializes_one_preallocated_identity_set() {
+        let repository = RecordingAgentRunForkSagaRepository::default();
+        let runtime = CompleteAgentTargetFixture::default();
+        let facade = AgentRunForkFacade::new(&repository, &runtime, &MatchingProductGraph);
+        let requested = saga();
+        let command = MaterializeAgentRunFork {
+            request_id: requested.request_id.clone(),
+            parent: requested.parent.clone(),
+            child: requested.child.clone(),
+            required_initial_context: None,
+        };
+
+        let created = facade
+            .materialize(command.clone())
+            .await
+            .expect("materialize");
+        let replayed = facade.materialize(command).await.expect("replay");
+        assert_eq!(created, replayed);
+
+        let mut drifted_child = requested.child;
+        drifted_child.frame_id = Uuid::new_v4();
+        assert_eq!(
+            facade
+                .materialize(MaterializeAgentRunFork {
+                    request_id: requested.request_id,
+                    parent: requested.parent,
+                    child: drifted_child,
+                    required_initial_context: None,
+                })
+                .await,
+            Err(AgentRunForkFacadeError::ExistingRequestDrift)
+        );
+    }
+
+    #[test]
+    fn persistence_contract_freezes_the_w8_transaction_coordinates() {
+        assert_eq!(
+            AGENT_RUN_FORK_SAGA_SCHEMA_CONTRACT.table,
+            "agent_run_fork_saga"
+        );
+        assert_eq!(
+            AGENT_RUN_FORK_SAGA_SCHEMA_CONTRACT.durable_dispatch_identity,
+            "durable_runtime_dispatch"
+        );
+        assert_eq!(
+            AGENT_RUN_FORK_SAGA_SCHEMA_CONTRACT.graph_commit_revision,
+            "graph_commit_revision"
+        );
     }
 
     #[tokio::test]
@@ -1292,7 +1474,7 @@ mod tests {
 
     #[async_trait]
     impl AgentRunForkProductGraphPort for FailingProductGraph {
-        async fn commit_child_graph(
+        async fn prepare_child_graph_commit(
             &self,
             _saga: &AgentRunForkSaga,
         ) -> Result<ProductGraphCommitEvidence, String> {

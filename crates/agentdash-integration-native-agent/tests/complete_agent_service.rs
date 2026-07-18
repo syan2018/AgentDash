@@ -386,7 +386,7 @@ impl DashProvider for SurfaceGenerationProvider {
         _: DashProviderRequest,
     ) -> Result<DashProviderEventStream, DashCoreError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
-        if call % 2 == 0 {
+        if call.is_multiple_of(2) {
             Ok(Box::pin(stream::iter([
                 Ok(DashProviderEvent::ToolCall {
                     call: DashToolCall {

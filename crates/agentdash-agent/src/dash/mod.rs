@@ -5,10 +5,10 @@ mod service;
 mod store;
 
 pub use core_execution::{
-    DashCancellation, DashCoreContext, DashCoreError, DashCoreEvent, DashCoreOutput, DashCoreTurn,
-    DashCoreTurnResult, DashExecutionCallbacks, DashFinishReason, DashMessage, DashMessageRole,
-    DashProvider, DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashToolCall,
-    DashToolCallbacks, DashToolDefinition, DashToolResult,
+    DashBeforeToolDecision, DashCancellation, DashCoreContext, DashCoreError, DashCoreEvent,
+    DashCoreOutput, DashCoreTurn, DashCoreTurnResult, DashExecutionCallbacks, DashFinishReason,
+    DashMessage, DashMessageRole, DashProvider, DashProviderEvent, DashProviderEventStream,
+    DashProviderRequest, DashToolCall, DashToolCallbacks, DashToolDefinition, DashToolResult,
 };
 pub use history::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId,
@@ -23,10 +23,10 @@ pub use lifecycle::{
     DashExecutionConsistency, DashLifecycle, EffectId, EffectOutcome, LifecycleError,
 };
 pub use service::{
-    DashAgentRead, DashAgentRepository, DashAgentRepositoryState, DashAgentService,
-    DashCommandReceipt, DashCommandRequest, DashCompactionRequest, DashCompactionResult,
-    DashCompactor, DashEffectInspection, DashExecutionDependencies, DashPublicCommand,
-    DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome,
+    DashAgentRead, DashAgentRepository, DashAgentRepositoryState, DashAgentRepositoryStore,
+    DashAgentService, DashCommandReceipt, DashCommandRequest, DashCompactionRequest,
+    DashCompactionResult, DashCompactor, DashEffectInspection, DashExecutionDependencies,
+    DashPublicCommand, DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome,
 };
 pub use store::{
     CommandSettlement, DashAgentChange, DashAgentChangePayload, DashAgentCommit, DashAgentStore,

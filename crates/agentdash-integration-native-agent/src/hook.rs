@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_core::{
+use agentdash_agent::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage,
     AgentRuntimeDelegateSet, AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput,
     BeforeToolCallInput, ContentPart, RuntimeProviderObserverDelegate, RuntimeToolPolicyDelegate,

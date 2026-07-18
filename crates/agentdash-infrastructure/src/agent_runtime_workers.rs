@@ -7,11 +7,11 @@ use crate::{
     PostgresAgentRuntimeCompositionRepository, PostgresAgentRuntimeContextBroker,
     PostgresRuntimeRepository, agent_runtime_driver_sink::admit_driver_event_to_pump,
 };
-use agentdash_agent_core::compaction::execute_compaction;
-use agentdash_agent_core::{
+use agentdash_agent::compaction::execute_compaction;
+use agentdash_agent::{
     AgentMessage, CompactionParams, ContentPart, MessageRef, StopReason, ToolCallInfo,
 };
-use agentdash_agent_core::{
+use agentdash_agent::{
     CompactionImplementation, CompactionMetadata, CompactionPhase, CompactionReason,
     CompactionStrategy, CompactionTrigger, CompactionTriggerStats, ProjectedTranscript,
 };
@@ -202,7 +202,7 @@ impl ManagedCompactionPreparationEngine for NativeManagedCompactionEngine {
             .collect::<Vec<_>>();
         let tokens_before = messages
             .iter()
-            .map(agentdash_agent_core::estimate_message_tokens)
+            .map(agentdash_agent::estimate_message_tokens)
             .sum();
         let metadata = CompactionMetadata {
             trigger: match work.trigger {

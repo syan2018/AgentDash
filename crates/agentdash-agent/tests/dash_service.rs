@@ -5,15 +5,73 @@ use std::sync::{
 
 use agentdash_agent::dash::{
     ActivityStatus, AgentHistory, AgentSessionId, AgentTurnId, BranchId, CommandId, CompactionId,
-    ContextRevision, DashAgentService, DashCommandRequest, DashCompactionRequest,
-    DashCompactionResult, DashCompactor, DashCoreError, DashCoreEvent, DashExecutionCallbacks,
-    DashExecutionConsistency, DashExecutionDependencies, DashFinishReason, DashProvider,
-    DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashPublicCommand,
-    DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome, DashToolCall,
-    DashToolCallbacks, DashToolResult, EffectId,
+    ContextRevision, DashAgentRepository, DashAgentRepositoryState, DashAgentService,
+    DashCommandRequest, DashCompactionRequest, DashCompactionResult, DashCompactor, DashCoreError,
+    DashCoreEvent, DashExecutionCallbacks, DashExecutionConsistency, DashExecutionDependencies,
+    DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
+    DashProviderRequest, DashPublicCommand, DashReceiptState, DashServiceError, DashSurface,
+    DashTerminalOutcome, DashToolCall, DashToolCallbacks, DashToolResult, EffectId,
 };
 use async_trait::async_trait;
 use futures::stream;
+
+#[derive(Default)]
+struct RecordingDashRepository {
+    state: tokio::sync::RwLock<Option<DashAgentRepositoryState>>,
+}
+
+#[async_trait]
+impl DashAgentRepository for RecordingDashRepository {
+    async fn initialize(&self, initial: DashAgentRepositoryState) -> Result<(), DashServiceError> {
+        let mut state = self.state.write().await;
+        if state.is_some() {
+            return Err(DashServiceError::Conflict {
+                message: "test repository already initialized".into(),
+            });
+        }
+        *state = Some(initial);
+        Ok(())
+    }
+
+    async fn load(&self) -> Result<DashAgentRepositoryState, DashServiceError> {
+        self.state
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| DashServiceError::InvalidState {
+                message: "test repository is not initialized".into(),
+            })
+    }
+
+    async fn compare_and_swap(
+        &self,
+        expected: DashAgentRepositoryState,
+        replacement: DashAgentRepositoryState,
+    ) -> Result<(), DashServiceError> {
+        let mut state = self.state.write().await;
+        if state.as_ref() != Some(&expected) {
+            return Err(DashServiceError::Conflict {
+                message: "test repository revision changed".into(),
+            });
+        }
+        *state = Some(replacement);
+        Ok(())
+    }
+}
+
+async fn create_service(
+    history: AgentHistory,
+    execution: DashExecutionDependencies,
+) -> DashAgentService {
+    DashAgentService::create_with_repository(
+        Arc::new(RecordingDashRepository::default()),
+        history,
+        None,
+        execution,
+    )
+    .await
+    .unwrap()
+}
 
 struct RetryableProvider;
 
@@ -73,12 +131,11 @@ impl DashCompactor for NoCompaction {
 
 #[tokio::test]
 async fn retryable_provider_failure_is_terminal_and_inspectable_outside_session() {
-    let service = DashAgentService::create(
+    let service = create_service(
         AgentHistory::empty(
             AgentSessionId::new("retry-session"),
             BranchId::new("retry-branch"),
         ),
-        None,
         DashExecutionDependencies {
             provider: Arc::new(RetryableProvider),
             tools: Arc::new(NoTools),
@@ -86,7 +143,7 @@ async fn retryable_provider_failure_is_terminal_and_inspectable_outside_session(
             compactor: Arc::new(NoCompaction),
         },
     )
-    .unwrap();
+    .await;
     let effect_id = EffectId::new("retry-effect");
     let receipt = service
         .execute(DashCommandRequest {
@@ -152,7 +209,9 @@ async fn repository_reopen_preserves_surface_inspect_and_idempotency_without_pro
     let provider = Arc::new(CountingProvider {
         calls: AtomicUsize::new(0),
     });
-    let service = DashAgentService::create(
+    let repository = Arc::new(RecordingDashRepository::default());
+    let service = DashAgentService::create_with_repository(
+        repository.clone(),
         AgentHistory::empty(
             AgentSessionId::new("reopen-session"),
             BranchId::new("reopen-branch"),
@@ -160,6 +219,7 @@ async fn repository_reopen_preserves_surface_inspect_and_idempotency_without_pro
         None,
         dependencies(provider.clone()),
     )
+    .await
     .unwrap();
     service
         .apply_surface(DashSurface {
@@ -178,8 +238,8 @@ async fn repository_reopen_preserves_surface_inspect_and_idempotency_without_pro
         },
     };
     let first = service.execute(request.clone()).await.unwrap();
-    let exported = service.export_repository_state().await.unwrap();
-    let reopened = DashAgentService::reopen(exported, dependencies(provider.clone()));
+    let reopened =
+        DashAgentService::open_with_repository(repository, dependencies(provider.clone()));
     let replayed = reopened.execute(request.clone()).await.unwrap();
 
     assert_eq!(replayed, first);
@@ -250,17 +310,16 @@ impl DashProvider for OverflowThenErrorProvider {
     }
 }
 
-fn automatic_service(
+async fn automatic_service(
     provider: Arc<dyn DashProvider>,
     compactor: Arc<dyn DashCompactor>,
     suffix: &str,
 ) -> DashAgentService {
-    DashAgentService::create(
+    create_service(
         AgentHistory::empty(
             AgentSessionId::new(format!("automatic-{suffix}-session")),
             BranchId::new(format!("automatic-{suffix}-branch")),
         ),
-        None,
         DashExecutionDependencies {
             provider,
             tools: Arc::new(NoTools),
@@ -268,7 +327,7 @@ fn automatic_service(
             compactor,
         },
     )
-    .unwrap()
+    .await
 }
 
 fn submit_request(suffix: &str) -> DashCommandRequest {
@@ -307,7 +366,8 @@ async fn automatic_compaction_b_failure_matrix_terminalizes_dependent_c_and_clea
             Arc::new(OverflowProvider),
             Arc::new(FailingCompactor { lost }),
             suffix,
-        );
+        )
+        .await;
         let request = submit_request(suffix);
         let receipt = service.execute(request.clone()).await.unwrap();
 
@@ -390,7 +450,8 @@ async fn automatic_continuation_c_failure_matrix_terminalizes_effect_and_clears_
             }),
             Arc::new(NoCompaction),
             suffix,
-        );
+        )
+        .await;
         let request = submit_request(suffix);
         let receipt = service.execute(request.clone()).await.unwrap();
 

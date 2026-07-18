@@ -1,10 +1,10 @@
 use std::pin::Pin;
 
 use agentdash_agent_core::{
-    CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput, CoreMessage, CoreOutput,
-    CoreProvider, CoreRole, CoreTokenUsage, CoreTool, CoreToolCall, CoreToolCallbacks,
-    CoreToolResult, FinishReason, ProviderEvent, ProviderEventStream, ProviderRequest,
-    run_agent_loop,
+    CoreBeforeToolDecision, CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput,
+    CoreMessage, CoreOutput, CoreProvider, CoreRole, CoreTokenUsage, CoreTool, CoreToolCall,
+    CoreToolCallbacks, CoreToolResult, FinishReason, ProviderEvent, ProviderEventStream,
+    ProviderRequest, run_agent_loop,
 };
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
@@ -65,6 +65,13 @@ pub struct DashToolResult {
     pub call_id: String,
     pub content: String,
     pub is_error: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "decision", rename_all = "snake_case")]
+pub enum DashBeforeToolDecision {
+    Invoke { call: DashToolCall },
+    Deny { result: DashToolResult },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,11 +197,28 @@ pub trait DashProvider: Send + Sync {
 
 #[async_trait]
 pub trait DashToolCallbacks: Send + Sync {
+    async fn before_tool(
+        &self,
+        _turn_id: &AgentTurnId,
+        call: DashToolCall,
+    ) -> Result<DashBeforeToolDecision, DashCoreError> {
+        Ok(DashBeforeToolDecision::Invoke { call })
+    }
+
     async fn invoke(
         &self,
         turn_id: &AgentTurnId,
         call: DashToolCall,
     ) -> Result<DashToolResult, DashCoreError>;
+
+    async fn after_tool(
+        &self,
+        _turn_id: &AgentTurnId,
+        _call: &DashToolCall,
+        result: DashToolResult,
+    ) -> Result<DashToolResult, DashCoreError> {
+        Ok(result)
+    }
 }
 
 #[async_trait]
@@ -341,6 +365,36 @@ struct ToolAdapter<'a> {
 
 #[async_trait]
 impl CoreToolCallbacks for ToolAdapter<'_> {
+    async fn before_tool(&self, call: CoreToolCall) -> Result<CoreBeforeToolDecision, CoreError> {
+        self.inner
+            .before_tool(
+                &self.turn_id,
+                DashToolCall {
+                    call_id: call.call_id,
+                    name: call.name,
+                    arguments: call.arguments,
+                },
+            )
+            .await
+            .map(|decision| match decision {
+                DashBeforeToolDecision::Invoke { call } => CoreBeforeToolDecision::Invoke {
+                    call: CoreToolCall {
+                        call_id: call.call_id,
+                        name: call.name,
+                        arguments: call.arguments,
+                    },
+                },
+                DashBeforeToolDecision::Deny { result } => CoreBeforeToolDecision::Deny {
+                    result: CoreToolResult {
+                        call_id: result.call_id,
+                        content: result.content,
+                        is_error: result.is_error,
+                    },
+                },
+            })
+            .map_err(core_error)
+    }
+
     async fn invoke(&self, call: CoreToolCall) -> Result<CoreToolResult, CoreError> {
         self.inner
             .invoke(
@@ -349,6 +403,34 @@ impl CoreToolCallbacks for ToolAdapter<'_> {
                     call_id: call.call_id,
                     name: call.name,
                     arguments: call.arguments,
+                },
+            )
+            .await
+            .map(|result| CoreToolResult {
+                call_id: result.call_id,
+                content: result.content,
+                is_error: result.is_error,
+            })
+            .map_err(core_error)
+    }
+
+    async fn after_tool(
+        &self,
+        call: &CoreToolCall,
+        result: CoreToolResult,
+    ) -> Result<CoreToolResult, CoreError> {
+        self.inner
+            .after_tool(
+                &self.turn_id,
+                &DashToolCall {
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                },
+                DashToolResult {
+                    call_id: result.call_id,
+                    content: result.content,
+                    is_error: result.is_error,
                 },
             )
             .await

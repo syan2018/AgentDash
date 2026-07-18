@@ -1,6 +1,7 @@
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use agentdash_diagnostics::{Subsystem, diag};
 use tokio::sync::broadcast;
 use tokio_stream::Stream;
 use tokio_stream::wrappers::BroadcastStream;
@@ -53,7 +54,9 @@ impl<T: Clone + Send + 'static> Stream for EventReceiver<T> {
             match Pin::new(&mut self.inner).poll_next(cx) {
                 Poll::Ready(Some(Ok(item))) => return Poll::Ready(Some(item)),
                 Poll::Ready(Some(Err(err))) => {
-                    tracing::warn!(
+                    diag!(
+                        Warn,
+                        Subsystem::AgentRun,
                         error = %err,
                         channel_capacity = DEFAULT_CHANNEL_CAPACITY,
                         consumer = "broadcast_stream",

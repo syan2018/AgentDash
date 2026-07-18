@@ -26,5 +26,7 @@ pub use driver::{
     native_agent_contribution, native_runtime_profile, native_runtime_trust_manifest,
 };
 pub use service::{
-    DashAgentCompleteService, NativeCompleteAgentRegistration, native_complete_agent_registration,
+    DashAgentCompleteService, DashCompleteAgentStore, DashCompleteEffectRecord,
+    DashCompleteRecordedReceipt, DashCompleteSourceMetadata, NativeCompleteAgentRegistration,
+    native_complete_agent_registration,
 };

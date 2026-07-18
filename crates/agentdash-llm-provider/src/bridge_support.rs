@@ -4,7 +4,7 @@ use std::pin::Pin;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::wrappers::ReceiverStream;
 
-use agentdash_agent_core::bridge::{BridgeError, ProviderErrorClassification, StreamChunk};
+use agentdash_agent::bridge::{BridgeError, ProviderErrorClassification, StreamChunk};
 
 /// 各 bridge `stream_complete` 共用的流脚手架：建立 64 容量 channel、`tokio::spawn`
 /// 运行 `run`，并在其返回 `Err` 时把错误作为 `StreamChunk::Error` 转发给消费方。
@@ -300,7 +300,7 @@ fn looks_retryable_text(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_agent_core::bridge::ProviderErrorKind;
+    use agentdash_agent::bridge::ProviderErrorKind;
 
     #[test]
     fn http_429_extracts_retry_after_seconds() {

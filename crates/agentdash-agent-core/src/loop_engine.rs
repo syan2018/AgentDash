@@ -2,9 +2,9 @@ use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput, CoreMessage, CoreOutput,
-    CoreProvider, CoreTokenUsage, CoreToolCall, CoreToolCallbacks, FinishReason, ProviderEvent,
-    ProviderRequest,
+    CoreBeforeToolDecision, CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput,
+    CoreMessage, CoreOutput, CoreProvider, CoreTokenUsage, CoreToolCall, CoreToolCallbacks,
+    FinishReason, ProviderEvent, ProviderRequest,
 };
 
 pub async fn run_agent_loop(
@@ -104,9 +104,22 @@ pub async fn run_agent_loop(
                 messages.push(CoreMessage::assistant(assistant_text));
                 for call in tool_calls {
                     ensure_not_cancelled(&cancel)?;
-                    let result = tokio::select! {
+                    let decision = tokio::select! {
                         _ = cancel.cancelled() => return Err(CoreError::Cancelled),
-                        result = tools.invoke(call) => result?,
+                        decision = tools.before_tool(call) => decision?,
+                    };
+                    let result = match decision {
+                        CoreBeforeToolDecision::Invoke { call } => {
+                            let result = tokio::select! {
+                                _ = cancel.cancelled() => return Err(CoreError::Cancelled),
+                                result = tools.invoke(call.clone()) => result?,
+                            };
+                            tokio::select! {
+                                _ = cancel.cancelled() => return Err(CoreError::Cancelled),
+                                result = tools.after_tool(&call, result) => result?,
+                            }
+                        }
+                        CoreBeforeToolDecision::Deny { result } => result,
                     };
                     callbacks
                         .emit(CoreEvent::ToolCallCompleted {

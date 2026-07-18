@@ -109,6 +109,15 @@ impl DashAgentRepositoryState {
     pub fn history(&self) -> &AgentHistory {
         self.store.history()
     }
+
+    pub fn new(store: DashAgentStore) -> Self {
+        Self {
+            store,
+            effects: BTreeMap::new(),
+            surface: None,
+            active: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -152,6 +161,8 @@ pub struct DashExecutionDependencies {
 
 #[async_trait]
 pub trait DashAgentRepository: Send + Sync {
+    async fn initialize(&self, initial: DashAgentRepositoryState) -> Result<(), DashServiceError>;
+
     async fn load(&self) -> Result<DashAgentRepositoryState, DashServiceError>;
 
     async fn compare_and_swap(
@@ -161,38 +172,18 @@ pub trait DashAgentRepository: Send + Sync {
     ) -> Result<(), DashServiceError>;
 }
 
-struct RecordingDashAgentRepository {
-    state: tokio::sync::RwLock<DashAgentRepositoryState>,
-}
-
-impl RecordingDashAgentRepository {
-    fn new(state: DashAgentRepositoryState) -> Self {
-        Self {
-            state: tokio::sync::RwLock::new(state),
-        }
-    }
-}
-
 #[async_trait]
-impl DashAgentRepository for RecordingDashAgentRepository {
-    async fn load(&self) -> Result<DashAgentRepositoryState, DashServiceError> {
-        Ok(self.state.read().await.clone())
-    }
-
-    async fn compare_and_swap(
+pub trait DashAgentRepositoryStore: Send + Sync {
+    async fn create(
         &self,
-        expected: DashAgentRepositoryState,
-        replacement: DashAgentRepositoryState,
-    ) -> Result<(), DashServiceError> {
-        let mut current = self.state.write().await;
-        if *current != expected {
-            return Err(DashServiceError::Conflict {
-                message: "Dash Agent repository revision changed".into(),
-            });
-        }
-        *current = replacement;
-        Ok(())
-    }
+        source: &super::AgentSessionId,
+        initial: DashAgentRepositoryState,
+    ) -> Result<Arc<dyn DashAgentRepository>, DashServiceError>;
+
+    async fn open(
+        &self,
+        source: &super::AgentSessionId,
+    ) -> Result<Option<Arc<dyn DashAgentRepository>>, DashServiceError>;
 }
 
 #[derive(Clone)]
@@ -203,11 +194,10 @@ pub struct DashAgentService {
 }
 
 impl DashAgentService {
-    pub fn create(
+    pub fn initial_repository_state(
         history: AgentHistory,
         initial_context: Option<InitialContextInstallation>,
-        execution: DashExecutionDependencies,
-    ) -> Result<Self, DashServiceError> {
+    ) -> Result<DashAgentRepositoryState, DashServiceError> {
         let mut store = DashAgentStore::new(history)?;
         if let Some(installation) = initial_context {
             store.commit(DashAgentCommit {
@@ -224,27 +214,57 @@ impl DashAgentService {
                 enqueue_commands: vec![],
             })?;
         }
-        Ok(Self::from_store(store, execution))
+        Ok(DashAgentRepositoryState::new(store))
     }
 
-    pub fn from_store(store: DashAgentStore, execution: DashExecutionDependencies) -> Self {
-        Self::reopen(
-            DashAgentRepositoryState {
-                store,
-                effects: BTreeMap::new(),
-                surface: None,
-                active: None,
-            },
-            execution,
-        )
+    pub async fn create_with_repository(
+        repository: Arc<dyn DashAgentRepository>,
+        history: AgentHistory,
+        initial_context: Option<InitialContextInstallation>,
+        execution: DashExecutionDependencies,
+    ) -> Result<Self, DashServiceError> {
+        repository
+            .initialize(Self::initial_repository_state(history, initial_context)?)
+            .await?;
+        Ok(Self::open_with_repository(repository, execution))
     }
 
-    pub fn reopen(state: DashAgentRepositoryState, execution: DashExecutionDependencies) -> Self {
+    pub fn open_with_repository(
+        repository: Arc<dyn DashAgentRepository>,
+        execution: DashExecutionDependencies,
+    ) -> Self {
         Self {
-            repository: Arc::new(RecordingDashAgentRepository::new(state)),
+            repository,
             execution: Arc::new(tokio::sync::RwLock::new(execution)),
             cancellation: Arc::new(tokio::sync::Mutex::new(None)),
         }
+    }
+
+    pub async fn create_with_store(
+        store: &dyn DashAgentRepositoryStore,
+        history: AgentHistory,
+        initial_context: Option<InitialContextInstallation>,
+        execution: DashExecutionDependencies,
+    ) -> Result<Self, DashServiceError> {
+        let source = history.session_id.clone();
+        let repository = store
+            .create(
+                &source,
+                Self::initial_repository_state(history, initial_context)?,
+            )
+            .await?;
+        Ok(Self::open_with_repository(repository, execution))
+    }
+
+    pub async fn open_with_store(
+        store: &dyn DashAgentRepositoryStore,
+        source: &super::AgentSessionId,
+        execution: DashExecutionDependencies,
+    ) -> Result<Option<Self>, DashServiceError> {
+        Ok(store
+            .open(source)
+            .await?
+            .map(|repository| Self::open_with_repository(repository, execution)))
     }
 
     pub async fn replace_tool_callbacks(&self, tools: Arc<dyn DashToolCallbacks>) {
@@ -255,27 +275,35 @@ impl DashAgentService {
         self.execution.read().await.clone()
     }
 
-    pub async fn fork(
+    pub async fn fork_with_store(
         &self,
+        repository_store: &dyn DashAgentRepositoryStore,
         child_session_id: super::AgentSessionId,
         child_branch_id: super::BranchId,
         cutoff: ForkCutoff,
     ) -> Result<Self, DashServiceError> {
+        let state = self
+            .fork_repository_state(child_session_id.clone(), child_branch_id, cutoff)
+            .await?;
+        let execution = self.execution_dependencies().await;
+        let repository = repository_store.create(&child_session_id, state).await?;
+        Ok(Self::open_with_repository(repository, execution))
+    }
+
+    pub async fn fork_repository_state(
+        &self,
+        child_session_id: super::AgentSessionId,
+        child_branch_id: super::BranchId,
+        cutoff: ForkCutoff,
+    ) -> Result<DashAgentRepositoryState, DashServiceError> {
         let current = self.repository.load().await?;
         let child = current
             .store
             .history()
             .fork(child_session_id, child_branch_id, cutoff)?;
-        let execution = self.execution_dependencies().await;
-        Ok(Self::reopen(
-            DashAgentRepositoryState {
-                store: DashAgentStore::new(child)?,
-                effects: BTreeMap::new(),
-                surface: current.surface,
-                active: None,
-            },
-            execution,
-        ))
+        let mut state = DashAgentRepositoryState::new(DashAgentStore::new(child)?);
+        state.surface = current.surface;
+        Ok(state)
     }
 
     pub async fn read(&self) -> Result<DashAgentRead, DashServiceError> {

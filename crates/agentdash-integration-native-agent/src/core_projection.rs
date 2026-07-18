@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use agentdash_agent_core::{
+use agentdash_agent::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
 };

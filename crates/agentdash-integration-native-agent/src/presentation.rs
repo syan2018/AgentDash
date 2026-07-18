@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use agentdash_agent_core::{
+use agentdash_agent::{
     AgentEvent, AgentMessage, AgentRunError, AgentRunErrorKind, AgentToolResult, ContentPart,
     ReadableBodyKind, ReadableToolResultRef, TokenUsage, ToolResultAddressProvider,
 };
@@ -85,10 +85,12 @@ pub(crate) struct NativeToolPresentationRoute {
     pub emitter: ToolPresentationEmitter,
 }
 
+type SharedNativeToolPresentationRoutes = Arc<RwLock<HashMap<String, NativeToolPresentationRoute>>>;
+
 #[derive(Debug, Default)]
 pub(crate) struct NativeSessionItemIdentity {
     state: RwLock<NativeSessionItemIdentityState>,
-    presentation_routes: RwLock<Option<Arc<RwLock<HashMap<String, NativeToolPresentationRoute>>>>>,
+    presentation_routes: RwLock<Option<SharedNativeToolPresentationRoutes>>,
 }
 
 #[derive(Debug, Default)]
@@ -364,7 +366,7 @@ fn upsert_state_from_tool_name(
 fn message_tool_call_info<'a>(
     message: &'a AgentMessage,
     tool_call_id: &str,
-) -> Option<&'a agentdash_agent_core::ToolCallInfo> {
+) -> Option<&'a agentdash_agent::ToolCallInfo> {
     match message {
         AgentMessage::Assistant { tool_calls, .. } => tool_calls
             .iter()
@@ -432,33 +434,27 @@ fn tool_result_item_id_from_details(result: &serde_json::Value) -> Option<String
 }
 
 fn provider_attempt_phase_to_protocol(
-    phase: agentdash_agent_core::ProviderAttemptPhase,
+    phase: agentdash_agent::ProviderAttemptPhase,
 ) -> ProtocolProviderAttemptPhase {
     match phase {
-        agentdash_agent_core::ProviderAttemptPhase::Connecting => {
+        agentdash_agent::ProviderAttemptPhase::Connecting => {
             ProtocolProviderAttemptPhase::Connecting
         }
-        agentdash_agent_core::ProviderAttemptPhase::ConnectedWaitingFirstDelta => {
+        agentdash_agent::ProviderAttemptPhase::ConnectedWaitingFirstDelta => {
             ProtocolProviderAttemptPhase::ConnectedWaitingFirstDelta
         }
-        agentdash_agent_core::ProviderAttemptPhase::Streaming => {
-            ProtocolProviderAttemptPhase::Streaming
-        }
-        agentdash_agent_core::ProviderAttemptPhase::RetryScheduled => {
+        agentdash_agent::ProviderAttemptPhase::Streaming => ProtocolProviderAttemptPhase::Streaming,
+        agentdash_agent::ProviderAttemptPhase::RetryScheduled => {
             ProtocolProviderAttemptPhase::RetryScheduled
         }
-        agentdash_agent_core::ProviderAttemptPhase::Retrying => {
-            ProtocolProviderAttemptPhase::Retrying
-        }
-        agentdash_agent_core::ProviderAttemptPhase::Failed => ProtocolProviderAttemptPhase::Failed,
-        agentdash_agent_core::ProviderAttemptPhase::Succeeded => {
-            ProtocolProviderAttemptPhase::Succeeded
-        }
+        agentdash_agent::ProviderAttemptPhase::Retrying => ProtocolProviderAttemptPhase::Retrying,
+        agentdash_agent::ProviderAttemptPhase::Failed => ProtocolProviderAttemptPhase::Failed,
+        agentdash_agent::ProviderAttemptPhase::Succeeded => ProtocolProviderAttemptPhase::Succeeded,
     }
 }
 
 fn provider_attempt_status_to_protocol(
-    status: &agentdash_agent_core::ProviderAttemptStatus,
+    status: &agentdash_agent::ProviderAttemptStatus,
     turn_id: &str,
 ) -> ProtocolProviderAttemptStatus {
     ProtocolProviderAttemptStatus {
@@ -1354,7 +1350,7 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
             message,
             event: stream_event,
         } => match stream_event {
-            agentdash_agent_core::types::AssistantStreamEvent::ToolCallStart {
+            agentdash_agent::types::AssistantStreamEvent::ToolCallStart {
                 tool_call_id,
                 name,
                 ..
@@ -1402,7 +1398,7 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                     state.entry_index,
                 )]
             }
-            agentdash_agent_core::types::AssistantStreamEvent::ToolCallDelta {
+            agentdash_agent::types::AssistantStreamEvent::ToolCallDelta {
                 tool_call_id,
                 name,
                 draft,
@@ -1465,9 +1461,7 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                     state.entry_index,
                 )]
             }
-            agentdash_agent_core::types::AssistantStreamEvent::ToolCallEnd {
-                tool_call, ..
-            } => {
+            agentdash_agent::types::AssistantStreamEvent::ToolCallEnd { tool_call, .. } => {
                 let (state, _) = upsert_tool_call_state(
                     &runtime_context,
                     tool_call_states,
@@ -1484,7 +1478,7 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                 }
                 Vec::new()
             }
-            agentdash_agent_core::types::AssistantStreamEvent::TextDelta { text, .. } => {
+            agentdash_agent::types::AssistantStreamEvent::TextDelta { text, .. } => {
                 if text.is_empty() {
                     return Ok(Vec::new());
                 }
@@ -1503,7 +1497,7 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                     *entry_index,
                 )]
             }
-            agentdash_agent_core::types::AssistantStreamEvent::ThinkingDelta { text, .. } => {
+            agentdash_agent::types::AssistantStreamEvent::ThinkingDelta { text, .. } => {
                 if text.is_empty() {
                     return Ok(Vec::new());
                 }
@@ -1536,7 +1530,7 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                 ..
             } = message
             {
-                if matches!(stop_reason, Some(agentdash_agent_core::StopReason::Aborted)) {
+                if matches!(stop_reason, Some(agentdash_agent::StopReason::Aborted)) {
                     return Ok(Vec::new());
                 }
                 if let Some(error_message) = error_message {
@@ -1708,10 +1702,7 @@ pub(crate) fn convert_event_to_envelopes_with_runtime_context(
                 }
                 if !matches!(
                     stop_reason,
-                    Some(
-                        agentdash_agent_core::StopReason::Error
-                            | agentdash_agent_core::StopReason::Aborted
-                    )
+                    Some(agentdash_agent::StopReason::Error | agentdash_agent::StopReason::Aborted)
                 ) && let Some(usage) = usage.as_ref()
                 {
                     envelopes.push(wrap(

@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-agentdash-agent-core = { workspace = true }
+agentdash-agent = { workspace = true }
 agentdash-diagnostics = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-spi = { workspace = true }

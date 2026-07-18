@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use agentdash_diagnostics::{Subsystem, diag};
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
@@ -820,7 +821,9 @@ async fn emit_retry_scheduled(
         },
     )
     .await;
-    tracing::warn!(
+    diag!(
+        Warn,
+        Subsystem::AgentRun,
         error = %error,
         attempt,
         retry_count = attempt.saturating_sub(1),

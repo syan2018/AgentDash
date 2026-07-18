@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_diagnostics::{Subsystem, diag};
 use jsonschema::validator_for;
 use tokio_util::sync::CancellationToken;
 
@@ -850,7 +851,9 @@ fn record_agent_tool_result_cache_write(
         return;
     }
 
-    tracing::debug!(
+    diag!(
+        Debug,
+        Subsystem::AgentRun,
         item_id = write.item_id,
         lifecycle_path = write.lifecycle_path,
         original_bytes = write.original_bytes,

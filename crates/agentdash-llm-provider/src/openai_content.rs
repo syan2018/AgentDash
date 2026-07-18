@@ -1,4 +1,4 @@
-use agentdash_agent_core::types::ContentPart;
+use agentdash_agent::types::ContentPart;
 
 pub(super) fn responses_input_items(content: &[ContentPart]) -> Vec<serde_json::Value> {
     content

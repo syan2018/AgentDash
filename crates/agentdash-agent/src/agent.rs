@@ -11,6 +11,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
+use agentdash_diagnostics::{Subsystem, diag};
 use tokio::sync::{Mutex, Notify, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -574,7 +575,9 @@ impl Agent {
                         let mut s = state.lock().await;
                         s.error = Some(error_text.clone());
                     }
-                    tracing::error!(
+                    diag!(
+                        Error,
+                        Subsystem::AgentRun,
                         error = %error,
                         loop_kind,
                         tool_count,

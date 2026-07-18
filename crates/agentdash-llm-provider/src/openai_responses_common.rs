@@ -1,8 +1,8 @@
-use agentdash_agent_core::bridge::{
+use agentdash_agent::bridge::{
     BridgeError, BridgeRequest, BridgeResponse, ProviderErrorClassification, StreamChunk,
     ToolCallDeltaContent,
 };
-use agentdash_agent_core::types::{
+use agentdash_agent::types::{
     AgentMessage, ContentPart, StopReason, TokenUsage, ToolCallInfo, now_millis,
 };
 use futures::{Stream, StreamExt};
@@ -523,8 +523,8 @@ fn is_responses_protocol_event(event_type: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_agent_core::bridge::ProviderErrorKind;
-    use agentdash_agent_core::types::ToolDefinition;
+    use agentdash_agent::bridge::ProviderErrorKind;
+    use agentdash_agent::types::ToolDefinition;
     use std::time::Duration;
 
     async fn collect_chunks(mut rx: tokio::sync::mpsc::Receiver<StreamChunk>) -> Vec<StreamChunk> {

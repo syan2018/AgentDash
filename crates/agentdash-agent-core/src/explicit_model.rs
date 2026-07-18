@@ -90,6 +90,13 @@ pub struct CoreToolResult {
     pub is_error: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "decision", rename_all = "snake_case")]
+pub enum CoreBeforeToolDecision {
+    Invoke { call: CoreToolCall },
+    Deny { result: CoreToolResult },
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub input_tokens: u64,
@@ -199,7 +206,19 @@ pub trait CoreProvider: Send + Sync {
 
 #[async_trait]
 pub trait CoreToolCallbacks: Send + Sync {
+    async fn before_tool(&self, call: CoreToolCall) -> Result<CoreBeforeToolDecision, CoreError> {
+        Ok(CoreBeforeToolDecision::Invoke { call })
+    }
+
     async fn invoke(&self, call: CoreToolCall) -> Result<CoreToolResult, CoreError>;
+
+    async fn after_tool(
+        &self,
+        _call: &CoreToolCall,
+        result: CoreToolResult,
+    ) -> Result<CoreToolResult, CoreError> {
+        Ok(result)
+    }
 }
 
 #[async_trait]

@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, pin::Pin, sync::Arc};
 
-use agentdash_agent_core::{AgentMessage, ContentPart};
-use agentdash_agent_core::{BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, TokenUsage};
+use agentdash_agent::{AgentMessage, ContentPart};
+use agentdash_agent::{BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, TokenUsage};
 use agentdash_agent_runtime_contract::*;
 use agentdash_agent_runtime_test_support::RuntimeTraceValidator;
 use agentdash_integration_api::*;

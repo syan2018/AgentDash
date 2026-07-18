@@ -1,4 +1,4 @@
-use agentdash_agent_core::{AgentMessage, ContentPart};
+use agentdash_agent::{AgentMessage, ContentPart};
 use agentdash_agent_protocol::{
     AgentDashThreadItem, UserInputBlock, codex_app_server_protocol as codex,
 };

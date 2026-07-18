@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_core::{
+use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
 };
 use agentdash_agent_runtime_contract::{
@@ -101,18 +101,18 @@ impl AgentTool for NativeRuntimeTool {
     fn parameters_schema(&self) -> serde_json::Value {
         self.definition.parameters_schema.clone()
     }
-    fn protocol_projector(&self) -> Option<agentdash_agent_core::ToolProtocolProjector> {
+    fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
         use agentdash_agent_runtime_contract::ToolProtocolProjection as P;
         Some(match &self.definition.protocol_projection {
-            P::Command => agentdash_agent_core::ToolProtocolProjector::Command,
-            P::FileChange => agentdash_agent_core::ToolProtocolProjector::FileChange,
-            P::FsRead => agentdash_agent_core::ToolProtocolProjector::FsRead,
-            P::FsGrep => agentdash_agent_core::ToolProtocolProjector::FsGrep,
-            P::FsGlob => agentdash_agent_core::ToolProtocolProjector::FsGlob,
-            P::Mcp { server_key } => agentdash_agent_core::ToolProtocolProjector::Mcp {
+            P::Command => agentdash_agent::ToolProtocolProjector::Command,
+            P::FileChange => agentdash_agent::ToolProtocolProjector::FileChange,
+            P::FsRead => agentdash_agent::ToolProtocolProjector::FsRead,
+            P::FsGrep => agentdash_agent::ToolProtocolProjector::FsGrep,
+            P::FsGlob => agentdash_agent::ToolProtocolProjector::FsGlob,
+            P::Mcp { server_key } => agentdash_agent::ToolProtocolProjector::Mcp {
                 server_key: server_key.clone(),
             },
-            P::Dynamic { namespace } => agentdash_agent_core::ToolProtocolProjector::Dynamic {
+            P::Dynamic { namespace } => agentdash_agent::ToolProtocolProjector::Dynamic {
                 namespace: namespace.clone(),
             },
         })

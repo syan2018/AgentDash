@@ -1,38 +1,213 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use agentdash_agent::dash::{
-    AgentTurnId as DashTurnId, ContextRevision, DashCompactionRequest, DashCompactionResult,
-    DashCompactor, DashCoreError, DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies,
-    DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
-    DashProviderRequest, DashServiceError, DashToolCall, DashToolCallbacks, DashToolResult,
+    AgentSessionId, AgentTurnId as DashTurnId, ContextRevision, DashAgentRepository,
+    DashAgentRepositoryState, DashAgentRepositoryStore, DashCompactionRequest,
+    DashCompactionResult, DashCompactor, DashCoreError, DashCoreEvent, DashExecutionCallbacks,
+    DashExecutionDependencies, DashFinishReason, DashProvider, DashProviderEvent,
+    DashProviderEventStream, DashProviderRequest, DashServiceError, DashToolCall,
+    DashToolCallbacks, DashToolResult,
 };
 use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentChangesQuery, AgentCommand,
     AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentContextPackageId,
     AgentContextSchemaVersion, AgentContextSourceCoordinate, AgentContextSourceRevision,
     AgentEffectIdentity, AgentEffectInspectionState, AgentForkCutoffKind, AgentForkPoint,
-    AgentHookBlockingSemantics, AgentHookDecision, AgentHookInvocation, AgentHookMutationKind,
-    AgentHookPoint, AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbacks,
-    AgentIdempotencyKey, AgentInput, AgentInputContent, AgentPayloadDigest, AgentProfileDigest,
-    AgentReadQuery, AgentReceiptState, AgentServiceInstanceId, AgentSnapshotRevision,
-    AgentSourceCoordinate, AgentSurfaceContributionPayload, AgentSurfaceDigest,
-    AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
-    AgentToolDelivery, AgentToolInvocation, AgentToolName, AgentToolResult, AgentToolSemanticFacet,
-    AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
+    AgentHookAction, AgentHookBlockingSemantics, AgentHookDecision, AgentHookDefinitionId,
+    AgentHookInvocation, AgentHookMutationKind, AgentHookPoint, AgentHookTiming,
+    AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbacks, AgentIdempotencyKey,
+    AgentInput, AgentInputContent, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
+    AgentReceiptState, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
+    AgentSnapshotRevision, AgentSourceCoordinate, AgentSurfaceContributionPayload,
+    AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
+    AgentTerminalOutcome, AgentToolDelivery, AgentToolInvocation, AgentToolName, AgentToolResult,
+    AgentToolSemanticFacet, AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
     BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind, ContextProvenance,
     CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
     InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
-    InitialContextMode, ResumeAgentCommand, SemanticFidelity,
+    InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_native_agent::{
-    DashAgentCompleteService, native_complete_agent_registration,
+    DashAgentCompleteService, DashCompleteAgentStore, DashCompleteEffectRecord,
+    DashCompleteSourceMetadata, native_complete_agent_registration,
 };
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, RwLock};
+
+#[derive(Default)]
+struct RecordingDashRepository {
+    state: RwLock<Option<DashAgentRepositoryState>>,
+}
+
+#[async_trait]
+impl DashAgentRepository for RecordingDashRepository {
+    async fn initialize(&self, initial: DashAgentRepositoryState) -> Result<(), DashServiceError> {
+        let mut state = self.state.write().await;
+        if state.is_some() {
+            return Err(DashServiceError::Conflict {
+                message: "test Dash repository already initialized".into(),
+            });
+        }
+        *state = Some(initial);
+        Ok(())
+    }
+
+    async fn load(&self) -> Result<DashAgentRepositoryState, DashServiceError> {
+        self.state
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| DashServiceError::InvalidState {
+                message: "test Dash repository is not initialized".into(),
+            })
+    }
+
+    async fn compare_and_swap(
+        &self,
+        expected: DashAgentRepositoryState,
+        replacement: DashAgentRepositoryState,
+    ) -> Result<(), DashServiceError> {
+        let mut state = self.state.write().await;
+        if state.as_ref() != Some(&expected) {
+            return Err(DashServiceError::Conflict {
+                message: "test Dash repository revision changed".into(),
+            });
+        }
+        *state = Some(replacement);
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct RecordingCompleteStore {
+    repositories: RwLock<BTreeMap<String, Arc<RecordingDashRepository>>>,
+    sources: RwLock<BTreeMap<AgentSourceCoordinate, DashCompleteSourceMetadata>>,
+    effects: RwLock<BTreeMap<AgentEffectIdentity, DashCompleteEffectRecord>>,
+}
+
+#[async_trait]
+impl DashAgentRepositoryStore for RecordingCompleteStore {
+    async fn create(
+        &self,
+        source: &AgentSessionId,
+        initial: DashAgentRepositoryState,
+    ) -> Result<Arc<dyn DashAgentRepository>, DashServiceError> {
+        let repository = Arc::new(RecordingDashRepository::default());
+        repository.initialize(initial).await?;
+        let mut repositories = self.repositories.write().await;
+        if repositories
+            .insert(source.0.clone(), repository.clone())
+            .is_some()
+        {
+            return Err(DashServiceError::Conflict {
+                message: "test Dash source already exists".into(),
+            });
+        }
+        Ok(repository)
+    }
+
+    async fn open(
+        &self,
+        source: &AgentSessionId,
+    ) -> Result<Option<Arc<dyn DashAgentRepository>>, DashServiceError> {
+        Ok(self
+            .repositories
+            .read()
+            .await
+            .get(&source.0)
+            .cloned()
+            .map(|repository| repository as Arc<dyn DashAgentRepository>))
+    }
+}
+
+#[async_trait]
+impl DashCompleteAgentStore for RecordingCompleteStore {
+    fn repositories(&self) -> &dyn DashAgentRepositoryStore {
+        self
+    }
+
+    async fn create_source(
+        &self,
+        source: AgentSourceCoordinate,
+        repository: DashAgentRepositoryState,
+        metadata: DashCompleteSourceMetadata,
+    ) -> Result<(), AgentServiceError> {
+        if self.sources.read().await.contains_key(&source) {
+            return Err(test_conflict("test Complete Agent source already exists"));
+        }
+        DashAgentRepositoryStore::create(self, &AgentSessionId::new(source.as_str()), repository)
+            .await
+            .map_err(test_store_error)?;
+        self.sources.write().await.insert(source, metadata);
+        Ok(())
+    }
+
+    async fn load_source(
+        &self,
+        source: &AgentSourceCoordinate,
+    ) -> Result<Option<DashCompleteSourceMetadata>, AgentServiceError> {
+        Ok(self.sources.read().await.get(source).cloned())
+    }
+
+    async fn replace_source(
+        &self,
+        source: &AgentSourceCoordinate,
+        expected: DashCompleteSourceMetadata,
+        replacement: DashCompleteSourceMetadata,
+    ) -> Result<(), AgentServiceError> {
+        let mut sources = self.sources.write().await;
+        if sources.get(source) != Some(&expected) {
+            return Err(test_conflict("test Complete Agent source revision changed"));
+        }
+        sources.insert(source.clone(), replacement);
+        Ok(())
+    }
+
+    async fn list_sources(&self) -> Result<Vec<AgentSourceCoordinate>, AgentServiceError> {
+        Ok(self.sources.read().await.keys().cloned().collect())
+    }
+
+    async fn load_effect(
+        &self,
+        identity: &AgentEffectIdentity,
+    ) -> Result<Option<DashCompleteEffectRecord>, AgentServiceError> {
+        Ok(self.effects.read().await.get(identity).cloned())
+    }
+
+    async fn record_effect(
+        &self,
+        identity: AgentEffectIdentity,
+        record: DashCompleteEffectRecord,
+    ) -> Result<(), AgentServiceError> {
+        let mut effects = self.effects.write().await;
+        if let Some(existing) = effects.get(&identity) {
+            return if existing == &record {
+                Ok(())
+            } else {
+                Err(test_conflict(
+                    "test Complete Agent effect identity conflict",
+                ))
+            };
+        }
+        effects.insert(identity, record);
+        Ok(())
+    }
+}
+
+fn test_conflict(message: &str) -> AgentServiceError {
+    AgentServiceError::new(AgentServiceErrorCode::Conflict, message, false)
+}
+
+fn test_store_error(error: DashServiceError) -> AgentServiceError {
+    AgentServiceError::new(AgentServiceErrorCode::Internal, error.to_string(), false)
+}
 
 struct FixtureProvider;
 
@@ -101,6 +276,100 @@ impl AgentHostCallbacks for FixtureHostCallbacks {
     }
 }
 
+struct HookRoundProvider {
+    calls: AtomicUsize,
+    requests: Mutex<Vec<DashProviderRequest>>,
+}
+
+#[async_trait]
+impl DashProvider for HookRoundProvider {
+    async fn stream(
+        &self,
+        request: DashProviderRequest,
+    ) -> Result<DashProviderEventStream, DashCoreError> {
+        self.requests.lock().unwrap().push(request);
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == 0 {
+            Ok(Box::pin(stream::iter([
+                Ok(DashProviderEvent::ToolCall {
+                    call: DashToolCall {
+                        call_id: "hook-call-1".into(),
+                        name: "read".into(),
+                        arguments: serde_json::json!({"original": true}),
+                    },
+                }),
+                Ok(DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::ToolCalls,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                }),
+            ])))
+        } else {
+            Ok(Box::pin(stream::iter([
+                Ok(DashProviderEvent::TextDelta {
+                    delta: "hooked answer".into(),
+                }),
+                Ok(DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::Stop,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                }),
+            ])))
+        }
+    }
+}
+
+#[derive(Default)]
+struct HookExecutionCallbacks {
+    before: AtomicUsize,
+    after: AtomicUsize,
+    tools: AtomicUsize,
+    tool_arguments: Mutex<Vec<serde_json::Value>>,
+}
+
+#[async_trait]
+impl AgentHostCallbacks for HookExecutionCallbacks {
+    async fn invoke_tool(
+        &self,
+        call: AgentToolInvocation,
+    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+        self.tools.fetch_add(1, Ordering::SeqCst);
+        self.tool_arguments.lock().unwrap().push(call.arguments);
+        Ok(AgentToolResult::Completed {
+            output: serde_json::json!({"content": "original-result"}),
+        })
+    }
+
+    async fn invoke_hook(
+        &self,
+        call: AgentHookInvocation,
+    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+        assert_eq!(call.meta.binding_generation, AgentBindingGeneration(11));
+        assert_eq!(call.meta.source.as_str(), "dash-hook-execution");
+        assert_eq!(call.meta.turn_id.as_str(), "turn:hook-input");
+        assert_eq!(call.meta.item_id.as_ref().unwrap().as_str(), "hook-call-1");
+        assert!(call.meta.deadline_at_ms > 0);
+        match call.point {
+            AgentHookPoint::BeforeTool => {
+                self.before.fetch_add(1, Ordering::SeqCst);
+                Ok(AgentHookDecision::ReplaceInput {
+                    input: serde_json::json!({"arguments": {"rewritten": true}}),
+                })
+            }
+            AgentHookPoint::AfterTool => {
+                self.after.fetch_add(1, Ordering::SeqCst);
+                Ok(AgentHookDecision::ReplaceResult {
+                    result: serde_json::json!({
+                        "content": "rewritten-result",
+                        "is_error": false
+                    }),
+                })
+            }
+            _ => Ok(AgentHookDecision::Allow),
+        }
+    }
+}
+
 struct FixtureCompactor;
 
 #[async_trait]
@@ -122,12 +391,20 @@ impl DashCompactor for FixtureCompactor {
 }
 
 fn service() -> DashAgentCompleteService {
-    DashAgentCompleteService::with_execution(DashExecutionDependencies {
-        provider: Arc::new(FixtureProvider),
-        tools: Arc::new(FixtureTools),
-        callbacks: Arc::new(FixtureCallbacks),
-        compactor: Arc::new(FixtureCompactor),
-    })
+    service_with_store(Arc::new(RecordingCompleteStore::default()))
+}
+
+fn service_with_store(store: Arc<dyn DashCompleteAgentStore>) -> DashAgentCompleteService {
+    DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider: Arc::new(FixtureProvider),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+        },
+        Arc::new(FixtureHostCallbacks),
+        store,
+    )
 }
 
 #[tokio::test]
@@ -141,6 +418,7 @@ async fn production_registration_packages_the_complete_dash_service_without_regi
             compactor: Arc::new(FixtureCompactor),
         },
         Arc::new(FixtureHostCallbacks),
+        Arc::new(RecordingCompleteStore::default()),
     );
 
     assert_eq!(registration.instance_id.as_str(), "native-complete-1");
@@ -164,12 +442,16 @@ fn service_with(
     provider: Arc<dyn DashProvider>,
     compactor: Arc<dyn DashCompactor>,
 ) -> DashAgentCompleteService {
-    DashAgentCompleteService::with_execution(DashExecutionDependencies {
-        provider,
-        tools: Arc::new(FixtureTools),
-        callbacks: Arc::new(FixtureCallbacks),
-        compactor,
-    })
+    DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider,
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            compactor,
+        },
+        Arc::new(FixtureHostCallbacks),
+        Arc::new(RecordingCompleteStore::default()),
+    )
 }
 
 struct ErrorProvider {
@@ -570,7 +852,8 @@ async fn unsupported_input_is_rejected_before_history_changes() {
 
 #[tokio::test]
 async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitution() {
-    let service = service();
+    let store = Arc::new(RecordingCompleteStore::default());
+    let service = service_with_store(store.clone());
     let source = AgentSourceCoordinate::new("dash-surface").unwrap();
     service
         .create(CreateAgentCommand {
@@ -634,6 +917,33 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
         receipt.applied.contributions[0].fidelity,
         SemanticFidelity::Exact
     );
+    let reopened = service_with_store(store.clone());
+    let replayed = reopened
+        .apply_surface(apply(
+            AgentSurfaceRoute::AgentNativeCallback,
+            "effect-apply",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(replayed, receipt);
+    let mut conflicting_apply = apply(AgentSurfaceRoute::AgentNativeCallback, "effect-apply");
+    conflicting_apply.command_id = AgentCommandId::new("conflicting-apply").unwrap();
+    assert_eq!(
+        reopened
+            .apply_surface(conflicting_apply)
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Conflict
+    );
+    assert!(matches!(
+        reopened
+            .inspect(AgentEffectIdentity::new("effect-apply").unwrap())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::Applied { .. }
+    ));
 
     let error = service
         .apply_surface(apply(
@@ -646,6 +956,291 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
         error.code,
         agentdash_agent_service_api::AgentServiceErrorCode::Unsupported
     );
+    let revoke = RevokeBoundAgentSurface {
+        command_id: AgentCommandId::new("command-revoke").unwrap(),
+        effect_id: AgentEffectIdentity::new("effect-revoke").unwrap(),
+        idempotency_key: AgentIdempotencyKey::new("idem-revoke").unwrap(),
+        binding_generation: AgentBindingGeneration(1),
+        source: source.clone(),
+        expected_revision: AgentSurfaceRevision(1),
+    };
+    let revoked = reopened.revoke_surface(revoke.clone()).await.unwrap();
+    let restarted = service_with_store(store);
+    assert_eq!(restarted.revoke_surface(revoke).await.unwrap(), revoked);
+    assert!(matches!(
+        restarted
+            .inspect(AgentEffectIdentity::new("effect-revoke").unwrap())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::Applied { .. }
+    ));
+}
+
+fn hook_execution_surface() -> BoundAgentSurface {
+    let hook = |id: &str,
+                point: AgentHookPoint,
+                timing: AgentHookTiming,
+                action: AgentHookAction,
+                mutation: AgentHookMutationKind| {
+        BoundAgentSurfaceContribution {
+            key: format!("hook:{id}"),
+            required: true,
+            route: AgentSurfaceRoute::AgentNativeCallback,
+            fidelity: SemanticFidelity::Exact,
+            semantics: AgentSurfaceSemanticFacet::Hook(
+                agentdash_agent_service_api::AgentHookSemanticFacet {
+                    point,
+                    timing,
+                    blocking: AgentHookBlockingSemantics::Blocking {
+                        fidelity: SemanticFidelity::Exact,
+                    },
+                    mutations: BTreeMap::from([(mutation, SemanticFidelity::Exact)]),
+                    effects: BTreeMap::new(),
+                },
+            ),
+            payload: AgentSurfaceContributionPayload::Hook {
+                definition_id: AgentHookDefinitionId::new(id).unwrap(),
+                point,
+                timing,
+                actions: BTreeSet::from([AgentHookAction::AllowOrDeny, action]),
+                deadline_ms: 2_000,
+            },
+            payload_digest: AgentPayloadDigest::new(format!("sha256:{id}")).unwrap(),
+        }
+    };
+    BoundAgentSurface {
+        revision: AgentSurfaceRevision(1),
+        digest: AgentSurfaceDigest::new("hook-execution-surface").unwrap(),
+        offer_profile_digest: AgentProfileDigest::new("dash-agent-profile-v1").unwrap(),
+        contributions: vec![
+            BoundAgentSurfaceContribution {
+                key: "tool:read".into(),
+                required: true,
+                route: AgentSurfaceRoute::AgentNativeCallback,
+                fidelity: SemanticFidelity::Exact,
+                semantics: AgentSurfaceSemanticFacet::Tool(AgentToolSemanticFacet {
+                    delivery: AgentToolDelivery::AgentNativeCallback,
+                    invocation: SemanticFidelity::Exact,
+                    update: AgentToolUpdateSemantics::HotUpdate,
+                }),
+                payload: AgentSurfaceContributionPayload::Tool {
+                    name: AgentToolName::new("read").unwrap(),
+                    description: "read".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    output_schema: None,
+                },
+                payload_digest: AgentPayloadDigest::new("sha256:hook-tool").unwrap(),
+            },
+            hook(
+                "before-tool",
+                AgentHookPoint::BeforeTool,
+                AgentHookTiming::Before,
+                AgentHookAction::RewriteInput,
+                AgentHookMutationKind::RewriteInput,
+            ),
+            hook(
+                "after-tool",
+                AgentHookPoint::AfterTool,
+                AgentHookTiming::After,
+                AgentHookAction::RewriteResult,
+                AgentHookMutationKind::RewriteResult,
+            ),
+        ],
+    }
+}
+
+#[tokio::test]
+async fn exact_hooks_run_once_rewrite_and_do_not_retrigger_on_effect_replay() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    let provider = Arc::new(HookRoundProvider {
+        calls: AtomicUsize::new(0),
+        requests: Mutex::new(Vec::new()),
+    });
+    let host = Arc::new(HookExecutionCallbacks::default());
+    let service = DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider: provider.clone(),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+        },
+        host.clone(),
+        store,
+    );
+    let source = AgentSourceCoordinate::new("dash-hook-execution").unwrap();
+    service
+        .create(CreateAgentCommand {
+            meta: meta("hook-create", "hook-effect-create"),
+            requested_source: Some(source.clone()),
+            initial_context: None,
+        })
+        .await
+        .unwrap();
+    service
+        .apply_surface(ApplyBoundAgentSurface {
+            command_id: AgentCommandId::new("hook-apply").unwrap(),
+            effect_id: AgentEffectIdentity::new("hook-effect-apply").unwrap(),
+            idempotency_key: AgentIdempotencyKey::new("hook-idem-apply").unwrap(),
+            source: source.clone(),
+            bound_surface: hook_execution_surface(),
+            callbacks: AgentHostCallbackBinding {
+                route_id: AgentCallbackRouteId::new("hook-route").unwrap(),
+                binding_generation: AgentBindingGeneration(11),
+                delivery: AgentSurfaceRoute::AgentNativeCallback,
+                default_deadline_ms: 5_000,
+            },
+        })
+        .await
+        .unwrap();
+    let request = submit_envelope(source, "hook-input", "hook-effect-input");
+    let first = service.execute(request.clone()).await.unwrap();
+    let replay = service.execute(request).await.unwrap();
+    assert_eq!(first, replay);
+    assert_eq!(host.before.load(Ordering::SeqCst), 1);
+    assert_eq!(host.after.load(Ordering::SeqCst), 1);
+    assert_eq!(host.tools.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        host.tool_arguments.lock().unwrap().as_slice(),
+        &[serde_json::json!({"rewritten": true})]
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    let requests = provider.requests.lock().unwrap();
+    assert!(
+        requests[1]
+            .messages
+            .iter()
+            .any(|message| message.content == "rewritten-result")
+    );
+}
+
+#[tokio::test]
+async fn shared_durable_store_reopens_source_fork_tail_initial_context_and_effects() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    let first = service_with_store(store.clone());
+    let parent = AgentSourceCoordinate::new("dash-durable-parent").unwrap();
+    let package = initial_package();
+    let created = first
+        .create(CreateAgentCommand {
+            meta: meta("durable-create", "durable-effect-create"),
+            requested_source: Some(parent.clone()),
+            initial_context: Some(package.clone()),
+        })
+        .await
+        .unwrap();
+    let submitted = first
+        .execute(submit_envelope(
+            parent.clone(),
+            "durable-input",
+            "durable-effect-input",
+        ))
+        .await
+        .unwrap();
+
+    let second = service_with_store(store.clone());
+    let reopened = second
+        .read(AgentReadQuery {
+            source: parent.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(reopened.revision, submitted.snapshot_revision.unwrap());
+    assert_eq!(
+        reopened.initial_context.unwrap().package_digest,
+        package.digest
+    );
+    let tail = second
+        .changes(AgentChangesQuery {
+            source: parent.clone(),
+            after: None,
+            limit: 100,
+        })
+        .await
+        .unwrap();
+    assert!(!tail.changes.is_empty());
+    assert_eq!(
+        second
+            .inspect(AgentEffectIdentity::new("durable-effect-create").unwrap())
+            .await
+            .unwrap()
+            .command_id,
+        Some(created.command_id)
+    );
+    assert!(matches!(
+        second
+            .inspect(AgentEffectIdentity::new("durable-effect-input").unwrap())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::Applied { .. }
+    ));
+
+    let child = AgentSourceCoordinate::new("dash-durable-child").unwrap();
+    second
+        .fork(ForkAgentCommand {
+            meta: meta("durable-fork", "durable-effect-fork"),
+            source: parent.clone(),
+            requested_child_source: Some(child.clone()),
+            cutoff: AgentForkPoint::Head,
+        })
+        .await
+        .unwrap();
+
+    let third = service_with_store(store);
+    let parent_before = third
+        .read(AgentReadQuery {
+            source: parent.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    third
+        .execute(submit_envelope(
+            child.clone(),
+            "durable-child-input",
+            "durable-child-effect",
+        ))
+        .await
+        .unwrap();
+    let parent_after = third
+        .read(AgentReadQuery {
+            source: parent,
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(parent_before.revision, parent_after.revision);
+    assert!(
+        third
+            .read(AgentReadQuery {
+                source: child,
+                at_revision: None,
+            })
+            .await
+            .unwrap()
+            .revision
+            > parent_after.revision
+    );
+    assert!(matches!(
+        third
+            .inspect(AgentEffectIdentity::new("durable-effect-fork").unwrap())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::Applied {
+            child_source: Some(_),
+            ..
+        }
+    ));
+    assert!(matches!(
+        third
+            .inspect(AgentEffectIdentity::new("durable-unknown").unwrap())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::NotApplied
+    ));
 }
 
 #[tokio::test]

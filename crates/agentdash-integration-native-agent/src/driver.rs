@@ -5,8 +5,8 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_core::DynAgentTool;
-use agentdash_agent_core::{
+use agentdash_agent::DynAgentTool;
+use agentdash_agent::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentMessage, AssistantStreamEvent,
     ConversationNamer, ConversationNamingInput, LlmBridge, ToolResultRefContext,
 };
@@ -1628,11 +1628,11 @@ struct NativeEventMapper {
     presentation_context: StreamMapperRuntimeContext,
 }
 
-fn assistant_has_canonical_content(message: &agentdash_agent_core::AgentMessage) -> bool {
-    matches!(message, agentdash_agent_core::AgentMessage::Assistant { content, .. } if content.iter().any(|part| match part {
-        agentdash_agent_core::ContentPart::Text { text }
-        | agentdash_agent_core::ContentPart::Reasoning { text, .. } => !text.is_empty(),
-        agentdash_agent_core::ContentPart::Image { .. } => false,
+fn assistant_has_canonical_content(message: &agentdash_agent::AgentMessage) -> bool {
+    matches!(message, agentdash_agent::AgentMessage::Assistant { content, .. } if content.iter().any(|part| match part {
+        agentdash_agent::ContentPart::Text { text }
+        | agentdash_agent::ContentPart::Reasoning { text, .. } => !text.is_empty(),
+        agentdash_agent::ContentPart::Image { .. } => false,
     }))
 }
 
@@ -1766,10 +1766,8 @@ impl NativeEventMapper {
             }
             AgentEvent::AgentStart | AgentEvent::TurnStart => {}
             AgentEvent::MessageStart { message } => {
-                if !matches!(
-                    &message,
-                    agentdash_agent_core::AgentMessage::Assistant { .. }
-                ) || !assistant_has_canonical_content(&message)
+                if !matches!(&message, agentdash_agent::AgentMessage::Assistant { .. })
+                    || !assistant_has_canonical_content(&message)
                 {
                     self.current_item = None;
                     return Ok(mapped);
@@ -1790,7 +1788,7 @@ impl NativeEventMapper {
             }
             AgentEvent::MessageUpdate { .. } => {}
             AgentEvent::MessageEnd { message } => {
-                if let agentdash_agent_core::AgentMessage::Assistant {
+                if let agentdash_agent::AgentMessage::Assistant {
                     usage: Some(usage), ..
                 } = &message
                     && usage
@@ -1819,10 +1817,8 @@ impl NativeEventMapper {
                         }),
                     );
                 }
-                if !matches!(
-                    &message,
-                    agentdash_agent_core::AgentMessage::Assistant { .. }
-                ) || !assistant_has_canonical_content(&message)
+                if !matches!(&message, agentdash_agent::AgentMessage::Assistant { .. })
+                    || !assistant_has_canonical_content(&message)
                 {
                     self.current_item = None;
                 } else {
@@ -2162,7 +2158,7 @@ fn conversation_naming_input(messages: &[AgentMessage]) -> Option<ConversationNa
         matches!(message, AgentMessage::Assistant { content, .. } if content.iter().any(
             |part| matches!(
                 part,
-                agentdash_agent_core::ContentPart::Text { text } if !text.trim().is_empty()
+                agentdash_agent::ContentPart::Text { text } if !text.trim().is_empty()
             )
         )) && !message.is_error_or_aborted()
     })?;
@@ -2170,9 +2166,9 @@ fn conversation_naming_input(messages: &[AgentMessage]) -> Option<ConversationNa
         .iter()
         .filter(|message| match message {
             AgentMessage::User { content, .. } => content.iter().any(|part| match part {
-                agentdash_agent_core::ContentPart::Text { text } => !text.trim().is_empty(),
-                agentdash_agent_core::ContentPart::Image { .. } => true,
-                agentdash_agent_core::ContentPart::Reasoning { .. } => false,
+                agentdash_agent::ContentPart::Text { text } => !text.trim().is_empty(),
+                agentdash_agent::ContentPart::Image { .. } => true,
+                agentdash_agent::ContentPart::Reasoning { .. } => false,
             }),
             _ => false,
         })
@@ -2247,7 +2243,7 @@ fn project_driver_transcript(
     transcript: &DriverTranscript,
     exclude_operation_id: Option<&RuntimeOperationId>,
     after_sequence: Option<EventSequence>,
-) -> Result<agentdash_agent_core::ProjectedTranscript, DriverError> {
+) -> Result<agentdash_agent::ProjectedTranscript, DriverError> {
     let required_after = after_sequence.unwrap_or(EventSequence(0));
     if transcript.latest_available.0 > required_after.0
         && transcript.earliest_available.0 > required_after.0.saturating_add(1)
@@ -2319,7 +2315,7 @@ fn project_driver_transcript(
 fn hydrate_presentation_identity(
     identity: &NativeSessionItemIdentity,
     transcript: &DriverTranscript,
-    projected: &agentdash_agent_core::ProjectedTranscript,
+    projected: &agentdash_agent::ProjectedTranscript,
 ) {
     for item_id in &transcript.completed_presentation_item_ids {
         identity.observe_tool_result_item_id(item_id);
@@ -2369,7 +2365,7 @@ fn context_error(error: DriverContextError) -> DriverError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_agent_core::{AgentMessage, ToolResultAddressProvider};
+    use agentdash_agent::{AgentMessage, ToolResultAddressProvider};
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
     use agentdash_agent_protocol::{BackboneEvent, ItemCompletedNotification};
     use agentdash_agent_runtime_test_support::session_parity::{
@@ -2460,7 +2456,7 @@ mod tests {
         let reasoning_only = vec![
             AgentMessage::user("需求"),
             AgentMessage::Assistant {
-                content: vec![agentdash_agent_core::ContentPart::reasoning(
+                content: vec![agentdash_agent::ContentPart::reasoning(
                     "仅推理",
                     None,
                     None,
@@ -2477,9 +2473,9 @@ mod tests {
         let aborted = vec![
             AgentMessage::user("需求"),
             AgentMessage::Assistant {
-                content: vec![agentdash_agent_core::ContentPart::text("不会成为标题候选")],
+                content: vec![agentdash_agent::ContentPart::text("不会成为标题候选")],
                 tool_calls: Vec::new(),
-                stop_reason: Some(agentdash_agent_core::StopReason::Aborted),
+                stop_reason: Some(agentdash_agent::StopReason::Aborted),
                 error_message: None,
                 usage: None,
                 timestamp: None,
@@ -2514,7 +2510,7 @@ mod tests {
         assert!(
             mapper
                 .map(AgentEvent::TurnEnd {
-                    message: agentdash_agent_core::AgentMessage::assistant("tool call iteration"),
+                    message: agentdash_agent::AgentMessage::assistant("tool call iteration"),
                     tool_results: Vec::new(),
                 })
                 .expect("intermediate provider iteration")
@@ -2570,7 +2566,7 @@ mod tests {
 
         let text = mapper
             .map(AgentEvent::MessageUpdate {
-                message: agentdash_agent_core::AgentMessage::assistant("hello"),
+                message: agentdash_agent::AgentMessage::assistant("hello"),
                 event: AssistantStreamEvent::TextDelta {
                     content_index: 0,
                     text: "hello".to_string(),
@@ -2593,8 +2589,8 @@ mod tests {
         );
         let provider = mapper
             .map(AgentEvent::ProviderAttemptStatus {
-                status: agentdash_agent_core::ProviderAttemptStatus {
-                    phase: agentdash_agent_core::ProviderAttemptPhase::RetryScheduled,
+                status: agentdash_agent::ProviderAttemptStatus {
+                    phase: agentdash_agent::ProviderAttemptPhase::RetryScheduled,
                     attempt: 2,
                     max_attempts: 3,
                     will_retry: true,
@@ -2642,7 +2638,7 @@ mod tests {
             parsed_id("source-turn").unwrap(),
             presentation_context(NativeSessionItemIdentity::new()),
         );
-        let partial = agentdash_agent_core::AgentMessage::assistant("");
+        let partial = agentdash_agent::AgentMessage::assistant("");
         let started = mapper
             .map(AgentEvent::MessageStart {
                 message: partial.clone(),
@@ -2676,15 +2672,15 @@ mod tests {
             .expect("reasoning delta");
         let completed = mapper
             .map(AgentEvent::MessageEnd {
-                message: agentdash_agent_core::AgentMessage::Assistant {
+                message: agentdash_agent::AgentMessage::Assistant {
                     content: vec![
-                        agentdash_agent_core::ContentPart::text("answer"),
-                        agentdash_agent_core::ContentPart::reasoning("thought", None, None),
+                        agentdash_agent::ContentPart::text("answer"),
+                        agentdash_agent::ContentPart::reasoning("thought", None, None),
                     ],
                     tool_calls: Vec::new(),
                     stop_reason: None,
                     error_message: None,
-                    usage: Some(agentdash_agent_core::TokenUsage {
+                    usage: Some(agentdash_agent::TokenUsage {
                         input: 10,
                         cache_read_input: 2,
                         cache_creation_input: 3,
@@ -2763,9 +2759,9 @@ mod tests {
             presentation_context(NativeSessionItemIdentity::new()),
         );
         let messages = [
-            agentdash_agent_core::AgentMessage::user("user input"),
-            agentdash_agent_core::AgentMessage::tool_result("tool-1", "tool output", false),
-            agentdash_agent_core::AgentMessage::assistant(""),
+            agentdash_agent::AgentMessage::user("user input"),
+            agentdash_agent::AgentMessage::tool_result("tool-1", "tool output", false),
+            agentdash_agent::AgentMessage::assistant(""),
         ];
 
         for message in messages {
@@ -2785,7 +2781,7 @@ mod tests {
 
         let assistant = mapper
             .map(AgentEvent::MessageEnd {
-                message: agentdash_agent_core::AgentMessage::assistant("canonical answer"),
+                message: agentdash_agent::AgentMessage::assistant("canonical answer"),
             })
             .expect("canonical assistant message after application-owned messages");
         assert!(matches!(
@@ -2805,24 +2801,24 @@ mod tests {
         );
         let started = mapper
             .map(AgentEvent::MessageStart {
-                message: agentdash_agent_core::AgentMessage::assistant(""),
+                message: agentdash_agent::AgentMessage::assistant(""),
             })
             .expect("tool-only message start");
         assert!(internal_events(&started).is_empty());
 
         let completed = mapper
             .map(AgentEvent::MessageEnd {
-                message: agentdash_agent_core::AgentMessage::Assistant {
+                message: agentdash_agent::AgentMessage::Assistant {
                     content: Vec::new(),
-                    tool_calls: vec![agentdash_agent_core::ToolCallInfo {
+                    tool_calls: vec![agentdash_agent::ToolCallInfo {
                         id: "tool-1".to_string(),
                         call_id: None,
                         name: "read".to_string(),
                         arguments: serde_json::json!({"path":"main://README.md"}),
                     }],
-                    stop_reason: Some(agentdash_agent_core::StopReason::ToolUse),
+                    stop_reason: Some(agentdash_agent::StopReason::ToolUse),
                     error_message: None,
-                    usage: Some(agentdash_agent_core::TokenUsage::default()),
+                    usage: Some(agentdash_agent::TokenUsage::default()),
                     timestamp: Some(1),
                 },
             })
@@ -2844,17 +2840,17 @@ mod tests {
         );
         mapper
             .map(AgentEvent::MessageStart {
-                message: agentdash_agent_core::AgentMessage::assistant(""),
+                message: agentdash_agent::AgentMessage::assistant(""),
             })
             .unwrap();
         let completed = mapper
             .map(AgentEvent::MessageEnd {
-                message: agentdash_agent_core::AgentMessage::Assistant {
-                    content: vec![agentdash_agent_core::ContentPart::text("answer")],
+                message: agentdash_agent::AgentMessage::Assistant {
+                    content: vec![agentdash_agent::ContentPart::text("answer")],
                     tool_calls: Vec::new(),
                     stop_reason: None,
                     error_message: None,
-                    usage: Some(agentdash_agent_core::TokenUsage {
+                    usage: Some(agentdash_agent::TokenUsage {
                         input: 10,
                         cache_read_input: 2,
                         cache_creation_input: 3,
@@ -2996,12 +2992,12 @@ mod tests {
 
         let announced = mapper
             .map(AgentEvent::MessageEnd {
-                message: agentdash_agent_core::AgentMessage::Assistant {
+                message: agentdash_agent::AgentMessage::Assistant {
                     content: Vec::new(),
                     tool_calls: calls
                         .iter()
                         .map(|(tool_call_id, tool_name, arguments, _, _)| {
-                            agentdash_agent_core::ToolCallInfo {
+                            agentdash_agent::ToolCallInfo {
                                 id: (*tool_call_id).to_string(),
                                 call_id: Some((*tool_call_id).to_string()),
                                 name: (*tool_name).to_string(),
@@ -3009,9 +3005,9 @@ mod tests {
                             }
                         })
                         .collect(),
-                    stop_reason: Some(agentdash_agent_core::StopReason::ToolUse),
+                    stop_reason: Some(agentdash_agent::StopReason::ToolUse),
                     error_message: None,
-                    usage: Some(agentdash_agent_core::TokenUsage::default()),
+                    usage: Some(agentdash_agent::TokenUsage::default()),
                     timestamp: Some(1),
                 },
             })
@@ -3070,9 +3066,9 @@ mod tests {
             presentation_context(NativeSessionItemIdentity::new()),
         );
         let arguments = serde_json::json!({"path":"main://README.md"});
-        let message = agentdash_agent_core::AgentMessage::Assistant {
+        let message = agentdash_agent::AgentMessage::Assistant {
             content: Vec::new(),
-            tool_calls: vec![agentdash_agent_core::ToolCallInfo {
+            tool_calls: vec![agentdash_agent::ToolCallInfo {
                 id: "tool-1".to_string(),
                 call_id: None,
                 name: "read".to_string(),
@@ -3649,25 +3645,25 @@ mod tests {
             presentation_context(NativeSessionItemIdentity::new()),
         );
         let phases = [
-            agentdash_agent_core::ProviderAttemptPhase::Connecting,
-            agentdash_agent_core::ProviderAttemptPhase::ConnectedWaitingFirstDelta,
-            agentdash_agent_core::ProviderAttemptPhase::Streaming,
-            agentdash_agent_core::ProviderAttemptPhase::RetryScheduled,
-            agentdash_agent_core::ProviderAttemptPhase::Retrying,
-            agentdash_agent_core::ProviderAttemptPhase::Failed,
-            agentdash_agent_core::ProviderAttemptPhase::Succeeded,
+            agentdash_agent::ProviderAttemptPhase::Connecting,
+            agentdash_agent::ProviderAttemptPhase::ConnectedWaitingFirstDelta,
+            agentdash_agent::ProviderAttemptPhase::Streaming,
+            agentdash_agent::ProviderAttemptPhase::RetryScheduled,
+            agentdash_agent::ProviderAttemptPhase::Retrying,
+            agentdash_agent::ProviderAttemptPhase::Failed,
+            agentdash_agent::ProviderAttemptPhase::Succeeded,
         ];
         for phase in phases {
             let mapped = mapper
                 .map(AgentEvent::ProviderAttemptStatus {
-                    status: agentdash_agent_core::ProviderAttemptStatus {
+                    status: agentdash_agent::ProviderAttemptStatus {
                         phase,
                         attempt: 1,
                         max_attempts: 2,
                         will_retry: matches!(
                             phase,
-                            agentdash_agent_core::ProviderAttemptPhase::RetryScheduled
-                                | agentdash_agent_core::ProviderAttemptPhase::Retrying
+                            agentdash_agent::ProviderAttemptPhase::RetryScheduled
+                                | agentdash_agent::ProviderAttemptPhase::Retrying
                         ),
                         delay_ms: None,
                         reason_code: None,
@@ -3719,8 +3715,8 @@ mod tests {
 
         let failure = mapper
             .map(AgentEvent::RunError {
-                error: agentdash_agent_core::AgentRunError::new(
-                    agentdash_agent_core::AgentRunErrorKind::Provider,
+                error: agentdash_agent::AgentRunError::new(
+                    agentdash_agent::AgentRunErrorKind::Provider,
                     "provider failed",
                 ),
             })
@@ -3774,13 +3770,13 @@ mod tests {
             serde_json::Value::Array(records)
         }
 
-        let partial = agentdash_agent_core::AgentMessage::assistant("");
-        let usage_message = agentdash_agent_core::AgentMessage::Assistant {
-            content: vec![agentdash_agent_core::ContentPart::text("answer")],
+        let partial = agentdash_agent::AgentMessage::assistant("");
+        let usage_message = agentdash_agent::AgentMessage::Assistant {
+            content: vec![agentdash_agent::ContentPart::text("answer")],
             tool_calls: Vec::new(),
             stop_reason: None,
             error_message: None,
-            usage: Some(agentdash_agent_core::TokenUsage {
+            usage: Some(agentdash_agent::TokenUsage {
                 input: 10,
                 cache_read_input: 2,
                 cache_creation_input: 3,
@@ -3803,7 +3799,7 @@ mod tests {
                     },
                 },
                 AgentEvent::MessageEnd {
-                    message: agentdash_agent_core::AgentMessage::assistant("answer"),
+                    message: agentdash_agent::AgentMessage::assistant("answer"),
                 },
             ]),
         );
@@ -3822,8 +3818,8 @@ mod tests {
                     },
                 },
                 AgentEvent::MessageEnd {
-                    message: agentdash_agent_core::AgentMessage::Assistant {
-                        content: vec![agentdash_agent_core::ContentPart::reasoning(
+                    message: agentdash_agent::AgentMessage::Assistant {
+                        content: vec![agentdash_agent::ContentPart::reasoning(
                             "thought", None, None,
                         )],
                         tool_calls: Vec::new(),
@@ -3882,24 +3878,24 @@ mod tests {
             "provider_phases_error".into(),
             snapshot(
                 [
-                    agentdash_agent_core::ProviderAttemptPhase::Connecting,
-                    agentdash_agent_core::ProviderAttemptPhase::ConnectedWaitingFirstDelta,
-                    agentdash_agent_core::ProviderAttemptPhase::Streaming,
-                    agentdash_agent_core::ProviderAttemptPhase::RetryScheduled,
-                    agentdash_agent_core::ProviderAttemptPhase::Retrying,
-                    agentdash_agent_core::ProviderAttemptPhase::Failed,
-                    agentdash_agent_core::ProviderAttemptPhase::Succeeded,
+                    agentdash_agent::ProviderAttemptPhase::Connecting,
+                    agentdash_agent::ProviderAttemptPhase::ConnectedWaitingFirstDelta,
+                    agentdash_agent::ProviderAttemptPhase::Streaming,
+                    agentdash_agent::ProviderAttemptPhase::RetryScheduled,
+                    agentdash_agent::ProviderAttemptPhase::Retrying,
+                    agentdash_agent::ProviderAttemptPhase::Failed,
+                    agentdash_agent::ProviderAttemptPhase::Succeeded,
                 ]
                 .into_iter()
                 .map(|phase| AgentEvent::ProviderAttemptStatus {
-                    status: agentdash_agent_core::ProviderAttemptStatus {
+                    status: agentdash_agent::ProviderAttemptStatus {
                         phase,
                         attempt: 1,
                         max_attempts: 2,
                         will_retry: matches!(
                             phase,
-                            agentdash_agent_core::ProviderAttemptPhase::RetryScheduled
-                                | agentdash_agent_core::ProviderAttemptPhase::Retrying
+                            agentdash_agent::ProviderAttemptPhase::RetryScheduled
+                                | agentdash_agent::ProviderAttemptPhase::Retrying
                         ),
                         delay_ms: Some(250),
                         reason_code: Some("rate_limit".into()),
@@ -3909,8 +3905,8 @@ mod tests {
                     },
                 })
                 .chain([AgentEvent::RunError {
-                    error: agentdash_agent_core::AgentRunError::new(
-                        agentdash_agent_core::AgentRunErrorKind::Provider,
+                    error: agentdash_agent::AgentRunError::new(
+                        agentdash_agent::AgentRunErrorKind::Provider,
                         "provider failed",
                     ),
                 }])
@@ -4019,12 +4015,12 @@ mod tests {
         );
         let first = mapper
             .map(AgentEvent::MessageEnd {
-                message: agentdash_agent_core::AgentMessage::assistant("first"),
+                message: agentdash_agent::AgentMessage::assistant("first"),
             })
             .unwrap();
         let second = mapper
             .map(AgentEvent::MessageEnd {
-                message: agentdash_agent_core::AgentMessage::assistant("second"),
+                message: agentdash_agent::AgentMessage::assistant("second"),
             })
             .unwrap();
         let presentation_indices = |mapped: &[MappedEvent]| {

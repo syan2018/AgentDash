@@ -24,6 +24,7 @@ pub mod runtime_facade;
 pub mod runtime_mailbox;
 pub mod runtime_session_boundary;
 mod runtime_surface_update;
+pub mod target_product_protocol;
 mod thread_name_projection;
 pub mod workspace;
 

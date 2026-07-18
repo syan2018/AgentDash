@@ -26,6 +26,7 @@
       "agent_runtime_binding",
       "agent_runtime_source_coordinate",
       "agent_runtime_effect",
+      "agent_runtime_effect_inspection_history",
       "agent_runtime_lease"
     ],
     "required_transaction": [
@@ -34,6 +35,7 @@
       "validate service-to-offer profile identity",
       "validate binding-to-source bidirectional uniqueness and positive generation",
       "validate effect identity, payload digest, binding, source and generation",
+      "validate monotonic effect dispatch attempt and append-only archived inspection evidence",
       "validate lease owner, token, epoch, generation and database-clock expiry",
       "fence every external receipt or inspection against the current active lease owner, token, epoch, generation and expiry",
       "settle revoke receipt and clear binding applied surface in the same Host transaction",
@@ -47,7 +49,9 @@
       "binding identity is unique and fixes service instance, source, generation, profile and surface",
       "source coordinate is unique and references the same binding generation",
       "effect identity is globally stable and fixes command, payload, binding, source and generation",
-      "receipt evidence is immutable; latest inspection may only advance Unknown or Accepted to stronger evidence, or replace NotApplied after an explicit redispatch; terminal and same-state inspection evidence is immutable",
+      "receipt evidence is immutable; current-attempt latest inspection may only advance Unknown or Accepted to stronger evidence; terminal and same-state inspection evidence is immutable",
+      "explicit redispatch atomically archives prior-attempt NotApplied inspection evidence, clears current-attempt inspection, and advances dispatch attempt exactly once",
+      "archived inspection evidence is append-only and immutable by effect identity plus dispatch attempt",
       "lease key is binding generation; owner/token/epoch fence stale workers",
       "lease epoch never decreases and binding Lost invalidates the active lease",
       "terminal revoke replay completes binding cleanup before returning the stored receipt"

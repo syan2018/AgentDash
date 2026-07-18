@@ -90,6 +90,13 @@ pub enum CompleteAgentEffectState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteAgentArchivedInspection {
+    pub dispatch_attempt: u64,
+    pub delivery_epoch: u64,
+    pub inspection: AgentEffectInspection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompleteAgentEffectRecord {
     pub effect_id: AgentEffectIdentity,
     pub command_id: AgentCommandId,
@@ -99,10 +106,12 @@ pub struct CompleteAgentEffectRecord {
     pub source: AgentSourceCoordinate,
     pub payload_digest: AgentPayloadDigest,
     pub delivery_epoch: u64,
+    pub dispatch_attempt: u64,
     pub state: CompleteAgentEffectState,
     pub receipt: Option<AgentCommandReceipt>,
     pub surface_receipt: Option<AppliedAgentSurfaceReceipt>,
     pub inspection: Option<AgentEffectInspection>,
+    pub inspection_history: Vec<CompleteAgentArchivedInspection>,
 }
 
 enum RevokeDispatchPlan {
@@ -449,10 +458,12 @@ impl CompleteAgentHost {
                 source: binding.source.clone(),
                 payload_digest: digest,
                 delivery_epoch: lease.epoch,
+                dispatch_attempt: 1,
                 state: CompleteAgentEffectState::Dispatching,
                 receipt: None,
                 surface_receipt: None,
                 inspection: None,
+                inspection_history: Vec::new(),
             };
             match state.effects.get(&command.meta.effect_id) {
                 Some(existing) => {
@@ -464,8 +475,7 @@ impl CompleteAgentHost {
                             .effects
                             .get_mut(&command.meta.effect_id)
                             .expect("effect was read from the same state");
-                        effect.state = CompleteAgentEffectState::Dispatching;
-                        effect.delivery_epoch = lease.epoch;
+                        begin_effect_redispatch(effect, lease.epoch)?;
                     } else {
                         state
                             .effects
@@ -634,10 +644,12 @@ impl CompleteAgentHost {
                 source: binding.source.clone(),
                 payload_digest: digest,
                 delivery_epoch: lease.epoch,
+                dispatch_attempt: 1,
                 state: CompleteAgentEffectState::Dispatching,
                 receipt: None,
                 surface_receipt: None,
                 inspection: None,
+                inspection_history: Vec::new(),
             };
             match state.effects.get(&command.effect_id) {
                 Some(existing) => {
@@ -652,8 +664,7 @@ impl CompleteAgentHost {
                             .effects
                             .get_mut(&command.effect_id)
                             .expect("effect was read from the same state");
-                        effect.state = CompleteAgentEffectState::Dispatching;
-                        effect.delivery_epoch = lease.epoch;
+                        begin_effect_redispatch(effect, lease.epoch)?;
                     } else {
                         state
                             .effects
@@ -729,10 +740,12 @@ impl CompleteAgentHost {
                 source: binding.source.clone(),
                 payload_digest: digest,
                 delivery_epoch: lease.epoch,
+                dispatch_attempt: 1,
                 state: CompleteAgentEffectState::Dispatching,
                 receipt: None,
                 surface_receipt: None,
                 inspection: None,
+                inspection_history: Vec::new(),
             };
             match state.effects.get(&command.effect_id) {
                 Some(existing) => {
@@ -752,8 +765,7 @@ impl CompleteAgentHost {
                             .effects
                             .get_mut(&command.effect_id)
                             .expect("effect was read from the same state");
-                        effect.state = CompleteAgentEffectState::Dispatching;
-                        effect.delivery_epoch = lease.epoch;
+                        begin_effect_redispatch(effect, lease.epoch)?;
                     } else {
                         state
                             .effects
@@ -1297,6 +1309,43 @@ fn observe_effect_state(
     Ok(())
 }
 
+fn begin_effect_redispatch(
+    record: &mut CompleteAgentEffectRecord,
+    delivery_epoch: u64,
+) -> Result<(), CompleteAgentHostError> {
+    if record.state != CompleteAgentEffectState::NotApplied {
+        return Err(CompleteAgentHostError::Invariant {
+            reason: "effect redispatch requires a confirmed NotApplied observation".to_owned(),
+        });
+    }
+    let inspection = record
+        .inspection
+        .take()
+        .ok_or_else(|| CompleteAgentHostError::Invariant {
+            reason: "effect redispatch requires durable NotApplied inspection evidence".to_owned(),
+        })?;
+    if inspection_state(&inspection.state) != CompleteAgentEffectState::NotApplied {
+        return Err(CompleteAgentHostError::Invariant {
+            reason: "effect redispatch inspection does not prove NotApplied".to_owned(),
+        });
+    }
+    record
+        .inspection_history
+        .push(CompleteAgentArchivedInspection {
+            dispatch_attempt: record.dispatch_attempt,
+            delivery_epoch: record.delivery_epoch,
+            inspection,
+        });
+    record.dispatch_attempt = record.dispatch_attempt.checked_add(1).ok_or_else(|| {
+        CompleteAgentHostError::Invariant {
+            reason: "effect dispatch attempt is exhausted".to_owned(),
+        }
+    })?;
+    record.delivery_epoch = delivery_epoch;
+    record.state = CompleteAgentEffectState::Dispatching;
+    Ok(())
+}
+
 fn ensure_same_observation_evidence<T: PartialEq>(
     current: CompleteAgentEffectState,
     observed: CompleteAgentEffectState,
@@ -1801,6 +1850,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn not_applied_redispatch_archives_inspection_before_applied_receipt() {
+        assert_not_applied_redispatch_settles_current_attempt(true).await;
+    }
+
+    #[tokio::test]
+    async fn not_applied_redispatch_archives_inspection_before_unknown_error() {
+        assert_not_applied_redispatch_settles_current_attempt(false).await;
+    }
+
+    #[tokio::test]
     async fn lease_takeover_rejects_receipt_returned_by_paused_old_execute() {
         let gate = Arc::new(ExternalOutcomeGate::default());
         let source = AgentSourceCoordinate::new("source").expect("source");
@@ -1945,10 +2004,12 @@ mod tests {
             source,
             payload_digest: payload_digest(&command).expect("command digest"),
             delivery_epoch: 1,
+            dispatch_attempt: 1,
             state: CompleteAgentEffectState::Applied,
             receipt: Some(receipt.clone()),
             surface_receipt: None,
             inspection: None,
+            inspection_history: Vec::new(),
         };
         let lease = seed_effect(&host, record, Some(binding)).await;
 
@@ -2284,10 +2345,12 @@ mod tests {
             source: AgentSourceCoordinate::new("source").expect("source"),
             payload_digest: AgentPayloadDigest::new(digest).expect("digest"),
             delivery_epoch: 1,
+            dispatch_attempt: 1,
             state: CompleteAgentEffectState::Dispatching,
             receipt: None,
             surface_receipt: None,
             inspection: None,
+            inspection_history: Vec::new(),
         }
     }
 
@@ -2389,6 +2452,88 @@ mod tests {
                 .expect("effect")
                 .state,
             CompleteAgentEffectState::Applied
+        );
+    }
+
+    async fn assert_not_applied_redispatch_settles_current_attempt(applied: bool) {
+        let source = AgentSourceCoordinate::new("source").expect("source");
+        let command_id = AgentCommandId::new("command").expect("command");
+        let effect_id = AgentEffectIdentity::new("effect").expect("effect");
+        let receipt = applied.then(|| applied_receipt(&command_id, &effect_id, &source));
+        let service = Arc::new(UnknownThenAppliedService {
+            descriptor: descriptor(),
+            source: source.clone(),
+            command_id: command_id.clone(),
+            execute_calls: AtomicUsize::new(0),
+            revoke_calls: AtomicUsize::new(0),
+            execute_receipt: receipt.clone(),
+            execute_gate: None,
+            inspect_gate: None,
+            inspection_states: Mutex::new(VecDeque::new()),
+            revoke_receipt: None,
+        });
+        let repository = Arc::new(FixtureHostRepository::default());
+        let (host, binding_id, lease) = available_host(repository, service.clone()).await;
+        let command = execute_command(command_id.clone(), effect_id.clone(), source.clone());
+        let snapshot = host.repository.load().await.expect("load Host facts");
+        let mut facts = snapshot.facts;
+        facts.effects.insert(
+            effect_id.clone(),
+            CompleteAgentEffectRecord {
+                effect_id: effect_id.clone(),
+                command_id: command_id.clone(),
+                binding_id: binding_id.clone(),
+                service_instance_id: AgentServiceInstanceId::new("service").expect("service"),
+                generation: AgentBindingGeneration(1),
+                source,
+                payload_digest: payload_digest(&command).expect("command digest"),
+                delivery_epoch: lease.epoch,
+                dispatch_attempt: 1,
+                state: CompleteAgentEffectState::NotApplied,
+                receipt: None,
+                surface_receipt: None,
+                inspection: Some(AgentEffectInspection {
+                    effect_id: effect_id.clone(),
+                    command_id: Some(command_id),
+                    state: AgentEffectInspectionState::NotApplied,
+                }),
+                inspection_history: Vec::new(),
+            },
+        );
+        host.commit(snapshot.revision, facts)
+            .await
+            .expect("seed NotApplied effect");
+
+        let result = host.dispatch_execute(&lease, &binding_id, command).await;
+        if let Some(receipt) = receipt {
+            assert_eq!(result.expect("applied redispatch receipt"), receipt);
+        } else {
+            assert!(matches!(result, Err(CompleteAgentHostError::Service(_))));
+        }
+        assert_eq!(service.execute_calls.load(Ordering::SeqCst), 1);
+
+        let effect = host
+            .effect(&effect_id)
+            .await
+            .expect("read effect")
+            .expect("effect");
+        assert_eq!(effect.dispatch_attempt, 2);
+        assert_eq!(
+            effect.state,
+            if applied {
+                CompleteAgentEffectState::Applied
+            } else {
+                CompleteAgentEffectState::Unknown
+            }
+        );
+        assert!(effect.inspection.is_none());
+        assert_eq!(effect.inspection_history.len(), 1);
+        let archived = &effect.inspection_history[0];
+        assert_eq!(archived.dispatch_attempt, 1);
+        assert_eq!(archived.delivery_epoch, lease.epoch);
+        assert_eq!(
+            archived.inspection.state,
+            AgentEffectInspectionState::NotApplied
         );
     }
 

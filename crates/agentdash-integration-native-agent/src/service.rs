@@ -14,25 +14,26 @@ use agentdash_agent::dash::{
     InteractionId as DashInteractionId, InteractionState, ItemDetails,
 };
 use agentdash_agent_service_api::{
-    AgentCapabilityProfile, AgentChange, AgentChangePage, AgentChangePayload, AgentChangesQuery,
-    AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
-    AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
-    AgentEffectInspectionState, AgentEntityStatus, AgentForkCapability, AgentForkCutoffKind,
-    AgentForkPoint, AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint,
-    AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbacks,
-    AgentInput, AgentInputContent, AgentInteractionKind, AgentInteractionSnapshot,
-    AgentItemContent, AgentItemSnapshot, AgentLifecycleCapability, AgentLifecycleStatus,
-    AgentPayloadDigest, AgentProfileDigest, AgentReadQuery, AgentReceiptState,
-    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
-    AgentServiceInstanceId, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
-    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
-    AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolName,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnSnapshot, AppliedAgentSurface,
+    AgentAppliedEffectOutcome, AgentCapabilityProfile, AgentChange, AgentChangePage,
+    AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandCapability,
+    AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
+    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentEntityStatus,
+    AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentHookBlockingSemantics,
+    AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming,
+    AgentHostCallbackBinding, AgentHostCallbacks, AgentInput, AgentInputContent,
+    AgentInteractionKind, AgentInteractionSnapshot, AgentItemContent, AgentItemSnapshot,
+    AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest,
+    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
+    AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot,
+    AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel,
+    AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet,
+    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
+    AgentToolDelivery, AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    AgentTurnSnapshot, AppliedAgentCommandReceipt, AppliedAgentSurface,
     AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
-    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
-    BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
-    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
+    AppliedForkAgentReceipt, AppliedInitialContextEvidence, ApplyBoundAgentSurface,
+    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand,
+    ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
     InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
     ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
@@ -61,6 +62,14 @@ pub enum DashCompleteRecordedReceipt {
     Command(AgentCommandReceipt),
     Fork(ForkAgentReceipt),
     ApplySurface(AppliedAgentSurfaceReceipt),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DashCompleteCommandEffectKind {
+    Create,
+    Resume,
+    Command,
+    SurfaceRevoke,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -443,20 +452,12 @@ impl CompleteAgentService for DashAgentCompleteService {
             snapshot_revision: Some(revision),
             initial_context: initial_evidence.clone(),
         };
-        let record = DashCompleteEffectRecord {
+        let record = command_effect_record(
+            DashCompleteCommandEffectKind::Create,
             request_fingerprint,
-            inspection: AgentEffectInspection {
-                effect_id: command.meta.effect_id.clone(),
-                command_id: Some(command.meta.command_id.clone()),
-                state: AgentEffectInspectionState::Applied {
-                    source: source.clone(),
-                    terminal: Some(AgentTerminalOutcome::Succeeded),
-                    initial_context: initial_evidence,
-                    child_source: None,
-                },
-            },
-            receipt: DashCompleteRecordedReceipt::Command(receipt.clone()),
-        };
+            receipt.clone(),
+            Some(AgentTerminalOutcome::Succeeded),
+        );
         self.store
             .commit(DashCompleteAtomicCommit {
                 effect_id: command.meta.effect_id,
@@ -507,8 +508,8 @@ impl CompleteAgentService for DashAgentCompleteService {
                 effect_id: command.meta.effect_id,
                 expected_effect: None,
                 replacement_effect: command_effect_record(
+                    DashCompleteCommandEffectKind::Resume,
                     request_fingerprint,
-                    command.meta.command_id,
                     receipt.clone(),
                     Some(AgentTerminalOutcome::Succeeded),
                 ),
@@ -551,8 +552,8 @@ impl CompleteAgentService for DashAgentCompleteService {
             effect_id: command.meta.effect_id.clone(),
             parent_source: command.source.clone(),
             child_source: Some(child_source.clone()),
-            cutoff: command.cutoff,
-            child_history_digest: Some(child_digest),
+            cutoff: command.cutoff.clone(),
+            child_history_digest: Some(child_digest.clone()),
             state: AgentReceiptState::Terminal {
                 outcome: AgentTerminalOutcome::Succeeded,
             },
@@ -563,10 +564,17 @@ impl CompleteAgentService for DashAgentCompleteService {
                 effect_id: command.meta.effect_id.clone(),
                 command_id: Some(command.meta.command_id.clone()),
                 state: AgentEffectInspectionState::Applied {
-                    source: command.source.clone(),
-                    terminal: Some(AgentTerminalOutcome::Succeeded),
-                    initial_context: None,
-                    child_source: Some(child_source.clone()),
+                    outcome: AgentAppliedEffectOutcome::Fork {
+                        receipt: AppliedForkAgentReceipt {
+                            command_id: command.meta.command_id.clone(),
+                            effect_id: command.meta.effect_id.clone(),
+                            parent_source: command.source.clone(),
+                            child_source: child_source.clone(),
+                            cutoff: command.cutoff,
+                            child_history_digest: child_digest,
+                            terminal: Some(AgentTerminalOutcome::Succeeded),
+                        },
+                    },
                 },
             },
             receipt: DashCompleteRecordedReceipt::Fork(receipt.clone()),
@@ -613,8 +621,8 @@ impl CompleteAgentService for DashAgentCompleteService {
                     initial_context: None,
                 };
                 let accepted_record = command_effect_record(
+                    DashCompleteCommandEffectKind::Command,
                     request_fingerprint.clone(),
-                    command.meta.command_id.clone(),
                     accepted_receipt,
                     None,
                 );
@@ -658,8 +666,8 @@ impl CompleteAgentService for DashAgentCompleteService {
             initial_context: None,
         };
         let final_record = command_effect_record(
+            DashCompleteCommandEffectKind::Command,
             request_fingerprint,
-            command.meta.command_id,
             receipt.clone(),
             terminal,
         );
@@ -872,10 +880,9 @@ impl CompleteAgentService for DashAgentCompleteService {
                 effect_id: command.effect_id.clone(),
                 command_id: Some(command.command_id.clone()),
                 state: AgentEffectInspectionState::Applied {
-                    source: command.source.clone(),
-                    terminal: Some(AgentTerminalOutcome::Succeeded),
-                    initial_context: None,
-                    child_source: None,
+                    outcome: AgentAppliedEffectOutcome::SurfaceApply {
+                        receipt: receipt.clone(),
+                    },
                 },
             },
             receipt: DashCompleteRecordedReceipt::ApplySurface(receipt.clone()),
@@ -954,8 +961,8 @@ impl CompleteAgentService for DashAgentCompleteService {
             initial_context: None,
         };
         let record = command_effect_record(
+            DashCompleteCommandEffectKind::SurfaceRevoke,
             request_fingerprint,
-            command.command_id,
             receipt.clone(),
             Some(AgentTerminalOutcome::Succeeded),
         );
@@ -1484,22 +1491,48 @@ fn applied_surface_matches_bound(applied: &AppliedAgentSurface, bound: &BoundAge
 }
 
 fn command_effect_record(
+    kind: DashCompleteCommandEffectKind,
     request_fingerprint: String,
-    command_id: agentdash_agent_service_api::AgentCommandId,
     receipt: AgentCommandReceipt,
     terminal: Option<AgentTerminalOutcome>,
 ) -> DashCompleteEffectRecord {
+    let applied_receipt = AppliedAgentCommandReceipt {
+        command_id: receipt.command_id.clone(),
+        effect_id: receipt.effect_id.clone(),
+        source: receipt.source.clone(),
+        terminal,
+        snapshot_revision: receipt.snapshot_revision,
+        initial_context: receipt.initial_context.clone(),
+    };
     DashCompleteEffectRecord {
         request_fingerprint,
         inspection: AgentEffectInspection {
             effect_id: receipt.effect_id.clone(),
-            command_id: Some(command_id),
+            command_id: Some(receipt.command_id.clone()),
             state: match terminal {
-                Some(terminal) => AgentEffectInspectionState::Applied {
-                    source: receipt.source.clone(),
-                    terminal: Some(terminal),
-                    initial_context: receipt.initial_context.clone(),
-                    child_source: None,
+                Some(_) => AgentEffectInspectionState::Applied {
+                    outcome: match kind {
+                        DashCompleteCommandEffectKind::Create => {
+                            AgentAppliedEffectOutcome::Create {
+                                receipt: applied_receipt,
+                            }
+                        }
+                        DashCompleteCommandEffectKind::Resume => {
+                            AgentAppliedEffectOutcome::Resume {
+                                receipt: applied_receipt,
+                            }
+                        }
+                        DashCompleteCommandEffectKind::Command => {
+                            AgentAppliedEffectOutcome::Command {
+                                receipt: applied_receipt,
+                            }
+                        }
+                        DashCompleteCommandEffectKind::SurfaceRevoke => {
+                            AgentAppliedEffectOutcome::SurfaceRevoke {
+                                receipt: applied_receipt,
+                            }
+                        }
+                    },
                 },
                 None => AgentEffectInspectionState::Accepted {
                     source: receipt.source.clone(),

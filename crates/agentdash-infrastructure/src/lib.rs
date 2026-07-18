@@ -14,7 +14,9 @@ pub mod skill_source;
 pub mod storage;
 pub mod workflow_scripts;
 
-pub use complete_agent_composition::{CompleteAgentComposition, CompleteAgentCompositionError};
+pub use complete_agent_composition::{
+    CompleteAgentComposition, CompleteAgentCompositionError, PinnedCompleteAgentVerificationCatalog,
+};
 pub use function_runner::DefaultFunctionRunner;
 pub use hooks::RhaiHookScriptEvaluator;
 pub use mcp::RmcpProbeTransport;

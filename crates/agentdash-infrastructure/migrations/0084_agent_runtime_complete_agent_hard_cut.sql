@@ -278,8 +278,10 @@ VALUES (
     0,
     '{
         "service_instances": {},
+        "service_verifications": {},
         "offers": {},
         "placements": {},
+        "remote_bindings": {},
         "bindings": {},
         "source_coordinates": {},
         "callback_routes": {},
@@ -296,6 +298,24 @@ CREATE TABLE agent_service_instance (
     service_instance_id TEXT PRIMARY KEY CHECK (btrim(service_instance_id) <> ''),
     descriptor_digest TEXT NOT NULL CHECK (btrim(descriptor_digest) <> ''),
     descriptor JSONB NOT NULL
+);
+
+CREATE TABLE agent_service_verification (
+    service_instance_id TEXT PRIMARY KEY
+        REFERENCES agent_service_instance(service_instance_id) ON DELETE RESTRICT,
+    publisher_integration TEXT NOT NULL CHECK (btrim(publisher_integration) <> ''),
+    service_version TEXT NOT NULL CHECK (btrim(service_version) <> ''),
+    verifier_identity TEXT NOT NULL CHECK (btrim(verifier_identity) <> ''),
+    verifier_revision TEXT NOT NULL CHECK (btrim(verifier_revision) <> ''),
+    verification_method TEXT NOT NULL CHECK (
+        verification_method IN ('pinned_builtin', 'remote_transport_attestation')
+    ),
+    verified_profile_digest TEXT NOT NULL CHECK (btrim(verified_profile_digest) <> ''),
+    claimed_conformance_suite_revision TEXT NOT NULL
+        CHECK (btrim(claimed_conformance_suite_revision) <> ''),
+    claimed_build_digest TEXT NOT NULL CHECK (btrim(claimed_build_digest) <> ''),
+    evidence_digest TEXT NOT NULL CHECK (btrim(evidence_digest) <> ''),
+    verification JSONB NOT NULL CHECK (jsonb_typeof(verification) = 'object')
 );
 
 CREATE TABLE agent_runtime_offer (
@@ -315,6 +335,7 @@ CREATE TABLE agent_runtime_placement (
     transport_id TEXT,
     host_incarnation_id TEXT NOT NULL CHECK (btrim(host_incarnation_id) <> ''),
     placement JSONB NOT NULL,
+    UNIQUE (service_instance_id, transport_id, host_incarnation_id),
     CHECK (
         (placement_kind = 'in_process' AND host_id IS NULL AND transport_id IS NULL)
         OR (
@@ -331,6 +352,24 @@ CREATE TABLE agent_runtime_placement (
             AND btrim(transport_id) <> ''
         )
     )
+);
+
+CREATE TABLE agent_runtime_remote_binding (
+    local_service_instance_id TEXT PRIMARY KEY,
+    local_binding_generation BIGINT NOT NULL CHECK (local_binding_generation > 0),
+    remote_service_instance_id TEXT NOT NULL CHECK (btrim(remote_service_instance_id) <> ''),
+    remote_binding_generation BIGINT NOT NULL CHECK (remote_binding_generation > 0),
+    host_incarnation_id TEXT NOT NULL CHECK (btrim(host_incarnation_id) <> ''),
+    transport_id TEXT NOT NULL CHECK (btrim(transport_id) <> ''),
+    mapping JSONB NOT NULL CHECK (jsonb_typeof(mapping) = 'object'),
+    FOREIGN KEY (local_service_instance_id)
+        REFERENCES agent_service_instance(service_instance_id) ON DELETE RESTRICT,
+    FOREIGN KEY (local_service_instance_id, transport_id, host_incarnation_id)
+        REFERENCES agent_runtime_placement(
+            service_instance_id,
+            transport_id,
+            host_incarnation_id
+        ) ON DELETE RESTRICT
 );
 
 CREATE TABLE agent_runtime_lifecycle_target (

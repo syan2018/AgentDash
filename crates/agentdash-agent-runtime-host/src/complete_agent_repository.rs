@@ -4,9 +4,9 @@ use std::{
 };
 
 use agentdash_agent_service_api::{
-    AgentCallbackRouteId, AgentEffectIdentity, AgentEffectInspectionState, AgentReceiptState,
-    AgentRuntimeOffer, AgentServiceDescriptor, AgentServiceInstanceId, AgentSourceCoordinate,
-    AgentSurfaceRoute, CompleteAgentService,
+    AgentCallbackRouteId, AgentEffectIdentity, AgentEffectInspectionState, AgentPayloadDigest,
+    AgentProfileDigest, AgentReceiptState, AgentRuntimeOffer, AgentServiceDescriptor,
+    AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceRoute, CompleteAgentService,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -25,11 +25,94 @@ use agentdash_agent_runtime_contract::RuntimeThreadId;
 #[serde(transparent)]
 pub struct CompleteAgentHostRevision(pub u64);
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteAgentVerifiedBuildEvidence {
+    pub claimed_build_digest: AgentPayloadDigest,
+    pub evidence_digest: AgentPayloadDigest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompleteAgentVerificationMethod {
+    PinnedBuiltin,
+    RemoteTransportAttestation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteAgentVerificationRequest {
+    pub service_instance_id: AgentServiceInstanceId,
+    pub publisher_integration: String,
+    pub service_version: String,
+    pub claimed_build_digest: AgentPayloadDigest,
+    pub profile_digest: AgentProfileDigest,
+    pub claimed_conformance_suite_revision: String,
+}
+
+/// Host-owned trust root supplied independently from an Integration contribution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteAgentVerificationRecord {
+    pub service_instance_id: AgentServiceInstanceId,
+    pub expected_publisher_integration: String,
+    pub expected_service_version: String,
+    pub expected_build_digest: AgentPayloadDigest,
+    pub expected_profile_digest: AgentProfileDigest,
+    pub expected_conformance_suite_revision: String,
+    pub method: CompleteAgentVerificationMethod,
+    pub verifier_identity: String,
+    pub verifier_revision: String,
+    pub evidence_digest: AgentPayloadDigest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteAgentServiceVerification {
+    pub service_instance_id: AgentServiceInstanceId,
+    pub publisher_integration: String,
+    pub service_version: String,
+    pub verifier_identity: String,
+    pub verifier_revision: String,
+    pub method: CompleteAgentVerificationMethod,
+    pub verified_profile_digest: AgentProfileDigest,
+    pub claimed_conformance_suite_revision: String,
+    pub verified_build: CompleteAgentVerifiedBuildEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum CompleteAgentVerificationError {
+    #[error("no trusted Complete Agent verification record for {service_instance_id}")]
+    MissingRecord {
+        service_instance_id: AgentServiceInstanceId,
+    },
+    #[error("Complete Agent verification claim drifted at {coordinate}")]
+    ClaimDrift { coordinate: &'static str },
+    #[error("Complete Agent verification record is invalid: {reason}")]
+    InvalidRecord { reason: String },
+}
+
+#[async_trait]
+pub trait CompleteAgentRegistrationVerifier: Send + Sync {
+    async fn verify(
+        &self,
+        request: CompleteAgentVerificationRequest,
+    ) -> Result<CompleteAgentServiceVerification, CompleteAgentVerificationError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteAgentRemoteBindingFact {
+    pub local_service_instance_id: AgentServiceInstanceId,
+    pub local_binding_generation: agentdash_agent_service_api::AgentBindingGeneration,
+    pub remote_service_instance_id: AgentServiceInstanceId,
+    pub remote_binding_generation: agentdash_agent_service_api::AgentBindingGeneration,
+    pub host_incarnation_id: String,
+    pub transport_id: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentHostFacts {
     pub service_instances: BTreeMap<AgentServiceInstanceId, AgentServiceDescriptor>,
+    pub service_verifications: BTreeMap<AgentServiceInstanceId, CompleteAgentServiceVerification>,
     pub offers: BTreeMap<AgentServiceInstanceId, AgentRuntimeOffer>,
     pub placements: BTreeMap<AgentServiceInstanceId, CompleteAgentPlacement>,
+    pub remote_bindings: BTreeMap<AgentServiceInstanceId, CompleteAgentRemoteBindingFact>,
     pub bindings: BTreeMap<CompleteAgentBindingId, CompleteAgentBinding>,
     pub source_coordinates: BTreeMap<CompleteAgentBindingId, AgentSourceCoordinate>,
     pub callback_routes: BTreeMap<AgentCallbackRouteId, CompleteAgentCallbackRoute>,
@@ -154,6 +237,7 @@ pub fn validate_complete_agent_host_facts(
 ) -> Result<(), CompleteAgentHostStoreError> {
     if candidate.service_instances.len() != candidate.offers.len()
         || candidate.service_instances.len() != candidate.placements.len()
+        || candidate.service_instances.len() != candidate.service_verifications.len()
     {
         return invariant(
             "every service instance must have exactly one Runtime offer and placement",
@@ -178,8 +262,46 @@ pub fn validate_complete_agent_host_facts(
                 reason: "service instance has no placement".to_owned(),
             }
         })?;
+        let verification = candidate
+            .service_verifications
+            .get(instance_id)
+            .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
+                reason: "service instance has no independent Host verification".to_owned(),
+            })?;
         if !placement.is_valid() {
             return invariant("service placement coordinates must not be empty");
+        }
+        if matches!(placement, CompleteAgentPlacement::Remote { .. })
+            != candidate.remote_bindings.contains_key(instance_id)
+        {
+            return invariant(
+                "only remote service placements require one explicit identity/generation mapping",
+            );
+        }
+        if &verification.service_instance_id != instance_id
+            || verification.publisher_integration.trim().is_empty()
+            || verification.service_version.trim().is_empty()
+            || verification.verifier_identity.trim().is_empty()
+            || verification.verifier_revision.trim().is_empty()
+            || verification
+                .claimed_conformance_suite_revision
+                .trim()
+                .is_empty()
+            || verification.verified_profile_digest != descriptor.profile_digest
+            || verification
+                .verified_build
+                .claimed_build_digest
+                .as_str()
+                .trim()
+                .is_empty()
+            || verification
+                .verified_build
+                .evidence_digest
+                .as_str()
+                .trim()
+                .is_empty()
+        {
+            return invariant("service Host verification coordinates or evidence are invalid");
         }
         if offer.profile_digest != descriptor.profile_digest
             || offer.contributions != descriptor.profile.surface.facets
@@ -199,6 +321,11 @@ pub fn validate_complete_agent_host_facts(
         if candidate.placements.get(instance_id) != current.placements.get(instance_id) {
             return invariant("service placement history is immutable");
         }
+        if candidate.service_verifications.get(instance_id)
+            != current.service_verifications.get(instance_id)
+        {
+            return invariant("service Host verification history is immutable");
+        }
     }
     if candidate
         .placements
@@ -206,6 +333,44 @@ pub fn validate_complete_agent_host_facts(
         .any(|instance_id| !candidate.service_instances.contains_key(instance_id))
     {
         return invariant("service placement has no owning service instance");
+    }
+    for (local_instance_id, mapping) in &candidate.remote_bindings {
+        let placement = candidate.placements.get(local_instance_id).ok_or_else(|| {
+            CompleteAgentHostStoreError::Invariant {
+                reason: "remote binding mapping has no owning service placement".to_owned(),
+            }
+        })?;
+        if local_instance_id != &mapping.local_service_instance_id
+            || mapping.local_binding_generation.0 == 0
+            || mapping.remote_binding_generation.0 == 0
+            || mapping
+                .remote_service_instance_id
+                .as_str()
+                .trim()
+                .is_empty()
+            || mapping.host_incarnation_id.trim().is_empty()
+            || mapping.transport_id.trim().is_empty()
+        {
+            return invariant("remote binding mapping coordinates are invalid");
+        }
+        match placement {
+            CompleteAgentPlacement::Remote {
+                transport_id,
+                host_incarnation_id,
+                ..
+            } if transport_id == &mapping.transport_id
+                && host_incarnation_id == &mapping.host_incarnation_id => {}
+            _ => {
+                return invariant(
+                    "remote binding mapping does not match its Host incarnation and transport placement",
+                );
+            }
+        }
+    }
+    for (local_instance_id, mapping) in &current.remote_bindings {
+        if candidate.remote_bindings.get(local_instance_id) != Some(mapping) {
+            return invariant("remote binding identity and generation mapping is immutable");
+        }
     }
 
     for (binding_id, binding) in &candidate.bindings {
@@ -1390,6 +1555,81 @@ mod tests {
     }
 
     #[test]
+    fn host_verification_and_remote_identity_mapping_are_immutable_fences() {
+        let current = valid_facts();
+
+        let mut verification_rewrite = current.clone();
+        verification_rewrite
+            .service_verifications
+            .get_mut(&service_id())
+            .expect("verification")
+            .verifier_revision = "rewritten-verifier-revision".to_owned();
+        assert_invariant(validate_complete_agent_host_facts(
+            &current,
+            &verification_rewrite,
+        ));
+
+        let mut evidence_rewrite = current.clone();
+        evidence_rewrite
+            .service_verifications
+            .get_mut(&service_id())
+            .expect("verification")
+            .verified_build
+            .evidence_digest =
+            AgentPayloadDigest::new("rewritten-evidence").expect("evidence digest");
+        assert_invariant(validate_complete_agent_host_facts(
+            &current,
+            &evidence_rewrite,
+        ));
+
+        let mut remote = current.clone();
+        remote.placements.insert(
+            service_id(),
+            CompleteAgentPlacement::Remote {
+                host_id: "remote-host".to_owned(),
+                transport_id: "remote-transport".to_owned(),
+                host_incarnation_id: "host-incarnation".to_owned(),
+            },
+        );
+        remote.remote_bindings.insert(
+            service_id(),
+            CompleteAgentRemoteBindingFact {
+                local_service_instance_id: service_id(),
+                local_binding_generation: AgentBindingGeneration(3),
+                remote_service_instance_id: AgentServiceInstanceId::new("remote-service")
+                    .expect("remote service"),
+                remote_binding_generation: AgentBindingGeneration(8),
+                host_incarnation_id: "host-incarnation".to_owned(),
+                transport_id: "remote-transport".to_owned(),
+            },
+        );
+        validate_complete_agent_host_facts(&CompleteAgentHostFacts::default(), &remote)
+            .expect("initial remote mapping");
+
+        let mut generation_rewrite = remote.clone();
+        generation_rewrite
+            .remote_bindings
+            .get_mut(&service_id())
+            .expect("remote mapping")
+            .remote_binding_generation = AgentBindingGeneration(9);
+        assert_invariant(validate_complete_agent_host_facts(
+            &remote,
+            &generation_rewrite,
+        ));
+
+        let mut incarnation_rewrite = remote.clone();
+        incarnation_rewrite
+            .remote_bindings
+            .get_mut(&service_id())
+            .expect("remote mapping")
+            .host_incarnation_id = "other-incarnation".to_owned();
+        assert_invariant(validate_complete_agent_host_facts(
+            &remote,
+            &incarnation_rewrite,
+        ));
+    }
+
+    #[test]
     fn callback_route_is_atomic_with_apply_and_revoke_binding_transitions() {
         let no_callback_current = valid_facts();
         let mut no_callback_applied = no_callback_current.clone();
@@ -2088,6 +2328,25 @@ mod tests {
         };
         CompleteAgentHostFacts {
             service_instances: BTreeMap::from([(service_id.clone(), descriptor)]),
+            service_verifications: BTreeMap::from([(
+                service_id.clone(),
+                CompleteAgentServiceVerification {
+                    service_instance_id: service_id.clone(),
+                    publisher_integration: "fixture-integration".to_owned(),
+                    service_version: "fixture-version".to_owned(),
+                    verifier_identity: "fixture-verifier".to_owned(),
+                    verifier_revision: "fixture-verifier-revision".to_owned(),
+                    method: CompleteAgentVerificationMethod::PinnedBuiltin,
+                    verified_profile_digest: AgentProfileDigest::new("profile").expect("profile"),
+                    claimed_conformance_suite_revision: "fixture-conformance".to_owned(),
+                    verified_build: CompleteAgentVerifiedBuildEvidence {
+                        claimed_build_digest: AgentPayloadDigest::new("fixture-build")
+                            .expect("build digest"),
+                        evidence_digest: AgentPayloadDigest::new("fixture-evidence")
+                            .expect("evidence digest"),
+                    },
+                },
+            )]),
             offers: BTreeMap::from([(service_id.clone(), offer)]),
             placements: BTreeMap::from([(
                 service_id.clone(),
@@ -2095,6 +2354,7 @@ mod tests {
                     host_incarnation_id: "fixture-host".to_owned(),
                 },
             )]),
+            remote_bindings: BTreeMap::new(),
             bindings: BTreeMap::from([(binding_id.clone(), binding)]),
             source_coordinates: BTreeMap::from([(binding_id.clone(), source)]),
             callback_routes: BTreeMap::new(),

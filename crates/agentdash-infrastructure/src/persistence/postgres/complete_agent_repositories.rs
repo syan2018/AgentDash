@@ -568,6 +568,26 @@ async fn replace_host_projection(
     execute_host_projection(
         tx,
         facts,
+        "INSERT INTO agent_service_verification(
+             service_instance_id, publisher_integration, service_version,
+             verifier_identity, verifier_revision, verification_method,
+             verified_profile_digest, claimed_conformance_suite_revision,
+             claimed_build_digest, evidence_digest, verification
+         )
+         SELECT entry.key, entry.value->>'publisher_integration',
+                entry.value->>'service_version', entry.value->>'verifier_identity',
+                entry.value->>'verifier_revision', entry.value->>'method',
+                entry.value->>'verified_profile_digest',
+                entry.value->>'claimed_conformance_suite_revision',
+                entry.value#>>'{verified_build,claimed_build_digest}',
+                entry.value#>>'{verified_build,evidence_digest}', entry.value
+         FROM jsonb_each($1::JSONB->'service_verifications') entry
+         ON CONFLICT (service_instance_id) DO NOTHING",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
         "INSERT INTO agent_runtime_offer(service_instance_id, profile_digest, offer)
          SELECT entry.key, entry.value->>'profile_digest', entry.value
          FROM jsonb_each($1::JSONB->'offers') entry
@@ -591,6 +611,23 @@ async fn replace_host_projection(
              transport_id = EXCLUDED.transport_id,
              host_incarnation_id = EXCLUDED.host_incarnation_id,
              placement = EXCLUDED.placement",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_remote_binding(
+             local_service_instance_id, local_binding_generation,
+             remote_service_instance_id, remote_binding_generation,
+             host_incarnation_id, transport_id, mapping
+         )
+         SELECT entry.key, (entry.value->>'local_binding_generation')::BIGINT,
+                entry.value->>'remote_service_instance_id',
+                (entry.value->>'remote_binding_generation')::BIGINT,
+                entry.value->>'host_incarnation_id', entry.value->>'transport_id',
+                entry.value
+         FROM jsonb_each($1::JSONB->'remote_bindings') entry
+         ON CONFLICT (local_service_instance_id) DO NOTHING",
     )
     .await?;
     execute_host_projection(
@@ -956,6 +993,18 @@ async fn verify_host_projection(
              LEFT JOIN agent_service_instance stored
                ON stored.service_instance_id = candidate.key
              WHERE stored.descriptor IS DISTINCT FROM candidate.value
+           )
+           OR EXISTS (
+             SELECT 1 FROM jsonb_each($1::JSONB->'service_verifications') candidate
+             LEFT JOIN agent_service_verification stored
+               ON stored.service_instance_id = candidate.key
+             WHERE stored.verification IS DISTINCT FROM candidate.value
+           )
+           OR EXISTS (
+             SELECT 1 FROM jsonb_each($1::JSONB->'remote_bindings') candidate
+             LEFT JOIN agent_runtime_remote_binding stored
+               ON stored.local_service_instance_id = candidate.key
+             WHERE stored.mapping IS DISTINCT FROM candidate.value
            )
            OR EXISTS (
              SELECT 1 FROM jsonb_each($1::JSONB->'bindings') candidate

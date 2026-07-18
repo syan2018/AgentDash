@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     CompleteAgentCallbackRoute, CompleteAgentHostCommit, CompleteAgentHostFacts,
     CompleteAgentHostRepository, CompleteAgentHostSnapshot, CompleteAgentHostStoreError,
+    CompleteAgentRemoteBindingFact, CompleteAgentServiceVerification,
     SharedCompleteAgentHostRepository, SharedCompleteAgentServiceRegistry,
 };
 use agentdash_agent_runtime::{
@@ -71,6 +72,14 @@ pub struct CompleteAgentRuntimeTarget {
     pub profile_digest: AgentProfileDigest,
     pub bound_surface: BoundAgentSurface,
     pub callbacks: AgentHostCallbackBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteAgentVerifiedServiceRegistration {
+    pub instance_id: AgentServiceInstanceId,
+    pub placement: CompleteAgentPlacement,
+    pub verification: CompleteAgentServiceVerification,
+    pub remote_binding: Option<CompleteAgentRemoteBindingFact>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,8 +293,8 @@ pub enum CompleteAgentHostError {
     Service(#[from] AgentServiceError),
 }
 
-/// Target Complete-Agent lane for service registration, binding/generation fencing, and stable
-/// effect reconciliation. It is additive until the production registry cutover.
+/// Final Complete-Agent Host boundary for verified service registration, binding/generation
+/// fencing, and stable effect reconciliation.
 pub struct CompleteAgentHost {
     repository: SharedCompleteAgentHostRepository,
     services: SharedCompleteAgentServiceRegistry,
@@ -302,15 +311,20 @@ impl CompleteAgentHost {
         }
     }
 
-    pub async fn register_service(
+    pub async fn register_verified_service(
         &self,
-        instance_id: AgentServiceInstanceId,
-        placement: CompleteAgentPlacement,
+        registration: CompleteAgentVerifiedServiceRegistration,
         service: Arc<dyn CompleteAgentService>,
     ) -> Result<AgentServiceDescriptor, CompleteAgentHostError> {
-        if !placement.is_valid() {
+        if !registration.placement.is_valid() {
             return Err(CompleteAgentHostError::Invariant {
                 reason: "Complete Agent placement coordinates must not be empty".to_owned(),
+            });
+        }
+        if registration.verification.service_instance_id != registration.instance_id {
+            return Err(CompleteAgentHostError::Invariant {
+                reason: "Complete Agent verification belongs to another service instance"
+                    .to_owned(),
             });
         }
         let descriptor = service.describe().await?;
@@ -318,23 +332,41 @@ impl CompleteAgentHost {
         let offer = runtime_offer_from_descriptor(&descriptor)?;
         let snapshot = self.repository.load().await?;
         let mut facts = snapshot.facts;
-        if let Some(existing) = facts.service_instances.get(&instance_id) {
-            if existing != &descriptor || facts.placements.get(&instance_id) != Some(&placement) {
+        if let Some(existing) = facts.service_instances.get(&registration.instance_id) {
+            if existing != &descriptor
+                || facts.placements.get(&registration.instance_id) != Some(&registration.placement)
+                || facts.service_verifications.get(&registration.instance_id)
+                    != Some(&registration.verification)
+                || facts.remote_bindings.get(&registration.instance_id)
+                    != registration.remote_binding.as_ref()
+            {
                 return Err(CompleteAgentHostError::Invariant {
                     reason:
-                        "service instance id is already registered with another descriptor or placement"
+                        "service instance id is already registered with different verified facts"
                             .to_owned(),
                 });
             }
         } else {
             facts
                 .service_instances
-                .insert(instance_id.clone(), descriptor.clone());
-            facts.offers.insert(instance_id.clone(), offer);
-            facts.placements.insert(instance_id.clone(), placement);
+                .insert(registration.instance_id.clone(), descriptor.clone());
+            facts
+                .service_verifications
+                .insert(registration.instance_id.clone(), registration.verification);
+            facts.offers.insert(registration.instance_id.clone(), offer);
+            facts
+                .placements
+                .insert(registration.instance_id.clone(), registration.placement);
+            if let Some(remote_binding) = registration.remote_binding {
+                facts
+                    .remote_bindings
+                    .insert(registration.instance_id.clone(), remote_binding);
+            }
             self.commit(snapshot.revision, facts).await?;
         }
-        self.services.attach(instance_id, service).await;
+        self.services
+            .attach(registration.instance_id, service)
+            .await;
         Ok(descriptor)
     }
 
@@ -3345,9 +3377,16 @@ mod tests {
         let service = lifecycle_service();
         let host = CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
         let instance_id = AgentServiceInstanceId::new("lifecycle-service").expect("service");
-        host.register_service(instance_id.clone(), fixture_placement(), service.clone())
-            .await
-            .expect("register lifecycle service");
+        host.register_verified_service(
+            fixture_verified_registration(
+                instance_id.clone(),
+                fixture_placement(),
+                descriptor().profile_digest,
+            ),
+            service.clone(),
+        )
+        .await
+        .expect("register lifecycle service");
         let parent_thread = RuntimeThreadId::new("runtime-parent").expect("thread");
         host.register_runtime_target(CompleteAgentRuntimeTarget {
             runtime_thread_id: parent_thread.clone(),
@@ -3372,9 +3411,13 @@ mod tests {
         service: Arc<LifecycleService>,
     ) -> CompleteAgentHost {
         let host = CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
-        host.register_service(
-            AgentServiceInstanceId::new("lifecycle-service").expect("service"),
-            fixture_placement(),
+        let instance_id = AgentServiceInstanceId::new("lifecycle-service").expect("service");
+        host.register_verified_service(
+            fixture_verified_registration(
+                instance_id,
+                fixture_placement(),
+                descriptor().profile_digest,
+            ),
             service,
         )
         .await
@@ -3422,9 +3465,16 @@ mod tests {
             Arc::new(FixtureServiceRegistry::default()),
         );
         let instance_id = AgentServiceInstanceId::new("lifecycle-service").expect("service");
-        host.register_service(instance_id.clone(), fixture_placement(), service.clone())
-            .await
-            .expect("register lifecycle service");
+        host.register_verified_service(
+            fixture_verified_registration(
+                instance_id.clone(),
+                fixture_placement(),
+                descriptor().profile_digest,
+            ),
+            service.clone(),
+        )
+        .await
+        .expect("register lifecycle service");
         let parent_thread = RuntimeThreadId::new("runtime-parent").expect("thread");
         host.register_runtime_target(CompleteAgentRuntimeTarget {
             runtime_thread_id: parent_thread.clone(),
@@ -4149,9 +4199,16 @@ mod tests {
         });
         let instance_id = AgentServiceInstanceId::new("service").expect("service");
         let host = fixture_host();
-        host.register_service(instance_id.clone(), fixture_placement(), service)
-            .await
-            .expect("register service");
+        host.register_verified_service(
+            fixture_verified_registration(
+                instance_id.clone(),
+                fixture_placement(),
+                service_descriptor.profile_digest.clone(),
+            ),
+            service,
+        )
+        .await
+        .expect("register service");
 
         let offer = host.runtime_offer(&instance_id).await.expect("offer");
 
@@ -4217,9 +4274,16 @@ mod tests {
             repository.clone(),
             Arc::new(FixtureServiceRegistry::default()),
         );
-        host.register_service(instance_id.clone(), fixture_placement(), service.clone())
-            .await
-            .expect("register service");
+        host.register_verified_service(
+            fixture_verified_registration(
+                instance_id.clone(),
+                fixture_placement(),
+                descriptor().profile_digest,
+            ),
+            service.clone(),
+        )
+        .await
+        .expect("register service");
         let binding_id = CompleteAgentBindingId::new("binding").expect("binding");
         let bound_surface = empty_bound_surface();
         host.register_binding(CompleteAgentBinding {
@@ -4275,9 +4339,12 @@ mod tests {
         let restarted =
             CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
         restarted
-            .register_service(
-                AgentServiceInstanceId::new("service").expect("service"),
-                fixture_placement(),
+            .register_verified_service(
+                fixture_verified_registration(
+                    AgentServiceInstanceId::new("service").expect("service"),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
                 service.clone(),
             )
             .await
@@ -4572,9 +4639,12 @@ mod tests {
         let restarted =
             CompleteAgentHost::new(durable, Arc::new(FixtureServiceRegistry::default()));
         restarted
-            .register_service(
-                AgentServiceInstanceId::new("service").expect("service"),
-                fixture_placement(),
+            .register_verified_service(
+                fixture_verified_registration(
+                    AgentServiceInstanceId::new("service").expect("service"),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
                 service.clone(),
             )
             .await
@@ -4621,9 +4691,16 @@ mod tests {
             inspection_states: Mutex::new(VecDeque::new()),
             revoke_receipt: None,
         });
-        host.register_service(instance_id.clone(), fixture_placement(), service)
-            .await
-            .expect("register service");
+        host.register_verified_service(
+            fixture_verified_registration(
+                instance_id.clone(),
+                fixture_placement(),
+                descriptor().profile_digest,
+            ),
+            service,
+        )
+        .await
+        .expect("register service");
         let binding_id = CompleteAgentBindingId::new("binding").expect("binding");
         host.register_binding(CompleteAgentBinding {
             id: binding_id.clone(),
@@ -4866,6 +4943,34 @@ mod tests {
         }
     }
 
+    fn fixture_verified_registration(
+        instance_id: AgentServiceInstanceId,
+        placement: CompleteAgentPlacement,
+        profile_digest: AgentProfileDigest,
+    ) -> CompleteAgentVerifiedServiceRegistration {
+        CompleteAgentVerifiedServiceRegistration {
+            verification: CompleteAgentServiceVerification {
+                service_instance_id: instance_id.clone(),
+                publisher_integration: "fixture-integration".to_owned(),
+                service_version: "fixture-version".to_owned(),
+                verifier_identity: "fixture-verifier".to_owned(),
+                verifier_revision: "fixture-verifier-revision".to_owned(),
+                method: crate::CompleteAgentVerificationMethod::PinnedBuiltin,
+                verified_profile_digest: profile_digest,
+                claimed_conformance_suite_revision: "fixture-conformance".to_owned(),
+                verified_build: crate::CompleteAgentVerifiedBuildEvidence {
+                    claimed_build_digest: AgentPayloadDigest::new("fixture-build")
+                        .expect("build digest"),
+                    evidence_digest: AgentPayloadDigest::new("fixture-evidence")
+                        .expect("evidence digest"),
+                },
+            },
+            instance_id,
+            placement,
+            remote_binding: None,
+        }
+    }
+
     async fn assert_inspection_progression_survives_restarts(
         first_inspection: AgentEffectInspectionState,
     ) {
@@ -4911,9 +5016,12 @@ mod tests {
             Arc::new(FixtureServiceRegistry::default()),
         ));
         restarted
-            .register_service(
-                AgentServiceInstanceId::new("service").expect("service"),
-                fixture_placement(),
+            .register_verified_service(
+                fixture_verified_registration(
+                    AgentServiceInstanceId::new("service").expect("service"),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
                 service.clone(),
             )
             .await
@@ -4931,9 +5039,12 @@ mod tests {
         let replayed =
             CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
         replayed
-            .register_service(
-                AgentServiceInstanceId::new("service").expect("service"),
-                fixture_placement(),
+            .register_verified_service(
+                fixture_verified_registration(
+                    AgentServiceInstanceId::new("service").expect("service"),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
                 service,
             )
             .await
@@ -5037,9 +5148,12 @@ mod tests {
         let restarted =
             CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
         restarted
-            .register_service(
-                AgentServiceInstanceId::new("service").expect("service"),
-                fixture_placement(),
+            .register_verified_service(
+                fixture_verified_registration(
+                    AgentServiceInstanceId::new("service").expect("service"),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
                 service.clone(),
             )
             .await
@@ -5120,9 +5234,16 @@ mod tests {
             Arc::new(FixtureServiceRegistry::default()),
         ));
         let instance_id = AgentServiceInstanceId::new("service").expect("service");
-        host.register_service(instance_id.clone(), fixture_placement(), service)
-            .await
-            .expect("register service");
+        host.register_verified_service(
+            fixture_verified_registration(
+                instance_id.clone(),
+                fixture_placement(),
+                descriptor().profile_digest,
+            ),
+            service,
+        )
+        .await
+        .expect("register service");
         let binding_id = CompleteAgentBindingId::new("binding").expect("binding");
         let bound_surface = empty_bound_surface();
         host.register_binding(CompleteAgentBinding {
@@ -5227,6 +5348,7 @@ mod tests {
         binding: Option<CompleteAgentBinding>,
     ) -> CompleteAgentBindingLease {
         let descriptor = descriptor();
+        let profile_digest = descriptor.profile_digest.clone();
         let binding = binding.unwrap_or_else(|| CompleteAgentBinding {
             id: record.binding_id.clone(),
             service_instance_id: record.service_instance_id.clone(),
@@ -5248,6 +5370,15 @@ mod tests {
         facts
             .placements
             .insert(binding.service_instance_id.clone(), fixture_placement());
+        facts.service_verifications.insert(
+            binding.service_instance_id.clone(),
+            fixture_verified_registration(
+                binding.service_instance_id.clone(),
+                fixture_placement(),
+                profile_digest,
+            )
+            .verification,
+        );
         facts
             .source_coordinates
             .insert(binding.id.clone(), binding.source.clone());

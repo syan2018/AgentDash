@@ -21,9 +21,11 @@ use agentdash_agent_runtime_host::{
     CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError, CompleteAgentHookHandler,
     CompleteAgentHost, CompleteAgentHostCommit, CompleteAgentHostRepository,
     CompleteAgentHostSnapshot, CompleteAgentHostStoreError, CompleteAgentPlacement,
-    CompleteAgentRuntimeTarget, CompleteAgentServiceRegistry, CompleteAgentToolHandler,
-    ResolvedCompleteAgentHookCallback, ResolvedCompleteAgentToolCallback,
-    apply_complete_agent_callback_commit, apply_complete_agent_host_commit,
+    CompleteAgentRuntimeTarget, CompleteAgentServiceRegistry, CompleteAgentServiceVerification,
+    CompleteAgentToolHandler, CompleteAgentVerificationMethod, CompleteAgentVerifiedBuildEvidence,
+    CompleteAgentVerifiedServiceRegistration, ResolvedCompleteAgentHookCallback,
+    ResolvedCompleteAgentToolCallback, apply_complete_agent_callback_commit,
+    apply_complete_agent_host_commit,
 };
 use agentdash_agent_service_api::*;
 use async_trait::async_trait;
@@ -127,10 +129,29 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         Arc::new(FixtureServiceRegistry::default()),
     );
     let descriptor = host
-        .register_service(
-            service_id.clone(),
-            CompleteAgentPlacement::InProcess {
-                host_incarnation_id: "fixture-host".to_owned(),
+        .register_verified_service(
+            CompleteAgentVerifiedServiceRegistration {
+                instance_id: service_id.clone(),
+                placement: CompleteAgentPlacement::InProcess {
+                    host_incarnation_id: "fixture-host".to_owned(),
+                },
+                verification: CompleteAgentServiceVerification {
+                    service_instance_id: service_id.clone(),
+                    publisher_integration: "fixture-integration".to_owned(),
+                    service_version: "fixture-version".to_owned(),
+                    verifier_identity: "fixture-verifier".to_owned(),
+                    verifier_revision: "fixture-verifier-revision".to_owned(),
+                    method: CompleteAgentVerificationMethod::PinnedBuiltin,
+                    verified_profile_digest: service.descriptor.profile_digest.clone(),
+                    claimed_conformance_suite_revision: "fixture-conformance".to_owned(),
+                    verified_build: CompleteAgentVerifiedBuildEvidence {
+                        claimed_build_digest: AgentPayloadDigest::new("fixture-build")
+                            .expect("build digest"),
+                        evidence_digest: AgentPayloadDigest::new("fixture-evidence")
+                            .expect("evidence digest"),
+                    },
+                },
+                remote_binding: None,
             },
             service.clone(),
         )

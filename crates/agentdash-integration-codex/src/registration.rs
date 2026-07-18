@@ -5,7 +5,7 @@ use agentdash_agent_service_api::{
     AgentServiceInstanceId, CompleteAgentService,
 };
 use agentdash_integration_api::{
-    AgentDashIntegration, CompleteAgentOfferProvenance, CompleteAgentPlacementRequirement,
+    AgentDashIntegration, CompleteAgentPlacementRequirement, CompleteAgentRegistrationClaim,
     CompleteAgentRegistrationContribution, CompleteAgentServiceFactory,
     CompleteAgentServiceFactoryError,
 };
@@ -70,26 +70,26 @@ impl AgentDashIntegration for CodexCompleteAgentIntegration {
 }
 
 pub fn codex_complete_agent_contribution() -> CompleteAgentRegistrationContribution {
-    let expected_descriptor = CodexCompleteAgentService::descriptor_for(
+    let declared_descriptor = CodexCompleteAgentService::descriptor_for(
         AgentServiceDefinitionId::new(CODEX_COMPLETE_AGENT_DEFINITION_ID)
             .expect("static Codex Complete Agent definition id"),
         "Codex App Server",
     );
     CompleteAgentRegistrationContribution::new(
-        expected_descriptor.clone(),
+        declared_descriptor,
         AgentServiceInstanceId::new(CODEX_COMPLETE_AGENT_INSTANCE_ID)
             .expect("static Codex Complete Agent instance id"),
         CompleteAgentPlacementRequirement::InProcess,
-        CompleteAgentOfferProvenance {
+        None,
+        CompleteAgentRegistrationClaim {
             publisher_integration: "builtin.codex_runtime".to_owned(),
             service_version: crate::CODEX_APP_SERVER_PROTOCOL_REVISION.to_string(),
-            service_build_digest: AgentPayloadDigest::new(format!(
+            claimed_service_build_digest: AgentPayloadDigest::new(format!(
                 "codex-app-server:{}",
                 crate::CODEX_APP_SERVER_PROTOCOL_REVISION
             ))
             .expect("static Codex Complete Agent build digest"),
-            conformance_suite_revision: CODEX_COMPLETE_AGENT_CONFORMANCE_SUITE.to_owned(),
-            verified_profile_digest: expected_descriptor.profile_digest,
+            claimed_conformance_suite_revision: CODEX_COMPLETE_AGENT_CONFORMANCE_SUITE.to_owned(),
         },
         Arc::new(CodexProcessCompleteAgentFactory),
     )
@@ -232,19 +232,26 @@ mod tests {
         let contribution = codex_complete_agent_contribution();
 
         assert_eq!(
-            contribution.expected_descriptor.definition_id.as_str(),
+            contribution
+                .facts()
+                .declared_descriptor()
+                .definition_id
+                .as_str(),
             CODEX_COMPLETE_AGENT_DEFINITION_ID
         );
         assert_eq!(
-            contribution.instance_id.as_str(),
+            contribution.facts().instance_id().as_str(),
             CODEX_COMPLETE_AGENT_INSTANCE_ID
         );
         assert_eq!(
-            contribution.offer_provenance.verified_profile_digest,
-            contribution.expected_descriptor.profile_digest
+            contribution
+                .facts()
+                .registration_claim()
+                .claimed_conformance_suite_revision,
+            CODEX_COMPLETE_AGENT_CONFORMANCE_SUITE
         );
         assert!(matches!(
-            contribution.placement,
+            contribution.facts().placement(),
             CompleteAgentPlacementRequirement::InProcess
         ));
     }

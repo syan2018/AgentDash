@@ -38,7 +38,7 @@ use agentdash_agent_service_api::{
     ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_api::{
-    AgentDashIntegration, CompleteAgentOfferProvenance, CompleteAgentPlacementRequirement,
+    AgentDashIntegration, CompleteAgentPlacementRequirement, CompleteAgentRegistrationClaim,
     CompleteAgentRegistrationContribution, CompleteAgentServiceFactory,
     CompleteAgentServiceFactoryError,
 };
@@ -1058,21 +1058,21 @@ pub fn native_complete_agent_registration(
     CompleteAgentRegistrationContribution,
     agentdash_integration_api::CompleteAgentContributionError,
 > {
-    let expected_descriptor = DashAgentCompleteService::descriptor();
+    let declared_descriptor = DashAgentCompleteService::descriptor();
     CompleteAgentRegistrationContribution::new(
-        expected_descriptor.clone(),
+        declared_descriptor,
         instance_id,
         CompleteAgentPlacementRequirement::InProcess,
-        CompleteAgentOfferProvenance {
+        None,
+        CompleteAgentRegistrationClaim {
             publisher_integration: "builtin.dash_agent".to_owned(),
             service_version: env!("CARGO_PKG_VERSION").to_owned(),
-            service_build_digest: AgentPayloadDigest::new(format!(
+            claimed_service_build_digest: AgentPayloadDigest::new(format!(
                 "dash-complete-agent:{}",
                 env!("CARGO_PKG_VERSION")
             ))
             .expect("static Dash Complete Agent build digest"),
-            conformance_suite_revision: "dash-complete-agent-v1".to_owned(),
-            verified_profile_digest: expected_descriptor.profile_digest,
+            claimed_conformance_suite_revision: "dash-complete-agent-v1".to_owned(),
         },
         Arc::new(NativeCompleteAgentServiceFactory {
             execution,

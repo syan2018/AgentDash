@@ -51,10 +51,11 @@ pub trait AgentDashIntegration: Send + Sync {
     /// 集成名称（用于日志和诊断）
     fn name(&self) -> &str;
 
-    /// 贡献受信的 Complete Agent definition、instance、placement requirement 与 factory。
+    /// 贡献 Complete Agent 声明、instance、placement requirement 与 factory。
     ///
-    /// Factory 只产出最终 `CompleteAgentService` 边界；Host 在 composition root 中归一
-    /// placement、health、credential 与 offer evidence。集成不能声明默认成功或 fallback。
+    /// Factory 只产出最终 `CompleteAgentService` 边界；Host 在 composition root 中独立
+    /// 验证 descriptor/build/conformance claim，并归一 placement、health、credential 与
+    /// offer evidence。集成不能自签 verified evidence，也不能声明默认成功或 fallback。
     fn complete_agent_registrations(&self) -> Vec<crate::CompleteAgentRegistrationContribution> {
         vec![]
     }

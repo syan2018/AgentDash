@@ -6,17 +6,16 @@ use agentdash_agent_service_api::{
     CompleteAgentService,
 };
 use agentdash_integration_api::{
-    AgentDashIntegration, CompleteAgentContributionError, CompleteAgentOfferProvenance,
-    CompleteAgentPlacementRequirement, CompleteAgentRegistrationContribution,
-    CompleteAgentServiceFactory, CompleteAgentServiceFactoryError,
+    AgentDashIntegration, CompleteAgentContributionError, CompleteAgentPlacementRequirement,
+    CompleteAgentRegistrationClaim, CompleteAgentRegistrationContribution,
+    CompleteAgentRemoteBindingMapping, CompleteAgentServiceFactory,
+    CompleteAgentServiceFactoryError,
 };
 
 use crate::{RemoteCompleteAgentService, RuntimeWirePlacement};
 
 struct RemoteCompleteAgentServiceFactory {
-    instance_id: AgentServiceInstanceId,
-    local_binding_generation: AgentBindingGeneration,
-    target: RuntimeWireAgentBindingTarget,
+    binding: CompleteAgentRemoteBindingMapping,
     placement: Arc<dyn RuntimeWirePlacement>,
     callbacks: Arc<dyn AgentHostCallbacks>,
 }
@@ -27,9 +26,12 @@ impl CompleteAgentServiceFactory for RemoteCompleteAgentServiceFactory {
         &self,
     ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentServiceFactoryError> {
         Ok(RemoteCompleteAgentRegistration::new(
-            self.instance_id.clone(),
-            self.local_binding_generation,
-            self.target.clone(),
+            self.binding.local_service_instance_id.clone(),
+            self.binding.local_binding_generation,
+            RuntimeWireAgentBindingTarget {
+                service_instance_id: self.binding.remote_service_instance_id.clone(),
+                binding_generation: self.binding.remote_binding_generation,
+            },
             self.placement.clone(),
             self.callbacks.clone(),
         )
@@ -44,24 +46,24 @@ pub struct RemoteCompleteAgentIntegration {
 impl RemoteCompleteAgentIntegration {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        expected_descriptor: AgentServiceDescriptor,
+        declared_descriptor: AgentServiceDescriptor,
         instance_id: AgentServiceInstanceId,
         host_id: impl Into<String>,
         transport_id: impl Into<String>,
-        offer_provenance: CompleteAgentOfferProvenance,
-        local_binding_generation: AgentBindingGeneration,
+        registration_claim: CompleteAgentRegistrationClaim,
+        remote_binding: CompleteAgentRemoteBindingMapping,
         target: RuntimeWireAgentBindingTarget,
         placement: Arc<dyn RuntimeWirePlacement>,
         callbacks: Arc<dyn AgentHostCallbacks>,
     ) -> Result<Self, CompleteAgentContributionError> {
         Ok(Self {
             registration: remote_complete_agent_contribution(
-                expected_descriptor,
+                declared_descriptor,
                 instance_id,
                 host_id,
                 transport_id,
-                offer_provenance,
-                local_binding_generation,
+                registration_claim,
+                remote_binding,
                 target,
                 placement,
                 callbacks,
@@ -72,7 +74,11 @@ impl RemoteCompleteAgentIntegration {
 
 impl AgentDashIntegration for RemoteCompleteAgentIntegration {
     fn name(&self) -> &str {
-        &self.registration.offer_provenance.publisher_integration
+        &self
+            .registration
+            .facts()
+            .registration_claim()
+            .publisher_integration
     }
 
     fn complete_agent_registrations(&self) -> Vec<CompleteAgentRegistrationContribution> {
@@ -82,33 +88,54 @@ impl AgentDashIntegration for RemoteCompleteAgentIntegration {
 
 #[allow(clippy::too_many_arguments)]
 pub fn remote_complete_agent_contribution(
-    expected_descriptor: AgentServiceDescriptor,
+    declared_descriptor: AgentServiceDescriptor,
     instance_id: AgentServiceInstanceId,
     host_id: impl Into<String>,
     transport_id: impl Into<String>,
-    offer_provenance: CompleteAgentOfferProvenance,
-    local_binding_generation: AgentBindingGeneration,
+    registration_claim: CompleteAgentRegistrationClaim,
+    remote_binding: CompleteAgentRemoteBindingMapping,
     target: RuntimeWireAgentBindingTarget,
     placement: Arc<dyn RuntimeWirePlacement>,
     callbacks: Arc<dyn AgentHostCallbacks>,
 ) -> Result<CompleteAgentRegistrationContribution, CompleteAgentContributionError> {
+    validate_wire_target(&remote_binding, &target)?;
     let placement_requirement = CompleteAgentPlacementRequirement::Remote {
         host_id: host_id.into(),
         transport_id: transport_id.into(),
     };
     CompleteAgentRegistrationContribution::new(
-        expected_descriptor,
-        instance_id.clone(),
+        declared_descriptor,
+        instance_id,
         placement_requirement,
-        offer_provenance,
+        Some(remote_binding.clone()),
+        registration_claim,
         Arc::new(RemoteCompleteAgentServiceFactory {
-            instance_id,
-            local_binding_generation,
-            target,
+            binding: remote_binding,
             placement,
             callbacks,
         }),
     )
+}
+
+fn validate_wire_target(
+    binding: &CompleteAgentRemoteBindingMapping,
+    target: &RuntimeWireAgentBindingTarget,
+) -> Result<(), CompleteAgentContributionError> {
+    if target.service_instance_id != binding.remote_service_instance_id {
+        return Err(CompleteAgentContributionError::RemoteBindingMismatch {
+            coordinate: "remote_service_instance_id".to_owned(),
+            expected: binding.remote_service_instance_id.to_string(),
+            actual: target.service_instance_id.to_string(),
+        });
+    }
+    if target.binding_generation != binding.remote_binding_generation {
+        return Err(CompleteAgentContributionError::RemoteBindingMismatch {
+            coordinate: "remote_binding_generation".to_owned(),
+            expected: binding.remote_binding_generation.0.to_string(),
+            actual: target.binding_generation.0.to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Host-ready registration for one remotely placed Complete Agent service instance.
@@ -148,5 +175,73 @@ impl RemoteCompleteAgentRegistration {
 
     pub fn into_parts(self) -> (AgentServiceInstanceId, Arc<dyn CompleteAgentService>) {
         (self.instance_id, self.service)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn instance(value: &str) -> AgentServiceInstanceId {
+        AgentServiceInstanceId::new(value).expect("instance")
+    }
+
+    fn mapping() -> CompleteAgentRemoteBindingMapping {
+        CompleteAgentRemoteBindingMapping {
+            local_service_instance_id: instance("local-agent"),
+            local_binding_generation: AgentBindingGeneration(3),
+            remote_service_instance_id: instance("remote-agent"),
+            remote_binding_generation: AgentBindingGeneration(9),
+        }
+    }
+
+    fn target(service_instance_id: &str, generation: u64) -> RuntimeWireAgentBindingTarget {
+        RuntimeWireAgentBindingTarget {
+            service_instance_id: instance(service_instance_id),
+            binding_generation: AgentBindingGeneration(generation),
+        }
+    }
+
+    #[test]
+    fn explicit_generation_mapping_accepts_distinct_local_and_remote_coordinates() {
+        let mapping = mapping();
+
+        validate_wire_target(&mapping, &target("remote-agent", 9))
+            .expect("target must match declared remote side");
+        assert_eq!(mapping.local_service_instance_id, instance("local-agent"));
+        assert_eq!(mapping.local_binding_generation, AgentBindingGeneration(3));
+        assert_eq!(mapping.remote_service_instance_id, instance("remote-agent"));
+        assert_eq!(mapping.remote_binding_generation, AgentBindingGeneration(9));
+    }
+
+    #[test]
+    fn remote_service_identity_mismatch_is_rejected_before_factory_side_effects() {
+        let error = validate_wire_target(&mapping(), &target("another-agent", 9))
+            .expect_err("foreign target identity");
+
+        assert!(matches!(
+            error,
+            CompleteAgentContributionError::RemoteBindingMismatch {
+                coordinate,
+                ..
+            } if coordinate == "remote_service_instance_id"
+        ));
+    }
+
+    #[test]
+    fn old_remote_generation_is_fenced_before_factory_side_effects() {
+        let error = validate_wire_target(&mapping(), &target("remote-agent", 8))
+            .expect_err("stale target generation");
+
+        assert!(matches!(
+            error,
+            CompleteAgentContributionError::RemoteBindingMismatch {
+                coordinate,
+                expected,
+                actual,
+            } if coordinate == "remote_binding_generation"
+                && expected == "9"
+                && actual == "8"
+        ));
     }
 }

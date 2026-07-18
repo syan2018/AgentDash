@@ -508,16 +508,29 @@ mod tests {
         let contributions = integration.complete_agent_registrations();
         assert_eq!(contributions.len(), 1);
         assert_eq!(
-            contributions[0].expected_descriptor.definition_id.as_str(),
+            contributions[0]
+                .facts()
+                .declared_descriptor()
+                .definition_id
+                .as_str(),
             "builtin.codex-app-server"
         );
-        assert_eq!(contributions[0].expected_descriptor.protocol_revision, 144);
         assert_eq!(
-            contributions[0].offer_provenance.verified_profile_digest,
-            contributions[0].expected_descriptor.profile_digest
+            contributions[0]
+                .facts()
+                .declared_descriptor()
+                .protocol_revision,
+            144
+        );
+        assert_eq!(
+            contributions[0]
+                .facts()
+                .registration_claim()
+                .claimed_conformance_suite_revision,
+            "codex-complete-agent-v1"
         );
         assert!(matches!(
-            contributions[0].placement,
+            contributions[0].facts().placement(),
             agentdash_integration_api::CompleteAgentPlacementRequirement::InProcess
         ));
     }

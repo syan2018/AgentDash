@@ -542,11 +542,14 @@ async fn production_registration_packages_the_complete_dash_service_without_regi
     )
     .unwrap();
 
-    assert_eq!(registration.instance_id.as_str(), "native-complete-1");
+    assert_eq!(
+        registration.facts().instance_id().as_str(),
+        "native-complete-1"
+    );
     let registration = registration.materialize().await.unwrap();
     assert_eq!(
         registration
-            .service
+            .service()
             .describe()
             .await
             .unwrap()

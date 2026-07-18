@@ -1,26 +1,25 @@
 use std::sync::Arc;
 
 use agentdash_agent_service_api::{
-    AgentPayloadDigest, AgentProfileDigest, AgentServiceDescriptor, AgentServiceError,
+    AgentBindingGeneration, AgentPayloadDigest, AgentServiceDescriptor, AgentServiceError,
     AgentServiceInstanceId, CompleteAgentService,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Build and conformance evidence attached to one trusted Complete Agent definition.
+/// Non-authoritative build and conformance claims declared by one Integration.
 ///
-/// This is an Integration input to Host offer normalization. It is not a boolean trust decision
-/// and does not claim that credentials, health, placement transport, or a runtime offer are
-/// currently available.
+/// W8 passes these claims to a Host-owned verifier. Only the verifier may produce verified profile
+/// or build evidence; an Integration cannot attest its own trust, credentials, health, placement
+/// transport, or runtime offer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct CompleteAgentOfferProvenance {
+pub struct CompleteAgentRegistrationClaim {
     pub publisher_integration: String,
     pub service_version: String,
-    pub service_build_digest: AgentPayloadDigest,
-    pub conformance_suite_revision: String,
-    pub verified_profile_digest: AgentProfileDigest,
+    pub claimed_service_build_digest: AgentPayloadDigest,
+    pub claimed_conformance_suite_revision: String,
 }
 
 /// Platform-neutral placement requested by an Integration contribution.
@@ -38,6 +37,42 @@ pub enum CompleteAgentPlacementRequirement {
         host_id: String,
         transport_id: String,
     },
+}
+
+/// Immutable identity and generation rewrite fact for one remote Complete Agent binding.
+///
+/// The local identity/generation is the Host-facing fence. The remote identity/generation is the
+/// Runtime Wire target. They may differ only through this explicit mapping: outbound requests are
+/// fenced against `local_binding_generation` and rewritten to `remote_binding_generation`;
+/// callbacks apply the inverse rewrite after fencing the remote generation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CompleteAgentRemoteBindingMapping {
+    pub local_service_instance_id: AgentServiceInstanceId,
+    pub local_binding_generation: AgentBindingGeneration,
+    pub remote_service_instance_id: AgentServiceInstanceId,
+    pub remote_binding_generation: AgentBindingGeneration,
+}
+
+impl CompleteAgentRemoteBindingMapping {
+    fn validate(
+        &self,
+        contribution_instance_id: &AgentServiceInstanceId,
+    ) -> Result<(), CompleteAgentContributionError> {
+        if &self.local_service_instance_id != contribution_instance_id {
+            return Err(CompleteAgentContributionError::RemoteBindingMismatch {
+                coordinate: "local_service_instance_id".to_owned(),
+                expected: contribution_instance_id.to_string(),
+                actual: self.local_service_instance_id.to_string(),
+            });
+        }
+        if self.local_binding_generation.0 == 0 || self.remote_binding_generation.0 == 0 {
+            return Err(CompleteAgentContributionError::InvalidRegistration {
+                reason: "remote binding generations must be non-zero".to_owned(),
+            });
+        }
+        Ok(())
+    }
 }
 
 impl CompleteAgentPlacementRequirement {
@@ -83,100 +118,153 @@ pub trait CompleteAgentServiceFactory: Send + Sync {
     ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentServiceFactoryError>;
 }
 
-/// Dependency-light, trusted contribution collected from [`crate::AgentDashIntegration`].
+/// Dependency-light declared contribution collected from [`crate::AgentDashIntegration`].
 ///
-/// `expected_descriptor` is service-API owned. Host definition, placement, health and offer facts
-/// are deliberately absent: the W8 composition root normalizes this input with Host-owned
-/// evidence, materializes the service, and then calls its final registration boundary.
+/// `declared_descriptor` and `registration_claim` are Integration claims, not verified Host facts.
+/// Host definition, health, credential, verifier and offer facts are deliberately absent: W8
+/// verifies this input, materializes the service, and then calls the final Host registration
+/// boundary.
 #[derive(Clone)]
 pub struct CompleteAgentRegistrationContribution {
-    pub expected_descriptor: AgentServiceDescriptor,
-    pub instance_id: AgentServiceInstanceId,
-    pub placement: CompleteAgentPlacementRequirement,
-    pub offer_provenance: CompleteAgentOfferProvenance,
-    pub factory: Arc<dyn CompleteAgentServiceFactory>,
+    facts: CompleteAgentRegistrationFacts,
+    factory: Arc<dyn CompleteAgentServiceFactory>,
+}
+
+/// Immutable declared facts preserved from Integration collection through Host verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteAgentRegistrationFacts {
+    declared_descriptor: AgentServiceDescriptor,
+    instance_id: AgentServiceInstanceId,
+    placement: CompleteAgentPlacementRequirement,
+    remote_binding: Option<CompleteAgentRemoteBindingMapping>,
+    registration_claim: CompleteAgentRegistrationClaim,
+}
+
+impl CompleteAgentRegistrationFacts {
+    pub fn declared_descriptor(&self) -> &AgentServiceDescriptor {
+        &self.declared_descriptor
+    }
+
+    pub fn instance_id(&self) -> &AgentServiceInstanceId {
+        &self.instance_id
+    }
+
+    pub fn placement(&self) -> &CompleteAgentPlacementRequirement {
+        &self.placement
+    }
+
+    pub fn remote_binding(&self) -> Option<&CompleteAgentRemoteBindingMapping> {
+        self.remote_binding.as_ref()
+    }
+
+    pub fn registration_claim(&self) -> &CompleteAgentRegistrationClaim {
+        &self.registration_claim
+    }
 }
 
 impl CompleteAgentRegistrationContribution {
     pub fn new(
-        expected_descriptor: AgentServiceDescriptor,
+        declared_descriptor: AgentServiceDescriptor,
         instance_id: AgentServiceInstanceId,
         placement: CompleteAgentPlacementRequirement,
-        offer_provenance: CompleteAgentOfferProvenance,
+        remote_binding: Option<CompleteAgentRemoteBindingMapping>,
+        registration_claim: CompleteAgentRegistrationClaim,
         factory: Arc<dyn CompleteAgentServiceFactory>,
     ) -> Result<Self, CompleteAgentContributionError> {
         placement.validate()?;
-        if expected_descriptor.title.trim().is_empty()
-            || expected_descriptor.protocol_revision == 0
-            || offer_provenance.publisher_integration.trim().is_empty()
-            || offer_provenance.service_version.trim().is_empty()
-            || offer_provenance
-                .conformance_suite_revision
+        match (&placement, &remote_binding) {
+            (CompleteAgentPlacementRequirement::Remote { .. }, Some(remote_binding)) => {
+                remote_binding.validate(&instance_id)?
+            }
+            (CompleteAgentPlacementRequirement::Remote { .. }, None) => {
+                return Err(CompleteAgentContributionError::InvalidRegistration {
+                    reason: "remote Complete Agent placement requires an explicit identity and generation mapping"
+                        .to_owned(),
+                });
+            }
+            (_, Some(_)) => {
+                return Err(CompleteAgentContributionError::InvalidRegistration {
+                    reason:
+                        "remote binding mapping is only valid for remote Complete Agent placement"
+                            .to_owned(),
+                });
+            }
+            (_, None) => {}
+        }
+        if declared_descriptor.title.trim().is_empty()
+            || declared_descriptor.protocol_revision == 0
+            || registration_claim.publisher_integration.trim().is_empty()
+            || registration_claim.service_version.trim().is_empty()
+            || registration_claim
+                .claimed_conformance_suite_revision
                 .trim()
                 .is_empty()
         {
             return Err(CompleteAgentContributionError::InvalidRegistration {
-                reason: "Complete Agent definition and provenance fields must not be empty"
-                    .to_owned(),
-            });
-        }
-        if expected_descriptor.profile_digest != offer_provenance.verified_profile_digest {
-            return Err(CompleteAgentContributionError::InvalidRegistration {
-                reason: "Complete Agent verified profile digest must match the expected descriptor"
+                reason: "Complete Agent descriptor and registration claim fields must not be empty"
                     .to_owned(),
             });
         }
         Ok(Self {
-            expected_descriptor,
-            instance_id,
-            placement,
-            offer_provenance,
+            facts: CompleteAgentRegistrationFacts {
+                declared_descriptor,
+                instance_id,
+                placement,
+                remote_binding,
+                registration_claim,
+            },
             factory,
         })
     }
 
+    pub fn facts(&self) -> &CompleteAgentRegistrationFacts {
+        &self.facts
+    }
+
     pub async fn materialize(
         &self,
-    ) -> Result<MaterializedCompleteAgentRegistration, CompleteAgentContributionError> {
+    ) -> Result<MaterializedCompleteAgentCandidate, CompleteAgentContributionError> {
         let service = self.factory.materialize().await?;
         let actual = service.describe().await?;
-        if actual != self.expected_descriptor {
+        if actual != self.facts.declared_descriptor {
             return Err(CompleteAgentContributionError::DescriptorMismatch {
-                expected: self.expected_descriptor.definition_id.to_string(),
+                expected: self.facts.declared_descriptor.definition_id.to_string(),
                 actual: actual.definition_id.to_string(),
             });
         }
-        Ok(MaterializedCompleteAgentRegistration {
-            expected_descriptor: self.expected_descriptor.clone(),
-            instance_id: self.instance_id.clone(),
-            placement: self.placement.clone(),
-            offer_provenance: self.offer_provenance.clone(),
+        Ok(MaterializedCompleteAgentCandidate {
+            facts: self.facts.clone(),
             service,
         })
     }
 }
 
-/// Fully materialized Integration output.
+/// Fully materialized, non-authoritative Integration candidate.
 ///
-/// W8 maps `placement` to its Host-owned placement by adding the active host incarnation, then
-/// passes `instance_id`, the mapped placement, and `service` to the Host registration call.
-pub struct MaterializedCompleteAgentRegistration {
-    pub expected_descriptor: AgentServiceDescriptor,
-    pub instance_id: AgentServiceInstanceId,
-    pub placement: CompleteAgentPlacementRequirement,
-    pub offer_provenance: CompleteAgentOfferProvenance,
-    pub service: Arc<dyn CompleteAgentService>,
+/// No registration claim or binding mapping is discarded. W8 verifies the descriptor/build/
+/// conformance claims, persists Host-owned verifier evidence and the remote generation mapping,
+/// maps `placement` to its Host-owned placement, then registers `service`.
+pub struct MaterializedCompleteAgentCandidate {
+    facts: CompleteAgentRegistrationFacts,
+    service: Arc<dyn CompleteAgentService>,
 }
 
-impl MaterializedCompleteAgentRegistration {
-    pub fn into_integration_parts(
+impl MaterializedCompleteAgentCandidate {
+    pub fn facts(&self) -> &CompleteAgentRegistrationFacts {
+        &self.facts
+    }
+
+    pub fn service(&self) -> Arc<dyn CompleteAgentService> {
+        self.service.clone()
+    }
+
+    pub fn into_parts(
         self,
     ) -> (
-        AgentServiceInstanceId,
-        CompleteAgentPlacementRequirement,
+        CompleteAgentRegistrationFacts,
         Arc<dyn CompleteAgentService>,
     ) {
-        (self.instance_id, self.placement, self.service)
+        (self.facts, self.service)
     }
 }
 
@@ -186,6 +274,14 @@ pub enum CompleteAgentContributionError {
     InvalidRegistration { reason: String },
     #[error("Complete Agent descriptor mismatch: expected {expected}, actual {actual}")]
     DescriptorMismatch { expected: String, actual: String },
+    #[error(
+        "Complete Agent remote binding {coordinate} mismatch: expected {expected}, actual {actual}"
+    )]
+    RemoteBindingMismatch {
+        coordinate: String,
+        expected: String,
+        actual: String,
+    },
     #[error(transparent)]
     Factory(#[from] CompleteAgentServiceFactoryError),
     #[error(transparent)]
@@ -201,10 +297,14 @@ mod tests {
     };
 
     use agentdash_agent_service_api::{
-        AgentCapabilityProfile, AgentCommandCapability, AgentCompactionMode,
-        AgentConfigurationBoundary, AgentForkCapability, AgentLifecycleCapability,
-        AgentServiceDefinitionId, AgentSourceChangeLevel, AgentSurfaceProfile,
-        InitialContextAppliedEvidence, InitialContextProfile, SemanticFidelity,
+        AgentCapabilityProfile, AgentChangePage, AgentChangesQuery, AgentCommandCapability,
+        AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
+        AgentEffectIdentity, AgentEffectInspection, AgentForkCapability, AgentLifecycleCapability,
+        AgentProfileDigest, AgentReadQuery, AgentServiceDefinitionId, AgentSnapshot,
+        AgentSourceChangeLevel, AgentSurfaceProfile, AppliedAgentSurfaceReceipt,
+        ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
+        InitialContextAppliedEvidence, InitialContextProfile, ResumeAgentCommand,
+        RevokeBoundAgentSurface, SemanticFidelity,
     };
 
     use super::*;
@@ -250,13 +350,99 @@ mod tests {
         }
     }
 
-    fn provenance(profile_digest: AgentProfileDigest) -> CompleteAgentOfferProvenance {
-        CompleteAgentOfferProvenance {
+    fn claim() -> CompleteAgentRegistrationClaim {
+        CompleteAgentRegistrationClaim {
             publisher_integration: "fixture.integration".to_owned(),
             service_version: "1".to_owned(),
-            service_build_digest: AgentPayloadDigest::new("sha256:fixture").expect("digest"),
-            conformance_suite_revision: "complete-agent-v1".to_owned(),
-            verified_profile_digest: profile_digest,
+            claimed_service_build_digest: AgentPayloadDigest::new("sha256:fixture")
+                .expect("digest"),
+            claimed_conformance_suite_revision: "complete-agent-v1".to_owned(),
+        }
+    }
+
+    struct DescriptorOnlyService {
+        descriptor: AgentServiceDescriptor,
+    }
+
+    #[async_trait]
+    impl CompleteAgentService for DescriptorOnlyService {
+        async fn describe(&self) -> Result<AgentServiceDescriptor, AgentServiceError> {
+            Ok(self.descriptor.clone())
+        }
+
+        async fn create(
+            &self,
+            _command: CreateAgentCommand,
+        ) -> Result<AgentCommandReceipt, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn resume(
+            &self,
+            _command: ResumeAgentCommand,
+        ) -> Result<AgentCommandReceipt, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn fork(
+            &self,
+            _command: ForkAgentCommand,
+        ) -> Result<ForkAgentReceipt, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn execute(
+            &self,
+            _command: AgentCommandEnvelope,
+        ) -> Result<AgentCommandReceipt, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn read(&self, _query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn changes(
+            &self,
+            _query: AgentChangesQuery,
+        ) -> Result<AgentChangePage, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn inspect(
+            &self,
+            _identity: AgentEffectIdentity,
+        ) -> Result<AgentEffectInspection, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn apply_surface(
+            &self,
+            _command: ApplyBoundAgentSurface,
+        ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn revoke_surface(
+            &self,
+            _command: RevokeBoundAgentSurface,
+        ) -> Result<AgentCommandReceipt, AgentServiceError> {
+            unreachable!()
+        }
+    }
+
+    struct DescriptorOnlyFactory {
+        descriptor: AgentServiceDescriptor,
+    }
+
+    #[async_trait]
+    impl CompleteAgentServiceFactory for DescriptorOnlyFactory {
+        async fn materialize(
+            &self,
+        ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentServiceFactoryError> {
+            Ok(Arc::new(DescriptorOnlyService {
+                descriptor: self.descriptor.clone(),
+            }))
         }
     }
 
@@ -285,7 +471,8 @@ mod tests {
             expected.clone(),
             AgentServiceInstanceId::new("fixture-instance").expect("instance"),
             CompleteAgentPlacementRequirement::InProcess,
-            provenance(expected.profile_digest),
+            None,
+            claim(),
             Arc::new(UnavailableFactory),
         )
         .expect("registration");
@@ -299,9 +486,8 @@ mod tests {
     }
 
     #[test]
-    fn placement_and_verified_profile_are_validated_before_factory_side_effects() {
+    fn placement_and_remote_binding_mapping_are_validated_before_factory_side_effects() {
         let expected = descriptor();
-        let invalid_profile = AgentProfileDigest::new("another-profile").expect("profile");
         assert!(matches!(
             CompleteAgentRegistrationContribution::new(
                 expected,
@@ -310,11 +496,101 @@ mod tests {
                     host_id: String::new(),
                     transport_id: String::new(),
                 },
-                provenance(invalid_profile),
+                None,
+                claim(),
                 Arc::new(UnavailableFactory),
             ),
             Err(CompleteAgentContributionError::InvalidRegistration { .. })
         ));
+    }
+
+    #[test]
+    fn remote_registration_requires_an_explicit_matching_local_identity() {
+        let declared_descriptor = descriptor();
+        let local_instance = AgentServiceInstanceId::new("local-instance").expect("instance");
+        let placement = CompleteAgentPlacementRequirement::Remote {
+            host_id: "remote-host".to_owned(),
+            transport_id: "runtime-wire".to_owned(),
+        };
+
+        assert!(matches!(
+            CompleteAgentRegistrationContribution::new(
+                declared_descriptor.clone(),
+                local_instance.clone(),
+                placement.clone(),
+                None,
+                claim(),
+                Arc::new(UnavailableFactory),
+            ),
+            Err(CompleteAgentContributionError::InvalidRegistration { .. })
+        ));
+        assert!(matches!(
+            CompleteAgentRegistrationContribution::new(
+                declared_descriptor,
+                local_instance,
+                placement,
+                Some(CompleteAgentRemoteBindingMapping {
+                    local_service_instance_id: AgentServiceInstanceId::new("another-local")
+                        .expect("instance"),
+                    local_binding_generation: AgentBindingGeneration(3),
+                    remote_service_instance_id: AgentServiceInstanceId::new("remote-instance")
+                        .expect("instance"),
+                    remote_binding_generation: AgentBindingGeneration(9),
+                }),
+                claim(),
+                Arc::new(UnavailableFactory),
+            ),
+            Err(CompleteAgentContributionError::RemoteBindingMismatch {
+                coordinate,
+                ..
+            }) if coordinate == "local_service_instance_id"
+        ));
+    }
+
+    #[test]
+    fn materialized_candidate_preserves_descriptor_claim_and_mapping_facts() {
+        let declared_descriptor = descriptor();
+        let registration_claim = claim();
+        let local_instance =
+            AgentServiceInstanceId::new("fixture-local-instance").expect("instance");
+        let remote_binding = CompleteAgentRemoteBindingMapping {
+            local_service_instance_id: local_instance.clone(),
+            local_binding_generation: AgentBindingGeneration(3),
+            remote_service_instance_id: AgentServiceInstanceId::new("fixture-remote-instance")
+                .expect("instance"),
+            remote_binding_generation: AgentBindingGeneration(9),
+        };
+        let contribution = CompleteAgentRegistrationContribution::new(
+            declared_descriptor.clone(),
+            local_instance.clone(),
+            CompleteAgentPlacementRequirement::Remote {
+                host_id: "remote-host".to_owned(),
+                transport_id: "runtime-wire".to_owned(),
+            },
+            Some(remote_binding.clone()),
+            registration_claim.clone(),
+            Arc::new(DescriptorOnlyFactory {
+                descriptor: declared_descriptor.clone(),
+            }),
+        )
+        .expect("registration");
+
+        let candidate = block_on(contribution.materialize()).expect("materialize");
+
+        assert_eq!(
+            candidate.facts().declared_descriptor(),
+            &declared_descriptor
+        );
+        assert_eq!(candidate.facts().instance_id(), &local_instance);
+        assert_eq!(candidate.facts().remote_binding(), Some(&remote_binding));
+        assert_eq!(candidate.facts().registration_claim(), &registration_claim);
+    }
+
+    #[test]
+    fn integration_claim_has_no_host_verified_profile_authority() {
+        let contract = include_str!("agent_runtime.rs");
+
+        assert!(!contract.contains(concat!("verified_profile_", "digest")));
     }
 
     #[test]

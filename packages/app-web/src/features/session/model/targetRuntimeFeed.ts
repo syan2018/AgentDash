@@ -1,173 +1,76 @@
-export type RuntimeFeedItem = {
-  itemId: string;
-  turnId: string;
-  kind: string;
-  text: string;
-};
+export class ManagedRuntimeFeedProtocolError extends Error {}
 
-export type RuntimeCompactionLifecycle =
-  | { state: "idle" }
-  | { state: "started"; operationId: string }
-  | { state: "completed"; operationId: string }
-  | { state: "failed"; operationId: string; reason: string }
-  | { state: "lost"; operationId: string; reason: string };
-
-export type RuntimeCommandAvailability = {
-  submitInput: boolean;
-  compact: boolean;
-  reason: "compaction_in_progress" | "compaction_state_lost" | null;
-};
-
-export type TargetRuntimeFeedSnapshot = {
-  sourceCoordinate: string;
-  snapshotRevision: number;
-  committedSequence: number;
-  cursor: string | null;
-  items: RuntimeFeedItem[];
-  compaction: RuntimeCompactionLifecycle;
-  availability: RuntimeCommandAvailability;
-};
-
-export type TargetRuntimeCommittedChangePayload =
-  | { kind: "item_upserted"; item: RuntimeFeedItem }
-  | { kind: "item_removed"; itemId: string }
-  | { kind: "compaction_started"; operationId: string }
-  | { kind: "compaction_completed"; operationId: string }
-  | { kind: "compaction_failed"; operationId: string; reason: string }
-  | { kind: "compaction_lost"; operationId: string; reason: string };
-
-export type TargetRuntimeCommittedChange = {
-  sequence: number;
-  previousSnapshotRevision: number;
-  snapshotRevision: number;
-  payload: TargetRuntimeCommittedChangePayload;
-};
-
-export type TargetRuntimeChangePage = {
-  sourceCoordinate: string;
-  afterCursor: string | null;
-  nextCursor: string | null;
-  gap: boolean;
-  changes: TargetRuntimeCommittedChange[];
-};
-
-export type TargetRuntimeFeedReduceOutcome =
-  | { kind: "applied"; snapshot: TargetRuntimeFeedSnapshot }
-  | { kind: "snapshot_reload_required" };
-
-export class TargetRuntimeFeedProtocolError extends Error {}
-
-export function availabilityForCompaction(
-  compaction: RuntimeCompactionLifecycle,
-): RuntimeCommandAvailability {
-  if (compaction.state === "started") {
-    return {
-      submitInput: false,
-      compact: false,
-      reason: "compaction_in_progress",
-    };
-  }
-  if (compaction.state === "lost") {
-    return {
-      submitInput: false,
-      compact: false,
-      reason: "compaction_state_lost",
-    };
-  }
-  return { submitInput: true, compact: true, reason: null };
-}
-
-export function reduceTargetRuntimeChangePage(
-  current: TargetRuntimeFeedSnapshot,
-  page: TargetRuntimeChangePage,
-): TargetRuntimeFeedReduceOutcome {
-  if (current.sourceCoordinate !== page.sourceCoordinate) {
-    throw new TargetRuntimeFeedProtocolError(
-      "change page source does not match target Runtime snapshot",
+/**
+ * Accept a committed Runtime change page without translating its identity,
+ * ordering, delta, or availability vocabulary into a UI-owned protocol.
+ */
+export function consumeManagedRuntimeChangePage<
+  TSnapshot extends {
+    readonly thread_id: string;
+    readonly revision: number;
+    readonly latest_change_sequence: number;
+  },
+  TPage extends {
+    readonly thread_id: string;
+    readonly changes: readonly {
+      readonly thread_id: string;
+      readonly sequence: number;
+      readonly revision: number;
+      readonly delta: unknown;
+    }[];
+    readonly next: number;
+    readonly gap: unknown | null;
+  },
+>(snapshot: TSnapshot, page: TPage) {
+  if (snapshot.thread_id !== page.thread_id) {
+    throw new ManagedRuntimeFeedProtocolError(
+      "change page thread does not match the managed Runtime snapshot",
     );
   }
-  if (page.gap) {
-    return { kind: "snapshot_reload_required" };
-  }
-  if (current.cursor !== page.afterCursor) {
-    throw new TargetRuntimeFeedProtocolError(
-      "change page cursor does not continue target Runtime snapshot",
-    );
+  if (page.gap !== null) {
+    return { kind: "snapshot_reload_required" } as const;
   }
 
-  const next: TargetRuntimeFeedSnapshot = {
-    ...current,
-    items: [...current.items],
-    compaction: { ...current.compaction },
-  };
+  let sequence = snapshot.latest_change_sequence;
+  let revision = snapshot.revision;
   for (const change of page.changes) {
-    if (change.sequence !== next.committedSequence + 1) {
-      throw new TargetRuntimeFeedProtocolError(
-        "committed change sequence is not contiguous",
+    if (change.thread_id !== snapshot.thread_id) {
+      throw new ManagedRuntimeFeedProtocolError(
+        "change thread does not match the managed Runtime snapshot",
       );
     }
-    if (
-      change.previousSnapshotRevision !== next.snapshotRevision ||
-      change.snapshotRevision !== next.snapshotRevision + 1
-    ) {
-      throw new TargetRuntimeFeedProtocolError(
-        "committed change revision is not contiguous",
+    if (change.sequence !== sequence + 1) {
+      throw new ManagedRuntimeFeedProtocolError(
+        "managed Runtime changes are not contiguous",
       );
     }
-    applyCommittedChange(next, change.payload);
-    next.committedSequence = change.sequence;
-    next.snapshotRevision = change.snapshotRevision;
+    if (change.revision < revision) {
+      throw new ManagedRuntimeFeedProtocolError(
+        "managed Runtime change revision moved backwards",
+      );
+    }
+    sequence = change.sequence;
+    revision = change.revision;
   }
-  next.cursor = page.nextCursor;
-  next.availability = availabilityForCompaction(next.compaction);
-  return { kind: "applied", snapshot: next };
+  if (page.next !== sequence) {
+    throw new ManagedRuntimeFeedProtocolError(
+      "managed Runtime page cursor does not match its committed tail",
+    );
+  }
+
+  return { kind: "apply", change_page: page } as const;
 }
 
-function applyCommittedChange(
-  snapshot: TargetRuntimeFeedSnapshot,
-  payload: TargetRuntimeCommittedChangePayload,
-): void {
-  switch (payload.kind) {
-    case "item_upserted": {
-      const index = snapshot.items.findIndex(
-        (item) => item.itemId === payload.item.itemId,
-      );
-      if (index === -1) {
-        snapshot.items.push(payload.item);
-      } else {
-        snapshot.items[index] = payload.item;
-      }
-      return;
-    }
-    case "item_removed":
-      snapshot.items = snapshot.items.filter(
-        (item) => item.itemId !== payload.itemId,
-      );
-      return;
-    case "compaction_started":
-      snapshot.compaction = {
-        state: "started",
-        operationId: payload.operationId,
-      };
-      return;
-    case "compaction_completed":
-      snapshot.compaction = {
-        state: "completed",
-        operationId: payload.operationId,
-      };
-      return;
-    case "compaction_failed":
-      snapshot.compaction = {
-        state: "failed",
-        operationId: payload.operationId,
-        reason: payload.reason,
-      };
-      return;
-    case "compaction_lost":
-      snapshot.compaction = {
-        state: "lost",
-        operationId: payload.operationId,
-        reason: payload.reason,
-      };
-  }
+/**
+ * Read the Runtime-owned decision verbatim. Command availability is not
+ * inferred from item, operation, worker, or request timing in the UI.
+ */
+export function managedRuntimeCommandAvailability<
+  TAvailability extends Readonly<Record<string, unknown>>,
+  TCommand extends keyof TAvailability,
+>(
+  snapshot: { readonly command_availability: TAvailability },
+  command: TCommand,
+): TAvailability[TCommand] {
+  return snapshot.command_availability[command];
 }

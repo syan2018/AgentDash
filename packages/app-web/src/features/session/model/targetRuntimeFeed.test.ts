@@ -1,129 +1,130 @@
 import { describe, expect, it } from "vitest";
 
+import canonicalFixture from "./fixtures/managedRuntimeProjection.json";
 import {
-  availabilityForCompaction,
-  reduceTargetRuntimeChangePage,
-  type TargetRuntimeCommittedChangePayload,
-  type TargetRuntimeFeedSnapshot,
+  consumeManagedRuntimeChangePage,
+  managedRuntimeCommandAvailability,
 } from "./targetRuntimeFeed";
 
-function snapshot(): TargetRuntimeFeedSnapshot {
-  return {
-    sourceCoordinate: "runtime-child",
-    snapshotRevision: 4,
-    committedSequence: 7,
-    cursor: "cursor-7",
-    items: [
-      {
-        itemId: "child-item",
-        turnId: "child-turn",
-        kind: "message",
-        text: "child-visible",
-      },
-    ],
-    compaction: { state: "idle" },
-    availability: { submitInput: true, compact: true, reason: null },
-  };
-}
+describe("managed Runtime feed protocol", () => {
+  it("applies the canonical Rust change page without identity or delta translation", () => {
+    const outcome = consumeManagedRuntimeChangePage(
+      canonicalFixture.snapshots.started,
+      canonicalFixture.change_page,
+    );
 
-function reduce(payload: TargetRuntimeCommittedChangePayload) {
-  return reduceTargetRuntimeChangePage(snapshot(), {
-    sourceCoordinate: "runtime-child",
-    afterCursor: "cursor-7",
-    nextCursor: "cursor-8",
-    gap: false,
-    changes: [
-      {
-        sequence: 8,
-        previousSnapshotRevision: 4,
-        snapshotRevision: 5,
-        payload,
-      },
-    ],
-  });
-}
-
-describe("target Runtime feed protocol", () => {
-  it("uses only the target Runtime snapshot as visible history", () => {
-    const current = snapshot();
-
-    expect(current.items.map((item) => item.text)).toEqual(["child-visible"]);
-    expect(JSON.stringify(current)).not.toContain("ancestor");
+    expect(outcome.kind).toBe("apply");
+    if (outcome.kind === "apply") {
+      expect(outcome.change_page).toBe(canonicalFixture.change_page);
+      expect(outcome.change_page.thread_id).toBe("runtime-thread-child");
+      expect(outcome.change_page.changes[0]).toEqual({
+        thread_id: "runtime-thread-child",
+        sequence: 9,
+        revision: 6,
+        delta: {
+          kind: "item_upserted",
+          item: {
+            id: "item-compaction",
+            turn_id: "turn-compaction",
+            status: "completed",
+            content: { kind: "context_compaction" },
+            content_digest: "sha256:compaction-6",
+          },
+        },
+      });
+    }
   });
 
-  it("requests a snapshot reload when the Runtime reports a cursor gap", () => {
+  it("reloads the canonical snapshot when Runtime reports a typed gap", () => {
     expect(
-      reduceTargetRuntimeChangePage(snapshot(), {
-        sourceCoordinate: "runtime-child",
-        afterCursor: "cursor-7",
-        nextCursor: "cursor-12",
-        gap: true,
-        changes: [],
-      }),
+      consumeManagedRuntimeChangePage(
+        canonicalFixture.snapshots.started,
+        canonicalFixture.gap_page,
+      ),
     ).toEqual({ kind: "snapshot_reload_required" });
+    expect(canonicalFixture.gap_page.gap).toEqual({
+      requested_after: 4,
+      earliest_available: 9,
+      latest_available: 12,
+      snapshot_revision: 8,
+    });
   });
 
-  it.each([
-    [
-      { kind: "compaction_started", operationId: "compact-1" } as const,
-      "started",
-      false,
-    ],
-    [
-      { kind: "compaction_completed", operationId: "compact-1" } as const,
-      "completed",
-      true,
-    ],
-    [
-      {
-        kind: "compaction_failed",
-        operationId: "compact-1",
-        reason: "rejected",
-      } as const,
-      "failed",
-      true,
-    ],
-    [
-      {
-        kind: "compaction_lost",
-        operationId: "compact-1",
-        reason: "unknown final state",
-      } as const,
-      "lost",
-      false,
-    ],
-  ])(
-    "projects %s with command availability",
-    (payload, expectedState, expectedSubmitInput) => {
-      const outcome = reduce(payload);
-      expect(outcome.kind).toBe("applied");
-      if (outcome.kind === "applied") {
-        expect(outcome.snapshot.compaction.state).toBe(expectedState);
-        expect(outcome.snapshot.availability.submitInput).toBe(
-          expectedSubmitInput,
-        );
-      }
-    },
-  );
+  it("renders compaction lifecycle from canonical item statuses", () => {
+    expect(
+      [
+        canonicalFixture.snapshots.started,
+        canonicalFixture.snapshots.completed,
+        canonicalFixture.snapshots.failed,
+        canonicalFixture.snapshots.lost,
+      ].map((snapshot) => snapshot.items[0]?.status),
+    ).toEqual(["running", "completed", "failed", "lost"]);
+  });
 
-  it("keeps failed and lost availability semantically distinct", () => {
+  it("uses the Runtime-owned availability decision verbatim", () => {
+    const started =
+      canonicalFixture.snapshots.started.command_availability.submit_input;
+    const completed =
+      canonicalFixture.snapshots.completed.command_availability.submit_input;
+
     expect(
-      availabilityForCompaction({
-        state: "failed",
-        operationId: "c1",
-        reason: "rejected",
-      }),
-    ).toEqual({ submitInput: true, compact: true, reason: null });
-    expect(
-      availabilityForCompaction({
-        state: "lost",
-        operationId: "c2",
-        reason: "unknown",
-      }),
-    ).toEqual({
-      submitInput: false,
-      compact: false,
-      reason: "compaction_state_lost",
+      managedRuntimeCommandAvailability(
+        canonicalFixture.snapshots.started,
+        "submit_input",
+      ),
+    ).toBe(started);
+    expect(started).toMatchObject({
+      status: "unavailable",
+      reason: "operation_in_flight",
+      evidence: { decided_at_revision: 5 },
     });
+    expect(
+      managedRuntimeCommandAvailability(
+        canonicalFixture.snapshots.completed,
+        "submit_input",
+      ),
+    ).toBe(completed);
+    expect(completed).toMatchObject({
+      status: "available",
+      evidence: { decided_at_revision: 6 },
+    });
+    expect(
+      managedRuntimeCommandAvailability(
+        canonicalFixture.snapshots.failed,
+        "submit_input",
+      ),
+    ).toMatchObject({
+      status: "available",
+      evidence: { decided_at_revision: 7 },
+    });
+    expect(
+      managedRuntimeCommandAvailability(
+        canonicalFixture.snapshots.lost,
+        "submit_input",
+      ),
+    ).toMatchObject({
+      status: "unavailable",
+      reason: "source_unavailable",
+      evidence: { decided_at_revision: 8 },
+    });
+  });
+
+  it("rejects translated identity and non-contiguous canonical ordering", () => {
+    expect(() =>
+      consumeManagedRuntimeChangePage(canonicalFixture.snapshots.started, {
+        ...canonicalFixture.change_page,
+        thread_id: "translated-thread",
+      }),
+    ).toThrow("thread does not match");
+    expect(() =>
+      consumeManagedRuntimeChangePage(canonicalFixture.snapshots.started, {
+        ...canonicalFixture.change_page,
+        changes: canonicalFixture.change_page.changes.map((change) => ({
+          ...change,
+          sequence: 10,
+        })),
+        next: 10,
+      }),
+    ).toThrow("not contiguous");
   });
 });

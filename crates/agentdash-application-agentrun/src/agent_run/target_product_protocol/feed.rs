@@ -1,385 +1,160 @@
-use serde::{Deserialize, Serialize};
+use agentdash_agent_runtime_contract::managed_projection::{
+    ManagedRuntimeChangePage, ManagedRuntimeSnapshot,
+};
+use agentdash_agent_runtime_contract::{RuntimeChangeSequence, RuntimeProjectionRevision};
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuntimeFeedItem {
-    pub item_id: String,
-    pub turn_id: String,
-    pub kind: String,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum RuntimeCompactionLifecycle {
-    Idle,
-    Started {
-        operation_id: String,
-    },
-    Completed {
-        operation_id: String,
-    },
-    Failed {
-        operation_id: String,
-        reason: String,
-    },
-    Lost {
-        operation_id: String,
-        reason: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuntimeCommandAvailability {
-    pub submit_input: bool,
-    pub compact: bool,
-    pub reason: Option<String>,
-}
-
-impl RuntimeCommandAvailability {
-    pub fn from_compaction(compaction: &RuntimeCompactionLifecycle) -> Self {
-        match compaction {
-            RuntimeCompactionLifecycle::Started { .. } => Self {
-                submit_input: false,
-                compact: false,
-                reason: Some("compaction_in_progress".to_owned()),
-            },
-            RuntimeCompactionLifecycle::Lost { .. } => Self {
-                submit_input: false,
-                compact: false,
-                reason: Some("compaction_state_lost".to_owned()),
-            },
-            RuntimeCompactionLifecycle::Idle
-            | RuntimeCompactionLifecycle::Completed { .. }
-            | RuntimeCompactionLifecycle::Failed { .. } => Self {
-                submit_input: true,
-                compact: true,
-                reason: None,
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentRunRuntimeFeedSnapshot {
-    pub source_coordinate: String,
-    pub snapshot_revision: u64,
-    pub committed_sequence: u64,
-    pub cursor: Option<String>,
-    pub items: Vec<RuntimeFeedItem>,
-    pub compaction: RuntimeCompactionLifecycle,
-    pub availability: RuntimeCommandAvailability,
-}
-
-impl AgentRunRuntimeFeedSnapshot {
-    pub fn new(
-        source_coordinate: String,
-        snapshot_revision: u64,
-        committed_sequence: u64,
-        cursor: Option<String>,
-        items: Vec<RuntimeFeedItem>,
-        compaction: RuntimeCompactionLifecycle,
-    ) -> Self {
-        let availability = RuntimeCommandAvailability::from_compaction(&compaction);
-        Self {
-            source_coordinate,
-            snapshot_revision,
-            committed_sequence,
-            cursor,
-            items,
-            compaction,
-            availability,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AgentRunRuntimeCommittedChangePayload {
-    ItemUpserted {
-        item: RuntimeFeedItem,
-    },
-    ItemRemoved {
-        item_id: String,
-    },
-    CompactionStarted {
-        operation_id: String,
-    },
-    CompactionCompleted {
-        operation_id: String,
-    },
-    CompactionFailed {
-        operation_id: String,
-        reason: String,
-    },
-    CompactionLost {
-        operation_id: String,
-        reason: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentRunRuntimeCommittedChange {
-    pub sequence: u64,
-    pub previous_snapshot_revision: u64,
-    pub snapshot_revision: u64,
-    pub payload: AgentRunRuntimeCommittedChangePayload,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentRunRuntimeChangePage {
-    pub source_coordinate: String,
-    pub after_cursor: Option<String>,
-    pub next_cursor: Option<String>,
-    pub gap: bool,
-    pub changes: Vec<AgentRunRuntimeCommittedChange>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RuntimeFeedReduceOutcome {
-    Applied(AgentRunRuntimeFeedSnapshot),
-    SnapshotReloadRequired,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum RuntimeFeedReduceError {
-    #[error("change page source does not match the target Runtime snapshot")]
-    SourceMismatch,
-    #[error("change page cursor does not continue the target Runtime snapshot")]
-    CursorMismatch,
-    #[error("committed change sequence is not contiguous")]
-    SequenceMismatch,
-    #[error("committed change revision is not contiguous")]
-    RevisionMismatch,
+pub enum ManagedRuntimeFeedContractError {
+    #[error(
+        "command {command} availability was decided at revision {decided_at:?}, expected {snapshot_revision:?}"
+    )]
+    AvailabilityRevisionMismatch {
+        command: &'static str,
+        decided_at: RuntimeProjectionRevision,
+        snapshot_revision: RuntimeProjectionRevision,
+    },
+    #[error("change page contains a change for a different Runtime thread")]
+    ChangeThreadMismatch,
+    #[error("change sequence {actual:?} does not follow retained sequence {expected_after:?}")]
+    ChangeSequenceNotIncreasing {
+        expected_after: RuntimeChangeSequence,
+        actual: RuntimeChangeSequence,
+    },
 }
 
-pub fn reduce_runtime_change_page(
-    mut snapshot: AgentRunRuntimeFeedSnapshot,
-    page: AgentRunRuntimeChangePage,
-) -> Result<RuntimeFeedReduceOutcome, RuntimeFeedReduceError> {
-    if snapshot.source_coordinate != page.source_coordinate {
-        return Err(RuntimeFeedReduceError::SourceMismatch);
-    }
-    if page.gap {
-        return Ok(RuntimeFeedReduceOutcome::SnapshotReloadRequired);
-    }
-    if snapshot.cursor != page.after_cursor {
-        return Err(RuntimeFeedReduceError::CursorMismatch);
-    }
-    for change in page.changes {
-        if change.sequence != snapshot.committed_sequence + 1 {
-            return Err(RuntimeFeedReduceError::SequenceMismatch);
+/// Validate and return the canonical Runtime snapshot without translating it
+/// into an AgentRun- or UI-owned state shape.
+pub fn consume_managed_runtime_snapshot(
+    snapshot: ManagedRuntimeSnapshot,
+) -> Result<ManagedRuntimeSnapshot, ManagedRuntimeFeedContractError> {
+    for (command, availability) in &snapshot.command_availability {
+        let decided_at = availability.evidence().decided_at_revision;
+        if decided_at != snapshot.revision {
+            return Err(
+                ManagedRuntimeFeedContractError::AvailabilityRevisionMismatch {
+                    command: match command {
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::SubmitInput => "submit_input",
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Steer => "steer",
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Interrupt => "interrupt",
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::RequestCompaction => "request_compaction",
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::ResolveInteraction => "resolve_interaction",
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Close => "close",
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Fork => "fork",
+                    },
+                    decided_at,
+                    snapshot_revision: snapshot.revision,
+                },
+            );
         }
-        if change.previous_snapshot_revision != snapshot.snapshot_revision
-            || change.snapshot_revision != snapshot.snapshot_revision + 1
-        {
-            return Err(RuntimeFeedReduceError::RevisionMismatch);
-        }
-        apply_change(&mut snapshot, change.payload);
-        snapshot.committed_sequence = change.sequence;
-        snapshot.snapshot_revision = change.snapshot_revision;
     }
-    snapshot.cursor = page.next_cursor;
-    snapshot.availability = RuntimeCommandAvailability::from_compaction(&snapshot.compaction);
-    Ok(RuntimeFeedReduceOutcome::Applied(snapshot))
+    Ok(snapshot)
 }
 
-fn apply_change(
-    snapshot: &mut AgentRunRuntimeFeedSnapshot,
-    payload: AgentRunRuntimeCommittedChangePayload,
-) {
-    match payload {
-        AgentRunRuntimeCommittedChangePayload::ItemUpserted { item } => {
-            if let Some(existing) = snapshot
-                .items
-                .iter_mut()
-                .find(|existing| existing.item_id == item.item_id)
-            {
-                *existing = item;
-            } else {
-                snapshot.items.push(item);
-            }
+/// Validate and return the committed Runtime tail without projecting a second
+/// change vocabulary. A typed gap is handled by reloading the canonical
+/// snapshot, so the retained tail is never replayed as full history.
+pub fn consume_managed_runtime_change_page(
+    page: ManagedRuntimeChangePage,
+) -> Result<ManagedRuntimeChangePage, ManagedRuntimeFeedContractError> {
+    let mut previous = page
+        .gap
+        .as_ref()
+        .and_then(|gap| gap.requested_after)
+        .unwrap_or_default();
+    for change in &page.changes {
+        if change.thread_id != page.thread_id {
+            return Err(ManagedRuntimeFeedContractError::ChangeThreadMismatch);
         }
-        AgentRunRuntimeCommittedChangePayload::ItemRemoved { item_id } => {
-            snapshot.items.retain(|item| item.item_id != item_id);
+        if change.sequence <= previous {
+            return Err(
+                ManagedRuntimeFeedContractError::ChangeSequenceNotIncreasing {
+                    expected_after: previous,
+                    actual: change.sequence,
+                },
+            );
         }
-        AgentRunRuntimeCommittedChangePayload::CompactionStarted { operation_id } => {
-            snapshot.compaction = RuntimeCompactionLifecycle::Started { operation_id };
-        }
-        AgentRunRuntimeCommittedChangePayload::CompactionCompleted { operation_id } => {
-            snapshot.compaction = RuntimeCompactionLifecycle::Completed { operation_id };
-        }
-        AgentRunRuntimeCommittedChangePayload::CompactionFailed {
-            operation_id,
-            reason,
-        } => {
-            snapshot.compaction = RuntimeCompactionLifecycle::Failed {
-                operation_id,
-                reason,
-            };
-        }
-        AgentRunRuntimeCommittedChangePayload::CompactionLost {
-            operation_id,
-            reason,
-        } => {
-            snapshot.compaction = RuntimeCompactionLifecycle::Lost {
-                operation_id,
-                reason,
-            };
-        }
+        previous = change.sequence;
     }
+    Ok(page)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentRunTargetApiProjection {
-    pub source_coordinate: String,
-    pub revision: u64,
-    pub cursor: Option<String>,
-    pub feed: Vec<RuntimeFeedItem>,
-    pub compaction: RuntimeCompactionLifecycle,
-    pub availability: RuntimeCommandAvailability,
-}
-
-impl From<AgentRunRuntimeFeedSnapshot> for AgentRunTargetApiProjection {
-    fn from(snapshot: AgentRunRuntimeFeedSnapshot) -> Self {
-        Self {
-            source_coordinate: snapshot.source_coordinate,
-            revision: snapshot.snapshot_revision,
-            cursor: snapshot.cursor,
-            feed: snapshot.items,
-            compaction: snapshot.compaction,
-            availability: snapshot.availability,
-        }
-    }
+pub fn managed_runtime_change_page_requires_snapshot_reload(
+    page: &ManagedRuntimeChangePage,
+) -> bool {
+    page.gap.is_some()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use agentdash_agent_runtime_contract::RuntimeThreadId;
+    use agentdash_agent_runtime_contract::managed_projection::{
+        ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
+        ManagedRuntimeCommandKind, ManagedRuntimeLifecycleStatus,
+        ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
+    };
+
     use super::*;
 
-    fn snapshot() -> AgentRunRuntimeFeedSnapshot {
-        AgentRunRuntimeFeedSnapshot::new(
-            "runtime-child".to_owned(),
-            4,
-            7,
-            Some("cursor-7".to_owned()),
-            vec![RuntimeFeedItem {
-                item_id: "item-child".to_owned(),
-                turn_id: "turn-child".to_owned(),
-                kind: "message".to_owned(),
-                text: "child-visible".to_owned(),
-            }],
-            RuntimeCompactionLifecycle::Idle,
-        )
-    }
-
-    fn change(
-        sequence: u64,
-        previous_snapshot_revision: u64,
-        payload: AgentRunRuntimeCommittedChangePayload,
-    ) -> AgentRunRuntimeCommittedChange {
-        AgentRunRuntimeCommittedChange {
-            sequence,
-            previous_snapshot_revision,
-            snapshot_revision: previous_snapshot_revision + 1,
-            payload,
+    fn snapshot(revision: u64) -> ManagedRuntimeSnapshot {
+        let revision = RuntimeProjectionRevision(revision);
+        ManagedRuntimeSnapshot {
+            thread_id: RuntimeThreadId::new("runtime-thread-feed").expect("thread"),
+            revision,
+            latest_change_sequence: RuntimeChangeSequence(3),
+            captured_at_ms: 10,
+            lifecycle: ManagedRuntimeLifecycleStatus::Active,
+            active_turn_id: None,
+            turns: Vec::new(),
+            items: Vec::new(),
+            interactions: Vec::new(),
+            operations: Vec::new(),
+            authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
+            fidelity: ManagedRuntimeProjectionFidelity::Exact,
+            command_availability: BTreeMap::from([(
+                ManagedRuntimeCommandKind::SubmitInput,
+                ManagedRuntimeCommandAvailability::Available {
+                    evidence: ManagedRuntimeAvailabilityEvidence {
+                        decided_at_revision: revision,
+                        blocking_operation_id: None,
+                        bound_surface_revision: None,
+                        applied_surface_revision: None,
+                    },
+                },
+            )]),
         }
     }
 
     #[test]
-    fn target_feed_only_contains_the_runtime_snapshot_items() {
-        let projection = AgentRunTargetApiProjection::from(snapshot());
-        assert_eq!(projection.feed.len(), 1);
-        assert_eq!(projection.feed[0].text, "child-visible");
-        assert!(
-            !serde_json::to_string(&projection)
-                .expect("json")
-                .contains("ancestor")
+    fn canonical_snapshot_is_returned_without_availability_derivation() {
+        let snapshot = snapshot(4);
+        assert_eq!(
+            consume_managed_runtime_snapshot(snapshot.clone()).expect("valid snapshot"),
+            snapshot
         );
     }
 
     #[test]
-    fn cursor_gap_requires_authoritative_snapshot_reload() {
-        let outcome = reduce_runtime_change_page(
-            snapshot(),
-            AgentRunRuntimeChangePage {
-                source_coordinate: "runtime-child".to_owned(),
-                after_cursor: Some("cursor-7".to_owned()),
-                next_cursor: Some("cursor-11".to_owned()),
-                gap: true,
-                changes: Vec::new(),
+    fn availability_evidence_must_match_the_committed_snapshot_revision() {
+        let mut snapshot = snapshot(4);
+        let availability = snapshot
+            .command_availability
+            .get_mut(&ManagedRuntimeCommandKind::SubmitInput)
+            .expect("availability");
+        *availability = ManagedRuntimeCommandAvailability::Available {
+            evidence: ManagedRuntimeAvailabilityEvidence {
+                decided_at_revision: RuntimeProjectionRevision(3),
+                blocking_operation_id: None,
+                bound_surface_revision: None,
+                applied_surface_revision: None,
             },
-        )
-        .expect("reduce");
-        assert_eq!(outcome, RuntimeFeedReduceOutcome::SnapshotReloadRequired);
-    }
-
-    #[test]
-    fn compaction_lifecycle_and_availability_follow_committed_changes() {
-        let started = reduce_runtime_change_page(
-            snapshot(),
-            AgentRunRuntimeChangePage {
-                source_coordinate: "runtime-child".to_owned(),
-                after_cursor: Some("cursor-7".to_owned()),
-                next_cursor: Some("cursor-8".to_owned()),
-                gap: false,
-                changes: vec![change(
-                    8,
-                    4,
-                    AgentRunRuntimeCommittedChangePayload::CompactionStarted {
-                        operation_id: "compact-1".to_owned(),
-                    },
-                )],
-            },
-        )
-        .expect("started");
-        let RuntimeFeedReduceOutcome::Applied(started) = started else {
-            panic!("applied");
         };
-        assert!(!started.availability.submit_input);
 
-        let completed = reduce_runtime_change_page(
-            started,
-            AgentRunRuntimeChangePage {
-                source_coordinate: "runtime-child".to_owned(),
-                after_cursor: Some("cursor-8".to_owned()),
-                next_cursor: Some("cursor-9".to_owned()),
-                gap: false,
-                changes: vec![change(
-                    9,
-                    5,
-                    AgentRunRuntimeCommittedChangePayload::CompactionCompleted {
-                        operation_id: "compact-1".to_owned(),
-                    },
-                )],
-            },
-        )
-        .expect("completed");
-        let RuntimeFeedReduceOutcome::Applied(completed) = completed else {
-            panic!("applied");
-        };
-        assert!(completed.availability.submit_input);
         assert!(matches!(
-            completed.compaction,
-            RuntimeCompactionLifecycle::Completed { .. }
+            consume_managed_runtime_snapshot(snapshot),
+            Err(ManagedRuntimeFeedContractError::AvailabilityRevisionMismatch { .. })
         ));
-    }
-
-    #[test]
-    fn failed_and_lost_are_distinct_availability_states() {
-        assert!(
-            RuntimeCommandAvailability::from_compaction(&RuntimeCompactionLifecycle::Failed {
-                operation_id: "c1".to_owned(),
-                reason: "rejected".to_owned(),
-            })
-            .submit_input
-        );
-        assert!(
-            !RuntimeCommandAvailability::from_compaction(&RuntimeCompactionLifecycle::Lost {
-                operation_id: "c2".to_owned(),
-                reason: "unknown final state".to_owned(),
-            })
-            .submit_input
-        );
     }
 }

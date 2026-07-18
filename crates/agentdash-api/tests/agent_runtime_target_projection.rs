@@ -1,123 +1,221 @@
 //! Target-only App Server projection evidence.
 //!
-//! The production router remains unchanged. This test freezes the response
-//! shape that the S5 composition root will expose from Runtime-owned state.
+//! The production router remains unchanged. This fixture is serialized
+//! directly from the dependency-light Runtime Contract and consumed verbatim
+//! by the frontend target test.
 
-use agentdash_application_agentrun::agent_run::target_product_protocol::{
-    AgentRunRuntimeChangePage, AgentRunRuntimeCommittedChange,
-    AgentRunRuntimeCommittedChangePayload, AgentRunRuntimeFeedSnapshot,
-    AgentRunTargetApiProjection, RuntimeCompactionLifecycle, RuntimeFeedItem,
-    RuntimeFeedReduceOutcome, reduce_runtime_change_page,
+use std::collections::BTreeMap;
+
+use agentdash_agent_runtime_contract::managed_projection::{
+    ManagedRuntimeAvailabilityEvidence, ManagedRuntimeChangeDelta, ManagedRuntimeChangeGap,
+    ManagedRuntimeChangePage, ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind,
+    ManagedRuntimeEntityStatus, ManagedRuntimeItem, ManagedRuntimeItemContent,
+    ManagedRuntimeLifecycleStatus, ManagedRuntimeOperation, ManagedRuntimeOperationStatus,
+    ManagedRuntimePlatformChange, ManagedRuntimeProjectionAuthority,
+    ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot, ManagedRuntimeTurn,
+    ManagedRuntimeUnavailabilityReason,
 };
+use agentdash_agent_runtime_contract::{
+    RuntimeChangeSequence, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
+    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
+};
+use agentdash_application_agentrun::agent_run::target_product_protocol::{
+    consume_managed_runtime_change_page, consume_managed_runtime_snapshot,
+    managed_runtime_change_page_requires_snapshot_reload,
+};
+use serde::{Deserialize, Serialize};
 
-fn snapshot() -> AgentRunRuntimeFeedSnapshot {
-    AgentRunRuntimeFeedSnapshot::new(
-        "runtime-source-child".to_owned(),
-        12,
-        20,
-        Some("cursor-20".to_owned()),
-        vec![RuntimeFeedItem {
-            item_id: "child-item".to_owned(),
-            turn_id: "child-turn".to_owned(),
-            kind: "message".to_owned(),
-            text: "child history".to_owned(),
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
+struct CanonicalFrontendFixture {
+    snapshots: BTreeMap<String, ManagedRuntimeSnapshot>,
+    change_page: ManagedRuntimeChangePage,
+    gap_page: ManagedRuntimeChangePage,
+}
+
+fn id<T>(
+    value: &str,
+    constructor: impl FnOnce(String) -> Result<T, agentdash_agent_runtime_contract::InvalidRuntimeId>,
+) -> T {
+    constructor(value.to_owned()).expect("valid Runtime identity")
+}
+
+fn availability(
+    revision: RuntimeProjectionRevision,
+    unavailable_reason: Option<ManagedRuntimeUnavailabilityReason>,
+) -> BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability> {
+    ManagedRuntimeCommandKind::ALL
+        .into_iter()
+        .map(|command| {
+            let evidence = ManagedRuntimeAvailabilityEvidence {
+                decided_at_revision: revision,
+                blocking_operation_id: matches!(
+                    unavailable_reason,
+                    Some(ManagedRuntimeUnavailabilityReason::OperationInFlight)
+                )
+                .then(|| id("operation-compaction", RuntimeOperationId::new)),
+                bound_surface_revision: None,
+                applied_surface_revision: None,
+            };
+            let availability = if let Some(reason) = unavailable_reason {
+                ManagedRuntimeCommandAvailability::Unavailable { reason, evidence }
+            } else {
+                ManagedRuntimeCommandAvailability::Available { evidence }
+            };
+            (command, availability)
+        })
+        .collect()
+}
+
+fn snapshot(
+    item_status: ManagedRuntimeEntityStatus,
+    operation_status: ManagedRuntimeOperationStatus,
+    revision: u64,
+    unavailable_reason: Option<ManagedRuntimeUnavailabilityReason>,
+) -> ManagedRuntimeSnapshot {
+    let thread_id = id("runtime-thread-child", RuntimeThreadId::new);
+    let turn_id = id("turn-compaction", RuntimeTurnId::new);
+    let item_id = id("item-compaction", RuntimeItemId::new);
+    let revision = RuntimeProjectionRevision(revision);
+    ManagedRuntimeSnapshot {
+        thread_id,
+        revision,
+        latest_change_sequence: RuntimeChangeSequence(revision.0 + 3),
+        captured_at_ms: 1_000 + revision.0,
+        lifecycle: ManagedRuntimeLifecycleStatus::Active,
+        active_turn_id: matches!(item_status, ManagedRuntimeEntityStatus::Running)
+            .then_some(turn_id.clone()),
+        turns: vec![ManagedRuntimeTurn {
+            id: turn_id.clone(),
+            status: item_status,
+            item_ids: vec![item_id.clone()],
         }],
-        RuntimeCompactionLifecycle::Idle,
-    )
-}
-
-#[test]
-fn app_server_projection_is_built_from_target_runtime_snapshot() {
-    let json = serde_json::to_value(AgentRunTargetApiProjection::from(snapshot()))
-        .expect("serialize target projection");
-
-    assert_eq!(json["source_coordinate"], "runtime-source-child");
-    assert_eq!(json["revision"], 12);
-    assert_eq!(json["feed"][0]["text"], "child history");
-    assert_eq!(json["compaction"]["state"], "idle");
-    assert_eq!(json["availability"]["submit_input"], true);
-    assert!(json.get("journal_segments").is_none());
-    assert!(json.get("ancestor_run_id").is_none());
-}
-
-#[test]
-fn app_server_change_projection_exposes_compaction_lost_and_availability() {
-    let outcome = reduce_runtime_change_page(
-        snapshot(),
-        AgentRunRuntimeChangePage {
-            source_coordinate: "runtime-source-child".to_owned(),
-            after_cursor: Some("cursor-20".to_owned()),
-            next_cursor: Some("cursor-21".to_owned()),
-            gap: false,
-            changes: vec![AgentRunRuntimeCommittedChange {
-                sequence: 21,
-                previous_snapshot_revision: 12,
-                snapshot_revision: 13,
-                payload: AgentRunRuntimeCommittedChangePayload::CompactionLost {
-                    operation_id: "compact-7".to_owned(),
-                    reason: "inspection horizon expired".to_owned(),
-                },
-            }],
-        },
-    )
-    .expect("reduce");
-    let RuntimeFeedReduceOutcome::Applied(snapshot) = outcome else {
-        panic!("change must apply");
-    };
-    let json = serde_json::to_value(AgentRunTargetApiProjection::from(snapshot))
-        .expect("serialize target projection");
-
-    assert_eq!(json["compaction"]["state"], "lost");
-    assert_eq!(json["availability"]["submit_input"], false);
-    assert_eq!(json["availability"]["reason"], "compaction_state_lost");
-}
-
-#[test]
-fn app_server_projection_preserves_each_compaction_lifecycle_fact() {
-    let cases = [
-        (
-            RuntimeCompactionLifecycle::Started {
-                operation_id: "compact-1".to_owned(),
-            },
-            "started",
-            false,
-        ),
-        (
-            RuntimeCompactionLifecycle::Completed {
-                operation_id: "compact-1".to_owned(),
-            },
-            "completed",
-            true,
-        ),
-        (
-            RuntimeCompactionLifecycle::Failed {
-                operation_id: "compact-1".to_owned(),
-                reason: "rejected".to_owned(),
-            },
-            "failed",
-            true,
-        ),
-        (
-            RuntimeCompactionLifecycle::Lost {
-                operation_id: "compact-1".to_owned(),
-                reason: "unknown final state".to_owned(),
-            },
-            "lost",
-            false,
-        ),
-    ];
-
-    for (compaction, state, submit_input) in cases {
-        let projection = AgentRunTargetApiProjection::from(AgentRunRuntimeFeedSnapshot::new(
-            "runtime-source-child".to_owned(),
-            12,
-            20,
-            Some("cursor-20".to_owned()),
-            Vec::new(),
-            compaction,
-        ));
-        let json = serde_json::to_value(projection).expect("serialize");
-        assert_eq!(json["compaction"]["state"], state);
-        assert_eq!(json["availability"]["submit_input"], submit_input);
+        items: vec![ManagedRuntimeItem {
+            id: item_id,
+            turn_id: turn_id.clone(),
+            status: item_status,
+            content: ManagedRuntimeItemContent::ContextCompaction,
+            content_digest: id(
+                &format!("sha256:compaction-{}", revision.0),
+                RuntimePayloadDigest::new,
+            ),
+        }],
+        interactions: Vec::new(),
+        operations: vec![ManagedRuntimeOperation {
+            id: id("operation-compaction", RuntimeOperationId::new),
+            turn_id: Some(turn_id),
+            status: operation_status,
+        }],
+        authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
+        fidelity: ManagedRuntimeProjectionFidelity::Exact,
+        command_availability: availability(revision, unavailable_reason),
     }
+}
+
+fn canonical_frontend_fixture() -> CanonicalFrontendFixture {
+    let snapshots = BTreeMap::from([
+        (
+            "completed".to_owned(),
+            snapshot(
+                ManagedRuntimeEntityStatus::Completed,
+                ManagedRuntimeOperationStatus::Succeeded,
+                6,
+                None,
+            ),
+        ),
+        (
+            "failed".to_owned(),
+            snapshot(
+                ManagedRuntimeEntityStatus::Failed,
+                ManagedRuntimeOperationStatus::Failed,
+                7,
+                None,
+            ),
+        ),
+        (
+            "lost".to_owned(),
+            snapshot(
+                ManagedRuntimeEntityStatus::Lost,
+                ManagedRuntimeOperationStatus::Lost,
+                8,
+                Some(ManagedRuntimeUnavailabilityReason::SourceUnavailable),
+            ),
+        ),
+        (
+            "started".to_owned(),
+            snapshot(
+                ManagedRuntimeEntityStatus::Running,
+                ManagedRuntimeOperationStatus::Running,
+                5,
+                Some(ManagedRuntimeUnavailabilityReason::OperationInFlight),
+            ),
+        ),
+    ]);
+    let thread_id = id("runtime-thread-child", RuntimeThreadId::new);
+    let change_page = ManagedRuntimeChangePage {
+        thread_id: thread_id.clone(),
+        changes: vec![ManagedRuntimePlatformChange {
+            thread_id: thread_id.clone(),
+            sequence: RuntimeChangeSequence(9),
+            revision: RuntimeProjectionRevision(6),
+            delta: ManagedRuntimeChangeDelta::ItemUpserted {
+                item: snapshot(
+                    ManagedRuntimeEntityStatus::Completed,
+                    ManagedRuntimeOperationStatus::Succeeded,
+                    6,
+                    None,
+                )
+                .items
+                .into_iter()
+                .next()
+                .expect("fixture item"),
+            },
+        }],
+        next: RuntimeChangeSequence(9),
+        gap: None,
+    };
+    let gap_page = ManagedRuntimeChangePage {
+        thread_id,
+        changes: Vec::new(),
+        next: RuntimeChangeSequence(12),
+        gap: Some(ManagedRuntimeChangeGap {
+            requested_after: Some(RuntimeChangeSequence(4)),
+            earliest_available: RuntimeChangeSequence(9),
+            latest_available: RuntimeChangeSequence(12),
+            snapshot_revision: RuntimeProjectionRevision(8),
+        }),
+    };
+
+    CanonicalFrontendFixture {
+        snapshots,
+        change_page,
+        gap_page,
+    }
+}
+
+#[test]
+fn app_server_projection_serializes_the_canonical_runtime_contract_losslessly() {
+    let fixture = canonical_frontend_fixture();
+    for snapshot in fixture.snapshots.values() {
+        assert_eq!(
+            consume_managed_runtime_snapshot(snapshot.clone()).expect("canonical snapshot"),
+            *snapshot
+        );
+    }
+    assert_eq!(
+        consume_managed_runtime_change_page(fixture.change_page.clone())
+            .expect("canonical change page"),
+        fixture.change_page
+    );
+    assert!(managed_runtime_change_page_requires_snapshot_reload(
+        &fixture.gap_page
+    ));
+}
+
+#[test]
+fn frontend_fixture_is_the_exact_canonical_rust_serialization() {
+    let expected: CanonicalFrontendFixture = serde_json::from_str(include_str!(
+        "../../../packages/app-web/src/features/session/model/fixtures/managedRuntimeProjection.json"
+    ))
+    .expect("typed frontend fixture");
+    assert_eq!(expected, canonical_frontend_fixture());
 }

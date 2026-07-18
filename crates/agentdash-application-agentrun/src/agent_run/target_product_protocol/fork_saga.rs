@@ -26,7 +26,7 @@ pub struct PreallocatedAgentRunChild {
     pub presentation_thread_id: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRunForkSagaPhase {
     Requested,
@@ -38,7 +38,7 @@ pub enum AgentRunForkSagaPhase {
     Succeeded,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRunForkRuntimeOperation {
     Admit,
@@ -47,7 +47,7 @@ pub enum AgentRunForkRuntimeOperation {
     Activate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AgentRunForkOperationIdentity {
     pub request_id: AgentRunForkRequestId,
     pub operation: AgentRunForkRuntimeOperation,
@@ -69,10 +69,18 @@ pub enum InitialContextDeliveryFidelity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitialContextContributionApplicationEvidence {
+    pub kind: String,
+    pub fidelity: InitialContextDeliveryFidelity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InitialContextApplicationEvidence {
     pub package_id: Uuid,
     pub package_digest: String,
     pub fidelity: InitialContextDeliveryFidelity,
+    pub contribution_fidelity: Vec<InitialContextContributionApplicationEvidence>,
+    pub renderer_version: Option<String>,
     pub materialized_digest: Option<String>,
 }
 
@@ -84,21 +92,28 @@ pub struct RequiredInitialContextEvidence {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeForkPhaseEvidence {
-    pub child: RuntimeAgentChildIdentity,
+    pub child: Option<RuntimeAgentChildIdentity>,
     pub host_binding: Option<String>,
+    pub child_history_digest: Option<String>,
     pub context: Option<InitialContextApplicationEvidence>,
     pub receipt: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductGraphCommitEvidence {
+    pub agent_run_id: Uuid,
     pub child_run_id: Uuid,
     pub child_agent_id: Uuid,
+    pub child_frame_id: Uuid,
+    pub presentation_thread_id: String,
+    pub runtime_child: RuntimeAgentChildIdentity,
+    pub host_binding: String,
+    pub child_history_digest: String,
     pub commit_revision: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingRuntimeObservation {
+pub struct DurableRuntimeDispatch {
     pub identity: AgentRunForkOperationIdentity,
 }
 
@@ -131,9 +146,10 @@ pub struct AgentRunForkSaga {
     child: PreallocatedAgentRunChild,
     phase: AgentRunForkSagaPhase,
     version: u64,
-    pending_runtime_observation: Option<PendingRuntimeObservation>,
+    durable_runtime_dispatch: Option<DurableRuntimeDispatch>,
     runtime_child: Option<RuntimeAgentChildIdentity>,
     host_binding: Option<String>,
+    child_history_digest: Option<String>,
     required_initial_context: Option<RequiredInitialContextEvidence>,
     initial_context_evidence: Option<InitialContextApplicationEvidence>,
     receipts: AgentRunForkSagaReceipts,
@@ -144,7 +160,7 @@ pub struct AgentRunForkSaga {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentRunForkSagaStep {
-    ExecuteRuntime(AgentRunForkOperationIdentity),
+    DispatchRuntime(AgentRunForkOperationIdentity),
     InspectRuntime(AgentRunForkOperationIdentity),
     CommitProductGraph,
     MarkSucceeded,
@@ -172,6 +188,16 @@ pub enum AgentRunForkSagaError {
     },
     #[error("runtime outcome does not belong to the pending operation identity")]
     OperationIdentityMismatch,
+    #[error("runtime dispatch marker does not belong to the current operation")]
+    DispatchIdentityMismatch,
+    #[error("Runtime/Agent child identity drifted after it was pinned")]
+    RuntimeChildIdentityDrift,
+    #[error("Host binding identity drifted after it was pinned")]
+    HostBindingIdentityDrift,
+    #[error("native fork receipt did not include an exact child history digest")]
+    MissingChildHistoryDigest,
+    #[error("native child history digest drifted after it was pinned")]
+    ChildHistoryDigestDrift,
     #[error("product graph commit does not match the preallocated child")]
     ProductGraphIdentityMismatch,
     #[error("product graph can only be committed after runtime provisioning")]
@@ -180,6 +206,10 @@ pub enum AgentRunForkSagaError {
     SuccessOutOfOrder,
     #[error("a clean fork failure can only terminalize before product graph commit")]
     FailureOutOfOrder,
+    #[error("a known native child cannot be terminalized as a clean failure")]
+    KnownChildCannotFail,
+    #[error("known child loss requires a pinned Runtime/Agent child identity")]
+    MissingKnownChild,
     #[error("Runtime activation requires matching applied initial context evidence")]
     InitialContextEvidenceRequired,
 }
@@ -205,9 +235,10 @@ impl AgentRunForkSaga {
             child,
             phase: AgentRunForkSagaPhase::Requested,
             version: 0,
-            pending_runtime_observation: None,
+            durable_runtime_dispatch: None,
             runtime_child: None,
             host_binding: None,
+            child_history_digest: None,
             required_initial_context,
             initial_context_evidence: None,
             receipts: AgentRunForkSagaReceipts::default(),
@@ -224,21 +255,21 @@ impl AgentRunForkSaga {
         {
             return AgentRunForkSagaStep::Terminal;
         }
-        if let Some(pending) = &self.pending_runtime_observation {
-            return AgentRunForkSagaStep::InspectRuntime(pending.identity.clone());
+        if let Some(dispatch) = &self.durable_runtime_dispatch {
+            return AgentRunForkSagaStep::InspectRuntime(dispatch.identity.clone());
         }
         match self.phase {
-            AgentRunForkSagaPhase::Requested => AgentRunForkSagaStep::ExecuteRuntime(
+            AgentRunForkSagaPhase::Requested => AgentRunForkSagaStep::DispatchRuntime(
                 self.operation_identity(AgentRunForkRuntimeOperation::Admit),
             ),
-            AgentRunForkSagaPhase::RuntimeAdmitted => AgentRunForkSagaStep::ExecuteRuntime(
+            AgentRunForkSagaPhase::RuntimeAdmitted => AgentRunForkSagaStep::DispatchRuntime(
                 self.operation_identity(AgentRunForkRuntimeOperation::ApplyAgentFork),
             ),
-            AgentRunForkSagaPhase::AgentForkApplied => AgentRunForkSagaStep::ExecuteRuntime(
+            AgentRunForkSagaPhase::AgentForkApplied => AgentRunForkSagaStep::DispatchRuntime(
                 self.operation_identity(AgentRunForkRuntimeOperation::Provision),
             ),
             AgentRunForkSagaPhase::RuntimeProvisioned => AgentRunForkSagaStep::CommitProductGraph,
-            AgentRunForkSagaPhase::ProductGraphCommitted => AgentRunForkSagaStep::ExecuteRuntime(
+            AgentRunForkSagaPhase::ProductGraphCommitted => AgentRunForkSagaStep::DispatchRuntime(
                 self.operation_identity(AgentRunForkRuntimeOperation::Activate),
             ),
             AgentRunForkSagaPhase::RuntimeActivated => AgentRunForkSagaStep::MarkSucceeded,
@@ -274,6 +305,14 @@ impl AgentRunForkSaga {
         self.host_binding.as_deref()
     }
 
+    pub fn child_history_digest(&self) -> Option<&str> {
+        self.child_history_digest.as_deref()
+    }
+
+    pub fn durable_runtime_dispatch(&self) -> Option<&DurableRuntimeDispatch> {
+        self.durable_runtime_dispatch.as_ref()
+    }
+
     pub fn initial_context_evidence(&self) -> Option<&InitialContextApplicationEvidence> {
         self.initial_context_evidence.as_ref()
     }
@@ -292,6 +331,24 @@ impl AgentRunForkSaga {
 
     pub fn lost(&self) -> Option<&LostRuntimeOperation> {
         self.lost.as_ref()
+    }
+
+    pub fn mark_runtime_dispatched(
+        &mut self,
+        identity: AgentRunForkOperationIdentity,
+    ) -> Result<(), AgentRunForkSagaError> {
+        let Some(operation) = self.runtime_operation_for_phase() else {
+            return Err(AgentRunForkSagaError::InvalidOperation {
+                phase: self.phase,
+                actual: identity.operation,
+            });
+        };
+        if self.durable_runtime_dispatch.is_some() || self.operation_identity(operation) != identity
+        {
+            return Err(AgentRunForkSagaError::DispatchIdentityMismatch);
+        }
+        self.durable_runtime_dispatch = Some(DurableRuntimeDispatch { identity });
+        Ok(())
     }
 
     pub fn record_runtime_outcome(
@@ -318,23 +375,21 @@ impl AgentRunForkSaga {
             });
         }
         let expected = self
-            .pending_runtime_observation
+            .durable_runtime_dispatch
             .as_ref()
-            .map(|pending| pending.identity.clone())
+            .map(|dispatch| dispatch.identity.clone())
             .unwrap_or_else(|| self.expected_operation_identity());
         if expected != identity {
             return Err(AgentRunForkSagaError::OperationIdentityMismatch);
         }
         match outcome {
-            RuntimeOperationOutcome::Unknown => {
-                self.pending_runtime_observation = Some(PendingRuntimeObservation { identity });
-            }
+            RuntimeOperationOutcome::Unknown => {}
             RuntimeOperationOutcome::Lost {
                 known_child,
                 reason,
             } => {
                 if let Some(child) = known_child {
-                    self.runtime_child = Some(child);
+                    self.pin_runtime_child(&child)?;
                 }
                 self.lost = Some(LostRuntimeOperation {
                     identity,
@@ -342,15 +397,25 @@ impl AgentRunForkSaga {
                     known_host_binding: self.host_binding.clone(),
                     reason,
                 });
-                self.pending_runtime_observation = None;
+                self.durable_runtime_dispatch = None;
             }
             RuntimeOperationOutcome::Applied(evidence) => {
                 if identity.operation == AgentRunForkRuntimeOperation::Activate {
                     self.ensure_initial_context_evidence(evidence.context.as_ref())?;
                 }
-                self.runtime_child = Some(evidence.child);
-                if evidence.host_binding.is_some() {
-                    self.host_binding = evidence.host_binding;
+                if identity.operation == AgentRunForkRuntimeOperation::ApplyAgentFork
+                    && evidence.child_history_digest.is_none()
+                {
+                    return Err(AgentRunForkSagaError::MissingChildHistoryDigest);
+                }
+                if let Some(child) = &evidence.child {
+                    self.pin_runtime_child(child)?;
+                }
+                if let Some(binding) = &evidence.host_binding {
+                    self.pin_host_binding(binding)?;
+                }
+                if let Some(digest) = &evidence.child_history_digest {
+                    self.pin_child_history_digest(digest)?;
                 }
                 if let Some(context) = evidence.context {
                     self.initial_context_evidence = Some(context);
@@ -381,7 +446,7 @@ impl AgentRunForkSaga {
                         AgentRunForkSagaPhase::RuntimeActivated
                     }
                 };
-                self.pending_runtime_observation = None;
+                self.durable_runtime_dispatch = None;
             }
         }
         Ok(())
@@ -394,8 +459,14 @@ impl AgentRunForkSaga {
         if self.phase != AgentRunForkSagaPhase::RuntimeProvisioned {
             return Err(AgentRunForkSagaError::ProductGraphOutOfOrder);
         }
-        if evidence.child_run_id != self.child.run_id
+        if evidence.agent_run_id != self.child.agent_run_id
+            || evidence.child_run_id != self.child.run_id
             || evidence.child_agent_id != self.child.agent_id
+            || evidence.child_frame_id != self.child.frame_id
+            || evidence.presentation_thread_id != self.child.presentation_thread_id
+            || Some(&evidence.runtime_child) != self.runtime_child.as_ref()
+            || Some(evidence.host_binding.as_str()) != self.host_binding.as_deref()
+            || Some(evidence.child_history_digest.as_str()) != self.child_history_digest.as_deref()
         {
             return Err(AgentRunForkSagaError::ProductGraphIdentityMismatch);
         }
@@ -413,6 +484,9 @@ impl AgentRunForkSaga {
     }
 
     pub fn mark_failed(&mut self, reason: String) -> Result<(), AgentRunForkSagaError> {
+        if self.runtime_child.is_some() || self.child_history_digest.is_some() {
+            return Err(AgentRunForkSagaError::KnownChildCannotFail);
+        }
         if !matches!(
             self.phase,
             AgentRunForkSagaPhase::Requested
@@ -426,7 +500,26 @@ impl AgentRunForkSaga {
             phase: self.phase,
             reason,
         });
-        self.pending_runtime_observation = None;
+        self.durable_runtime_dispatch = None;
+        Ok(())
+    }
+
+    pub fn mark_known_child_lost(&mut self, reason: String) -> Result<(), AgentRunForkSagaError> {
+        let Some(known_child) = self.runtime_child.clone() else {
+            return Err(AgentRunForkSagaError::MissingKnownChild);
+        };
+        let identity = self
+            .durable_runtime_dispatch
+            .as_ref()
+            .map(|dispatch| dispatch.identity.clone())
+            .unwrap_or_else(|| self.operation_identity(AgentRunForkRuntimeOperation::Provision));
+        self.lost = Some(LostRuntimeOperation {
+            identity,
+            known_child: Some(known_child),
+            known_host_binding: self.host_binding.clone(),
+            reason,
+        });
+        self.durable_runtime_dispatch = None;
         Ok(())
     }
 
@@ -468,6 +561,45 @@ impl AgentRunForkSaga {
             | AgentRunForkSagaPhase::RuntimeActivated
             | AgentRunForkSagaPhase::Succeeded => None,
         }
+    }
+
+    fn pin_runtime_child(
+        &mut self,
+        child: &RuntimeAgentChildIdentity,
+    ) -> Result<(), AgentRunForkSagaError> {
+        if self
+            .runtime_child
+            .as_ref()
+            .is_some_and(|current| current != child)
+        {
+            return Err(AgentRunForkSagaError::RuntimeChildIdentityDrift);
+        }
+        self.runtime_child = Some(child.clone());
+        Ok(())
+    }
+
+    fn pin_host_binding(&mut self, binding: &str) -> Result<(), AgentRunForkSagaError> {
+        if self
+            .host_binding
+            .as_deref()
+            .is_some_and(|current| current != binding)
+        {
+            return Err(AgentRunForkSagaError::HostBindingIdentityDrift);
+        }
+        self.host_binding = Some(binding.to_owned());
+        Ok(())
+    }
+
+    fn pin_child_history_digest(&mut self, digest: &str) -> Result<(), AgentRunForkSagaError> {
+        if self
+            .child_history_digest
+            .as_deref()
+            .is_some_and(|current| current != digest)
+        {
+            return Err(AgentRunForkSagaError::ChildHistoryDigestDrift);
+        }
+        self.child_history_digest = Some(digest.to_owned());
+        Ok(())
     }
 
     fn ensure_initial_context_evidence(
@@ -632,15 +764,19 @@ impl<'a> AgentRunForkSagaWorker<'a> {
             .load(request_id)
             .await?
             .ok_or(AgentRunForkSagaRepositoryError::NotFound)?;
-        let expected_version = saga.version;
         match saga.next_step() {
-            AgentRunForkSagaStep::ExecuteRuntime(identity) => {
+            AgentRunForkSagaStep::DispatchRuntime(identity) => {
+                let expected_version = saga.version;
+                saga.mark_runtime_dispatched(identity.clone())?;
+                let mut dispatched = self.repository.save(expected_version, saga).await?;
                 let outcome = self
                     .runtime
-                    .execute(&saga, &identity)
+                    .execute(&dispatched, &identity)
                     .await
                     .map_err(AgentRunForkSagaWorkerError::Runtime)?;
-                saga.record_runtime_outcome(identity, outcome)?;
+                let dispatched_version = dispatched.version;
+                dispatched.record_runtime_outcome(identity, outcome)?;
+                return Ok(self.repository.save(dispatched_version, dispatched).await?);
             }
             AgentRunForkSagaStep::InspectRuntime(identity) => {
                 let outcome = self
@@ -651,22 +787,32 @@ impl<'a> AgentRunForkSagaWorker<'a> {
                 saga.record_runtime_outcome(identity, outcome)?;
             }
             AgentRunForkSagaStep::CommitProductGraph => {
-                let evidence = self
-                    .product_graph
-                    .commit_child_graph(&saga)
-                    .await
-                    .map_err(AgentRunForkSagaWorkerError::ProductGraph)?;
+                let evidence = match self.product_graph.commit_child_graph(&saga).await {
+                    Ok(evidence) => evidence,
+                    Err(reason) if saga.runtime_child.is_some() => {
+                        let expected_version = saga.version;
+                        saga.mark_known_child_lost(reason.clone())?;
+                        self.repository.save(expected_version, saga).await?;
+                        return Err(AgentRunForkSagaWorkerError::ProductGraph(reason));
+                    }
+                    Err(reason) => {
+                        return Err(AgentRunForkSagaWorkerError::ProductGraph(reason));
+                    }
+                };
                 saga.record_product_graph_commit(evidence)?;
             }
             AgentRunForkSagaStep::MarkSucceeded => saga.mark_succeeded()?,
             AgentRunForkSagaStep::Terminal => return Ok(saga),
         }
+        let expected_version = saga.version;
         Ok(self.repository.save(expected_version, saga).await?)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     fn saga() -> AgentRunForkSaga {
@@ -689,24 +835,50 @@ mod tests {
     }
 
     fn evidence(saga: &AgentRunForkSaga, receipt: &str) -> RuntimeForkPhaseEvidence {
-        RuntimeForkPhaseEvidence {
-            child: saga
-                .runtime_child
+        let child = (saga.phase != AgentRunForkSagaPhase::Requested).then(|| {
+            saga.runtime_child
                 .clone()
                 .unwrap_or(RuntimeAgentChildIdentity {
                     source_coordinate: "child-source".to_owned(),
                     runtime_agent_id: "runtime-child".to_owned(),
-                }),
-            host_binding: Some("host-binding-child".to_owned()),
+                })
+        });
+        RuntimeForkPhaseEvidence {
+            child,
+            host_binding: matches!(
+                saga.phase,
+                AgentRunForkSagaPhase::AgentForkApplied
+                    | AgentRunForkSagaPhase::RuntimeProvisioned
+                    | AgentRunForkSagaPhase::ProductGraphCommitted
+            )
+            .then(|| "host-binding-child".to_owned()),
+            child_history_digest: (saga.phase != AgentRunForkSagaPhase::Requested)
+                .then(|| "sha256:child-history".to_owned()),
             context: None,
             receipt: receipt.to_owned(),
         }
     }
 
+    fn graph_evidence(saga: &AgentRunForkSaga) -> ProductGraphCommitEvidence {
+        ProductGraphCommitEvidence {
+            agent_run_id: saga.child.agent_run_id,
+            child_run_id: saga.child.run_id,
+            child_agent_id: saga.child.agent_id,
+            child_frame_id: saga.child.frame_id,
+            presentation_thread_id: saga.child.presentation_thread_id.clone(),
+            runtime_child: saga.runtime_child.clone().expect("runtime child"),
+            host_binding: saga.host_binding.clone().expect("host binding"),
+            child_history_digest: saga.child_history_digest.clone().expect("history digest"),
+            commit_revision: 1,
+        }
+    }
+
     fn apply_runtime(saga: &mut AgentRunForkSaga) {
-        let AgentRunForkSagaStep::ExecuteRuntime(identity) = saga.next_step() else {
+        let AgentRunForkSagaStep::DispatchRuntime(identity) = saga.next_step() else {
             panic!("runtime step");
         };
+        saga.mark_runtime_dispatched(identity.clone())
+            .expect("dispatch marker");
         let ev = evidence(saga, "receipt");
         saga.record_runtime_outcome(identity, RuntimeOperationOutcome::Applied(ev))
             .expect("advance");
@@ -722,25 +894,26 @@ mod tests {
                 serde_json::from_slice(&encoded).expect("deserialize");
             observed.push(restarted.phase);
             match restarted.next_step() {
-                AgentRunForkSagaStep::ExecuteRuntime(identity) => {
+                AgentRunForkSagaStep::DispatchRuntime(identity) => {
+                    restarted
+                        .mark_runtime_dispatched(identity)
+                        .expect("dispatch marker");
+                }
+                AgentRunForkSagaStep::InspectRuntime(identity) => {
                     let ev = evidence(&restarted, "runtime");
                     restarted
                         .record_runtime_outcome(identity, RuntimeOperationOutcome::Applied(ev))
                         .expect("runtime");
                 }
                 AgentRunForkSagaStep::CommitProductGraph => restarted
-                    .record_product_graph_commit(ProductGraphCommitEvidence {
-                        child_run_id: restarted.child.run_id,
-                        child_agent_id: restarted.child.agent_id,
-                        commit_revision: 1,
-                    })
+                    .record_product_graph_commit(graph_evidence(&restarted))
                     .expect("graph"),
                 AgentRunForkSagaStep::MarkSucceeded => restarted.mark_succeeded().expect("succeed"),
                 AgentRunForkSagaStep::Terminal => break,
-                AgentRunForkSagaStep::InspectRuntime(_) => panic!("unexpected inspect"),
             }
             current = restarted;
         }
+        observed.dedup();
         assert_eq!(
             observed,
             vec![
@@ -758,9 +931,11 @@ mod tests {
     #[test]
     fn unknown_result_only_allows_inspection_of_the_same_identity() {
         let mut saga = saga();
-        let AgentRunForkSagaStep::ExecuteRuntime(identity) = saga.next_step() else {
+        let AgentRunForkSagaStep::DispatchRuntime(identity) = saga.next_step() else {
             panic!("execute");
         };
+        saga.mark_runtime_dispatched(identity.clone())
+            .expect("dispatch marker");
         saga.record_runtime_outcome(identity.clone(), RuntimeOperationOutcome::Unknown)
             .expect("unknown");
         assert_eq!(
@@ -780,10 +955,16 @@ mod tests {
     fn lost_result_retains_known_child_and_forbids_second_fork() {
         let mut saga = saga();
         apply_runtime(&mut saga);
+        apply_runtime(&mut saga);
+        apply_runtime(&mut saga);
+        saga.record_product_graph_commit(graph_evidence(&saga))
+            .expect("graph");
         let known_child = saga.runtime_child.clone().expect("known child");
-        let AgentRunForkSagaStep::ExecuteRuntime(identity) = saga.next_step() else {
+        let AgentRunForkSagaStep::DispatchRuntime(identity) = saga.next_step() else {
             panic!("execute");
         };
+        saga.mark_runtime_dispatched(identity.clone())
+            .expect("dispatch marker");
         saga.record_runtime_outcome(
             identity,
             RuntimeOperationOutcome::Lost {
@@ -820,20 +1001,18 @@ mod tests {
         apply_runtime(&mut saga);
         apply_runtime(&mut saga);
         apply_runtime(&mut saga);
-        saga.record_product_graph_commit(ProductGraphCommitEvidence {
-            child_run_id: saga.child.run_id,
-            child_agent_id: saga.child.agent_id,
-            commit_revision: 1,
-        })
-        .expect("graph");
+        saga.record_product_graph_commit(graph_evidence(&saga))
+            .expect("graph");
         let package_id = Uuid::new_v4();
         saga.required_initial_context = Some(RequiredInitialContextEvidence {
             package_id,
             package_digest: "sha256:package".to_owned(),
         });
-        let AgentRunForkSagaStep::ExecuteRuntime(activate) = saga.next_step() else {
+        let AgentRunForkSagaStep::DispatchRuntime(activate) = saga.next_step() else {
             panic!("activate");
         };
+        saga.mark_runtime_dispatched(activate.clone())
+            .expect("dispatch marker");
         let ev = evidence(&saga, "activate");
         assert_eq!(
             saga.record_runtime_outcome(activate, RuntimeOperationOutcome::Applied(ev)),
@@ -877,24 +1056,61 @@ mod tests {
         assert!(saga.graph_commit.is_none());
     }
 
-    struct AlwaysAppliedRuntime;
+    #[derive(Default)]
+    struct CompleteAgentTargetFixture {
+        effects: Mutex<HashMap<AgentRunForkOperationIdentity, RuntimeOperationOutcome>>,
+        lose_response_once: Mutex<HashSet<AgentRunForkRuntimeOperation>>,
+        execute_calls: Mutex<Vec<AgentRunForkOperationIdentity>>,
+        inspect_calls: Mutex<Vec<AgentRunForkOperationIdentity>>,
+    }
+
+    impl CompleteAgentTargetFixture {
+        fn losing_responses(
+            operations: impl IntoIterator<Item = AgentRunForkRuntimeOperation>,
+        ) -> Self {
+            Self {
+                lose_response_once: Mutex::new(operations.into_iter().collect()),
+                ..Self::default()
+            }
+        }
+    }
 
     #[async_trait]
-    impl AgentRunForkRuntimePort for AlwaysAppliedRuntime {
+    impl AgentRunForkRuntimePort for CompleteAgentTargetFixture {
         async fn execute(
             &self,
             saga: &AgentRunForkSaga,
-            _identity: &AgentRunForkOperationIdentity,
+            identity: &AgentRunForkOperationIdentity,
         ) -> Result<RuntimeOperationOutcome, String> {
-            Ok(RuntimeOperationOutcome::Applied(evidence(saga, "execute")))
+            self.execute_calls.lock().await.push(identity.clone());
+            let outcome = RuntimeOperationOutcome::Applied(evidence(saga, "complete-agent-effect"));
+            self.effects
+                .lock()
+                .await
+                .insert(identity.clone(), outcome.clone());
+            if self
+                .lose_response_once
+                .lock()
+                .await
+                .remove(&identity.operation)
+            {
+                return Err("effect applied but response was lost".to_owned());
+            }
+            Ok(outcome)
         }
 
         async fn inspect(
             &self,
-            saga: &AgentRunForkSaga,
-            _identity: &AgentRunForkOperationIdentity,
+            _saga: &AgentRunForkSaga,
+            identity: &AgentRunForkOperationIdentity,
         ) -> Result<RuntimeOperationOutcome, String> {
-            Ok(RuntimeOperationOutcome::Applied(evidence(saga, "inspect")))
+            self.inspect_calls.lock().await.push(identity.clone());
+            self.effects
+                .lock()
+                .await
+                .get(identity)
+                .cloned()
+                .ok_or_else(|| "stable Complete Agent effect was not found".to_owned())
         }
     }
 
@@ -906,11 +1122,7 @@ mod tests {
             &self,
             saga: &AgentRunForkSaga,
         ) -> Result<ProductGraphCommitEvidence, String> {
-            Ok(ProductGraphCommitEvidence {
-                child_run_id: saga.child.run_id,
-                child_agent_id: saga.child.agent_id,
-                commit_revision: 1,
-            })
+            Ok(graph_evidence(saga))
         }
     }
 
@@ -918,8 +1130,9 @@ mod tests {
     async fn a_new_worker_can_resume_each_persisted_step_to_success() {
         let repository = InMemoryAgentRunForkSagaRepository::default();
         let created = repository.create(saga()).await.expect("create");
+        let runtime = CompleteAgentTargetFixture::default();
         for _ in 0..6 {
-            AgentRunForkSagaWorker::new(&repository, &AlwaysAppliedRuntime, &MatchingProductGraph)
+            AgentRunForkSagaWorker::new(&repository, &runtime, &MatchingProductGraph)
                 .advance(&created.request_id)
                 .await
                 .expect("advance");
@@ -930,5 +1143,175 @@ mod tests {
             .expect("load")
             .expect("saga");
         assert_eq!(succeeded.phase, AgentRunForkSagaPhase::Succeeded);
+        assert_eq!(
+            succeeded.child_history_digest.as_deref(),
+            Some("sha256:child-history")
+        );
+        assert!(succeeded.receipts.runtime_admission.is_some());
+        assert!(succeeded.receipts.agent_fork.is_some());
+        assert!(succeeded.receipts.runtime_provisioning.is_some());
+        assert!(succeeded.receipts.runtime_activation.is_some());
+    }
+
+    #[tokio::test]
+    async fn side_effect_before_save_restart_only_inspects_the_same_identity() {
+        let repository = InMemoryAgentRunForkSagaRepository::default();
+        let created = repository.create(saga()).await.expect("create");
+        let runtime =
+            CompleteAgentTargetFixture::losing_responses([AgentRunForkRuntimeOperation::Admit]);
+        let worker = AgentRunForkSagaWorker::new(&repository, &runtime, &MatchingProductGraph);
+
+        assert!(matches!(
+            worker.advance(&created.request_id).await,
+            Err(AgentRunForkSagaWorkerError::Runtime(_))
+        ));
+        let after_crash = repository
+            .load(&created.request_id)
+            .await
+            .expect("load")
+            .expect("saga");
+        let dispatch = after_crash
+            .durable_runtime_dispatch()
+            .expect("durable dispatch")
+            .identity
+            .clone();
+        assert_eq!(after_crash.phase(), AgentRunForkSagaPhase::Requested);
+
+        let admitted = worker.advance(&created.request_id).await.expect("inspect");
+        assert_eq!(admitted.phase(), AgentRunForkSagaPhase::RuntimeAdmitted);
+        assert_eq!(
+            runtime.execute_calls.lock().await.as_slice(),
+            &[dispatch.clone()]
+        );
+        assert_eq!(runtime.inspect_calls.lock().await.as_slice(), &[dispatch]);
+    }
+
+    #[tokio::test]
+    async fn every_runtime_crash_window_recovers_by_inspection() {
+        let repository = InMemoryAgentRunForkSagaRepository::default();
+        let created = repository.create(saga()).await.expect("create");
+        let runtime = CompleteAgentTargetFixture::losing_responses([
+            AgentRunForkRuntimeOperation::Admit,
+            AgentRunForkRuntimeOperation::ApplyAgentFork,
+            AgentRunForkRuntimeOperation::Provision,
+            AgentRunForkRuntimeOperation::Activate,
+        ]);
+        let worker = AgentRunForkSagaWorker::new(&repository, &runtime, &MatchingProductGraph);
+
+        for _ in 0..10 {
+            let _ = worker.advance(&created.request_id).await;
+        }
+        let succeeded = repository
+            .load(&created.request_id)
+            .await
+            .expect("load")
+            .expect("saga");
+        assert_eq!(succeeded.phase(), AgentRunForkSagaPhase::Succeeded);
+        assert_eq!(runtime.execute_calls.lock().await.len(), 4);
+        assert_eq!(runtime.inspect_calls.lock().await.len(), 4);
+    }
+
+    #[test]
+    fn pinned_runtime_child_binding_and_history_reject_drift() {
+        let mut saga = saga();
+        apply_runtime(&mut saga);
+        apply_runtime(&mut saga);
+        let AgentRunForkSagaStep::DispatchRuntime(identity) = saga.next_step() else {
+            panic!("provision");
+        };
+        saga.mark_runtime_dispatched(identity.clone())
+            .expect("dispatch");
+        let mut drifted = evidence(&saga, "provision");
+        drifted.child = Some(RuntimeAgentChildIdentity {
+            source_coordinate: "different-child".to_owned(),
+            runtime_agent_id: "runtime-child".to_owned(),
+        });
+        assert_eq!(
+            saga.record_runtime_outcome(identity, RuntimeOperationOutcome::Applied(drifted)),
+            Err(AgentRunForkSagaError::RuntimeChildIdentityDrift)
+        );
+    }
+
+    #[test]
+    fn product_graph_receipt_covers_every_preallocated_and_runtime_identity() {
+        let mut base = saga();
+        apply_runtime(&mut base);
+        apply_runtime(&mut base);
+        apply_runtime(&mut base);
+        let expected = graph_evidence(&base);
+        let mut mismatches = Vec::new();
+        let mut evidence = expected.clone();
+        evidence.agent_run_id = Uuid::new_v4();
+        mismatches.push(evidence);
+        let mut evidence = expected.clone();
+        evidence.child_run_id = Uuid::new_v4();
+        mismatches.push(evidence);
+        let mut evidence = expected.clone();
+        evidence.child_agent_id = Uuid::new_v4();
+        mismatches.push(evidence);
+        let mut evidence = expected.clone();
+        evidence.child_frame_id = Uuid::new_v4();
+        mismatches.push(evidence);
+        let mut evidence = expected.clone();
+        evidence.presentation_thread_id = "different-thread".to_owned();
+        mismatches.push(evidence);
+        let mut evidence = expected.clone();
+        evidence.runtime_child.source_coordinate = "different-child".to_owned();
+        mismatches.push(evidence);
+        let mut evidence = expected.clone();
+        evidence.host_binding = "different-binding".to_owned();
+        mismatches.push(evidence);
+        let mut evidence = expected;
+        evidence.child_history_digest = "sha256:different-history".to_owned();
+        mismatches.push(evidence);
+
+        for evidence in mismatches {
+            let mut saga = base.clone();
+            assert_eq!(
+                saga.record_product_graph_commit(evidence),
+                Err(AgentRunForkSagaError::ProductGraphIdentityMismatch)
+            );
+        }
+    }
+
+    struct FailingProductGraph;
+
+    #[async_trait]
+    impl AgentRunForkProductGraphPort for FailingProductGraph {
+        async fn commit_child_graph(
+            &self,
+            _saga: &AgentRunForkSaga,
+        ) -> Result<ProductGraphCommitEvidence, String> {
+            Err("Runtime child mapping could not be committed".to_owned())
+        }
+    }
+
+    #[tokio::test]
+    async fn known_native_child_mapping_failure_is_lost_not_failed() {
+        let repository = InMemoryAgentRunForkSagaRepository::default();
+        let created = repository.create(saga()).await.expect("create");
+        let runtime = CompleteAgentTargetFixture::default();
+        let worker = AgentRunForkSagaWorker::new(&repository, &runtime, &FailingProductGraph);
+        for _ in 0..3 {
+            worker
+                .advance(&created.request_id)
+                .await
+                .expect("runtime phase");
+        }
+        assert!(matches!(
+            worker.advance(&created.request_id).await,
+            Err(AgentRunForkSagaWorkerError::ProductGraph(_))
+        ));
+        let mut lost = repository
+            .load(&created.request_id)
+            .await
+            .expect("load")
+            .expect("saga");
+        assert!(lost.lost().is_some());
+        assert!(lost.failure().is_none());
+        assert_eq!(
+            lost.mark_failed("clean failure".to_owned()),
+            Err(AgentRunForkSagaError::KnownChildCannotFail)
+        );
     }
 }

@@ -1,0 +1,447 @@
+{
+  "snapshots": {
+    "completed": {
+      "thread_id": "runtime-thread-child",
+      "revision": 6,
+      "latest_change_sequence": 9,
+      "captured_at_ms": 1006,
+      "lifecycle": "active",
+      "active_turn_id": null,
+      "turns": [
+        {
+          "id": "turn-compaction",
+          "status": "completed",
+          "item_ids": ["item-compaction"]
+        }
+      ],
+      "items": [
+        {
+          "id": "item-compaction",
+          "turn_id": "turn-compaction",
+          "status": "completed",
+          "content": { "kind": "context_compaction" },
+          "content_digest": "sha256:compaction-6"
+        }
+      ],
+      "interactions": [],
+      "operations": [
+        {
+          "id": "operation-compaction",
+          "turn_id": "turn-compaction",
+          "status": "succeeded"
+        }
+      ],
+      "authority": "source_authoritative",
+      "fidelity": "exact",
+      "command_availability": {
+        "submit_input": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 6,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "steer": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 6,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "interrupt": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 6,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "request_compaction": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 6,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "resolve_interaction": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 6,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "close": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 6,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "fork": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 6,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        }
+      }
+    },
+    "failed": {
+      "thread_id": "runtime-thread-child",
+      "revision": 7,
+      "latest_change_sequence": 10,
+      "captured_at_ms": 1007,
+      "lifecycle": "active",
+      "active_turn_id": null,
+      "turns": [
+        {
+          "id": "turn-compaction",
+          "status": "failed",
+          "item_ids": ["item-compaction"]
+        }
+      ],
+      "items": [
+        {
+          "id": "item-compaction",
+          "turn_id": "turn-compaction",
+          "status": "failed",
+          "content": { "kind": "context_compaction" },
+          "content_digest": "sha256:compaction-7"
+        }
+      ],
+      "interactions": [],
+      "operations": [
+        {
+          "id": "operation-compaction",
+          "turn_id": "turn-compaction",
+          "status": "failed"
+        }
+      ],
+      "authority": "source_authoritative",
+      "fidelity": "exact",
+      "command_availability": {
+        "submit_input": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 7,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "steer": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 7,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "interrupt": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 7,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "request_compaction": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 7,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "resolve_interaction": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 7,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "close": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 7,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "fork": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": 7,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        }
+      }
+    },
+    "lost": {
+      "thread_id": "runtime-thread-child",
+      "revision": 8,
+      "latest_change_sequence": 11,
+      "captured_at_ms": 1008,
+      "lifecycle": "active",
+      "active_turn_id": null,
+      "turns": [
+        {
+          "id": "turn-compaction",
+          "status": "lost",
+          "item_ids": ["item-compaction"]
+        }
+      ],
+      "items": [
+        {
+          "id": "item-compaction",
+          "turn_id": "turn-compaction",
+          "status": "lost",
+          "content": { "kind": "context_compaction" },
+          "content_digest": "sha256:compaction-8"
+        }
+      ],
+      "interactions": [],
+      "operations": [
+        {
+          "id": "operation-compaction",
+          "turn_id": "turn-compaction",
+          "status": "lost"
+        }
+      ],
+      "authority": "source_authoritative",
+      "fidelity": "exact",
+      "command_availability": {
+        "submit_input": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": 8,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "steer": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": 8,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "interrupt": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": 8,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "request_compaction": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": 8,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "resolve_interaction": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": 8,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "close": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": 8,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "fork": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": 8,
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        }
+      }
+    },
+    "started": {
+      "thread_id": "runtime-thread-child",
+      "revision": 5,
+      "latest_change_sequence": 8,
+      "captured_at_ms": 1005,
+      "lifecycle": "active",
+      "active_turn_id": "turn-compaction",
+      "turns": [
+        {
+          "id": "turn-compaction",
+          "status": "running",
+          "item_ids": ["item-compaction"]
+        }
+      ],
+      "items": [
+        {
+          "id": "item-compaction",
+          "turn_id": "turn-compaction",
+          "status": "running",
+          "content": { "kind": "context_compaction" },
+          "content_digest": "sha256:compaction-5"
+        }
+      ],
+      "interactions": [],
+      "operations": [
+        {
+          "id": "operation-compaction",
+          "turn_id": "turn-compaction",
+          "status": "running"
+        }
+      ],
+      "authority": "source_authoritative",
+      "fidelity": "exact",
+      "command_availability": {
+        "submit_input": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": 5,
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "steer": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": 5,
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "interrupt": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": 5,
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "request_compaction": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": 5,
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "resolve_interaction": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": 5,
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "close": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": 5,
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "fork": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": 5,
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        }
+      }
+    }
+  },
+  "change_page": {
+    "thread_id": "runtime-thread-child",
+    "changes": [
+      {
+        "thread_id": "runtime-thread-child",
+        "sequence": 9,
+        "revision": 6,
+        "delta": {
+          "kind": "item_upserted",
+          "item": {
+            "id": "item-compaction",
+            "turn_id": "turn-compaction",
+            "status": "completed",
+            "content": { "kind": "context_compaction" },
+            "content_digest": "sha256:compaction-6"
+          }
+        }
+      }
+    ],
+    "next": 9,
+    "gap": null
+  },
+  "gap_page": {
+    "thread_id": "runtime-thread-child",
+    "changes": [],
+    "next": 12,
+    "gap": {
+      "requested_after": 4,
+      "earliest_available": 9,
+      "latest_available": 12,
+      "snapshot_revision": 8
+    }
+  }
+}

@@ -68,6 +68,8 @@
       "file": "crates/agentdash-agent-runtime-contract/src/managed_projection.rs",
       "symbols": [
         "ManagedRuntimeChangeDelta::SourceObservationApplied",
+        "ManagedRuntimeChangeDelta::SourceProjectionChanged",
+        "ManagedRuntimeSourceProjectionDelta",
         "ManagedRuntimeProjectionSection"
       ]
     },
@@ -230,6 +232,7 @@
       "prepare source normalization and Runtime projection candidates without an independent write",
       "write source projection, source identity mappings and source changes in the same ManagedRuntimeStateCommit as their Runtime projection, typed changes and outbox",
       "append exactly one SourceObservationApplied change and matching outbox row for every appended source change, including normalized no-op observations",
+      "append exactly one SourceProjectionChanged wrapper per changed section with explicit source change sequence, projection revision, observation digest, section digest and full section payload",
       "write immutable operation identity and idempotency mapping",
       "write pending effect intent before any external dispatch",
       "advance projection operation and availability facts",
@@ -247,6 +250,8 @@
       "operation and pending delivery states cannot move backwards",
       "source authority, fidelity, revision, identity mapping and source change history are monotonic",
       "each source change has exactly one causal SourceObservationApplied delta with exact source, projection revision, observation, source revision, cursor and changed-section digests",
+      "each listed changed section has exactly one source-derived concrete wrapper and sections not listed by the observation have none",
+      "source-derived concrete wrappers exactly match the observation sequence/revision/digest and the reconstructed normalized section payload/digest",
       "a source observation and every causal or concrete Runtime projection/change/outbox fact derived from it commit or fail together",
       "a normalized no-op source observation has empty changed_sections and no concrete projection delta, but retains its causal change and outbox",
       "without a trusted local source cursor, or after a gap/partial page, snapshot reconcile keeps source_cursor null instead of trusting page.next",
@@ -351,7 +356,7 @@
       "tests": [
         "complete_agent_state::tests::source_observation_commit_failure_leaves_no_normalized_or_platform_gap",
         "complete_agent_state::tests::no_op_source_observation_keeps_causal_change_and_empty_sections",
-        "complete_agent_state::tests::source_observation_causal_delta_rejects_omission_duplication_and_wrong_evidence",
+        "complete_agent_state::tests::source_observation_and_projection_deltas_reject_incomplete_or_wrong_evidence",
         "complete_agent_state::tests::stale_source_candidate_cannot_commit_without_its_platform_change",
         "complete_agent_state::tests::restarted_reconciler_continues_from_one_atomic_source_and_runtime_state",
         "complete_agent_state::tests::first_partial_ordered_page_is_not_used_as_snapshot_head",

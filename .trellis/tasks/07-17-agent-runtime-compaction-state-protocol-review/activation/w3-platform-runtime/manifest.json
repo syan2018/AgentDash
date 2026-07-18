@@ -1,7 +1,7 @@
 {
   "bundle": "Platform Runtime",
   "checkpoint": "S5 activation component",
-  "base_revision": "ed1a7d95aa9c4d10feda5cbed29cdb3c4bad02a7",
+  "base_revision": "45ff3e7c9196d30e94c5feeef95920fa1c487be9",
   "platform_library_route_changed": true,
   "production_composition_route_changed": false,
   "activation_ready_requires_combined_bundle": true,
@@ -26,13 +26,16 @@
   },
   "dependency_delta": {
     "owned_manifest_additions": [
+      "crates/agentdash-agent-runtime-contract/Cargo.toml: sha2.workspace = true",
       "crates/agentdash-agent-runtime/Cargo.toml: serde.workspace = true",
-      "crates/agentdash-agent-runtime/Cargo.toml: sha2.workspace = true"
+      "crates/agentdash-agent-runtime/Cargo.toml: sha2.workspace = true",
+      "crates/agentdash-agent-runtime-host/Cargo.toml: agentdash-agent-runtime.workspace = true",
+      "crates/agentdash-agent-runtime-host/Cargo.toml: agentdash-agent-runtime-contract.workspace = true"
     ],
     "root_manifest_owner": "W8 composition",
     "root_lock_owner": "W8 composition",
     "component_modifies_root_lock": false,
-    "reason": "source observation evidence uses canonical serialization and SHA-256 digests at the Runtime authority boundary"
+    "reason": "source observation and initial-context evidence use canonical SHA-256 digests; CompleteAgentHost implements the Host-neutral Runtime lifecycle port"
   },
   "live_contracts": [
     {
@@ -49,7 +52,27 @@
       "symbols": [
         "ManagedRuntimeStateRepository::load(&RuntimeThreadId) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError>",
         "ManagedRuntimeStateRepository::commit(ManagedRuntimeStateCommit) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError>",
-        "ManagedRuntimeCoordinator::accept(ManagedRuntimeCommandEnvelope, AgentEffectIdentity, captured_at_ms) -> ManagedRuntimeOperationReceipt"
+        "ManagedRuntimeCoordinator::accept(ManagedRuntimeCommandEnvelope, AgentEffectIdentity, captured_at_ms) -> ManagedRuntimeOperationReceipt",
+        "ManagedRuntimeCoordinator::mark_running(&RuntimeThreadId, &RuntimeOperationId, claim_owner, captured_at_ms)",
+        "ManagedRuntimeCoordinator::settle(&RuntimeThreadId, &RuntimeOperationId, ManagedRuntimeSettlement)",
+        "ManagedRuntimeCoordinator::provision_child(RuntimeThreadId, ManagedRuntimeBindingFact, captured_at_ms)"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime/src/lifecycle.rs",
+      "symbols": [
+        "ManagedRuntimeLifecyclePort::create(ManagedRuntimeDispatchContext, Option<InitialAgentContextPackage>) -> ManagedRuntimeCreateOutcome",
+        "ManagedRuntimeLifecyclePort::resume(ManagedRuntimeDispatchContext, ManagedRuntimeAgentBinding) -> ManagedRuntimeResumeOutcome",
+        "ManagedRuntimeLifecyclePort::fork(ManagedRuntimeDispatchContext, ManagedRuntimeAgentBinding, RuntimeThreadId, AgentForkPoint) -> ManagedRuntimeForkOutcome",
+        "ManagedRuntimeLifecyclePort::execute(ManagedRuntimeDispatchContext, ManagedRuntimeAgentBinding, AgentCommandEnvelope) -> AgentCommandReceipt",
+        "ManagedRuntimeLifecyclePort::{inspect,read,changes,is_ready}"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime/src/gateway.rs",
+      "symbols": [
+        "ProductionManagedAgentRuntimeGateway",
+        "production_managed_runtime_gateway(Arc<dyn ManagedRuntimeStateRepository>, Arc<dyn ManagedRuntimeLifecyclePort>, dispatch_owner, lease_duration_ms)"
       ]
     },
     {
@@ -93,6 +116,9 @@
       "symbols": [
         "CompleteAgentHost::register_service(AgentServiceInstanceId, CompleteAgentPlacement, Arc<dyn CompleteAgentService>)",
         "CompleteAgentHost::register_binding",
+        "CompleteAgentHost::register_runtime_target",
+        "ManagedRuntimeLifecyclePort for CompleteAgentHost",
+        "complete_agent_managed_runtime_gateway(Arc<dyn ManagedRuntimeStateRepository>, Arc<CompleteAgentHost>, dispatch_owner, lease_duration_ms)",
         "CompleteAgentHost::placement",
         "CompleteAgentHost::acquire_binding_lease",
         "CompleteAgentPlacement"
@@ -152,6 +178,8 @@
       "files": [
         "crates/agentdash-agent-runtime/src/lib.rs",
         "crates/agentdash-agent-runtime/src/managed_runtime.rs",
+        "crates/agentdash-agent-runtime/src/gateway.rs",
+        "crates/agentdash-agent-runtime/src/lifecycle.rs",
         "crates/agentdash-agent-runtime/src/complete_agent_state.rs",
         "crates/agentdash-agent-runtime/src/complete_agent_surface.rs",
         "crates/agentdash-agent-runtime/Cargo.toml"
@@ -162,7 +190,6 @@
       "files": [
         "crates/agentdash-agent-runtime/src/context.rs",
         "crates/agentdash-agent-runtime/src/context_projection/**",
-        "crates/agentdash-agent-runtime/src/gateway.rs",
         "crates/agentdash-agent-runtime/src/hook.rs",
         "crates/agentdash-agent-runtime/src/memory.rs",
         "crates/agentdash-agent-runtime/src/model.rs",
@@ -220,6 +247,7 @@
       "agent_runtime_source_identity",
       "agent_runtime_source_change",
       "agent_runtime_projection",
+      "agent_runtime_thread_binding",
       "agent_runtime_operation",
       "agent_runtime_idempotency",
       "agent_runtime_pending_command",
@@ -234,6 +262,7 @@
       "append exactly one SourceObservationApplied change and matching outbox row for every appended source change, including normalized no-op observations",
       "append exactly one SourceProjectionChanged wrapper per changed section with explicit source change sequence, projection revision, observation digest, section digest and full section payload",
       "write immutable operation identity and idempotency mapping",
+      "commit the Host-returned source binding and applied-surface evidence before lifecycle activation",
       "write pending effect intent before any external dispatch",
       "advance projection operation and availability facts",
       "append typed Runtime changes and one outbox row per change",
@@ -242,6 +271,7 @@
     ],
     "required_constraints": [
       "operation identity, thread and command are immutable",
+      "source binding and terminal operation evidence are immutable and mutually consistent",
       "idempotency key uniquely maps to one immutable operation command",
       "pending command exactly equals its authoritative operation command",
       "projection operations have one entry per authoritative operation id with exact payload, turn and status",
@@ -290,6 +320,8 @@
       "agent_service_instance",
       "agent_runtime_offer",
       "agent_runtime_placement",
+      "agent_runtime_lifecycle_target",
+      "agent_runtime_lifecycle_effect",
       "agent_runtime_binding",
       "agent_runtime_source_coordinate",
       "agent_runtime_callback_route",
@@ -303,6 +335,7 @@
       "lock and compare CompleteAgentHostRevision",
       "validate one immutable descriptor, offer and placement per service instance",
       "validate binding/source/generation/profile/surface coordinates",
+      "persist Create, Resume and Fork lifecycle intent before invoking the Complete Agent service",
       "when a callback-bound surface becomes Applied/Available, insert its unique route in the same Host revision transaction",
       "when a callback-bound applied surface is revoked or lost, retain the immutable route and append its tombstone in the same Host revision transaction",
       "validate effect identity, payload and append-only attempt evidence",
@@ -314,6 +347,8 @@
     ],
     "required_constraints": [
       "service instance identity fixes descriptor, exact Runtime offer and placement",
+      "Runtime lifecycle target fixes service, generation, profile, bound surface and callback binding",
+      "lifecycle effect identity fixes operation kind, target, initial context or exact fork cutoff and terminal outcome",
       "placement is exactly one of in_process, local_process or remote and all coordinates are non-empty",
       "binding generation is positive and binding/source mapping is bidirectionally unique",
       "an Available callback-bound applied surface has exactly one active route with exact binding, generation, source and bound-surface digest",
@@ -409,6 +444,22 @@
       ]
     },
     {
+      "duty": "production Managed Runtime lifecycle admission, durable dispatch, recovery, fork provisioning and explicit activation",
+      "symbols": [
+        "ProductionManagedAgentRuntimeGateway",
+        "ManagedRuntimeLifecyclePort",
+        "ManagedRuntimeOperationEvidence",
+        "ManagedRuntimeForkProgressEvidence"
+      ],
+      "tests": [
+        "gateway::tests::create_activate_duplicate_and_fork_are_one_durable_runtime_fact_graph",
+        "gateway::tests::lost_create_receipt_recovers_by_same_effect_inspection_after_restart",
+        "gateway::tests::fork_child_known_without_provisioning_is_terminal_lost_evidence",
+        "gateway::tests::resume_without_mapping_is_typed_and_changes_cursor_is_strict",
+        "complete_agent::tests::runtime_lifecycle_adapter_persists_intent_before_create_and_fork_provisioning"
+      ]
+    },
+    {
       "duty": "unique revision 4 Runtime and Complete Agent transport",
       "symbols": [
         "RUNTIME_WIRE_PROTOCOL_REVISION",
@@ -494,6 +545,17 @@
     "regenerate the four canonical TypeScript/JSON Schema artifacts once",
     "verify zero legacy consumers and run full workspace gates"
   ],
+  "production_composition_prerequisites": {
+    "factory": "complete_agent_managed_runtime_gateway(Arc<dyn ManagedRuntimeStateRepository>, Arc<CompleteAgentHost>, dispatch_owner, lease_duration_ms)",
+    "w8_supplies": [
+      "one PostgreSQL ManagedRuntimeStateRepository",
+      "one PostgreSQL CompleteAgentHostRepository",
+      "one process-local CompleteAgentServiceRegistry populated with final Complete Agent registrations",
+      "CompleteAgentRuntimeTarget registrations for every production Runtime thread placement",
+      "database-backed lease and recovery workers for pending Runtime and Host lifecycle effects"
+    ],
+    "activation_rule": "Product submits Fork once, observes its terminal operation evidence, and sends a separate Activate only after Provisioned evidence; no Product DTO contains Host source, generation, lease or provisioning fields"
+  },
   "gates": {
     "component_tests": [
       "cargo test -p agentdash-agent-runtime-contract -p agentdash-agent-runtime -p agentdash-agent-runtime-host -p agentdash-agent-runtime-wire",

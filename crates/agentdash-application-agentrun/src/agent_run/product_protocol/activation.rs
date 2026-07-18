@@ -1,10 +1,15 @@
+use std::sync::Arc;
+
 use agentdash_agent_runtime_contract::managed_projection::{
     ManagedRuntimeChangePage, ManagedRuntimeSnapshot,
 };
 use agentdash_agent_runtime_contract::{RuntimeChangeSequence, RuntimeThreadId};
 use async_trait::async_trait;
 
-use super::{AgentRunForkRuntimePort, RuntimeAgentChildIdentity, SubmitInput};
+use super::{
+    AgentRunForkProductGraphPort, AgentRunForkRuntimePort, AgentRunForkSagaRepository,
+    CompanionFreshRuntimePort, CompanionFreshSagaRepository,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRunActivationWorkstream {
@@ -247,29 +252,6 @@ pub const AGENT_RUN_TARGET_S5_ACTIVATION_GATES: &[AgentRunS5ActivationGate] = &[
 ];
 
 #[async_trait]
-pub trait AgentRunBusinessSurfacePort: Send + Sync {
-    async fn apply_business_surface(
-        &self,
-        child: &RuntimeAgentChildIdentity,
-        surface_facts: &serde_json::Value,
-    ) -> Result<String, String>;
-}
-
-#[async_trait]
-pub trait AgentRunToolBrokerPort: Send + Sync {
-    async fn bind_tool_broker(&self, child: &RuntimeAgentChildIdentity) -> Result<String, String>;
-}
-
-#[async_trait]
-pub trait AgentRunHostCallbacksPort: Send + Sync {
-    async fn submit_input(
-        &self,
-        child: &RuntimeAgentChildIdentity,
-        input: SubmitInput,
-    ) -> Result<String, String>;
-}
-
-#[async_trait]
 pub trait AgentRunRuntimeProjectionPort: Send + Sync {
     async fn load_snapshot(
         &self,
@@ -285,12 +267,33 @@ pub trait AgentRunRuntimeProjectionPort: Send + Sync {
 
 /// S5 显式 composition boundary。生产 constructor 必须完整注入这些 final ports，
 /// 不存在 legacy/default 分支。
-pub struct AgentRunProductProtocolPorts<'a> {
-    pub runtime: &'a dyn AgentRunForkRuntimePort,
-    pub business_surface: &'a dyn AgentRunBusinessSurfacePort,
-    pub tool_broker: &'a dyn AgentRunToolBrokerPort,
-    pub host_callbacks: &'a dyn AgentRunHostCallbacksPort,
-    pub runtime_projection: &'a dyn AgentRunRuntimeProjectionPort,
+pub struct AgentRunProductProtocolPorts {
+    pub fork_sagas: Arc<dyn AgentRunForkSagaRepository>,
+    pub fork_runtime: Arc<dyn AgentRunForkRuntimePort>,
+    pub fork_product_graph: Arc<dyn AgentRunForkProductGraphPort>,
+    pub companion_fresh_sagas: Arc<dyn CompanionFreshSagaRepository>,
+    pub companion_fresh_runtime: Arc<dyn CompanionFreshRuntimePort>,
+    pub runtime_projection: Arc<dyn AgentRunRuntimeProjectionPort>,
+}
+
+impl AgentRunProductProtocolPorts {
+    pub fn new(
+        fork_sagas: Arc<dyn AgentRunForkSagaRepository>,
+        fork_runtime: Arc<dyn AgentRunForkRuntimePort>,
+        fork_product_graph: Arc<dyn AgentRunForkProductGraphPort>,
+        companion_fresh_sagas: Arc<dyn CompanionFreshSagaRepository>,
+        companion_fresh_runtime: Arc<dyn CompanionFreshRuntimePort>,
+        runtime_projection: Arc<dyn AgentRunRuntimeProjectionPort>,
+    ) -> Self {
+        Self {
+            fork_sagas,
+            fork_runtime,
+            fork_product_graph,
+            companion_fresh_sagas,
+            companion_fresh_runtime,
+            runtime_projection,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -422,5 +425,28 @@ mod tests {
             assert!(!gate.evidence.is_empty());
             assert!(gate.negative_gate.is_some_and(|gate| !gate.is_empty()));
         }
+    }
+
+    #[test]
+    fn app_state_constructor_requires_the_exact_six_product_protocol_ports() {
+        fn construct(
+            fork_sagas: Arc<dyn AgentRunForkSagaRepository>,
+            fork_runtime: Arc<dyn AgentRunForkRuntimePort>,
+            fork_product_graph: Arc<dyn AgentRunForkProductGraphPort>,
+            companion_fresh_sagas: Arc<dyn CompanionFreshSagaRepository>,
+            companion_fresh_runtime: Arc<dyn CompanionFreshRuntimePort>,
+            runtime_projection: Arc<dyn AgentRunRuntimeProjectionPort>,
+        ) -> AgentRunProductProtocolPorts {
+            AgentRunProductProtocolPorts::new(
+                fork_sagas,
+                fork_runtime,
+                fork_product_graph,
+                companion_fresh_sagas,
+                companion_fresh_runtime,
+                runtime_projection,
+            )
+        }
+
+        let _ = construct;
     }
 }

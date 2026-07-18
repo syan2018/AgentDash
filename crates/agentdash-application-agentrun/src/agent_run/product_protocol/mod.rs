@@ -8,8 +8,10 @@ mod activation;
 mod companion;
 mod feed;
 mod fork_saga;
+mod production_adapters;
 
 pub use activation::*;
 pub use companion::*;
 pub use feed::*;
 pub use fork_saga::*;
+pub use production_adapters::*;

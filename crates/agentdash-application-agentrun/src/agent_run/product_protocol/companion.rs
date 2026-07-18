@@ -1,6 +1,7 @@
 #[cfg(test)]
 use std::{collections::HashMap, sync::Arc};
 
+use agentdash_agent_runtime_contract::{RuntimeOperationId, RuntimeThreadId};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,9 +12,9 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use super::{
-    AgentRunForkParent, AgentRunForkRequestId, AgentRunForkSaga, AgentRunForkSagaRepository,
-    AgentRunForkSagaRepositoryError, CompiledContextApplication, CompiledContextDeliveryFidelity,
-    PreallocatedAgentRunChild, RequiredInitialContextEvidence, RuntimeAgentChildIdentity,
+    AcceptedRuntimeOperation, AgentRunForkParent, AgentRunForkRequestId, AgentRunForkSaga,
+    AgentRunForkSagaRepository, AgentRunForkSagaRepositoryError, CompiledContextApplication,
+    CompiledContextDeliveryFidelity, PreallocatedAgentRunChild, RequiredInitialContextEvidence,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,7 +171,7 @@ pub struct SubmitInput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CompanionRuntimePreparation {
     ForkParentHistory {
-        parent_source_coordinate: String,
+        parent_runtime_thread_id: RuntimeThreadId,
         through_turn_id: String,
     },
     FreshCreate {
@@ -204,7 +205,7 @@ pub struct CompanionDispatchTargetPlan {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompanionContextSources {
-    pub parent_source_coordinate: String,
+    pub parent_runtime_thread_id: RuntimeThreadId,
     pub through_turn_id: Option<String>,
     pub package_id: Uuid,
     pub compact_summary: Option<(String, CompanionContextSourceDraft)>,
@@ -284,7 +285,7 @@ pub fn compile_companion_dispatch_target(
     };
     let preparation = match mode {
         CompanionContextMode::Full => CompanionRuntimePreparation::ForkParentHistory {
-            parent_source_coordinate: sources.parent_source_coordinate,
+            parent_runtime_thread_id: sources.parent_runtime_thread_id,
             through_turn_id: sources
                 .through_turn_id
                 .ok_or(CompanionTargetPlanError::MissingParentTurnCutoff)?,
@@ -356,12 +357,12 @@ pub fn compile_companion_dispatch_target(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompanionRuntimePreparationEvidence {
     ForkParentHistory {
-        child: RuntimeAgentChildIdentity,
-        parent_source_coordinate: String,
+        child_runtime_thread_id: RuntimeThreadId,
+        parent_runtime_thread_id: RuntimeThreadId,
         through_turn_id: String,
     },
     FreshCreate {
-        child: RuntimeAgentChildIdentity,
+        child_runtime_thread_id: RuntimeThreadId,
         context: Option<CompiledContextApplication>,
     },
 }
@@ -373,15 +374,15 @@ pub fn verify_companion_activation(
     match (&plan.preparation, evidence) {
         (
             CompanionRuntimePreparation::ForkParentHistory {
-                parent_source_coordinate,
+                parent_runtime_thread_id,
                 through_turn_id,
             },
             CompanionRuntimePreparationEvidence::ForkParentHistory {
-                parent_source_coordinate: actual_parent,
+                parent_runtime_thread_id: actual_parent,
                 through_turn_id: actual_turn,
                 ..
             },
-        ) if parent_source_coordinate == actual_parent && through_turn_id == actual_turn => Ok(()),
+        ) if parent_runtime_thread_id == actual_parent && through_turn_id == actual_turn => Ok(()),
         (
             CompanionRuntimePreparation::FreshCreate { initial_context },
             CompanionRuntimePreparationEvidence::FreshCreate {
@@ -489,6 +490,7 @@ pub struct CompanionFreshRequestId(pub Uuid);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompanionFreshStableIdentities {
     pub request_id: CompanionFreshRequestId,
+    pub runtime_thread_id: RuntimeThreadId,
     pub create_effect_id: Uuid,
     pub activation_effect_id: Uuid,
     pub first_input_effect_id: Uuid,
@@ -507,6 +509,7 @@ pub struct CompanionFreshOperationIdentity {
     pub request_id: CompanionFreshRequestId,
     pub operation: CompanionFreshOperation,
     pub effect_id: Uuid,
+    pub runtime_operation_id: RuntimeOperationId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -526,32 +529,32 @@ pub struct CompanionFreshDurableDispatch {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompanionFreshReceipts {
-    pub create: Option<String>,
-    pub activation: Option<String>,
-    pub first_input: Option<String>,
+    pub create: Option<AcceptedRuntimeOperation>,
+    pub activation: Option<AcceptedRuntimeOperation>,
+    pub first_input: Option<AcceptedRuntimeOperation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompanionFreshLost {
     pub identity: CompanionFreshOperationIdentity,
-    pub known_child: Option<RuntimeAgentChildIdentity>,
+    pub known_child_runtime_thread_id: RuntimeThreadId,
     pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompanionFreshEffectEvidence {
     Created {
-        child: RuntimeAgentChildIdentity,
+        child_runtime_thread_id: RuntimeThreadId,
         context: CompiledContextApplication,
-        receipt: String,
+        receipt: AcceptedRuntimeOperation,
     },
     Activated {
-        child: RuntimeAgentChildIdentity,
-        receipt: String,
+        child_runtime_thread_id: RuntimeThreadId,
+        receipt: AcceptedRuntimeOperation,
     },
     FirstInputSubmitted {
-        child: RuntimeAgentChildIdentity,
-        receipt: String,
+        child_runtime_thread_id: RuntimeThreadId,
+        receipt: AcceptedRuntimeOperation,
     },
 }
 
@@ -577,7 +580,6 @@ pub struct CompanionFreshSaga {
     phase: CompanionFreshPhase,
     version: u64,
     durable_dispatch: Option<CompanionFreshDurableDispatch>,
-    child: Option<RuntimeAgentChildIdentity>,
     context_evidence: Option<CompiledContextApplication>,
     receipts: CompanionFreshReceipts,
     lost: Option<CompanionFreshLost>,
@@ -595,6 +597,8 @@ pub enum CompanionFreshSagaError {
     EffectIdentityDrift,
     #[error("fresh Companion child identity drifted")]
     ChildIdentityDrift,
+    #[error("fresh Companion Runtime receipt does not match the pending operation")]
+    RuntimeReceiptIdentityDrift,
     #[error(transparent)]
     Preparation(#[from] CompanionTargetPlanError),
 }
@@ -616,7 +620,6 @@ impl CompanionFreshSaga {
             phase: CompanionFreshPhase::Requested,
             version: 0,
             durable_dispatch: None,
-            child: None,
             context_evidence: None,
             receipts: CompanionFreshReceipts {
                 create: None,
@@ -631,6 +634,10 @@ impl CompanionFreshSaga {
         &self.identities.request_id
     }
 
+    pub fn runtime_thread_id(&self) -> &RuntimeThreadId {
+        &self.identities.runtime_thread_id
+    }
+
     pub fn plan(&self) -> &CompanionDispatchTargetPlan {
         &self.plan
     }
@@ -641,10 +648,6 @@ impl CompanionFreshSaga {
 
     pub fn version(&self) -> u64 {
         self.version
-    }
-
-    pub fn child(&self) -> Option<&RuntimeAgentChildIdentity> {
-        self.child.as_ref()
     }
 
     pub fn context_evidence(&self) -> Option<&CompiledContextApplication> {
@@ -710,7 +713,7 @@ impl CompanionFreshSaga {
             CompanionFreshEffectOutcome::Lost { reason } => {
                 self.lost = Some(CompanionFreshLost {
                     identity,
-                    known_child: self.child.clone(),
+                    known_child_runtime_thread_id: self.identities.runtime_thread_id.clone(),
                     reason,
                 });
                 self.durable_dispatch = None;
@@ -740,7 +743,7 @@ impl CompanionFreshSaga {
             (
                 CompanionFreshOperation::CreateWithContextPackage,
                 CompanionFreshEffectEvidence::Created {
-                    child,
+                    child_runtime_thread_id,
                     context,
                     receipt,
                 },
@@ -748,11 +751,12 @@ impl CompanionFreshSaga {
                 verify_companion_activation(
                     &self.plan,
                     &CompanionRuntimePreparationEvidence::FreshCreate {
-                        child: child.clone(),
+                        child_runtime_thread_id: child_runtime_thread_id.clone(),
                         context: Some(context.clone()),
                     },
                 )?;
-                self.pin_child(&child)?;
+                self.ensure_child_thread(&child_runtime_thread_id)?;
+                self.ensure_receipt_identity(&receipt)?;
                 self.context_evidence = Some(context);
                 self.receipts.create = Some(receipt);
                 self.phase = CompanionFreshPhase::AgentCreated;
@@ -760,20 +764,28 @@ impl CompanionFreshSaga {
             }
             (
                 CompanionFreshOperation::Activate,
-                CompanionFreshEffectEvidence::Activated { child, receipt },
+                CompanionFreshEffectEvidence::Activated {
+                    child_runtime_thread_id,
+                    receipt,
+                },
             ) if self.phase == CompanionFreshPhase::AgentCreated
                 && self.context_evidence.is_some() =>
             {
-                self.pin_child(&child)?;
+                self.ensure_child_thread(&child_runtime_thread_id)?;
+                self.ensure_receipt_identity(&receipt)?;
                 self.receipts.activation = Some(receipt);
                 self.phase = CompanionFreshPhase::Activated;
                 Ok(())
             }
             (
                 CompanionFreshOperation::SubmitFirstInput,
-                CompanionFreshEffectEvidence::FirstInputSubmitted { child, receipt },
+                CompanionFreshEffectEvidence::FirstInputSubmitted {
+                    child_runtime_thread_id,
+                    receipt,
+                },
             ) if self.phase == CompanionFreshPhase::Activated => {
-                self.pin_child(&child)?;
+                self.ensure_child_thread(&child_runtime_thread_id)?;
+                self.ensure_receipt_identity(&receipt)?;
                 self.receipts.first_input = Some(receipt);
                 self.phase = CompanionFreshPhase::FirstInputSubmitted;
                 Ok(())
@@ -782,14 +794,23 @@ impl CompanionFreshSaga {
         }
     }
 
-    fn pin_child(
-        &mut self,
-        child: &RuntimeAgentChildIdentity,
+    fn ensure_child_thread(
+        &self,
+        child_runtime_thread_id: &RuntimeThreadId,
     ) -> Result<(), CompanionFreshSagaError> {
-        if self.child.as_ref().is_some_and(|current| current != child) {
+        if child_runtime_thread_id != &self.identities.runtime_thread_id {
             return Err(CompanionFreshSagaError::ChildIdentityDrift);
         }
-        self.child = Some(child.clone());
+        Ok(())
+    }
+
+    fn ensure_receipt_identity(
+        &self,
+        receipt: &AcceptedRuntimeOperation,
+    ) -> Result<(), CompanionFreshSagaError> {
+        if receipt.operation_id != self.expected_identity().runtime_operation_id {
+            return Err(CompanionFreshSagaError::RuntimeReceiptIdentityDrift);
+        }
         Ok(())
     }
 
@@ -818,6 +839,16 @@ impl CompanionFreshSaga {
             request_id: self.identities.request_id.clone(),
             operation,
             effect_id,
+            runtime_operation_id: RuntimeOperationId::new(format!(
+                "companion-fresh:{}:{}",
+                self.identities.request_id.0,
+                match operation {
+                    CompanionFreshOperation::CreateWithContextPackage => "create",
+                    CompanionFreshOperation::Activate => "activate",
+                    CompanionFreshOperation::SubmitFirstInput => "submit-first-input",
+                }
+            ))
+            .expect("stable fresh Companion Runtime operation identity is non-empty"),
         }
     }
 }
@@ -1046,13 +1077,13 @@ impl<'a> CompanionDispatchCoordinator<'a> {
         request: CompanionFullForkRequest,
     ) -> Result<AgentRunForkSaga, CompanionDispatchCoordinatorError> {
         let CompanionRuntimePreparation::ForkParentHistory {
-            parent_source_coordinate,
+            parent_runtime_thread_id,
             through_turn_id,
         } = &plan.preparation
         else {
             return Err(CompanionDispatchCoordinatorError::NotFullFork);
         };
-        if request.parent.source_coordinate != *parent_source_coordinate
+        if request.parent.runtime_thread_id != *parent_runtime_thread_id
             || request.parent.through_turn_id != *through_turn_id
         {
             return Err(CompanionDispatchCoordinatorError::FullForkIdentityMismatch);
@@ -1109,9 +1140,10 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::agent_run::product_protocol::{
-        AgentRunForkOperationIdentity, AgentRunForkProductGraphPort, AgentRunForkRuntimePort,
-        AgentRunForkSagaPhase, AgentRunForkSagaWorker, CompiledContextContributionApplication,
-        PreparedAgentRunForkGraph, RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
+        AgentRunForkOperationIdentity, AgentRunForkProductGraphPort, AgentRunForkRuntimeOperation,
+        AgentRunForkRuntimePort, AgentRunForkSagaPhase, AgentRunForkSagaWorker,
+        CompiledContextContributionApplication, PreparedAgentRunForkGraph,
+        RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
     };
     use agentdash_agent_service_api as service_api;
     use agentdash_application_ports::agent_run_fork::AgentRunForkGraph;
@@ -1140,7 +1172,7 @@ mod tests {
 
     fn sources() -> CompanionContextSources {
         CompanionContextSources {
-            parent_source_coordinate: "parent".to_owned(),
+            parent_runtime_thread_id: RuntimeThreadId::new("parent").expect("parent thread"),
             through_turn_id: Some("turn-9".to_owned()),
             package_id: Uuid::new_v4(),
             compact_summary: Some(("summary".to_owned(), provenance("agent_history"))),
@@ -1177,6 +1209,8 @@ mod tests {
     fn stable_fresh_identities() -> CompanionFreshStableIdentities {
         CompanionFreshStableIdentities {
             request_id: CompanionFreshRequestId(Uuid::new_v4()),
+            runtime_thread_id: RuntimeThreadId::new("fresh-runtime-thread")
+                .expect("fresh runtime thread"),
             create_effect_id: Uuid::new_v4(),
             activation_effect_id: Uuid::new_v4(),
             first_input_effect_id: Uuid::new_v4(),
@@ -1368,23 +1402,31 @@ mod tests {
     }
 
     fn fresh_evidence(saga: &CompanionFreshSaga) -> CompanionFreshEffectEvidence {
-        let child = saga.child.clone().unwrap_or(RuntimeAgentChildIdentity {
-            source_coordinate: "fresh-child-source".to_owned(),
-            runtime_agent_id: "fresh-runtime-child".to_owned(),
-        });
+        let child_runtime_thread_id = saga.runtime_thread_id().clone();
+        let operation_id = saga
+            .durable_dispatch
+            .as_ref()
+            .expect("durable dispatch")
+            .identity
+            .runtime_operation_id
+            .clone();
+        let receipt = AcceptedRuntimeOperation {
+            operation_id,
+            accepted_revision: agentdash_agent_runtime_contract::RuntimeProjectionRevision(1),
+        };
         match saga.phase {
             CompanionFreshPhase::Requested => CompanionFreshEffectEvidence::Created {
-                child,
+                child_runtime_thread_id,
                 context: applied_context(&saga.plan),
-                receipt: "create-receipt".to_owned(),
+                receipt,
             },
             CompanionFreshPhase::AgentCreated => CompanionFreshEffectEvidence::Activated {
-                child,
-                receipt: "activation-receipt".to_owned(),
+                child_runtime_thread_id,
+                receipt,
             },
             CompanionFreshPhase::Activated => CompanionFreshEffectEvidence::FirstInputSubmitted {
-                child,
-                receipt: "first-input-receipt".to_owned(),
+                child_runtime_thread_id,
+                receipt,
             },
             CompanionFreshPhase::FirstInputSubmitted | CompanionFreshPhase::Succeeded => {
                 panic!("no Runtime effect")
@@ -1511,10 +1553,8 @@ mod tests {
         verify_companion_activation(
             &plan,
             &CompanionRuntimePreparationEvidence::FreshCreate {
-                child: RuntimeAgentChildIdentity {
-                    source_coordinate: "service:child".to_owned(),
-                    runtime_agent_id: "runtime-child".to_owned(),
-                },
+                child_runtime_thread_id: RuntimeThreadId::new("service-child")
+                    .expect("runtime thread"),
                 context: Some(mapped_evidence),
             },
         )
@@ -1555,9 +1595,9 @@ mod tests {
         assert!(matches!(
             plan.preparation,
             CompanionRuntimePreparation::ForkParentHistory {
-                ref parent_source_coordinate,
+                ref parent_runtime_thread_id,
                 ref through_turn_id,
-            } if parent_source_coordinate == "parent" && through_turn_id == "turn-9"
+            } if parent_runtime_thread_id.as_str() == "parent" && through_turn_id == "turn-9"
         ));
     }
 
@@ -1651,15 +1691,12 @@ mod tests {
         let CompanionRuntimePreparation::FreshCreate { initial_context } = &plan.preparation else {
             panic!("fresh");
         };
-        let child = RuntimeAgentChildIdentity {
-            source_coordinate: "child".to_owned(),
-            runtime_agent_id: "runtime-child".to_owned(),
-        };
+        let child = RuntimeThreadId::new("child").expect("runtime thread");
         assert_eq!(
             verify_companion_activation(
                 &plan,
                 &CompanionRuntimePreparationEvidence::FreshCreate {
-                    child: child.clone(),
+                    child_runtime_thread_id: child.clone(),
                     context: None,
                 }
             ),
@@ -1669,7 +1706,7 @@ mod tests {
             verify_companion_activation(
                 &plan,
                 &CompanionRuntimePreparationEvidence::FreshCreate {
-                    child: child.clone(),
+                    child_runtime_thread_id: child.clone(),
                     context: Some(CompiledContextApplication {
                         package_id: initial_context.package_id,
                         package_digest: initial_context.digest.clone(),
@@ -1688,7 +1725,7 @@ mod tests {
         verify_companion_activation(
             &plan,
             &CompanionRuntimePreparationEvidence::FreshCreate {
-                child,
+                child_runtime_thread_id: child,
                 context: Some(CompiledContextApplication {
                     package_id: initial_context.package_id,
                     package_digest: initial_context.digest.clone(),
@@ -1748,17 +1785,14 @@ mod tests {
     #[test]
     fn canonical_rendered_evidence_requires_renderer_and_exact_contributions() {
         let plan = fresh_plan_for(CompanionContextMode::Compact);
-        let child = RuntimeAgentChildIdentity {
-            source_coordinate: "fresh-child-source".to_owned(),
-            runtime_agent_id: "fresh-runtime-child".to_owned(),
-        };
+        let child = RuntimeThreadId::new("fresh-runtime-thread").expect("runtime thread");
         let mut evidence = applied_context(&plan);
         evidence.renderer_version = None;
         assert_eq!(
             verify_companion_activation(
                 &plan,
                 &CompanionRuntimePreparationEvidence::FreshCreate {
-                    child: child.clone(),
+                    child_runtime_thread_id: child.clone(),
                     context: Some(evidence),
                 }
             ),
@@ -1771,7 +1805,7 @@ mod tests {
             verify_companion_activation(
                 &plan,
                 &CompanionRuntimePreparationEvidence::FreshCreate {
-                    child,
+                    child_runtime_thread_id: child,
                     context: Some(evidence),
                 }
             ),
@@ -1782,10 +1816,7 @@ mod tests {
     #[test]
     fn slice_policy_rejects_unapproved_or_below_minimum_rendered_fidelity() {
         let plan = fresh_plan();
-        let child = RuntimeAgentChildIdentity {
-            source_coordinate: "fresh-child-source".to_owned(),
-            runtime_agent_id: "fresh-runtime-child".to_owned(),
-        };
+        let child = RuntimeThreadId::new("fresh-runtime-thread").expect("runtime thread");
         let mut evidence = applied_context(&plan);
         evidence.fidelity = CompiledContextDeliveryFidelity::CanonicalRendered;
         evidence.contribution_fidelity[0].fidelity =
@@ -1795,7 +1826,7 @@ mod tests {
             verify_companion_activation(
                 &plan,
                 &CompanionRuntimePreparationEvidence::FreshCreate {
-                    child: child.clone(),
+                    child_runtime_thread_id: child.clone(),
                     context: Some(evidence.clone()),
                 }
             ),
@@ -1815,7 +1846,7 @@ mod tests {
             verify_companion_activation(
                 &allow_but_require_typed,
                 &CompanionRuntimePreparationEvidence::FreshCreate {
-                    child,
+                    child_runtime_thread_id: child,
                     context: Some(evidence),
                 }
             ),
@@ -1837,10 +1868,8 @@ mod tests {
             verify_companion_activation(
                 &plan,
                 &CompanionRuntimePreparationEvidence::FreshCreate {
-                    child: RuntimeAgentChildIdentity {
-                        source_coordinate: "fresh-child-source".to_owned(),
-                        runtime_agent_id: "fresh-runtime-child".to_owned(),
-                    },
+                    child_runtime_thread_id: RuntimeThreadId::new("fresh-runtime-thread")
+                        .expect("runtime thread"),
                     context: Some(evidence),
                 }
             ),
@@ -1940,30 +1969,30 @@ mod tests {
         async fn execute(
             &self,
             saga: &AgentRunForkSaga,
-            _identity: &AgentRunForkOperationIdentity,
+            identity: &AgentRunForkOperationIdentity,
         ) -> Result<RuntimeOperationOutcome, String> {
-            let child = (saga.phase() != AgentRunForkSagaPhase::Requested).then(|| {
-                saga.runtime_child()
-                    .cloned()
-                    .unwrap_or(RuntimeAgentChildIdentity {
-                        source_coordinate: "exact-child-source".to_owned(),
-                        runtime_agent_id: "exact-runtime-child".to_owned(),
-                    })
-            });
-            Ok(RuntimeOperationOutcome::Applied(RuntimeForkPhaseEvidence {
-                child,
-                host_binding: matches!(
-                    saga.phase(),
-                    AgentRunForkSagaPhase::AgentForkApplied
-                        | AgentRunForkSagaPhase::RuntimeProvisioned
-                        | AgentRunForkSagaPhase::ProductGraphCommitted
-                )
-                .then(|| "exact-host-binding".to_owned()),
-                child_history_digest: (saga.phase() != AgentRunForkSagaPhase::Requested)
-                    .then(|| "sha256:exact-child-history".to_owned()),
-                context: None,
-                receipt: format!("complete-agent-{:?}", saga.phase()),
-            }))
+            let receipt = AcceptedRuntimeOperation {
+                operation_id: identity.runtime_operation_id.clone(),
+                accepted_revision: agentdash_agent_runtime_contract::RuntimeProjectionRevision(1),
+            };
+            let evidence = match identity.operation {
+                AgentRunForkRuntimeOperation::Fork => RuntimeForkPhaseEvidence::ForkProvisioned {
+                    child_thread_id: saga.child().runtime_thread_id.clone(),
+                    child_history_digest:
+                        agentdash_agent_runtime_contract::RuntimePayloadDigest::new(
+                            "sha256:exact-child-history",
+                        )
+                        .expect("history digest"),
+                    context: None,
+                    receipt,
+                },
+                AgentRunForkRuntimeOperation::Activate => RuntimeForkPhaseEvidence::Activated {
+                    child_thread_id: saga.child().runtime_thread_id.clone(),
+                    context: None,
+                    receipt,
+                },
+            };
+            Ok(RuntimeOperationOutcome::Applied(evidence))
         }
 
         async fn inspect(
@@ -2032,7 +2061,7 @@ mod tests {
             parent: AgentRunForkParent {
                 run_id: Uuid::new_v4(),
                 agent_id: Uuid::new_v4(),
-                source_coordinate: "parent".to_owned(),
+                runtime_thread_id: RuntimeThreadId::new("parent").expect("parent thread"),
                 through_turn_id: "turn-9".to_owned(),
             },
             child: PreallocatedAgentRunChild {
@@ -2040,7 +2069,7 @@ mod tests {
                 run_id: Uuid::new_v4(),
                 agent_id: Uuid::new_v4(),
                 frame_id: Uuid::new_v4(),
-                presentation_thread_id: "full-child-thread".to_owned(),
+                runtime_thread_id: RuntimeThreadId::new("full-child-thread").expect("child thread"),
             },
         };
         let fork_repository = RecordingAgentRunForkSagaRepository::default();
@@ -2075,9 +2104,11 @@ mod tests {
             .expect("saga");
         assert_eq!(succeeded.phase(), AgentRunForkSagaPhase::Succeeded);
         assert_eq!(
-            succeeded.child_history_digest(),
+            succeeded
+                .child_history_digest()
+                .map(agentdash_agent_runtime_contract::RuntimePayloadDigest::as_str),
             Some("sha256:exact-child-history")
         );
-        assert!(succeeded.receipts().agent_fork.is_some());
+        assert!(succeeded.receipts().runtime_provisioning.is_some());
     }
 }

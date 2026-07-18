@@ -12,6 +12,11 @@ use agentdash_agent_service_api::AgentEffectIdentity;
 use async_trait::async_trait;
 use thiserror::Error;
 
+use crate::{
+    CompleteAgentRuntimeIdentityMap, NormalizedAgentPlatformChange, NormalizedAgentProjection,
+    validate_complete_agent_source_facts,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagedRuntimePendingCommandState {
     Pending,
@@ -36,6 +41,7 @@ pub struct ManagedRuntimePendingCommand {
 pub struct ManagedRuntimeOperationRecord {
     pub receipt: ManagedRuntimeOperationReceipt,
     pub command: ManagedRuntimeCommandEnvelope,
+    pub operation: ManagedRuntimeOperation,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +54,9 @@ pub struct ManagedRuntimeOutboxEntry {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ManagedRuntimeFacts {
     pub projection: Option<ManagedRuntimeSnapshot>,
+    pub source_projection: Option<NormalizedAgentProjection>,
+    pub source_identities: Option<CompleteAgentRuntimeIdentityMap>,
+    pub source_changes: Vec<NormalizedAgentPlatformChange>,
     pub operations: BTreeMap<RuntimeOperationId, ManagedRuntimeOperationRecord>,
     pub idempotency: BTreeMap<RuntimeIdempotencyKey, RuntimeOperationId>,
     pub pending_commands: BTreeMap<RuntimeOperationId, ManagedRuntimePendingCommand>,
@@ -128,10 +137,13 @@ pub fn validate_managed_runtime_facts(
     candidate: &ManagedRuntimeFacts,
 ) -> Result<(), ManagedRuntimeStateStoreError> {
     validate_projection(candidate)?;
+    validate_complete_agent_source_facts(current, candidate)?;
     for (operation_id, operation) in &candidate.operations {
         if operation_id != &operation.receipt.operation_id
             || operation_id != &operation.command.operation_id
+            || operation_id != &operation.operation.id
             || operation.receipt.thread_id != operation.command.thread_id
+            || operation.receipt.status != operation.operation.status
         {
             return invariant("operation identity or thread coordinates are inconsistent");
         }
@@ -164,14 +176,18 @@ pub fn validate_managed_runtime_facts(
         {
             return invariant("pending command identity, effect, state, or claim is invalid");
         }
-        if !candidate.operations.contains_key(operation_id) {
+        let Some(operation) = candidate.operations.get(operation_id) else {
             return invariant("pending command references an unknown operation");
+        };
+        if pending.command != operation.command {
+            return invariant("pending command does not match its authoritative operation command");
         }
     }
 
     if candidate.outbox.len() != candidate.changes.len() {
         return invariant("every Runtime change must have exactly one outbox entry");
     }
+    let mut last_changed_operations = BTreeMap::new();
     for (entry, change) in candidate.outbox.iter().zip(&candidate.changes) {
         if entry.sequence.0 == 0
             || entry.sequence != entry.change.sequence
@@ -183,10 +199,33 @@ pub fn validate_managed_runtime_facts(
         {
             return invariant("Runtime outbox sequence or operation coordinates are invalid");
         }
-        if let ManagedRuntimeChangeDelta::OperationUpserted { operation } = &entry.change.delta
-            && entry.operation_id.as_ref() != Some(&operation.id)
-        {
-            return invariant("operation change outbox has mismatched operation identity");
+        if let ManagedRuntimeChangeDelta::OperationUpserted { operation } = &entry.change.delta {
+            if entry.operation_id.as_ref() != Some(&operation.id)
+                || candidate
+                    .operations
+                    .get(&operation.id)
+                    .is_none_or(|record| {
+                        record.operation.turn_id != operation.turn_id
+                            || !operation_status_can_advance(
+                                operation.status,
+                                record.operation.status,
+                            )
+                    })
+            {
+                return invariant("operation change outbox does not match operation authority");
+            }
+            if let Some(previous) =
+                last_changed_operations.insert(operation.id.clone(), operation.clone())
+                && (previous.turn_id != operation.turn_id
+                    || !operation_status_can_advance(previous.status, operation.status))
+            {
+                return invariant("operation change history moved backwards or changed payload");
+            }
+        }
+    }
+    for (operation_id, record) in &candidate.operations {
+        if last_changed_operations.get(operation_id) != Some(&record.operation) {
+            return invariant("operation authority has no exact latest typed Runtime change");
         }
     }
 
@@ -201,7 +240,10 @@ pub fn validate_managed_runtime_facts(
             || operation.receipt.thread_id != next.receipt.thread_id
             || operation.receipt.accepted_revision != next.receipt.accepted_revision
             || operation.receipt.duplicate != next.receipt.duplicate
+            || operation.operation.id != next.operation.id
+            || operation.operation.turn_id != next.operation.turn_id
             || !operation_status_can_advance(operation.receipt.status, next.receipt.status)
+            || !operation_status_can_advance(operation.operation.status, next.operation.status)
         {
             return invariant("operation command, receipt, or status was rewritten");
         }
@@ -250,6 +292,9 @@ pub fn validate_managed_runtime_facts(
 fn validate_projection(facts: &ManagedRuntimeFacts) -> Result<(), ManagedRuntimeStateStoreError> {
     let Some(projection) = &facts.projection else {
         if facts.operations.is_empty()
+            && facts.source_projection.is_none()
+            && facts.source_identities.is_none()
+            && facts.source_changes.is_empty()
             && facts.idempotency.is_empty()
             && facts.pending_commands.is_empty()
             && facts.changes.is_empty()
@@ -270,29 +315,42 @@ fn validate_projection(facts: &ManagedRuntimeFacts) -> Result<(), ManagedRuntime
             return invariant("Runtime availability evidence does not match projection revision");
         }
     }
-    if projection.operations.len() != facts.operations.len()
-        || projection.operations.iter().any(|operation| {
-            facts.operations.get(&operation.id).is_none_or(|record| {
-                record.receipt.thread_id != projection.thread_id
-                    || record.receipt.status != operation.status
-            })
+    let mut projected_operations = BTreeMap::new();
+    for operation in &projection.operations {
+        if projected_operations
+            .insert(operation.id.clone(), operation)
+            .is_some()
+        {
+            return invariant("Runtime projection contains a duplicate operation identity");
+        }
+    }
+    if projected_operations.len() != facts.operations.len()
+        || facts.operations.iter().any(|(operation_id, record)| {
+            record.receipt.thread_id != projection.thread_id
+                || projected_operations.get(operation_id).copied() != Some(&record.operation)
         })
     {
         return invariant("Runtime projection operation state does not match operation authority");
     }
     let mut previous_sequence = None;
+    let mut previous_revision = None;
     for change in &facts.changes {
         if change.thread_id != projection.thread_id
             || change.sequence.0 == 0
             || previous_sequence.is_some_and(|previous| change.sequence.0 != previous + 1)
+            || previous_revision.is_some_and(|previous| change.revision.0 < previous)
             || change.revision.0 > projection.revision.0
         {
             return invariant("Runtime change coordinates are invalid");
         }
         previous_sequence = Some(change.sequence.0);
+        previous_revision = Some(change.revision.0);
     }
     if previous_sequence.unwrap_or_default() != projection.latest_change_sequence.0 {
         return invariant("Runtime projection head does not match change history");
+    }
+    if previous_revision.is_some_and(|revision| revision != projection.revision.0) {
+        return invariant("latest Runtime change revision does not match projection revision");
     }
     Ok(())
 }
@@ -439,6 +497,11 @@ where
             status: ManagedRuntimeOperationStatus::Accepted,
             duplicate: false,
         };
+        let operation = ManagedRuntimeOperation {
+            id: receipt.operation_id.clone(),
+            turn_id: None,
+            status: receipt.status,
+        };
         let mut facts = snapshot.facts;
         facts.idempotency.insert(
             command.idempotency_key.clone(),
@@ -449,6 +512,7 @@ where
             ManagedRuntimeOperationRecord {
                 receipt: receipt.clone(),
                 command: command.clone(),
+                operation: operation.clone(),
             },
         );
         facts.pending_commands.insert(
@@ -462,11 +526,6 @@ where
                 claim_epoch: 0,
             },
         );
-        let operation = ManagedRuntimeOperation {
-            id: receipt.operation_id.clone(),
-            turn_id: None,
-            status: receipt.status,
-        };
         let projection = facts
             .projection
             .as_mut()
@@ -624,6 +683,68 @@ mod tests {
         }
     }
 
+    fn operation_facts() -> ManagedRuntimeFacts {
+        let command = command();
+        let receipt = ManagedRuntimeOperationReceipt {
+            operation_id: command.operation_id.clone(),
+            thread_id: command.thread_id.clone(),
+            accepted_revision: RuntimeProjectionRevision(7),
+            status: ManagedRuntimeOperationStatus::Accepted,
+            duplicate: false,
+        };
+        let operation = ManagedRuntimeOperation {
+            id: command.operation_id.clone(),
+            turn_id: None,
+            status: receipt.status,
+        };
+        let change = ManagedRuntimePlatformChange {
+            thread_id: command.thread_id.clone(),
+            sequence: RuntimeChangeSequence(1),
+            revision: RuntimeProjectionRevision(7),
+            delta: ManagedRuntimeChangeDelta::OperationUpserted {
+                operation: operation.clone(),
+            },
+        };
+        ManagedRuntimeFacts {
+            projection: Some({
+                let mut projection = projection();
+                projection.operations.push(operation.clone());
+                projection.latest_change_sequence = RuntimeChangeSequence(1);
+                projection
+            }),
+            operations: BTreeMap::from([(
+                command.operation_id.clone(),
+                ManagedRuntimeOperationRecord {
+                    receipt,
+                    command: command.clone(),
+                    operation,
+                },
+            )]),
+            idempotency: BTreeMap::from([(
+                command.idempotency_key.clone(),
+                command.operation_id.clone(),
+            )]),
+            pending_commands: BTreeMap::from([(
+                command.operation_id.clone(),
+                ManagedRuntimePendingCommand {
+                    operation_id: command.operation_id.clone(),
+                    effect_id: AgentEffectIdentity::new("effect").expect("effect"),
+                    command: command.clone(),
+                    state: ManagedRuntimePendingCommandState::Pending,
+                    claim_owner: None,
+                    claim_epoch: 0,
+                },
+            )]),
+            changes: vec![change.clone()],
+            outbox: vec![ManagedRuntimeOutboxEntry {
+                sequence: RuntimeChangeSequence(1),
+                operation_id: Some(command.operation_id),
+                change,
+            }],
+            ..ManagedRuntimeFacts::default()
+        }
+    }
+
     #[tokio::test]
     async fn command_acceptance_atomically_writes_operation_pending_intent_and_outbox() {
         let repository = Arc::new(FixtureRepository::default());
@@ -691,63 +812,7 @@ mod tests {
 
     #[test]
     fn facts_reject_removed_idempotency_pending_or_outbox_history() {
-        let command = command();
-        let receipt = ManagedRuntimeOperationReceipt {
-            operation_id: command.operation_id.clone(),
-            thread_id: command.thread_id.clone(),
-            accepted_revision: RuntimeProjectionRevision(7),
-            status: ManagedRuntimeOperationStatus::Accepted,
-            duplicate: false,
-        };
-        let operation = ManagedRuntimeOperation {
-            id: command.operation_id.clone(),
-            turn_id: None,
-            status: receipt.status,
-        };
-        let change = ManagedRuntimePlatformChange {
-            thread_id: command.thread_id.clone(),
-            sequence: RuntimeChangeSequence(1),
-            revision: RuntimeProjectionRevision(7),
-            delta: ManagedRuntimeChangeDelta::OperationUpserted {
-                operation: operation.clone(),
-            },
-        };
-        let current = ManagedRuntimeFacts {
-            projection: Some({
-                let mut projection = projection();
-                projection.operations.push(operation);
-                projection.latest_change_sequence = RuntimeChangeSequence(1);
-                projection
-            }),
-            operations: BTreeMap::from([(
-                command.operation_id.clone(),
-                ManagedRuntimeOperationRecord {
-                    receipt,
-                    command: command.clone(),
-                },
-            )]),
-            idempotency: BTreeMap::from([(
-                command.idempotency_key.clone(),
-                command.operation_id.clone(),
-            )]),
-            pending_commands: BTreeMap::from([(
-                command.operation_id.clone(),
-                ManagedRuntimePendingCommand {
-                    operation_id: command.operation_id.clone(),
-                    effect_id: AgentEffectIdentity::new("effect").expect("effect"),
-                    command: command.clone(),
-                    state: ManagedRuntimePendingCommandState::Pending,
-                    claim_owner: None,
-                    claim_epoch: 0,
-                },
-            )]),
-            changes: vec![change.clone()],
-            outbox: vec![ManagedRuntimeOutboxEntry {
-                sequence: RuntimeChangeSequence(1),
-                operation_id: Some(command.operation_id.clone()),
-                change,
-            }],
-        };
+        let current = operation_facts();
         let mut removed = current.clone();
         removed.idempotency.clear();
         assert!(validate_managed_runtime_facts(&current, &removed).is_err());
@@ -757,5 +822,107 @@ mod tests {
         let mut removed = current.clone();
         removed.outbox.clear();
         assert!(validate_managed_runtime_facts(&current, &removed).is_err());
+    }
+
+    #[test]
+    fn facts_reject_pending_command_rebinding() {
+        let current = operation_facts();
+        let operation_id = command().operation_id;
+
+        let mut changed_thread = current.clone();
+        changed_thread
+            .pending_commands
+            .get_mut(&operation_id)
+            .expect("pending")
+            .command
+            .thread_id = RuntimeThreadId::new("other-thread").expect("thread");
+        assert!(validate_managed_runtime_facts(&current, &changed_thread).is_err());
+
+        let mut changed_command = current.clone();
+        changed_command
+            .pending_commands
+            .get_mut(&operation_id)
+            .expect("pending")
+            .command
+            .command = ManagedRuntimeCommand::Close;
+        assert!(validate_managed_runtime_facts(&current, &changed_command).is_err());
+    }
+
+    #[test]
+    fn facts_reject_duplicate_omitted_extra_or_tampered_projected_operations() {
+        let current = operation_facts();
+        let operation = current.projection.as_ref().expect("projection").operations[0].clone();
+
+        let mut duplicate = current.clone();
+        duplicate
+            .projection
+            .as_mut()
+            .expect("projection")
+            .operations
+            .push(operation.clone());
+        assert!(validate_managed_runtime_facts(&current, &duplicate).is_err());
+
+        let mut omitted = current.clone();
+        omitted
+            .projection
+            .as_mut()
+            .expect("projection")
+            .operations
+            .clear();
+        assert!(validate_managed_runtime_facts(&current, &omitted).is_err());
+
+        let mut extra = current.clone();
+        extra
+            .projection
+            .as_mut()
+            .expect("projection")
+            .operations
+            .push(ManagedRuntimeOperation {
+                id: RuntimeOperationId::new("extra").expect("operation"),
+                turn_id: None,
+                status: ManagedRuntimeOperationStatus::Accepted,
+            });
+        assert!(validate_managed_runtime_facts(&current, &extra).is_err());
+
+        let mut tampered = current.clone();
+        tampered.projection.as_mut().expect("projection").operations[0].status =
+            ManagedRuntimeOperationStatus::Running;
+        assert!(validate_managed_runtime_facts(&current, &tampered).is_err());
+    }
+
+    #[test]
+    fn facts_accept_exact_monotonic_operation_transition() {
+        let current = operation_facts();
+        let operation_id = command().operation_id;
+        let mut candidate = current.clone();
+        let record = candidate
+            .operations
+            .get_mut(&operation_id)
+            .expect("operation");
+        record.receipt.status = ManagedRuntimeOperationStatus::Running;
+        record.operation.status = ManagedRuntimeOperationStatus::Running;
+        let projection = candidate.projection.as_mut().expect("projection");
+        projection.revision = RuntimeProjectionRevision(8);
+        projection.operations[0].status = ManagedRuntimeOperationStatus::Running;
+        for availability in projection.command_availability.values_mut() {
+            availability.evidence_mut().decided_at_revision = RuntimeProjectionRevision(8);
+        }
+        projection.latest_change_sequence = RuntimeChangeSequence(2);
+        let change = ManagedRuntimePlatformChange {
+            thread_id: projection.thread_id.clone(),
+            sequence: RuntimeChangeSequence(2),
+            revision: RuntimeProjectionRevision(8),
+            delta: ManagedRuntimeChangeDelta::OperationUpserted {
+                operation: record.operation.clone(),
+            },
+        };
+        candidate.changes.push(change.clone());
+        candidate.outbox.push(ManagedRuntimeOutboxEntry {
+            sequence: change.sequence,
+            operation_id: Some(operation_id),
+            change,
+        });
+
+        validate_managed_runtime_facts(&current, &candidate).expect("exact monotonic transition");
     }
 }

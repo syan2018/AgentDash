@@ -22,8 +22,12 @@ use agentdash_agent_service_api::{
     AgentSourceRevision, AgentTurnId, AgentTurnSnapshot, AppliedAgentSurface,
     AppliedInitialContextEvidence, CompleteAgentService,
 };
-use async_trait::async_trait;
 use thiserror::Error;
+
+use crate::{
+    ManagedRuntimeFacts, ManagedRuntimeOutboxEntry, ManagedRuntimeStateCommit,
+    ManagedRuntimeStateRepository, ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NormalizedAgentTurn {
@@ -86,50 +90,18 @@ pub struct NormalizedAgentChangePage {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct NormalizedAgentProjectionCommit {
-    pub expected_platform_revision: Option<u64>,
+pub struct PreparedCompleteAgentObservation {
     pub projection: NormalizedAgentProjection,
     pub changes: Vec<NormalizedAgentPlatformChangePayload>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum CompleteAgentStateStoreError {
-    #[error(
-        "normalized Agent projection revision conflict for {coordinate}: expected {expected:?}, actual {actual:?}"
-    )]
-    Conflict {
-        coordinate: AgentSourceCoordinate,
-        expected: Option<u64>,
-        actual: Option<u64>,
-    },
-    #[error("normalized Agent state persistence failed: {reason}")]
-    Persistence { reason: String },
-}
-
-#[async_trait]
-pub trait CompleteAgentStateRepository: Send + Sync {
-    async fn load_projection(
-        &self,
-        source: &AgentSourceCoordinate,
-    ) -> Result<Option<NormalizedAgentProjection>, CompleteAgentStateStoreError>;
-
-    async fn commit_projection(
-        &self,
-        commit: NormalizedAgentProjectionCommit,
-    ) -> Result<NormalizedAgentProjection, CompleteAgentStateStoreError>;
-
-    async fn platform_changes(
-        &self,
-        source: &AgentSourceCoordinate,
-        after_sequence: u64,
-        limit: usize,
-    ) -> Result<NormalizedAgentChangePage, CompleteAgentStateStoreError>;
+    pub captured_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CompleteAgentStateError {
     #[error(transparent)]
-    Store(#[from] CompleteAgentStateStoreError),
+    Store(#[from] ManagedRuntimeStateStoreError),
+    #[error(transparent)]
+    Projection(#[from] CompleteAgentRuntimeProjectionError),
     #[error(transparent)]
     Service(#[from] AgentServiceError),
     #[error("Agent snapshot/change source does not match the requested source")]
@@ -167,14 +139,28 @@ pub struct CompleteAgentSourceSyncOutcome {
 
 pub struct CompleteAgentStateReconciler<R> {
     repository: Arc<R>,
+    identities: CompleteAgentRuntimeIdentityMap,
+    initial_command_availability:
+        BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability>,
 }
 
 impl<R> CompleteAgentStateReconciler<R>
 where
-    R: CompleteAgentStateRepository,
+    R: ManagedRuntimeStateRepository,
 {
-    pub fn new(repository: Arc<R>) -> Self {
-        Self { repository }
+    pub fn new(
+        repository: Arc<R>,
+        identities: CompleteAgentRuntimeIdentityMap,
+        initial_command_availability: BTreeMap<
+            ManagedRuntimeCommandKind,
+            ManagedRuntimeCommandAvailability,
+        >,
+    ) -> Self {
+        Self {
+            repository,
+            identities,
+            initial_command_availability,
+        }
     }
 
     pub async fn reconcile_snapshot(
@@ -182,34 +168,27 @@ where
         snapshot: AgentSnapshot,
         source_cursor: Option<AgentSourceCursor>,
     ) -> Result<CompleteAgentReconcileOutcome, CompleteAgentStateError> {
-        let existing = self.repository.load_projection(&snapshot.source).await?;
-        let next_platform_revision = existing
-            .as_ref()
-            .map_or(1, |projection| projection.platform_revision + 1);
-        let normalized = normalize_snapshot(snapshot, source_cursor, next_platform_revision)?;
-
-        if let Some(existing) = &existing {
-            ensure_snapshot_can_replace(existing, &normalized)?;
-            if same_projection_facts(existing, &normalized) {
-                return Ok(CompleteAgentReconcileOutcome::Unchanged(existing.clone()));
-            }
+        if snapshot.source != *self.identities.source() {
+            return Err(CompleteAgentStateError::SourceMismatch);
         }
-
-        let committed = self
-            .repository
-            .commit_projection(NormalizedAgentProjectionCommit {
-                expected_platform_revision: existing
-                    .as_ref()
-                    .map(|projection| projection.platform_revision),
-                changes: vec![NormalizedAgentPlatformChangePayload::SnapshotReplaced {
-                    snapshot_revision: normalized.snapshot_revision,
-                    authority: normalized.source_info.authority,
-                    fidelity: normalized.source_info.fidelity,
-                }],
-                projection: normalized,
-            })
-            .await?;
-        Ok(CompleteAgentReconcileOutcome::Committed(committed))
+        let state = self.repository.load(self.identities.thread_id()).await?;
+        self.validate_stored_identities(&state.facts)?;
+        let next_revision = next_runtime_revision(&state)?;
+        let prepared = prepare_snapshot_observation(
+            state.facts.source_projection.as_ref(),
+            snapshot,
+            source_cursor,
+            next_revision.0,
+        )?;
+        let Some(prepared) = prepared else {
+            return Ok(CompleteAgentReconcileOutcome::Unchanged(
+                state
+                    .facts
+                    .source_projection
+                    .expect("unchanged snapshot requires an existing source projection"),
+            ));
+        };
+        self.commit_observation(state, prepared).await
     }
 
     pub async fn reconcile_change_page(
@@ -217,60 +196,25 @@ where
         query: &AgentChangesQuery,
         page: AgentChangePage,
     ) -> Result<CompleteAgentReconcileOutcome, CompleteAgentStateError> {
-        if query.source != page.source {
-            return Err(CompleteAgentStateError::SourceMismatch);
-        }
-        if page.gap
-            || page.changes.iter().any(|change| {
-                matches!(
-                    &change.payload,
-                    AgentChangePayload::SnapshotInvalidated { .. }
-                )
-            })
-        {
-            return Ok(CompleteAgentReconcileOutcome::SnapshotReloadRequired);
-        }
-        if query.limit == 0 || page.changes.len() > query.limit as usize {
-            return Err(CompleteAgentStateError::InvalidChangePage);
-        }
-
-        let Some(mut projection) = self.repository.load_projection(&query.source).await? else {
-            return Ok(CompleteAgentReconcileOutcome::SnapshotReloadRequired);
-        };
-        if projection.source_cursor != query.after {
-            return Err(CompleteAgentStateError::CursorMismatch);
-        }
-        validate_page_cursors(query, &page)?;
-        if page.changes.is_empty() && projection.source_cursor == page.next {
-            return Ok(CompleteAgentReconcileOutcome::Unchanged(projection));
-        }
-
-        let expected_platform_revision = projection.platform_revision;
-        let next_platform_revision = expected_platform_revision + 1;
-        let mut changes = Vec::with_capacity(page.changes.len());
-        for change in page.changes {
-            apply_source_change(&mut projection, &change.payload)?;
-            if let Some(source_revision) = &change.source_revision {
-                projection.source_info.source_revision = Some(source_revision.clone());
+        let state = self.repository.load(self.identities.thread_id()).await?;
+        self.validate_stored_identities(&state.facts)?;
+        let next_revision = next_runtime_revision(&state)?;
+        match prepare_change_observation(
+            state.facts.source_projection.as_ref(),
+            query,
+            page,
+            next_revision.0,
+        )? {
+            PreparedChangeObservation::SnapshotReloadRequired => {
+                Ok(CompleteAgentReconcileOutcome::SnapshotReloadRequired)
             }
-            changes.push(NormalizedAgentPlatformChangePayload::SourceChangeApplied {
-                source_cursor: change.cursor,
-                source_revision: change.source_revision,
-                payload: Box::new(change.payload),
-            });
+            PreparedChangeObservation::Unchanged(projection) => {
+                Ok(CompleteAgentReconcileOutcome::Unchanged(projection))
+            }
+            PreparedChangeObservation::Commit(prepared) => {
+                self.commit_observation(state, prepared).await
+            }
         }
-        projection.platform_revision = next_platform_revision;
-        projection.source_cursor = page.next;
-
-        let committed = self
-            .repository
-            .commit_projection(NormalizedAgentProjectionCommit {
-                expected_platform_revision: Some(expected_platform_revision),
-                projection,
-                changes,
-            })
-            .await?;
-        Ok(CompleteAgentReconcileOutcome::Committed(committed))
     }
 
     /// Synchronizes one source without replaying source history into a Runtime journal.
@@ -283,11 +227,22 @@ where
         source: AgentSourceCoordinate,
         limit: u32,
     ) -> Result<CompleteAgentSourceSyncOutcome, CompleteAgentStateError> {
+        if source != *self.identities.source() {
+            return Err(CompleteAgentStateError::SourceMismatch);
+        }
         let descriptor = service.describe().await?;
+        let current = self.repository.load(self.identities.thread_id()).await?;
+        self.validate_stored_identities(&current.facts)?;
         if matches!(
             descriptor.profile.source_changes,
             AgentSourceChangeLevel::SnapshotOnly | AgentSourceChangeLevel::ObservationOnly
-        ) {
+        ) || current
+            .facts
+            .source_projection
+            .as_ref()
+            .and_then(|projection| projection.source_cursor.as_ref())
+            .is_none()
+        {
             let snapshot = service
                 .read(AgentReadQuery {
                     source: source.clone(),
@@ -305,72 +260,290 @@ where
             });
         }
 
-        let current = self.repository.load_projection(&source).await?;
-        let query = AgentChangesQuery {
-            source: source.clone(),
-            after: current
-                .as_ref()
-                .and_then(|projection| projection.source_cursor.clone()),
-            limit,
-        };
-        let page = service.changes(query.clone()).await?;
-        if page.source != source {
-            return Err(CompleteAgentStateError::SourceMismatch);
+        if limit == 0 {
+            return Err(CompleteAgentStateError::InvalidChangePage);
         }
-        let page_cursor = page.next.clone();
-        let must_reload = current.is_none()
-            || page.gap
-            || page.changes.iter().any(|change| {
-                matches!(
-                    &change.payload,
-                    AgentChangePayload::SnapshotInvalidated { .. }
-                )
-            });
-        if must_reload {
-            let snapshot = service
-                .read(AgentReadQuery {
-                    source: source.clone(),
-                    at_revision: None,
-                })
-                .await?;
-            if snapshot.source != source {
+        loop {
+            let state = self.repository.load(self.identities.thread_id()).await?;
+            let current_projection = state
+                .facts
+                .source_projection
+                .ok_or(CompleteAgentStateError::CursorMismatch)?;
+            let query = AgentChangesQuery {
+                source: source.clone(),
+                after: current_projection.source_cursor,
+                limit,
+            };
+            let page = service.changes(query.clone()).await?;
+            if page.source != source {
                 return Err(CompleteAgentStateError::SourceMismatch);
             }
-            let outcome = self.reconcile_snapshot(snapshot, page_cursor).await?;
-            return Ok(CompleteAgentSourceSyncOutcome {
-                projection: outcome_projection(outcome)
-                    .expect("snapshot reconciliation always returns a projection"),
-                reloaded_snapshot: true,
-            });
-        }
-
-        match self.reconcile_change_page(&query, page).await? {
-            CompleteAgentReconcileOutcome::Unchanged(projection)
-            | CompleteAgentReconcileOutcome::Committed(projection) => {
-                Ok(CompleteAgentSourceSyncOutcome {
-                    projection,
-                    reloaded_snapshot: false,
-                })
-            }
-            CompleteAgentReconcileOutcome::SnapshotReloadRequired => {
-                let snapshot = service
-                    .read(AgentReadQuery {
-                        source: source.clone(),
-                        at_revision: None,
-                    })
-                    .await?;
-                if snapshot.source != source {
-                    return Err(CompleteAgentStateError::SourceMismatch);
+            let page_is_full = page.changes.len() == limit as usize;
+            match self.reconcile_change_page(&query, page).await? {
+                CompleteAgentReconcileOutcome::Unchanged(projection) => {
+                    return Ok(CompleteAgentSourceSyncOutcome {
+                        projection,
+                        reloaded_snapshot: false,
+                    });
                 }
-                let outcome = self.reconcile_snapshot(snapshot, page_cursor).await?;
-                Ok(CompleteAgentSourceSyncOutcome {
-                    projection: outcome_projection(outcome)
-                        .expect("snapshot reconciliation always returns a projection"),
-                    reloaded_snapshot: true,
-                })
+                CompleteAgentReconcileOutcome::Committed(projection) if !page_is_full => {
+                    return Ok(CompleteAgentSourceSyncOutcome {
+                        projection,
+                        reloaded_snapshot: false,
+                    });
+                }
+                CompleteAgentReconcileOutcome::Committed(_) => {}
+                CompleteAgentReconcileOutcome::SnapshotReloadRequired => {
+                    let snapshot = service
+                        .read(AgentReadQuery {
+                            source: source.clone(),
+                            at_revision: None,
+                        })
+                        .await?;
+                    if snapshot.source != source {
+                        return Err(CompleteAgentStateError::SourceMismatch);
+                    }
+                    let outcome = self.reconcile_snapshot(snapshot, None).await?;
+                    return Ok(CompleteAgentSourceSyncOutcome {
+                        projection: outcome_projection(outcome)
+                            .expect("snapshot reconciliation always returns a projection"),
+                        reloaded_snapshot: true,
+                    });
+                }
             }
         }
     }
+
+    fn validate_stored_identities(
+        &self,
+        facts: &ManagedRuntimeFacts,
+    ) -> Result<(), CompleteAgentStateError> {
+        if let Some(stored) = &facts.source_identities {
+            self.identities.validate_extension_of(stored)?;
+        }
+        Ok(())
+    }
+
+    async fn commit_observation(
+        &self,
+        state: ManagedRuntimeStateSnapshot,
+        prepared: PreparedCompleteAgentObservation,
+    ) -> Result<CompleteAgentReconcileOutcome, CompleteAgentStateError> {
+        let mut facts = state.facts;
+        let next_revision = RuntimeProjectionRevision(prepared.projection.platform_revision);
+        let mut availability = facts.projection.as_ref().map_or_else(
+            || self.initial_command_availability.clone(),
+            |projection| projection.command_availability.clone(),
+        );
+        for value in availability.values_mut() {
+            value.evidence_mut().decided_at_revision = next_revision;
+        }
+        let operations = facts
+            .operations
+            .values()
+            .map(|record| record.operation.clone())
+            .collect::<Vec<_>>();
+        let current_sequence = facts
+            .projection
+            .as_ref()
+            .map_or(RuntimeChangeSequence(0), |projection| {
+                projection.latest_change_sequence
+            });
+        let mut managed_projection = project_managed_runtime_snapshot(
+            &prepared.projection,
+            &self.identities,
+            CompleteAgentRuntimeProjectionInput {
+                thread_id: self.identities.thread_id().clone(),
+                projection_revision: next_revision,
+                latest_change_sequence: current_sequence,
+                captured_at_ms: prepared.captured_at_ms,
+                operations,
+                command_availability: availability.clone(),
+            },
+        )?;
+
+        let source_base_sequence = facts
+            .source_changes
+            .last()
+            .map_or(0, |change| change.sequence);
+        for (offset, payload) in prepared.changes.iter().cloned().enumerate() {
+            let sequence = source_base_sequence
+                .checked_add(u64::try_from(offset).map_err(|_| {
+                    ManagedRuntimeStateStoreError::Invariant {
+                        reason: "source change offset exceeds u64".to_owned(),
+                    }
+                })?)
+                .and_then(|value| value.checked_add(1))
+                .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                    reason: "source change sequence is exhausted".to_owned(),
+                })?;
+            facts.source_changes.push(NormalizedAgentPlatformChange {
+                sequence,
+                platform_revision: prepared.projection.platform_revision,
+                payload,
+            });
+        }
+
+        let mut deltas = prepared
+            .changes
+            .iter()
+            .map(|change| project_normalized_change_delta(change, &self.identities))
+            .collect::<Result<Vec<_>, _>>()?;
+        for command in ManagedRuntimeCommandKind::ALL {
+            deltas.push(ManagedRuntimeChangeDelta::CommandAvailabilityChanged {
+                command,
+                availability: availability
+                    .get(&command)
+                    .expect("availability completeness is validated by Runtime facts")
+                    .clone(),
+            });
+        }
+        let mut next_sequence = current_sequence.0;
+        for delta in deltas {
+            next_sequence = next_sequence.checked_add(1).ok_or_else(|| {
+                ManagedRuntimeStateStoreError::Invariant {
+                    reason: "Runtime change sequence is exhausted".to_owned(),
+                }
+            })?;
+            let change = ManagedRuntimePlatformChange {
+                thread_id: self.identities.thread_id().clone(),
+                sequence: RuntimeChangeSequence(next_sequence),
+                revision: next_revision,
+                delta,
+            };
+            facts.changes.push(change.clone());
+            facts.outbox.push(ManagedRuntimeOutboxEntry {
+                sequence: change.sequence,
+                operation_id: None,
+                change,
+            });
+        }
+        managed_projection.latest_change_sequence = RuntimeChangeSequence(next_sequence);
+        facts.projection = Some(managed_projection);
+        facts.source_projection = Some(prepared.projection.clone());
+        facts.source_identities = Some(self.identities.clone());
+
+        self.repository
+            .commit(ManagedRuntimeStateCommit {
+                thread_id: self.identities.thread_id().clone(),
+                expected_revision: state.revision,
+                facts,
+            })
+            .await?;
+        Ok(CompleteAgentReconcileOutcome::Committed(
+            prepared.projection,
+        ))
+    }
+}
+
+enum PreparedChangeObservation {
+    Unchanged(NormalizedAgentProjection),
+    Commit(PreparedCompleteAgentObservation),
+    SnapshotReloadRequired,
+}
+
+fn next_runtime_revision(
+    state: &ManagedRuntimeStateSnapshot,
+) -> Result<RuntimeProjectionRevision, ManagedRuntimeStateStoreError> {
+    let current = state
+        .facts
+        .projection
+        .as_ref()
+        .map_or(0, |projection| projection.revision.0);
+    current
+        .checked_add(1)
+        .map(RuntimeProjectionRevision)
+        .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+            reason: "Runtime projection revision is exhausted".to_owned(),
+        })
+}
+
+fn prepare_snapshot_observation(
+    existing: Option<&NormalizedAgentProjection>,
+    snapshot: AgentSnapshot,
+    source_cursor: Option<AgentSourceCursor>,
+    platform_revision: u64,
+) -> Result<Option<PreparedCompleteAgentObservation>, CompleteAgentStateError> {
+    let captured_at_ms = snapshot.source_info.observed_at_ms;
+    let normalized = normalize_snapshot(snapshot, source_cursor, platform_revision)?;
+    if let Some(existing) = existing {
+        ensure_snapshot_can_replace(existing, &normalized)?;
+        if same_projection_facts(existing, &normalized) {
+            return Ok(None);
+        }
+    }
+    Ok(Some(PreparedCompleteAgentObservation {
+        changes: vec![NormalizedAgentPlatformChangePayload::SnapshotReplaced {
+            snapshot_revision: normalized.snapshot_revision,
+            authority: normalized.source_info.authority,
+            fidelity: normalized.source_info.fidelity,
+        }],
+        projection: normalized,
+        captured_at_ms,
+    }))
+}
+
+fn prepare_change_observation(
+    existing: Option<&NormalizedAgentProjection>,
+    query: &AgentChangesQuery,
+    page: AgentChangePage,
+    platform_revision: u64,
+) -> Result<PreparedChangeObservation, CompleteAgentStateError> {
+    if query.source != page.source {
+        return Err(CompleteAgentStateError::SourceMismatch);
+    }
+    if page.gap
+        || page.changes.iter().any(|change| {
+            matches!(
+                &change.payload,
+                AgentChangePayload::SnapshotInvalidated { .. }
+            )
+        })
+    {
+        return Ok(PreparedChangeObservation::SnapshotReloadRequired);
+    }
+    if query.limit == 0 || page.changes.len() > query.limit as usize {
+        return Err(CompleteAgentStateError::InvalidChangePage);
+    }
+    let Some(existing) = existing else {
+        return Ok(PreparedChangeObservation::SnapshotReloadRequired);
+    };
+    if existing.source != query.source {
+        return Err(CompleteAgentStateError::SourceMismatch);
+    }
+    if existing.source_cursor != query.after {
+        return Err(CompleteAgentStateError::CursorMismatch);
+    }
+    validate_page_cursors(query, &page)?;
+    if page.changes.is_empty() && existing.source_cursor == page.next {
+        return Ok(PreparedChangeObservation::Unchanged(existing.clone()));
+    }
+
+    let mut projection = existing.clone();
+    let mut captured_at_ms = projection.source_info.observed_at_ms;
+    let mut changes = Vec::with_capacity(page.changes.len());
+    for change in page.changes {
+        apply_source_change(&mut projection, &change.payload)?;
+        if let Some(source_revision) = &change.source_revision {
+            projection.source_info.source_revision = Some(source_revision.clone());
+        }
+        captured_at_ms = captured_at_ms.max(change.occurred_at_ms);
+        changes.push(NormalizedAgentPlatformChangePayload::SourceChangeApplied {
+            source_cursor: change.cursor,
+            source_revision: change.source_revision,
+            payload: Box::new(change.payload),
+        });
+    }
+    projection.platform_revision = platform_revision;
+    projection.source_cursor = page.next;
+    projection.source_info.observed_at_ms = captured_at_ms;
+    Ok(PreparedChangeObservation::Commit(
+        PreparedCompleteAgentObservation {
+            projection,
+            changes,
+            captured_at_ms,
+        },
+    ))
 }
 
 fn outcome_projection(outcome: CompleteAgentReconcileOutcome) -> Option<NormalizedAgentProjection> {
@@ -679,6 +852,43 @@ impl CompleteAgentRuntimeIdentityMap {
         &self.thread_id
     }
 
+    pub(crate) fn validate_extension_of(
+        &self,
+        current: &Self,
+    ) -> Result<(), CompleteAgentRuntimeProjectionError> {
+        if self.source != current.source {
+            return Err(CompleteAgentRuntimeProjectionError::SourceMismatch);
+        }
+        if self.thread_id != current.thread_id {
+            return Err(CompleteAgentRuntimeProjectionError::ThreadMismatch);
+        }
+        if current
+            .turns
+            .iter()
+            .any(|(source, runtime)| self.turns.get(source) != Some(runtime))
+            || current
+                .items
+                .iter()
+                .any(|(source, runtime)| self.items.get(source) != Some(runtime))
+            || current
+                .interactions
+                .iter()
+                .any(|(source, runtime)| self.interactions.get(source) != Some(runtime))
+            || current
+                .surface_revisions
+                .iter()
+                .any(|(source, runtime)| self.surface_revisions.get(source) != Some(runtime))
+        {
+            return Err(CompleteAgentRuntimeProjectionError::IdentityDrift {
+                kind: "source mapping",
+                source_identity: self.source.to_string(),
+                expected_runtime_identity: current.thread_id.to_string(),
+                received_runtime_identity: self.thread_id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn bind_turn(
         &mut self,
         source_turn_id: AgentTurnId,
@@ -891,6 +1101,133 @@ impl CompleteAgentRuntimeIdentityMap {
     }
 }
 
+pub(crate) fn validate_complete_agent_source_facts(
+    current: &ManagedRuntimeFacts,
+    candidate: &ManagedRuntimeFacts,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    let source_facts_present = candidate.source_projection.is_some()
+        || candidate.source_identities.is_some()
+        || !candidate.source_changes.is_empty();
+    if !source_facts_present {
+        if current.source_projection.is_some()
+            || current.source_identities.is_some()
+            || !current.source_changes.is_empty()
+        {
+            return Err(ManagedRuntimeStateStoreError::Invariant {
+                reason: "Complete Agent source facts cannot be removed".to_owned(),
+            });
+        }
+        return Ok(());
+    }
+    let source = candidate.source_projection.as_ref().ok_or_else(|| {
+        ManagedRuntimeStateStoreError::Invariant {
+            reason: "Complete Agent source changes require a normalized projection".to_owned(),
+        }
+    })?;
+    let identities = candidate.source_identities.as_ref().ok_or_else(|| {
+        ManagedRuntimeStateStoreError::Invariant {
+            reason: "Complete Agent source projection requires Runtime identities".to_owned(),
+        }
+    })?;
+    let managed =
+        candidate
+            .projection
+            .as_ref()
+            .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                reason: "Complete Agent source projection requires a Managed Runtime projection"
+                    .to_owned(),
+            })?;
+    if source.source != *identities.source()
+        || managed.thread_id != *identities.thread_id()
+        || source.platform_revision > managed.revision.0
+    {
+        return Err(ManagedRuntimeStateStoreError::Invariant {
+            reason: "Complete Agent source and Managed Runtime coordinates are inconsistent"
+                .to_owned(),
+        });
+    }
+    if let Some(current_identities) = &current.source_identities {
+        identities
+            .validate_extension_of(current_identities)
+            .map_err(|error| ManagedRuntimeStateStoreError::Invariant {
+                reason: error.to_string(),
+            })?;
+    }
+    if let Some(current_source) = &current.source_projection {
+        if source.source != current_source.source
+            || source.snapshot_revision.0 < current_source.snapshot_revision.0
+            || authority_rank(source.source_info.authority)
+                < authority_rank(current_source.source_info.authority)
+            || !source
+                .source_info
+                .fidelity
+                .satisfies(current_source.source_info.fidelity)
+            || source.platform_revision < current_source.platform_revision
+        {
+            return Err(ManagedRuntimeStateStoreError::Invariant {
+                reason: "Complete Agent source authority, fidelity, or revision moved backwards"
+                    .to_owned(),
+            });
+        }
+    }
+    if !candidate
+        .source_changes
+        .starts_with(&current.source_changes)
+    {
+        return Err(ManagedRuntimeStateStoreError::Invariant {
+            reason: "Complete Agent source change history is append-only".to_owned(),
+        });
+    }
+    let mut previous_sequence = None;
+    let mut previous_revision = None;
+    for change in &candidate.source_changes {
+        if change.sequence == 0
+            || previous_sequence.is_some_and(|previous| change.sequence != previous + 1)
+            || previous_revision.is_some_and(|previous| change.platform_revision < previous)
+            || change.platform_revision > source.platform_revision
+        {
+            return Err(ManagedRuntimeStateStoreError::Invariant {
+                reason: "Complete Agent source change coordinates are invalid".to_owned(),
+            });
+        }
+        previous_sequence = Some(change.sequence);
+        previous_revision = Some(change.platform_revision);
+    }
+    if previous_revision.is_some_and(|revision| revision != source.platform_revision) {
+        return Err(ManagedRuntimeStateStoreError::Invariant {
+            reason: "Complete Agent source projection has no matching latest change".to_owned(),
+        });
+    }
+
+    let expected = project_managed_runtime_snapshot(
+        source,
+        identities,
+        CompleteAgentRuntimeProjectionInput {
+            thread_id: managed.thread_id.clone(),
+            projection_revision: managed.revision,
+            latest_change_sequence: managed.latest_change_sequence,
+            captured_at_ms: managed.captured_at_ms,
+            operations: candidate
+                .operations
+                .values()
+                .map(|record| record.operation.clone())
+                .collect(),
+            command_availability: managed.command_availability.clone(),
+        },
+    )
+    .map_err(|error| ManagedRuntimeStateStoreError::Invariant {
+        reason: error.to_string(),
+    })?;
+    if &expected != managed {
+        return Err(ManagedRuntimeStateStoreError::Invariant {
+            reason:
+                "Managed Runtime projection does not exactly project source and operation facts"
+                    .to_owned(),
+        });
+    }
+    Ok(())
+}
+
 fn bind_identity<S, R>(
     kind: &'static str,
     source: &S,
@@ -1082,7 +1419,7 @@ fn validate_projection_boundary(
     if input.thread_id != identities.thread_id {
         return Err(CompleteAgentRuntimeProjectionError::ThreadMismatch);
     }
-    if input.projection_revision.0 != projection.platform_revision {
+    if input.projection_revision.0 < projection.platform_revision {
         return Err(CompleteAgentRuntimeProjectionError::RevisionMismatch {
             source_revision: projection.platform_revision,
             runtime_revision: input.projection_revision.0,
@@ -1120,25 +1457,32 @@ fn project_platform_change(
     change: &NormalizedAgentPlatformChange,
     identities: &CompleteAgentRuntimeIdentityMap,
 ) -> Result<ManagedRuntimePlatformChange, CompleteAgentRuntimeProjectionError> {
-    let delta = match &change.payload {
-        NormalizedAgentPlatformChangePayload::SnapshotReplaced {
-            authority,
-            fidelity,
-            ..
-        } => ManagedRuntimeChangeDelta::SnapshotReplaced {
-            authority: project_authority(*authority),
-            fidelity: project_fidelity(*fidelity),
-        },
-        NormalizedAgentPlatformChangePayload::SourceChangeApplied { payload, .. } => {
-            project_source_delta(payload, identities)?
-        }
-    };
+    let delta = project_normalized_change_delta(&change.payload, identities)?;
     Ok(ManagedRuntimePlatformChange {
         thread_id: identities.thread_id.clone(),
         sequence: RuntimeChangeSequence(change.sequence),
         revision: RuntimeProjectionRevision(change.platform_revision),
         delta,
     })
+}
+
+fn project_normalized_change_delta(
+    change: &NormalizedAgentPlatformChangePayload,
+    identities: &CompleteAgentRuntimeIdentityMap,
+) -> Result<ManagedRuntimeChangeDelta, CompleteAgentRuntimeProjectionError> {
+    match change {
+        NormalizedAgentPlatformChangePayload::SnapshotReplaced {
+            authority,
+            fidelity,
+            ..
+        } => Ok(ManagedRuntimeChangeDelta::SnapshotReplaced {
+            authority: project_authority(*authority),
+            fidelity: project_fidelity(*fidelity),
+        }),
+        NormalizedAgentPlatformChangePayload::SourceChangeApplied { payload, .. } => {
+            project_source_delta(payload, identities)
+        }
+    }
 }
 
 fn project_source_delta(
@@ -1431,7 +1775,10 @@ fn project_fidelity(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        collections::VecDeque,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use agentdash_agent_runtime_contract::ManagedRuntimeAvailabilityEvidence;
     use agentdash_agent_service_api::{
@@ -1444,113 +1791,80 @@ mod tests {
         ForkAgentReceipt, InitialContextAppliedEvidence, InitialContextProfile, ResumeAgentCommand,
         RevokeBoundAgentSurface, SemanticFidelity,
     };
+    use async_trait::async_trait;
     use tokio::sync::Mutex;
 
     use super::*;
 
     #[derive(Default)]
-    struct FixtureCompleteAgentState {
-        projections: BTreeMap<AgentSourceCoordinate, NormalizedAgentProjection>,
-        changes: BTreeMap<AgentSourceCoordinate, Vec<NormalizedAgentPlatformChange>>,
-    }
-
-    #[derive(Default)]
     struct FixtureCompleteAgentStateRepository {
-        state: Mutex<FixtureCompleteAgentState>,
+        states: Mutex<BTreeMap<RuntimeThreadId, ManagedRuntimeStateSnapshot>>,
+        fail_next_commit: AtomicUsize,
     }
 
     #[async_trait]
-    impl CompleteAgentStateRepository for FixtureCompleteAgentStateRepository {
-        async fn load_projection(
+    impl ManagedRuntimeStateRepository for FixtureCompleteAgentStateRepository {
+        async fn load(
             &self,
-            source: &AgentSourceCoordinate,
-        ) -> Result<Option<NormalizedAgentProjection>, CompleteAgentStateStoreError> {
-            Ok(self.state.lock().await.projections.get(source).cloned())
-        }
-
-        async fn commit_projection(
-            &self,
-            commit: NormalizedAgentProjectionCommit,
-        ) -> Result<NormalizedAgentProjection, CompleteAgentStateStoreError> {
-            let mut state = self.state.lock().await;
-            let source = commit.projection.source.clone();
-            let actual = state
-                .projections
-                .get(&source)
-                .map(|projection| projection.platform_revision);
-            if actual != commit.expected_platform_revision {
-                return Err(CompleteAgentStateStoreError::Conflict {
-                    coordinate: source,
-                    expected: commit.expected_platform_revision,
-                    actual,
-                });
-            }
-            let stream = state.changes.entry(source.clone()).or_default();
-            let base_sequence = stream.last().map_or(0, |change| change.sequence);
-            for (offset, payload) in commit.changes.into_iter().enumerate() {
-                let offset = u64::try_from(offset).map_err(|_| {
-                    CompleteAgentStateStoreError::Persistence {
-                        reason: "platform change sequence offset exceeds u64".to_owned(),
-                    }
-                })?;
-                let sequence = base_sequence
-                    .checked_add(offset)
-                    .and_then(|value| value.checked_add(1))
-                    .ok_or_else(|| CompleteAgentStateStoreError::Persistence {
-                        reason: "platform change sequence is exhausted".to_owned(),
-                    })?;
-                stream.push(NormalizedAgentPlatformChange {
-                    sequence,
-                    platform_revision: commit.projection.platform_revision,
-                    payload,
-                });
-            }
-            state.projections.insert(source, commit.projection.clone());
-            Ok(commit.projection)
-        }
-
-        async fn platform_changes(
-            &self,
-            source: &AgentSourceCoordinate,
-            after_sequence: u64,
-            limit: usize,
-        ) -> Result<NormalizedAgentChangePage, CompleteAgentStateStoreError> {
-            let state = self.state.lock().await;
-            let changes = state
-                .changes
-                .get(source)
-                .into_iter()
-                .flatten()
-                .filter(|change| change.sequence > after_sequence)
-                .take(limit)
+            thread_id: &RuntimeThreadId,
+        ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+            Ok(self
+                .states
+                .lock()
+                .await
+                .get(thread_id)
                 .cloned()
-                .collect::<Vec<_>>();
-            let next_sequence = changes
-                .last()
-                .map_or(after_sequence, |change| change.sequence);
-            Ok(NormalizedAgentChangePage {
-                source: source.clone(),
-                requested_after_sequence: after_sequence,
-                earliest_available_sequence: state
-                    .changes
-                    .get(source)
-                    .and_then(|changes| changes.first())
-                    .map(|change| change.sequence),
-                latest_available_sequence: state
-                    .changes
-                    .get(source)
-                    .and_then(|changes| changes.last())
-                    .map(|change| change.sequence),
-                changes,
-                next_sequence,
-            })
+                .unwrap_or_default())
         }
+
+        async fn commit(
+            &self,
+            commit: ManagedRuntimeStateCommit,
+        ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+            if self.fail_next_commit.swap(0, Ordering::SeqCst) != 0 {
+                return Err(ManagedRuntimeStateStoreError::Persistence {
+                    reason: "injected before atomic commit".to_owned(),
+                });
+            }
+            let mut states = self.states.lock().await;
+            let state = states.entry(commit.thread_id.clone()).or_default();
+            crate::apply_managed_runtime_state_commit(state, commit)
+        }
+    }
+
+    fn fixture_reconciler(
+        repository: Arc<FixtureCompleteAgentStateRepository>,
+    ) -> CompleteAgentStateReconciler<FixtureCompleteAgentStateRepository> {
+        CompleteAgentStateReconciler::new(
+            repository,
+            identity_map(),
+            projection_input(1, RuntimeChangeSequence(0)).command_availability,
+        )
+    }
+
+    async fn fixture_state(
+        repository: &FixtureCompleteAgentStateRepository,
+    ) -> ManagedRuntimeStateSnapshot {
+        repository
+            .load(identity_map().thread_id())
+            .await
+            .expect("load Runtime state")
+    }
+
+    async fn fixture_source_projection(
+        repository: &FixtureCompleteAgentStateRepository,
+    ) -> NormalizedAgentProjection {
+        fixture_state(repository)
+            .await
+            .facts
+            .source_projection
+            .expect("source projection")
     }
 
     #[tokio::test]
     async fn snapshot_is_normalized_and_reconnects_from_platform_changes() {
         let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-        let reconciler = CompleteAgentStateReconciler::new(repository.clone());
+        let reconciler = fixture_reconciler(repository.clone());
         let source = source();
         reconciler
             .reconcile_snapshot(
@@ -1584,26 +1898,165 @@ mod tests {
             .await
             .expect("changes");
 
-        let projection = repository
-            .load_projection(&source)
-            .await
-            .expect("load")
-            .expect("projection");
+        let projection = fixture_source_projection(&repository).await;
         assert_eq!(projection.lifecycle, AgentLifecycleStatus::Closed);
         assert_eq!(projection.turns.len(), 1);
         assert_eq!(projection.items.len(), 1);
-        let reconnect = repository
-            .platform_changes(&source, 0, 10)
+        let reconnect = fixture_state(&repository).await;
+        assert_eq!(reconnect.facts.source_changes.len(), 2);
+        assert_eq!(
+            reconnect
+                .facts
+                .source_changes
+                .last()
+                .expect("change")
+                .sequence,
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn source_observation_commit_failure_leaves_no_normalized_or_platform_gap() {
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        repository.fail_next_commit.store(1, Ordering::SeqCst);
+        let reconciler = fixture_reconciler(repository.clone());
+
+        assert!(matches!(
+            reconciler
+                .reconcile_snapshot(
+                    snapshot(1, AgentSnapshotAuthority::AgentAuthoritative),
+                    None,
+                )
+                .await,
+            Err(CompleteAgentStateError::Store(
+                ManagedRuntimeStateStoreError::Persistence { .. }
+            ))
+        ));
+        assert_eq!(
+            fixture_state(&repository).await,
+            ManagedRuntimeStateSnapshot::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_source_candidate_cannot_commit_without_its_platform_change() {
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let reconciler = fixture_reconciler(repository.clone());
+        let base = fixture_state(&repository).await;
+        let first = prepare_snapshot_observation(
+            None,
+            snapshot(1, AgentSnapshotAuthority::AgentObserved),
+            None,
+            1,
+        )
+        .expect("prepare first")
+        .expect("first candidate");
+        let stale = prepare_snapshot_observation(
+            None,
+            snapshot(2, AgentSnapshotAuthority::AgentAuthoritative),
+            None,
+            1,
+        )
+        .expect("prepare stale")
+        .expect("stale candidate");
+
+        reconciler
+            .commit_observation(base.clone(), first)
             .await
-            .expect("platform changes");
-        assert_eq!(reconnect.changes.len(), 2);
-        assert_eq!(reconnect.next_sequence, 2);
+            .expect("commit first");
+        assert!(matches!(
+            reconciler.commit_observation(base, stale).await,
+            Err(CompleteAgentStateError::Store(
+                ManagedRuntimeStateStoreError::Conflict
+            ))
+        ));
+
+        let committed = fixture_state(&repository).await;
+        assert_eq!(
+            committed
+                .facts
+                .source_projection
+                .as_ref()
+                .expect("source")
+                .snapshot_revision,
+            AgentSnapshotRevision(1)
+        );
+        assert_eq!(committed.facts.changes.len(), committed.facts.outbox.len());
+        assert_eq!(
+            committed
+                .facts
+                .projection
+                .as_ref()
+                .expect("managed")
+                .latest_change_sequence
+                .0 as usize,
+            committed.facts.changes.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn restarted_reconciler_continues_from_one_atomic_source_and_runtime_state() {
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        fixture_reconciler(repository.clone())
+            .reconcile_snapshot(
+                snapshot(1, AgentSnapshotAuthority::AgentObserved),
+                Some(cursor("cursor-0")),
+            )
+            .await
+            .expect("initial snapshot");
+        let restarted = fixture_reconciler(repository.clone());
+        restarted
+            .reconcile_change_page(
+                &AgentChangesQuery {
+                    source: source(),
+                    after: Some(cursor("cursor-0")),
+                    limit: 10,
+                },
+                AgentChangePage {
+                    source: source(),
+                    changes: vec![agentdash_agent_service_api::AgentChange {
+                        cursor: cursor("cursor-1"),
+                        source_revision: Some(
+                            AgentSourceRevision::new("source-rev-2").expect("revision"),
+                        ),
+                        occurred_at_ms: 20,
+                        payload: AgentChangePayload::LifecycleChanged {
+                            status: AgentLifecycleStatus::Closed,
+                        },
+                    }],
+                    next: Some(cursor("cursor-1")),
+                    gap: false,
+                },
+            )
+            .await
+            .expect("reconcile after restart");
+
+        let committed = fixture_state(&repository).await;
+        assert_eq!(
+            committed
+                .facts
+                .source_projection
+                .as_ref()
+                .expect("source")
+                .lifecycle,
+            AgentLifecycleStatus::Closed
+        );
+        assert_eq!(
+            committed
+                .facts
+                .projection
+                .as_ref()
+                .expect("managed")
+                .lifecycle,
+            ManagedRuntimeLifecycleStatus::Closed
+        );
+        assert_eq!(committed.facts.changes.len(), committed.facts.outbox.len());
     }
 
     #[tokio::test]
     async fn managed_snapshot_uses_explicit_runtime_ids_and_committed_availability() {
         let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-        let reconciler = CompleteAgentStateReconciler::new(repository.clone());
+        let reconciler = fixture_reconciler(repository.clone());
         reconciler
             .reconcile_snapshot(
                 snapshot(1, AgentSnapshotAuthority::AgentAuthoritative),
@@ -1611,11 +2064,7 @@ mod tests {
             )
             .await
             .expect("snapshot");
-        let projection = repository
-            .load_projection(&source())
-            .await
-            .expect("load")
-            .expect("projection");
+        let projection = fixture_source_projection(&repository).await;
         let mut identities = identity_map();
         let snapshot = project_managed_runtime_snapshot(
             &projection,
@@ -1652,7 +2101,7 @@ mod tests {
     #[tokio::test]
     async fn missing_or_drifting_identity_is_rejected() {
         let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-        let reconciler = CompleteAgentStateReconciler::new(repository.clone());
+        let reconciler = fixture_reconciler(repository.clone());
         reconciler
             .reconcile_snapshot(
                 snapshot(1, AgentSnapshotAuthority::AgentAuthoritative),
@@ -1660,11 +2109,7 @@ mod tests {
             )
             .await
             .expect("snapshot");
-        let projection = repository
-            .load_projection(&source())
-            .await
-            .expect("load")
-            .expect("projection");
+        let projection = fixture_source_projection(&repository).await;
         let mut identities = CompleteAgentRuntimeIdentityMap::new(
             source(),
             RuntimeThreadId::new("runtime-thread-7").expect("runtime thread"),
@@ -1696,7 +2141,7 @@ mod tests {
     #[tokio::test]
     async fn availability_must_be_complete_and_committed_at_snapshot_revision() {
         let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-        let reconciler = CompleteAgentStateReconciler::new(repository.clone());
+        let reconciler = fixture_reconciler(repository.clone());
         reconciler
             .reconcile_snapshot(
                 snapshot(1, AgentSnapshotAuthority::AgentAuthoritative),
@@ -1704,11 +2149,7 @@ mod tests {
             )
             .await
             .expect("snapshot");
-        let projection = repository
-            .load_projection(&source())
-            .await
-            .expect("load")
-            .expect("projection");
+        let projection = fixture_source_projection(&repository).await;
         let mut input = projection_input(1, RuntimeChangeSequence(1));
         input.command_availability.insert(
             ManagedRuntimeCommandKind::SubmitInput,
@@ -1779,7 +2220,7 @@ mod tests {
     #[tokio::test]
     async fn active_turn_change_is_applied_as_an_explicit_source_fact() {
         let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-        let reconciler = CompleteAgentStateReconciler::new(repository.clone());
+        let reconciler = fixture_reconciler(repository.clone());
         let source = source();
         reconciler
             .reconcile_snapshot(
@@ -1827,11 +2268,7 @@ mod tests {
             .await
             .expect("changes");
 
-        let projection = repository
-            .load_projection(&source)
-            .await
-            .expect("load")
-            .expect("projection");
+        let projection = fixture_source_projection(&repository).await;
         assert_eq!(projection.active_turn_id, None);
         assert_eq!(
             projection
@@ -1846,7 +2283,7 @@ mod tests {
     #[tokio::test]
     async fn weaker_snapshot_authority_cannot_replace_authoritative_projection() {
         let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-        let reconciler = CompleteAgentStateReconciler::new(repository);
+        let reconciler = fixture_reconciler(repository);
         reconciler
             .reconcile_snapshot(
                 snapshot(1, AgentSnapshotAuthority::AgentAuthoritative),
@@ -1865,9 +2302,12 @@ mod tests {
     #[tokio::test]
     async fn stronger_authority_can_confirm_the_same_snapshot_revision() {
         let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-        let reconciler = CompleteAgentStateReconciler::new(repository);
+        let reconciler = fixture_reconciler(repository);
         reconciler
-            .reconcile_snapshot(snapshot(1, AgentSnapshotAuthority::AgentObserved), None)
+            .reconcile_snapshot(
+                snapshot(1, AgentSnapshotAuthority::AgentObserved),
+                Some(cursor("cursor-known")),
+            )
             .await
             .expect("observed");
 
@@ -1888,7 +2328,7 @@ mod tests {
     #[tokio::test]
     async fn cursor_gap_requires_snapshot_reload_without_partial_change_apply() {
         let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-        let reconciler = CompleteAgentStateReconciler::new(repository.clone());
+        let reconciler = fixture_reconciler(repository.clone());
         let source = source();
         reconciler
             .reconcile_snapshot(snapshot(1, AgentSnapshotAuthority::AgentObserved), None)
@@ -1916,11 +2356,8 @@ mod tests {
             CompleteAgentReconcileOutcome::SnapshotReloadRequired
         );
         assert_eq!(
-            repository
-                .load_projection(&source)
+            fixture_source_projection(&repository)
                 .await
-                .expect("load")
-                .expect("projection")
                 .platform_revision,
             1
         );
@@ -1929,15 +2366,19 @@ mod tests {
     #[tokio::test]
     async fn source_sync_reloads_snapshot_at_gap_cursor() {
         let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-        let reconciler = CompleteAgentStateReconciler::new(repository.clone());
+        let reconciler = fixture_reconciler(repository.clone());
         reconciler
-            .reconcile_snapshot(snapshot(1, AgentSnapshotAuthority::AgentObserved), None)
+            .reconcile_snapshot(
+                snapshot(1, AgentSnapshotAuthority::AgentObserved),
+                Some(cursor("cursor-known")),
+            )
             .await
             .expect("initial snapshot");
         let service = GapService {
             reads: AtomicUsize::new(0),
             changes: AtomicUsize::new(0),
             source_changes: AgentSourceChangeLevel::OrderedDurableTail,
+            pages: Mutex::new(VecDeque::new()),
         };
 
         let outcome = reconciler
@@ -1950,10 +2391,7 @@ mod tests {
             outcome.projection.snapshot_revision,
             AgentSnapshotRevision(2)
         );
-        assert_eq!(
-            outcome.projection.source_cursor,
-            Some(cursor("cursor-head"))
-        );
+        assert_eq!(outcome.projection.source_cursor, None);
         assert_eq!(service.reads.load(Ordering::SeqCst), 1);
         assert_eq!(service.changes.load(Ordering::SeqCst), 1);
     }
@@ -1961,11 +2399,12 @@ mod tests {
     #[tokio::test]
     async fn snapshot_only_sync_never_calls_the_unsupported_changes_endpoint() {
         let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-        let reconciler = CompleteAgentStateReconciler::new(repository);
+        let reconciler = fixture_reconciler(repository);
         let service = GapService {
             reads: AtomicUsize::new(0),
             changes: AtomicUsize::new(0),
             source_changes: AgentSourceChangeLevel::SnapshotOnly,
+            pages: Mutex::new(VecDeque::new()),
         };
 
         let outcome = reconciler
@@ -1977,6 +2416,104 @@ mod tests {
         assert_eq!(outcome.projection.source_cursor, None);
         assert_eq!(service.reads.load(Ordering::SeqCst), 1);
         assert_eq!(service.changes.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn first_partial_ordered_page_is_not_used_as_snapshot_head() {
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let reconciler = fixture_reconciler(repository);
+        let service = GapService {
+            reads: AtomicUsize::new(0),
+            changes: AtomicUsize::new(0),
+            source_changes: AgentSourceChangeLevel::OrderedDurableTail,
+            pages: Mutex::new(VecDeque::from([AgentChangePage {
+                source: source(),
+                changes: vec![agentdash_agent_service_api::AgentChange {
+                    cursor: cursor("partial-1"),
+                    source_revision: None,
+                    occurred_at_ms: 10,
+                    payload: AgentChangePayload::LifecycleChanged {
+                        status: AgentLifecycleStatus::Suspended,
+                    },
+                }],
+                next: Some(cursor("partial-1")),
+                gap: false,
+            }])),
+        };
+
+        let outcome = reconciler
+            .synchronize_source(&service, source(), 1)
+            .await
+            .expect("snapshot-first synchronization");
+
+        assert!(outcome.reloaded_snapshot);
+        assert_eq!(outcome.projection.source_cursor, None);
+        assert_eq!(service.reads.load(Ordering::SeqCst), 1);
+        assert_eq!(service.changes.load(Ordering::SeqCst), 0);
+        assert_eq!(service.pages.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn trusted_ordered_cursor_drains_multiple_pages_without_replay_or_regression() {
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let reconciler = fixture_reconciler(repository);
+        reconciler
+            .reconcile_snapshot(
+                snapshot(1, AgentSnapshotAuthority::AgentObserved),
+                Some(cursor("cursor-0")),
+            )
+            .await
+            .expect("trusted snapshot cursor");
+        let service = GapService {
+            reads: AtomicUsize::new(0),
+            changes: AtomicUsize::new(0),
+            source_changes: AgentSourceChangeLevel::OrderedDurableTail,
+            pages: Mutex::new(VecDeque::from([
+                AgentChangePage {
+                    source: source(),
+                    changes: vec![agentdash_agent_service_api::AgentChange {
+                        cursor: cursor("cursor-1"),
+                        source_revision: None,
+                        occurred_at_ms: 10,
+                        payload: AgentChangePayload::LifecycleChanged {
+                            status: AgentLifecycleStatus::Suspended,
+                        },
+                    }],
+                    next: Some(cursor("cursor-1")),
+                    gap: false,
+                },
+                AgentChangePage {
+                    source: source(),
+                    changes: vec![agentdash_agent_service_api::AgentChange {
+                        cursor: cursor("cursor-2"),
+                        source_revision: None,
+                        occurred_at_ms: 11,
+                        payload: AgentChangePayload::LifecycleChanged {
+                            status: AgentLifecycleStatus::Closed,
+                        },
+                    }],
+                    next: Some(cursor("cursor-2")),
+                    gap: false,
+                },
+                AgentChangePage {
+                    source: source(),
+                    changes: Vec::new(),
+                    next: Some(cursor("cursor-2")),
+                    gap: false,
+                },
+            ])),
+        };
+
+        let outcome = reconciler
+            .synchronize_source(&service, source(), 1)
+            .await
+            .expect("drain ordered pages");
+
+        assert!(!outcome.reloaded_snapshot);
+        assert_eq!(outcome.projection.source_cursor, Some(cursor("cursor-2")));
+        assert_eq!(outcome.projection.lifecycle, AgentLifecycleStatus::Closed);
+        assert_eq!(service.reads.load(Ordering::SeqCst), 0);
+        assert_eq!(service.changes.load(Ordering::SeqCst), 3);
     }
 
     fn identity_map() -> CompleteAgentRuntimeIdentityMap {
@@ -2075,6 +2612,7 @@ mod tests {
         reads: AtomicUsize,
         changes: AtomicUsize,
         source_changes: AgentSourceChangeLevel,
+        pages: Mutex<VecDeque<AgentChangePage>>,
     }
 
     #[async_trait]
@@ -2123,6 +2661,9 @@ mod tests {
             self.changes.fetch_add(1, Ordering::SeqCst);
             if self.source_changes == AgentSourceChangeLevel::SnapshotOnly {
                 return Err(unsupported());
+            }
+            if let Some(page) = self.pages.lock().await.pop_front() {
+                return Ok(page);
             }
             Ok(AgentChangePage {
                 source: query.source,

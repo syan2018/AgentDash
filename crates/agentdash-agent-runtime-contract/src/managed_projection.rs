@@ -233,6 +233,12 @@ impl ManagedRuntimeCommandAvailability {
             Self::Available { evidence } | Self::Unavailable { evidence, .. } => evidence,
         }
     }
+
+    pub fn evidence_mut(&mut self) -> &mut ManagedRuntimeAvailabilityEvidence {
+        match self {
+            Self::Available { evidence } | Self::Unavailable { evidence, .. } => evidence,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

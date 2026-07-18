@@ -19,3 +19,4 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 agentdash-agent-runtime = { workspace = true }
+agentdash-agent-runtime-contract = { workspace = true }

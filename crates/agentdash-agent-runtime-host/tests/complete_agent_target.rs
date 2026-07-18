@@ -7,16 +7,22 @@ use std::{
 };
 
 use agentdash_agent_runtime::{
-    CompleteAgentStateReconciler, CompleteAgentStateRepository, CompleteAgentStateStoreError,
-    NormalizedAgentChangePage, NormalizedAgentPlatformChange, NormalizedAgentProjection,
-    NormalizedAgentProjectionCommit, bind_complete_agent_surface,
+    CompleteAgentRuntimeIdentityMap, CompleteAgentStateReconciler, ManagedRuntimeStateCommit,
+    ManagedRuntimeStateRepository, ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError,
+    apply_managed_runtime_state_commit, bind_complete_agent_surface,
+};
+use agentdash_agent_runtime_contract::{
+    ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
+    ManagedRuntimeCommandKind, RuntimeProjectionRevision, RuntimeThreadId, SurfaceRevision,
 };
 use agentdash_agent_runtime_host::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingState,
-    CompleteAgentCallbackBroker, CompleteAgentCallbackRoute, CompleteAgentHookHandler,
-    CompleteAgentHost, CompleteAgentHostCommit, CompleteAgentHostRepository,
-    CompleteAgentHostSnapshot, CompleteAgentHostStoreError, CompleteAgentPlacement,
-    CompleteAgentServiceRegistry, CompleteAgentToolHandler, apply_complete_agent_host_commit,
+    CompleteAgentCallbackBroker, CompleteAgentCallbackCommit, CompleteAgentCallbackRepository,
+    CompleteAgentCallbackRoute, CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError,
+    CompleteAgentHookHandler, CompleteAgentHost, CompleteAgentHostCommit,
+    CompleteAgentHostRepository, CompleteAgentHostSnapshot, CompleteAgentHostStoreError,
+    CompleteAgentPlacement, CompleteAgentServiceRegistry, CompleteAgentToolHandler,
+    apply_complete_agent_callback_commit, apply_complete_agent_host_commit,
 };
 use agentdash_agent_service_api::*;
 use async_trait::async_trait;
@@ -67,100 +73,45 @@ impl CompleteAgentServiceRegistry for FixtureServiceRegistry {
 }
 
 #[derive(Default)]
-struct FixtureCompleteAgentState {
-    projections: BTreeMap<AgentSourceCoordinate, NormalizedAgentProjection>,
-    changes: BTreeMap<AgentSourceCoordinate, Vec<NormalizedAgentPlatformChange>>,
-}
-
-#[derive(Default)]
 struct FixtureCompleteAgentStateRepository {
-    state: Mutex<FixtureCompleteAgentState>,
+    snapshot: Mutex<ManagedRuntimeStateSnapshot>,
 }
 
 #[async_trait]
-impl CompleteAgentStateRepository for FixtureCompleteAgentStateRepository {
-    async fn load_projection(
+impl ManagedRuntimeStateRepository for FixtureCompleteAgentStateRepository {
+    async fn load(
         &self,
-        source: &AgentSourceCoordinate,
-    ) -> Result<Option<NormalizedAgentProjection>, CompleteAgentStateStoreError> {
-        Ok(self.state.lock().await.projections.get(source).cloned())
+        _thread_id: &RuntimeThreadId,
+    ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+        Ok(self.snapshot.lock().await.clone())
     }
 
-    async fn commit_projection(
+    async fn commit(
         &self,
-        commit: NormalizedAgentProjectionCommit,
-    ) -> Result<NormalizedAgentProjection, CompleteAgentStateStoreError> {
-        let mut state = self.state.lock().await;
-        let source = commit.projection.source.clone();
-        let actual = state
-            .projections
-            .get(&source)
-            .map(|projection| projection.platform_revision);
-        if actual != commit.expected_platform_revision {
-            return Err(CompleteAgentStateStoreError::Conflict {
-                coordinate: source,
-                expected: commit.expected_platform_revision,
-                actual,
-            });
-        }
-        let stream = state.changes.entry(source.clone()).or_default();
-        let base_sequence = stream.last().map_or(0, |change| change.sequence);
-        for (offset, payload) in commit.changes.into_iter().enumerate() {
-            let offset =
-                u64::try_from(offset).map_err(|_| CompleteAgentStateStoreError::Persistence {
-                    reason: "platform change sequence offset exceeds u64".to_owned(),
-                })?;
-            let sequence = base_sequence
-                .checked_add(offset)
-                .and_then(|value| value.checked_add(1))
-                .ok_or_else(|| CompleteAgentStateStoreError::Persistence {
-                    reason: "platform change sequence is exhausted".to_owned(),
-                })?;
-            stream.push(NormalizedAgentPlatformChange {
-                sequence,
-                platform_revision: commit.projection.platform_revision,
-                payload,
-            });
-        }
-        state.projections.insert(source, commit.projection.clone());
-        Ok(commit.projection)
+        commit: ManagedRuntimeStateCommit,
+    ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+        let mut snapshot = self.snapshot.lock().await;
+        apply_managed_runtime_state_commit(&mut snapshot, commit)
+    }
+}
+
+#[derive(Default)]
+struct FixtureCallbackRepository {
+    snapshot: Mutex<CompleteAgentCallbackSnapshot>,
+}
+
+#[async_trait]
+impl CompleteAgentCallbackRepository for FixtureCallbackRepository {
+    async fn load(&self) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
+        Ok(self.snapshot.lock().await.clone())
     }
 
-    async fn platform_changes(
+    async fn commit(
         &self,
-        source: &AgentSourceCoordinate,
-        after_sequence: u64,
-        limit: usize,
-    ) -> Result<NormalizedAgentChangePage, CompleteAgentStateStoreError> {
-        let state = self.state.lock().await;
-        let changes = state
-            .changes
-            .get(source)
-            .into_iter()
-            .flatten()
-            .filter(|change| change.sequence > after_sequence)
-            .take(limit)
-            .cloned()
-            .collect::<Vec<_>>();
-        let next_sequence = changes
-            .last()
-            .map_or(after_sequence, |change| change.sequence);
-        Ok(NormalizedAgentChangePage {
-            source: source.clone(),
-            requested_after_sequence: after_sequence,
-            earliest_available_sequence: state
-                .changes
-                .get(source)
-                .and_then(|changes| changes.first())
-                .map(|change| change.sequence),
-            latest_available_sequence: state
-                .changes
-                .get(source)
-                .and_then(|changes| changes.last())
-                .map(|change| change.sequence),
-            changes,
-            next_sequence,
-        })
+        commit: CompleteAgentCallbackCommit,
+    ) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
+        let mut snapshot = self.snapshot.lock().await;
+        apply_complete_agent_callback_commit(&mut snapshot, commit)
     }
 }
 
@@ -271,7 +222,33 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
     ));
 
     let state_repository = Arc::new(FixtureCompleteAgentStateRepository::default());
-    let reconciler = CompleteAgentStateReconciler::new(state_repository.clone());
+    let runtime_thread_id = RuntimeThreadId::new("runtime-thread").expect("runtime thread");
+    let mut identities =
+        CompleteAgentRuntimeIdentityMap::new(source.clone(), runtime_thread_id.clone());
+    identities
+        .bind_surface_revision(AgentSurfaceRevision(1), SurfaceRevision(1))
+        .expect("surface identity");
+    let command_availability = ManagedRuntimeCommandKind::ALL
+        .into_iter()
+        .map(|command| {
+            (
+                command,
+                ManagedRuntimeCommandAvailability::Available {
+                    evidence: ManagedRuntimeAvailabilityEvidence {
+                        decided_at_revision: RuntimeProjectionRevision(1),
+                        blocking_operation_id: None,
+                        bound_surface_revision: Some(SurfaceRevision(1)),
+                        applied_surface_revision: Some(SurfaceRevision(1)),
+                    },
+                },
+            )
+        })
+        .collect();
+    let reconciler = CompleteAgentStateReconciler::new(
+        state_repository.clone(),
+        identities,
+        command_availability,
+    );
     let sync = reconciler
         .synchronize_source(service.as_ref(), source.clone(), 32)
         .await
@@ -280,17 +257,21 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
     assert_eq!(sync.projection.applied_surface, Some(applied.applied));
     assert_eq!(
         state_repository
-            .platform_changes(&source, 0, 32)
+            .load(&runtime_thread_id)
             .await
-            .expect("platform changes")
-            .changes
+            .expect("managed Runtime state")
+            .facts
+            .source_changes
             .len(),
         1
     );
 
     let tool_handler = Arc::new(CountingToolHandler::default());
-    let callback_broker =
-        CompleteAgentCallbackBroker::new(tool_handler.clone(), Arc::new(AllowHookHandler));
+    let callback_broker = CompleteAgentCallbackBroker::new(
+        tool_handler.clone(),
+        Arc::new(AllowHookHandler),
+        Arc::new(FixtureCallbackRepository::default()),
+    );
     callback_broker
         .register_route(
             CompleteAgentCallbackRoute::from_binding(callback_binding, source.clone(), bound)

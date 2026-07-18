@@ -1,8 +1,8 @@
 # W3 Platform Runtime activation input
 
 本目录冻结 Platform Runtime bundle 在 S5 原子切换中交给 W8 的输入。当前代码只建立
-target-lane contract、Host repository seam 和 recording behavior evidence，不改变
-production composition，也不新增正式 migration。
+target-lane contract、Host repository seam 和可复现的行为证据，不改变 production
+composition，也不新增正式 migration。
 
 ## Host durable authority
 
@@ -17,9 +17,12 @@ coordination facts 均从 repository 恢复。Host 本身不持有锁或内存 m
 - exact committed fact graph replay 幂等返回当前 snapshot；
 - revision 相同的不同 graph 原子提交并推进 revision；
 - stale revision 的不同 graph 返回 typed `Conflict`；
-- binding/source/generation、effect、lease 复合坐标在提交前整体校验；
+- 当前 revision 到候选 revision 的 descriptor/offer、binding/source/generation、
+  effect identity/evidence、lease token/epoch/expiry 约束在提交前整体校验；
 - effect intent 在调用 Complete Agent 前提交，receipt/inspection 在调用后以
-  delivery epoch 和 binding generation 再次 fence。
+  当前 durable binding generation 与 active lease owner/token/epoch/expiry 再次 fence；
+- revoke terminal receipt 与 binding applied surface 清理在同一 Host transaction
+  结算，重启 replay 仍须完成未结清的 binding 清理。
 
 W8 PostgreSQL adapter 与唯一 final migration 必须共同实现 `manifest.json` 冻结的表、
 约束与事务语义；不得通过 Host 内存 map、Runtime repository、兼容表或双写补造事实。
@@ -37,4 +40,5 @@ W8 PostgreSQL adapter 与唯一 final migration 必须共同实现 `manifest.jso
 
 `CompleteAgentHost` 与 `CompleteAgentStateReconciler` 必须由 production composition
 显式注入最终 PostgreSQL repositories；没有 repository 时 composition 失败，不存在
-默认内存实现或 fallback。
+默认内存实现或 fallback。状态型 repository/registry 测试实现只存在于私有测试夹具，
+production library 只公开持久化端口与纯 transaction validator。

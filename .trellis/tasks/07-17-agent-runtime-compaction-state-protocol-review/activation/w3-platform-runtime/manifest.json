@@ -35,6 +35,8 @@
       "validate binding-to-source bidirectional uniqueness and positive generation",
       "validate effect identity, payload digest, binding, source and generation",
       "validate lease owner, token, epoch, generation and database-clock expiry",
+      "fence every external receipt or inspection against the current active lease owner, token, epoch, generation and expiry",
+      "settle revoke receipt and clear binding applied surface in the same Host transaction",
       "atomically persist all changed Host facts and advance revision",
       "return exact committed replay without a second write"
     ],
@@ -47,7 +49,8 @@
       "effect identity is globally stable and fixes command, payload, binding, source and generation",
       "effect observations are monotonic and evidence is immutable",
       "lease key is binding generation; owner/token/epoch fence stale workers",
-      "lease epoch never decreases and binding Lost invalidates the active lease"
+      "lease epoch never decreases and binding Lost invalidates the active lease",
+      "terminal revoke replay completes binding cleanup before returning the stored receipt"
     ],
     "typed_errors": [
       "Conflict(expected_revision, actual_revision)",
@@ -88,7 +91,7 @@
   ],
   "negative_gates": [
     "CompleteAgentHost has no Mutex/RwLock Host fact graph",
-    "production composition has no RecordingCompleteAgentHostRepository",
+    "production libraries expose no stateful repository or service-registry test adapter",
     "Runtime projection remains owned by CompleteAgentStateRepository",
     "Runtime repository does not create Host binding or source coordinates",
     "production service registry contains only Complete Agent registrations",

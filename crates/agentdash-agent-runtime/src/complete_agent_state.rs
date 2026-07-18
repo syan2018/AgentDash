@@ -24,7 +24,6 @@ use agentdash_agent_service_api::{
 };
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NormalizedAgentTurn {
@@ -1430,110 +1429,6 @@ fn project_fidelity(
     }
 }
 
-#[derive(Default)]
-struct InMemoryCompleteAgentState {
-    projections: BTreeMap<AgentSourceCoordinate, NormalizedAgentProjection>,
-    changes: BTreeMap<AgentSourceCoordinate, Vec<NormalizedAgentPlatformChange>>,
-}
-
-#[derive(Default)]
-pub struct RecordingCompleteAgentStateRepository {
-    state: Mutex<InMemoryCompleteAgentState>,
-}
-
-impl RecordingCompleteAgentStateRepository {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[async_trait]
-impl CompleteAgentStateRepository for RecordingCompleteAgentStateRepository {
-    async fn load_projection(
-        &self,
-        source: &AgentSourceCoordinate,
-    ) -> Result<Option<NormalizedAgentProjection>, CompleteAgentStateStoreError> {
-        Ok(self.state.lock().await.projections.get(source).cloned())
-    }
-
-    async fn commit_projection(
-        &self,
-        commit: NormalizedAgentProjectionCommit,
-    ) -> Result<NormalizedAgentProjection, CompleteAgentStateStoreError> {
-        let mut state = self.state.lock().await;
-        let source = commit.projection.source.clone();
-        let actual = state
-            .projections
-            .get(&source)
-            .map(|projection| projection.platform_revision);
-        if actual != commit.expected_platform_revision {
-            return Err(CompleteAgentStateStoreError::Conflict {
-                coordinate: source,
-                expected: commit.expected_platform_revision,
-                actual,
-            });
-        }
-        let stream = state.changes.entry(source.clone()).or_default();
-        let base_sequence = stream.last().map_or(0, |change| change.sequence);
-        for (offset, payload) in commit.changes.into_iter().enumerate() {
-            let offset =
-                u64::try_from(offset).map_err(|_| CompleteAgentStateStoreError::Persistence {
-                    reason: "platform change sequence offset exceeds u64".to_owned(),
-                })?;
-            let sequence = base_sequence
-                .checked_add(offset)
-                .and_then(|value| value.checked_add(1))
-                .ok_or_else(|| CompleteAgentStateStoreError::Persistence {
-                    reason: "platform change sequence is exhausted".to_owned(),
-                })?;
-            stream.push(NormalizedAgentPlatformChange {
-                sequence,
-                platform_revision: commit.projection.platform_revision,
-                payload,
-            });
-        }
-        state.projections.insert(source, commit.projection.clone());
-        Ok(commit.projection)
-    }
-
-    async fn platform_changes(
-        &self,
-        source: &AgentSourceCoordinate,
-        after_sequence: u64,
-        limit: usize,
-    ) -> Result<NormalizedAgentChangePage, CompleteAgentStateStoreError> {
-        let state = self.state.lock().await;
-        let changes = state
-            .changes
-            .get(source)
-            .into_iter()
-            .flatten()
-            .filter(|change| change.sequence > after_sequence)
-            .take(limit)
-            .cloned()
-            .collect::<Vec<_>>();
-        let next_sequence = changes
-            .last()
-            .map_or(after_sequence, |change| change.sequence);
-        Ok(NormalizedAgentChangePage {
-            source: source.clone(),
-            requested_after_sequence: after_sequence,
-            earliest_available_sequence: state
-                .changes
-                .get(source)
-                .and_then(|changes| changes.first())
-                .map(|change| change.sequence),
-            latest_available_sequence: state
-                .changes
-                .get(source)
-                .and_then(|changes| changes.last())
-                .map(|change| change.sequence),
-            changes,
-            next_sequence,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1549,12 +1444,112 @@ mod tests {
         ForkAgentReceipt, InitialContextAppliedEvidence, InitialContextProfile, ResumeAgentCommand,
         RevokeBoundAgentSurface, SemanticFidelity,
     };
+    use tokio::sync::Mutex;
 
     use super::*;
 
+    #[derive(Default)]
+    struct FixtureCompleteAgentState {
+        projections: BTreeMap<AgentSourceCoordinate, NormalizedAgentProjection>,
+        changes: BTreeMap<AgentSourceCoordinate, Vec<NormalizedAgentPlatformChange>>,
+    }
+
+    #[derive(Default)]
+    struct FixtureCompleteAgentStateRepository {
+        state: Mutex<FixtureCompleteAgentState>,
+    }
+
+    #[async_trait]
+    impl CompleteAgentStateRepository for FixtureCompleteAgentStateRepository {
+        async fn load_projection(
+            &self,
+            source: &AgentSourceCoordinate,
+        ) -> Result<Option<NormalizedAgentProjection>, CompleteAgentStateStoreError> {
+            Ok(self.state.lock().await.projections.get(source).cloned())
+        }
+
+        async fn commit_projection(
+            &self,
+            commit: NormalizedAgentProjectionCommit,
+        ) -> Result<NormalizedAgentProjection, CompleteAgentStateStoreError> {
+            let mut state = self.state.lock().await;
+            let source = commit.projection.source.clone();
+            let actual = state
+                .projections
+                .get(&source)
+                .map(|projection| projection.platform_revision);
+            if actual != commit.expected_platform_revision {
+                return Err(CompleteAgentStateStoreError::Conflict {
+                    coordinate: source,
+                    expected: commit.expected_platform_revision,
+                    actual,
+                });
+            }
+            let stream = state.changes.entry(source.clone()).or_default();
+            let base_sequence = stream.last().map_or(0, |change| change.sequence);
+            for (offset, payload) in commit.changes.into_iter().enumerate() {
+                let offset = u64::try_from(offset).map_err(|_| {
+                    CompleteAgentStateStoreError::Persistence {
+                        reason: "platform change sequence offset exceeds u64".to_owned(),
+                    }
+                })?;
+                let sequence = base_sequence
+                    .checked_add(offset)
+                    .and_then(|value| value.checked_add(1))
+                    .ok_or_else(|| CompleteAgentStateStoreError::Persistence {
+                        reason: "platform change sequence is exhausted".to_owned(),
+                    })?;
+                stream.push(NormalizedAgentPlatformChange {
+                    sequence,
+                    platform_revision: commit.projection.platform_revision,
+                    payload,
+                });
+            }
+            state.projections.insert(source, commit.projection.clone());
+            Ok(commit.projection)
+        }
+
+        async fn platform_changes(
+            &self,
+            source: &AgentSourceCoordinate,
+            after_sequence: u64,
+            limit: usize,
+        ) -> Result<NormalizedAgentChangePage, CompleteAgentStateStoreError> {
+            let state = self.state.lock().await;
+            let changes = state
+                .changes
+                .get(source)
+                .into_iter()
+                .flatten()
+                .filter(|change| change.sequence > after_sequence)
+                .take(limit)
+                .cloned()
+                .collect::<Vec<_>>();
+            let next_sequence = changes
+                .last()
+                .map_or(after_sequence, |change| change.sequence);
+            Ok(NormalizedAgentChangePage {
+                source: source.clone(),
+                requested_after_sequence: after_sequence,
+                earliest_available_sequence: state
+                    .changes
+                    .get(source)
+                    .and_then(|changes| changes.first())
+                    .map(|change| change.sequence),
+                latest_available_sequence: state
+                    .changes
+                    .get(source)
+                    .and_then(|changes| changes.last())
+                    .map(|change| change.sequence),
+                changes,
+                next_sequence,
+            })
+        }
+    }
+
     #[tokio::test]
     async fn snapshot_is_normalized_and_reconnects_from_platform_changes() {
-        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         let source = source();
         reconciler
@@ -1607,7 +1602,7 @@ mod tests {
 
     #[tokio::test]
     async fn managed_snapshot_uses_explicit_runtime_ids_and_committed_availability() {
-        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         reconciler
             .reconcile_snapshot(
@@ -1656,7 +1651,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_or_drifting_identity_is_rejected() {
-        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         reconciler
             .reconcile_snapshot(
@@ -1700,7 +1695,7 @@ mod tests {
 
     #[tokio::test]
     async fn availability_must_be_complete_and_committed_at_snapshot_revision() {
-        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         reconciler
             .reconcile_snapshot(
@@ -1783,7 +1778,7 @@ mod tests {
 
     #[tokio::test]
     async fn active_turn_change_is_applied_as_an_explicit_source_fact() {
-        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         let source = source();
         reconciler
@@ -1850,7 +1845,7 @@ mod tests {
 
     #[tokio::test]
     async fn weaker_snapshot_authority_cannot_replace_authoritative_projection() {
-        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
         let reconciler = CompleteAgentStateReconciler::new(repository);
         reconciler
             .reconcile_snapshot(
@@ -1869,7 +1864,7 @@ mod tests {
 
     #[tokio::test]
     async fn stronger_authority_can_confirm_the_same_snapshot_revision() {
-        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
         let reconciler = CompleteAgentStateReconciler::new(repository);
         reconciler
             .reconcile_snapshot(snapshot(1, AgentSnapshotAuthority::AgentObserved), None)
@@ -1892,7 +1887,7 @@ mod tests {
 
     #[tokio::test]
     async fn cursor_gap_requires_snapshot_reload_without_partial_change_apply() {
-        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         let source = source();
         reconciler
@@ -1933,7 +1928,7 @@ mod tests {
 
     #[tokio::test]
     async fn source_sync_reloads_snapshot_at_gap_cursor() {
-        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         reconciler
             .reconcile_snapshot(snapshot(1, AgentSnapshotAuthority::AgentObserved), None)
@@ -1965,7 +1960,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_only_sync_never_calls_the_unsupported_changes_endpoint() {
-        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
         let reconciler = CompleteAgentStateReconciler::new(repository);
         let service = GapService {
             reads: AtomicUsize::new(0),

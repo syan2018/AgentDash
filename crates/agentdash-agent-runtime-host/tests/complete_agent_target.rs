@@ -7,19 +7,162 @@ use std::{
 };
 
 use agentdash_agent_runtime::{
-    CompleteAgentStateReconciler, CompleteAgentStateRepository,
-    RecordingCompleteAgentStateRepository, bind_complete_agent_surface,
+    CompleteAgentStateReconciler, CompleteAgentStateRepository, CompleteAgentStateStoreError,
+    NormalizedAgentChangePage, NormalizedAgentPlatformChange, NormalizedAgentProjection,
+    NormalizedAgentProjectionCommit, bind_complete_agent_surface,
 };
 use agentdash_agent_runtime_host::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingState,
     CompleteAgentCallbackBroker, CompleteAgentCallbackRoute, CompleteAgentHookHandler,
-    CompleteAgentHost, CompleteAgentToolHandler, RecordingCompleteAgentHostRepository,
-    RecordingCompleteAgentServiceRegistry,
+    CompleteAgentHost, CompleteAgentHostCommit, CompleteAgentHostRepository,
+    CompleteAgentHostSnapshot, CompleteAgentHostStoreError, CompleteAgentServiceRegistry,
+    CompleteAgentToolHandler, apply_complete_agent_host_commit,
 };
 use agentdash_agent_service_api::*;
 use async_trait::async_trait;
 use serde_json::json;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
+
+#[derive(Default)]
+struct FixtureHostRepository {
+    snapshot: Mutex<CompleteAgentHostSnapshot>,
+}
+
+#[async_trait]
+impl CompleteAgentHostRepository for FixtureHostRepository {
+    async fn load(&self) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+        Ok(self.snapshot.lock().await.clone())
+    }
+
+    async fn commit(
+        &self,
+        commit: CompleteAgentHostCommit,
+    ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+        let mut snapshot = self.snapshot.lock().await;
+        apply_complete_agent_host_commit(&mut snapshot, commit)
+    }
+}
+
+#[derive(Default)]
+struct FixtureServiceRegistry {
+    handles: RwLock<BTreeMap<AgentServiceInstanceId, Arc<dyn CompleteAgentService>>>,
+}
+
+#[async_trait]
+impl CompleteAgentServiceRegistry for FixtureServiceRegistry {
+    async fn attach(
+        &self,
+        instance_id: AgentServiceInstanceId,
+        service: Arc<dyn CompleteAgentService>,
+    ) {
+        self.handles.write().await.insert(instance_id, service);
+    }
+
+    async fn resolve(
+        &self,
+        instance_id: &AgentServiceInstanceId,
+    ) -> Option<Arc<dyn CompleteAgentService>> {
+        self.handles.read().await.get(instance_id).cloned()
+    }
+}
+
+#[derive(Default)]
+struct FixtureCompleteAgentState {
+    projections: BTreeMap<AgentSourceCoordinate, NormalizedAgentProjection>,
+    changes: BTreeMap<AgentSourceCoordinate, Vec<NormalizedAgentPlatformChange>>,
+}
+
+#[derive(Default)]
+struct FixtureCompleteAgentStateRepository {
+    state: Mutex<FixtureCompleteAgentState>,
+}
+
+#[async_trait]
+impl CompleteAgentStateRepository for FixtureCompleteAgentStateRepository {
+    async fn load_projection(
+        &self,
+        source: &AgentSourceCoordinate,
+    ) -> Result<Option<NormalizedAgentProjection>, CompleteAgentStateStoreError> {
+        Ok(self.state.lock().await.projections.get(source).cloned())
+    }
+
+    async fn commit_projection(
+        &self,
+        commit: NormalizedAgentProjectionCommit,
+    ) -> Result<NormalizedAgentProjection, CompleteAgentStateStoreError> {
+        let mut state = self.state.lock().await;
+        let source = commit.projection.source.clone();
+        let actual = state
+            .projections
+            .get(&source)
+            .map(|projection| projection.platform_revision);
+        if actual != commit.expected_platform_revision {
+            return Err(CompleteAgentStateStoreError::Conflict {
+                coordinate: source,
+                expected: commit.expected_platform_revision,
+                actual,
+            });
+        }
+        let stream = state.changes.entry(source.clone()).or_default();
+        let base_sequence = stream.last().map_or(0, |change| change.sequence);
+        for (offset, payload) in commit.changes.into_iter().enumerate() {
+            let offset =
+                u64::try_from(offset).map_err(|_| CompleteAgentStateStoreError::Persistence {
+                    reason: "platform change sequence offset exceeds u64".to_owned(),
+                })?;
+            let sequence = base_sequence
+                .checked_add(offset)
+                .and_then(|value| value.checked_add(1))
+                .ok_or_else(|| CompleteAgentStateStoreError::Persistence {
+                    reason: "platform change sequence is exhausted".to_owned(),
+                })?;
+            stream.push(NormalizedAgentPlatformChange {
+                sequence,
+                platform_revision: commit.projection.platform_revision,
+                payload,
+            });
+        }
+        state.projections.insert(source, commit.projection.clone());
+        Ok(commit.projection)
+    }
+
+    async fn platform_changes(
+        &self,
+        source: &AgentSourceCoordinate,
+        after_sequence: u64,
+        limit: usize,
+    ) -> Result<NormalizedAgentChangePage, CompleteAgentStateStoreError> {
+        let state = self.state.lock().await;
+        let changes = state
+            .changes
+            .get(source)
+            .into_iter()
+            .flatten()
+            .filter(|change| change.sequence > after_sequence)
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        let next_sequence = changes
+            .last()
+            .map_or(after_sequence, |change| change.sequence);
+        Ok(NormalizedAgentChangePage {
+            source: source.clone(),
+            requested_after_sequence: after_sequence,
+            earliest_available_sequence: state
+                .changes
+                .get(source)
+                .and_then(|changes| changes.first())
+                .map(|change| change.sequence),
+            latest_available_sequence: state
+                .changes
+                .get(source)
+                .and_then(|changes| changes.last())
+                .map(|change| change.sequence),
+            changes,
+            next_sequence,
+        })
+    }
+}
 
 #[tokio::test]
 async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
@@ -27,8 +170,8 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
     let service = Arc::new(FixtureService::new(source.clone()));
     let service_id = AgentServiceInstanceId::new("service-1").expect("service");
     let host = CompleteAgentHost::new(
-        Arc::new(RecordingCompleteAgentHostRepository::new()),
-        Arc::new(RecordingCompleteAgentServiceRegistry::new()),
+        Arc::new(FixtureHostRepository::default()),
+        Arc::new(FixtureServiceRegistry::default()),
     );
     let descriptor = host
         .register_service(service_id.clone(), service.clone())
@@ -121,7 +264,7 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         AgentReceiptState::AlreadyApplied { .. }
     ));
 
-    let state_repository = Arc::new(RecordingCompleteAgentStateRepository::new());
+    let state_repository = Arc::new(FixtureCompleteAgentStateRepository::default());
     let reconciler = CompleteAgentStateReconciler::new(state_repository.clone());
     let sync = reconciler
         .synchronize_source(service.as_ref(), source.clone(), 32)

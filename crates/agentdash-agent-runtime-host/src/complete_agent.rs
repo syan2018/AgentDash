@@ -90,10 +90,13 @@ pub enum CompleteAgentEffectState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompleteAgentArchivedInspection {
+pub struct CompleteAgentEffectAttemptEvidence {
     pub dispatch_attempt: u64,
     pub delivery_epoch: u64,
-    pub inspection: AgentEffectInspection,
+    pub state: CompleteAgentEffectState,
+    pub receipt: Option<AgentCommandReceipt>,
+    pub surface_receipt: Option<AppliedAgentSurfaceReceipt>,
+    pub inspection: Option<AgentEffectInspection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +114,7 @@ pub struct CompleteAgentEffectRecord {
     pub receipt: Option<AgentCommandReceipt>,
     pub surface_receipt: Option<AppliedAgentSurfaceReceipt>,
     pub inspection: Option<AgentEffectInspection>,
-    pub inspection_history: Vec<CompleteAgentArchivedInspection>,
+    pub attempt_history: Vec<CompleteAgentEffectAttemptEvidence>,
 }
 
 enum RevokeDispatchPlan {
@@ -463,7 +466,7 @@ impl CompleteAgentHost {
                 receipt: None,
                 surface_receipt: None,
                 inspection: None,
-                inspection_history: Vec::new(),
+                attempt_history: Vec::new(),
             };
             match state.effects.get(&command.meta.effect_id) {
                 Some(existing) => {
@@ -649,7 +652,7 @@ impl CompleteAgentHost {
                 receipt: None,
                 surface_receipt: None,
                 inspection: None,
-                inspection_history: Vec::new(),
+                attempt_history: Vec::new(),
             };
             match state.effects.get(&command.effect_id) {
                 Some(existing) => {
@@ -745,7 +748,7 @@ impl CompleteAgentHost {
                 receipt: None,
                 surface_receipt: None,
                 inspection: None,
-                inspection_history: Vec::new(),
+                attempt_history: Vec::new(),
             };
             match state.effects.get(&command.effect_id) {
                 Some(existing) => {
@@ -1318,23 +1321,28 @@ fn begin_effect_redispatch(
             reason: "effect redispatch requires a confirmed NotApplied observation".to_owned(),
         });
     }
-    let inspection = record
-        .inspection
-        .take()
-        .ok_or_else(|| CompleteAgentHostError::Invariant {
-            reason: "effect redispatch requires durable NotApplied inspection evidence".to_owned(),
-        })?;
+    let inspection =
+        record
+            .inspection
+            .as_ref()
+            .ok_or_else(|| CompleteAgentHostError::Invariant {
+                reason: "effect redispatch requires durable NotApplied inspection evidence"
+                    .to_owned(),
+            })?;
     if inspection_state(&inspection.state) != CompleteAgentEffectState::NotApplied {
         return Err(CompleteAgentHostError::Invariant {
             reason: "effect redispatch inspection does not prove NotApplied".to_owned(),
         });
     }
     record
-        .inspection_history
-        .push(CompleteAgentArchivedInspection {
+        .attempt_history
+        .push(CompleteAgentEffectAttemptEvidence {
             dispatch_attempt: record.dispatch_attempt,
             delivery_epoch: record.delivery_epoch,
-            inspection,
+            state: record.state,
+            receipt: record.receipt.take(),
+            surface_receipt: record.surface_receipt.take(),
+            inspection: record.inspection.take(),
         });
     record.dispatch_attempt = record.dispatch_attempt.checked_add(1).ok_or_else(|| {
         CompleteAgentHostError::Invariant {
@@ -1646,7 +1654,7 @@ mod tests {
             command_id: AgentCommandId::new("command").expect("command"),
             execute_calls: AtomicUsize::new(0),
             revoke_calls: AtomicUsize::new(0),
-            execute_receipt: None,
+            execute_outcomes: Mutex::new(VecDeque::new()),
             execute_gate: None,
             inspect_gate: None,
             inspection_states: Mutex::new(VecDeque::new()),
@@ -1711,7 +1719,7 @@ mod tests {
             command_id: command_id.clone(),
             execute_calls: AtomicUsize::new(0),
             revoke_calls: AtomicUsize::new(0),
-            execute_receipt: None,
+            execute_outcomes: Mutex::new(VecDeque::new()),
             execute_gate: None,
             inspect_gate: None,
             inspection_states: Mutex::new(VecDeque::new()),
@@ -1872,7 +1880,9 @@ mod tests {
             command_id: command_id.clone(),
             execute_calls: AtomicUsize::new(0),
             revoke_calls: AtomicUsize::new(0),
-            execute_receipt: Some(receipt),
+            execute_outcomes: Mutex::new(VecDeque::from([FixtureExecuteOutcome::Receipt(
+                Box::new(receipt),
+            )])),
             execute_gate: Some(gate.clone()),
             inspect_gate: None,
             inspection_states: Mutex::new(VecDeque::new()),
@@ -1925,7 +1935,7 @@ mod tests {
             command_id: command_id.clone(),
             execute_calls: AtomicUsize::new(0),
             revoke_calls: AtomicUsize::new(0),
-            execute_receipt: None,
+            execute_outcomes: Mutex::new(VecDeque::new()),
             execute_gate: None,
             inspect_gate: Some(gate.clone()),
             inspection_states: Mutex::new(VecDeque::new()),
@@ -2009,7 +2019,7 @@ mod tests {
             receipt: Some(receipt.clone()),
             surface_receipt: None,
             inspection: None,
-            inspection_history: Vec::new(),
+            attempt_history: Vec::new(),
         };
         let lease = seed_effect(&host, record, Some(binding)).await;
 
@@ -2040,7 +2050,7 @@ mod tests {
             command_id: command_id.clone(),
             execute_calls: AtomicUsize::new(0),
             revoke_calls: AtomicUsize::new(0),
-            execute_receipt: None,
+            execute_outcomes: Mutex::new(VecDeque::new()),
             execute_gate: None,
             inspect_gate: None,
             inspection_states: Mutex::new(VecDeque::new()),
@@ -2116,7 +2126,7 @@ mod tests {
             command_id: AgentCommandId::new("command").expect("command"),
             execute_calls: AtomicUsize::new(0),
             revoke_calls: AtomicUsize::new(0),
-            execute_receipt: None,
+            execute_outcomes: Mutex::new(VecDeque::new()),
             execute_gate: None,
             inspect_gate: None,
             inspection_states: Mutex::new(VecDeque::new()),
@@ -2350,7 +2360,7 @@ mod tests {
             receipt: None,
             surface_receipt: None,
             inspection: None,
-            inspection_history: Vec::new(),
+            attempt_history: Vec::new(),
         }
     }
 
@@ -2373,7 +2383,7 @@ mod tests {
             command_id: command_id.clone(),
             execute_calls: AtomicUsize::new(0),
             revoke_calls: AtomicUsize::new(0),
-            execute_receipt: None,
+            execute_outcomes: Mutex::new(VecDeque::new()),
             execute_gate: None,
             inspect_gate: None,
             inspection_states: Mutex::new(VecDeque::from([
@@ -2459,60 +2469,120 @@ mod tests {
         let source = AgentSourceCoordinate::new("source").expect("source");
         let command_id = AgentCommandId::new("command").expect("command");
         let effect_id = AgentEffectIdentity::new("effect").expect("effect");
-        let receipt = applied.then(|| applied_receipt(&command_id, &effect_id, &source));
+        let unknown_receipt = AgentCommandReceipt {
+            command_id: command_id.clone(),
+            effect_id: effect_id.clone(),
+            source: source.clone(),
+            state: AgentReceiptState::Unknown,
+            snapshot_revision: None,
+            initial_context: None,
+        };
+        let current_attempt_outcome = if applied {
+            FixtureExecuteOutcome::Receipt(Box::new(applied_receipt(
+                &command_id,
+                &effect_id,
+                &source,
+            )))
+        } else {
+            FixtureExecuteOutcome::Error
+        };
+        let duplicate_inspection = if applied {
+            AgentEffectInspectionState::Applied {
+                source: source.clone(),
+                terminal: None,
+                initial_context: None,
+                child_source: None,
+            }
+        } else {
+            AgentEffectInspectionState::Unknown
+        };
         let service = Arc::new(UnknownThenAppliedService {
             descriptor: descriptor(),
             source: source.clone(),
             command_id: command_id.clone(),
             execute_calls: AtomicUsize::new(0),
             revoke_calls: AtomicUsize::new(0),
-            execute_receipt: receipt.clone(),
+            execute_outcomes: Mutex::new(VecDeque::from([
+                FixtureExecuteOutcome::Receipt(Box::new(unknown_receipt.clone())),
+                current_attempt_outcome,
+            ])),
             execute_gate: None,
             inspect_gate: None,
-            inspection_states: Mutex::new(VecDeque::new()),
+            inspection_states: Mutex::new(VecDeque::from([
+                AgentEffectInspectionState::NotApplied,
+                duplicate_inspection,
+            ])),
             revoke_receipt: None,
         });
         let repository = Arc::new(FixtureHostRepository::default());
-        let (host, binding_id, lease) = available_host(repository, service.clone()).await;
+        let (host, binding_id, lease) = available_host(repository.clone(), service.clone()).await;
         let command = execute_command(command_id.clone(), effect_id.clone(), source.clone());
-        let snapshot = host.repository.load().await.expect("load Host facts");
-        let mut facts = snapshot.facts;
-        facts.effects.insert(
-            effect_id.clone(),
-            CompleteAgentEffectRecord {
-                effect_id: effect_id.clone(),
-                command_id: command_id.clone(),
-                binding_id: binding_id.clone(),
-                service_instance_id: AgentServiceInstanceId::new("service").expect("service"),
-                generation: AgentBindingGeneration(1),
-                source,
-                payload_digest: payload_digest(&command).expect("command digest"),
-                delivery_epoch: lease.epoch,
-                dispatch_attempt: 1,
-                state: CompleteAgentEffectState::NotApplied,
-                receipt: None,
-                surface_receipt: None,
-                inspection: Some(AgentEffectInspection {
-                    effect_id: effect_id.clone(),
-                    command_id: Some(command_id),
-                    state: AgentEffectInspectionState::NotApplied,
-                }),
-                inspection_history: Vec::new(),
-            },
-        );
-        host.commit(snapshot.revision, facts)
-            .await
-            .expect("seed NotApplied effect");
 
-        let result = host.dispatch_execute(&lease, &binding_id, command).await;
-        if let Some(receipt) = receipt {
-            assert_eq!(result.expect("applied redispatch receipt"), receipt);
+        assert_eq!(
+            host.dispatch_execute(&lease, &binding_id, command.clone())
+                .await
+                .expect("initial Unknown receipt"),
+            unknown_receipt
+        );
+        assert!(matches!(
+            host.dispatch_execute(&lease, &binding_id, command.clone())
+                .await
+                .expect("inspect NotApplied before redispatch")
+                .state,
+            AgentReceiptState::Unknown
+        ));
+        let not_applied = host
+            .effect(&effect_id)
+            .await
+            .expect("read NotApplied effect")
+            .expect("effect");
+        assert_eq!(not_applied.state, CompleteAgentEffectState::NotApplied);
+        assert_eq!(not_applied.receipt, Some(unknown_receipt.clone()));
+        assert!(matches!(
+            not_applied
+                .inspection
+                .as_ref()
+                .map(|inspection| &inspection.state),
+            Some(AgentEffectInspectionState::NotApplied)
+        ));
+        drop(host);
+
+        let restarted =
+            CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
+        restarted
+            .register_service(
+                AgentServiceInstanceId::new("service").expect("service"),
+                service.clone(),
+            )
+            .await
+            .expect("reattach service after restart");
+        let result = restarted
+            .dispatch_execute(&lease, &binding_id, command.clone())
+            .await;
+        if applied {
+            assert!(matches!(
+                result.expect("applied redispatch receipt").state,
+                AgentReceiptState::AlreadyApplied { .. }
+            ));
         } else {
             assert!(matches!(result, Err(CompleteAgentHostError::Service(_))));
         }
-        assert_eq!(service.execute_calls.load(Ordering::SeqCst), 1);
 
-        let effect = host
+        let duplicate = restarted
+            .dispatch_execute(&lease, &binding_id, command)
+            .await
+            .expect("duplicate reconciles current attempt");
+        if applied {
+            assert!(matches!(
+                duplicate.state,
+                AgentReceiptState::AlreadyApplied { .. }
+            ));
+        } else {
+            assert_eq!(duplicate.state, AgentReceiptState::Unknown);
+        }
+        assert_eq!(service.execute_calls.load(Ordering::SeqCst), 2);
+
+        let effect = restarted
             .effect(&effect_id)
             .await
             .expect("read effect")
@@ -2526,15 +2596,27 @@ mod tests {
                 CompleteAgentEffectState::Unknown
             }
         );
-        assert!(effect.inspection.is_none());
-        assert_eq!(effect.inspection_history.len(), 1);
-        let archived = &effect.inspection_history[0];
+        assert_eq!(effect.attempt_history.len(), 1);
+        let archived = &effect.attempt_history[0];
         assert_eq!(archived.dispatch_attempt, 1);
         assert_eq!(archived.delivery_epoch, lease.epoch);
+        assert_eq!(archived.state, CompleteAgentEffectState::NotApplied);
+        assert_eq!(archived.receipt, Some(unknown_receipt));
+        assert!(archived.surface_receipt.is_none());
         assert_eq!(
-            archived.inspection.state,
-            AgentEffectInspectionState::NotApplied
+            archived
+                .inspection
+                .as_ref()
+                .expect("archived inspection")
+                .state,
+            AgentEffectInspectionState::NotApplied,
         );
+        if applied {
+            assert!(effect.receipt.is_some());
+        } else {
+            assert!(effect.receipt.is_none());
+        }
+        assert!(effect.inspection.is_some());
     }
 
     async fn available_host(
@@ -2684,13 +2766,18 @@ mod tests {
         lease
     }
 
+    enum FixtureExecuteOutcome {
+        Receipt(Box<AgentCommandReceipt>),
+        Error,
+    }
+
     struct UnknownThenAppliedService {
         descriptor: AgentServiceDescriptor,
         source: AgentSourceCoordinate,
         command_id: AgentCommandId,
         execute_calls: AtomicUsize,
         revoke_calls: AtomicUsize,
-        execute_receipt: Option<AgentCommandReceipt>,
+        execute_outcomes: Mutex<VecDeque<FixtureExecuteOutcome>>,
         execute_gate: Option<Arc<ExternalOutcomeGate>>,
         inspect_gate: Option<Arc<ExternalOutcomeGate>>,
         inspection_states: Mutex<VecDeque<AgentEffectInspectionState>>,
@@ -2745,8 +2832,10 @@ mod tests {
             if let Some(gate) = &self.execute_gate {
                 gate.pause().await;
             }
-            if let Some(receipt) = &self.execute_receipt {
-                return Ok(receipt.clone());
+            if let Some(FixtureExecuteOutcome::Receipt(receipt)) =
+                self.execute_outcomes.lock().await.pop_front()
+            {
+                return Ok(*receipt);
             }
             Err(AgentServiceError::new(
                 AgentServiceErrorCode::Unavailable,

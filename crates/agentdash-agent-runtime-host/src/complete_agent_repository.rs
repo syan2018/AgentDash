@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::{
-    CompleteAgentArchivedInspection, CompleteAgentBinding, CompleteAgentBindingId,
-    CompleteAgentBindingLease, CompleteAgentBindingState, CompleteAgentEffectRecord,
+    CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingLease,
+    CompleteAgentBindingState, CompleteAgentEffectAttemptEvidence, CompleteAgentEffectRecord,
     CompleteAgentEffectState,
 };
 
@@ -252,9 +252,15 @@ pub fn validate_complete_agent_host_facts(
         if effect.dispatch_attempt == 0 {
             return invariant("effect dispatch attempt must be positive");
         }
+        if !current.effects.contains_key(effect_id)
+            && (effect.dispatch_attempt != 1 || !effect.attempt_history.is_empty())
+        {
+            return invariant("a new effect must begin at dispatch attempt one without history");
+        }
         validate_effect_evidence(effect, binding)?;
-        validate_effect_inspection_history(
+        validate_effect_attempt_history(
             effect,
+            binding,
             candidate
                 .lease_epochs
                 .get(&effect.binding_id)
@@ -288,13 +294,7 @@ pub fn validate_complete_agent_host_facts(
         if !effect_state_can_advance(effect.state, next.state) {
             return invariant("effect observation moved backwards");
         }
-        immutable_optional_evidence(&effect.receipt, &next.receipt, "effect receipt")?;
-        immutable_optional_evidence(
-            &effect.surface_receipt,
-            &next.surface_receipt,
-            "surface receipt",
-        )?;
-        validate_inspection_transition(effect, next)?;
+        validate_attempt_transition(effect, next)?;
     }
 
     for (binding_id, epoch) in &current.lease_epochs {
@@ -458,24 +458,76 @@ fn validate_effect_evidence(
     Ok(())
 }
 
-fn validate_effect_inspection_history(
+fn validate_effect_attempt_history(
     effect: &CompleteAgentEffectRecord,
+    binding: &CompleteAgentBinding,
     max_delivery_epoch: u64,
 ) -> Result<(), CompleteAgentHostStoreError> {
-    let mut previous_attempt = 0;
-    for archived in &effect.inspection_history {
-        if archived.dispatch_attempt <= previous_attempt
-            || archived.dispatch_attempt >= effect.dispatch_attempt
+    let expected_history_len = usize::try_from(effect.dispatch_attempt - 1).map_err(|_| {
+        CompleteAgentHostStoreError::Invariant {
+            reason: "effect dispatch attempt cannot be represented as history length".to_owned(),
+        }
+    })?;
+    if effect.attempt_history.len() != expected_history_len {
+        return invariant("effect attempt history must contain every prior attempt exactly once");
+    }
+
+    for (index, archived) in effect.attempt_history.iter().enumerate() {
+        let expected_attempt = u64::try_from(index)
+            .ok()
+            .and_then(|index| index.checked_add(1))
+            .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
+                reason: "effect attempt history index is exhausted".to_owned(),
+            })?;
+        if archived.dispatch_attempt != expected_attempt
             || archived.delivery_epoch == 0
             || archived.delivery_epoch > max_delivery_epoch
-            || inspection_state(&archived.inspection.state) != CompleteAgentEffectState::NotApplied
-            || !inspection_coordinates_match(effect, &archived.inspection)
+            || archived.state != CompleteAgentEffectState::NotApplied
         {
             return invariant(
-                "archived inspection attempt, delivery epoch, coordinates, or evidence is invalid",
+                "archived attempt number, delivery epoch, or terminal state is invalid",
             );
         }
-        previous_attempt = archived.dispatch_attempt;
+        validate_attempt_evidence(effect, binding, archived)?;
+    }
+    Ok(())
+}
+
+fn validate_attempt_evidence(
+    effect: &CompleteAgentEffectRecord,
+    binding: &CompleteAgentBinding,
+    archived: &CompleteAgentEffectAttemptEvidence,
+) -> Result<(), CompleteAgentHostStoreError> {
+    if let Some(receipt) = &archived.receipt
+        && (receipt.effect_id != effect.effect_id
+            || receipt.command_id != effect.command_id
+            || receipt.source != effect.source
+            || !effect_state_can_advance(receipt_state(&receipt.state), archived.state))
+    {
+        return invariant("archived effect receipt coordinates or observation state are invalid");
+    }
+    if let Some(receipt) = &archived.surface_receipt
+        && (receipt.effect_id != effect.effect_id
+            || receipt.command_id != effect.command_id
+            || receipt.source != effect.source
+            || !binding.bound_surface.accepts_applied(&receipt.applied)
+            || !effect_state_can_advance(CompleteAgentEffectState::Applied, archived.state))
+    {
+        return invariant("archived surface receipt coordinates or applied evidence are invalid");
+    }
+    let inspection =
+        archived
+            .inspection
+            .as_ref()
+            .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
+                reason: "archived redispatch attempt requires NotApplied inspection evidence"
+                    .to_owned(),
+            })?;
+    if inspection_state(&inspection.state) != CompleteAgentEffectState::NotApplied
+        || !inspection_coordinates_match(effect, inspection)
+        || !effect_state_can_advance(inspection_state(&inspection.state), archived.state)
+    {
+        return invariant("archived inspection coordinates or observation state are invalid");
     }
     Ok(())
 }
@@ -506,7 +558,7 @@ fn immutable_optional_evidence<T: PartialEq>(
     Ok(())
 }
 
-fn validate_inspection_transition(
+fn validate_attempt_transition(
     current: &CompleteAgentEffectRecord,
     candidate: &CompleteAgentEffectRecord,
 ) -> Result<(), CompleteAgentHostStoreError> {
@@ -518,9 +570,15 @@ fn validate_inspection_transition(
                 "NotApplied redispatch must advance attempt and archive inspection evidence",
             );
         }
-        if candidate.inspection_history != current.inspection_history {
-            return invariant("inspection history changed without a new dispatch attempt");
+        if candidate.attempt_history != current.attempt_history {
+            return invariant("attempt history changed without a new dispatch attempt");
         }
+        immutable_optional_evidence(&current.receipt, &candidate.receipt, "effect receipt")?;
+        immutable_optional_evidence(
+            &current.surface_receipt,
+            &candidate.surface_receipt,
+            "surface receipt",
+        )?;
         return validate_latest_inspection_evidence(current, candidate);
     }
 
@@ -532,23 +590,28 @@ fn validate_inspection_transition(
                 reason: "effect redispatch requires current NotApplied inspection evidence"
                     .to_owned(),
             })?;
-    let expected_archive = CompleteAgentArchivedInspection {
+    let expected_archive = CompleteAgentEffectAttemptEvidence {
         dispatch_attempt: current.dispatch_attempt,
         delivery_epoch: current.delivery_epoch,
-        inspection: current_inspection.clone(),
+        state: current.state,
+        receipt: current.receipt.clone(),
+        surface_receipt: current.surface_receipt.clone(),
+        inspection: Some(current_inspection.clone()),
     };
     if current.state != CompleteAgentEffectState::NotApplied
         || candidate.state != CompleteAgentEffectState::Dispatching
         || inspection_state(&current_inspection.state) != CompleteAgentEffectState::NotApplied
+        || candidate.receipt.is_some()
+        || candidate.surface_receipt.is_some()
         || candidate.inspection.is_some()
-        || candidate.inspection_history.len() != current.inspection_history.len() + 1
+        || candidate.attempt_history.len() != current.attempt_history.len() + 1
         || !candidate
-            .inspection_history
-            .starts_with(&current.inspection_history)
-        || candidate.inspection_history.last() != Some(&expected_archive)
+            .attempt_history
+            .starts_with(&current.attempt_history)
+        || candidate.attempt_history.last() != Some(&expected_archive)
     {
         return invariant(
-            "new dispatch attempt must atomically archive NotApplied evidence and clear latest inspection",
+            "new dispatch attempt must atomically archive all prior evidence and clear current evidence",
         );
     }
     Ok(())
@@ -899,25 +962,38 @@ mod tests {
     }
 
     #[test]
-    fn redispatch_attempt_requires_append_only_not_applied_archive() {
-        let not_applied = facts_with_inspection(
+    fn redispatch_attempt_requires_complete_append_only_attempt_history() {
+        let mut not_applied = facts_with_inspection(
             CompleteAgentEffectState::NotApplied,
             AgentEffectInspectionState::NotApplied,
         );
+        let effect = not_applied.effects.get_mut(&effect_id()).expect("effect");
+        effect.receipt = Some(AgentCommandReceipt {
+            command_id: effect.command_id.clone(),
+            effect_id: effect.effect_id.clone(),
+            source: effect.source.clone(),
+            state: AgentReceiptState::Unknown,
+            snapshot_revision: None,
+            initial_context: None,
+        });
+
         let mut redispatched = not_applied.clone();
         let effect = redispatched.effects.get_mut(&effect_id()).expect("effect");
         let inspection = effect.inspection.take().expect("NotApplied inspection");
         effect
-            .inspection_history
-            .push(CompleteAgentArchivedInspection {
+            .attempt_history
+            .push(CompleteAgentEffectAttemptEvidence {
                 dispatch_attempt: effect.dispatch_attempt,
                 delivery_epoch: effect.delivery_epoch,
-                inspection,
+                state: effect.state,
+                receipt: effect.receipt.take(),
+                surface_receipt: effect.surface_receipt.take(),
+                inspection: Some(inspection),
             });
         effect.dispatch_attempt = 2;
         effect.state = CompleteAgentEffectState::Dispatching;
         validate_complete_agent_host_facts(&not_applied, &redispatched)
-            .expect("explicit redispatch archive");
+            .expect("explicit redispatch archives the complete prior attempt");
 
         let mut unarchived_redispatch = not_applied.clone();
         unarchived_redispatch
@@ -955,24 +1031,74 @@ mod tests {
             .effects
             .get_mut(&effect_id())
             .expect("effect")
-            .inspection_history
+            .attempt_history
             .clear();
         assert_invariant(validate_complete_agent_host_facts(
             &redispatched,
             &removed_history,
         ));
 
-        let mut rewritten_history = redispatched.clone();
-        rewritten_history
+        let mut duplicate_history = redispatched.clone();
+        let duplicate = duplicate_history
+            .effects
+            .get(&effect_id())
+            .expect("effect")
+            .attempt_history[0]
+            .clone();
+        duplicate_history
             .effects
             .get_mut(&effect_id())
             .expect("effect")
-            .inspection_history[0]
+            .attempt_history
+            .push(duplicate);
+        assert_invariant(validate_complete_agent_host_facts(
+            &redispatched,
+            &duplicate_history,
+        ));
+
+        let mut rewritten_receipt = redispatched.clone();
+        rewritten_receipt
+            .effects
+            .get_mut(&effect_id())
+            .expect("effect")
+            .attempt_history[0]
+            .receipt
+            .as_mut()
+            .expect("receipt")
+            .state = AgentReceiptState::Rejected {
+            code: "tampered".to_owned(),
+            message: "tampered".to_owned(),
+        };
+        assert_invariant(validate_complete_agent_host_facts(
+            &redispatched,
+            &rewritten_receipt,
+        ));
+
+        let mut rewritten_inspection = redispatched.clone();
+        rewritten_inspection
+            .effects
+            .get_mut(&effect_id())
+            .expect("effect")
+            .attempt_history[0]
             .inspection
+            .as_mut()
+            .expect("inspection")
             .state = AgentEffectInspectionState::Unknown;
         assert_invariant(validate_complete_agent_host_facts(
             &redispatched,
-            &rewritten_history,
+            &rewritten_inspection,
+        ));
+
+        let mut skipped_attempt = redispatched.clone();
+        skipped_attempt
+            .effects
+            .get_mut(&effect_id())
+            .expect("effect")
+            .attempt_history[0]
+            .dispatch_attempt = 2;
+        assert_invariant(validate_complete_agent_host_facts(
+            &redispatched,
+            &skipped_attempt,
         ));
 
         let mut attempt_rollback = redispatched.clone();
@@ -984,6 +1110,11 @@ mod tests {
         assert_invariant(validate_complete_agent_host_facts(
             &redispatched,
             &attempt_rollback,
+        ));
+
+        assert_invariant(validate_complete_agent_host_facts(
+            &CompleteAgentHostFacts::default(),
+            &redispatched,
         ));
     }
 
@@ -1169,7 +1300,7 @@ mod tests {
             receipt: None,
             surface_receipt: None,
             inspection: None,
-            inspection_history: Vec::new(),
+            attempt_history: Vec::new(),
         };
         CompleteAgentHostFacts {
             service_instances: BTreeMap::from([(service_id.clone(), descriptor)]),

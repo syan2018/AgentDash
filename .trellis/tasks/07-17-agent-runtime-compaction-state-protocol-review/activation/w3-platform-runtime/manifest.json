@@ -26,7 +26,7 @@
       "agent_runtime_binding",
       "agent_runtime_source_coordinate",
       "agent_runtime_effect",
-      "agent_runtime_effect_inspection_history",
+      "agent_runtime_effect_attempt_history",
       "agent_runtime_lease"
     ],
     "required_transaction": [
@@ -35,7 +35,7 @@
       "validate service-to-offer profile identity",
       "validate binding-to-source bidirectional uniqueness and positive generation",
       "validate effect identity, payload digest, binding, source and generation",
-      "validate monotonic effect dispatch attempt and append-only archived inspection evidence",
+      "validate initial dispatch attempt one and a continuous append-only history containing every completed prior attempt",
       "validate lease owner, token, epoch, generation and database-clock expiry",
       "fence every external receipt or inspection against the current active lease owner, token, epoch, generation and expiry",
       "settle revoke receipt and clear binding applied surface in the same Host transaction",
@@ -49,9 +49,10 @@
       "binding identity is unique and fixes service instance, source, generation, profile and surface",
       "source coordinate is unique and references the same binding generation",
       "effect identity is globally stable and fixes command, payload, binding, source and generation",
-      "receipt evidence is immutable; current-attempt latest inspection may only advance Unknown or Accepted to stronger evidence; terminal and same-state inspection evidence is immutable",
-      "explicit redispatch atomically archives prior-attempt NotApplied inspection evidence, clears current-attempt inspection, and advances dispatch attempt exactly once",
-      "archived inspection evidence is append-only and immutable by effect identity plus dispatch attempt",
+      "current-attempt receipt and surface evidence are immutable; latest inspection may only advance Unknown or Accepted to stronger evidence; terminal and same-state inspection evidence is immutable",
+      "a new effect begins at dispatch attempt one with empty history",
+      "explicit redispatch atomically archives the prior attempt state, receipt, surface receipt and NotApplied inspection, clears every current-attempt evidence field, and advances dispatch attempt exactly once",
+      "attempt history is append-only and immutable by effect identity plus dispatch attempt, and attempt N contains exactly the continuous completed attempts 1 through N-1",
       "lease key is binding generation; owner/token/epoch fence stale workers",
       "lease epoch never decreases and binding Lost invalidates the active lease",
       "terminal revoke replay completes binding cleanup before returning the stored receipt"

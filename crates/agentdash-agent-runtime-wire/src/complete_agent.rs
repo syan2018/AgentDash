@@ -244,6 +244,9 @@ mod tests {
             "callback_request",
             "callback_response",
             "AgentChange",
+            "surface_apply",
+            "surface_revoke",
+            "child_history_digest",
         ] {
             assert!(schema.contains(operation), "missing {operation}");
         }

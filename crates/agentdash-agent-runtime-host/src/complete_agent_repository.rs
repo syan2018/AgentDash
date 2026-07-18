@@ -1,16 +1,20 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use agentdash_agent_service_api::{
-    AgentEffectIdentity, AgentEffectInspectionState, AgentReceiptState, AgentRuntimeOffer,
-    AgentServiceDescriptor, AgentServiceInstanceId, AgentSourceCoordinate, CompleteAgentService,
+    AgentCallbackRouteId, AgentEffectIdentity, AgentEffectInspectionState, AgentReceiptState,
+    AgentRuntimeOffer, AgentServiceDescriptor, AgentServiceInstanceId, AgentSourceCoordinate,
+    AgentSurfaceRoute, CompleteAgentService,
 };
 use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingLease,
-    CompleteAgentBindingState, CompleteAgentEffectAttemptEvidence, CompleteAgentEffectRecord,
-    CompleteAgentEffectState, CompleteAgentPlacement,
+    CompleteAgentBindingState, CompleteAgentCallbackRoute, CompleteAgentEffectAttemptEvidence,
+    CompleteAgentEffectRecord, CompleteAgentEffectState, CompleteAgentPlacement,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -23,6 +27,8 @@ pub struct CompleteAgentHostFacts {
     pub placements: BTreeMap<AgentServiceInstanceId, CompleteAgentPlacement>,
     pub bindings: BTreeMap<CompleteAgentBindingId, CompleteAgentBinding>,
     pub source_coordinates: BTreeMap<CompleteAgentBindingId, AgentSourceCoordinate>,
+    pub callback_routes: BTreeMap<AgentCallbackRouteId, CompleteAgentCallbackRoute>,
+    pub revoked_callback_routes: BTreeSet<AgentCallbackRouteId>,
     pub effects: BTreeMap<AgentEffectIdentity, CompleteAgentEffectRecord>,
     pub leases: BTreeMap<CompleteAgentBindingId, CompleteAgentBindingLease>,
     pub lease_epochs: BTreeMap<CompleteAgentBindingId, u64>,
@@ -241,6 +247,105 @@ pub fn validate_complete_agent_host_facts(
             return invariant("source coordinate history is immutable");
         }
     }
+    for (route_id, route) in &candidate.callback_routes {
+        if route_id != &route.route_id
+            || route.generation.0 == 0
+            || route.delivery != AgentSurfaceRoute::AgentNativeCallback
+            || route.default_deadline_ms == 0
+        {
+            return invariant("callback route coordinates are invalid");
+        }
+        let binding = candidate.bindings.get(&route.binding_id).ok_or_else(|| {
+            CompleteAgentHostStoreError::Invariant {
+                reason: "callback route has no owning binding".to_owned(),
+            }
+        })?;
+        if route.generation != binding.generation
+            || route.source != binding.source
+            || route.bound_surface != binding.bound_surface
+        {
+            return invariant("callback route fence does not exactly match its binding");
+        }
+    }
+    for (route_id, route) in &current.callback_routes {
+        if candidate.callback_routes.get(route_id) != Some(route) {
+            return invariant("callback route tombstone history is immutable");
+        }
+    }
+    if !candidate
+        .revoked_callback_routes
+        .is_superset(&current.revoked_callback_routes)
+        || candidate
+            .revoked_callback_routes
+            .iter()
+            .any(|route_id| !candidate.callback_routes.contains_key(route_id))
+    {
+        return invariant("callback route revocation history is invalid");
+    }
+    for (binding_id, binding) in &candidate.bindings {
+        let active_routes = candidate
+            .callback_routes
+            .values()
+            .filter(|route| {
+                &route.binding_id == binding_id
+                    && !candidate.revoked_callback_routes.contains(&route.route_id)
+            })
+            .count();
+        let requires_active_route = binding.state == CompleteAgentBindingState::Available
+            && binding.applied_surface.is_some()
+            && binding_requires_callback_route(binding);
+        if (requires_active_route && active_routes != 1)
+            || (!requires_active_route && active_routes != 0)
+        {
+            return invariant(
+                "binding applied surface and active callback route are not atomically aligned",
+            );
+        }
+    }
+    for (route_id, route) in &candidate.callback_routes {
+        if current.callback_routes.contains_key(route_id) {
+            continue;
+        }
+        let previous = current.bindings.get(&route.binding_id).ok_or_else(|| {
+            CompleteAgentHostStoreError::Invariant {
+                reason: "new callback route has no preceding pending binding".to_owned(),
+            }
+        })?;
+        let next = candidate
+            .bindings
+            .get(&route.binding_id)
+            .expect("route owning binding was validated");
+        if previous.state != CompleteAgentBindingState::PendingSurface
+            || next.state != CompleteAgentBindingState::Available
+            || candidate.revoked_callback_routes.contains(route_id)
+        {
+            return invariant("callback route must be created with its applied binding transition");
+        }
+    }
+    for route_id in candidate
+        .revoked_callback_routes
+        .difference(&current.revoked_callback_routes)
+    {
+        let route = current.callback_routes.get(route_id).ok_or_else(|| {
+            CompleteAgentHostStoreError::Invariant {
+                reason: "callback route revocation has no active route tombstone".to_owned(),
+            }
+        })?;
+        let previous = current
+            .bindings
+            .get(&route.binding_id)
+            .expect("route owning binding was validated");
+        let next = candidate
+            .bindings
+            .get(&route.binding_id)
+            .expect("route owning binding was validated");
+        if previous.state != CompleteAgentBindingState::Available
+            || (next.state == CompleteAgentBindingState::Available
+                && next.applied_surface.is_some())
+        {
+            return invariant("callback route must be revoked with its binding surface transition");
+        }
+    }
 
     let mut command_effects = BTreeMap::new();
     for (effect_id, effect) in &candidate.effects {
@@ -384,6 +489,14 @@ pub fn validate_complete_agent_host_facts(
         return invariant("lease epoch has no owning binding");
     }
     Ok(())
+}
+
+fn binding_requires_callback_route(binding: &CompleteAgentBinding) -> bool {
+    binding
+        .bound_surface
+        .contributions
+        .iter()
+        .any(|contribution| contribution.route == AgentSurfaceRoute::AgentNativeCallback)
 }
 
 fn binding_state_can_advance(
@@ -723,14 +836,19 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use agentdash_agent_service_api::{
-        AgentBindingGeneration, AgentCapabilityProfile, AgentCommandCapability, AgentCommandId,
-        AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity,
-        AgentEffectInspection, AgentForkCapability, AgentForkCutoffKind, AgentLifecycleCapability,
-        AgentPayloadDigest, AgentProfileDigest, AgentReceiptState, AgentRuntimeOffer,
-        AgentServiceDefinitionId, AgentSourceChangeLevel, AgentSurfaceDigest, AgentSurfaceProfile,
-        AgentSurfaceRevision, AgentTerminalOutcome, BoundAgentSurface,
-        InitialContextAppliedEvidence, InitialContextProfile, SemanticFidelity,
+        AgentBindingGeneration, AgentCallbackRouteId, AgentCapabilityProfile,
+        AgentCommandCapability, AgentCommandId, AgentCommandReceipt, AgentCompactionMode,
+        AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
+        AgentForkCapability, AgentForkCutoffKind, AgentLifecycleCapability, AgentPayloadDigest,
+        AgentProfileDigest, AgentReceiptState, AgentRuntimeOffer, AgentServiceDefinitionId,
+        AgentSourceChangeLevel, AgentSurfaceContributionPayload, AgentSurfaceDigest,
+        AgentSurfaceProfile, AgentSurfaceRevision, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
+        AgentToolDelivery, AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+        AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedContributionStatus,
+        BoundAgentSurface, BoundAgentSurfaceContribution, InitialContextAppliedEvidence,
+        InitialContextProfile, SemanticFidelity,
     };
+    use serde_json::json;
     use tokio::sync::Mutex;
 
     use super::*;
@@ -877,6 +995,140 @@ mod tests {
             &current,
             &profile_mismatch,
         ));
+    }
+
+    #[test]
+    fn callback_route_is_atomic_with_apply_and_revoke_binding_transitions() {
+        let no_callback_current = valid_facts();
+        let mut no_callback_applied = no_callback_current.clone();
+        let binding = no_callback_applied
+            .bindings
+            .get_mut(&binding_id())
+            .expect("binding");
+        binding.applied_surface = Some(AppliedAgentSurface {
+            revision: binding.bound_surface.revision,
+            digest: binding.bound_surface.digest.clone(),
+            contributions: Vec::new(),
+        });
+        binding.state = CompleteAgentBindingState::Available;
+        validate_complete_agent_host_facts(&no_callback_current, &no_callback_applied)
+            .expect("a surface without callbacks has no route");
+        assert!(no_callback_applied.callback_routes.is_empty());
+
+        let mut current = valid_facts();
+        let binding_id = binding_id();
+        let surface = callback_surface();
+        let binding = current.bindings.get_mut(&binding_id).expect("binding");
+        binding.bound_surface = surface.clone();
+        binding.applied_surface = None;
+        binding.state = CompleteAgentBindingState::PendingSurface;
+
+        let route = callback_route(binding_id.clone(), surface.clone());
+        let mut applied = current.clone();
+        let binding = applied.bindings.get_mut(&binding_id).expect("binding");
+        binding.applied_surface = Some(applied_surface(&surface));
+        binding.state = CompleteAgentBindingState::Available;
+
+        let mut snapshot = CompleteAgentHostSnapshot {
+            revision: CompleteAgentHostRevision(7),
+            facts: current.clone(),
+        };
+        let before_failed_apply = snapshot.clone();
+        assert!(matches!(
+            apply_complete_agent_host_commit(
+                &mut snapshot,
+                CompleteAgentHostCommit {
+                    expected_revision: CompleteAgentHostRevision(7),
+                    facts: applied.clone(),
+                },
+            ),
+            Err(CompleteAgentHostStoreError::Invariant { .. })
+        ));
+        assert_eq!(
+            snapshot, before_failed_apply,
+            "a rejected apply commit cannot expose the applied surface without its route"
+        );
+
+        let mut extra = applied.clone();
+        extra
+            .callback_routes
+            .insert(route.route_id.clone(), route.clone());
+        let mut second = route.clone();
+        second.route_id = AgentCallbackRouteId::new("route-extra").expect("route");
+        extra
+            .callback_routes
+            .insert(second.route_id.clone(), second);
+        assert_invariant(validate_complete_agent_host_facts(&current, &extra));
+
+        let mut stale = applied.clone();
+        let mut stale_route = route.clone();
+        stale_route.generation = AgentBindingGeneration(2);
+        stale
+            .callback_routes
+            .insert(stale_route.route_id.clone(), stale_route);
+        assert_invariant(validate_complete_agent_host_facts(&current, &stale));
+
+        let mut wrong_digest = applied.clone();
+        let mut wrong_route = route.clone();
+        wrong_route.bound_surface.digest =
+            AgentSurfaceDigest::new("wrong-surface").expect("surface");
+        wrong_digest
+            .callback_routes
+            .insert(wrong_route.route_id.clone(), wrong_route);
+        assert_invariant(validate_complete_agent_host_facts(&current, &wrong_digest));
+
+        applied
+            .callback_routes
+            .insert(route.route_id.clone(), route.clone());
+        let applied_snapshot = apply_complete_agent_host_commit(
+            &mut snapshot,
+            CompleteAgentHostCommit {
+                expected_revision: CompleteAgentHostRevision(7),
+                facts: applied.clone(),
+            },
+        )
+        .expect("atomic apply route");
+
+        let mut missing_tombstone = applied.clone();
+        let binding = missing_tombstone
+            .bindings
+            .get_mut(&binding_id)
+            .expect("binding");
+        binding.applied_surface = None;
+        binding.state = CompleteAgentBindingState::PendingSurface;
+        let before_failed_revoke = snapshot.clone();
+        assert!(matches!(
+            apply_complete_agent_host_commit(
+                &mut snapshot,
+                CompleteAgentHostCommit {
+                    expected_revision: applied_snapshot.revision,
+                    facts: missing_tombstone.clone(),
+                },
+            ),
+            Err(CompleteAgentHostStoreError::Invariant { .. })
+        ));
+        assert_eq!(
+            snapshot, before_failed_revoke,
+            "a rejected revoke commit cannot hide the applied surface while leaving its route active"
+        );
+
+        let mut revoked = missing_tombstone;
+        revoked
+            .revoked_callback_routes
+            .insert(route.route_id.clone());
+        apply_complete_agent_host_commit(
+            &mut snapshot,
+            CompleteAgentHostCommit {
+                expected_revision: applied_snapshot.revision,
+                facts: revoked.clone(),
+            },
+        )
+        .expect("atomic revoke tombstone");
+        assert_eq!(
+            revoked.callback_routes.get(&route.route_id),
+            Some(&route),
+            "revocation retains the immutable generation/digest fence"
+        );
     }
 
     #[test]
@@ -1271,6 +1523,67 @@ mod tests {
         AgentEffectIdentity::new("effect").expect("effect")
     }
 
+    fn callback_surface() -> BoundAgentSurface {
+        BoundAgentSurface {
+            revision: AgentSurfaceRevision(1),
+            digest: AgentSurfaceDigest::new("callback-surface").expect("surface"),
+            offer_profile_digest: AgentProfileDigest::new("profile").expect("profile"),
+            contributions: vec![BoundAgentSurfaceContribution {
+                key: "tool:test".to_owned(),
+                required: true,
+                route: AgentSurfaceRoute::AgentNativeCallback,
+                fidelity: SemanticFidelity::Exact,
+                semantics: AgentSurfaceSemanticFacet::Tool(AgentToolSemanticFacet {
+                    delivery: AgentToolDelivery::AgentNativeCallback,
+                    invocation: SemanticFidelity::Exact,
+                    update: AgentToolUpdateSemantics::BindingOnly,
+                }),
+                payload: AgentSurfaceContributionPayload::Tool {
+                    name: AgentToolName::new("test").expect("tool"),
+                    description: "test".to_owned(),
+                    input_schema: json!({"type": "object"}),
+                    output_schema: None,
+                },
+                payload_digest: AgentPayloadDigest::new("callback-payload").expect("payload"),
+            }],
+        }
+    }
+
+    fn callback_route(
+        binding_id: CompleteAgentBindingId,
+        bound_surface: BoundAgentSurface,
+    ) -> CompleteAgentCallbackRoute {
+        CompleteAgentCallbackRoute {
+            route_id: AgentCallbackRouteId::new("callback-route").expect("route"),
+            binding_id,
+            generation: AgentBindingGeneration(1),
+            source: AgentSourceCoordinate::new("source").expect("source"),
+            delivery: AgentSurfaceRoute::AgentNativeCallback,
+            default_deadline_ms: 10,
+            bound_surface,
+        }
+    }
+
+    fn applied_surface(surface: &BoundAgentSurface) -> AppliedAgentSurface {
+        AppliedAgentSurface {
+            revision: surface.revision,
+            digest: surface.digest.clone(),
+            contributions: surface
+                .contributions
+                .iter()
+                .map(|bound| AppliedAgentSurfaceContribution {
+                    key: bound.key.clone(),
+                    route: bound.route,
+                    fidelity: bound.fidelity,
+                    semantics: bound.semantics.clone(),
+                    payload_digest: bound.payload_digest.clone(),
+                    status: AppliedContributionStatus::Applied,
+                    evidence: Some("fixture applied".to_owned()),
+                })
+                .collect(),
+        }
+    }
+
     fn facts_with_inspection(
         state: CompleteAgentEffectState,
         inspection_state: AgentEffectInspectionState,
@@ -1371,6 +1684,8 @@ mod tests {
             )]),
             bindings: BTreeMap::from([(binding_id.clone(), binding)]),
             source_coordinates: BTreeMap::from([(binding_id.clone(), source)]),
+            callback_routes: BTreeMap::new(),
+            revoked_callback_routes: BTreeSet::new(),
             effects: BTreeMap::from([(effect_id, effect)]),
             leases: BTreeMap::from([(binding_id.clone(), lease)]),
             lease_epochs: BTreeMap::from([(binding_id, 1)]),

@@ -9,10 +9,10 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeEntityStatus, ManagedRuntimeInteraction, ManagedRuntimeInteractionKind,
     ManagedRuntimeInteractionStatus, ManagedRuntimeItem, ManagedRuntimeItemContent,
     ManagedRuntimeLifecycleStatus, ManagedRuntimeOperation, ManagedRuntimePlatformChange,
-    ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot,
-    ManagedRuntimeTurn, RuntimeChangeSequence, RuntimeInteractionId, RuntimeItemId,
-    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
-    SurfaceRevision,
+    ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
+    ManagedRuntimeProjectionSection, ManagedRuntimeSnapshot, ManagedRuntimeTurn,
+    RuntimeChangeSequence, RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest,
+    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_agent_service_api::{
     AgentChangePage, AgentChangePayload, AgentChangesQuery, AgentEntityStatus, AgentInteractionId,
@@ -22,6 +22,8 @@ use agentdash_agent_service_api::{
     AgentSourceRevision, AgentTurnId, AgentTurnSnapshot, AppliedAgentSurface,
     AppliedInitialContextEvidence, CompleteAgentService,
 };
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{
@@ -58,12 +60,14 @@ pub struct NormalizedAgentProjection {
     pub initial_context: Option<AppliedInitialContextEvidence>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum NormalizedAgentPlatformChangePayload {
     SnapshotReplaced {
         snapshot_revision: AgentSnapshotRevision,
         authority: AgentSnapshotAuthority,
         fidelity: agentdash_agent_service_api::SemanticFidelity,
+        source_revision: Option<AgentSourceRevision>,
+        source_cursor: Option<AgentSourceCursor>,
     },
     SourceChangeApplied {
         source_cursor: AgentSourceCursor,
@@ -77,6 +81,7 @@ pub struct NormalizedAgentPlatformChange {
     pub sequence: u64,
     pub platform_revision: u64,
     pub payload: NormalizedAgentPlatformChangePayload,
+    pub changed_sections: BTreeSet<ManagedRuntimeProjectionSection>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,8 +97,14 @@ pub struct NormalizedAgentChangePage {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedCompleteAgentObservation {
     pub projection: NormalizedAgentProjection,
-    pub changes: Vec<NormalizedAgentPlatformChangePayload>,
+    pub observations: Vec<PreparedSourceObservation>,
     pub captured_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedSourceObservation {
+    pub payload: NormalizedAgentPlatformChangePayload,
+    pub changed_sections: BTreeSet<ManagedRuntimeProjectionSection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -217,10 +228,11 @@ where
         }
     }
 
-    /// Synchronizes one source without replaying source history into a Runtime journal.
+    /// Synchronizes one source and records every accepted observation in the Runtime journal.
     ///
-    /// Snapshot/observation sources reconcile directly from authoritative snapshots. Ordered
-    /// sources use their change contract and align a gap reload to the returned cursor.
+    /// Snapshot/observation sources reconcile from authoritative snapshots. Ordered sources only
+    /// consume a tail after a durable cursor is known; a missing cursor or gap reloads the
+    /// authoritative snapshot, whose contract may intentionally leave the cursor unknown.
     pub async fn synchronize_source(
         &self,
         service: &dyn CompleteAgentService,
@@ -366,7 +378,8 @@ where
             .source_changes
             .last()
             .map_or(0, |change| change.sequence);
-        for (offset, payload) in prepared.changes.iter().cloned().enumerate() {
+        let mut committed_observations = Vec::with_capacity(prepared.observations.len());
+        for (offset, observation) in prepared.observations.iter().cloned().enumerate() {
             let sequence = source_base_sequence
                 .checked_add(u64::try_from(offset).map_err(|_| {
                     ManagedRuntimeStateStoreError::Invariant {
@@ -377,18 +390,29 @@ where
                 .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
                     reason: "source change sequence is exhausted".to_owned(),
                 })?;
-            facts.source_changes.push(NormalizedAgentPlatformChange {
+            let source_change = NormalizedAgentPlatformChange {
                 sequence,
                 platform_revision: prepared.projection.platform_revision,
-                payload,
-            });
+                payload: observation.payload,
+                changed_sections: observation.changed_sections,
+            };
+            facts.source_changes.push(source_change.clone());
+            committed_observations.push(source_change);
         }
 
-        let mut deltas = prepared
-            .changes
-            .iter()
-            .map(|change| project_normalized_change_delta(change, &self.identities))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut deltas = Vec::new();
+        for observation in &committed_observations {
+            deltas.push(source_observation_delta(
+                self.identities.source(),
+                observation,
+            )?);
+            if !observation.changed_sections.is_empty() {
+                deltas.push(project_normalized_change_delta(
+                    &observation.payload,
+                    &self.identities,
+                )?);
+            }
+        }
         for command in ManagedRuntimeCommandKind::ALL {
             deltas.push(ManagedRuntimeChangeDelta::CommandAvailabilityChanged {
                 command,
@@ -473,10 +497,15 @@ fn prepare_snapshot_observation(
         }
     }
     Ok(Some(PreparedCompleteAgentObservation {
-        changes: vec![NormalizedAgentPlatformChangePayload::SnapshotReplaced {
-            snapshot_revision: normalized.snapshot_revision,
-            authority: normalized.source_info.authority,
-            fidelity: normalized.source_info.fidelity,
+        observations: vec![PreparedSourceObservation {
+            payload: NormalizedAgentPlatformChangePayload::SnapshotReplaced {
+                snapshot_revision: normalized.snapshot_revision,
+                authority: normalized.source_info.authority,
+                fidelity: normalized.source_info.fidelity,
+                source_revision: normalized.source_info.source_revision.clone(),
+                source_cursor: normalized.source_cursor.clone(),
+            },
+            changed_sections: BTreeSet::from([ManagedRuntimeProjectionSection::Snapshot]),
         }],
         projection: normalized,
         captured_at_ms,
@@ -521,17 +550,22 @@ fn prepare_change_observation(
 
     let mut projection = existing.clone();
     let mut captured_at_ms = projection.source_info.observed_at_ms;
-    let mut changes = Vec::with_capacity(page.changes.len());
+    let mut observations = Vec::with_capacity(page.changes.len());
     for change in page.changes {
+        let before = projection.clone();
         apply_source_change(&mut projection, &change.payload)?;
+        let changed_sections = changed_sections(&before, &projection, &change.payload);
         if let Some(source_revision) = &change.source_revision {
             projection.source_info.source_revision = Some(source_revision.clone());
         }
         captured_at_ms = captured_at_ms.max(change.occurred_at_ms);
-        changes.push(NormalizedAgentPlatformChangePayload::SourceChangeApplied {
-            source_cursor: change.cursor,
-            source_revision: change.source_revision,
-            payload: Box::new(change.payload),
+        observations.push(PreparedSourceObservation {
+            payload: NormalizedAgentPlatformChangePayload::SourceChangeApplied {
+                source_cursor: change.cursor,
+                source_revision: change.source_revision,
+                payload: Box::new(change.payload),
+            },
+            changed_sections,
         });
     }
     projection.platform_revision = platform_revision;
@@ -540,7 +574,7 @@ fn prepare_change_observation(
     Ok(PreparedChangeObservation::Commit(
         PreparedCompleteAgentObservation {
             projection,
-            changes,
+            observations,
             captured_at_ms,
         },
     ))
@@ -804,6 +838,56 @@ fn apply_source_change(
         }
     }
     Ok(())
+}
+
+fn changed_sections(
+    before: &NormalizedAgentProjection,
+    after: &NormalizedAgentProjection,
+    payload: &AgentChangePayload,
+) -> BTreeSet<ManagedRuntimeProjectionSection> {
+    let mut sections = BTreeSet::new();
+    match payload {
+        AgentChangePayload::LifecycleChanged { .. } if before.lifecycle != after.lifecycle => {
+            sections.insert(ManagedRuntimeProjectionSection::Lifecycle);
+        }
+        AgentChangePayload::TurnChanged { .. } => {
+            if before.turns != after.turns {
+                sections.insert(ManagedRuntimeProjectionSection::Turns);
+            }
+            if before.items != after.items {
+                sections.insert(ManagedRuntimeProjectionSection::Items);
+            }
+        }
+        AgentChangePayload::ActiveTurnChanged { .. }
+            if before.active_turn_id != after.active_turn_id =>
+        {
+            sections.insert(ManagedRuntimeProjectionSection::ActiveTurn);
+        }
+        AgentChangePayload::ItemChanged { .. } => {
+            if before.turns != after.turns {
+                sections.insert(ManagedRuntimeProjectionSection::Turns);
+            }
+            if before.items != after.items {
+                sections.insert(ManagedRuntimeProjectionSection::Items);
+            }
+        }
+        AgentChangePayload::InteractionChanged { .. }
+            if before.interactions != after.interactions =>
+        {
+            sections.insert(ManagedRuntimeProjectionSection::Interactions);
+        }
+        AgentChangePayload::SurfaceApplied { .. }
+            if before.applied_surface != after.applied_surface =>
+        {
+            sections.insert(ManagedRuntimeProjectionSection::Surface);
+        }
+        AgentChangePayload::SnapshotInvalidated { .. }
+        | AgentChangePayload::LifecycleChanged { .. }
+        | AgentChangePayload::ActiveTurnChanged { .. }
+        | AgentChangePayload::InteractionChanged { .. }
+        | AgentChangePayload::SurfaceApplied { .. } => {}
+    }
+    sections
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1197,6 +1281,53 @@ pub(crate) fn validate_complete_agent_source_facts(
             reason: "Complete Agent source projection has no matching latest change".to_owned(),
         });
     }
+    validate_appended_source_sections(current, candidate)?;
+
+    let expected_observations = candidate
+        .source_changes
+        .iter()
+        .map(|change| {
+            source_observation_delta(&source.source, change).map_err(|error| {
+                ManagedRuntimeStateStoreError::Invariant {
+                    reason: error.to_string(),
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let actual_observations = candidate
+        .changes
+        .iter()
+        .filter_map(|change| {
+            matches!(
+                change.delta,
+                ManagedRuntimeChangeDelta::SourceObservationApplied { .. }
+            )
+            .then_some((&change.delta, change.revision))
+        })
+        .collect::<Vec<_>>();
+    if actual_observations.len() != expected_observations.len()
+        || expected_observations.iter().any(|expected| {
+            let ManagedRuntimeChangeDelta::SourceObservationApplied {
+                source_projection_revision,
+                ..
+            } = expected
+            else {
+                unreachable!("source observation helper always returns its typed delta");
+            };
+            actual_observations
+                .iter()
+                .filter(|(actual, revision)| {
+                    *actual == expected && revision == source_projection_revision
+                })
+                .count()
+                != 1
+        })
+    {
+        return Err(ManagedRuntimeStateStoreError::Invariant {
+            reason: "Complete Agent source observation has no exact causal Runtime change"
+                .to_owned(),
+        });
+    }
 
     let expected = project_managed_runtime_snapshot(
         source,
@@ -1223,6 +1354,60 @@ pub(crate) fn validate_complete_agent_source_facts(
                 "Managed Runtime projection does not exactly project source and operation facts"
                     .to_owned(),
         });
+    }
+    Ok(())
+}
+
+fn validate_appended_source_sections(
+    current: &ManagedRuntimeFacts,
+    candidate: &ManagedRuntimeFacts,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    let appended = &candidate.source_changes[current.source_changes.len()..];
+    let mut projection = current.source_projection.clone();
+    for change in appended {
+        match &change.payload {
+            NormalizedAgentPlatformChangePayload::SnapshotReplaced { .. } => {
+                if change.changed_sections
+                    != BTreeSet::from([ManagedRuntimeProjectionSection::Snapshot])
+                {
+                    return Err(ManagedRuntimeStateStoreError::Invariant {
+                        reason: "snapshot observation changed-section evidence is invalid"
+                            .to_owned(),
+                    });
+                }
+                projection = candidate.source_projection.clone();
+            }
+            NormalizedAgentPlatformChangePayload::SourceChangeApplied {
+                source_cursor,
+                source_revision,
+                payload,
+            } => {
+                let before = projection.as_ref().ok_or_else(|| {
+                    ManagedRuntimeStateStoreError::Invariant {
+                        reason: "source delta has no preceding normalized projection".to_owned(),
+                    }
+                })?;
+                let mut after = before.clone();
+                apply_source_change(&mut after, payload).map_err(|error| {
+                    ManagedRuntimeStateStoreError::Invariant {
+                        reason: error.to_string(),
+                    }
+                })?;
+                let expected = changed_sections(before, &after, payload);
+                if change.changed_sections != expected {
+                    return Err(ManagedRuntimeStateStoreError::Invariant {
+                        reason: "source observation changed-section evidence is inconsistent"
+                            .to_owned(),
+                    });
+                }
+                after.source_cursor = Some(source_cursor.clone());
+                if let Some(source_revision) = source_revision {
+                    after.source_info.source_revision = Some(source_revision.clone());
+                }
+                after.platform_revision = change.platform_revision;
+                projection = Some(after);
+            }
+        }
     }
     Ok(())
 }
@@ -1324,6 +1509,8 @@ pub enum CompleteAgentRuntimeProjectionError {
     OperationTurnMissing { turn_id: RuntimeTurnId },
     #[error("Agent payload digest could not be represented by the Runtime contract")]
     InvalidPayloadDigest,
+    #[error("Agent source observation could not be encoded for causal evidence")]
+    ObservationEncoding,
     #[error("Agent source emitted a snapshot invalidation as a committed delta")]
     SnapshotInvalidationCommitted,
 }
@@ -1456,7 +1643,7 @@ fn project_platform_change(
     change: &NormalizedAgentPlatformChange,
     identities: &CompleteAgentRuntimeIdentityMap,
 ) -> Result<ManagedRuntimePlatformChange, CompleteAgentRuntimeProjectionError> {
-    let delta = project_normalized_change_delta(&change.payload, identities)?;
+    let delta = source_observation_delta(identities.source(), change)?;
     Ok(ManagedRuntimePlatformChange {
         thread_id: identities.thread_id.clone(),
         sequence: RuntimeChangeSequence(change.sequence),
@@ -1482,6 +1669,56 @@ fn project_normalized_change_delta(
             project_source_delta(payload, identities)
         }
     }
+}
+
+fn source_observation_delta(
+    source: &AgentSourceCoordinate,
+    change: &NormalizedAgentPlatformChange,
+) -> Result<ManagedRuntimeChangeDelta, CompleteAgentRuntimeProjectionError> {
+    let (source_revision, source_cursor) = match &change.payload {
+        NormalizedAgentPlatformChangePayload::SnapshotReplaced {
+            source_revision,
+            source_cursor,
+            ..
+        } => (source_revision.as_ref(), source_cursor.as_ref()),
+        NormalizedAgentPlatformChangePayload::SourceChangeApplied {
+            source_revision,
+            source_cursor,
+            ..
+        } => (source_revision.as_ref(), Some(source_cursor)),
+    };
+    Ok(ManagedRuntimeChangeDelta::SourceObservationApplied {
+        source_change_sequence: change.sequence,
+        source_projection_revision: RuntimeProjectionRevision(change.platform_revision),
+        source_identity_digest: opaque_digest(source.as_str())?,
+        observation_digest: serialized_digest(&change.payload)?,
+        source_revision_digest: source_revision
+            .map(|revision| opaque_digest(revision.as_str()))
+            .transpose()?,
+        source_cursor_digest: source_cursor
+            .map(|cursor| opaque_digest(cursor.as_str()))
+            .transpose()?,
+        changed_sections: change.changed_sections.clone(),
+    })
+}
+
+fn serialized_digest(
+    value: &impl Serialize,
+) -> Result<RuntimePayloadDigest, CompleteAgentRuntimeProjectionError> {
+    let encoded = serde_json::to_vec(value)
+        .map_err(|_| CompleteAgentRuntimeProjectionError::ObservationEncoding)?;
+    runtime_digest(&encoded)
+}
+
+fn opaque_digest(value: &str) -> Result<RuntimePayloadDigest, CompleteAgentRuntimeProjectionError> {
+    runtime_digest(value.as_bytes())
+}
+
+fn runtime_digest(
+    value: &[u8],
+) -> Result<RuntimePayloadDigest, CompleteAgentRuntimeProjectionError> {
+    RuntimePayloadDigest::new(format!("sha256:{:x}", Sha256::digest(value)))
+        .map_err(|_| CompleteAgentRuntimeProjectionError::InvalidPayloadDigest)
 }
 
 fn project_source_delta(
@@ -1860,6 +2097,13 @@ mod tests {
             .expect("source projection")
     }
 
+    fn assert_source_invariant(result: Result<(), ManagedRuntimeStateStoreError>) {
+        assert!(matches!(
+            result,
+            Err(ManagedRuntimeStateStoreError::Invariant { .. })
+        ));
+    }
+
     #[tokio::test]
     async fn snapshot_is_normalized_and_reconnects_from_platform_changes() {
         let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
@@ -1912,6 +2156,222 @@ mod tests {
                 .sequence,
             2
         );
+    }
+
+    #[tokio::test]
+    async fn no_op_source_observation_keeps_causal_change_and_empty_sections() {
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
+        let reconciler = fixture_reconciler(repository.clone());
+        reconciler
+            .reconcile_snapshot(
+                snapshot(1, AgentSnapshotAuthority::AgentAuthoritative),
+                None,
+            )
+            .await
+            .expect("snapshot");
+        reconciler
+            .reconcile_change_page(
+                &AgentChangesQuery {
+                    source: source(),
+                    after: None,
+                    limit: 10,
+                },
+                AgentChangePage {
+                    source: source(),
+                    changes: vec![agentdash_agent_service_api::AgentChange {
+                        cursor: cursor("cursor-no-op"),
+                        source_revision: Some(
+                            AgentSourceRevision::new("source-revision-no-op").expect("revision"),
+                        ),
+                        occurred_at_ms: 10,
+                        payload: AgentChangePayload::LifecycleChanged {
+                            status: AgentLifecycleStatus::Active,
+                        },
+                    }],
+                    next: Some(cursor("cursor-no-op")),
+                    gap: false,
+                },
+            )
+            .await
+            .expect("no-op observation");
+
+        let state = fixture_state(&repository).await;
+        let source_change = state.facts.source_changes.last().expect("source change");
+        assert!(source_change.changed_sections.is_empty());
+        let causal = state
+            .facts
+            .changes
+            .iter()
+            .find(|change| {
+                matches!(
+                    &change.delta,
+                    ManagedRuntimeChangeDelta::SourceObservationApplied {
+                        source_change_sequence: 2,
+                        ..
+                    }
+                )
+            })
+            .expect("causal Runtime change");
+        let ManagedRuntimeChangeDelta::SourceObservationApplied {
+            changed_sections, ..
+        } = &causal.delta
+        else {
+            unreachable!("filtered causal change");
+        };
+        assert!(changed_sections.is_empty());
+        assert!(
+            !state.facts.changes.iter().any(|change| {
+                change.revision == RuntimeProjectionRevision(2)
+                    && matches!(
+                        change.delta,
+                        ManagedRuntimeChangeDelta::LifecycleChanged { .. }
+                    )
+            }),
+            "a no-op observation has no concrete projection delta"
+        );
+        assert_eq!(
+            state
+                .facts
+                .outbox
+                .iter()
+                .filter(|entry| entry.change == *causal)
+                .count(),
+            1,
+            "the causal Runtime change has exactly one matching outbox entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn source_observation_causal_delta_rejects_omission_duplication_and_wrong_evidence() {
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
+        let reconciler = fixture_reconciler(repository.clone());
+        reconciler
+            .reconcile_snapshot(
+                snapshot(1, AgentSnapshotAuthority::AgentAuthoritative),
+                None,
+            )
+            .await
+            .expect("snapshot");
+        let current = fixture_state(&repository).await.facts;
+        reconciler
+            .reconcile_change_page(
+                &AgentChangesQuery {
+                    source: source(),
+                    after: None,
+                    limit: 10,
+                },
+                AgentChangePage {
+                    source: source(),
+                    changes: vec![agentdash_agent_service_api::AgentChange {
+                        cursor: cursor("cursor-2"),
+                        source_revision: Some(
+                            AgentSourceRevision::new("source-revision-2").expect("revision"),
+                        ),
+                        occurred_at_ms: 10,
+                        payload: AgentChangePayload::LifecycleChanged {
+                            status: AgentLifecycleStatus::Closed,
+                        },
+                    }],
+                    next: Some(cursor("cursor-2")),
+                    gap: false,
+                },
+            )
+            .await
+            .expect("source change");
+        let candidate = fixture_state(&repository).await.facts;
+        validate_complete_agent_source_facts(&current, &candidate).expect("valid causal evidence");
+        let causal_index = candidate
+            .changes
+            .iter()
+            .position(|change| {
+                matches!(
+                    change.delta,
+                    ManagedRuntimeChangeDelta::SourceObservationApplied {
+                        source_change_sequence: 2,
+                        ..
+                    }
+                )
+            })
+            .expect("causal change");
+
+        let mut omitted = candidate.clone();
+        omitted.changes.remove(causal_index);
+        assert_source_invariant(validate_complete_agent_source_facts(&current, &omitted));
+
+        let mut duplicated = candidate.clone();
+        duplicated
+            .changes
+            .push(candidate.changes[causal_index].clone());
+        assert_source_invariant(validate_complete_agent_source_facts(&current, &duplicated));
+
+        let mut wrong_revision = candidate.clone();
+        let ManagedRuntimeChangeDelta::SourceObservationApplied {
+            source_projection_revision,
+            ..
+        } = &mut wrong_revision.changes[causal_index].delta
+        else {
+            unreachable!("causal change");
+        };
+        *source_projection_revision = RuntimeProjectionRevision(99);
+        assert_source_invariant(validate_complete_agent_source_facts(
+            &current,
+            &wrong_revision,
+        ));
+
+        let mut wrong_digest = candidate.clone();
+        let ManagedRuntimeChangeDelta::SourceObservationApplied {
+            observation_digest, ..
+        } = &mut wrong_digest.changes[causal_index].delta
+        else {
+            unreachable!("causal change");
+        };
+        *observation_digest = RuntimePayloadDigest::new("sha256:wrong").expect("digest");
+        assert_source_invariant(validate_complete_agent_source_facts(
+            &current,
+            &wrong_digest,
+        ));
+
+        let mut wrong_source = candidate.clone();
+        let ManagedRuntimeChangeDelta::SourceObservationApplied {
+            source_identity_digest,
+            ..
+        } = &mut wrong_source.changes[causal_index].delta
+        else {
+            unreachable!("causal change");
+        };
+        *source_identity_digest = RuntimePayloadDigest::new("sha256:wrong-source").expect("digest");
+        assert_source_invariant(validate_complete_agent_source_facts(
+            &current,
+            &wrong_source,
+        ));
+
+        let mut wrong_source_revision = candidate.clone();
+        let ManagedRuntimeChangeDelta::SourceObservationApplied {
+            source_revision_digest,
+            ..
+        } = &mut wrong_source_revision.changes[causal_index].delta
+        else {
+            unreachable!("causal change");
+        };
+        *source_revision_digest =
+            Some(RuntimePayloadDigest::new("sha256:wrong-revision").expect("digest"));
+        assert_source_invariant(validate_complete_agent_source_facts(
+            &current,
+            &wrong_source_revision,
+        ));
+
+        let mut wrong_sections = candidate.clone();
+        let ManagedRuntimeChangeDelta::SourceObservationApplied {
+            changed_sections, ..
+        } = &mut wrong_sections.changes[causal_index].delta
+        else {
+            unreachable!("causal change");
+        };
+        changed_sections.clear();
+        assert_source_invariant(validate_complete_agent_source_facts(
+            &current,
+            &wrong_sections,
+        ));
     }
 
     #[tokio::test]
@@ -2193,6 +2653,7 @@ mod tests {
                         },
                     }),
                 },
+                changed_sections: BTreeSet::from([ManagedRuntimeProjectionSection::Items]),
             }],
             next_sequence: 5,
         };
@@ -2209,11 +2670,21 @@ mod tests {
                 snapshot_revision: RuntimeProjectionRevision(3),
             })
         );
-        let ManagedRuntimeChangeDelta::ItemUpserted { item } = &projected.changes[0].delta else {
-            panic!("item delta");
+        let ManagedRuntimeChangeDelta::SourceObservationApplied {
+            source_change_sequence,
+            source_projection_revision,
+            changed_sections,
+            ..
+        } = &projected.changes[0].delta
+        else {
+            panic!("source observation delta");
         };
-        assert_eq!(item.id.as_str(), "runtime-item-13");
-        assert_eq!(item.turn_id.as_str(), "runtime-turn-11");
+        assert_eq!(*source_change_sequence, 5);
+        assert_eq!(*source_projection_revision, RuntimeProjectionRevision(3));
+        assert_eq!(
+            changed_sections,
+            &BTreeSet::from([ManagedRuntimeProjectionSection::Items])
+        );
     }
 
     #[tokio::test]

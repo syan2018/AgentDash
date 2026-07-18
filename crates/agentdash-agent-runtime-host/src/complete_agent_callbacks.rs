@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -8,13 +8,17 @@ use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentHookAction, AgentHookDecision,
     AgentHookInvocation, AgentHostCallbackBinding, AgentHostCallbackError,
     AgentHostCallbackErrorCode, AgentHostCallbacks, AgentSourceCoordinate,
-    AgentSurfaceContributionPayload, AgentSurfaceRoute, AgentToolInvocation, AgentToolResult,
-    BoundAgentSurface,
+    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRoute, AgentToolInvocation,
+    AgentToolResult, BoundAgentSurface,
 };
 use async_trait::async_trait;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+use crate::{
+    CompleteAgentBindingId, CompleteAgentHostStoreError, SharedCompleteAgentHostRepository,
+};
 
 #[async_trait]
 pub trait CompleteAgentToolHandler: Send + Sync {
@@ -51,6 +55,7 @@ impl AgentCallbackClock for SystemAgentCallbackClock {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompleteAgentCallbackRoute {
     pub route_id: AgentCallbackRouteId,
+    pub binding_id: CompleteAgentBindingId,
     pub generation: AgentBindingGeneration,
     pub source: AgentSourceCoordinate,
     pub delivery: AgentSurfaceRoute,
@@ -60,6 +65,7 @@ pub struct CompleteAgentCallbackRoute {
 
 impl CompleteAgentCallbackRoute {
     pub fn from_binding(
+        binding_id: CompleteAgentBindingId,
         binding: AgentHostCallbackBinding,
         source: AgentSourceCoordinate,
         bound_surface: BoundAgentSurface,
@@ -75,6 +81,7 @@ impl CompleteAgentCallbackRoute {
         }
         Ok(Self {
             route_id: binding.route_id,
+            binding_id,
             generation: binding.binding_generation,
             source,
             delivery: binding.delivery,
@@ -121,6 +128,7 @@ pub struct CompleteAgentCallbackRecord {
     pub request_digest: String,
     pub generation: AgentBindingGeneration,
     pub source: AgentSourceCoordinate,
+    pub bound_surface_digest: AgentSurfaceDigest,
     pub deadline_at_ms: u64,
     pub state: CompleteAgentCallbackReservationState,
 }
@@ -130,8 +138,6 @@ pub struct CompleteAgentCallbackRevision(pub u64);
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CompleteAgentCallbackFacts {
-    pub routes: BTreeMap<AgentCallbackRouteId, CompleteAgentCallbackRoute>,
-    pub revoked_routes: BTreeSet<AgentCallbackRouteId>,
     pub callbacks: BTreeMap<CompleteAgentCallbackKey, CompleteAgentCallbackRecord>,
 }
 
@@ -157,11 +163,11 @@ pub enum CompleteAgentCallbackStoreError {
     Persistence { reason: String },
 }
 
-/// Host 持有的反向回调路由、reservation 与 outcome 持久化边界。
+/// 反向回调 reservation 与 outcome 的持久化边界。
 ///
-/// 生产 adapter 必须把路由注册或撤销与对应的 Host binding/surface 状态转换放进同一个
-/// 数据库事务。回调 reservation 与 outcome 转换形成独立 CAS 聚合；调用平台 handler
-/// 之前必须先持久化 reservation。
+/// route 与 tombstone 属于 `CompleteAgentHostRepository` 聚合。回调 reservation 与
+/// outcome 转换形成独立 CAS 聚合；调用平台 handler 之前必须先持久化引用已提交 route
+/// generation 与 bound-surface digest 的 reservation。
 #[async_trait]
 pub trait CompleteAgentCallbackRepository: Send + Sync {
     async fn load(&self) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError>;
@@ -197,30 +203,6 @@ pub fn validate_complete_agent_callback_facts(
     current: &CompleteAgentCallbackFacts,
     candidate: &CompleteAgentCallbackFacts,
 ) -> Result<(), CompleteAgentCallbackStoreError> {
-    for (route_id, route) in &candidate.routes {
-        if route_id != &route.route_id
-            || route.generation.0 == 0
-            || route.delivery != AgentSurfaceRoute::AgentNativeCallback
-            || route.default_deadline_ms == 0
-        {
-            return callback_invariant("callback route coordinates are invalid");
-        }
-    }
-    for (route_id, route) in &current.routes {
-        if candidate.routes.get(route_id) != Some(route) {
-            return callback_invariant("callback route history is immutable");
-        }
-    }
-    if !candidate
-        .revoked_routes
-        .is_superset(&current.revoked_routes)
-        || candidate
-            .revoked_routes
-            .iter()
-            .any(|route_id| !candidate.routes.contains_key(route_id))
-    {
-        return callback_invariant("callback route revocation history is invalid");
-    }
     for (key, record) in &candidate.callbacks {
         if key != &record.key
             || key.route_id != record.key.route_id
@@ -229,14 +211,6 @@ pub fn validate_complete_agent_callback_facts(
             || record.deadline_at_ms == 0
         {
             return callback_invariant("callback reservation coordinates are invalid");
-        }
-        let route = candidate.routes.get(&key.route_id).ok_or_else(|| {
-            CompleteAgentCallbackStoreError::Invariant {
-                reason: "callback reservation has no durable route".to_owned(),
-            }
-        })?;
-        if route.generation != record.generation || route.source != record.source {
-            return callback_invariant("callback reservation route fence is inconsistent");
         }
     }
     for (key, record) in &current.callbacks {
@@ -250,6 +224,7 @@ pub fn validate_complete_agent_callback_facts(
             || record.request_digest != next.request_digest
             || record.generation != next.generation
             || record.source != next.source
+            || record.bound_surface_digest != next.bound_surface_digest
             || record.deadline_at_ms != next.deadline_at_ms
             || !callback_state_can_advance(&record.state, &next.state)
         {
@@ -290,12 +265,12 @@ fn callback_invariant<T>(reason: &str) -> Result<T, CompleteAgentCallbackStoreEr
 
 /// Reverse callback broker for Agent-native Tool/Hook execution.
 ///
-/// Each registered route is bound to one source and generation. Per-idempotency-key serialization
-/// persists both successful and failed outcomes, so duplicate/replayed calls do not execute the
-/// platform handler twice.
+/// 每条已提交 Host route 绑定唯一 source、generation 与 surface digest。按幂等键持久化
+/// 成功和失败 outcome，使重复或重放调用不会再次执行平台 handler。
 pub struct CompleteAgentCallbackBroker {
     tool_handler: Arc<dyn CompleteAgentToolHandler>,
     hook_handler: Arc<dyn CompleteAgentHookHandler>,
+    host_repository: SharedCompleteAgentHostRepository,
     repository: Arc<dyn CompleteAgentCallbackRepository>,
     clock: Arc<dyn AgentCallbackClock>,
 }
@@ -304,11 +279,13 @@ impl CompleteAgentCallbackBroker {
     pub fn new(
         tool_handler: Arc<dyn CompleteAgentToolHandler>,
         hook_handler: Arc<dyn CompleteAgentHookHandler>,
+        host_repository: SharedCompleteAgentHostRepository,
         repository: Arc<dyn CompleteAgentCallbackRepository>,
     ) -> Self {
         Self::with_clock(
             tool_handler,
             hook_handler,
+            host_repository,
             repository,
             Arc::new(SystemAgentCallbackClock),
         )
@@ -317,90 +294,17 @@ impl CompleteAgentCallbackBroker {
     pub fn with_clock(
         tool_handler: Arc<dyn CompleteAgentToolHandler>,
         hook_handler: Arc<dyn CompleteAgentHookHandler>,
+        host_repository: SharedCompleteAgentHostRepository,
         repository: Arc<dyn CompleteAgentCallbackRepository>,
         clock: Arc<dyn AgentCallbackClock>,
     ) -> Self {
         Self {
             tool_handler,
             hook_handler,
+            host_repository,
             repository,
             clock,
         }
-    }
-
-    pub async fn register_route(
-        &self,
-        route: CompleteAgentCallbackRoute,
-    ) -> Result<(), AgentHostCallbackError> {
-        if route.generation.0 == 0
-            || route.delivery != AgentSurfaceRoute::AgentNativeCallback
-            || route.default_deadline_ms == 0
-        {
-            return Err(callback_error(
-                AgentHostCallbackErrorCode::InvalidArgument,
-                "callback route requires positive generation/deadline and Agent-native delivery",
-                false,
-            ));
-        }
-        let snapshot = self.repository.load().await.map_err(store_error)?;
-        if let Some(existing) = snapshot.facts.routes.get(&route.route_id) {
-            if existing == &route {
-                if snapshot.facts.revoked_routes.contains(&route.route_id) {
-                    return Err(callback_error(
-                        AgentHostCallbackErrorCode::StaleBindingGeneration,
-                        "callback route was revoked and cannot be reactivated",
-                        false,
-                    ));
-                }
-                return Ok(());
-            }
-            return Err(callback_error(
-                AgentHostCallbackErrorCode::DuplicateConflict,
-                "callback route id is already registered with different binding evidence",
-                false,
-            ));
-        }
-        let mut facts = snapshot.facts;
-        facts.routes.insert(route.route_id.clone(), route);
-        self.repository
-            .commit(CompleteAgentCallbackCommit {
-                expected_revision: snapshot.revision,
-                facts,
-            })
-            .await
-            .map_err(store_error)?;
-        Ok(())
-    }
-
-    pub async fn revoke_route(
-        &self,
-        route_id: &AgentCallbackRouteId,
-        expected_generation: AgentBindingGeneration,
-    ) -> Result<(), AgentHostCallbackError> {
-        let snapshot = self.repository.load().await.map_err(store_error)?;
-        let route = snapshot.facts.routes.get(route_id).ok_or_else(|| {
-            callback_error(
-                AgentHostCallbackErrorCode::UnknownRoute,
-                "callback route is not registered",
-                false,
-            )
-        })?;
-        if route.generation != expected_generation {
-            return Err(stale_generation_error());
-        }
-        if snapshot.facts.revoked_routes.contains(route_id) {
-            return Ok(());
-        }
-        let mut facts = snapshot.facts;
-        facts.revoked_routes.insert(route_id.clone());
-        self.repository
-            .commit(CompleteAgentCallbackCommit {
-                expected_revision: snapshot.revision,
-                facts,
-            })
-            .await
-            .map_err(store_error)?;
-        Ok(())
     }
 
     pub async fn inspect_callback(
@@ -491,10 +395,14 @@ impl CompleteAgentCallbackBroker {
         ),
         AgentHostCallbackError,
     > {
-        let snapshot = self.repository.load().await.map_err(store_error)?;
-        let route = snapshot
+        let host_snapshot = self
+            .host_repository
+            .load()
+            .await
+            .map_err(host_store_error)?;
+        let route = host_snapshot
             .facts
-            .routes
+            .callback_routes
             .get(&meta.route_id)
             .cloned()
             .ok_or_else(|| {
@@ -504,7 +412,11 @@ impl CompleteAgentCallbackBroker {
                     false,
                 )
             })?;
-        if snapshot.facts.revoked_routes.contains(&meta.route_id) {
+        if host_snapshot
+            .facts
+            .revoked_callback_routes
+            .contains(&meta.route_id)
+        {
             return Err(stale_generation_error());
         }
         if route.generation != meta.binding_generation {
@@ -521,6 +433,7 @@ impl CompleteAgentCallbackBroker {
             route_id: meta.route_id.clone(),
             idempotency_key: meta.idempotency_key.clone(),
         };
+        let snapshot = self.repository.load().await.map_err(store_error)?;
         Ok((snapshot, route, key))
     }
 
@@ -634,6 +547,7 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
                 request_digest: request_digest.clone(),
                 generation: call.meta.binding_generation,
                 source: call.meta.source.clone(),
+                bound_surface_digest: route.bound_surface.digest.clone(),
                 deadline_at_ms: call.meta.deadline_at_ms,
                 state: CompleteAgentCallbackReservationState::Pending,
             },
@@ -664,6 +578,7 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
                 request_digest: request_digest.clone(),
                 generation: call.meta.binding_generation,
                 source: call.meta.source.clone(),
+                bound_surface_digest: route.bound_surface.digest.clone(),
                 deadline_at_ms: call.meta.deadline_at_ms,
                 state: CompleteAgentCallbackReservationState::Pending,
             },
@@ -883,6 +798,22 @@ fn store_error(error: CompleteAgentCallbackStoreError) -> AgentHostCallbackError
     }
 }
 
+fn host_store_error(error: CompleteAgentHostStoreError) -> AgentHostCallbackError {
+    match error {
+        CompleteAgentHostStoreError::Conflict { .. } => pending_callback_error(
+            "callback route state changed concurrently; inspect durable Host state before retry",
+        ),
+        CompleteAgentHostStoreError::Invariant { reason } => callback_error(
+            AgentHostCallbackErrorCode::Internal,
+            format!("callback Host invariant failed: {reason}"),
+            false,
+        ),
+        CompleteAgentHostStoreError::Persistence { reason } => pending_callback_error(format!(
+            "callback Host persistence is unavailable: {reason}"
+        )),
+    }
+}
+
 fn callback_error(
     code: AgentHostCallbackErrorCode,
     message: impl Into<String>,
@@ -911,6 +842,10 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
+    use crate::{
+        CompleteAgentHostCommit, CompleteAgentHostRepository, CompleteAgentHostSnapshot,
+        apply_complete_agent_host_commit,
+    };
 
     #[derive(Default)]
     struct FixtureCallbackRepository {
@@ -937,6 +872,39 @@ mod tests {
             }
             let mut snapshot = self.snapshot.lock().await;
             apply_complete_agent_callback_commit(&mut snapshot, commit)
+        }
+    }
+
+    #[derive(Default)]
+    struct FixtureCallbackRouteRepository {
+        snapshot: Mutex<CompleteAgentHostSnapshot>,
+    }
+
+    impl FixtureCallbackRouteRepository {
+        fn with_route(route: CompleteAgentCallbackRoute) -> Self {
+            let mut snapshot = CompleteAgentHostSnapshot::default();
+            snapshot
+                .facts
+                .callback_routes
+                .insert(route.route_id.clone(), route);
+            Self {
+                snapshot: Mutex::new(snapshot),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CompleteAgentHostRepository for FixtureCallbackRouteRepository {
+        async fn load(&self) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+            Ok(self.snapshot.lock().await.clone())
+        }
+
+        async fn commit(
+            &self,
+            commit: CompleteAgentHostCommit,
+        ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+            let mut snapshot = self.snapshot.lock().await;
+            apply_complete_agent_host_commit(&mut snapshot, commit)
         }
     }
 
@@ -1017,22 +985,23 @@ mod tests {
     async fn duplicate_tool_callback_replays_one_result() {
         let tool_handler = Arc::new(CountingToolHandler::default());
         let repository = Arc::new(FixtureCallbackRepository::default());
+        let host_repository = Arc::new(FixtureCallbackRouteRepository::with_route(route(
+            AgentBindingGeneration(2),
+        )));
         let broker = CompleteAgentCallbackBroker::with_clock(
             tool_handler.clone(),
             Arc::new(AllowHookHandler),
+            host_repository.clone(),
             repository.clone(),
             Arc::new(FixedClock(10)),
         );
-        broker
-            .register_route(route(AgentBindingGeneration(2)))
-            .await
-            .expect("route");
         let call = tool_call(AgentBindingGeneration(2), 20);
 
         let first = broker.invoke_tool(call.clone()).await.expect("first");
         let restarted = CompleteAgentCallbackBroker::with_clock(
             tool_handler.clone(),
             Arc::new(AllowHookHandler),
+            host_repository,
             repository,
             Arc::new(FixedClock(10)),
         );
@@ -1043,21 +1012,89 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_generation_and_elapsed_deadline_are_rejected() {
-        let repository = Arc::new(FixtureCallbackRepository::default());
-        let registering_broker = CompleteAgentCallbackBroker::with_clock(
-            Arc::new(CountingToolHandler::default()),
+    async fn missing_or_tombstoned_host_route_never_reserves_or_replays_callback() {
+        let tool_handler = Arc::new(CountingToolHandler::default());
+        let callback_repository = Arc::new(FixtureCallbackRepository::default());
+        let missing_host_repository = Arc::new(FixtureCallbackRouteRepository::default());
+        let missing_broker = CompleteAgentCallbackBroker::with_clock(
+            tool_handler.clone(),
             Arc::new(AllowHookHandler),
-            repository.clone(),
+            missing_host_repository,
+            callback_repository.clone(),
             Arc::new(FixedClock(10)),
         );
-        registering_broker
-            .register_route(route(AgentBindingGeneration(2)))
+        let call = tool_call(AgentBindingGeneration(2), 20);
+
+        let missing = missing_broker
+            .invoke_tool(call.clone())
             .await
-            .expect("route");
+            .expect_err("missing route");
+        assert_eq!(missing.code, AgentHostCallbackErrorCode::UnknownRoute);
+        assert!(
+            callback_repository
+                .load()
+                .await
+                .expect("callback snapshot")
+                .facts
+                .callbacks
+                .is_empty(),
+            "a missing durable Host route cannot create a callback reservation"
+        );
+
+        let host_repository = Arc::new(FixtureCallbackRouteRepository::with_route(route(
+            AgentBindingGeneration(2),
+        )));
+        let broker = CompleteAgentCallbackBroker::with_clock(
+            tool_handler.clone(),
+            Arc::new(AllowHookHandler),
+            host_repository.clone(),
+            callback_repository.clone(),
+            Arc::new(FixedClock(10)),
+        );
+        broker
+            .invoke_tool(call.clone())
+            .await
+            .expect("initial callback");
+        host_repository
+            .snapshot
+            .lock()
+            .await
+            .facts
+            .revoked_callback_routes
+            .insert(call.meta.route_id.clone());
+
+        let restarted = CompleteAgentCallbackBroker::with_clock(
+            tool_handler.clone(),
+            Arc::new(AllowHookHandler),
+            host_repository,
+            callback_repository,
+            Arc::new(FixedClock(10)),
+        );
+        let revoked = restarted
+            .invoke_tool(call)
+            .await
+            .expect_err("tombstoned route");
+        assert_eq!(
+            revoked.code,
+            AgentHostCallbackErrorCode::StaleBindingGeneration
+        );
+        assert_eq!(
+            tool_handler.calls.load(Ordering::SeqCst),
+            1,
+            "the tombstone fence wins over a previously settled callback outcome"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_generation_and_elapsed_deadline_are_rejected() {
+        let repository = Arc::new(FixtureCallbackRepository::default());
+        let host_repository = Arc::new(FixtureCallbackRouteRepository::with_route(route(
+            AgentBindingGeneration(2),
+        )));
         let broker = CompleteAgentCallbackBroker::with_clock(
             Arc::new(CountingToolHandler::default()),
             Arc::new(AllowHookHandler),
+            host_repository,
             repository,
             Arc::new(FixedClock(10)),
         );
@@ -1088,16 +1125,14 @@ mod tests {
     async fn hook_decision_outside_bound_actions_is_rejected_and_replayed_once() {
         let hook_handler = Arc::new(InvalidHookHandler::default());
         let repository = Arc::new(FixtureCallbackRepository::default());
+        let host_repository = Arc::new(FixtureCallbackRouteRepository::with_route(hook_route()));
         let broker = CompleteAgentCallbackBroker::with_clock(
             Arc::new(CountingToolHandler::default()),
             hook_handler.clone(),
+            host_repository.clone(),
             repository.clone(),
             Arc::new(FixedClock(10)),
         );
-        broker
-            .register_route(hook_route())
-            .await
-            .expect("hook route");
         let call = hook_call();
 
         let first = broker
@@ -1107,6 +1142,7 @@ mod tests {
         let restarted = CompleteAgentCallbackBroker::with_clock(
             Arc::new(CountingToolHandler::default()),
             hook_handler.clone(),
+            host_repository,
             repository,
             Arc::new(FixedClock(10)),
         );
@@ -1123,6 +1159,9 @@ mod tests {
     #[tokio::test]
     async fn pending_callback_survives_restart_and_requires_explicit_reconciliation() {
         let repository = Arc::new(FixtureCallbackRepository::default());
+        let host_repository = Arc::new(FixtureCallbackRouteRepository::with_route(route(
+            AgentBindingGeneration(2),
+        )));
         let failing_handler = Arc::new(FailSettleToolHandler {
             calls: AtomicUsize::new(0),
             repository: repository.clone(),
@@ -1130,13 +1169,10 @@ mod tests {
         let broker = CompleteAgentCallbackBroker::with_clock(
             failing_handler.clone(),
             Arc::new(AllowHookHandler),
+            host_repository.clone(),
             repository.clone(),
             Arc::new(FixedClock(10)),
         );
-        broker
-            .register_route(route(AgentBindingGeneration(2)))
-            .await
-            .expect("route");
         let call = tool_call(AgentBindingGeneration(2), 20);
         let digest = request_digest(&call).expect("request digest");
         let key = CompleteAgentCallbackKey {
@@ -1156,6 +1192,7 @@ mod tests {
         let restarted = CompleteAgentCallbackBroker::with_clock(
             restarted_handler.clone(),
             Arc::new(AllowHookHandler),
+            host_repository,
             repository.clone(),
             Arc::new(FixedClock(10)),
         );
@@ -1212,16 +1249,16 @@ mod tests {
 
     #[tokio::test]
     async fn hook_callback_cannot_exceed_its_bound_payload_deadline() {
+        let host_repository = Arc::new(FixtureCallbackRouteRepository::with_route(
+            hook_route_with_deadlines(100, 10),
+        ));
         let broker = CompleteAgentCallbackBroker::with_clock(
             Arc::new(CountingToolHandler::default()),
             Arc::new(AllowHookHandler),
+            host_repository,
             Arc::new(FixtureCallbackRepository::default()),
             Arc::new(FixedClock(10)),
         );
-        broker
-            .register_route(hook_route_with_deadlines(100, 10))
-            .await
-            .expect("hook route");
 
         let error = broker
             .invoke_hook(hook_call_with_deadline(21))
@@ -1240,6 +1277,7 @@ mod tests {
             default_deadline_ms: 10,
         };
         let callback_route = CompleteAgentCallbackRoute::from_binding(
+            CompleteAgentBindingId::new("binding").expect("binding"),
             binding,
             AgentSourceCoordinate::new("source").expect("source"),
             route(AgentBindingGeneration(2)).bound_surface,
@@ -1251,6 +1289,7 @@ mod tests {
         );
 
         let rejected = CompleteAgentCallbackRoute::from_binding(
+            CompleteAgentBindingId::new("binding").expect("binding"),
             AgentHostCallbackBinding {
                 route_id: AgentCallbackRouteId::new("wrong-route").expect("route"),
                 binding_generation: AgentBindingGeneration(2),
@@ -1267,6 +1306,7 @@ mod tests {
     fn route(generation: AgentBindingGeneration) -> CompleteAgentCallbackRoute {
         CompleteAgentCallbackRoute {
             route_id: AgentCallbackRouteId::new("route").expect("route"),
+            binding_id: CompleteAgentBindingId::new("binding").expect("binding"),
             generation,
             source: AgentSourceCoordinate::new("source").expect("source"),
             delivery: AgentSurfaceRoute::AgentNativeCallback,
@@ -1325,6 +1365,7 @@ mod tests {
     ) -> CompleteAgentCallbackRoute {
         CompleteAgentCallbackRoute {
             route_id: AgentCallbackRouteId::new("hook-route").expect("route"),
+            binding_id: CompleteAgentBindingId::new("binding").expect("binding"),
             generation: AgentBindingGeneration(2),
             source: AgentSourceCoordinate::new("source").expect("source"),
             delivery: AgentSurfaceRoute::AgentNativeCallback,

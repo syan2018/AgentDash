@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -260,9 +260,32 @@ pub struct ManagedRuntimeSnapshot {
         BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability>,
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedRuntimeProjectionSection {
+    Snapshot,
+    Lifecycle,
+    ActiveTurn,
+    Turns,
+    Items,
+    Interactions,
+    Surface,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ManagedRuntimeChangeDelta {
+    SourceObservationApplied {
+        source_change_sequence: u64,
+        source_projection_revision: RuntimeProjectionRevision,
+        source_identity_digest: RuntimePayloadDigest,
+        observation_digest: RuntimePayloadDigest,
+        source_revision_digest: Option<RuntimePayloadDigest>,
+        source_cursor_digest: Option<RuntimePayloadDigest>,
+        changed_sections: BTreeSet<ManagedRuntimeProjectionSection>,
+    },
     SnapshotReplaced {
         authority: ManagedRuntimeProjectionAuthority,
         fidelity: ManagedRuntimeProjectionFidelity,

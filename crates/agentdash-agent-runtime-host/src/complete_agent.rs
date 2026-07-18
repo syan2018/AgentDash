@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use crate::{
-    CompleteAgentHostCommit, CompleteAgentHostFacts, CompleteAgentHostRepository,
-    CompleteAgentHostSnapshot, CompleteAgentHostStoreError, SharedCompleteAgentHostRepository,
-    SharedCompleteAgentServiceRegistry,
+    CompleteAgentCallbackRoute, CompleteAgentHostCommit, CompleteAgentHostFacts,
+    CompleteAgentHostRepository, CompleteAgentHostSnapshot, CompleteAgentHostStoreError,
+    SharedCompleteAgentHostRepository, SharedCompleteAgentServiceRegistry,
 };
 use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentCommandEnvelope, AgentCommandId, AgentCommandReceipt,
@@ -466,6 +466,19 @@ impl CompleteAgentHost {
         })?;
         ensure_generation(binding, generation)?;
         binding.state = CompleteAgentBindingState::Lost;
+        let route_ids = state
+            .callback_routes
+            .values()
+            .filter(|route| {
+                &route.binding_id == binding_id
+                    && route.generation == generation
+                    && !state.revoked_callback_routes.contains(&route.route_id)
+            })
+            .map(|route| route.route_id.clone())
+            .collect::<Vec<_>>();
+        for route_id in route_ids {
+            state.revoked_callback_routes.insert(route_id);
+        }
         state.leases.remove(binding_id);
         for effect in state
             .effects
@@ -682,6 +695,26 @@ impl CompleteAgentHost {
         command: ApplyBoundAgentSurface,
     ) -> Result<AppliedAgentSurfaceReceipt, CompleteAgentHostError> {
         let digest = payload_digest(&command)?;
+        let callback_route = command
+            .bound_surface
+            .contributions
+            .iter()
+            .any(|contribution| {
+                contribution.route
+                    == agentdash_agent_service_api::AgentSurfaceRoute::AgentNativeCallback
+            })
+            .then(|| {
+                CompleteAgentCallbackRoute::from_binding(
+                    binding_id.clone(),
+                    command.callbacks.clone(),
+                    command.source.clone(),
+                    command.bound_surface.clone(),
+                )
+            })
+            .transpose()
+            .map_err(|error| CompleteAgentHostError::Invariant {
+                reason: error.message,
+            })?;
         let (service_instance_id, should_dispatch) = {
             let snapshot = self.repository.load().await?;
             let mut state = snapshot.facts;
@@ -752,14 +785,25 @@ impl CompleteAgentHost {
         let service = self.service(&service_instance_id).await?;
         if !should_dispatch {
             return self
-                .recover_applied_surface(lease, binding_id, &command.effect_id)
+                .recover_applied_surface(
+                    lease,
+                    binding_id,
+                    &command.effect_id,
+                    callback_route.as_ref(),
+                )
                 .await;
         }
 
         match service.apply_surface(command.clone()).await {
             Ok(receipt) => {
-                self.record_surface_receipt(lease, binding_id, &command.effect_id, receipt.clone())
-                    .await?;
+                self.record_surface_receipt(
+                    lease,
+                    binding_id,
+                    &command.effect_id,
+                    receipt.clone(),
+                    callback_route.as_ref(),
+                )
+                .await?;
                 Ok(receipt)
             }
             Err(error) => {
@@ -1015,6 +1059,19 @@ impl CompleteAgentHost {
             })?;
             binding.applied_surface = None;
             binding.state = CompleteAgentBindingState::PendingSurface;
+            let route_ids = state
+                .callback_routes
+                .values()
+                .filter(|route| {
+                    &route.binding_id == binding_id
+                        && route.generation == lease.generation
+                        && !state.revoked_callback_routes.contains(&route.route_id)
+                })
+                .map(|route| route.route_id.clone())
+                .collect::<Vec<_>>();
+            for route_id in route_ids {
+                state.revoked_callback_routes.insert(route_id);
+            }
         }
         self.commit(snapshot.revision, state).await?;
         Ok(())
@@ -1026,6 +1083,7 @@ impl CompleteAgentHost {
         binding_id: &CompleteAgentBindingId,
         effect_id: &AgentEffectIdentity,
         receipt: AppliedAgentSurfaceReceipt,
+        callback_route: Option<&CompleteAgentCallbackRoute>,
     ) -> Result<(), CompleteAgentHostError> {
         let snapshot = self.repository.load().await?;
         let mut state = snapshot.facts;
@@ -1080,6 +1138,19 @@ impl CompleteAgentHost {
             .expect("binding was validated in the same state");
         binding.applied_surface = Some(applied_surface);
         binding.state = CompleteAgentBindingState::Available;
+        if let Some(route) = callback_route {
+            if let Some(existing) = state.callback_routes.get(&route.route_id)
+                && existing != route
+            {
+                return Err(CompleteAgentHostError::Invariant {
+                    reason: "callback route identity was reused with another binding fence"
+                        .to_owned(),
+                });
+            }
+            state
+                .callback_routes
+                .insert(route.route_id.clone(), route.clone());
+        }
         self.commit(snapshot.revision, state).await?;
         Ok(())
     }
@@ -1089,6 +1160,7 @@ impl CompleteAgentHost {
         lease: &CompleteAgentBindingLease,
         binding_id: &CompleteAgentBindingId,
         effect_id: &AgentEffectIdentity,
+        callback_route: Option<&CompleteAgentCallbackRoute>,
     ) -> Result<AppliedAgentSurfaceReceipt, CompleteAgentHostError> {
         let inspection = self.inspect_effect(lease, effect_id).await?;
         match inspection.state {
@@ -1138,8 +1210,14 @@ impl CompleteAgentHost {
             source,
             applied,
         };
-        self.record_surface_receipt(lease, binding_id, effect_id, receipt.clone())
-            .await?;
+        self.record_surface_receipt(
+            lease,
+            binding_id,
+            effect_id,
+            receipt.clone(),
+            callback_route,
+        )
+        .await?;
         Ok(receipt)
     }
 
@@ -2395,7 +2473,7 @@ mod tests {
         };
 
         assert!(matches!(
-            host.record_surface_receipt(&lease, &binding_id, &effect_id, receipt)
+            host.record_surface_receipt(&lease, &binding_id, &effect_id, receipt, None)
                 .await,
             Err(CompleteAgentHostError::DispatchRejected { .. })
         ));

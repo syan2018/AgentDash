@@ -18,11 +18,11 @@ use agentdash_agent_runtime_contract::{
 use agentdash_agent_runtime_host::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingState,
     CompleteAgentCallbackBroker, CompleteAgentCallbackCommit, CompleteAgentCallbackRepository,
-    CompleteAgentCallbackRoute, CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError,
-    CompleteAgentHookHandler, CompleteAgentHost, CompleteAgentHostCommit,
-    CompleteAgentHostRepository, CompleteAgentHostSnapshot, CompleteAgentHostStoreError,
-    CompleteAgentPlacement, CompleteAgentServiceRegistry, CompleteAgentToolHandler,
-    apply_complete_agent_callback_commit, apply_complete_agent_host_commit,
+    CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError, CompleteAgentHookHandler,
+    CompleteAgentHost, CompleteAgentHostCommit, CompleteAgentHostRepository,
+    CompleteAgentHostSnapshot, CompleteAgentHostStoreError, CompleteAgentPlacement,
+    CompleteAgentServiceRegistry, CompleteAgentToolHandler, apply_complete_agent_callback_commit,
+    apply_complete_agent_host_commit,
 };
 use agentdash_agent_service_api::*;
 use async_trait::async_trait;
@@ -120,8 +120,9 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
     let source = AgentSourceCoordinate::new("source-1").expect("source");
     let service = Arc::new(FixtureService::new(source.clone()));
     let service_id = AgentServiceInstanceId::new("service-1").expect("service");
+    let host_repository = Arc::new(FixtureHostRepository::default());
     let host = CompleteAgentHost::new(
-        Arc::new(FixtureHostRepository::default()),
+        host_repository.clone(),
         Arc::new(FixtureServiceRegistry::default()),
     );
     let descriptor = host
@@ -190,6 +191,27 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
             .expect("binding")
             .state,
         CompleteAgentBindingState::Available
+    );
+    let applied_host_snapshot = host_repository
+        .load()
+        .await
+        .expect("Host snapshot after apply");
+    let persisted_route = applied_host_snapshot
+        .facts
+        .callback_routes
+        .get(&callback_binding.route_id)
+        .expect("atomic callback route");
+    assert_eq!(persisted_route.binding_id, binding_id);
+    assert_eq!(
+        persisted_route.generation,
+        callback_binding.binding_generation
+    );
+    assert_eq!(persisted_route.bound_surface.digest, bound.digest);
+    assert!(
+        !applied_host_snapshot
+            .facts
+            .revoked_callback_routes
+            .contains(&callback_binding.route_id)
     );
 
     let receipt = host
@@ -267,23 +289,18 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
     );
 
     let tool_handler = Arc::new(CountingToolHandler::default());
+    let callback_repository = Arc::new(FixtureCallbackRepository::default());
     let callback_broker = CompleteAgentCallbackBroker::new(
         tool_handler.clone(),
         Arc::new(AllowHookHandler),
-        Arc::new(FixtureCallbackRepository::default()),
+        host_repository.clone(),
+        callback_repository.clone(),
     );
-    callback_broker
-        .register_route(
-            CompleteAgentCallbackRoute::from_binding(callback_binding, source.clone(), bound)
-                .expect("callback route"),
-        )
-        .await
-        .expect("register callback route");
     let tool_call = AgentToolInvocation {
         meta: AgentHostCallbackMeta {
             route_id: AgentCallbackRouteId::new("callback-1").expect("route"),
             binding_generation: AgentBindingGeneration(1),
-            source,
+            source: source.clone(),
             turn_id: AgentTurnId::new("turn-1").expect("turn"),
             item_id: Some(AgentItemId::new("item-1").expect("item")),
             interaction_id: None,
@@ -299,10 +316,59 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         .await
         .expect("tool callback");
     let replay = callback_broker
-        .invoke_tool(tool_call)
+        .invoke_tool(tool_call.clone())
         .await
         .expect("tool callback replay");
     assert_eq!(first, replay);
+    assert_eq!(tool_handler.calls.load(Ordering::SeqCst), 1);
+
+    host.revoke_bound_surface(
+        &lease,
+        &binding_id,
+        RevokeBoundAgentSurface {
+            command_id: AgentCommandId::new("revoke-command").expect("command"),
+            effect_id: AgentEffectIdentity::new("revoke-effect").expect("effect"),
+            idempotency_key: AgentIdempotencyKey::new("revoke-idem").expect("idempotency"),
+            binding_generation: AgentBindingGeneration(1),
+            source,
+            expected_revision: bound.revision,
+        },
+    )
+    .await
+    .expect("revoke surface");
+    let revoked_host_snapshot = host_repository
+        .load()
+        .await
+        .expect("Host snapshot after revoke");
+    assert!(
+        revoked_host_snapshot
+            .facts
+            .callback_routes
+            .contains_key(&callback_binding.route_id),
+        "the immutable route fence remains durable"
+    );
+    assert!(
+        revoked_host_snapshot
+            .facts
+            .revoked_callback_routes
+            .contains(&callback_binding.route_id),
+        "revoke atomically tombstones the route"
+    );
+
+    let restarted_broker = CompleteAgentCallbackBroker::new(
+        tool_handler.clone(),
+        Arc::new(AllowHookHandler),
+        host_repository,
+        callback_repository,
+    );
+    let rejected = restarted_broker
+        .invoke_tool(tool_call)
+        .await
+        .expect_err("old callback after revoke");
+    assert_eq!(
+        rejected.code,
+        AgentHostCallbackErrorCode::StaleBindingGeneration
+    );
     assert_eq!(tool_handler.calls.load(Ordering::SeqCst), 1);
 }
 
@@ -479,9 +545,17 @@ impl CompleteAgentService for FixtureService {
 
     async fn revoke_surface(
         &self,
-        _command: RevokeBoundAgentSurface,
+        command: RevokeBoundAgentSurface,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        Err(unsupported())
+        *self.applied_surface.lock().await = None;
+        Ok(AgentCommandReceipt {
+            command_id: command.command_id,
+            effect_id: command.effect_id,
+            source: command.source,
+            state: AgentReceiptState::AlreadyApplied { terminal: None },
+            snapshot_revision: None,
+            initial_context: None,
+        })
     }
 }
 

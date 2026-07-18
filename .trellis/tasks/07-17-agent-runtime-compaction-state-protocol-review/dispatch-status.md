@@ -37,17 +37,17 @@
 | Branch | `codex/agent-runtime-final-convergence-plan` |
 | Planning base | `263b990e` |
 | Current wave | Wave 1 — Foundation bundles ready to dispatch |
-| Current checkpoint | S0 Baseline — passed；checkpoint commit pending |
+| Current checkpoint | S1 Contract Freeze — passed；checkpoint commit pending |
 | Production path | Current Runtime → Driver Host → Native/Codex driver |
-| Active implementation bundles | none |
+| Active implementation bundles | Platform Runtime、Dash / Native |
 | Shared hotspot owner | main dispatcher |
 
 ## Checkpoint ledger
 
 | Checkpoint | Status | Commit | Evidence |
 | --- | --- | --- | --- |
-| S0 Baseline | passed | pending | 5 AgentRun fork + 1 Native fork；Runtime 129 tests；ordinary send/reconnect；migration guard |
-| S1 Contract Freeze | pending | — | — |
+| S0 Baseline | committed | `32ecfd2c` | 5 AgentRun fork + 1 Native fork；Runtime 129 tests；ordinary send/reconnect；migration guard |
+| S1 Contract Freeze | passed | pending | final Service API 15 tests + clippy；Runtime admission 3；Host target 5；dependency/negative gates |
 | S2 Target Domains Ready | pending | — | — |
 | S3 Complete Agent Lane | pending | — | — |
 | S4 Product Lane Ready | pending | — | — |
@@ -58,11 +58,11 @@
 
 | Work | Status | Owning bundle | Notes |
 | --- | --- | --- | --- |
-| W1 | pending | Platform Runtime | — |
-| W2 | pending | Dash / Native | — |
-| W3 | pending | Platform Runtime | — |
-| W4 | pending | Platform Runtime | — |
-| W5 | pending | Dash / Native | waits for Platform checked revision before final check |
+| W1 | contract frozen | Platform Runtime | typed Service API and additive crate boundary independently checked |
+| W2 | in progress | Dash / Native | Wave 1 |
+| W3 | in progress | Platform Runtime | Wave 1 |
+| W4 | in progress | Platform Runtime | Wave 1 |
+| W5 | in progress | Dash / Native | contract milestone may unblock；waits for Platform checked revision before final check |
 | W6 | pending | External Agents | — |
 | W7 | pending | Product / Protocol | — |
 | W8 | pending | Hard Cut | unique migration/composition/deletion owner |
@@ -108,7 +108,15 @@
 
 ## Active bundle handoffs
 
-None. Wave 1 dispatch begins after the S0 checkpoint commit.
+- Platform Runtime implement: W1/W3/W4；owns Runtime Contract、new Service API、
+  Runtime/Host/Surface/Tool/Hook target lane. W1 contract frozen after final checker pass:
+  Service API 15 tests、clippy、Runtime admission 3 tests、Host target 5 tests and
+  dependency/negative gates passed. W3/W4 target modules remain unstaged for S2.
+  Shared hotspots remain with main.
+- Dash / Native implement: W2/W5；owns Dash Agent/Core and Native adapter target lane.
+  AgentCore 2 tests and Dash ordered-history/fold/fork/compaction 7 tests passed.
+  It may consume current contract milestone, but final W5 check waits for Platform checked
+  revision.
 
 ## Known blockers
 

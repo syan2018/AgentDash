@@ -110,6 +110,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-agent-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "agentdash-agent-protocol"
 version = "0.1.0"
 dependencies = [
@@ -218,6 +231,19 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "ts-rs",
+]
+
+[[package]]
+name = "agentdash-agent-service-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

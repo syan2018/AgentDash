@@ -37,9 +37,9 @@
 | Branch | `codex/agent-runtime-final-convergence-plan` |
 | Planning base | `263b990e` |
 | Current wave | Wave 2 — External Agents target lane |
-| Current checkpoint | S3 Complete Agent Lane — in progress |
+| Current checkpoint | S3 Complete Agent Lane — ready to commit |
 | Production path | Current Runtime → Driver Host → Native/Codex driver |
-| Active implementation bundles | External Agents；Platform Runtime Wire support |
+| Active implementation bundles | Product / Protocol；Platform Runtime projection contract |
 | Shared hotspot owner | main dispatcher |
 
 ## Checkpoint ledger
@@ -49,7 +49,7 @@
 | S0 Baseline | committed | `32ecfd2c` | 5 AgentRun fork + 1 Native fork；Runtime 129 tests；ordinary send/reconnect；migration guard |
 | S1 Contract Freeze | committed | `09bff131` | final Service API 15 tests + clippy；Runtime admission 3；Host target 5；dependency/negative gates |
 | S2 Target Domains Ready | committed | `7b9f0ab4` | Platform/Runtime/Host/Dash/Core/Native target checks；W2 activation component signed；5+1 fork、ordinary send、reconnect tracers |
-| S3 Complete Agent Lane | pending | — | — |
+| S3 Complete Agent Lane | ready | checkpoint commit pending | Native/Codex/Remote Complete Agent target；Wire 8、Codex 14、Remote 11、Relay 5；ordinary send/reconnect |
 | S4 Product Lane Ready | pending | — | — |
 | S5 Atomic Hard Cut | pending | — | — |
 | S6 Final Conformance | pending | — | — |
@@ -63,7 +63,7 @@
 | W3 | target ready | Platform Runtime | independent recheck passed；S5 repository/schema activation remains |
 | W4 | target ready | Platform Runtime | independent recheck passed；S5 production binding remains |
 | W5 | target ready | Dash / Native | Native Complete Agent target conformance passed；production activation remains |
-| W6 | in progress | External Agents | Codex/Remote target lane；Platform owner补齐 Complete Agent Runtime Wire |
+| W6 | target + component ready | External Agents | independent W6/S3 check passed；production registry/canonical activation remains S5 |
 | W7 | pending | Product / Protocol | — |
 | W8 | pending | Hard Cut | unique migration/composition/deletion owner |
 | W9 | pending | Final Conformance | — |
@@ -141,11 +141,23 @@
   `research/current-w7-product-protocol-readiness.md`. It confirms the current graph-before-runtime
   fork, prompt-slice Companion and journal/UI feed must be replaced by the target saga,
   initial-package and Runtime snapshot/change lane before the combined hard cut.
+- External Agents are frozen through main-branch commits `81a31793`、`9d339458`、`270a1485`、
+  `e834498d` and `69053fc9`. Independent review closed post-dispatch Codex Unknown handling,
+  unknown vendor terminal mapping, Remote endpoint callback/change production, callback
+  reentrancy/deadline/effect idempotency, send-before-ledger ordering and target Wire revision
+  isolation. Production Wire remains revision 3; Complete Agent target Wire uses revision 4.
 
 ## Known blockers
 
 - S2 has no remaining blocker. The current production checkpoint tracers passed:
   AgentRun fork 5、Native fork 1、ordinary first send 1 and reconnect 1.
+- S3 has no remaining blocker. Main-branch integration reran Wire 8、Codex target 14、Remote target
+  11、ordinary first send 1 and reconnect 1 with the convergence-owned lockfile.
+- S4 remains in owner-fix: the first W7 target commit passed its model tests but independent review
+  found that Fork/Companion were not yet durable end-to-end, feed duplicated Runtime protocol and
+  availability state, and its activation inventory did not close the real consumer matrix.
+  Product/Protocol and Platform Runtime owners are revising those boundaries in the isolated S4
+  worktree.
 - Complete combined `activation_ready` remains a Wave 4 gate: W7 must remove Product/Application
   Core-tool and journal callers, then W8 and Dash/Native jointly remove the remaining legacy
   consumers, serde transcode and `agentdash-agent-types` in one S5 set.

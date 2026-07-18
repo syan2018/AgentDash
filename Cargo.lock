@@ -228,6 +228,7 @@ name = "agentdash-agent-runtime-wire"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-runtime-contract",
+ "agentdash-agent-service-api",
  "agentdash-integration-api",
  "schemars 1.2.1",
  "serde",
@@ -742,6 +743,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
+ "agentdash-agent-service-api",
  "agentdash-integration-api",
  "agentdash-process",
  "async-trait",
@@ -786,6 +788,7 @@ dependencies = [
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
  "agentdash-agent-runtime-wire",
+ "agentdash-agent-service-api",
  "agentdash-integration-api",
  "agentdash-relay",
  "async-trait",

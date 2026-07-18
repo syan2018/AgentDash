@@ -2989,6 +2989,7 @@ mod tests {
 
     #[derive(Clone, Copy)]
     enum LifecycleFailpoint {
+        AppliedReceiptObservation,
         BindingProvision,
         RuntimeTargetProvision,
         SurfaceSettlement,
@@ -3020,6 +3021,18 @@ mod tests {
             if self.armed.load(Ordering::SeqCst) {
                 let current = self.inner.load().await?;
                 let should_fail = match self.failpoint {
+                    LifecycleFailpoint::AppliedReceiptObservation => commit
+                        .facts
+                        .lifecycle_effects
+                        .iter()
+                        .any(|(effect_id, effect)| {
+                            effect.applied_receipt.is_some()
+                                && current
+                                    .facts
+                                    .lifecycle_effects
+                                    .get(effect_id)
+                                    .is_none_or(|current| current.applied_receipt.is_none())
+                        }),
                     LifecycleFailpoint::BindingProvision => {
                         commit.facts.bindings.len() > current.facts.bindings.len()
                     }
@@ -3790,6 +3803,81 @@ mod tests {
         );
         assert_eq!(service.fork_calls.load(Ordering::SeqCst), 1);
         assert_eq!(service.inspect_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn fork_applied_receipt_commit_failure_recovers_only_by_inspection() {
+        let durable = Arc::new(FixtureHostRepository::default());
+        let failing = Arc::new(FailLifecycleCommitOnceRepository {
+            inner: durable.clone(),
+            failpoint: LifecycleFailpoint::AppliedReceiptObservation,
+            armed: AtomicBool::new(false),
+        });
+        let (host, service, parent_thread) = lifecycle_host(failing.clone()).await;
+        let created = ManagedRuntimeLifecyclePort::create(
+            &host,
+            lifecycle_context(parent_thread.clone(), "fork-receipt-parent-create"),
+            None,
+        )
+        .await
+        .expect("create parent");
+        let fork_context = lifecycle_context(parent_thread, "fork-receipt-fail");
+        let child_thread = RuntimeThreadId::new("runtime-child-receipt").expect("child");
+        failing.arm();
+
+        assert!(matches!(
+            ManagedRuntimeLifecyclePort::fork(
+                &host,
+                fork_context.clone(),
+                created.binding.clone(),
+                child_thread.clone(),
+                AgentForkPoint::Head,
+            )
+            .await,
+            Err(ManagedRuntimeLifecycleError::ForkInspectionRequired {
+                ref child_source,
+                child_history_digest: Some(ref digest),
+                ..
+            }) if child_source.as_str() == "lifecycle-child"
+                && digest.as_str() == "sha256:child-history"
+        ));
+        assert_eq!(service.fork_calls.load(Ordering::SeqCst), 1);
+        let facts = durable.load().await.expect("durable Host facts").facts;
+        assert!(
+            facts
+                .lifecycle_effects
+                .get(&fork_context.effect_id)
+                .is_some_and(|record| record.applied_receipt.is_none() && record.outcome.is_none())
+        );
+        assert!(!facts.runtime_targets.contains_key(&child_thread));
+
+        drop(host);
+        let restarted = restarted_lifecycle_host(failing, service.clone()).await;
+        assert!(matches!(
+            ManagedRuntimeLifecyclePort::inspect(
+                &restarted,
+                fork_context.clone(),
+                Some(created.binding),
+            )
+            .await,
+            Ok(ManagedRuntimeLifecycleInspection::ForkApplied(ref outcome))
+                if outcome.receipt.effect_id == fork_context.effect_id
+        ));
+        assert_eq!(service.fork_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(service.inspect_calls.load(Ordering::SeqCst), 1);
+        let facts = durable.load().await.expect("settled Host facts").facts;
+        assert!(
+            facts
+                .lifecycle_effects
+                .get(&fork_context.effect_id)
+                .is_some_and(|record| record.applied_receipt.is_some() && record.outcome.is_some())
+        );
+        assert!(
+            facts
+                .bindings
+                .get(&runtime_binding_id(&child_thread).expect("binding"))
+                .is_some_and(CompleteAgentBinding::dispatch_admitted)
+        );
     }
 
     #[tokio::test]

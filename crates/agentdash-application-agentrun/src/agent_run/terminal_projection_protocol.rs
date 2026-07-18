@@ -93,6 +93,7 @@ pub struct AgentRunTerminalSourceSequence(pub u64);
 pub enum AgentRunTerminalProductChangeKind {
     BackendAvailability,
     ControlCorrelation,
+    ReconcileLost,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,6 +381,18 @@ impl AgentRunTerminalProjectionCommit {
                 self.change.delta,
                 AgentRunTerminalProjectionDelta::ControlCorrelated { .. }
             ) => {}
+            (
+                AgentRunTerminalChangeOrigin::ProductFact {
+                    change_kind: AgentRunTerminalProductChangeKind::ReconcileLost,
+                },
+                None,
+            ) if matches!(
+                self.change.delta,
+                AgentRunTerminalProjectionDelta::StateChanged {
+                    state: AgentRunTerminalLifecycleState::Lost,
+                    ..
+                }
+            ) => {}
             _ => return Err(AgentRunTerminalProtocolError::ChangeOriginMismatch),
         }
         match &self.change.delta {
@@ -661,6 +674,9 @@ impl From<AgentRunTerminalChange> for wire::AgentRunTerminalChange {
                             AgentRunTerminalProductChangeKind::ControlCorrelation => {
                                 wire::AgentRunTerminalProductChangeKind::ControlCorrelation
                             }
+                            AgentRunTerminalProductChangeKind::ReconcileLost => {
+                                wire::AgentRunTerminalProductChangeKind::ReconcileLost
+                            }
                         },
                     }
                 }
@@ -762,31 +778,62 @@ pub struct AgentRunTerminalReconcileResult {
 impl AgentRunTerminalReconcileResult {
     pub fn validate(&self) -> Result<(), AgentRunTerminalProtocolError> {
         if self.inventory.owner.target != self.request.target
-            || self.inventory.owner.terminal_owner_epoch_id != self.request.terminal_owner_epoch_id
+            || self
+                .inventory
+                .terminals
+                .iter()
+                .any(|snapshot| snapshot.terminal.owner != self.inventory.owner)
         {
             return Err(AgentRunTerminalProtocolError::ReconcileOwnerMismatch);
         }
-        if let Some(snapshot) = &self.snapshot
-            && (snapshot.terminal.terminal_id != self.request.terminal_id
-                || snapshot.terminal.owner != self.inventory.owner)
-        {
-            return Err(AgentRunTerminalProtocolError::ReconcileOwnerMismatch);
-        }
-        let mut expected = self.request.after_source_sequence.0.saturating_add(1);
-        for delta in &self.deltas {
-            if delta.terminal_id != self.request.terminal_id
-                || delta.terminal_owner_epoch_id != self.request.terminal_owner_epoch_id
-                || delta.delta.owner() != &self.inventory.owner
-                || delta.source_sequence != AgentRunTerminalSourceSequence(expected)
-            {
-                return Err(AgentRunTerminalProtocolError::ReconcileSequenceMismatch);
+        let same_owner_epoch =
+            self.inventory.owner.terminal_owner_epoch_id == self.request.terminal_owner_epoch_id;
+        match self.resolution {
+            AgentRunTerminalSourceResolution::Exact => {
+                if !same_owner_epoch {
+                    return Err(AgentRunTerminalProtocolError::ReconcileOwnerMismatch);
+                }
+                let snapshot = self
+                    .snapshot
+                    .as_ref()
+                    .ok_or(AgentRunTerminalProtocolError::MissingReconcileSnapshot)?;
+                if snapshot.terminal.terminal_id != self.request.terminal_id
+                    || snapshot.terminal.owner != self.inventory.owner
+                {
+                    return Err(AgentRunTerminalProtocolError::ReconcileOwnerMismatch);
+                }
             }
-            expected = expected.saturating_add(1);
+            AgentRunTerminalSourceResolution::Unknown => {
+                let old_owner_terminal_is_absent = !self
+                    .inventory
+                    .terminals
+                    .iter()
+                    .any(|snapshot| snapshot.terminal.terminal_id == self.request.terminal_id);
+                if !same_owner_epoch || self.snapshot.is_some() || !old_owner_terminal_is_absent {
+                    return Err(AgentRunTerminalProtocolError::ReconcileResolutionEvidenceMismatch);
+                }
+            }
+            AgentRunTerminalSourceResolution::OwnerFenceUnprovable => {
+                if same_owner_epoch || self.snapshot.is_some() || !self.deltas.is_empty() {
+                    return Err(AgentRunTerminalProtocolError::ReconcileResolutionEvidenceMismatch);
+                }
+            }
         }
-        if matches!(self.resolution, AgentRunTerminalSourceResolution::Exact)
-            && self.snapshot.is_none()
-        {
-            return Err(AgentRunTerminalProtocolError::MissingReconcileSnapshot);
+        if !matches!(
+            self.resolution,
+            AgentRunTerminalSourceResolution::OwnerFenceUnprovable
+        ) {
+            let mut expected = self.request.after_source_sequence.0.saturating_add(1);
+            for delta in &self.deltas {
+                if delta.terminal_id != self.request.terminal_id
+                    || delta.terminal_owner_epoch_id != self.request.terminal_owner_epoch_id
+                    || delta.delta.owner() != &self.inventory.owner
+                    || delta.source_sequence != AgentRunTerminalSourceSequence(expected)
+                {
+                    return Err(AgentRunTerminalProtocolError::ReconcileSequenceMismatch);
+                }
+                expected = expected.saturating_add(1);
+            }
         }
         Ok(())
     }
@@ -882,6 +929,8 @@ pub enum AgentRunTerminalProtocolError {
     ReconcileSequenceMismatch,
     #[error("exact terminal reconcile result is missing its source snapshot")]
     MissingReconcileSnapshot,
+    #[error("terminal reconcile resolution lacks its required owner evidence")]
+    ReconcileResolutionEvidenceMismatch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -932,6 +981,62 @@ mod tests {
                 ),
             },
             backend_id: "backend-1".to_string(),
+        }
+    }
+
+    fn terminal(owner: AgentRunTerminalOwnerFence) -> AgentRunTerminalProjection {
+        AgentRunTerminalProjection {
+            terminal_id: AgentRunTerminalId::new("terminal-1").expect("terminal"),
+            owner,
+            mount_id: None,
+            cwd: Some("F:/workspace".to_string()),
+            capability: AgentRunTerminalCapability::Interactive,
+            max_output_bytes: 16_384,
+            state: AgentRunTerminalLifecycleState::Running,
+            availability: AgentRunTerminalAvailability::Online,
+            latest_source_sequence: AgentRunTerminalSourceSequence(6),
+            exit_code: None,
+            process_id: Some(42),
+            created_at_ms: 1,
+            exited_at_ms: None,
+            output: AgentRunTerminalOutputProjection {
+                next_sequence: AgentRunTerminalOutputSequence(8),
+                retained_output: "hello".to_string(),
+                truncated: false,
+                omitted_bytes: 0,
+            },
+        }
+    }
+
+    fn source_snapshot(owner: AgentRunTerminalOwnerFence) -> AgentRunTerminalSourceSnapshot {
+        AgentRunTerminalSourceSnapshot {
+            terminal: terminal(owner),
+            payload_digest: RuntimePayloadDigest::new("sha256:terminal-source-snapshot")
+                .expect("digest"),
+        }
+    }
+
+    fn reconcile_result(
+        resolution: AgentRunTerminalSourceResolution,
+        inventory_owner: AgentRunTerminalOwnerFence,
+        snapshot: Option<AgentRunTerminalSourceSnapshot>,
+    ) -> AgentRunTerminalReconcileResult {
+        let requested_owner = owner();
+        AgentRunTerminalReconcileResult {
+            request: AgentRunTerminalReconcileRequest {
+                target: requested_owner.target,
+                terminal_id: AgentRunTerminalId::new("terminal-1").expect("terminal"),
+                terminal_owner_epoch_id: requested_owner.terminal_owner_epoch_id,
+                after_source_sequence: AgentRunTerminalSourceSequence(6),
+            },
+            resolution,
+            inventory: AgentRunTerminalSourceInventory {
+                owner: inventory_owner,
+                captured_at_source_sequence: AgentRunTerminalSourceSequence(6),
+                terminals: Vec::new(),
+            },
+            snapshot,
+            deltas: Vec::new(),
         }
     }
 
@@ -1066,5 +1171,118 @@ mod tests {
             changed_at_ms: 11,
         };
         commit.validate().expect("Product-only change");
+    }
+
+    #[test]
+    fn product_reconcile_lost_does_not_consume_or_forge_agent_source_sequence() {
+        let mut commit = output_commit();
+        commit.expected_output_sequence = None;
+        commit.expected_source_sequence = None;
+        commit.expected_terminal_state = Some(AgentRunTerminalLifecycleState::Running);
+        commit.change.origin = AgentRunTerminalChangeOrigin::ProductFact {
+            change_kind: AgentRunTerminalProductChangeKind::ReconcileLost,
+        };
+        commit.change.delta = AgentRunTerminalProjectionDelta::StateChanged {
+            terminal_id: AgentRunTerminalId::new("terminal-1").expect("terminal"),
+            owner: owner(),
+            state: AgentRunTerminalLifecycleState::Lost,
+            exit_code: None,
+            changed_at_ms: 12,
+        };
+
+        commit
+            .validate()
+            .expect("reconcile Lost is a Product-only change");
+    }
+
+    #[test]
+    fn exact_reconcile_requires_the_requested_owner_snapshot() {
+        let old_owner = owner();
+        reconcile_result(
+            AgentRunTerminalSourceResolution::Exact,
+            old_owner.clone(),
+            Some(source_snapshot(old_owner.clone())),
+        )
+        .validate()
+        .expect("exact source snapshot");
+
+        assert_eq!(
+            reconcile_result(AgentRunTerminalSourceResolution::Exact, old_owner, None).validate(),
+            Err(AgentRunTerminalProtocolError::MissingReconcileSnapshot)
+        );
+    }
+
+    #[test]
+    fn unknown_reconcile_requires_old_owner_absence_and_no_snapshot() {
+        let old_owner = owner();
+        reconcile_result(
+            AgentRunTerminalSourceResolution::Unknown,
+            old_owner.clone(),
+            None,
+        )
+        .validate()
+        .expect("old owner inventory proves terminal absence");
+
+        let mut present_in_inventory = reconcile_result(
+            AgentRunTerminalSourceResolution::Unknown,
+            old_owner.clone(),
+            None,
+        );
+        present_in_inventory
+            .inventory
+            .terminals
+            .push(source_snapshot(old_owner.clone()));
+        assert_eq!(
+            present_in_inventory.validate(),
+            Err(AgentRunTerminalProtocolError::ReconcileResolutionEvidenceMismatch)
+        );
+
+        let stale_snapshot = source_snapshot(old_owner.clone());
+        assert_eq!(
+            reconcile_result(
+                AgentRunTerminalSourceResolution::Unknown,
+                old_owner,
+                Some(stale_snapshot),
+            )
+            .validate(),
+            Err(AgentRunTerminalProtocolError::ReconcileResolutionEvidenceMismatch)
+        );
+    }
+
+    #[test]
+    fn owner_fence_unprovable_requires_changed_owner_evidence_without_old_snapshot() {
+        let mut changed_owner = owner();
+        changed_owner.terminal_owner_epoch_id =
+            AgentRunTerminalOwnerEpochId::new("owner-epoch-2").expect("owner epoch");
+        changed_owner.source_binding.source_ref =
+            agentdash_agent_runtime_contract::RuntimeSourceRef::new("source-2").expect("source");
+
+        reconcile_result(
+            AgentRunTerminalSourceResolution::OwnerFenceUnprovable,
+            changed_owner.clone(),
+            None,
+        )
+        .validate()
+        .expect("changed owner fence is explicit evidence");
+
+        assert_eq!(
+            reconcile_result(
+                AgentRunTerminalSourceResolution::OwnerFenceUnprovable,
+                changed_owner.clone(),
+                Some(source_snapshot(changed_owner)),
+            )
+            .validate(),
+            Err(AgentRunTerminalProtocolError::ReconcileResolutionEvidenceMismatch)
+        );
+
+        assert_eq!(
+            reconcile_result(
+                AgentRunTerminalSourceResolution::OwnerFenceUnprovable,
+                owner(),
+                None,
+            )
+            .validate(),
+            Err(AgentRunTerminalProtocolError::ReconcileResolutionEvidenceMismatch)
+        );
     }
 }

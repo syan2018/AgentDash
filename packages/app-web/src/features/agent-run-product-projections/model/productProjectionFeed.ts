@@ -113,8 +113,9 @@ export function connectProductProjectionFeed<
           }
           expected += 1;
         }
-        if (page.next < (changes.at(-1)?.sequence ?? cursor)) {
-          throw new Error("Product projection cursor regressed");
+        const appliedSequence = changes.at(-1)?.sequence ?? cursor;
+        if (page.next !== appliedSequence) {
+          throw new Error("Product projection cursor is not contiguous with applied changes");
         }
         cursor = page.next;
         if (changes.length > 0) observer.onChanges(changes);

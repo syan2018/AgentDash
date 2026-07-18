@@ -255,6 +255,16 @@ use agentdash_contracts::workspace_module::{
 };
 use ts_rs::TS;
 
+const AGENT_RUN_PRODUCT_RUNTIME_IMPORTS: &[(&str, &str)] = &[
+    (
+        "ManagedRuntimeSourceBindingEvidence",
+        "./agent-runtime-contracts",
+    ),
+    ("RuntimeSourceRef", "./agent-runtime-contracts"),
+    ("RuntimeProjectionRevision", "./agent-runtime-contracts"),
+    ("SurfaceRevision", "./agent-runtime-contracts"),
+];
+
 fn main() {
     let check = env::args().any(|arg| arg == "--check");
     let generated_dir: PathBuf =
@@ -790,10 +800,11 @@ fn main() {
     );
 
     // --- agent-run-product-projection-contracts.ts ---
-    emit_domain(
+    emit_domain_with_external_imports(
         &generated_dir,
         "agent-run-product-projection-contracts.ts",
         &mut upstream,
+        AGENT_RUN_PRODUCT_RUNTIME_IMPORTS,
         check,
         |dir| {
             export_all::<AgentRunProductProjectionContractSchema>(dir);
@@ -1096,6 +1107,25 @@ fn emit_domain(
     emit_domain_with_footer(dir, filename, upstream, check, None, export);
 }
 
+fn emit_domain_with_external_imports(
+    dir: &Path,
+    filename: &str,
+    upstream: &mut BTreeMap<String, String>,
+    external_imports: &[(&str, &str)],
+    check: bool,
+    export: impl FnOnce(&Path),
+) {
+    let mut domain_upstream = upstream.clone();
+    for (name, source) in external_imports {
+        domain_upstream.insert((*name).to_string(), (*source).to_string());
+    }
+    let types = write_domain_dedup(&dir.join(filename), &domain_upstream, check, None, export);
+    let source = format!("./{}", filename.strip_suffix(".ts").unwrap());
+    for name in types {
+        upstream.insert(name, source.clone());
+    }
+}
+
 fn emit_domain_with_footer(
     dir: &Path,
     filename: &str,
@@ -1243,6 +1273,44 @@ fn collect_ts_files(dir: &std::path::Path, out: &mut BTreeMap<String, String>) {
             if !decl_lines.is_empty() {
                 out.insert(stem, decl_lines.join("\n"));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn product_projection_contract_reuses_the_canonical_runtime_type_closure() {
+        let generated_dir = tempfile::tempdir().expect("generated dir");
+        let out = generated_dir
+            .path()
+            .join("agent-run-product-projection-contracts.ts");
+        let runtime_upstream = AGENT_RUN_PRODUCT_RUNTIME_IMPORTS
+            .iter()
+            .map(|(name, source)| ((*name).to_string(), (*source).to_string()))
+            .collect();
+
+        let exported = write_domain_dedup(&out, &runtime_upstream, false, None, |dir| {
+            export_all::<AgentRunProductProjectionContractSchema>(dir);
+            export_all::<WorkspaceModulePresentationAcknowledgeRequest>(dir);
+        });
+
+        let generated = fs::read_to_string(out).expect("product contract");
+        assert!(generated.contains(
+            "import type { ManagedRuntimeSourceBindingEvidence } from \"./agent-runtime-contracts\";"
+        ));
+        for runtime_owned in [
+            "ManagedRuntimeSourceBindingEvidence",
+            "RuntimeSourceRef",
+            "RuntimeProjectionRevision",
+            "SurfaceRevision",
+        ] {
+            assert!(
+                !exported.contains(runtime_owned),
+                "Product contract must not redeclare Runtime-owned {runtime_owned}"
+            );
         }
     }
 }

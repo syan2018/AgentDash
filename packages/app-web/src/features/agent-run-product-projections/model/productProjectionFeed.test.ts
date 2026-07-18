@@ -134,6 +134,34 @@ describe("connectProductProjectionFeed", () => {
     connection.close();
   });
 
+  it("rejects a cursor jump after duplicate changes are filtered", async () => {
+    const fixture = harness(
+      [{ target: wireTarget, latest_change_sequence: 4, marker: "baseline" }],
+      [{
+        target: wireTarget,
+        changes: [{ target: wireTarget, sequence: 4 }],
+        next: 5,
+      }],
+    );
+    const onChanges = vi.fn();
+    const onError = vi.fn();
+    const connection = connectProductProjectionFeed<Snapshot, Change, Page>(
+      target,
+      { onSnapshot: vi.fn(), onChanges, onError },
+      fixture.dependencies,
+    );
+    await connection.ready;
+
+    expect(onChanges).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Product projection cursor is not contiguous with applied changes",
+      }),
+    );
+    expect(fixture.scheduled).toHaveLength(1);
+    connection.close();
+  });
+
   it("schedules a reconnect when the initial snapshot load fails", async () => {
     const scheduled: Array<() => void> = [];
     const fetchSnapshot = vi.fn()

@@ -84,7 +84,8 @@ function isTerminalChangeOrigin(value: unknown): boolean {
   }
   if (value.kind === "product_fact") {
     return value.change_kind === "backend_availability"
-      || value.change_kind === "control_correlation";
+      || value.change_kind === "control_correlation"
+      || value.change_kind === "reconcile_lost";
   }
   return false;
 }

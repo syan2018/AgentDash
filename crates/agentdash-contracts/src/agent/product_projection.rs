@@ -258,6 +258,7 @@ pub enum AgentRunTerminalProjectionDelta {
 pub enum AgentRunTerminalProductChangeKind {
     BackendAvailability,
     ControlCorrelation,
+    ReconcileLost,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

@@ -1,0 +1,105 @@
+{
+  "bundle": "Platform Runtime",
+  "checkpoint": "S5 activation input",
+  "base_revision": "fc26d3ff",
+  "production_route_changed": false,
+  "contracts": {
+    "runtime": "agentdash-agent-runtime-contract",
+    "complete_agent": "agentdash-agent-service-api",
+    "host_repository": "agentdash-agent-runtime-host::CompleteAgentHostRepository",
+    "host_transaction": "agentdash-agent-runtime-host::CompleteAgentHostCommit",
+    "runtime_projection_repository": "agentdash-agent-runtime::CompleteAgentStateRepository"
+  },
+  "production_registration_inputs": [
+    "CompleteAgentHost(final PostgreSQL CompleteAgentHostRepository, production CompleteAgentServiceRegistry)",
+    "CompleteAgentStateReconciler(final PostgreSQL CompleteAgentStateRepository)",
+    "Native Complete Agent Service",
+    "Codex Complete Agent Service",
+    "Remote Complete Agent Service",
+    "CompleteAgentCallbackBroker Tool/Hook routes"
+  ],
+  "host_postgres_contract": {
+    "tables": [
+      "agent_runtime_host_revision",
+      "agent_service_instance",
+      "agent_runtime_offer",
+      "agent_runtime_binding",
+      "agent_runtime_source_coordinate",
+      "agent_runtime_effect",
+      "agent_runtime_lease"
+    ],
+    "required_transaction": [
+      "load the complete Host fact graph at one committed Host revision",
+      "compare expected CompleteAgentHostRevision under a database lock",
+      "validate service-to-offer profile identity",
+      "validate binding-to-source bidirectional uniqueness and positive generation",
+      "validate effect identity, payload digest, binding, source and generation",
+      "validate lease owner, token, epoch, generation and database-clock expiry",
+      "atomically persist all changed Host facts and advance revision",
+      "return exact committed replay without a second write"
+    ],
+    "required_constraints": [
+      "Host revision is a singleton monotonic CAS token advanced only with the complete Host transaction",
+      "service instance identity is unique and immutable for a descriptor",
+      "offer references the exact service instance and profile digest",
+      "binding identity is unique and fixes service instance, source, generation, profile and surface",
+      "source coordinate is unique and references the same binding generation",
+      "effect identity is globally stable and fixes command, payload, binding, source and generation",
+      "effect observations are monotonic and evidence is immutable",
+      "lease key is binding generation; owner/token/epoch fence stale workers",
+      "lease epoch never decreases and binding Lost invalidates the active lease"
+    ],
+    "typed_errors": [
+      "Conflict(expected_revision, actual_revision)",
+      "Invariant(reason)",
+      "Persistence(reason)",
+      "EffectIdentityConflict",
+      "EffectObservationConflict",
+      "EffectEvidenceConflict",
+      "StaleGeneration",
+      "StaleLeaseOutcome",
+      "LeaseConflict",
+      "LeaseExpired"
+    ]
+  },
+  "canonical_generator_roots": [
+    "ManagedRuntimeProjectionSchema",
+    "AgentServiceDescriptor",
+    "AgentCommandEnvelope",
+    "AgentCommandReceipt",
+    "AgentSnapshot",
+    "AgentChangePage",
+    "AgentHostCallbacks",
+    "AgentToolInvocation",
+    "AgentToolResult",
+    "AgentHookInvocation",
+    "AgentHookDecision"
+  ],
+  "wire": {
+    "current_production_revision": 3,
+    "target_revision": 4,
+    "final_state": "revision 4 is the only generated and registered production revision"
+  },
+  "platform_deletions": [
+    "RuntimeJournalFact and RuntimeJournalRecord Runtime/Host producers and readers",
+    "ContextActivation and ContextActivationDispatch Platform paths",
+    "AgentRuntimeDriverContribution, AgentRuntimeDriverFactory and AgentRuntimeDriver Platform contracts",
+    "legacy Runtime Wire revision 3 generator and handlers"
+  ],
+  "negative_gates": [
+    "CompleteAgentHost has no Mutex/RwLock Host fact graph",
+    "production composition has no RecordingCompleteAgentHostRepository",
+    "Runtime projection remains owned by CompleteAgentStateRepository",
+    "Runtime repository does not create Host binding or source coordinates",
+    "production service registry contains only Complete Agent registrations",
+    "canonical generators include all frozen roots and only final Wire revision",
+    "legacy Platform journal, context activation and driver contract consumers are zero"
+  ],
+  "dependency_order": [
+    "Application -> Runtime Contract",
+    "Managed Runtime -> Complete Agent Host",
+    "Complete Agent Host -> Complete Agent Service API",
+    "Complete Agent adapters -> Complete Agent Service API",
+    "Infrastructure -> Runtime and Host repository ports"
+  ]
+}

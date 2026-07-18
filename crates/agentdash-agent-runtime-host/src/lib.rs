@@ -6,6 +6,7 @@
 
 mod complete_agent;
 mod complete_agent_callbacks;
+mod complete_agent_repository;
 mod conformance;
 mod host;
 mod memory;
@@ -19,6 +20,7 @@ pub use agentdash_integration_api::{
 };
 pub use complete_agent::*;
 pub use complete_agent_callbacks::*;
+pub use complete_agent_repository::*;
 pub use conformance::*;
 pub use host::*;
 pub use memory::*;

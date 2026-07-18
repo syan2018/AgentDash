@@ -8,12 +8,13 @@ use std::{
 
 use agentdash_agent_runtime::{
     CompleteAgentStateReconciler, CompleteAgentStateRepository,
-    InMemoryCompleteAgentStateRepository, bind_complete_agent_surface,
+    RecordingCompleteAgentStateRepository, bind_complete_agent_surface,
 };
 use agentdash_agent_runtime_host::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingState,
     CompleteAgentCallbackBroker, CompleteAgentCallbackRoute, CompleteAgentHookHandler,
-    CompleteAgentHost, CompleteAgentToolHandler,
+    CompleteAgentHost, CompleteAgentToolHandler, RecordingCompleteAgentHostRepository,
+    RecordingCompleteAgentServiceRegistry,
 };
 use agentdash_agent_service_api::*;
 use async_trait::async_trait;
@@ -25,7 +26,10 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
     let source = AgentSourceCoordinate::new("source-1").expect("source");
     let service = Arc::new(FixtureService::new(source.clone()));
     let service_id = AgentServiceInstanceId::new("service-1").expect("service");
-    let host = CompleteAgentHost::new();
+    let host = CompleteAgentHost::new(
+        Arc::new(RecordingCompleteAgentHostRepository::new()),
+        Arc::new(RecordingCompleteAgentServiceRegistry::new()),
+    );
     let descriptor = host
         .register_service(service_id.clone(), service.clone())
         .await
@@ -80,7 +84,11 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         .expect("apply surface");
     assert!(bound.accepts_applied(&applied.applied));
     assert_eq!(
-        host.binding(&binding_id).await.expect("binding").state,
+        host.binding(&binding_id)
+            .await
+            .expect("read binding")
+            .expect("binding")
+            .state,
         CompleteAgentBindingState::Available
     );
 
@@ -113,7 +121,7 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         AgentReceiptState::AlreadyApplied { .. }
     ));
 
-    let state_repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+    let state_repository = Arc::new(RecordingCompleteAgentStateRepository::new());
     let reconciler = CompleteAgentStateReconciler::new(state_repository.clone());
     let sync = reconciler
         .synchronize_source(service.as_ref(), source.clone(), 32)

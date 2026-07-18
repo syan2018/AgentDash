@@ -1437,18 +1437,18 @@ struct InMemoryCompleteAgentState {
 }
 
 #[derive(Default)]
-pub struct InMemoryCompleteAgentStateRepository {
+pub struct RecordingCompleteAgentStateRepository {
     state: Mutex<InMemoryCompleteAgentState>,
 }
 
-impl InMemoryCompleteAgentStateRepository {
+impl RecordingCompleteAgentStateRepository {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
 #[async_trait]
-impl CompleteAgentStateRepository for InMemoryCompleteAgentStateRepository {
+impl CompleteAgentStateRepository for RecordingCompleteAgentStateRepository {
     async fn load_projection(
         &self,
         source: &AgentSourceCoordinate,
@@ -1554,7 +1554,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_is_normalized_and_reconnects_from_platform_changes() {
-        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         let source = source();
         reconciler
@@ -1607,7 +1607,7 @@ mod tests {
 
     #[tokio::test]
     async fn managed_snapshot_uses_explicit_runtime_ids_and_committed_availability() {
-        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         reconciler
             .reconcile_snapshot(
@@ -1656,7 +1656,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_or_drifting_identity_is_rejected() {
-        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         reconciler
             .reconcile_snapshot(
@@ -1700,7 +1700,7 @@ mod tests {
 
     #[tokio::test]
     async fn availability_must_be_complete_and_committed_at_snapshot_revision() {
-        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         reconciler
             .reconcile_snapshot(
@@ -1783,7 +1783,7 @@ mod tests {
 
     #[tokio::test]
     async fn active_turn_change_is_applied_as_an_explicit_source_fact() {
-        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         let source = source();
         reconciler
@@ -1850,7 +1850,7 @@ mod tests {
 
     #[tokio::test]
     async fn weaker_snapshot_authority_cannot_replace_authoritative_projection() {
-        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
         let reconciler = CompleteAgentStateReconciler::new(repository);
         reconciler
             .reconcile_snapshot(
@@ -1869,7 +1869,7 @@ mod tests {
 
     #[tokio::test]
     async fn stronger_authority_can_confirm_the_same_snapshot_revision() {
-        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
         let reconciler = CompleteAgentStateReconciler::new(repository);
         reconciler
             .reconcile_snapshot(snapshot(1, AgentSnapshotAuthority::AgentObserved), None)
@@ -1892,7 +1892,7 @@ mod tests {
 
     #[tokio::test]
     async fn cursor_gap_requires_snapshot_reload_without_partial_change_apply() {
-        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         let source = source();
         reconciler
@@ -1933,7 +1933,7 @@ mod tests {
 
     #[tokio::test]
     async fn source_sync_reloads_snapshot_at_gap_cursor() {
-        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
         let reconciler = CompleteAgentStateReconciler::new(repository.clone());
         reconciler
             .reconcile_snapshot(snapshot(1, AgentSnapshotAuthority::AgentObserved), None)
@@ -1965,7 +1965,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_only_sync_never_calls_the_unsupported_changes_endpoint() {
-        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let repository = Arc::new(RecordingCompleteAgentStateRepository::new());
         let reconciler = CompleteAgentStateReconciler::new(repository);
         let service = GapService {
             reads: AtomicUsize::new(0),

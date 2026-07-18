@@ -1,5 +1,10 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
+use crate::{
+    CompleteAgentHostCommit, CompleteAgentHostFacts, CompleteAgentHostRepository,
+    CompleteAgentHostSnapshot, CompleteAgentHostStoreError, SharedCompleteAgentHostRepository,
+    SharedCompleteAgentServiceRegistry,
+};
 use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentCommandEnvelope, AgentCommandId, AgentCommandReceipt,
     AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentPayloadDigest,
@@ -12,7 +17,6 @@ use agentdash_agent_service_api::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio::sync::{Mutex, RwLock};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CompleteAgentBindingId(String);
@@ -142,34 +146,27 @@ pub enum CompleteAgentHostError {
     #[error("Complete Agent payload cannot be encoded: {reason}")]
     Encoding { reason: String },
     #[error(transparent)]
+    Store(#[from] CompleteAgentHostStoreError),
+    #[error(transparent)]
     Service(#[from] AgentServiceError),
-}
-
-#[derive(Clone)]
-struct RegisteredCompleteAgentService {
-    service: Arc<dyn CompleteAgentService>,
-    descriptor: AgentServiceDescriptor,
-}
-
-#[derive(Default)]
-struct CompleteAgentHostState {
-    bindings: BTreeMap<CompleteAgentBindingId, CompleteAgentBinding>,
-    effects: BTreeMap<AgentEffectIdentity, CompleteAgentEffectRecord>,
-    leases: BTreeMap<CompleteAgentBindingId, CompleteAgentBindingLease>,
-    lease_epochs: BTreeMap<CompleteAgentBindingId, u64>,
 }
 
 /// Target Complete-Agent lane for service registration, binding/generation fencing, and stable
 /// effect reconciliation. It is additive until the production registry cutover.
-#[derive(Default)]
 pub struct CompleteAgentHost {
-    services: RwLock<BTreeMap<AgentServiceInstanceId, RegisteredCompleteAgentService>>,
-    state: Mutex<CompleteAgentHostState>,
+    repository: SharedCompleteAgentHostRepository,
+    services: SharedCompleteAgentServiceRegistry,
 }
 
 impl CompleteAgentHost {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(
+        repository: Arc<dyn CompleteAgentHostRepository>,
+        services: SharedCompleteAgentServiceRegistry,
+    ) -> Self {
+        Self {
+            repository,
+            services,
+        }
     }
 
     pub async fn register_service(
@@ -179,23 +176,24 @@ impl CompleteAgentHost {
     ) -> Result<AgentServiceDescriptor, CompleteAgentHostError> {
         let descriptor = service.describe().await?;
         validate_service_descriptor(&descriptor)?;
-        let mut services = self.services.write().await;
-        if let Some(existing) = services.get(&instance_id) {
-            if existing.descriptor != descriptor {
+        let offer = runtime_offer_from_descriptor(&descriptor)?;
+        let snapshot = self.repository.load().await?;
+        let mut facts = snapshot.facts;
+        if let Some(existing) = facts.service_instances.get(&instance_id) {
+            if existing != &descriptor {
                 return Err(CompleteAgentHostError::Invariant {
                     reason: "service instance id is already registered with another descriptor"
                         .to_owned(),
                 });
             }
-            return Ok(existing.descriptor.clone());
+        } else {
+            facts
+                .service_instances
+                .insert(instance_id.clone(), descriptor.clone());
+            facts.offers.insert(instance_id.clone(), offer);
+            self.commit(snapshot.revision, facts).await?;
         }
-        services.insert(
-            instance_id,
-            RegisteredCompleteAgentService {
-                service,
-                descriptor: descriptor.clone(),
-            },
-        );
+        self.services.attach(instance_id, service).await;
         Ok(descriptor)
     }
 
@@ -208,13 +206,15 @@ impl CompleteAgentHost {
                 reason: "Complete Agent binding generation must be positive".to_owned(),
             });
         }
-        let services = self.services.read().await;
-        let registered = services.get(&binding.service_instance_id).ok_or_else(|| {
-            CompleteAgentHostError::UnknownService {
+        let snapshot = self.repository.load().await?;
+        let mut facts = snapshot.facts;
+        let descriptor = facts
+            .service_instances
+            .get(&binding.service_instance_id)
+            .ok_or_else(|| CompleteAgentHostError::UnknownService {
                 instance_id: binding.service_instance_id.clone(),
-            }
-        })?;
-        if binding.profile_digest != registered.descriptor.profile_digest
+            })?;
+        if binding.profile_digest != descriptor.profile_digest
             || binding.bound_surface.offer_profile_digest != binding.profile_digest
         {
             return Err(CompleteAgentHostError::DispatchRejected {
@@ -222,8 +222,6 @@ impl CompleteAgentHost {
                     .to_owned(),
             });
         }
-        drop(services);
-
         let surface_matches = binding
             .applied_surface
             .as_ref()
@@ -236,8 +234,7 @@ impl CompleteAgentHost {
                 reason: "binding state does not match its applied surface evidence".to_owned(),
             });
         }
-        let mut state = self.state.lock().await;
-        if let Some(existing) = state.bindings.get(&binding.id) {
+        if let Some(existing) = facts.bindings.get(&binding.id) {
             if existing == &binding {
                 return Ok(());
             }
@@ -245,7 +242,20 @@ impl CompleteAgentHost {
                 reason: "binding id is already reserved with different coordinates".to_owned(),
             });
         }
-        state.bindings.insert(binding.id.clone(), binding);
+        if facts
+            .source_coordinates
+            .values()
+            .any(|source| source == &binding.source)
+        {
+            return Err(CompleteAgentHostError::Invariant {
+                reason: "source coordinate is already assigned to another binding".to_owned(),
+            });
+        }
+        facts
+            .source_coordinates
+            .insert(binding.id.clone(), binding.source.clone());
+        facts.bindings.insert(binding.id.clone(), binding);
+        self.commit(snapshot.revision, facts).await?;
         Ok(())
     }
 
@@ -253,19 +263,15 @@ impl CompleteAgentHost {
         &self,
         instance_id: &AgentServiceInstanceId,
     ) -> Result<AgentRuntimeOffer, CompleteAgentHostError> {
-        let services = self.services.read().await;
-        let descriptor = &services
+        let snapshot = self.repository.load().await?;
+        snapshot
+            .facts
+            .offers
             .get(instance_id)
+            .cloned()
             .ok_or_else(|| CompleteAgentHostError::UnknownService {
                 instance_id: instance_id.clone(),
-            })?
-            .descriptor;
-        let surface = &descriptor.profile.surface;
-        validate_surface_profile(surface)?;
-        Ok(AgentRuntimeOffer {
-            profile_digest: descriptor.profile_digest.clone(),
-            contributions: surface.facets.clone(),
-        })
+            })
     }
 
     pub async fn acquire_binding_lease(
@@ -282,7 +288,8 @@ impl CompleteAgentHost {
                 reason: "binding lease requires an owner and a future expiry".to_owned(),
             });
         }
-        let mut state = self.state.lock().await;
+        let snapshot = self.repository.load().await?;
+        let mut state = snapshot.facts;
         let binding = state.bindings.get(binding_id).ok_or_else(|| {
             CompleteAgentHostError::UnknownBinding {
                 binding_id: binding_id.as_str().to_owned(),
@@ -324,6 +331,7 @@ impl CompleteAgentHost {
         };
         state.lease_epochs.insert(binding_id.clone(), epoch);
         state.leases.insert(binding_id.clone(), lease.clone());
+        self.commit(snapshot.revision, state).await?;
         Ok(lease)
     }
 
@@ -338,14 +346,17 @@ impl CompleteAgentHost {
                 reason: "binding lease renewal requires a future expiry".to_owned(),
             });
         }
-        let mut state = self.state.lock().await;
+        let snapshot = self.repository.load().await?;
+        let mut state = snapshot.facts;
         validate_lease_state(&state, lease, now_ms)?;
         let current = state
             .leases
             .get_mut(&lease.binding_id)
             .expect("validated lease exists in the same state");
         current.expires_at_ms = expires_at_ms;
-        Ok(current.clone())
+        let renewed = current.clone();
+        self.commit(snapshot.revision, state).await?;
+        Ok(renewed)
     }
 
     pub async fn release_binding_lease(
@@ -353,9 +364,11 @@ impl CompleteAgentHost {
         lease: &CompleteAgentBindingLease,
         now_ms: u64,
     ) -> Result<(), CompleteAgentHostError> {
-        let mut state = self.state.lock().await;
+        let snapshot = self.repository.load().await?;
+        let mut state = snapshot.facts;
         validate_lease_state(&state, lease, now_ms)?;
         state.leases.remove(&lease.binding_id);
+        self.commit(snapshot.revision, state).await?;
         Ok(())
     }
 
@@ -364,7 +377,8 @@ impl CompleteAgentHost {
         binding_id: &CompleteAgentBindingId,
         generation: AgentBindingGeneration,
     ) -> Result<(), CompleteAgentHostError> {
-        let mut state = self.state.lock().await;
+        let snapshot = self.repository.load().await?;
+        let mut state = snapshot.facts;
         let binding = state.bindings.get_mut(binding_id).ok_or_else(|| {
             CompleteAgentHostError::UnknownBinding {
                 binding_id: binding_id.as_str().to_owned(),
@@ -385,6 +399,7 @@ impl CompleteAgentHost {
                 observe_effect_state(effect, CompleteAgentEffectState::Lost)?;
             }
         }
+        self.commit(snapshot.revision, state).await?;
         Ok(())
     }
 
@@ -396,7 +411,8 @@ impl CompleteAgentHost {
     ) -> Result<AgentCommandReceipt, CompleteAgentHostError> {
         let digest = payload_digest(&command)?;
         let (service_instance_id, source, should_dispatch) = {
-            let mut state = self.state.lock().await;
+            let snapshot = self.repository.load().await?;
+            let mut state = snapshot.facts;
             validate_lease_state(&state, lease, current_time_ms())?;
             if &lease.binding_id != binding_id {
                 return Err(CompleteAgentHostError::LeaseConflict);
@@ -458,21 +474,25 @@ impl CompleteAgentHost {
                             .expect("effect was read from the same state")
                             .delivery_epoch = lease.epoch;
                     }
-                    (
+                    let result = (
                         binding.service_instance_id.clone(),
                         binding.source.clone(),
                         confirmed_not_applied,
-                    )
+                    );
+                    self.commit(snapshot.revision, state).await?;
+                    result
                 }
                 None => {
                     state
                         .effects
                         .insert(command.meta.effect_id.clone(), candidate);
-                    (
+                    let result = (
                         binding.service_instance_id.clone(),
                         binding.source.clone(),
                         true,
-                    )
+                    );
+                    self.commit(snapshot.revision, state).await?;
+                    result
                 }
             }
         };
@@ -507,7 +527,8 @@ impl CompleteAgentHost {
         effect_id: &AgentEffectIdentity,
     ) -> Result<AgentEffectInspection, CompleteAgentHostError> {
         {
-            let mut state = self.state.lock().await;
+            let snapshot = self.repository.load().await?;
+            let mut state = snapshot.facts;
             validate_lease_state(&state, lease, current_time_ms())?;
             let record = state.effects.get_mut(effect_id).ok_or_else(|| {
                 CompleteAgentHostError::UnknownEffect {
@@ -518,6 +539,7 @@ impl CompleteAgentHost {
                 return Err(CompleteAgentHostError::LeaseConflict);
             }
             record.delivery_epoch = lease.epoch;
+            self.commit(snapshot.revision, state).await?;
         }
         self.inspect_effect(effect_id, lease.epoch).await
     }
@@ -528,7 +550,7 @@ impl CompleteAgentHost {
         delivery_epoch: u64,
     ) -> Result<AgentEffectInspection, CompleteAgentHostError> {
         let service_instance_id = {
-            let state = self.state.lock().await;
+            let state = self.repository.load().await?.facts;
             state
                 .effects
                 .get(effect_id)
@@ -541,7 +563,8 @@ impl CompleteAgentHost {
         let service = self.service(&service_instance_id).await?;
         let inspection = service.inspect(effect_id.clone()).await?;
 
-        let mut state = self.state.lock().await;
+        let snapshot = self.repository.load().await?;
+        let mut state = snapshot.facts;
         let record = state.effects.get_mut(effect_id).ok_or_else(|| {
             CompleteAgentHostError::UnknownEffect {
                 effect_id: effect_id.clone(),
@@ -570,6 +593,7 @@ impl CompleteAgentHost {
         )?;
         observe_effect_state(record, observed_state)?;
         record.inspection = Some(inspection.clone());
+        self.commit(snapshot.revision, state).await?;
         Ok(inspection)
     }
 
@@ -581,7 +605,8 @@ impl CompleteAgentHost {
     ) -> Result<AppliedAgentSurfaceReceipt, CompleteAgentHostError> {
         let digest = payload_digest(&command)?;
         let (service_instance_id, should_dispatch) = {
-            let mut state = self.state.lock().await;
+            let snapshot = self.repository.load().await?;
+            let mut state = snapshot.facts;
             validate_lease_state(&state, lease, current_time_ms())?;
             if &lease.binding_id != binding_id {
                 return Err(CompleteAgentHostError::LeaseConflict);
@@ -633,11 +658,15 @@ impl CompleteAgentHost {
                             .expect("effect was read from the same state")
                             .delivery_epoch = lease.epoch;
                     }
-                    (binding.service_instance_id, confirmed_not_applied)
+                    let result = (binding.service_instance_id, confirmed_not_applied);
+                    self.commit(snapshot.revision, state).await?;
+                    result
                 }
                 None => {
                     state.effects.insert(command.effect_id.clone(), candidate);
-                    (binding.service_instance_id, true)
+                    let result = (binding.service_instance_id, true);
+                    self.commit(snapshot.revision, state).await?;
+                    result
                 }
             }
         };
@@ -674,7 +703,8 @@ impl CompleteAgentHost {
     ) -> Result<AgentCommandReceipt, CompleteAgentHostError> {
         let digest = payload_digest(&command)?;
         let (service_instance_id, source, should_dispatch) = {
-            let mut state = self.state.lock().await;
+            let snapshot = self.repository.load().await?;
+            let mut state = snapshot.facts;
             validate_lease_state(&state, lease, current_time_ms())?;
             if &lease.binding_id != binding_id {
                 return Err(CompleteAgentHostError::LeaseConflict);
@@ -732,15 +762,19 @@ impl CompleteAgentHost {
                             .expect("effect was read from the same state")
                             .delivery_epoch = lease.epoch;
                     }
-                    (
+                    let result = (
                         binding.service_instance_id,
                         binding.source,
                         confirmed_not_applied,
-                    )
+                    );
+                    self.commit(snapshot.revision, state).await?;
+                    result
                 }
                 None => {
                     state.effects.insert(command.effect_id.clone(), candidate);
-                    (binding.service_instance_id, binding.source, true)
+                    let result = (binding.service_instance_id, binding.source, true);
+                    self.commit(snapshot.revision, state).await?;
+                    result
                 }
             }
         };
@@ -765,7 +799,8 @@ impl CompleteAgentHost {
             receipt.state,
             AgentReceiptState::AlreadyApplied { .. } | AgentReceiptState::Terminal { .. }
         ) {
-            let mut state = self.state.lock().await;
+            let snapshot = self.repository.load().await?;
+            let mut state = snapshot.facts;
             let binding = state.bindings.get_mut(binding_id).ok_or_else(|| {
                 CompleteAgentHostError::UnknownBinding {
                     binding_id: binding_id.as_str().to_owned(),
@@ -773,6 +808,7 @@ impl CompleteAgentHost {
             })?;
             binding.applied_surface = None;
             binding.state = CompleteAgentBindingState::PendingSurface;
+            self.commit(snapshot.revision, state).await?;
         }
         Ok(receipt)
     }
@@ -780,29 +816,40 @@ impl CompleteAgentHost {
     pub async fn effect(
         &self,
         effect_id: &AgentEffectIdentity,
-    ) -> Option<CompleteAgentEffectRecord> {
-        self.state.lock().await.effects.get(effect_id).cloned()
+    ) -> Result<Option<CompleteAgentEffectRecord>, CompleteAgentHostError> {
+        Ok(self
+            .repository
+            .load()
+            .await?
+            .facts
+            .effects
+            .get(effect_id)
+            .cloned())
     }
 
     pub async fn binding(
         &self,
         binding_id: &CompleteAgentBindingId,
-    ) -> Option<CompleteAgentBinding> {
-        self.state.lock().await.bindings.get(binding_id).cloned()
+    ) -> Result<Option<CompleteAgentBinding>, CompleteAgentHostError> {
+        Ok(self
+            .repository
+            .load()
+            .await?
+            .facts
+            .bindings
+            .get(binding_id)
+            .cloned())
     }
 
     async fn service(
         &self,
         instance_id: &AgentServiceInstanceId,
     ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentHostError> {
-        self.services
-            .read()
-            .await
-            .get(instance_id)
-            .map(|registered| registered.service.clone())
-            .ok_or_else(|| CompleteAgentHostError::UnknownService {
+        self.services.resolve(instance_id).await.ok_or_else(|| {
+            CompleteAgentHostError::UnknownService {
                 instance_id: instance_id.clone(),
-            })
+            }
+        })
     }
 
     async fn record_receipt(
@@ -811,7 +858,8 @@ impl CompleteAgentHost {
         delivery_epoch: u64,
         receipt: AgentCommandReceipt,
     ) -> Result<(), CompleteAgentHostError> {
-        let mut state = self.state.lock().await;
+        let snapshot = self.repository.load().await?;
+        let mut state = snapshot.facts;
         let record = state.effects.get_mut(effect_id).ok_or_else(|| {
             CompleteAgentHostError::UnknownEffect {
                 effect_id: effect_id.clone(),
@@ -836,6 +884,7 @@ impl CompleteAgentHost {
         )?;
         observe_effect_state(record, observed_state)?;
         record.receipt = Some(receipt);
+        self.commit(snapshot.revision, state).await?;
         Ok(())
     }
 
@@ -846,7 +895,8 @@ impl CompleteAgentHost {
         delivery_epoch: u64,
         receipt: AppliedAgentSurfaceReceipt,
     ) -> Result<(), CompleteAgentHostError> {
-        let mut state = self.state.lock().await;
+        let snapshot = self.repository.load().await?;
+        let mut state = snapshot.facts;
         let record =
             state
                 .effects
@@ -898,6 +948,7 @@ impl CompleteAgentHost {
             .expect("binding was validated in the same state");
         binding.applied_surface = Some(applied_surface);
         binding.state = CompleteAgentBindingState::Available;
+        self.commit(snapshot.revision, state).await?;
         Ok(())
     }
 
@@ -922,7 +973,7 @@ impl CompleteAgentHost {
             AgentEffectInspectionState::Applied { .. } => {}
         }
         let (service_instance_id, source, command_id) = {
-            let state = self.state.lock().await;
+            let state = self.repository.load().await?.facts;
             let record = state.effects.get(effect_id).ok_or_else(|| {
                 CompleteAgentHostError::UnknownEffect {
                     effect_id: effect_id.clone(),
@@ -965,7 +1016,8 @@ impl CompleteAgentHost {
         effect_id: &AgentEffectIdentity,
         delivery_epoch: u64,
     ) -> Result<(), CompleteAgentHostError> {
-        let mut state = self.state.lock().await;
+        let snapshot = self.repository.load().await?;
+        let mut state = snapshot.facts;
         let record = state.effects.get_mut(effect_id).ok_or_else(|| {
             CompleteAgentHostError::UnknownEffect {
                 effect_id: effect_id.clone(),
@@ -973,7 +1025,22 @@ impl CompleteAgentHost {
         })?;
         ensure_effect_epoch(record, delivery_epoch)?;
         observe_effect_state(record, CompleteAgentEffectState::Unknown)?;
+        self.commit(snapshot.revision, state).await?;
         Ok(())
+    }
+
+    async fn commit(
+        &self,
+        expected_revision: crate::CompleteAgentHostRevision,
+        facts: CompleteAgentHostFacts,
+    ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostError> {
+        Ok(self
+            .repository
+            .commit(CompleteAgentHostCommit {
+                expected_revision,
+                facts,
+            })
+            .await?)
     }
 }
 
@@ -994,6 +1061,17 @@ fn validate_service_descriptor(
     descriptor: &AgentServiceDescriptor,
 ) -> Result<(), CompleteAgentHostError> {
     validate_surface_profile(&descriptor.profile.surface)
+}
+
+fn runtime_offer_from_descriptor(
+    descriptor: &AgentServiceDescriptor,
+) -> Result<AgentRuntimeOffer, CompleteAgentHostError> {
+    let surface = &descriptor.profile.surface;
+    validate_surface_profile(surface)?;
+    Ok(AgentRuntimeOffer {
+        profile_digest: descriptor.profile_digest.clone(),
+        contributions: surface.facets.clone(),
+    })
 }
 
 fn validate_surface_profile(surface: &AgentSurfaceProfile) -> Result<(), CompleteAgentHostError> {
@@ -1050,7 +1128,7 @@ fn validate_surface_profile(surface: &AgentSurfaceProfile) -> Result<(), Complet
 }
 
 fn validate_lease_state(
-    state: &CompleteAgentHostState,
+    state: &CompleteAgentHostFacts,
     lease: &CompleteAgentBindingLease,
     now_ms: u64,
 ) -> Result<(), CompleteAgentHostError> {
@@ -1374,7 +1452,7 @@ mod tests {
             execute_calls: AtomicUsize::new(0),
         });
         let instance_id = AgentServiceInstanceId::new("service").expect("service");
-        let host = CompleteAgentHost::new();
+        let host = recording_host();
         host.register_service(instance_id.clone(), service)
             .await
             .expect("register service");
@@ -1421,7 +1499,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_dispatch_is_inspected_without_second_execution() {
+    async fn reconstructed_host_recovers_unknown_effect_binding_source_and_generation_fence() {
         let instance_id = AgentServiceInstanceId::new("service").expect("service");
         let source = AgentSourceCoordinate::new("source").expect("source");
         let command_id = AgentCommandId::new("command").expect("command");
@@ -1432,7 +1510,11 @@ mod tests {
             command_id: command_id.clone(),
             execute_calls: AtomicUsize::new(0),
         });
-        let host = CompleteAgentHost::new();
+        let repository = Arc::new(crate::RecordingCompleteAgentHostRepository::new());
+        let host = CompleteAgentHost::new(
+            repository.clone(),
+            Arc::new(crate::RecordingCompleteAgentServiceRegistry::new()),
+        );
         host.register_service(instance_id.clone(), service.clone())
             .await
             .expect("register service");
@@ -1486,7 +1568,49 @@ mod tests {
                 .await,
             Err(CompleteAgentHostError::Service(_))
         ));
-        let recovered = host
+        drop(host);
+
+        let restarted = CompleteAgentHost::new(
+            repository,
+            Arc::new(crate::RecordingCompleteAgentServiceRegistry::new()),
+        );
+        restarted
+            .register_service(
+                AgentServiceInstanceId::new("service").expect("service"),
+                service.clone(),
+            )
+            .await
+            .expect("reattach live service handle");
+        let recovered_binding = restarted
+            .binding(&binding_id)
+            .await
+            .expect("read durable binding")
+            .expect("durable binding");
+        assert_eq!(recovered_binding.source, command.source);
+        assert_eq!(recovered_binding.generation, AgentBindingGeneration(1));
+        assert_eq!(
+            restarted
+                .effect(&effect_id)
+                .await
+                .expect("read durable effect")
+                .expect("durable effect")
+                .state,
+            CompleteAgentEffectState::Unknown
+        );
+        assert!(matches!(
+            restarted
+                .acquire_binding_lease(
+                    &binding_id,
+                    AgentBindingGeneration(2),
+                    "stale-worker",
+                    0,
+                    u64::MAX,
+                )
+                .await,
+            Err(CompleteAgentHostError::StaleGeneration { .. })
+        ));
+
+        let recovered = restarted
             .dispatch_execute(&lease, &binding_id, command)
             .await
             .expect("inspect same effect");
@@ -1497,14 +1621,19 @@ mod tests {
         ));
         assert_eq!(service.execute_calls.load(Ordering::SeqCst), 1);
         assert_eq!(
-            host.effect(&effect_id).await.expect("effect").state,
+            restarted
+                .effect(&effect_id)
+                .await
+                .expect("read effect")
+                .expect("effect")
+                .state,
             CompleteAgentEffectState::Applied
         );
     }
 
     #[tokio::test]
     async fn lease_reclaim_fences_old_owner_and_binding_loss_converges_state() {
-        let host = CompleteAgentHost::new();
+        let host = recording_host();
         let instance_id = AgentServiceInstanceId::new("service").expect("service");
         let service = Arc::new(UnknownThenAppliedService {
             descriptor: descriptor(),
@@ -1552,7 +1681,11 @@ mod tests {
             .await
             .expect("mark lost");
         assert_eq!(
-            host.binding(&binding_id).await.expect("binding").state,
+            host.binding(&binding_id)
+                .await
+                .expect("read binding")
+                .expect("binding")
+                .state,
             CompleteAgentBindingState::Lost
         );
         assert!(matches!(
@@ -1564,15 +1697,11 @@ mod tests {
 
     #[tokio::test]
     async fn late_receipt_from_previous_delivery_epoch_cannot_advance_effect() {
-        let host = CompleteAgentHost::new();
+        let host = recording_host();
         let effect_id = AgentEffectIdentity::new("effect").expect("effect");
         let mut record = effect_record("sha256:payload");
         record.delivery_epoch = 2;
-        host.state
-            .lock()
-            .await
-            .effects
-            .insert(effect_id.clone(), record.clone());
+        seed_effect(&host, record.clone(), None).await;
         let receipt = AgentCommandReceipt {
             command_id: record.command_id.clone(),
             effect_id: effect_id.clone(),
@@ -1587,14 +1716,18 @@ mod tests {
             Err(CompleteAgentHostError::StaleLeaseOutcome)
         );
         assert_eq!(
-            host.effect(&effect_id).await.expect("effect").state,
+            host.effect(&effect_id)
+                .await
+                .expect("read effect")
+                .expect("effect")
+                .state,
             CompleteAgentEffectState::Dispatching
         );
     }
 
     #[tokio::test]
     async fn terminal_effect_observations_are_idempotent_and_never_downgrade() {
-        let host = CompleteAgentHost::new();
+        let host = recording_host();
         let effect_id = AgentEffectIdentity::new("effect").expect("effect");
         let record = effect_record("sha256:payload");
         let applied = AgentCommandReceipt {
@@ -1605,11 +1738,7 @@ mod tests {
             snapshot_revision: None,
             initial_context: None,
         };
-        host.state
-            .lock()
-            .await
-            .effects
-            .insert(effect_id.clone(), record);
+        seed_effect(&host, record, None).await;
 
         host.record_receipt(&effect_id, 1, applied.clone())
             .await
@@ -1662,14 +1791,18 @@ mod tests {
             })
         );
         assert_eq!(
-            host.effect(&effect_id).await.expect("effect").state,
+            host.effect(&effect_id)
+                .await
+                .expect("read effect")
+                .expect("effect")
+                .state,
             CompleteAgentEffectState::Applied
         );
     }
 
     #[tokio::test]
     async fn mismatched_surface_receipt_never_makes_binding_available() {
-        let host = CompleteAgentHost::new();
+        let host = recording_host();
         let binding_id = CompleteAgentBindingId::new("binding").expect("binding");
         let effect_id = AgentEffectIdentity::new("effect").expect("effect");
         let binding = CompleteAgentBinding {
@@ -1685,10 +1818,7 @@ mod tests {
         let mut record = effect_record("sha256:surface-command");
         record.binding_id = binding_id.clone();
         record.effect_id = effect_id.clone();
-        let mut state = host.state.lock().await;
-        state.bindings.insert(binding_id.clone(), binding);
-        state.effects.insert(effect_id.clone(), record.clone());
-        drop(state);
+        seed_effect(&host, record.clone(), Some(binding)).await;
         let receipt = AppliedAgentSurfaceReceipt {
             command_id: record.command_id,
             effect_id: effect_id.clone(),
@@ -1707,7 +1837,11 @@ mod tests {
             Err(CompleteAgentHostError::DispatchRejected { .. })
         ));
         assert_eq!(
-            host.binding(&binding_id).await.expect("binding").state,
+            host.binding(&binding_id)
+                .await
+                .expect("read binding")
+                .expect("binding")
+                .state,
             CompleteAgentBindingState::PendingSurface
         );
     }
@@ -1727,6 +1861,47 @@ mod tests {
             surface_receipt: None,
             inspection: None,
         }
+    }
+
+    fn recording_host() -> CompleteAgentHost {
+        CompleteAgentHost::new(
+            Arc::new(crate::RecordingCompleteAgentHostRepository::new()),
+            Arc::new(crate::RecordingCompleteAgentServiceRegistry::new()),
+        )
+    }
+
+    async fn seed_effect(
+        host: &CompleteAgentHost,
+        record: CompleteAgentEffectRecord,
+        binding: Option<CompleteAgentBinding>,
+    ) {
+        let descriptor = descriptor();
+        let binding = binding.unwrap_or_else(|| CompleteAgentBinding {
+            id: record.binding_id.clone(),
+            service_instance_id: record.service_instance_id.clone(),
+            generation: record.generation,
+            source: record.source.clone(),
+            profile_digest: descriptor.profile_digest.clone(),
+            bound_surface: empty_bound_surface(),
+            applied_surface: None,
+            state: CompleteAgentBindingState::PendingSurface,
+        });
+        let offer = runtime_offer_from_descriptor(&descriptor).expect("runtime offer");
+        let mut facts = CompleteAgentHostFacts::default();
+        facts
+            .service_instances
+            .insert(binding.service_instance_id.clone(), descriptor);
+        facts
+            .offers
+            .insert(binding.service_instance_id.clone(), offer);
+        facts
+            .source_coordinates
+            .insert(binding.id.clone(), binding.source.clone());
+        facts.bindings.insert(binding.id.clone(), binding);
+        facts.effects.insert(record.effect_id.clone(), record);
+        host.commit(crate::CompleteAgentHostRevision(0), facts)
+            .await
+            .expect("seed host facts");
     }
 
     struct UnknownThenAppliedService {

@@ -1,5 +1,9 @@
 //! AgentDash-owned transport-neutral Runtime Wire frames.
 
+mod complete_agent;
+
+pub use complete_agent::*;
+
 use agentdash_agent_runtime_contract::{
     DriverBindRequest, DriverBinding, DriverCommandEnvelope, DriverDescribeRequest,
     DriverDispatchReceipt, DriverError, DriverEventEnvelope, DriverInspection,
@@ -18,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 3;
+pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 4;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
@@ -59,6 +63,12 @@ pub enum RuntimeWireRequest {
     DriverDispatch(DriverCommandEnvelope),
     DriverInspect(DriverInspectionQuery),
     HostPort(Box<RuntimeWireHostPortRequest>),
+    #[schemars(skip)]
+    #[ts(skip)]
+    AgentService(Box<RuntimeWireAgentServiceRequest>),
+    #[schemars(skip)]
+    #[ts(skip)]
+    AgentHostCallback(Box<RuntimeWireAgentHostCallbackRequest>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -72,6 +82,12 @@ pub enum RuntimeWireResponse {
     DriverDispatch(RuntimeWireDriverDispatchResult),
     DriverInspect(RuntimeWireDriverInspectResult),
     HostPort(RuntimeWireHostPortResponse),
+    #[schemars(skip)]
+    #[ts(skip)]
+    AgentService(RuntimeWireAgentServiceResponse),
+    #[schemars(skip)]
+    #[ts(skip)]
+    AgentHostCallback(RuntimeWireAgentHostCallbackResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -155,6 +171,9 @@ pub enum RuntimeWireNotification {
     /// `journal_fact` and filter for `RuntimeJournalFact::Presentation`.
     RuntimeEvent(RuntimeEventEnvelope),
     DriverEvent(DriverEventEnvelope),
+    #[schemars(skip)]
+    #[ts(skip)]
+    AgentChange(Box<RuntimeWireAgentChangeNotification>),
     Heartbeat {
         last_received_frame_id: RuntimeWireFrameId,
     },
@@ -247,7 +266,7 @@ mod tests {
     #[test]
     fn unknown_critical_frame_is_a_protocol_violation() {
         let error = decode_frame(
-            br#"{"protocol_revision":3,"frame_id":7,"critical":true,"frame":{"kind":"future_control","payload":{}}}"#,
+            br#"{"protocol_revision":4,"frame_id":7,"critical":true,"frame":{"kind":"future_control","payload":{}}}"#,
         )
         .expect_err("critical frame must fail");
         assert!(matches!(
@@ -259,7 +278,7 @@ mod tests {
     #[test]
     fn unknown_non_critical_frame_can_be_ignored() {
         let decoded = decode_frame(
-            br#"{"protocol_revision":3,"frame_id":7,"critical":false,"frame":{"kind":"future_hint","payload":{}}}"#,
+            br#"{"protocol_revision":4,"frame_id":7,"critical":false,"frame":{"kind":"future_hint","payload":{}}}"#,
         )
         .expect("non-critical frame may be ignored");
         assert!(matches!(

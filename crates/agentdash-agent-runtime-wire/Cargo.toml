@@ -12,6 +12,7 @@ name = "generate_agent_runtime_wire"
 path = "src/generate.rs"
 
 [dependencies]
+agentdash-agent-service-api = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }
 agentdash-integration-api = { workspace = true }
 schemars = { workspace = true }

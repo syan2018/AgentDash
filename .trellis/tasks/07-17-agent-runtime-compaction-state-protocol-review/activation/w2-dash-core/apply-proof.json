@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "patch": "0001-refactor-agent-runtime-Dash-Core.patch",
-  "sha256": "C9807367EE570DD9DFAA34AE0A0127CF17DAF12DCB378707CEE989F799CC5638",
+  "sha256": "ABAB53192296ABDFFCBCF67246E8D63D5F8E2612D8E0BC8DEA2787F398C9EC1C",
   "base": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
-  "code_tip": "d998ce8d0d5f4fd0ea347d7a3fdaaa2f949c2026",
+  "code_tip": "884913d8aa7fb355dcd15a92d43b853ab85a0b32",
   "excluded_paths": [
     "Cargo.lock",
     ".trellis/**"
   ],
   "command": "GIT_INDEX_FILE=<temp> git read-tree <base>; git apply --cached --check --whitespace=error-all <patch>; git apply --cached --whitespace=error-all <patch>; git write-tree",
-  "applied_tree": "575c7935b0dfef2391dbfd42c7c369217e686d07",
-  "expected_tree": "575c7935b0dfef2391dbfd42c7c369217e686d07",
+  "applied_tree": "320d478dd55d7460ace48fedbebd9f6d61d77b62",
+  "expected_tree": "320d478dd55d7460ace48fedbebd9f6d61d77b62",
   "result": "pass"
 }

@@ -5,9 +5,7 @@
   "agent_core_direct_consumers": [
     "agentdash-agent"
   ],
-  "agent_core_test_or_adapter_consumers": [
-    "agentdash-integration-native-agent"
-  ],
+  "agent_core_test_or_adapter_consumers": [],
   "direct_consumers_before": 14,
   "removed_by_component": [
     "agentdash-agent",
@@ -64,9 +62,46 @@
     }
   ],
   "atomic_order": [
-    "W2 type move",
+    "W2 type move and Native owner physical deletion",
     "W7 caller cutover",
-    "W8 legacy deletion"
+    "W8 PostgreSQL composition and remaining legacy deletion"
+  ],
+  "native_removed_symbols": [
+    "NativeAgentDriver",
+    "NativeAgentDriverFactory",
+    "NativeAgentRuntimeIntegration",
+    "NativeBridgeResolver",
+    "project_native_core_input",
+    "project_native_core_transcript",
+    "native_agent_contribution",
+    "native_runtime_profile",
+    "native_runtime_trust_manifest"
+  ],
+  "cross_owner_switches": [
+    {
+      "paths": [
+        "crates/agentdash-infrastructure/src/agent_runtime_composition.rs"
+      ],
+      "owner": "W8",
+      "action": "实现 DashCompleteAgentStore PostgreSQL adapter 并装配唯一 native_complete_agent_registration"
+    },
+    {
+      "paths": [
+        "crates/agentdash-infrastructure/src/agent_runtime_workers.rs"
+      ],
+      "owner": "W7",
+      "action": "删除 Native journal/context projector consumer，改读 Complete Agent snapshot/change 与平台 context"
+    },
+    {
+      "paths": [
+        "crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs",
+        "crates/agentdash-api/src/bootstrap/production_tools_e2e.rs",
+        "crates/agentdash-api/src/bootstrap/agent_runtime_surface.rs",
+        "crates/agentdash-api/src/relay/registry.rs"
+      ],
+      "owner": "W7",
+      "action": "删除 legacy Native driver/profile consumer，覆盖唯一 Complete Agent registration 与 Business Surface route"
+    }
   ],
   "excluded_component_paths": [
     {

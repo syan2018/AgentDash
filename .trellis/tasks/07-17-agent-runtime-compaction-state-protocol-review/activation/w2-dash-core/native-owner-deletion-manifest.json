@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "owner": "Dash/Native",
+  "code_tip": "884913d8aa7fb355dcd15a92d43b853ab85a0b32",
+  "physically_deleted_paths": [
+    "crates/agentdash-integration-native-agent/src/context.rs",
+    "crates/agentdash-integration-native-agent/src/core_projection.rs",
+    "crates/agentdash-integration-native-agent/src/driver.rs",
+    "crates/agentdash-integration-native-agent/src/hook.rs",
+    "crates/agentdash-integration-native-agent/src/mapping.rs",
+    "crates/agentdash-integration-native-agent/src/presentation.rs",
+    "crates/agentdash-integration-native-agent/src/tool.rs",
+    "crates/agentdash-integration-native-agent/tests/native_driver.rs"
+  ],
+  "physically_removed_symbols": [
+    "NativeAgentDriver",
+    "NativeAgentDriverFactory",
+    "NativeAgentRuntimeIntegration",
+    "NativeBridgeResolver",
+    "NativeAgentServiceConfig",
+    "NativeCoreProjectionEvent",
+    "project_native_core_input",
+    "project_native_core_transcript",
+    "native_agent_contribution",
+    "native_runtime_profile",
+    "native_runtime_trust_manifest"
+  ],
+  "final_native_exports": [
+    "DashAgentCompleteService",
+    "DashCompleteAgentStore",
+    "DashCompleteAtomicCommit",
+    "DashCompleteSourceMutation",
+    "DashAgentCoreToolCallbacks",
+    "native_complete_agent_registration"
+  ],
+  "final_registration_producer": {
+    "function": "native_complete_agent_registration",
+    "service": "Arc<dyn CompleteAgentService>",
+    "store": "Arc<dyn DashCompleteAgentStore>",
+    "callbacks": "Arc<dyn AgentHostCallbacks>",
+    "dual_registration_allowed": false
+  },
+  "cross_owner_consumers": [
+    {
+      "owner": "W8",
+      "path": "crates/agentdash-infrastructure/src/agent_runtime_composition.rs",
+      "removed_consumers": [
+        "NativeAgentRuntimeIntegration",
+        "NativeBridgeResolver",
+        "native_runtime_profile",
+        "native_runtime_trust_manifest"
+      ],
+      "required_switch": "实现 PostgreSQL DashCompleteAgentStore、AgentHostCallbacks 与 DashExecutionDependencies，并装配唯一 native_complete_agent_registration"
+    },
+    {
+      "owner": "W7",
+      "path": "crates/agentdash-infrastructure/src/agent_runtime_workers.rs",
+      "removed_consumers": [
+        "NativeAgentServiceConfig",
+        "NativeCoreProjectionEvent",
+        "project_native_core_input",
+        "project_native_core_transcript"
+      ],
+      "required_switch": "从 Complete Agent snapshot/change 与平台 context authority 读取状态，不再读取 legacy journal"
+    },
+    {
+      "owner": "W7",
+      "paths": [
+        "crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs",
+        "crates/agentdash-api/src/bootstrap/production_tools_e2e.rs",
+        "crates/agentdash-api/src/bootstrap/agent_runtime_surface.rs",
+        "crates/agentdash-api/src/relay/registry.rs"
+      ],
+      "required_switch": "删除 legacy Native profile/driver fixtures，验证 Complete Agent descriptor、Business Surface 与唯一 registration"
+    }
+  ],
+  "w8_scope_boundary": {
+    "owns": [
+      "production composition",
+      "PostgreSQL adapter and migration",
+      "workspace dependency and Cargo.lock regeneration"
+    ],
+    "does_not_own": [
+      "Native legacy source deletion",
+      "Native Complete Agent behavior"
+    ]
+  }
+}

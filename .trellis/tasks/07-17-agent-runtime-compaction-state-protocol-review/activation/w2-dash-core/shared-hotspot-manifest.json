@@ -7,16 +7,21 @@
       "id": "dash_repository_contract",
       "owned_here": [
         "crates/agentdash-agent/src/dash/service.rs",
-        "crates/agentdash-agent/src/dash/store.rs"
+        "crates/agentdash-agent/src/dash/store.rs",
+        "crates/agentdash-integration-native-agent/src/service.rs"
       ],
       "shared_with": ["W5", "W8"],
-      "handoff": "W2 owns opaque state/CAS/create/open/fork ports; W8 implements PostgreSQL storage without bypassing them"
+      "handoff": "W2 owns opaque Dash state plus Complete effect/source aggregate CAS；W8 必须用单一 PostgreSQL transaction 实现 DashCompleteAtomicCommit，不得拆分 source mutation 与 receipt ledger"
     },
     {
       "id": "native_complete_service",
-      "owned_here": ["crates/agentdash-agent-core", "crates/agentdash-agent"],
-      "shared_with": ["W5"],
-      "handoff": "Core owns only explicit loop; W5 materializes Complete Agent callbacks through Dash"
+      "owned_here": [
+        "crates/agentdash-agent-core",
+        "crates/agentdash-agent",
+        "crates/agentdash-integration-native-agent"
+      ],
+      "shared_with": ["W5", "W7", "W8"],
+      "handoff": "Native owner 已物理删除 legacy driver/journal/context route，只导出 Complete service registration producer 与 typed callbacks；W7 清理跨 owner consumers，W8 装配唯一 producer"
     },
     {
       "id": "cargo_dependency_graph",

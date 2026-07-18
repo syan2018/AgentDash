@@ -1,19 +1,19 @@
-From 265155ea513e576b11897d531fe0279903627e7e Mon Sep 17 00:00:00 2001
+From 61b68b6a1d4c8c1101d2ba8729d57e50bc898bb4 Mon Sep 17 00:00:00 2001
 From: syan2018 <18905928089@163.com>
-Date: Sat, 18 Jul 2026 15:56:13 +0800
-Subject: [PATCH 1/2] =?UTF-8?q?refactor(agent-runtime):=20=E5=87=86?=
- =?UTF-8?q?=E5=A4=87=20Dash=20=E4=B8=8E=20Core=20=E7=89=A9=E7=90=86?=
- =?UTF-8?q?=E5=88=87=E6=8D=A2?=
+Date: Sat, 18 Jul 2026 19:35:47 +0800
+Subject: [PATCH] =?UTF-8?q?refactor(agent-runtime):=20=E5=88=B7=E6=96=B0?=
+ =?UTF-8?q?=20Dash=20=E4=B8=8E=20Core=20=E6=BF=80=E6=B4=BB=E7=BB=84?=
+ =?UTF-8?q?=E4=BB=B6?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-- 将 legacy Agent loop、provider、tool、stream、cancel primitives 与对齐测试物理迁入 AgentCore，并收窄 agentdash-agent 为 Dash 中层。
-- 将 LLM Provider、Native、Infrastructure 等真实执行消费者切换为直接依赖 AgentCore，以显式反腐转换承接协议边界。
-- 保留 W7/W8 待收敛的 11 个 agent-types bundle 消费者，不启用生产 Complete Agent registry、schema、migration 或产品路由。
-- 通过受影响 crate 联合 cargo check、Core/Dash 全量测试、Native 与 LLM Provider 定向测试及依赖负向核验。
+- 将旧 Agent loop 与通用类型物理迁入纯净 AgentCore，并收窄 Dash Agent 为 history、fork、compaction 与 repository 中层。
+- 让 Native 与 Infrastructure 复用 Native-owned typed Core projector，移除协议/Core serde 同构转码并保持 Dash -> Core 单向依赖。
+- 将 Dash memory adapter 收口为 recording fixture，冻结 repository CAS 与 Complete Agent production registration 输入。
+- 清理 contracts/executor 无效 agent-types 依赖，将直接消费者从 14 个精确降为 9 个。
 ---
- Cargo.lock                                    |  28 +-
+ Cargo.lock                                    |  31 +-
  crates/agentdash-agent-core/Cargo.toml        |  11 +-
  .../src/agent.rs                              |   9 +-
  .../src/agent_loop.rs                         |   0
@@ -25,46 +25,56 @@ Content-Transfer-Encoding: 8bit
  .../src/conversation_naming.rs                |   0
  .../src/event_stream.rs                       |  10 +-
  .../src/{model.rs => explicit_model.rs}       |   0
- crates/agentdash-agent-core/src/lib.rs        |  88 +++++-
+ crates/agentdash-agent-core/src/lib.rs        |  88 ++-
  .../agentdash-agent-core/src/loop_engine.rs   |   6 +-
- .../agentdash-agent-core/src/model/content.rs |  65 ++++
- .../agentdash-agent-core/src/model/context.rs |  25 ++
- .../agentdash-agent-core/src/model/message.rs | 281 ++++++++++++++++++
+ .../agentdash-agent-core/src/model/content.rs |  65 ++
+ .../agentdash-agent-core/src/model/context.rs |  25 +
+ .../agentdash-agent-core/src/model/message.rs | 281 +++++++
  crates/agentdash-agent-core/src/model/mod.rs  |   4 +
- .../src/model/projection.rs                   | 254 ++++++++++++++++
- .../src/runtime/decisions.rs                  | 267 +++++++++++++++++
- .../src/runtime/delegate.rs                   | 238 +++++++++++++++
- .../src/runtime/hooks_io.rs                   |  59 ++++
+ .../src/model/projection.rs                   | 254 ++++++
+ .../src/runtime/decisions.rs                  | 267 +++++++
+ .../src/runtime/delegate.rs                   | 238 ++++++
+ .../src/runtime/hooks_io.rs                   |  59 ++
  .../agentdash-agent-core/src/runtime/mod.rs   |   4 +
- .../agentdash-agent-core/src/runtime/tool.rs  | 111 +++++++
- .../src/token_estimation.rs                   | 138 +++++++++
+ .../agentdash-agent-core/src/runtime/tool.rs  | 111 +++
+ .../src/token_estimation.rs                   | 138 ++++
  .../src/tool_result_ref.rs                    |   0
  .../src/tools/mod.rs                          |   0
  .../src/tools/registry.rs                     |   0
  .../src/tools/schema.rs                       |   0
  .../src/types.rs                              |   4 +-
  .../agentdash-agent-core/tests/loop_engine.rs |   8 +-
- .../tests/runtime_alignment.rs                | 266 ++++++++---------
- crates/agentdash-agent/Cargo.toml             |  35 +--
+ .../tests/runtime_alignment.rs                | 266 +++----
+ crates/agentdash-agent/Cargo.toml             |  35 +-
  .../src/dash/core_execution.rs                |   7 +-
- crates/agentdash-agent/src/lib.rs             |  40 ---
+ crates/agentdash-agent/src/dash/mod.rs        |   1 -
+ crates/agentdash-agent/src/dash/service.rs    |  60 +-
+ crates/agentdash-agent/src/lib.rs             |  40 -
  crates/agentdash-api/Cargo.toml               |   4 +-
- .../src/bootstrap/agent_runtime_surface.rs    |  49 +--
+ .../src/bootstrap/agent_runtime_surface.rs    |  49 +-
  .../src/bootstrap/enterprise_remote_e2e.rs    |  11 +-
  .../src/bootstrap/production_tools_e2e.rs     |   2 +-
  crates/agentdash-api/src/vfs_access/mod.rs    |   2 +-
  .../agentdash-application-agentrun/Cargo.toml |   3 +-
  .../src/agent_run/context_sources.rs          |  18 +-
  crates/agentdash-application/Cargo.toml       |   1 -
+ crates/agentdash-contracts/Cargo.toml         |   1 -
+ .../src/runtime/session.rs                    |  10 -
+ crates/agentdash-executor/Cargo.toml          |   1 -
  crates/agentdash-infrastructure/Cargo.toml    |   3 +-
  .../src/agent_runtime_composition.rs          |   2 +-
- .../src/agent_runtime_workers.rs              |  49 ++-
- .../Cargo.toml                                |   2 +-
- .../src/driver.rs                             | 191 ++++++------
+ .../src/agent_runtime_workers.rs              |  38 +-
+ .../Cargo.toml                                |   3 +-
+ .../src/core_callbacks.rs                     |  40 +-
+ .../src/core_projection.rs                    | 733 ++++++++++++++++++
+ .../src/driver.rs                             | 179 +++--
  .../src/hook.rs                               |  10 +-
- .../src/mapping.rs                            |  25 +-
- .../src/presentation.rs                       |  47 +--
+ .../src/lib.rs                                |  16 +-
+ .../src/mapping.rs                            |  11 +-
+ .../src/presentation.rs                       |  47 +-
+ .../src/service.rs                            |  76 +-
  .../src/tool.rs                               |  22 +-
+ .../tests/complete_agent_service.rs           |  63 +-
  .../tests/native_driver.rs                    |   4 +-
  crates/agentdash-llm-provider/Cargo.toml      |   2 +-
  .../src/anthropic_bridge.rs                   |   8 +-
@@ -75,7 +85,7 @@ Content-Transfer-Encoding: 8bit
  .../src/openai_responses_bridge.rs            |   2 +-
  .../src/openai_responses_common.rs            |   8 +-
  .../src/provider_registry.rs                  |   2 +-
- 62 files changed, 1995 insertions(+), 469 deletions(-)
+ 72 files changed, 2886 insertions(+), 546 deletions(-)
  rename crates/{agentdash-agent => agentdash-agent-core}/src/agent.rs (98%)
  rename crates/{agentdash-agent => agentdash-agent-core}/src/agent_loop.rs (100%)
  rename crates/{agentdash-agent => agentdash-agent-core}/src/agent_loop/streaming.rs (98%)
@@ -103,9 +113,10 @@ Content-Transfer-Encoding: 8bit
  rename crates/{agentdash-agent => agentdash-agent-core}/src/tools/schema.rs (100%)
  rename crates/{agentdash-agent => agentdash-agent-core}/src/types.rs (98%)
  rename crates/{agentdash-agent => agentdash-agent-core}/tests/runtime_alignment.rs (87%)
+ create mode 100644 crates/agentdash-integration-native-agent/src/core_projection.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
-index d3f5b417..f635ce9c 100644
+index 5805b72c..2e55159b 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -89,39 +89,32 @@ name = "agentdash-agent"
@@ -153,7 +164,7 @@ index d3f5b417..f635ce9c 100644
  ]
  
  [[package]]
-@@ -266,7 +259,7 @@ dependencies = [
+@@ -267,7 +260,7 @@ dependencies = [
  name = "agentdash-api"
  version = "0.1.0"
  dependencies = [
@@ -162,7 +173,7 @@ index d3f5b417..f635ce9c 100644
   "agentdash-agent-protocol",
   "agentdash-agent-runtime",
   "agentdash-agent-runtime-contract",
-@@ -334,7 +327,6 @@ dependencies = [
+@@ -335,7 +328,6 @@ dependencies = [
  name = "agentdash-application"
  version = "0.1.0"
  dependencies = [
@@ -170,7 +181,7 @@ index d3f5b417..f635ce9c 100644
   "agentdash-agent-protocol",
   "agentdash-agent-runtime",
   "agentdash-agent-runtime-contract",
-@@ -392,7 +384,6 @@ dependencies = [
+@@ -393,7 +385,6 @@ dependencies = [
  name = "agentdash-application-agentrun"
  version = "0.1.0"
  dependencies = [
@@ -178,7 +189,23 @@ index d3f5b417..f635ce9c 100644
   "agentdash-agent-protocol",
   "agentdash-agent-runtime",
   "agentdash-agent-runtime-contract",
-@@ -680,12 +671,11 @@ name = "agentdash-infrastructure"
+@@ -611,7 +602,6 @@ name = "agentdash-contracts"
+ version = "0.1.0"
+ dependencies = [
+  "agentdash-agent-protocol",
+- "agentdash-agent-types",
+  "agentdash-domain",
+  "agentdash-spi",
+  "chrono",
+@@ -649,7 +639,6 @@ dependencies = [
+ name = "agentdash-executor"
+ version = "0.1.0"
+ dependencies = [
+- "agentdash-agent-types",
+  "agentdash-application-ports",
+  "agentdash-diagnostics",
+  "agentdash-domain",
+@@ -681,12 +670,11 @@ name = "agentdash-infrastructure"
  version = "0.1.0"
  dependencies = [
   "aes-gcm",
@@ -192,7 +219,7 @@ index d3f5b417..f635ce9c 100644
   "agentdash-application-ports",
   "agentdash-diagnostics",
   "agentdash-domain",
-@@ -760,12 +750,12 @@ name = "agentdash-integration-native-agent"
+@@ -762,15 +750,16 @@ name = "agentdash-integration-native-agent"
  version = "0.1.0"
  dependencies = [
   "agentdash-agent",
@@ -206,7 +233,11 @@ index d3f5b417..f635ce9c 100644
   "agentdash-diagnostics",
   "agentdash-integration-api",
   "async-trait",
-@@ -799,7 +789,7 @@ dependencies = [
++ "base64 0.22.1",
+  "futures",
+  "serde",
+  "serde_json",
+@@ -802,7 +791,7 @@ dependencies = [
  name = "agentdash-llm-provider"
  version = "0.1.0"
  dependencies = [
@@ -3046,6 +3077,180 @@ index 4fe06361..16992b1b 100644
                  input_tokens,
                  output_tokens,
              },
+diff --git a/crates/agentdash-agent/src/dash/mod.rs b/crates/agentdash-agent/src/dash/mod.rs
+index 8e08b984..55773e07 100644
+--- a/crates/agentdash-agent/src/dash/mod.rs
++++ b/crates/agentdash-agent/src/dash/mod.rs
+@@ -27,7 +27,6 @@ pub use service::{
+     DashCommandReceipt, DashCommandRequest, DashCompactionRequest, DashCompactionResult,
+     DashCompactor, DashEffectInspection, DashExecutionDependencies, DashPublicCommand,
+     DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome,
+-    MemoryDashAgentRepository,
+ };
+ pub use store::{
+     CommandSettlement, DashAgentChange, DashAgentChangePayload, DashAgentCommit, DashAgentStore,
+diff --git a/crates/agentdash-agent/src/dash/service.rs b/crates/agentdash-agent/src/dash/service.rs
+index 35429bb0..e1b35a43 100644
+--- a/crates/agentdash-agent/src/dash/service.rs
++++ b/crates/agentdash-agent/src/dash/service.rs
+@@ -161,12 +161,12 @@ pub trait DashAgentRepository: Send + Sync {
+     ) -> Result<(), DashServiceError>;
+ }
+ 
+-pub struct MemoryDashAgentRepository {
++struct RecordingDashAgentRepository {
+     state: tokio::sync::RwLock<DashAgentRepositoryState>,
+ }
+ 
+-impl MemoryDashAgentRepository {
+-    pub fn new(state: DashAgentRepositoryState) -> Self {
++impl RecordingDashAgentRepository {
++    fn new(state: DashAgentRepositoryState) -> Self {
+         Self {
+             state: tokio::sync::RwLock::new(state),
+         }
+@@ -174,7 +174,7 @@ impl MemoryDashAgentRepository {
+ }
+ 
+ #[async_trait]
+-impl DashAgentRepository for MemoryDashAgentRepository {
++impl DashAgentRepository for RecordingDashAgentRepository {
+     async fn load(&self) -> Result<DashAgentRepositoryState, DashServiceError> {
+         Ok(self.state.read().await.clone())
+     }
+@@ -198,7 +198,7 @@ impl DashAgentRepository for MemoryDashAgentRepository {
+ #[derive(Clone)]
+ pub struct DashAgentService {
+     repository: Arc<dyn DashAgentRepository>,
+-    execution: Arc<DashExecutionDependencies>,
++    execution: Arc<tokio::sync::RwLock<DashExecutionDependencies>>,
+     cancellation: Arc<tokio::sync::Mutex<Option<(AgentTurnId, DashCancellation)>>>,
+ }
+ 
+@@ -241,12 +241,20 @@ impl DashAgentService {
+ 
+     pub fn reopen(state: DashAgentRepositoryState, execution: DashExecutionDependencies) -> Self {
+         Self {
+-            repository: Arc::new(MemoryDashAgentRepository::new(state)),
+-            execution: Arc::new(execution),
++            repository: Arc::new(RecordingDashAgentRepository::new(state)),
++            execution: Arc::new(tokio::sync::RwLock::new(execution)),
+             cancellation: Arc::new(tokio::sync::Mutex::new(None)),
+         }
+     }
+ 
++    pub async fn replace_tool_callbacks(&self, tools: Arc<dyn DashToolCallbacks>) {
++        self.execution.write().await.tools = tools;
++    }
++
++    async fn execution_dependencies(&self) -> DashExecutionDependencies {
++        self.execution.read().await.clone()
++    }
++
+     pub async fn fork(
+         &self,
+         child_session_id: super::AgentSessionId,
+@@ -258,6 +266,7 @@ impl DashAgentService {
+             .store
+             .history()
+             .fork(child_session_id, child_branch_id, cutoff)?;
++        let execution = self.execution_dependencies().await;
+         Ok(Self::reopen(
+             DashAgentRepositoryState {
+                 store: DashAgentStore::new(child)?,
+@@ -265,12 +274,7 @@ impl DashAgentService {
+                 surface: current.surface,
+                 active: None,
+             },
+-            DashExecutionDependencies {
+-                provider: self.execution.provider.clone(),
+-                tools: self.execution.tools.clone(),
+-                callbacks: self.execution.callbacks.clone(),
+-                compactor: self.execution.compactor.clone(),
+-            },
++            execution,
+         ))
+     }
+ 
+@@ -501,6 +505,7 @@ impl DashAgentService {
+         }
+ 
+         let context = self.materialize_context(&turn_id).await?;
++        let execution = self.execution_dependencies().await;
+         let result = DashCoreTurn {
+             turn_id: turn_id.clone(),
+             input: content.clone(),
+@@ -516,9 +521,9 @@ impl DashAgentService {
+             terminal_entry_id: HistoryEntryId::new(format!("{effect_prefix}:turn-completed")),
+         }
+         .run(
+-            self.execution.provider.as_ref(),
+-            self.execution.tools.as_ref(),
+-            self.execution.callbacks.as_ref(),
++            execution.provider.as_ref(),
++            execution.tools.as_ref(),
++            execution.callbacks.as_ref(),
+             cancellation,
+         )
+         .await;
+@@ -678,9 +683,8 @@ impl DashAgentService {
+                 Ok(store.history().clone())
+             })
+             .await?;
+-        let compacted = match self
+-            .execution
+-            .compactor
++        let compactor = self.execution_dependencies().await.compactor;
++        let compacted = match compactor
+             .compact(DashCompactionRequest {
+                 compaction_id: compaction_id.clone(),
+                 mode: CompactionMode::AutomaticOverflow,
+@@ -781,6 +785,7 @@ impl DashAgentService {
+                 continuation_cancellation.clone(),
+             ));
+         }
++        let execution = self.execution_dependencies().await;
+         let continuation = DashCoreTurn {
+             turn_id: continuation_turn_id.clone(),
+             input: content,
+@@ -799,9 +804,9 @@ impl DashAgentService {
+             terminal_entry_id: HistoryEntryId::new(format!("{prefix}:C-completed")),
+         }
+         .run(
+-            self.execution.provider.as_ref(),
+-            self.execution.tools.as_ref(),
+-            self.execution.callbacks.as_ref(),
++            execution.provider.as_ref(),
++            execution.tools.as_ref(),
++            execution.callbacks.as_ref(),
+             continuation_cancellation,
+         )
+         .await;
+@@ -902,7 +907,11 @@ impl DashAgentService {
+         content: String,
+     ) -> Result<DashCommandReceipt, DashServiceError> {
+         self.require_active_turn(&turn_id).await?;
+-        self.execution.provider.steer(&turn_id, &content).await?;
++        self.execution_dependencies()
++            .await
++            .provider
++            .steer(&turn_id, &content)
++            .await?;
+         let (_, receipt) = self
+             .update_repository(|repository| {
+                 repository.store.commit(DashAgentCommit {
+@@ -1003,9 +1012,8 @@ impl DashAgentService {
+                 Ok(history)
+             })
+             .await?;
+-        let result = self
+-            .execution
+-            .compactor
++        let compactor = self.execution_dependencies().await.compactor;
++        let result = compactor
+             .compact(DashCompactionRequest {
+                 compaction_id: compaction_id.clone(),
+                 mode,
 diff --git a/crates/agentdash-agent/src/lib.rs b/crates/agentdash-agent/src/lib.rs
 index d71912b9..dca730de 100644
 --- a/crates/agentdash-agent/src/lib.rs
@@ -3396,6 +3601,58 @@ index d7e91309..28a4cb0a 100644
  agentdash-infrastructure = { workspace = true }
  agentdash-test-support = { workspace = true }
  agentdash-agent-runtime = { workspace = true }
+diff --git a/crates/agentdash-contracts/Cargo.toml b/crates/agentdash-contracts/Cargo.toml
+index 1f87e45c..a1a78216 100644
+--- a/crates/agentdash-contracts/Cargo.toml
++++ b/crates/agentdash-contracts/Cargo.toml
+@@ -12,7 +12,6 @@ name = "generate_contracts_ts"
+ path = "src/generate_ts.rs"
+ 
+ [dependencies]
+-agentdash-agent-types = { workspace = true }
+ agentdash-domain = { workspace = true }
+ agentdash-agent-protocol = { workspace = true }
+ agentdash-spi = { workspace = true }
+diff --git a/crates/agentdash-contracts/src/runtime/session.rs b/crates/agentdash-contracts/src/runtime/session.rs
+index 21ee5ed4..da5a3ed0 100644
+--- a/crates/agentdash-contracts/src/runtime/session.rs
++++ b/crates/agentdash-contracts/src/runtime/session.rs
+@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
+ use ts_rs::TS;
+ 
+ use agentdash_agent_protocol::BackboneEnvelope;
+-use agentdash_agent_types::MessageRef;
+ 
+ #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+ #[serde(rename_all = "snake_case")]
+@@ -264,15 +263,6 @@ pub struct SessionMessageRefDto {
+     pub entry_index: u32,
+ }
+ 
+-impl From<MessageRef> for SessionMessageRefDto {
+-    fn from(value: MessageRef) -> Self {
+-        Self {
+-            turn_id: value.turn_id,
+-            entry_index: value.entry_index,
+-        }
+-    }
+-}
+-
+ fn is_zero(value: &u64) -> bool {
+     *value == 0
+ }
+diff --git a/crates/agentdash-executor/Cargo.toml b/crates/agentdash-executor/Cargo.toml
+index cca44250..22233271 100644
+--- a/crates/agentdash-executor/Cargo.toml
++++ b/crates/agentdash-executor/Cargo.toml
+@@ -8,7 +8,6 @@ edition.workspace = true
+ agentdash-application-ports = { workspace = true }
+ agentdash-spi = { workspace = true }
+ agentdash-domain = { workspace = true }
+-agentdash-agent-types = { workspace = true }
+ agentdash-mcp = { workspace = true }
+ serde = { workspace = true }
+ serde_json = { workspace = true }
 diff --git a/crates/agentdash-infrastructure/Cargo.toml b/crates/agentdash-infrastructure/Cargo.toml
 index 1803a79f..94c2c5b2 100644
 --- a/crates/agentdash-infrastructure/Cargo.toml
@@ -3424,10 +3681,10 @@ index 7ee18afa..f343b0bb 100644
          TokenUsage,
      };
 diff --git a/crates/agentdash-infrastructure/src/agent_runtime_workers.rs b/crates/agentdash-infrastructure/src/agent_runtime_workers.rs
-index b4e56fde..686abf13 100644
+index b4e56fde..ef244f04 100644
 --- a/crates/agentdash-infrastructure/src/agent_runtime_workers.rs
 +++ b/crates/agentdash-infrastructure/src/agent_runtime_workers.rs
-@@ -7,10 +7,14 @@ use crate::{
+@@ -7,11 +7,15 @@ use crate::{
      PostgresAgentRuntimeCompositionRepository, PostgresAgentRuntimeContextBroker,
      PostgresRuntimeRepository, agent_runtime_driver_sink::admit_driver_event_to_pump,
  };
@@ -3437,13 +3694,15 @@ index b4e56fde..686abf13 100644
 +use agentdash_agent_core::{
      AgentMessage, CompactionParams, ContentPart, MessageRef, StopReason, ToolCallInfo,
  };
+-use agentdash_agent_protocol::{BackboneEvent, TranscriptProjectionEvent, project_transcript};
 +use agentdash_agent_core::{
 +    CompactionImplementation, CompactionMetadata, CompactionPhase, CompactionReason,
 +    CompactionStrategy, CompactionTrigger, CompactionTriggerStats, ProjectedTranscript,
 +};
- use agentdash_agent_protocol::{BackboneEvent, TranscriptProjectionEvent, project_transcript};
++use agentdash_agent_protocol::BackboneEvent;
  use agentdash_agent_runtime::CompactionPresentationFacts;
  use agentdash_agent_runtime::{
+     ActivationObservation, CompactionPreparation, ContextPreparationStatus, HookEffect,
 @@ -27,10 +31,6 @@ use agentdash_agent_runtime_contract::{
  };
  use agentdash_agent_runtime_host::AgentRuntimeHostRepository;
@@ -3455,7 +3714,19 @@ index b4e56fde..686abf13 100644
  use agentdash_diagnostics::{Subsystem, diag};
  use agentdash_domain::llm_provider::{
      LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
-@@ -199,7 +199,7 @@ impl ManagedCompactionPreparationEngine for NativeManagedCompactionEngine {
+@@ -38,7 +38,10 @@ use agentdash_domain::llm_provider::{
+ use agentdash_integration_api::{
+     AgentRuntimeContextBroker, DriverTranscript, DriverTranscriptRequest,
+ };
+-use agentdash_integration_native_agent::{NativeAgentServiceConfig, NativeCredentialScope};
++use agentdash_integration_native_agent::{
++    NativeAgentServiceConfig, NativeCoreProjectionEvent, NativeCredentialScope,
++    project_native_core_input, project_native_core_transcript,
++};
+ use agentdash_llm_provider::{
+     ProviderCredentialScope, resolve_effective_bridge_with_model_for_scope,
+ };
+@@ -199,7 +202,7 @@ impl ManagedCompactionPreparationEngine for NativeManagedCompactionEngine {
              .collect::<Vec<_>>();
          let tokens_before = messages
              .iter()
@@ -3464,7 +3735,7 @@ index b4e56fde..686abf13 100644
              .sum();
          let metadata = CompactionMetadata {
              trigger: match work.trigger {
-@@ -423,7 +423,7 @@ fn managed_compaction_input(
+@@ -423,7 +426,7 @@ fn managed_compaction_input(
              let (messages, kept_source) = match block {
                  ContextBlock::Instruction { .. } => continue,
                  ContextBlock::Input { input } => (
@@ -3473,23 +3744,26 @@ index b4e56fde..686abf13 100644
                      Some(ManagedCompactionKeptSource {
                          key: format!("base:block:{block_index}"),
                          block: block.clone(),
-@@ -556,7 +556,14 @@ fn project_durable_compaction_tail(
+@@ -544,7 +547,7 @@ fn project_durable_compaction_tail(
+                 );
+             }
+         }
+-        projected_events.push(TranscriptProjectionEvent {
++        projected_events.push(NativeCoreProjectionEvent {
+             event_seq: sequence,
+             turn_id: record
+                 .carrier()
+@@ -556,7 +559,8 @@ fn project_durable_compaction_tail(
              event: &presentation.event,
          });
      }
 -    let projected: ProjectedTranscript = project_transcript(projected_events);
-+    let projected = project_transcript(projected_events);
-+    let projected = ProjectedTranscript {
-+        entries: projected
-+            .entries
-+            .into_iter()
-+            .map(|entry| transcode_protocol_owned(entry, "compaction transcript entry"))
-+            .collect::<Result<Vec<_>, _>>()?,
-+    };
++    let projected: ProjectedTranscript = project_native_core_transcript(projected_events)
++        .map_err(|error| RuntimeDurableWorkerError::Processing(error.to_string()))?;
      Ok(projected
          .entries
          .into_iter()
-@@ -577,7 +584,7 @@ fn project_durable_compaction_tail(
+@@ -577,15 +581,15 @@ fn project_durable_compaction_tail(
  
  fn compaction_input_message(
      input: &[agentdash_agent_runtime_contract::RuntimeInput],
@@ -3498,47 +3772,31 @@ index b4e56fde..686abf13 100644
      let mut parts = Vec::new();
      for input in input {
          match input {
-@@ -585,7 +592,10 @@ fn compaction_input_message(
+             agentdash_agent_runtime_contract::RuntimeInput::UserInput { block } => {
                  parts.extend(
-                     agentdash_agent_protocol::user_input_blocks_to_content_parts(
-                         std::slice::from_ref(block),
+-                    agentdash_agent_protocol::user_input_blocks_to_content_parts(
+-                        std::slice::from_ref(block),
 -                    ),
-+                    )
-+                    .into_iter()
-+                    .map(|part| transcode_protocol_owned(part, "compaction input content"))
-+                    .collect::<Result<Vec<_>, _>>()?,
++                    project_native_core_input(std::slice::from_ref(block)).map_err(|error| {
++                        RuntimeDurableWorkerError::Processing(error.to_string())
++                    })?,
                  );
              }
              agentdash_agent_runtime_contract::RuntimeInput::Structured { schema, value } => {
-@@ -595,7 +605,22 @@ fn compaction_input_message(
+@@ -595,7 +599,7 @@ fn compaction_input_message(
              }
          }
      }
 -    AgentMessage::user_parts(parts)
 +    Ok(AgentMessage::user_parts(parts))
-+}
-+
-+fn transcode_protocol_owned<T, U>(value: T, boundary: &str) -> Result<U, RuntimeDurableWorkerError>
-+where
-+    T: serde::Serialize,
-+    U: serde::de::DeserializeOwned,
-+{
-+    let encoded = serde_json::to_value(value).map_err(|error| {
-+        RuntimeDurableWorkerError::Processing(format!("{boundary} cannot serialize: {error}"))
-+    })?;
-+    serde_json::from_value(encoded).map_err(|error| {
-+        RuntimeDurableWorkerError::Processing(format!(
-+            "{boundary} is incompatible with the Core-owned type: {error}"
-+        ))
-+    })
  }
  
  fn presentation_source_item_id(event: &BackboneEvent) -> Option<&str> {
 diff --git a/crates/agentdash-integration-native-agent/Cargo.toml b/crates/agentdash-integration-native-agent/Cargo.toml
-index 53ea0850..c9fb7da2 100644
+index 53ea0850..6fd02276 100644
 --- a/crates/agentdash-integration-native-agent/Cargo.toml
 +++ b/crates/agentdash-integration-native-agent/Cargo.toml
-@@ -7,7 +7,7 @@ license.workspace = true
+@@ -7,13 +7,14 @@ license.workspace = true
  
  [dependencies]
  agentdash-agent = { workspace = true }
@@ -3547,11 +3805,822 @@ index 53ea0850..c9fb7da2 100644
  agentdash-agent-protocol = { workspace = true }
  agentdash-agent-service-api = { workspace = true }
  agentdash-agent-runtime-contract = { workspace = true }
+ agentdash-diagnostics = { workspace = true }
+ agentdash-integration-api = { workspace = true }
+ async-trait = { workspace = true }
++base64 = { workspace = true }
+ futures = { workspace = true }
+ serde = { workspace = true }
+ serde_json = { workspace = true }
+diff --git a/crates/agentdash-integration-native-agent/src/core_callbacks.rs b/crates/agentdash-integration-native-agent/src/core_callbacks.rs
+index bf84e2ae..909399f0 100644
+--- a/crates/agentdash-integration-native-agent/src/core_callbacks.rs
++++ b/crates/agentdash-integration-native-agent/src/core_callbacks.rs
+@@ -13,7 +13,12 @@ pub struct DashAgentCoreToolCallbacks {
+     route_id: AgentCallbackRouteId,
+     binding_generation: AgentBindingGeneration,
+     source: AgentSourceCoordinate,
+-    deadline_at_ms: u64,
++    deadline: DashCallbackDeadline,
++}
++
++enum DashCallbackDeadline {
++    Absolute(u64),
++    FromInvocation(u64),
+ }
+ 
+ impl DashAgentCoreToolCallbacks {
+@@ -29,7 +34,36 @@ impl DashAgentCoreToolCallbacks {
+             route_id,
+             binding_generation,
+             source,
+-            deadline_at_ms,
++            deadline: DashCallbackDeadline::Absolute(deadline_at_ms),
++        }
++    }
++
++    pub fn from_bound_surface(
++        callbacks: Arc<dyn AgentHostCallbacks>,
++        route_id: AgentCallbackRouteId,
++        binding_generation: AgentBindingGeneration,
++        source: AgentSourceCoordinate,
++        default_deadline_ms: u64,
++    ) -> Self {
++        Self {
++            callbacks,
++            route_id,
++            binding_generation,
++            source,
++            deadline: DashCallbackDeadline::FromInvocation(default_deadline_ms),
++        }
++    }
++
++    fn deadline_at_ms(&self) -> u64 {
++        match self.deadline {
++            DashCallbackDeadline::Absolute(deadline_at_ms) => deadline_at_ms,
++            DashCallbackDeadline::FromInvocation(duration_ms) => {
++                let now = std::time::SystemTime::now()
++                    .duration_since(std::time::UNIX_EPOCH)
++                    .unwrap_or_default()
++                    .as_millis() as u64;
++                now.saturating_add(duration_ms)
++            }
+         }
+     }
+ }
+@@ -70,7 +104,7 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
+                         message: error.to_string(),
+                         retryable: false,
+                     })?,
+-                deadline_at_ms: self.deadline_at_ms,
++                deadline_at_ms: self.deadline_at_ms(),
+             },
+             tool: AgentToolName::new(call.name).map_err(|error| DashCoreError::Tool {
+                 message: error.to_string(),
+diff --git a/crates/agentdash-integration-native-agent/src/core_projection.rs b/crates/agentdash-integration-native-agent/src/core_projection.rs
+new file mode 100644
+index 00000000..d048cfc4
+--- /dev/null
++++ b/crates/agentdash-integration-native-agent/src/core_projection.rs
+@@ -0,0 +1,733 @@
++use std::collections::{HashMap, HashSet};
++
++use agentdash_agent_core::{
++    AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
++    StopReason, ToolCallInfo,
++};
++use agentdash_agent_protocol::{
++    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent, ItemStartedNotification,
++    ItemUpdatedNotification, UserInputBlock, codex_app_server_protocol as codex,
++};
++use base64::Engine;
++use thiserror::Error;
++
++const RESTORED_TOOL_OUTPUT_MISSING_MARKER: &str = "[restored tool output missing]";
++
++#[derive(Debug, Clone, PartialEq, Eq, Error)]
++pub enum NativeCoreProjectionError {
++    #[error("Native Core projection does not support input kind: {kind}")]
++    UnsupportedInput { kind: &'static str },
++    #[error("Native Core projection requires an inline base64 image")]
++    InvalidImage,
++}
++
++/// Native-owned durable presentation input. `turn_id` is the presentation turn coordinate.
++#[derive(Debug, Clone, Copy)]
++pub struct NativeCoreProjectionEvent<'a> {
++    pub event_seq: u64,
++    pub turn_id: Option<&'a str>,
++    pub entry_index: Option<u32>,
++    pub event: &'a BackboneEvent,
++}
++
++pub fn project_native_core_input(
++    input: &[UserInputBlock],
++) -> Result<Vec<ContentPart>, NativeCoreProjectionError> {
++    input
++        .iter()
++        .filter_map(|block| match block {
++            codex::UserInput::Text { text, .. } => {
++                let text = text.trim();
++                (!text.is_empty()).then(|| Ok(ContentPart::text(text)))
++            }
++            codex::UserInput::Image { url, .. } => Some(parse_data_image(url)),
++            codex::UserInput::LocalImage { .. } => {
++                Some(Err(NativeCoreProjectionError::UnsupportedInput {
++                    kind: "local_image",
++                }))
++            }
++            codex::UserInput::Skill { .. } => {
++                Some(Err(NativeCoreProjectionError::UnsupportedInput {
++                    kind: "skill",
++                }))
++            }
++            codex::UserInput::Mention { .. } => {
++                Some(Err(NativeCoreProjectionError::UnsupportedInput {
++                    kind: "mention",
++                }))
++            }
++        })
++        .collect()
++}
++
++#[derive(Debug, Clone)]
++struct RestoredUserMessageState {
++    order: u64,
++    turn_id: Option<String>,
++    entry_index: Option<u32>,
++    content: Vec<ContentPart>,
++}
++
++#[derive(Debug, Clone)]
++struct RestoredAssistantMessageState {
++    order: u64,
++    turn_id: Option<String>,
++    entry_index: Option<u32>,
++    content: Vec<ContentPart>,
++    tool_calls: Vec<ToolCallInfo>,
++    tool_call_ids: HashSet<String>,
++    final_text: Option<String>,
++    final_reasoning: Option<String>,
++}
++
++impl RestoredAssistantMessageState {
++    fn new(event: &NativeCoreProjectionEvent<'_>) -> Self {
++        Self {
++            order: event.event_seq,
++            turn_id: event.turn_id.map(ToOwned::to_owned),
++            entry_index: event.entry_index,
++            content: Vec::new(),
++            tool_calls: Vec::new(),
++            tool_call_ids: HashSet::new(),
++            final_text: None,
++            final_reasoning: None,
++        }
++    }
++}
++
++#[derive(Debug, Clone, Default)]
++struct RestoredToolResultState {
++    order: u64,
++    turn_id: Option<String>,
++    entry_index: Option<u32>,
++    tool_call_id: String,
++    call_id: Option<String>,
++    tool_name: Option<String>,
++    content: Vec<ContentPart>,
++    details: Option<serde_json::Value>,
++    is_error: bool,
++    terminal: bool,
++}
++
++enum RestoredMessageEnvelope {
++    User {
++        order: u64,
++        message_ref: MessageRef,
++        content: Vec<ContentPart>,
++    },
++    Assistant {
++        order: u64,
++        message_ref: MessageRef,
++        content: Vec<ContentPart>,
++        tool_calls: Vec<ToolCallInfo>,
++    },
++    ToolResult {
++        order: u64,
++        message_ref: MessageRef,
++        tool_call_id: String,
++        call_id: Option<String>,
++        tool_name: Option<String>,
++        content: Vec<ContentPart>,
++        details: Option<serde_json::Value>,
++        is_error: bool,
++    },
++}
++
++pub fn project_native_core_transcript<'a>(
++    events: impl IntoIterator<Item = NativeCoreProjectionEvent<'a>>,
++) -> Result<ProjectedTranscript, NativeCoreProjectionError> {
++    let mut users = HashMap::<String, RestoredUserMessageState>::new();
++    let mut assistants = HashMap::<String, RestoredAssistantMessageState>::new();
++    let mut tool_results = HashMap::<String, RestoredToolResultState>::new();
++
++    for event in events {
++        match event.event {
++            BackboneEvent::UserInputSubmitted(input) => {
++                let content = project_native_core_input(&input.content)?;
++                let state = users
++                    .entry(format!("user:item:{}", input.item_id))
++                    .or_insert_with(|| RestoredUserMessageState {
++                        order: event.event_seq,
++                        turn_id: event
++                            .turn_id
++                            .map(ToOwned::to_owned)
++                            .or_else(|| Some(input.turn_id.clone())),
++                        entry_index: event.entry_index,
++                        content: Vec::new(),
++                    });
++                state.content.extend(content);
++            }
++            BackboneEvent::AgentMessageDelta(delta) if !delta.delta.is_empty() => {
++                let state = assistants
++                    .entry(assistant_key(&event, Some(&delta.item_id)))
++                    .or_insert_with(|| RestoredAssistantMessageState::new(&event));
++                state.content.push(ContentPart::text(&delta.delta));
++            }
++            BackboneEvent::ReasoningTextDelta(delta) if !delta.delta.is_empty() => {
++                let state = assistants
++                    .entry(assistant_key(&event, Some(&delta.item_id)))
++                    .or_insert_with(|| RestoredAssistantMessageState::new(&event));
++                state
++                    .content
++                    .push(ContentPart::reasoning(&delta.delta, None, None));
++            }
++            BackboneEvent::ReasoningSummaryDelta(delta) if !delta.delta.is_empty() => {
++                let state = assistants
++                    .entry(assistant_key(&event, Some(&delta.item_id)))
++                    .or_insert_with(|| RestoredAssistantMessageState::new(&event));
++                state
++                    .content
++                    .push(ContentPart::reasoning(&delta.delta, None, None));
++            }
++            BackboneEvent::ItemStarted(ItemStartedNotification { item, .. })
++            | BackboneEvent::ItemUpdated(ItemUpdatedNotification { item, .. }) => {
++                observe_tool_item(&event, item, &mut assistants, &mut tool_results)?;
++            }
++            BackboneEvent::ItemCompleted(notification) => {
++                if extract_tool_call(&notification.item)?.is_some() {
++                    observe_tool_item(
++                        &event,
++                        &notification.item,
++                        &mut assistants,
++                        &mut tool_results,
++                    )?;
++                } else if let Some(final_message) = extract_final_assistant(&notification.item) {
++                    let state = assistants
++                        .entry(assistant_key(&event, Some(&final_message.item_id)))
++                        .or_insert_with(|| RestoredAssistantMessageState::new(&event));
++                    state.order = state.order.min(event.event_seq);
++                    match final_message.kind {
++                        FinalAssistantKind::Text(text) => state.final_text = Some(text),
++                        FinalAssistantKind::Reasoning(text) => state.final_reasoning = Some(text),
++                    }
++                }
++            }
++            _ => {}
++        }
++    }
++
++    ensure_tool_results(&assistants, &mut tool_results);
++    let mut envelopes = Vec::new();
++    for state in users.into_values() {
++        if !state.content.is_empty() {
++            envelopes.push(RestoredMessageEnvelope::User {
++                order: state.order,
++                message_ref: message_ref(state.turn_id.as_deref(), state.entry_index, state.order),
++                content: state.content,
++            });
++        }
++    }
++    for state in assistants.into_values() {
++        let content = assistant_content(&state);
++        if !content.is_empty() || !state.tool_calls.is_empty() {
++            envelopes.push(RestoredMessageEnvelope::Assistant {
++                order: state.order,
++                message_ref: message_ref(state.turn_id.as_deref(), state.entry_index, state.order),
++                content,
++                tool_calls: state.tool_calls,
++            });
++        }
++    }
++    for state in tool_results.into_values() {
++        if state.terminal && (!state.content.is_empty() || state.details.is_some()) {
++            envelopes.push(RestoredMessageEnvelope::ToolResult {
++                order: state.order,
++                message_ref: message_ref(state.turn_id.as_deref(), state.entry_index, state.order),
++                tool_call_id: state.tool_call_id,
++                call_id: state.call_id,
++                tool_name: state.tool_name,
++                content: state.content,
++                details: state.details,
++                is_error: state.is_error,
++            });
++        }
++    }
++    envelopes.sort_by_key(envelope_order);
++    Ok(ProjectedTranscript {
++        entries: envelopes.into_iter().map(project_envelope).collect(),
++    })
++}
++
++fn observe_tool_item(
++    event: &NativeCoreProjectionEvent<'_>,
++    item: &AgentDashThreadItem,
++    assistants: &mut HashMap<String, RestoredAssistantMessageState>,
++    tool_results: &mut HashMap<String, RestoredToolResultState>,
++) -> Result<(), NativeCoreProjectionError> {
++    let Some(tool_call) = extract_tool_call(item)? else {
++        return Ok(());
++    };
++    let assistant_key = assistants
++        .iter()
++        .find_map(|(key, state)| {
++            state
++                .tool_call_ids
++                .contains(&tool_call.id)
++                .then(|| key.clone())
++        })
++        .unwrap_or_else(|| assistant_key(event, None));
++    let state = assistants
++        .entry(assistant_key)
++        .or_insert_with(|| RestoredAssistantMessageState::new(event));
++    state.order = state.order.min(event.event_seq);
++    upsert_tool_call(state, &tool_call);
++    if tool_call.is_terminal {
++        update_tool_result(tool_results, &tool_call, event);
++    }
++    Ok(())
++}
++
++fn assistant_key(event: &NativeCoreProjectionEvent<'_>, message_id: Option<&str>) -> String {
++    if let (Some(turn_id), Some(entry_index)) = (event.turn_id, event.entry_index) {
++        return format!("assistant:turn:{turn_id}:{entry_index}");
++    }
++    if let Some(message_id) = message_id.filter(|value| !value.trim().is_empty()) {
++        return format!("assistant:msg:{message_id}");
++    }
++    format!("assistant:event:{}", event.event_seq)
++}
++
++fn upsert_tool_call(state: &mut RestoredAssistantMessageState, tool_call: &ExtractedToolCall) {
++    if let Some(existing) = state
++        .tool_calls
++        .iter_mut()
++        .find(|existing| existing.id == tool_call.id)
++    {
++        if existing.name.trim().is_empty() {
++            existing.name.clone_from(&tool_call.name);
++        }
++        if existing.arguments.is_null() || existing.arguments == serde_json::json!({}) {
++            existing.arguments = tool_call
++                .raw_input
++                .clone()
++                .unwrap_or_else(|| serde_json::json!({}));
++        }
++        return;
++    }
++    if state.tool_call_ids.insert(tool_call.id.clone()) {
++        state.tool_calls.push(ToolCallInfo {
++            id: tool_call.id.clone(),
++            call_id: Some(tool_call.id.clone()),
++            name: tool_call.name.clone(),
++            arguments: tool_call
++                .raw_input
++                .clone()
++                .unwrap_or_else(|| serde_json::json!({})),
++        });
++    }
++}
++
++fn update_tool_result(
++    results: &mut HashMap<String, RestoredToolResultState>,
++    tool_call: &ExtractedToolCall,
++    event: &NativeCoreProjectionEvent<'_>,
++) {
++    let state = results
++        .entry(tool_call.id.clone())
++        .or_insert_with(|| RestoredToolResultState {
++            tool_call_id: tool_call.id.clone(),
++            call_id: Some(tool_call.id.clone()),
++            ..Default::default()
++        });
++    state.order = event.event_seq;
++    state.turn_id = event.turn_id.map(ToOwned::to_owned);
++    state.entry_index = event.entry_index;
++    state.tool_name = Some(tool_call.name.clone());
++    state.terminal = true;
++    state.is_error = tool_call.is_error;
++    state.content.clone_from(&tool_call.content_parts);
++    if let Some(output) = &tool_call.raw_output {
++        state.details = Some(output.clone());
++        if state.content.is_empty() {
++            state.content = vec![ContentPart::text(json_preview(output))];
++        }
++    }
++    if state.content.is_empty() && state.details.is_none() {
++        apply_missing_output(state);
++    }
++}
++
++fn ensure_tool_results(
++    assistants: &HashMap<String, RestoredAssistantMessageState>,
++    results: &mut HashMap<String, RestoredToolResultState>,
++) {
++    for assistant in assistants.values() {
++        for tool_call in &assistant.tool_calls {
++            results.entry(tool_call.id.clone()).or_insert_with(|| {
++                let mut state = RestoredToolResultState {
++                    order: assistant.order,
++                    turn_id: assistant.turn_id.clone(),
++                    entry_index: assistant.entry_index,
++                    tool_call_id: tool_call.id.clone(),
++                    call_id: tool_call
++                        .call_id
++                        .clone()
++                        .or_else(|| Some(tool_call.id.clone())),
++                    tool_name: Some(tool_call.name.clone()),
++                    ..Default::default()
++                };
++                apply_missing_output(&mut state);
++                state
++            });
++        }
++    }
++}
++
++fn apply_missing_output(state: &mut RestoredToolResultState) {
++    let tool_name = state
++        .tool_name
++        .as_deref()
++        .unwrap_or("tool_call")
++        .to_string();
++    state.content = vec![ContentPart::text(format!(
++        "{RESTORED_TOOL_OUTPUT_MISSING_MARKER}\ntool_call_id: {}\ntool_name: {tool_name}\nThe original tool output was not available in durable presentation events. A restored placeholder preserves the tool-call/tool-result pair so continuation can proceed.",
++        state.tool_call_id
++    ))];
++    state.details = Some(serde_json::json!({
++        "type": "restored_tool_output_missing",
++        "tool_call_id": state.tool_call_id,
++        "tool_name": tool_name,
++    }));
++    state.is_error = true;
++    state.terminal = true;
++}
++
++fn assistant_content(state: &RestoredAssistantMessageState) -> Vec<ContentPart> {
++    let mut content = Vec::new();
++    if let Some(reasoning) = state
++        .final_reasoning
++        .as_deref()
++        .filter(|text| !text.is_empty())
++    {
++        content.push(ContentPart::reasoning(reasoning, None, None));
++    } else {
++        content.extend(
++            state
++                .content
++                .iter()
++                .filter(|part| part.extract_reasoning().is_some())
++                .cloned(),
++        );
++    }
++    if let Some(text) = state.final_text.as_deref().filter(|text| !text.is_empty()) {
++        content.push(ContentPart::text(text));
++    } else {
++        content.extend(
++            state
++                .content
++                .iter()
++                .filter(|part| part.extract_text().is_some())
++                .cloned(),
++        );
++    }
++    content
++}
++
++fn envelope_order(envelope: &RestoredMessageEnvelope) -> u64 {
++    match envelope {
++        RestoredMessageEnvelope::User { order, .. }
++        | RestoredMessageEnvelope::Assistant { order, .. }
++        | RestoredMessageEnvelope::ToolResult { order, .. } => *order,
++    }
++}
++
++fn project_envelope(envelope: RestoredMessageEnvelope) -> ProjectedEntry {
++    match envelope {
++        RestoredMessageEnvelope::User {
++            order,
++            message_ref,
++            content,
++        } => ProjectedEntry::event(
++            message_ref,
++            ProjectionKind::Transcript,
++            AgentMessage::User {
++                content,
++                timestamp: None,
++            },
++            Some(order),
++        ),
++        RestoredMessageEnvelope::Assistant {
++            order,
++            message_ref,
++            content,
++            tool_calls,
++        } => ProjectedEntry::event(
++            message_ref,
++            ProjectionKind::Transcript,
++            AgentMessage::Assistant {
++                content,
++                stop_reason: Some(if tool_calls.is_empty() {
++                    StopReason::Stop
++                } else {
++                    StopReason::ToolUse
++                }),
++                tool_calls,
++                error_message: None,
++                usage: None,
++                timestamp: None,
++            },
++            Some(order),
++        ),
++        RestoredMessageEnvelope::ToolResult {
++            order,
++            message_ref,
++            tool_call_id,
++            call_id,
++            tool_name,
++            content,
++            details,
++            is_error,
++        } => ProjectedEntry::event(
++            message_ref,
++            ProjectionKind::Transcript,
++            AgentMessage::ToolResult {
++                tool_call_id,
++                call_id,
++                tool_name,
++                content,
++                details,
++                is_error,
++                timestamp: None,
++            },
++            Some(order),
++        ),
++    }
++}
++
++fn message_ref(turn_id: Option<&str>, entry_index: Option<u32>, event_seq: u64) -> MessageRef {
++    MessageRef {
++        turn_id: turn_id
++            .map(ToOwned::to_owned)
++            .unwrap_or_else(|| format!("_seq:{event_seq}")),
++        entry_index: entry_index.unwrap_or(0),
++    }
++}
++
++struct FinalAssistantMessage {
++    item_id: String,
++    kind: FinalAssistantKind,
++}
++
++enum FinalAssistantKind {
++    Text(String),
++    Reasoning(String),
++}
++
++fn extract_final_assistant(item: &AgentDashThreadItem) -> Option<FinalAssistantMessage> {
++    let AgentDashThreadItem::Codex(item) = item else {
++        return None;
++    };
++    match item {
++        codex::ThreadItem::AgentMessage { id, text, .. } => Some(FinalAssistantMessage {
++            item_id: id.clone(),
++            kind: FinalAssistantKind::Text(text.clone()),
++        }),
++        codex::ThreadItem::Reasoning { id, content, .. } => Some(FinalAssistantMessage {
++            item_id: id.clone(),
++            kind: FinalAssistantKind::Reasoning(content.join("")),
++        }),
++        _ => None,
++    }
++}
++
++struct ExtractedToolCall {
++    id: String,
++    name: String,
++    raw_input: Option<serde_json::Value>,
++    raw_output: Option<serde_json::Value>,
++    content_parts: Vec<ContentPart>,
++    is_terminal: bool,
++    is_error: bool,
++}
++
++fn extract_tool_call(
++    item: &AgentDashThreadItem,
++) -> Result<Option<ExtractedToolCall>, NativeCoreProjectionError> {
++    match item {
++        AgentDashThreadItem::Codex(item) => extract_codex_tool_call(item),
++        AgentDashThreadItem::AgentDash(item) => extract_native_tool_call(item),
++    }
++}
++
++fn extract_codex_tool_call(
++    item: &codex::ThreadItem,
++) -> Result<Option<ExtractedToolCall>, NativeCoreProjectionError> {
++    let call = match item {
++        codex::ThreadItem::DynamicToolCall {
++            id,
++            tool,
++            arguments,
++            status,
++            content_items,
++            success,
++            ..
++        } => {
++            let success = success.as_ref().and_then(|value| *value);
++            ExtractedToolCall {
++                id: id.clone(),
++                name: tool.clone(),
++                raw_input: Some(arguments.clone()),
++                raw_output: None,
++                content_parts: content_items
++                    .as_ref()
++                    .and_then(Option::as_ref)
++                    .map(|items| content_items_to_parts(items))
++                    .transpose()?
++                    .unwrap_or_default(),
++                is_terminal: matches!(
++                    status,
++                    codex::DynamicToolCallStatus::Completed | codex::DynamicToolCallStatus::Failed
++                ),
++                is_error: success == Some(false)
++                    || matches!(status, codex::DynamicToolCallStatus::Failed),
++            }
++        }
++        codex::ThreadItem::McpToolCall {
++            id,
++            tool,
++            arguments,
++            status,
++            result,
++            error,
++            ..
++        } => {
++            let result = result.as_ref().and_then(Option::as_ref);
++            let error = error.as_ref().and_then(Option::as_ref);
++            ExtractedToolCall {
++                id: id.clone(),
++                name: tool.clone(),
++                raw_input: Some(arguments.clone()),
++                raw_output: result
++                    .and_then(|value| serde_json::to_value(value).ok())
++                    .or_else(|| error.and_then(|value| serde_json::to_value(value).ok())),
++                content_parts: Vec::new(),
++                is_terminal: matches!(
++                    status,
++                    codex::McpToolCallStatus::Completed | codex::McpToolCallStatus::Failed
++                ),
++                is_error: error.is_some() || matches!(status, codex::McpToolCallStatus::Failed),
++            }
++        }
++        codex::ThreadItem::CommandExecution {
++            id,
++            command,
++            status,
++            exit_code,
++            aggregated_output,
++            ..
++        } => {
++            let exit_code = exit_code.as_ref().and_then(|value| *value);
++            ExtractedToolCall {
++                id: id.clone(),
++                name: "command_execution".to_string(),
++                raw_input: Some(serde_json::json!({ "command": command })),
++                raw_output: None,
++                content_parts: aggregated_output
++                    .as_ref()
++                    .and_then(Option::as_ref)
++                    .map(|output| vec![ContentPart::text(output)])
++                    .unwrap_or_default(),
++                is_terminal: matches!(
++                    status,
++                    codex::CommandExecutionStatus::Completed
++                        | codex::CommandExecutionStatus::Failed
++                        | codex::CommandExecutionStatus::Declined
++                ),
++                is_error: exit_code.is_some_and(|code| code != 0)
++                    || matches!(status, codex::CommandExecutionStatus::Failed),
++            }
++        }
++        codex::ThreadItem::FileChange { id, status, .. } => ExtractedToolCall {
++            id: id.clone(),
++            name: "file_change".to_string(),
++            raw_input: None,
++            raw_output: None,
++            content_parts: Vec::new(),
++            is_terminal: matches!(
++                status,
++                codex::PatchApplyStatus::Completed
++                    | codex::PatchApplyStatus::Failed
++                    | codex::PatchApplyStatus::Declined
++            ),
++            is_error: matches!(status, codex::PatchApplyStatus::Failed),
++        },
++        _ => return Ok(None),
++    };
++    Ok(Some(call))
++}
++
++fn extract_native_tool_call(
++    item: &AgentDashNativeThreadItem,
++) -> Result<Option<ExtractedToolCall>, NativeCoreProjectionError> {
++    Ok(Some(ExtractedToolCall {
++        id: item.id().to_string(),
++        name: item.tool_name().to_string(),
++        raw_input: item.arguments().cloned(),
++        raw_output: None,
++        content_parts: item
++            .content_items()
++            .map(|items| content_items_to_parts(items))
++            .transpose()?
++            .unwrap_or_else(|| {
++                item.shell_output()
++                    .map(|output| vec![ContentPart::text(output)])
++                    .unwrap_or_default()
++            }),
++        is_terminal: matches!(
++            item.status(),
++            codex::DynamicToolCallStatus::Completed | codex::DynamicToolCallStatus::Failed
++        ),
++        is_error: item.success() == Some(false)
++            || matches!(item.status(), codex::DynamicToolCallStatus::Failed),
++    }))
++}
++
++fn content_items_to_parts(
++    items: &[codex::DynamicToolCallOutputContentItem],
++) -> Result<Vec<ContentPart>, NativeCoreProjectionError> {
++    items
++        .iter()
++        .filter_map(|item| match item {
++            codex::DynamicToolCallOutputContentItem::InputText { text } => {
++                (!text.trim().is_empty()).then(|| Ok(ContentPart::text(text)))
++            }
++            codex::DynamicToolCallOutputContentItem::InputImage { image_url } => {
++                Some(parse_data_image(image_url))
++            }
++        })
++        .collect()
++}
++
++fn parse_data_image(image_url: &str) -> Result<ContentPart, NativeCoreProjectionError> {
++    let rest = image_url
++        .trim()
++        .strip_prefix("data:")
++        .ok_or(NativeCoreProjectionError::InvalidImage)?;
++    let (mime_type, data) = rest
++        .split_once(";base64,")
++        .ok_or(NativeCoreProjectionError::InvalidImage)?;
++    let mime_type = mime_type.trim();
++    let data = data.trim();
++    if !mime_type.starts_with("image/") || data.is_empty() {
++        return Err(NativeCoreProjectionError::InvalidImage);
++    }
++    base64::engine::general_purpose::STANDARD
++        .decode(data)
++        .map_err(|_| NativeCoreProjectionError::InvalidImage)?;
++    Ok(ContentPart::Image {
++        mime_type: mime_type.to_string(),
++        data: data.to_string(),
++    })
++}
++
++fn json_preview(value: &serde_json::Value) -> String {
++    const MAX_CHARS: usize = 320;
++    let rendered = value.to_string();
++    let mut chars = rendered.chars();
++    let preview = chars.by_ref().take(MAX_CHARS).collect::<String>();
++    if chars.next().is_some() {
++        format!("{preview}...")
++    } else {
++        preview
++    }
++}
 diff --git a/crates/agentdash-integration-native-agent/src/driver.rs b/crates/agentdash-integration-native-agent/src/driver.rs
-index 89efe7be..15f2e36e 100644
+index 89efe7be..d1a0f12f 100644
 --- a/crates/agentdash-integration-native-agent/src/driver.rs
 +++ b/crates/agentdash-integration-native-agent/src/driver.rs
-@@ -5,13 +5,13 @@ use std::{
+@@ -5,13 +5,12 @@ use std::{
      sync::Arc,
  };
  
@@ -3561,12 +4630,20 @@ index 89efe7be..15f2e36e 100644
      Agent, AgentConfig, AgentError, AgentEvent, AgentMessage, AssistantStreamEvent,
      ConversationNamer, ConversationNamingInput, LlmBridge, ToolResultRefContext,
  };
- use agentdash_agent_protocol::{TranscriptProjectionEvent, project_transcript};
+-use agentdash_agent_protocol::{TranscriptProjectionEvent, project_transcript};
  use agentdash_agent_runtime_contract::*;
 -use agentdash_agent_types::DynAgentTool;
  use agentdash_diagnostics::{Subsystem, diag};
  use agentdash_integration_api::*;
  use async_trait::async_trait;
+@@ -24,6 +23,7 @@ use tokio::sync::{Mutex, RwLock};
+ 
+ use crate::{
+     context::{NativeBindingContext, NativeToolCallContext},
++    core_projection::{NativeCoreProjectionEvent, project_native_core_transcript},
+     hook::{NativeHookDelegate, supported_hook},
+     mapping::{context_blocks_to_messages, inputs_to_message, message_content, validate_inputs},
+     presentation::{
 @@ -1628,11 +1628,11 @@ struct NativeEventMapper {
      presentation_context: StreamMapperRuntimeContext,
  }
@@ -3650,31 +4727,24 @@ index 89efe7be..15f2e36e 100644
      let required_after = after_sequence.unwrap_or(EventSequence(0));
      if transcript.latest_available.0 > required_after.0
          && transcript.earliest_available.0 > required_after.0.saturating_add(1)
-@@ -2306,13 +2310,32 @@ fn project_driver_transcript(
+@@ -2295,7 +2299,7 @@ fn project_driver_transcript(
+         if presentation.durability != PresentationDurability::Durable {
+             continue;
+         }
+-        events.push(TranscriptProjectionEvent {
++        events.push(NativeCoreProjectionEvent {
+             event_seq: sequence,
+             turn_id: carrier
+                 .coordinate
+@@ -2306,13 +2310,16 @@ fn project_driver_transcript(
              event: &presentation.event,
          });
      }
 -    Ok(project_transcript(events))
-+    let entries = project_transcript(events)
-+        .entries
-+        .into_iter()
-+        .map(|entry| {
-+            let encoded =
-+                serde_json::to_value(entry).map_err(|error| DriverError::ProtocolViolation {
-+                    reason: format!(
-+                        "native transcript cannot cross the protocol/Core boundary: {error}"
-+                    ),
-+                    critical: true,
-+                })?;
-+            serde_json::from_value(encoded).map_err(|error| DriverError::ProtocolViolation {
-+                reason: format!(
-+                    "native transcript is incompatible with the Core-owned projection: {error}"
-+                ),
-+                critical: true,
-+            })
-+        })
-+        .collect::<Result<Vec<_>, _>>()?;
-+    Ok(agentdash_agent_core::ProjectedTranscript { entries })
++    project_native_core_transcript(events).map_err(|error| DriverError::ProtocolViolation {
++        reason: format!("native transcript cannot cross the protocol/Core boundary: {error}"),
++        critical: true,
++    })
  }
  
  fn hydrate_presentation_identity(
@@ -3685,7 +4755,7 @@ index 89efe7be..15f2e36e 100644
  ) {
      for item_id in &transcript.completed_presentation_item_ids {
          identity.observe_tool_result_item_id(item_id);
-@@ -2362,7 +2385,7 @@ fn context_error(error: DriverContextError) -> DriverError {
+@@ -2362,7 +2369,7 @@ fn context_error(error: DriverContextError) -> DriverError {
  #[cfg(test)]
  mod tests {
      use super::*;
@@ -3694,7 +4764,7 @@ index 89efe7be..15f2e36e 100644
      use agentdash_agent_protocol::codex_app_server_protocol as codex;
      use agentdash_agent_protocol::{BackboneEvent, ItemCompletedNotification};
      use agentdash_agent_runtime_test_support::session_parity::{
-@@ -2453,7 +2476,7 @@ mod tests {
+@@ -2453,7 +2460,7 @@ mod tests {
          let reasoning_only = vec![
              AgentMessage::user("需求"),
              AgentMessage::Assistant {
@@ -3703,7 +4773,7 @@ index 89efe7be..15f2e36e 100644
                      "仅推理",
                      None,
                      None,
-@@ -2470,9 +2493,9 @@ mod tests {
+@@ -2470,9 +2477,9 @@ mod tests {
          let aborted = vec![
              AgentMessage::user("需求"),
              AgentMessage::Assistant {
@@ -3715,7 +4785,7 @@ index 89efe7be..15f2e36e 100644
                  error_message: None,
                  usage: None,
                  timestamp: None,
-@@ -2507,7 +2530,7 @@ mod tests {
+@@ -2507,7 +2514,7 @@ mod tests {
          assert!(
              mapper
                  .map(AgentEvent::TurnEnd {
@@ -3724,7 +4794,7 @@ index 89efe7be..15f2e36e 100644
                      tool_results: Vec::new(),
                  })
                  .expect("intermediate provider iteration")
-@@ -2563,7 +2586,7 @@ mod tests {
+@@ -2563,7 +2570,7 @@ mod tests {
  
          let text = mapper
              .map(AgentEvent::MessageUpdate {
@@ -3733,7 +4803,7 @@ index 89efe7be..15f2e36e 100644
                  event: AssistantStreamEvent::TextDelta {
                      content_index: 0,
                      text: "hello".to_string(),
-@@ -2586,8 +2609,8 @@ mod tests {
+@@ -2586,8 +2593,8 @@ mod tests {
          );
          let provider = mapper
              .map(AgentEvent::ProviderAttemptStatus {
@@ -3744,7 +4814,7 @@ index 89efe7be..15f2e36e 100644
                      attempt: 2,
                      max_attempts: 3,
                      will_retry: true,
-@@ -2635,7 +2658,7 @@ mod tests {
+@@ -2635,7 +2642,7 @@ mod tests {
              parsed_id("source-turn").unwrap(),
              presentation_context(NativeSessionItemIdentity::new()),
          );
@@ -3753,7 +4823,7 @@ index 89efe7be..15f2e36e 100644
          let started = mapper
              .map(AgentEvent::MessageStart {
                  message: partial.clone(),
-@@ -2669,15 +2692,15 @@ mod tests {
+@@ -2669,15 +2676,15 @@ mod tests {
              .expect("reasoning delta");
          let completed = mapper
              .map(AgentEvent::MessageEnd {
@@ -3773,7 +4843,7 @@ index 89efe7be..15f2e36e 100644
                          input: 10,
                          cache_read_input: 2,
                          cache_creation_input: 3,
-@@ -2756,9 +2779,9 @@ mod tests {
+@@ -2756,9 +2763,9 @@ mod tests {
              presentation_context(NativeSessionItemIdentity::new()),
          );
          let messages = [
@@ -3786,7 +4856,7 @@ index 89efe7be..15f2e36e 100644
          ];
  
          for message in messages {
-@@ -2778,7 +2801,7 @@ mod tests {
+@@ -2778,7 +2785,7 @@ mod tests {
  
          let assistant = mapper
              .map(AgentEvent::MessageEnd {
@@ -3795,7 +4865,7 @@ index 89efe7be..15f2e36e 100644
              })
              .expect("canonical assistant message after application-owned messages");
          assert!(matches!(
-@@ -2798,24 +2821,24 @@ mod tests {
+@@ -2798,24 +2805,24 @@ mod tests {
          );
          let started = mapper
              .map(AgentEvent::MessageStart {
@@ -3825,7 +4895,7 @@ index 89efe7be..15f2e36e 100644
                      timestamp: Some(1),
                  },
              })
-@@ -2837,17 +2860,17 @@ mod tests {
+@@ -2837,17 +2844,17 @@ mod tests {
          );
          mapper
              .map(AgentEvent::MessageStart {
@@ -3847,7 +4917,7 @@ index 89efe7be..15f2e36e 100644
                          input: 10,
                          cache_read_input: 2,
                          cache_creation_input: 3,
-@@ -2989,12 +3012,12 @@ mod tests {
+@@ -2989,12 +2996,12 @@ mod tests {
  
          let announced = mapper
              .map(AgentEvent::MessageEnd {
@@ -3862,7 +4932,7 @@ index 89efe7be..15f2e36e 100644
                                  id: (*tool_call_id).to_string(),
                                  call_id: Some((*tool_call_id).to_string()),
                                  name: (*tool_name).to_string(),
-@@ -3002,9 +3025,9 @@ mod tests {
+@@ -3002,9 +3009,9 @@ mod tests {
                              }
                          })
                          .collect(),
@@ -3874,7 +4944,7 @@ index 89efe7be..15f2e36e 100644
                      timestamp: Some(1),
                  },
              })
-@@ -3063,9 +3086,9 @@ mod tests {
+@@ -3063,9 +3070,9 @@ mod tests {
              presentation_context(NativeSessionItemIdentity::new()),
          );
          let arguments = serde_json::json!({"path":"main://README.md"});
@@ -3886,7 +4956,7 @@ index 89efe7be..15f2e36e 100644
                  id: "tool-1".to_string(),
                  call_id: None,
                  name: "read".to_string(),
-@@ -3642,25 +3665,25 @@ mod tests {
+@@ -3642,25 +3649,25 @@ mod tests {
              presentation_context(NativeSessionItemIdentity::new()),
          );
          let phases = [
@@ -3922,7 +4992,7 @@ index 89efe7be..15f2e36e 100644
                          ),
                          delay_ms: None,
                          reason_code: None,
-@@ -3712,8 +3735,8 @@ mod tests {
+@@ -3712,8 +3719,8 @@ mod tests {
  
          let failure = mapper
              .map(AgentEvent::RunError {
@@ -3933,7 +5003,7 @@ index 89efe7be..15f2e36e 100644
                      "provider failed",
                  ),
              })
-@@ -3767,13 +3790,13 @@ mod tests {
+@@ -3767,13 +3774,13 @@ mod tests {
              serde_json::Value::Array(records)
          }
  
@@ -3951,7 +5021,7 @@ index 89efe7be..15f2e36e 100644
                  input: 10,
                  cache_read_input: 2,
                  cache_creation_input: 3,
-@@ -3796,7 +3819,7 @@ mod tests {
+@@ -3796,7 +3803,7 @@ mod tests {
                      },
                  },
                  AgentEvent::MessageEnd {
@@ -3960,7 +5030,7 @@ index 89efe7be..15f2e36e 100644
                  },
              ]),
          );
-@@ -3815,8 +3838,8 @@ mod tests {
+@@ -3815,8 +3822,8 @@ mod tests {
                      },
                  },
                  AgentEvent::MessageEnd {
@@ -3971,7 +5041,7 @@ index 89efe7be..15f2e36e 100644
                              "thought", None, None,
                          )],
                          tool_calls: Vec::new(),
-@@ -3875,24 +3898,24 @@ mod tests {
+@@ -3875,24 +3882,24 @@ mod tests {
              "provider_phases_error".into(),
              snapshot(
                  [
@@ -4006,7 +5076,7 @@ index 89efe7be..15f2e36e 100644
                          ),
                          delay_ms: Some(250),
                          reason_code: Some("rate_limit".into()),
-@@ -3902,8 +3925,8 @@ mod tests {
+@@ -3902,8 +3909,8 @@ mod tests {
                      },
                  })
                  .chain([AgentEvent::RunError {
@@ -4017,7 +5087,7 @@ index 89efe7be..15f2e36e 100644
                          "provider failed",
                      ),
                  }])
-@@ -4012,12 +4035,12 @@ mod tests {
+@@ -4012,12 +4019,12 @@ mod tests {
          );
          let first = mapper
              .map(AgentEvent::MessageEnd {
@@ -4057,60 +5127,76 @@ index aeec4262..07c8698d 100644
  use agentdash_diagnostics::{Subsystem, diag};
  use agentdash_integration_api::{
      AgentRuntimeHookCallback, AuthIdentity, DriverHookBinding, DriverHookDecision,
+diff --git a/crates/agentdash-integration-native-agent/src/lib.rs b/crates/agentdash-integration-native-agent/src/lib.rs
+index eec77145..b8b8f230 100644
+--- a/crates/agentdash-integration-native-agent/src/lib.rs
++++ b/crates/agentdash-integration-native-agent/src/lib.rs
+@@ -1,10 +1,12 @@
+-//! First-party adapter from AgentDash's provider-neutral Agent Core to the managed Runtime SPI.
++//! First-party adapter from Dash Agent and its provider-neutral Agent Core to Agent Runtime.
+ //!
+-//! This crate owns lifecycle/context/surface translation. `agentdash-agent` remains a single-turn
+-//! provider/tool loop and never imports Runtime, Integration, repository, or vendor vocabulary.
++//! This crate owns lifecycle/context/surface translation and the Backbone-to-Core
++//! anti-corruption projection. Dash Agent depends one-way on the pure Core; neither layer imports
++//! Runtime, Integration, repository, or vendor vocabulary.
+ 
+ mod context;
+ mod core_callbacks;
++mod core_projection;
+ mod driver;
+ mod hook;
+ mod mapping;
+@@ -13,10 +15,16 @@ mod service;
+ mod tool;
+ 
+ pub use core_callbacks::DashAgentCoreToolCallbacks;
++pub use core_projection::{
++    NativeCoreProjectionError, NativeCoreProjectionEvent, project_native_core_input,
++    project_native_core_transcript,
++};
+ pub use driver::{
+     NATIVE_STREAM_USAGE_RESERVE_TOKENS, NativeAgentDriver, NativeAgentDriverFactory,
+     NativeAgentRuntimeIntegration, NativeAgentServiceConfig, NativeBridgeResolveError,
+     NativeBridgeResolver, NativeCredentialScope, NativePresentationMetadata, ResolvedNativeBridge,
+     native_agent_contribution, native_runtime_profile, native_runtime_trust_manifest,
+ };
+-pub use service::DashAgentCompleteService;
++pub use service::{
++    DashAgentCompleteService, NativeCompleteAgentRegistration, native_complete_agent_registration,
++};
 diff --git a/crates/agentdash-integration-native-agent/src/mapping.rs b/crates/agentdash-integration-native-agent/src/mapping.rs
-index fc2a4ee6..fbdf16e1 100644
+index fc2a4ee6..557b8310 100644
 --- a/crates/agentdash-integration-native-agent/src/mapping.rs
 +++ b/crates/agentdash-integration-native-agent/src/mapping.rs
-@@ -1,3 +1,4 @@
+@@ -1,11 +1,12 @@
 +use agentdash_agent_core::{AgentMessage, ContentPart};
  use agentdash_agent_protocol::{
      AgentDashThreadItem, UserInputBlock, codex_app_server_protocol as codex,
-     user_input_blocks_to_content_parts,
-@@ -5,7 +6,6 @@ use agentdash_agent_protocol::{
+-    user_input_blocks_to_content_parts,
+ };
  use agentdash_agent_runtime_contract::{
      ContextBlock, DriverError, RuntimeInput, RuntimeItemContent,
  };
 -use agentdash_agent_types::{AgentMessage, ContentPart};
++
++use crate::core_projection::project_native_core_input;
  
  pub(crate) fn inputs_to_message(input: Vec<RuntimeInput>) -> Result<AgentMessage, DriverError> {
      validate_inputs(&input)?;
-@@ -27,7 +27,7 @@ pub(crate) fn inputs_to_message(input: Vec<RuntimeInput>) -> Result<AgentMessage
+@@ -27,7 +28,11 @@ pub(crate) fn inputs_to_message(input: Vec<RuntimeInput>) -> Result<AgentMessage
              }
          }
      }
 -    let parts = user_input_blocks_to_content_parts(&user_input);
-+    let parts = map_protocol_content_parts(&user_input)?;
++    let parts =
++        project_native_core_input(&user_input).map_err(|error| DriverError::ProtocolViolation {
++            reason: format!("native input cannot cross the protocol/Core boundary: {error}"),
++            critical: true,
++        })?;
      if parts.is_empty() {
          return Err(DriverError::Rejected {
              reason: "native Agent Core input has no deliverable content".to_string(),
-@@ -36,6 +36,27 @@ pub(crate) fn inputs_to_message(input: Vec<RuntimeInput>) -> Result<AgentMessage
-     Ok(AgentMessage::user_parts(parts))
- }
- 
-+fn map_protocol_content_parts(input: &[UserInputBlock]) -> Result<Vec<ContentPart>, DriverError> {
-+    user_input_blocks_to_content_parts(input)
-+        .into_iter()
-+        .map(|part| {
-+            let encoded =
-+                serde_json::to_value(part).map_err(|error| DriverError::ProtocolViolation {
-+                    reason: format!(
-+                        "native input content cannot cross the protocol/Core boundary: {error}"
-+                    ),
-+                    critical: true,
-+                })?;
-+            serde_json::from_value(encoded).map_err(|error| DriverError::ProtocolViolation {
-+                reason: format!(
-+                    "native input content is incompatible with the Core-owned type: {error}"
-+                ),
-+                critical: true,
-+            })
-+        })
-+        .collect()
-+}
-+
- pub(crate) fn validate_inputs(input: &[RuntimeInput]) -> Result<(), DriverError> {
-     let mut has_deliverable_content = false;
-     for input in input {
 diff --git a/crates/agentdash-integration-native-agent/src/presentation.rs b/crates/agentdash-integration-native-agent/src/presentation.rs
 index c02f9d19..5bf62a83 100644
 --- a/crates/agentdash-integration-native-agent/src/presentation.rs
@@ -4244,6 +5330,126 @@ index c02f9d19..5bf62a83 100644
                  ) && let Some(usage) = usage.as_ref()
                  {
                      envelopes.push(wrap(
+diff --git a/crates/agentdash-integration-native-agent/src/service.rs b/crates/agentdash-integration-native-agent/src/service.rs
+index 12f573df..f8252c5c 100644
+--- a/crates/agentdash-integration-native-agent/src/service.rs
++++ b/crates/agentdash-integration-native-agent/src/service.rs
+@@ -21,26 +21,28 @@ use agentdash_agent_service_api::{
+     AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
+     AgentEffectInspectionState, AgentEntityStatus, AgentForkCapability, AgentForkCutoffKind,
+     AgentForkPoint, AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint,
+-    AgentHookSemanticFacet, AgentHookTiming, AgentInput, AgentInputContent, AgentInteractionKind,
+-    AgentInteractionSnapshot, AgentItemContent, AgentItemSnapshot, AgentLifecycleCapability,
+-    AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
+-    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
+-    AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
+-    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
+-    AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
+-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolName,
+-    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnSnapshot, AppliedAgentSurface,
+-    AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
+-    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurfaceContribution,
+-    CompleteAgentService, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
+-    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContributionKind,
+-    InitialContextDeliveryFidelity, InitialContextProfile, ResumeAgentCommand,
+-    RevokeBoundAgentSurface, SemanticFidelity,
++    AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbacks, AgentInput, AgentInputContent,
++    AgentInteractionKind, AgentInteractionSnapshot, AgentItemContent, AgentItemSnapshot,
++    AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest,
++    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
++    AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot,
++    AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel,
++    AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet,
++    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
++    AgentToolDelivery, AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
++    AgentTurnSnapshot, AppliedAgentSurface, AppliedAgentSurfaceContribution,
++    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedInitialContextEvidence,
++    ApplyBoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
++    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
++    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
++    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+ };
+ use async_trait::async_trait;
+ use sha2::{Digest, Sha256};
+ use tokio::sync::RwLock;
+ 
++use crate::DashAgentCoreToolCallbacks;
++
+ #[derive(Clone)]
+ struct DashSource {
+     service: DashAgentService,
+@@ -74,6 +76,7 @@ struct DashServiceState {
+ pub struct DashAgentCompleteService {
+     state: RwLock<DashServiceState>,
+     execution: DashExecutionDependencies,
++    host_callbacks: Option<Arc<dyn AgentHostCallbacks>>,
+ }
+ 
+ impl Default for DashAgentCompleteService {
+@@ -96,6 +99,18 @@ impl DashAgentCompleteService {
+         Self {
+             state: RwLock::new(DashServiceState::default()),
+             execution,
++            host_callbacks: None,
++        }
++    }
++
++    pub fn with_host_callbacks(
++        execution: DashExecutionDependencies,
++        host_callbacks: Arc<dyn AgentHostCallbacks>,
++    ) -> Self {
++        Self {
++            state: RwLock::new(DashServiceState::default()),
++            execution,
++            host_callbacks: Some(host_callbacks),
+         }
+     }
+ 
+@@ -739,6 +754,18 @@ impl CompleteAgentService for DashAgentCompleteService {
+                 })
+                 .collect(),
+         };
++        if let Some(callbacks) = &self.host_callbacks {
++            source
++                .service
++                .replace_tool_callbacks(Arc::new(DashAgentCoreToolCallbacks::from_bound_surface(
++                    callbacks.clone(),
++                    command.callbacks.route_id.clone(),
++                    command.callbacks.binding_generation,
++                    command.source.clone(),
++                    command.callbacks.default_deadline_ms,
++                )))
++                .await;
++        }
+         source
+             .service
+             .apply_surface(dash_surface.clone())
+@@ -797,6 +824,25 @@ impl CompleteAgentService for DashAgentCompleteService {
+     }
+ }
+ 
++pub struct NativeCompleteAgentRegistration {
++    pub instance_id: AgentServiceInstanceId,
++    pub service: Arc<dyn CompleteAgentService>,
++}
++
++pub fn native_complete_agent_registration(
++    instance_id: AgentServiceInstanceId,
++    execution: DashExecutionDependencies,
++    host_callbacks: Arc<dyn AgentHostCallbacks>,
++) -> NativeCompleteAgentRegistration {
++    NativeCompleteAgentRegistration {
++        instance_id,
++        service: Arc::new(DashAgentCompleteService::with_host_callbacks(
++            execution,
++            host_callbacks,
++        )),
++    }
++}
++
+ impl RecordedEffect {
+     fn command_receipt_for(
+         &self,
 diff --git a/crates/agentdash-integration-native-agent/src/tool.rs b/crates/agentdash-integration-native-agent/src/tool.rs
 index 7dca8203..ee77d9e5 100644
 --- a/crates/agentdash-integration-native-agent/src/tool.rs
@@ -4292,6 +5498,100 @@ index 7dca8203..ee77d9e5 100644
                  namespace: namespace.clone(),
              },
          })
+diff --git a/crates/agentdash-integration-native-agent/tests/complete_agent_service.rs b/crates/agentdash-integration-native-agent/tests/complete_agent_service.rs
+index 2a90bc89..bc1f6175 100644
+--- a/crates/agentdash-integration-native-agent/tests/complete_agent_service.rs
++++ b/crates/agentdash-integration-native-agent/tests/complete_agent_service.rs
+@@ -14,18 +14,22 @@ use agentdash_agent_service_api::{
+     AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentContextPackageId,
+     AgentContextSchemaVersion, AgentContextSourceCoordinate, AgentContextSourceRevision,
+     AgentEffectIdentity, AgentEffectInspectionState, AgentForkCutoffKind, AgentForkPoint,
+-    AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint, AgentHostCallbackBinding,
++    AgentHookBlockingSemantics, AgentHookDecision, AgentHookInvocation, AgentHookMutationKind,
++    AgentHookPoint, AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbacks,
+     AgentIdempotencyKey, AgentInput, AgentInputContent, AgentPayloadDigest, AgentProfileDigest,
+-    AgentReadQuery, AgentReceiptState, AgentSnapshotRevision, AgentSourceCoordinate,
+-    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
+-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolName,
+-    AgentToolSemanticFacet, AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
++    AgentReadQuery, AgentReceiptState, AgentServiceInstanceId, AgentSnapshotRevision,
++    AgentSourceCoordinate, AgentSurfaceContributionPayload, AgentSurfaceDigest,
++    AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
++    AgentToolDelivery, AgentToolInvocation, AgentToolName, AgentToolResult, AgentToolSemanticFacet,
++    AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
+     BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind, ContextProvenance,
+     CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
+     InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
+     InitialContextMode, ResumeAgentCommand, SemanticFidelity,
+ };
+-use agentdash_integration_native_agent::DashAgentCompleteService;
++use agentdash_integration_native_agent::{
++    DashAgentCompleteService, native_complete_agent_registration,
++};
+ use async_trait::async_trait;
+ use futures::{StreamExt, stream};
+ use tokio::sync::Notify;
+@@ -76,6 +80,27 @@ impl DashExecutionCallbacks for FixtureCallbacks {
+     }
+ }
+ 
++struct FixtureHostCallbacks;
++
++#[async_trait]
++impl AgentHostCallbacks for FixtureHostCallbacks {
++    async fn invoke_tool(
++        &self,
++        _: AgentToolInvocation,
++    ) -> Result<AgentToolResult, AgentHostCallbackError> {
++        Ok(AgentToolResult::Completed {
++            output: serde_json::json!({"ok": true}),
++        })
++    }
++
++    async fn invoke_hook(
++        &self,
++        _: AgentHookInvocation,
++    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
++        Ok(AgentHookDecision::Allow)
++    }
++}
++
+ struct FixtureCompactor;
+ 
+ #[async_trait]
+@@ -105,6 +130,32 @@ fn service() -> DashAgentCompleteService {
+     })
+ }
+ 
++#[tokio::test]
++async fn production_registration_packages_the_complete_dash_service_without_registering_a_driver() {
++    let registration = native_complete_agent_registration(
++        AgentServiceInstanceId::new("native-complete-1").unwrap(),
++        DashExecutionDependencies {
++            provider: Arc::new(FixtureProvider),
++            tools: Arc::new(FixtureTools),
++            callbacks: Arc::new(FixtureCallbacks),
++            compactor: Arc::new(FixtureCompactor),
++        },
++        Arc::new(FixtureHostCallbacks),
++    );
++
++    assert_eq!(registration.instance_id.as_str(), "native-complete-1");
++    assert_eq!(
++        registration
++            .service
++            .describe()
++            .await
++            .unwrap()
++            .definition_id
++            .as_str(),
++        "dash-agent"
++    );
++}
++
+ fn service_with_provider(provider: Arc<dyn DashProvider>) -> DashAgentCompleteService {
+     service_with(provider, Arc::new(FixtureCompactor))
+ }
 diff --git a/crates/agentdash-integration-native-agent/tests/native_driver.rs b/crates/agentdash-integration-native-agent/tests/native_driver.rs
 index a484fc9a..2cf3c740 100644
 --- a/crates/agentdash-integration-native-agent/tests/native_driver.rs

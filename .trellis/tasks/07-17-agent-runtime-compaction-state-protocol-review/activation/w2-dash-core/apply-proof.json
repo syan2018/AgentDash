@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "patch": "0001-refactor-agent-runtime-Dash-Core.patch",
+  "sha256": "A257712E48F0CE3CA1B78A88FC899D6FF9CCE78E9EC299F342A17F7BE8ADD1E3",
+  "base": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
+  "code_tip": "61b68b6a",
+  "command": "GIT_INDEX_FILE=<temp> git read-tree <base>; git apply --cached --check --whitespace=error-all <patch>; git apply --cached --whitespace=error-all <patch>; git write-tree",
+  "applied_tree": "b85609c52c380efd9a19908d6d75ef60f38f9d41",
+  "expected_tree": "b85609c52c380efd9a19908d6d75ef60f38f9d41",
+  "result": "pass"
+}

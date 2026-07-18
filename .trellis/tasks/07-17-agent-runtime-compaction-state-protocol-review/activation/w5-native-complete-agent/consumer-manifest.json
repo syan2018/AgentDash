@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "frozen_base": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
+  "component": "w5-native-complete-agent",
+  "producer": {
+    "function": "native_complete_agent_registration",
+    "output": "NativeCompleteAgentRegistration",
+    "fields": [
+      "instance_id",
+      "service"
+    ]
+  },
+  "composition_consumer": {
+    "owner": "W8",
+    "action": "将 instance_id/service 注册到唯一 CompleteAgentHost，并绑定 durable Host/Dash repositories"
+  },
+  "required_same_revision_deletions": [
+    "agentdash_integration_native_agent::native_agent_contribution",
+    "NativeAgentRuntimeIntegration",
+    "NativeAgentDriverFactory",
+    "NativeAgentDriver",
+    "crates/agentdash-integration-native-agent/src/driver.rs",
+    "crates/agentdash-integration-native-agent/src/context.rs",
+    "crates/agentdash-integration-native-agent/src/hook.rs",
+    "crates/agentdash-integration-native-agent/src/mapping.rs",
+    "crates/agentdash-integration-native-agent/src/presentation.rs",
+    "crates/agentdash-integration-native-agent/src/tool.rs",
+    "Native-produced RuntimeJournalFact paths",
+    "legacy Native tool registry/materialization paths"
+  ],
+  "required_same_revision_consumer_switches": [
+    "agentdash-api production integration collection",
+    "agentdash-infrastructure production runtime composition",
+    "agentdash-local runtime driver contribution wiring",
+    "W7 AgentRun/Product callers"
+  ],
+  "kept_native_modules": [
+    "service.rs",
+    "core_callbacks.rs",
+    "core_projection.rs"
+  ],
+  "production_dual_registration_allowed": false
+}

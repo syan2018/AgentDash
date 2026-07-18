@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "frozen_base": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
+  "component": "w2-dash-core",
+  "direct_consumers_before": 14,
+  "removed_by_component": [
+    "agentdash-agent",
+    "agentdash-contracts",
+    "agentdash-executor",
+    "agentdash-infrastructure",
+    "agentdash-integration-native-agent"
+  ],
+  "remaining_final_owner_consumers": [
+    {
+      "crate": "agentdash-agent-protocol",
+      "owner": "W8",
+      "action": "删除 legacy protocol；Native-owned projector 保留 Core 反腐投影"
+    },
+    {
+      "crate": "agentdash-api",
+      "owner": "W7",
+      "action": "生产装配只消费 Business Surface、Tool Broker 与 Host callbacks"
+    },
+    {
+      "crate": "agentdash-application",
+      "owner": "W7",
+      "action": "工具产出改为平台 contribution/requirement"
+    },
+    {
+      "crate": "agentdash-application-agentrun",
+      "owner": "W7",
+      "action": "context/read 改读 Runtime snapshot/change"
+    },
+    {
+      "crate": "agentdash-application-lifecycle",
+      "owner": "W7",
+      "action": "workflow 工具只声明平台 contribution"
+    },
+    {
+      "crate": "agentdash-application-ports",
+      "owner": "W7+W8",
+      "action": "MCP discovery 返回平台 descriptor/call route；删除 RuntimeSession live port"
+    },
+    {
+      "crate": "agentdash-application-runtime-gateway",
+      "owner": "W8",
+      "action": "删除 legacy tool/session/MCP execution modules"
+    },
+    {
+      "crate": "agentdash-application-vfs",
+      "owner": "W7",
+      "action": "VFS 产出平台 tool contribution"
+    },
+    {
+      "crate": "agentdash-spi",
+      "owner": "W8",
+      "action": "删除 Agent re-export/connector tool assembly并收敛为 platform SPI"
+    }
+  ],
+  "atomic_order": [
+    "W2 type move",
+    "W7 caller cutover",
+    "W8 legacy deletion"
+  ],
+  "forbidden": [
+    "Core facade or re-export from agentdash-agent",
+    "serde transcode between protocol and Core",
+    "temporary Application dependency on Dash or Core",
+    "production dual registration"
+  ]
+}

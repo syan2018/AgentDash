@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "owner": "Dash Agent",
+  "port": {
+    "trait": "DashAgentRepository",
+    "read": "load() -> DashAgentRepositoryState",
+    "write": "compare_and_swap(expected, replacement)",
+    "conflict": "DashServiceError::Conflict",
+    "cas_authority": "history head plus repository revision"
+  },
+  "atomic_commit_input": {
+    "type": "DashAgentCommit",
+    "fields": [
+      "expected_head",
+      "command_settlement",
+      "effect_settlements",
+      "history",
+      "enqueue_commands"
+    ],
+    "invariant": "command/effect settlement、history contribution、change cursor与continuation enqueue 同一事务提交"
+  },
+  "postgresql_adapter_input_for_w8": {
+    "tables": [
+      "dash_agent_session",
+      "dash_agent_branch",
+      "dash_agent_history",
+      "dash_agent_command",
+      "dash_agent_effect",
+      "dash_agent_change"
+    ],
+    "scalar_constraints": [
+      "session_id + branch_id 唯一",
+      "branch head revision 单调",
+      "command_id 与 effect_id 各自唯一",
+      "change revision + ordinal 连续且唯一",
+      "fork parent/cutoff/digest 精确",
+      "compaction source head/digest CAS"
+    ],
+    "transaction_order": [
+      "锁定并校验 branch head/revision",
+      "校验 DashAgentCommit.expected_head",
+      "写 command/effect settlements",
+      "追加 history contributions 与逐 revision changes",
+      "写 continuation commands",
+      "推进 branch head/revision"
+    ]
+  },
+  "migration_owner": "W8",
+  "migration_in_this_component": false,
+  "compatibility_reader": false
+}

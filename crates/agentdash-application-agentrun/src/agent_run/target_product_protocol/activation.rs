@@ -133,6 +133,7 @@ pub struct AgentRunGeneratedArtifactActivation {
     pub owner: AgentRunActivationOwner,
     pub activation_action: &'static str,
     pub prerequisite: &'static str,
+    pub target_evidence: &'static str,
 }
 
 pub const AGENT_RUN_TARGET_GENERATED_ARTIFACTS: &[AgentRunGeneratedArtifactActivation] = &[
@@ -141,18 +142,21 @@ pub const AGENT_RUN_TARGET_GENERATED_ARTIFACTS: &[AgentRunGeneratedArtifactActiv
         owner: AgentRunActivationOwner::RuntimeContract,
         activation_action: "consume managed_projection as the sole snapshot/change vocabulary",
         prerequisite: "W3 Runtime Contract milestone",
+        target_evidence: "activation/w7-product-protocol/managed-runtime-projection.schema.json",
     },
     AgentRunGeneratedArtifactActivation {
         artifact: AgentRunGeneratedArtifactKind::TypeScriptApiBindings,
         owner: AgentRunActivationOwner::RuntimeContract,
         activation_action: "regenerate frontend bindings from the canonical Rust schema",
         prerequisite: "production routes expose only managed Runtime projection types",
+        target_evidence: "packages/app-web/src/features/session/model/fixtures/managedRuntimeProjection.json",
     },
     AgentRunGeneratedArtifactActivation {
         artifact: AgentRunGeneratedArtifactKind::ContractDiffGate,
         owner: AgentRunActivationOwner::RuntimeContract,
         activation_action: "require a clean generated-contract diff in the atomic cutover",
         prerequisite: "Rust routes and TypeScript consumers are switched together",
+        target_evidence: "activation/w7-product-protocol/manifest.json",
     },
 ];
 
@@ -357,6 +361,9 @@ mod tests {
             .into_iter()
             .collect()
         );
+        for artifact in AGENT_RUN_TARGET_GENERATED_ARTIFACTS {
+            assert!(!artifact.target_evidence.is_empty());
+        }
         assert_eq!(
             w8,
             [

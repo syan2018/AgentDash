@@ -4,7 +4,7 @@
 //! directly from the dependency-light Runtime Contract and consumed verbatim
 //! by the frontend target test.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use agentdash_agent_runtime_contract::managed_projection::{
     ManagedRuntimeAvailabilityEvidence, ManagedRuntimeChangeDelta, ManagedRuntimeChangeGap,
@@ -12,8 +12,8 @@ use agentdash_agent_runtime_contract::managed_projection::{
     ManagedRuntimeEntityStatus, ManagedRuntimeItem, ManagedRuntimeItemContent,
     ManagedRuntimeLifecycleStatus, ManagedRuntimeOperation, ManagedRuntimeOperationStatus,
     ManagedRuntimePlatformChange, ManagedRuntimeProjectionAuthority,
-    ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot, ManagedRuntimeTurn,
-    ManagedRuntimeUnavailabilityReason,
+    ManagedRuntimeProjectionFidelity, ManagedRuntimeProjectionSchema, ManagedRuntimeSnapshot,
+    ManagedRuntimeTurn, ManagedRuntimeUnavailabilityReason,
 };
 use agentdash_agent_runtime_contract::{
     RuntimeChangeSequence, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
@@ -23,13 +23,31 @@ use agentdash_application_agentrun::agent_run::target_product_protocol::{
     consume_managed_runtime_change_page, consume_managed_runtime_snapshot,
     managed_runtime_change_page_requires_snapshot_reload,
 };
+use schemars::schema_for;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+const UPDATE_ACTIVATION_ARTIFACTS: &str = "AGENTDASH_UPDATE_W7_ACTIVATION_ARTIFACTS";
+const ACTIVATION_ARTIFACT_DIRECTORY: &str = ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w7-product-protocol";
+const FRONTEND_FIXTURE: &str =
+    "packages/app-web/src/features/session/model/fixtures/managedRuntimeProjection.json";
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 struct CanonicalFrontendFixture {
     snapshots: BTreeMap<String, ManagedRuntimeSnapshot>,
     change_page: ManagedRuntimeChangePage,
     gap_page: ManagedRuntimeChangePage,
+}
+
+#[derive(Debug, Serialize)]
+struct W7GeneratedActivationManifest {
+    generator: &'static str,
+    canonical_root: &'static str,
+    schema_path: &'static str,
+    schema_sha256: String,
+    frontend_fixture_path: &'static str,
+    frontend_fixture_sha256: String,
+    reproduction_command: &'static str,
 }
 
 fn id<T>(
@@ -192,6 +210,42 @@ fn canonical_frontend_fixture() -> CanonicalFrontendFixture {
     }
 }
 
+fn repository_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn canonical_projection_schema() -> String {
+    format!(
+        "{}\n",
+        serde_json::to_string_pretty(&schema_for!(ManagedRuntimeProjectionSchema))
+            .expect("serialize canonical managed Runtime projection schema")
+    )
+}
+
+fn sha256(value: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(value))
+}
+
+fn check_or_update_activation_artifact(path: PathBuf, expected: &str) {
+    if std::env::var(UPDATE_ACTIVATION_ARTIFACTS).as_deref() == Ok("1") {
+        fs::create_dir_all(path.parent().expect("activation artifact parent"))
+            .expect("create activation artifact directory");
+        fs::write(path, expected).expect("write activation artifact");
+        return;
+    }
+    assert_eq!(
+        fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "read {}: {error}; run the documented W7 activation artifact generator",
+                path.display()
+            )
+        }),
+        expected,
+        "{} is out of date",
+        path.display()
+    );
+}
+
 #[test]
 fn app_server_projection_serializes_the_canonical_runtime_contract_losslessly() {
     let fixture = canonical_frontend_fixture();
@@ -218,4 +272,41 @@ fn frontend_fixture_is_the_exact_canonical_rust_serialization() {
     ))
     .expect("typed frontend fixture");
     assert_eq!(expected, canonical_frontend_fixture());
+}
+
+#[test]
+fn task_local_generated_artifacts_match_canonical_schema_and_frontend_fixture() {
+    let root = repository_root();
+    let schema = canonical_projection_schema();
+    let fixture = fs::read(root.join(FRONTEND_FIXTURE)).expect("read canonical frontend fixture");
+    let manifest = W7GeneratedActivationManifest {
+        generator: "schemars::schema_for!(ManagedRuntimeProjectionSchema)",
+        canonical_root: "agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeProjectionSchema",
+        schema_path: "managed-runtime-projection.schema.json",
+        schema_sha256: sha256(schema.as_bytes()),
+        frontend_fixture_path: FRONTEND_FIXTURE,
+        frontend_fixture_sha256: sha256(&fixture),
+        reproduction_command: "$env:AGENTDASH_UPDATE_W7_ACTIVATION_ARTIFACTS='1'; cargo test -p agentdash-api --test agent_runtime_target_projection task_local_generated_artifacts_match_canonical_schema_and_frontend_fixture -- --exact",
+    };
+    let manifest = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&manifest).expect("serialize activation manifest")
+    );
+    let artifact_root = root.join(ACTIVATION_ARTIFACT_DIRECTORY);
+    check_or_update_activation_artifact(
+        artifact_root.join("managed-runtime-projection.schema.json"),
+        &schema,
+    );
+    check_or_update_activation_artifact(artifact_root.join("manifest.json"), &manifest);
+
+    let schema: serde_json::Value =
+        serde_json::from_str(&schema).expect("generated canonical schema");
+    assert!(schema.pointer("/properties/snapshot").is_some());
+    assert!(schema.pointer("/properties/change_page").is_some());
+    assert!(schema.pointer("/$defs/ManagedRuntimeChangeGap").is_some());
+    assert!(
+        schema
+            .pointer("/$defs/ManagedRuntimeCommandAvailability")
+            .is_some()
+    );
 }

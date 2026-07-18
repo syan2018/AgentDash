@@ -1,0 +1,884 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ManagedRuntimeProjectionSchema",
+  "type": "object",
+  "properties": {
+    "snapshot": {
+      "$ref": "#/$defs/ManagedRuntimeSnapshot"
+    },
+    "change_page": {
+      "$ref": "#/$defs/ManagedRuntimeChangePage"
+    }
+  },
+  "required": [
+    "snapshot",
+    "change_page"
+  ],
+  "$defs": {
+    "ManagedRuntimeSnapshot": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "latest_change_sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "captured_at_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/ManagedRuntimeLifecycleStatus"
+        },
+        "active_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ManagedRuntimeTurn"
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ManagedRuntimeItem"
+          }
+        },
+        "interactions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ManagedRuntimeInteraction"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ManagedRuntimeOperation"
+          }
+        },
+        "authority": {
+          "$ref": "#/$defs/ManagedRuntimeProjectionAuthority"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/ManagedRuntimeProjectionFidelity"
+        },
+        "command_availability": {
+          "type": "object",
+          "properties": {
+            "close": {
+              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+            },
+            "fork": {
+              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+            },
+            "interrupt": {
+              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+            },
+            "request_compaction": {
+              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+            },
+            "resolve_interaction": {
+              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+            },
+            "steer": {
+              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+            },
+            "submit_input": {
+              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "thread_id",
+        "revision",
+        "latest_change_sequence",
+        "captured_at_ms",
+        "lifecycle",
+        "turns",
+        "items",
+        "interactions",
+        "operations",
+        "authority",
+        "fidelity",
+        "command_availability"
+      ]
+    },
+    "ManagedRuntimeLifecycleStatus": {
+      "type": "string",
+      "enum": [
+        "provisioning",
+        "active",
+        "suspended",
+        "closed",
+        "lost"
+      ]
+    },
+    "ManagedRuntimeTurn": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ManagedRuntimeEntityStatus"
+        },
+        "item_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "item_ids"
+      ]
+    },
+    "ManagedRuntimeEntityStatus": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "running",
+        "completed",
+        "failed",
+        "interrupted",
+        "lost"
+      ]
+    },
+    "ManagedRuntimeItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ManagedRuntimeEntityStatus"
+        },
+        "content": {
+          "$ref": "#/$defs/ManagedRuntimeItemContent"
+        },
+        "content_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "turn_id",
+        "status",
+        "content",
+        "content_digest"
+      ]
+    },
+    "ManagedRuntimeItemContent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimeContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_input"
+            }
+          },
+          "required": [
+            "kind",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimeContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "agent_output"
+            }
+          },
+          "required": [
+            "kind",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "arguments": true,
+            "kind": {
+              "type": "string",
+              "const": "tool_call"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "arguments"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "result": true,
+            "kind": {
+              "type": "string",
+              "const": "tool_result"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "context_compaction"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "error"
+            }
+          },
+          "required": [
+            "kind",
+            "code",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "namespace": {
+              "type": "string"
+            },
+            "schema": {
+              "type": "string"
+            },
+            "value": true,
+            "kind": {
+              "type": "string",
+              "const": "extension"
+            }
+          },
+          "required": [
+            "kind",
+            "namespace",
+            "schema",
+            "value"
+          ]
+        }
+      ]
+    },
+    "ManagedRuntimeContentBlock": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "media_type": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "image"
+            }
+          },
+          "required": [
+            "kind",
+            "media_type",
+            "source",
+            "digest"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            },
+            "media_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "resource"
+            }
+          },
+          "required": [
+            "kind",
+            "uri"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "type": "string"
+            },
+            "value": true,
+            "kind": {
+              "type": "string",
+              "const": "structured"
+            }
+          },
+          "required": [
+            "kind",
+            "schema",
+            "value"
+          ]
+        }
+      ]
+    },
+    "ManagedRuntimeInteraction": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/ManagedRuntimeInteractionKind"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ManagedRuntimeInteractionStatus"
+        }
+      },
+      "required": [
+        "id",
+        "turn_id",
+        "kind",
+        "prompt",
+        "status"
+      ]
+    },
+    "ManagedRuntimeInteractionKind": {
+      "type": "string",
+      "enum": [
+        "approval",
+        "user_input",
+        "mcp_elicitation",
+        "dynamic_tool"
+      ]
+    },
+    "ManagedRuntimeInteractionStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "resolved"
+      ]
+    },
+    "ManagedRuntimeOperation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ManagedRuntimeOperationStatus"
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ]
+    },
+    "ManagedRuntimeOperationStatus": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "running",
+        "succeeded",
+        "failed",
+        "interrupted",
+        "lost"
+      ]
+    },
+    "ManagedRuntimeProjectionAuthority": {
+      "type": "string",
+      "enum": [
+        "source_authoritative",
+        "source_observed",
+        "runtime_derived"
+      ]
+    },
+    "ManagedRuntimeProjectionFidelity": {
+      "type": "string",
+      "enum": [
+        "unsupported",
+        "observed",
+        "approximation",
+        "exact"
+      ]
+    },
+    "ManagedRuntimeCommandAvailability": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "evidence": {
+              "$ref": "#/$defs/ManagedRuntimeAvailabilityEvidence"
+            },
+            "status": {
+              "type": "string",
+              "const": "available"
+            }
+          },
+          "required": [
+            "status",
+            "evidence"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/ManagedRuntimeUnavailabilityReason"
+            },
+            "evidence": {
+              "$ref": "#/$defs/ManagedRuntimeAvailabilityEvidence"
+            },
+            "status": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "status",
+            "reason",
+            "evidence"
+          ]
+        }
+      ]
+    },
+    "ManagedRuntimeAvailabilityEvidence": {
+      "type": "object",
+      "properties": {
+        "decided_at_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "blocking_operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bound_surface_revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "applied_surface_revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "decided_at_revision"
+      ]
+    },
+    "ManagedRuntimeUnavailabilityReason": {
+      "type": "string",
+      "enum": [
+        "runtime_not_active",
+        "admission_denied",
+        "bound_surface_unavailable",
+        "applied_surface_mismatch",
+        "active_turn_required",
+        "no_active_turn_required",
+        "pending_interaction_required",
+        "operation_in_flight",
+        "source_unavailable"
+      ]
+    },
+    "ManagedRuntimeChangePage": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ManagedRuntimePlatformChange"
+          }
+        },
+        "next": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ManagedRuntimeChangeGap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "changes",
+        "next"
+      ]
+    },
+    "ManagedRuntimePlatformChange": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "delta": {
+          "$ref": "#/$defs/ManagedRuntimeChangeDelta"
+        }
+      },
+      "required": [
+        "thread_id",
+        "sequence",
+        "revision",
+        "delta"
+      ]
+    },
+    "ManagedRuntimeChangeDelta": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "authority": {
+              "$ref": "#/$defs/ManagedRuntimeProjectionAuthority"
+            },
+            "fidelity": {
+              "$ref": "#/$defs/ManagedRuntimeProjectionFidelity"
+            },
+            "kind": {
+              "type": "string",
+              "const": "snapshot_replaced"
+            }
+          },
+          "required": [
+            "kind",
+            "authority",
+            "fidelity"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "lifecycle": {
+              "$ref": "#/$defs/ManagedRuntimeLifecycleStatus"
+            },
+            "kind": {
+              "type": "string",
+              "const": "lifecycle_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "lifecycle"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "active_turn_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "active_turn_changed"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn": {
+              "$ref": "#/$defs/ManagedRuntimeTurn"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimeItem"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "turn_upserted"
+            }
+          },
+          "required": [
+            "kind",
+            "turn",
+            "items"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "item": {
+              "$ref": "#/$defs/ManagedRuntimeItem"
+            },
+            "kind": {
+              "type": "string",
+              "const": "item_upserted"
+            }
+          },
+          "required": [
+            "kind",
+            "item"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "interaction": {
+              "$ref": "#/$defs/ManagedRuntimeInteraction"
+            },
+            "kind": {
+              "type": "string",
+              "const": "interaction_upserted"
+            }
+          },
+          "required": [
+            "kind",
+            "interaction"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "$ref": "#/$defs/ManagedRuntimeOperation"
+            },
+            "kind": {
+              "type": "string",
+              "const": "operation_upserted"
+            }
+          },
+          "required": [
+            "kind",
+            "operation"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/ManagedRuntimeCommandKind"
+            },
+            "availability": {
+              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+            },
+            "kind": {
+              "type": "string",
+              "const": "command_availability_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "command",
+            "availability"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bound_surface_revision": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "applied_surface_revision": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "surface_evidence_changed"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "ManagedRuntimeCommandKind": {
+      "type": "string",
+      "enum": [
+        "submit_input",
+        "steer",
+        "interrupt",
+        "request_compaction",
+        "resolve_interaction",
+        "close",
+        "fork"
+      ]
+    },
+    "ManagedRuntimeChangeGap": {
+      "type": "object",
+      "properties": {
+        "requested_after": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "earliest_available": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "latest_available": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "snapshot_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "earliest_available",
+        "latest_available",
+        "snapshot_revision"
+      ]
+    }
+  }
+}

@@ -124,9 +124,23 @@ pub enum CompanionRuntimePreparation {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompanionContextContributionRequirement {
+    pub kind: String,
+    pub minimum_fidelity: InitialContextDeliveryFidelity,
+    pub canonical_rendered_allowed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompanionContextApplicationRequirement {
+    pub contribution_requirements: Vec<CompanionContextContributionRequirement>,
+    pub materialized_digest_required: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompanionDispatchTargetPlan {
     pub preparation: CompanionRuntimePreparation,
+    pub context_application_requirement: Option<CompanionContextApplicationRequirement>,
     pub adoption_mode: CompanionAdoptionMode,
     pub first_submit_input: SubmitInput,
     /// Business Surface facts remain a separate target input. They are not
@@ -159,10 +173,22 @@ pub enum CompanionTargetPlanError {
     ContextEvidenceMismatch,
     #[error("applied initial context evidence reports unsupported delivery fidelity")]
     UnsupportedContextFidelity,
+    #[error("dispatch target does not contain the required context application policy")]
+    MissingContextApplicationRequirement,
+    #[error("{kind} context fidelity {actual:?} is below required {minimum:?}")]
+    ContextFidelityBelowMinimum {
+        kind: String,
+        minimum: InitialContextDeliveryFidelity,
+        actual: InitialContextDeliveryFidelity,
+    },
+    #[error("CanonicalRendered delivery is not allowed for {kind}")]
+    CanonicalRenderedNotAllowed { kind: String },
     #[error("applied initial context evidence does not cover each typed contribution exactly once")]
     ContributionFidelityMismatch,
     #[error("CanonicalRendered context evidence requires a renderer version")]
     MissingRendererVersion,
+    #[error("applied initial context evidence requires a materialized digest")]
+    MissingMaterializedDigest,
     #[error("Full history fork evidence does not match the exact parent history request")]
     ForkHistoryEvidenceMismatch,
 }
@@ -173,6 +199,33 @@ pub fn compile_companion_dispatch_target(
     task: SubmitInput,
     sources: CompanionContextSources,
 ) -> Result<CompanionDispatchTargetPlan, CompanionTargetPlanError> {
+    let context_application_requirement = match mode {
+        CompanionContextMode::Full => None,
+        CompanionContextMode::Compact => Some(CompanionContextApplicationRequirement {
+            contribution_requirements: vec![CompanionContextContributionRequirement {
+                kind: "compact_summary".to_owned(),
+                minimum_fidelity: InitialContextDeliveryFidelity::CanonicalRendered,
+                canonical_rendered_allowed: true,
+            }],
+            materialized_digest_required: true,
+        }),
+        CompanionContextMode::WorkflowOnly => Some(CompanionContextApplicationRequirement {
+            contribution_requirements: vec![CompanionContextContributionRequirement {
+                kind: "workflow_context".to_owned(),
+                minimum_fidelity: InitialContextDeliveryFidelity::TypedNative,
+                canonical_rendered_allowed: false,
+            }],
+            materialized_digest_required: true,
+        }),
+        CompanionContextMode::ConstraintsOnly => Some(CompanionContextApplicationRequirement {
+            contribution_requirements: vec![CompanionContextContributionRequirement {
+                kind: "constraint_set".to_owned(),
+                minimum_fidelity: InitialContextDeliveryFidelity::TypedNative,
+                canonical_rendered_allowed: false,
+            }],
+            materialized_digest_required: true,
+        }),
+    };
     let preparation = match mode {
         CompanionContextMode::Full => CompanionRuntimePreparation::ForkParentHistory {
             parent_source_coordinate: sources.parent_source_coordinate,
@@ -238,6 +291,7 @@ pub fn compile_companion_dispatch_target(
     };
     Ok(CompanionDispatchTargetPlan {
         preparation,
+        context_application_requirement,
         adoption_mode,
         first_submit_input: task,
         surface_facts: sources.surface_facts,
@@ -288,30 +342,76 @@ pub fn verify_companion_activation(
             if actual.fidelity == InitialContextDeliveryFidelity::Unsupported {
                 return Err(CompanionTargetPlanError::UnsupportedContextFidelity);
             }
+            let requirement = plan
+                .context_application_requirement
+                .as_ref()
+                .ok_or(CompanionTargetPlanError::MissingContextApplicationRequirement)?;
             let expected = initial_context
                 .contributions
                 .iter()
                 .map(InitialAgentContextContribution::kind_name)
+                .collect::<Vec<_>>();
+            let required = requirement
+                .contribution_requirements
+                .iter()
+                .map(|contribution| contribution.kind.as_str())
                 .collect::<Vec<_>>();
             let actual_kinds = actual
                 .contribution_fidelity
                 .iter()
                 .map(|contribution| contribution.kind.as_str())
                 .collect::<Vec<_>>();
-            if expected != actual_kinds
+            if expected != required
+                || expected != actual_kinds
                 || actual.contribution_fidelity.iter().any(|contribution| {
                     contribution.fidelity == InitialContextDeliveryFidelity::Unsupported
                 })
             {
                 return Err(CompanionTargetPlanError::ContributionFidelityMismatch);
             }
-            if (actual.fidelity == InitialContextDeliveryFidelity::CanonicalRendered
+            for (required, applied) in requirement
+                .contribution_requirements
+                .iter()
+                .zip(&actual.contribution_fidelity)
+            {
+                if (actual.fidelity == InitialContextDeliveryFidelity::CanonicalRendered
+                    || applied.fidelity == InitialContextDeliveryFidelity::CanonicalRendered)
+                    && !required.canonical_rendered_allowed
+                {
+                    return Err(CompanionTargetPlanError::CanonicalRenderedNotAllowed {
+                        kind: required.kind.clone(),
+                    });
+                }
+                if !actual.fidelity.satisfies(required.minimum_fidelity) {
+                    return Err(CompanionTargetPlanError::ContextFidelityBelowMinimum {
+                        kind: required.kind.clone(),
+                        minimum: required.minimum_fidelity,
+                        actual: actual.fidelity,
+                    });
+                }
+                if !applied.fidelity.satisfies(required.minimum_fidelity) {
+                    return Err(CompanionTargetPlanError::ContextFidelityBelowMinimum {
+                        kind: required.kind.clone(),
+                        minimum: required.minimum_fidelity,
+                        actual: applied.fidelity,
+                    });
+                }
+            }
+            let canonical_rendered = actual.fidelity
+                == InitialContextDeliveryFidelity::CanonicalRendered
                 || actual.contribution_fidelity.iter().any(|contribution| {
                     contribution.fidelity == InitialContextDeliveryFidelity::CanonicalRendered
-                }))
-                && actual.renderer_version.as_deref().is_none_or(str::is_empty)
-            {
+                });
+            if canonical_rendered && actual.renderer_version.as_deref().is_none_or(str::is_empty) {
                 return Err(CompanionTargetPlanError::MissingRendererVersion);
+            }
+            if requirement.materialized_digest_required
+                && actual
+                    .materialized_digest
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+            {
+                return Err(CompanionTargetPlanError::MissingMaterializedDigest);
             }
             Ok(())
         }
@@ -695,12 +795,12 @@ pub trait CompanionFreshSagaRepository: Send + Sync {
 }
 
 #[derive(Default)]
-pub struct InMemoryCompanionFreshSagaRepository {
+pub struct RecordingCompanionFreshSagaRepository {
     sagas: Arc<Mutex<HashMap<CompanionFreshRequestId, CompanionFreshSaga>>>,
 }
 
 #[async_trait]
-impl CompanionFreshSagaRepository for InMemoryCompanionFreshSagaRepository {
+impl CompanionFreshSagaRepository for RecordingCompanionFreshSagaRepository {
     async fn create(
         &self,
         mut saga: CompanionFreshSaga,
@@ -929,9 +1029,9 @@ mod tests {
 
     use crate::agent_run::target_product_protocol::{
         AgentRunForkOperationIdentity, AgentRunForkProductGraphPort, AgentRunForkRuntimePort,
-        AgentRunForkSagaPhase, AgentRunForkSagaWorker, InMemoryAgentRunForkSagaRepository,
+        AgentRunForkSagaPhase, AgentRunForkSagaWorker,
         InitialContextContributionApplicationEvidence, ProductGraphCommitEvidence,
-        RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
+        RecordingAgentRunForkSagaRepository, RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
     };
     use serde_json::json;
 
@@ -967,8 +1067,12 @@ mod tests {
     }
 
     fn fresh_plan() -> CompanionDispatchTargetPlan {
+        fresh_plan_for(CompanionContextMode::WorkflowOnly)
+    }
+
+    fn fresh_plan_for(mode: CompanionContextMode) -> CompanionDispatchTargetPlan {
         compile_companion_dispatch_target(
-            CompanionContextMode::WorkflowOnly,
+            mode,
             CompanionAdoptionMode::BlockingReview,
             SubmitInput {
                 text: "perform durable review".to_owned(),
@@ -991,21 +1095,27 @@ mod tests {
         let CompanionRuntimePreparation::FreshCreate { initial_context } = &plan.preparation else {
             panic!("fresh");
         };
+        let requirement = plan
+            .context_application_requirement
+            .as_ref()
+            .expect("fresh context requirement");
+        let fidelity = requirement.contribution_requirements[0].minimum_fidelity;
         InitialContextApplicationEvidence {
             package_id: initial_context.package_id,
             package_digest: initial_context.digest.clone(),
-            fidelity: InitialContextDeliveryFidelity::CanonicalRendered,
-            contribution_fidelity: initial_context
-                .contributions
+            fidelity,
+            contribution_fidelity: requirement
+                .contribution_requirements
                 .iter()
                 .map(
                     |contribution| InitialContextContributionApplicationEvidence {
-                        kind: contribution.kind_name().to_owned(),
-                        fidelity: InitialContextDeliveryFidelity::CanonicalRendered,
+                        kind: contribution.kind.clone(),
+                        fidelity,
                     },
                 )
                 .collect(),
-            renderer_version: Some("context-renderer-v1".to_owned()),
+            renderer_version: (fidelity == InitialContextDeliveryFidelity::CanonicalRendered)
+                .then(|| "context-renderer-v1".to_owned()),
             materialized_digest: Some("sha256:materialized-context".to_owned()),
         }
     }
@@ -1135,7 +1245,9 @@ mod tests {
                 sources(),
             )
             .expect("plan");
-            let CompanionRuntimePreparation::FreshCreate { initial_context } = plan.preparation
+            let CompanionRuntimePreparation::FreshCreate {
+                ref initial_context,
+            } = plan.preparation
             else {
                 panic!("fresh create");
             };
@@ -1145,6 +1257,29 @@ mod tests {
                 serde_json::to_value(&initial_context.contributions[0]).expect("contribution json");
             assert_eq!(value["kind"], expected_kind);
             assert!(value.get("surface_facts").is_none());
+            let requirement = plan
+                .context_application_requirement
+                .as_ref()
+                .expect("fresh requirement");
+            assert_eq!(requirement.contribution_requirements.len(), 1);
+            assert_eq!(requirement.contribution_requirements[0].kind, expected_kind);
+            match mode {
+                CompanionContextMode::Compact => {
+                    assert_eq!(
+                        requirement.contribution_requirements[0].minimum_fidelity,
+                        InitialContextDeliveryFidelity::CanonicalRendered
+                    );
+                    assert!(requirement.contribution_requirements[0].canonical_rendered_allowed);
+                }
+                CompanionContextMode::WorkflowOnly | CompanionContextMode::ConstraintsOnly => {
+                    assert_eq!(
+                        requirement.contribution_requirements[0].minimum_fidelity,
+                        InitialContextDeliveryFidelity::TypedNative
+                    );
+                    assert!(!requirement.contribution_requirements[0].canonical_rendered_allowed);
+                }
+                CompanionContextMode::Full => unreachable!(),
+            }
         }
     }
 
@@ -1265,7 +1400,7 @@ mod tests {
 
     #[test]
     fn canonical_rendered_evidence_requires_renderer_and_exact_contributions() {
-        let plan = fresh_plan();
+        let plan = fresh_plan_for(CompanionContextMode::Compact);
         let child = RuntimeAgentChildIdentity {
             source_coordinate: "fresh-child-source".to_owned(),
             runtime_agent_id: "fresh-runtime-child".to_owned(),
@@ -1297,10 +1432,79 @@ mod tests {
         );
     }
 
+    #[test]
+    fn slice_policy_rejects_unapproved_or_below_minimum_rendered_fidelity() {
+        let plan = fresh_plan();
+        let child = RuntimeAgentChildIdentity {
+            source_coordinate: "fresh-child-source".to_owned(),
+            runtime_agent_id: "fresh-runtime-child".to_owned(),
+        };
+        let mut evidence = applied_context(&plan);
+        evidence.fidelity = InitialContextDeliveryFidelity::CanonicalRendered;
+        evidence.contribution_fidelity[0].fidelity =
+            InitialContextDeliveryFidelity::CanonicalRendered;
+        evidence.renderer_version = Some("context-renderer-v1".to_owned());
+        assert_eq!(
+            verify_companion_activation(
+                &plan,
+                &CompanionRuntimePreparationEvidence::FreshCreate {
+                    child: child.clone(),
+                    context: Some(evidence.clone()),
+                }
+            ),
+            Err(CompanionTargetPlanError::CanonicalRenderedNotAllowed {
+                kind: "workflow_context".to_owned(),
+            })
+        );
+
+        let mut allow_but_require_typed = plan;
+        allow_but_require_typed
+            .context_application_requirement
+            .as_mut()
+            .expect("requirement")
+            .contribution_requirements[0]
+            .canonical_rendered_allowed = true;
+        assert_eq!(
+            verify_companion_activation(
+                &allow_but_require_typed,
+                &CompanionRuntimePreparationEvidence::FreshCreate {
+                    child,
+                    context: Some(evidence),
+                }
+            ),
+            Err(CompanionTargetPlanError::ContextFidelityBelowMinimum {
+                kind: "workflow_context".to_owned(),
+                minimum: InitialContextDeliveryFidelity::TypedNative,
+                actual: InitialContextDeliveryFidelity::CanonicalRendered,
+            })
+        );
+    }
+
+    #[test]
+    fn canonical_rendered_evidence_requires_materialized_digest() {
+        let plan = fresh_plan_for(CompanionContextMode::Compact);
+        let mut evidence = applied_context(&plan);
+        evidence.materialized_digest = None;
+
+        assert_eq!(
+            verify_companion_activation(
+                &plan,
+                &CompanionRuntimePreparationEvidence::FreshCreate {
+                    child: RuntimeAgentChildIdentity {
+                        source_coordinate: "fresh-child-source".to_owned(),
+                        runtime_agent_id: "fresh-runtime-child".to_owned(),
+                    },
+                    context: Some(evidence),
+                }
+            ),
+            Err(CompanionTargetPlanError::MissingMaterializedDigest)
+        );
+    }
+
     #[tokio::test]
     async fn fresh_create_activation_and_first_input_are_durable_and_ordered() {
-        let fork_repository = InMemoryAgentRunForkSagaRepository::default();
-        let repository = InMemoryCompanionFreshSagaRepository::default();
+        let fork_repository = RecordingAgentRunForkSagaRepository::default();
+        let repository = RecordingCompanionFreshSagaRepository::default();
         let coordinator = CompanionDispatchCoordinator::new(&fork_repository, &repository);
         let identities = stable_fresh_identities();
         let created = coordinator
@@ -1347,8 +1551,8 @@ mod tests {
 
     #[tokio::test]
     async fn fresh_effect_crashes_recover_by_inspection_and_submit_input_once() {
-        let fork_repository = InMemoryAgentRunForkSagaRepository::default();
-        let repository = InMemoryCompanionFreshSagaRepository::default();
+        let fork_repository = RecordingAgentRunForkSagaRepository::default();
+        let repository = RecordingCompanionFreshSagaRepository::default();
         let coordinator = CompanionDispatchCoordinator::new(&fork_repository, &repository);
         let identities = stable_fresh_identities();
         coordinator
@@ -1476,8 +1680,8 @@ mod tests {
                 presentation_thread_id: "full-child-thread".to_owned(),
             },
         };
-        let fork_repository = InMemoryAgentRunForkSagaRepository::default();
-        let fresh_repository = InMemoryCompanionFreshSagaRepository::default();
+        let fork_repository = RecordingAgentRunForkSagaRepository::default();
+        let fresh_repository = RecordingCompanionFreshSagaRepository::default();
         let coordinator = CompanionDispatchCoordinator::new(&fork_repository, &fresh_repository);
         let created = coordinator
             .materialize_full_fork(&plan, request.clone())

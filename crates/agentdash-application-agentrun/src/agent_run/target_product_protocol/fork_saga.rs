@@ -60,12 +60,26 @@ pub struct RuntimeAgentChildIdentity {
     pub runtime_agent_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InitialContextDeliveryFidelity {
     Unsupported,
     CanonicalRendered,
     TypedNative,
+}
+
+impl InitialContextDeliveryFidelity {
+    pub fn satisfies(self, minimum: Self) -> bool {
+        matches!(
+            (self, minimum),
+            (Self::TypedNative, _)
+                | (
+                    Self::CanonicalRendered,
+                    Self::CanonicalRendered | Self::Unsupported
+                )
+                | (Self::Unsupported, Self::Unsupported)
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -652,12 +666,12 @@ pub trait AgentRunForkSagaRepository: Send + Sync {
 }
 
 #[derive(Default)]
-pub struct InMemoryAgentRunForkSagaRepository {
+pub struct RecordingAgentRunForkSagaRepository {
     sagas: Arc<Mutex<HashMap<AgentRunForkRequestId, AgentRunForkSaga>>>,
 }
 
 #[async_trait]
-impl AgentRunForkSagaRepository for InMemoryAgentRunForkSagaRepository {
+impl AgentRunForkSagaRepository for RecordingAgentRunForkSagaRepository {
     async fn create(
         &self,
         mut saga: AgentRunForkSaga,
@@ -1022,7 +1036,7 @@ mod tests {
 
     #[tokio::test]
     async fn repository_claim_is_unique_and_updates_are_compare_and_swap() {
-        let repository = InMemoryAgentRunForkSagaRepository::default();
+        let repository = RecordingAgentRunForkSagaRepository::default();
         let created = repository.create(saga()).await.expect("create");
         assert_eq!(
             repository.create(created.clone()).await,
@@ -1128,7 +1142,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_new_worker_can_resume_each_persisted_step_to_success() {
-        let repository = InMemoryAgentRunForkSagaRepository::default();
+        let repository = RecordingAgentRunForkSagaRepository::default();
         let created = repository.create(saga()).await.expect("create");
         let runtime = CompleteAgentTargetFixture::default();
         for _ in 0..6 {
@@ -1155,7 +1169,7 @@ mod tests {
 
     #[tokio::test]
     async fn side_effect_before_save_restart_only_inspects_the_same_identity() {
-        let repository = InMemoryAgentRunForkSagaRepository::default();
+        let repository = RecordingAgentRunForkSagaRepository::default();
         let created = repository.create(saga()).await.expect("create");
         let runtime =
             CompleteAgentTargetFixture::losing_responses([AgentRunForkRuntimeOperation::Admit]);
@@ -1188,7 +1202,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_runtime_crash_window_recovers_by_inspection() {
-        let repository = InMemoryAgentRunForkSagaRepository::default();
+        let repository = RecordingAgentRunForkSagaRepository::default();
         let created = repository.create(saga()).await.expect("create");
         let runtime = CompleteAgentTargetFixture::losing_responses([
             AgentRunForkRuntimeOperation::Admit,
@@ -1288,7 +1302,7 @@ mod tests {
 
     #[tokio::test]
     async fn known_native_child_mapping_failure_is_lost_not_failed() {
-        let repository = InMemoryAgentRunForkSagaRepository::default();
+        let repository = RecordingAgentRunForkSagaRepository::default();
         let created = repository.create(saga()).await.expect("create");
         let runtime = CompleteAgentTargetFixture::default();
         let worker = AgentRunForkSagaWorker::new(&repository, &runtime, &FailingProductGraph);

@@ -6,9 +6,73 @@ use ts_rs::TS;
 
 use crate::{
     ManagedRuntimeChangePage, ManagedRuntimeContentBlock, ManagedRuntimeOperationStatus,
-    ManagedRuntimeSnapshot, RuntimeChangeSequence, RuntimeIdempotencyKey, RuntimeInteractionId,
-    RuntimeOperationId, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
+    ManagedRuntimeSnapshot, RuntimeChangeSequence, RuntimeContextContributionId,
+    RuntimeContextPackageId, RuntimeIdempotencyKey, RuntimeInteractionId, RuntimeOperationId,
+    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedRuntimeInitialContextMode {
+    Compact,
+    WorkflowOnly,
+    ConstraintsOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedRuntimeContextAuthority {
+    AgentHistory,
+    AgentSnapshot,
+    Workflow,
+    Constraint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ManagedRuntimeContextProvenance {
+    pub authority: ManagedRuntimeContextAuthority,
+    pub source: String,
+    pub revision: String,
+    pub digest: RuntimePayloadDigest,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ManagedRuntimeInitialContextContributionContent {
+    CompactSummary {
+        summary: String,
+        provenance: ManagedRuntimeContextProvenance,
+    },
+    WorkflowContext {
+        schema: String,
+        value: serde_json::Value,
+        provenance: ManagedRuntimeContextProvenance,
+    },
+    ConstraintSet {
+        schema: String,
+        value: serde_json::Value,
+        provenance: ManagedRuntimeContextProvenance,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ManagedRuntimeInitialContextContribution {
+    pub contribution_id: RuntimeContextContributionId,
+    pub digest: RuntimePayloadDigest,
+    pub content: ManagedRuntimeInitialContextContributionContent,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ManagedRuntimeInitialContextPackage {
+    pub package_id: RuntimeContextPackageId,
+    pub schema_version: u32,
+    pub mode: ManagedRuntimeInitialContextMode,
+    pub contributions: Vec<ManagedRuntimeInitialContextContribution>,
+    pub digest: RuntimePayloadDigest,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -29,6 +93,11 @@ pub enum ManagedRuntimeInteractionResponse {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ManagedRuntimeCommand {
+    Create {
+        initial_context: Option<ManagedRuntimeInitialContextPackage>,
+    },
+    Resume,
+    Activate,
     SubmitInput {
         content: Vec<ManagedRuntimeContentBlock>,
     },
@@ -54,6 +123,9 @@ pub enum ManagedRuntimeCommand {
 impl ManagedRuntimeCommand {
     pub fn kind(&self) -> crate::ManagedRuntimeCommandKind {
         match self {
+            Self::Create { .. } => crate::ManagedRuntimeCommandKind::Create,
+            Self::Resume => crate::ManagedRuntimeCommandKind::Resume,
+            Self::Activate => crate::ManagedRuntimeCommandKind::Activate,
             Self::SubmitInput { .. } => crate::ManagedRuntimeCommandKind::SubmitInput,
             Self::Steer { .. } => crate::ManagedRuntimeCommandKind::Steer,
             Self::Interrupt { .. } => crate::ManagedRuntimeCommandKind::Interrupt,
@@ -82,6 +154,7 @@ pub struct ManagedRuntimeOperationReceipt {
     pub thread_id: RuntimeThreadId,
     pub accepted_revision: RuntimeProjectionRevision,
     pub status: ManagedRuntimeOperationStatus,
+    pub evidence: Option<crate::ManagedRuntimeOperationEvidence>,
     pub duplicate: bool,
 }
 
@@ -162,5 +235,11 @@ mod tests {
         ] {
             assert!(schema.contains(family), "missing {family}");
         }
+        for lifecycle in ["create", "resume", "activate", "fork"] {
+            assert!(schema.contains(lifecycle), "missing {lifecycle}");
+        }
+        assert!(schema.contains("ManagedRuntimeOperationEvidence"));
+        assert!(!schema.contains("binding_generation"));
+        assert!(!schema.contains("AgentSourceCoordinate"));
     }
 }

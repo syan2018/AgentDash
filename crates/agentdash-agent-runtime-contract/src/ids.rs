@@ -73,6 +73,9 @@ runtime_id!(RuntimeInteractionId);
 runtime_id!(RuntimeOperationId);
 runtime_id!(RuntimePayloadDigest);
 runtime_id!(RuntimeIdempotencyKey);
+runtime_id!(RuntimeSourceRef);
+runtime_id!(RuntimeContextPackageId);
+runtime_id!(RuntimeContextContributionId);
 
 macro_rules! revision {
     ($name:ident) => {

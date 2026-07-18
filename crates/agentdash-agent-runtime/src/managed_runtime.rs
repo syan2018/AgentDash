@@ -541,12 +541,14 @@ where
             thread_id: command.thread_id.clone(),
             accepted_revision,
             status: ManagedRuntimeOperationStatus::Accepted,
+            evidence: None,
             duplicate: false,
         };
         let operation = ManagedRuntimeOperation {
             id: receipt.operation_id.clone(),
             turn_id: None,
             status: receipt.status,
+            evidence: None,
         };
         let mut facts = snapshot.facts;
         facts.idempotency.insert(
@@ -723,6 +725,7 @@ mod tests {
             items: Vec::new(),
             interactions: Vec::new(),
             operations: Vec::new(),
+            source_binding: None,
             authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
             fidelity: ManagedRuntimeProjectionFidelity::Exact,
             command_availability,
@@ -736,12 +739,14 @@ mod tests {
             thread_id: command.thread_id.clone(),
             accepted_revision: RuntimeProjectionRevision(7),
             status: ManagedRuntimeOperationStatus::Accepted,
+            evidence: None,
             duplicate: false,
         };
         let operation = ManagedRuntimeOperation {
             id: command.operation_id.clone(),
             turn_id: None,
             status: receipt.status,
+            evidence: None,
         };
         let change = ManagedRuntimePlatformChange {
             thread_id: command.thread_id.clone(),
@@ -825,11 +830,11 @@ mod tests {
             .expect("load state");
         assert_eq!(snapshot.facts.operations.len(), 1);
         assert_eq!(snapshot.facts.pending_commands.len(), 1);
-        assert_eq!(snapshot.facts.changes.len(), 8);
-        assert_eq!(snapshot.facts.outbox.len(), 8);
+        assert_eq!(snapshot.facts.changes.len(), 11);
+        assert_eq!(snapshot.facts.outbox.len(), 11);
         let projection = snapshot.facts.projection.expect("projection");
         assert_eq!(projection.revision, RuntimeProjectionRevision(8));
-        assert_eq!(projection.latest_change_sequence, RuntimeChangeSequence(8));
+        assert_eq!(projection.latest_change_sequence, RuntimeChangeSequence(11));
         assert_eq!(projection.operations.len(), 1);
     }
 
@@ -927,6 +932,7 @@ mod tests {
                 id: RuntimeOperationId::new("extra").expect("operation"),
                 turn_id: None,
                 status: ManagedRuntimeOperationStatus::Accepted,
+                evidence: None,
             });
         assert!(validate_managed_runtime_facts(&current, &extra).is_err());
 

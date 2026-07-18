@@ -1652,6 +1652,7 @@ pub fn project_managed_runtime_snapshot(
         items,
         interactions,
         operations: input.operations,
+        source_binding: None,
         authority: project_authority(projection.source_info.authority),
         fidelity: project_fidelity(projection.source_info.fidelity),
         command_availability: input.command_availability,

@@ -6,9 +6,9 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::{
-    RuntimeChangeSequence, RuntimeInteractionId, RuntimeItemId, RuntimeOperationId,
-    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
-    SurfaceRevision,
+    RuntimeChangeSequence, RuntimeContextContributionId, RuntimeContextPackageId,
+    RuntimeInteractionId, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
+    RuntimeProjectionRevision, RuntimeSourceRef, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -158,12 +158,94 @@ pub enum ManagedRuntimeOperationStatus {
     Lost,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedRuntimeInitialContextDeliveryFidelity {
+    Unsupported,
+    CanonicalRendered,
+    TypedNative,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedRuntimeInitialContextContributionKind {
+    CompactSummary,
+    WorkflowContext,
+    ConstraintSet,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ManagedRuntimeInitialContextContributionEvidence {
+    pub contribution_id: RuntimeContextContributionId,
+    pub kind: ManagedRuntimeInitialContextContributionKind,
+    pub contribution_digest: RuntimePayloadDigest,
+    pub fidelity: ManagedRuntimeInitialContextDeliveryFidelity,
+    pub renderer_version: Option<String>,
+    pub materialized_digest: Option<RuntimePayloadDigest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ManagedRuntimeAppliedInitialContextEvidence {
+    pub package_id: RuntimeContextPackageId,
+    pub package_digest: RuntimePayloadDigest,
+    pub contributions: Vec<ManagedRuntimeInitialContextContributionEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ManagedRuntimeForkCutoff {
+    Head,
+    CompletedTurn { turn_id: RuntimeTurnId },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ManagedRuntimeForkHistoryEvidence {
+    pub cutoff: ManagedRuntimeForkCutoff,
+    pub history_digest: RuntimePayloadDigest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ManagedRuntimeSourceBindingEvidence {
+    pub source_ref: RuntimeSourceRef,
+    pub committed_at_revision: RuntimeProjectionRevision,
+    pub applied_surface_revision: SurfaceRevision,
+    pub activated_at_revision: Option<RuntimeProjectionRevision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ManagedRuntimeOperationEvidence {
+    Create {
+        binding: ManagedRuntimeSourceBindingEvidence,
+        initial_context: Option<ManagedRuntimeAppliedInitialContextEvidence>,
+    },
+    Resume {
+        binding: ManagedRuntimeSourceBindingEvidence,
+    },
+    Fork {
+        parent_binding: ManagedRuntimeSourceBindingEvidence,
+        child_thread_id: RuntimeThreadId,
+        child_binding: ManagedRuntimeSourceBindingEvidence,
+        history: ManagedRuntimeForkHistoryEvidence,
+    },
+    Activate {
+        binding: ManagedRuntimeSourceBindingEvidence,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ManagedRuntimeOperation {
     pub id: RuntimeOperationId,
     pub turn_id: Option<RuntimeTurnId>,
     pub status: ManagedRuntimeOperationStatus,
+    pub evidence: Option<ManagedRuntimeOperationEvidence>,
 }
 
 #[derive(
@@ -171,6 +253,9 @@ pub struct ManagedRuntimeOperation {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ManagedRuntimeCommandKind {
+    Create,
+    Resume,
+    Activate,
     SubmitInput,
     Steer,
     Interrupt,
@@ -181,7 +266,10 @@ pub enum ManagedRuntimeCommandKind {
 }
 
 impl ManagedRuntimeCommandKind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 10] = [
+        Self::Create,
+        Self::Resume,
+        Self::Activate,
         Self::SubmitInput,
         Self::Steer,
         Self::Interrupt,
@@ -254,6 +342,7 @@ pub struct ManagedRuntimeSnapshot {
     pub items: Vec<ManagedRuntimeItem>,
     pub interactions: Vec<ManagedRuntimeInteraction>,
     pub operations: Vec<ManagedRuntimeOperation>,
+    pub source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
     pub authority: ManagedRuntimeProjectionAuthority,
     pub fidelity: ManagedRuntimeProjectionFidelity,
     pub command_availability:
@@ -337,6 +426,9 @@ pub enum ManagedRuntimeChangeDelta {
     SurfaceEvidenceChanged {
         bound_surface_revision: Option<SurfaceRevision>,
         applied_surface_revision: Option<SurfaceRevision>,
+    },
+    SourceBindingChanged {
+        binding: Option<ManagedRuntimeSourceBindingEvidence>,
     },
 }
 
@@ -430,6 +522,7 @@ mod tests {
                 }],
                 interactions: Vec::new(),
                 operations: Vec::new(),
+                source_binding: None,
                 authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
                 fidelity: ManagedRuntimeProjectionFidelity::Exact,
                 command_availability,
@@ -476,5 +569,56 @@ mod tests {
         assert!(!schema.contains("AgentSourceCoordinate"));
         assert!(!schema.contains("AgentTurnId"));
         assert!(!schema.contains("AgentItemId"));
+    }
+
+    #[test]
+    fn operation_evidence_round_trips_without_host_identity_leakage() {
+        let source_ref = id("source-ref-1", RuntimeSourceRef::new);
+        let child_source_ref = id("source-ref-2", RuntimeSourceRef::new);
+        let child_thread_id = id("runtime-thread-2", RuntimeThreadId::new);
+        let operation = ManagedRuntimeOperation {
+            id: id("fork-operation", RuntimeOperationId::new),
+            turn_id: None,
+            status: ManagedRuntimeOperationStatus::Succeeded,
+            evidence: Some(ManagedRuntimeOperationEvidence::Fork {
+                parent_binding: ManagedRuntimeSourceBindingEvidence {
+                    source_ref,
+                    committed_at_revision: RuntimeProjectionRevision(2),
+                    applied_surface_revision: SurfaceRevision(4),
+                    activated_at_revision: Some(RuntimeProjectionRevision(3)),
+                },
+                child_thread_id,
+                child_binding: ManagedRuntimeSourceBindingEvidence {
+                    source_ref: child_source_ref,
+                    committed_at_revision: RuntimeProjectionRevision(8),
+                    applied_surface_revision: SurfaceRevision(9),
+                    activated_at_revision: None,
+                },
+                history: ManagedRuntimeForkHistoryEvidence {
+                    cutoff: ManagedRuntimeForkCutoff::CompletedTurn {
+                        turn_id: id("runtime-turn-4", RuntimeTurnId::new),
+                    },
+                    history_digest: id("sha256:history", RuntimePayloadDigest::new),
+                },
+            }),
+        };
+
+        let json = serde_json::to_value(&operation).expect("serialize operation evidence");
+        assert_eq!(json["evidence"]["kind"], "fork");
+        assert_eq!(
+            json["evidence"]["history"]["cutoff"]["kind"],
+            "completed_turn"
+        );
+        assert_eq!(
+            serde_json::from_value::<ManagedRuntimeOperation>(json).expect("deserialize evidence"),
+            operation
+        );
+
+        let schema = serde_json::to_string(&schemars::schema_for!(ManagedRuntimeProjectionSchema))
+            .expect("serialize schema");
+        assert!(schema.contains("source_ref"));
+        assert!(!schema.contains("AgentBindingGeneration"));
+        assert!(!schema.contains("AgentSourceCoordinate"));
+        assert!(!schema.contains("CompleteAgent"));
     }
 }

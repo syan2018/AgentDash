@@ -49,6 +49,45 @@ pub struct CompleteAgentBinding {
     pub state: CompleteAgentBindingState,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompleteAgentPlacement {
+    InProcess {
+        host_incarnation_id: String,
+    },
+    LocalProcess {
+        host_id: String,
+        host_incarnation_id: String,
+    },
+    Remote {
+        host_id: String,
+        transport_id: String,
+        host_incarnation_id: String,
+    },
+}
+
+impl CompleteAgentPlacement {
+    pub(crate) fn is_valid(&self) -> bool {
+        match self {
+            Self::InProcess {
+                host_incarnation_id,
+            } => !host_incarnation_id.trim().is_empty(),
+            Self::LocalProcess {
+                host_id,
+                host_incarnation_id,
+            } => !host_id.trim().is_empty() && !host_incarnation_id.trim().is_empty(),
+            Self::Remote {
+                host_id,
+                transport_id,
+                host_incarnation_id,
+            } => {
+                !host_id.trim().is_empty()
+                    && !transport_id.trim().is_empty()
+                    && !host_incarnation_id.trim().is_empty()
+            }
+        }
+    }
+}
+
 impl CompleteAgentBinding {
     pub fn dispatch_admitted(&self) -> bool {
         self.state == CompleteAgentBindingState::Available
@@ -190,18 +229,25 @@ impl CompleteAgentHost {
     pub async fn register_service(
         &self,
         instance_id: AgentServiceInstanceId,
+        placement: CompleteAgentPlacement,
         service: Arc<dyn CompleteAgentService>,
     ) -> Result<AgentServiceDescriptor, CompleteAgentHostError> {
+        if !placement.is_valid() {
+            return Err(CompleteAgentHostError::Invariant {
+                reason: "Complete Agent placement coordinates must not be empty".to_owned(),
+            });
+        }
         let descriptor = service.describe().await?;
         validate_service_descriptor(&descriptor)?;
         let offer = runtime_offer_from_descriptor(&descriptor)?;
         let snapshot = self.repository.load().await?;
         let mut facts = snapshot.facts;
         if let Some(existing) = facts.service_instances.get(&instance_id) {
-            if existing != &descriptor {
+            if existing != &descriptor || facts.placements.get(&instance_id) != Some(&placement) {
                 return Err(CompleteAgentHostError::Invariant {
-                    reason: "service instance id is already registered with another descriptor"
-                        .to_owned(),
+                    reason:
+                        "service instance id is already registered with another descriptor or placement"
+                            .to_owned(),
                 });
             }
         } else {
@@ -209,6 +255,7 @@ impl CompleteAgentHost {
                 .service_instances
                 .insert(instance_id.clone(), descriptor.clone());
             facts.offers.insert(instance_id.clone(), offer);
+            facts.placements.insert(instance_id.clone(), placement);
             self.commit(snapshot.revision, facts).await?;
         }
         self.services.attach(instance_id, service).await;
@@ -285,6 +332,21 @@ impl CompleteAgentHost {
         snapshot
             .facts
             .offers
+            .get(instance_id)
+            .cloned()
+            .ok_or_else(|| CompleteAgentHostError::UnknownService {
+                instance_id: instance_id.clone(),
+            })
+    }
+
+    pub async fn placement(
+        &self,
+        instance_id: &AgentServiceInstanceId,
+    ) -> Result<CompleteAgentPlacement, CompleteAgentHostError> {
+        let snapshot = self.repository.load().await?;
+        snapshot
+            .facts
+            .placements
             .get(instance_id)
             .cloned()
             .ok_or_else(|| CompleteAgentHostError::UnknownService {
@@ -1662,7 +1724,7 @@ mod tests {
         });
         let instance_id = AgentServiceInstanceId::new("service").expect("service");
         let host = fixture_host();
-        host.register_service(instance_id.clone(), service)
+        host.register_service(instance_id.clone(), fixture_placement(), service)
             .await
             .expect("register service");
 
@@ -1730,7 +1792,7 @@ mod tests {
             repository.clone(),
             Arc::new(FixtureServiceRegistry::default()),
         );
-        host.register_service(instance_id.clone(), service.clone())
+        host.register_service(instance_id.clone(), fixture_placement(), service.clone())
             .await
             .expect("register service");
         let binding_id = CompleteAgentBindingId::new("binding").expect("binding");
@@ -1790,6 +1852,7 @@ mod tests {
         restarted
             .register_service(
                 AgentServiceInstanceId::new("service").expect("service"),
+                fixture_placement(),
                 service.clone(),
             )
             .await
@@ -2086,6 +2149,7 @@ mod tests {
         restarted
             .register_service(
                 AgentServiceInstanceId::new("service").expect("service"),
+                fixture_placement(),
                 service.clone(),
             )
             .await
@@ -2132,7 +2196,7 @@ mod tests {
             inspection_states: Mutex::new(VecDeque::new()),
             revoke_receipt: None,
         });
-        host.register_service(instance_id.clone(), service)
+        host.register_service(instance_id.clone(), fixture_placement(), service)
             .await
             .expect("register service");
         let binding_id = CompleteAgentBindingId::new("binding").expect("binding");
@@ -2371,6 +2435,12 @@ mod tests {
         )
     }
 
+    fn fixture_placement() -> CompleteAgentPlacement {
+        CompleteAgentPlacement::InProcess {
+            host_incarnation_id: "fixture-host".to_owned(),
+        }
+    }
+
     async fn assert_inspection_progression_survives_restarts(
         first_inspection: AgentEffectInspectionState,
     ) {
@@ -2423,6 +2493,7 @@ mod tests {
         restarted
             .register_service(
                 AgentServiceInstanceId::new("service").expect("service"),
+                fixture_placement(),
                 service.clone(),
             )
             .await
@@ -2442,6 +2513,7 @@ mod tests {
         replayed
             .register_service(
                 AgentServiceInstanceId::new("service").expect("service"),
+                fixture_placement(),
                 service,
             )
             .await
@@ -2552,6 +2624,7 @@ mod tests {
         restarted
             .register_service(
                 AgentServiceInstanceId::new("service").expect("service"),
+                fixture_placement(),
                 service.clone(),
             )
             .await
@@ -2632,7 +2705,7 @@ mod tests {
             Arc::new(FixtureServiceRegistry::default()),
         ));
         let instance_id = AgentServiceInstanceId::new("service").expect("service");
-        host.register_service(instance_id.clone(), service)
+        host.register_service(instance_id.clone(), fixture_placement(), service)
             .await
             .expect("register service");
         let binding_id = CompleteAgentBindingId::new("binding").expect("binding");
@@ -2745,6 +2818,9 @@ mod tests {
         facts
             .offers
             .insert(binding.service_instance_id.clone(), offer);
+        facts
+            .placements
+            .insert(binding.service_instance_id.clone(), fixture_placement());
         facts
             .source_coordinates
             .insert(binding.id.clone(), binding.source.clone());

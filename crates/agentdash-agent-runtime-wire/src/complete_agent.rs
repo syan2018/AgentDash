@@ -11,18 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Target-only revision for Complete Agent frames before the S5 canonical route activation.
-///
-/// The active Driver Runtime Wire remains on [`crate::RUNTIME_WIRE_PROTOCOL_REVISION`]. Complete
-/// Agent adapters use this revision in isolated target composition until their frames, generated
-/// bindings, and production route are activated atomically.
-pub const RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION: u32 = 4;
-
-/// Schema root for the Complete Agent transport vocabulary.
-///
-/// Complete Agent frames remain independently schema-checkable while the production-generated
-/// Runtime Wire bindings continue to describe the active Driver route. The hard cut can make this
-/// closure canonical without inventing parallel DTOs.
+/// Schema root for the canonical Complete Agent transport vocabulary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireCompleteAgentSchema {
@@ -298,7 +287,7 @@ mod tests {
             arguments: json!({"path": "README.md"}),
         });
         let request = RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+            protocol_revision: crate::RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(10),
             critical: true,
             frame: RuntimeWireFrame::Request(Box::new(RuntimeWireRequest::AgentHostCallback(
@@ -313,7 +302,7 @@ mod tests {
         assert_eq!(callback.binding_generation(), AgentBindingGeneration(9));
 
         let ack = RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+            protocol_revision: crate::RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(11),
             critical: true,
             frame: RuntimeWireFrame::Ack(RuntimeWireAck {
@@ -362,7 +351,7 @@ mod tests {
         );
 
         let envelope = RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+            protocol_revision: crate::RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(42),
             critical: true,
             frame: RuntimeWireFrame::Notification(Box::new(
@@ -374,7 +363,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(envelope)
                 .expect("serialize envelope")
-                .pointer("/frame/payload/method")
+                .pointer("/frame/payload/kind")
                 .and_then(serde_json::Value::as_str),
             Some("agent_change")
         );

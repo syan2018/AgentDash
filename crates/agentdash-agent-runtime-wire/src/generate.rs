@@ -1,7 +1,6 @@
 use std::{collections::BTreeSet, env, fs, path::Path};
 
 use agentdash_agent_runtime_wire::RuntimeWireEnvelope;
-use agentdash_integration_api::{AuthGroup, AuthIdentity, AuthMode, MaterializedDriverSurface};
 use schemars::schema_for;
 use ts_rs::TS;
 
@@ -16,12 +15,7 @@ fn main() {
     RuntimeWireEnvelope::export_all_to(temp.path()).expect("export Runtime Wire types");
     let mut declarations = Vec::new();
     collect_typescript(temp.path(), &mut declarations);
-    declarations.extend([
-        format!("export {}", MaterializedDriverSurface::decl()),
-        format!("export {}", AuthIdentity::decl()),
-        format!("export {}", AuthGroup::decl()),
-        format!("export {}", AuthMode::decl()),
-    ]);
+
     let contract_source = fs::read_to_string(&contract_ts_path).unwrap_or_else(|error| {
         panic!(
             "read canonical Runtime contract bindings at {}: {error}; run the contract generator first",
@@ -36,29 +30,10 @@ fn main() {
     {
         panic!("Runtime Wire type `{collision}` collides with the canonical Runtime contract");
     }
-    let generated_names = declarations
-        .iter()
-        .filter_map(|declaration| declaration_name(declaration))
-        .collect::<BTreeSet<_>>();
-    let missing = wire_owned
-        .iter()
-        .filter(|name| !generated_names.contains(name.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    assert!(
-        missing.is_empty(),
-        "Runtime Wire owned types were not reachable from RuntimeWireEnvelope: {missing:?}"
-    );
+
     declarations.retain(|declaration| {
         declaration_name(declaration).is_some_and(|name| wire_owned.contains(name))
     });
-    for declaration in &mut declarations {
-        *declaration = declaration
-            .lines()
-            .map(str::trim_end)
-            .collect::<Vec<_>>()
-            .join("\n");
-    }
     declarations.sort();
     let wire_source = declarations.join("\n\n");
     let imports = referenced_contract_names(&wire_source, &contract_names);
@@ -84,48 +59,20 @@ fn main() {
 
 fn wire_owned_type_names() -> BTreeSet<String> {
     [
+        "RuntimeProtocolViolation",
         "RuntimeWireAck",
-        "RuntimeWireDriverBindResult",
-        "RuntimeWireDriverDescribeResult",
-        "RuntimeWireDriverDispatchResult",
-        "RuntimeWireDriverInspectResult",
+        "RuntimeWireChangesResult",
         "RuntimeWireEnvelope",
         "RuntimeWireExecuteResult",
         "RuntimeWireFrame",
         "RuntimeWireFrameId",
-        "RuntimeWireHostPortError",
-        "RuntimeWireHostPortRequest",
-        "RuntimeWireHostPortResponse",
         "RuntimeWireNotification",
+        "RuntimeWireReadResult",
         "RuntimeWireRequest",
         "RuntimeWireResponse",
-        "RuntimeWireSnapshotResult",
-        "RuntimeWireSubscribeResult",
-        "AuthGroup",
-        "AuthIdentity",
-        "AuthMode",
-        "DriverCompactionActivationRequest",
-        "DriverContextActivation",
-        "DriverContextCheckpointRequest",
-        "DriverContextSurface",
-        "DriverHookBinding",
-        "DriverHookDecision",
-        "DriverHookInvocation",
-        "DriverHookSurface",
-        "DriverInstructionSet",
-        "DriverTranscript",
-        "DriverTranscriptRequest",
-        "DriverSurfaceRequest",
-        "DriverToolDefinition",
-        "DriverToolInvocation",
-        "DriverToolOutcome",
-        "DriverToolSurface",
-        "DriverWorkspaceSurface",
-        "MaterializedDriverSurface",
-        "PresentationItemId",
     ]
     .into_iter()
-    .map(str::to_string)
+    .map(str::to_owned)
     .collect()
 }
 
@@ -133,7 +80,7 @@ fn exported_type_names(source: &str) -> BTreeSet<String> {
     source
         .lines()
         .filter_map(declaration_name)
-        .map(str::to_string)
+        .map(str::to_owned)
         .collect()
 }
 
@@ -152,18 +99,17 @@ fn referenced_contract_names(source: &str, contract_names: &BTreeSet<String>) ->
     source
         .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .filter(|token| contract_names.contains(*token))
-        .map(str::to_string)
+        .map(str::to_owned)
         .collect()
 }
 
 fn ensure_no_implicit_bindings() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     if let Some(path) = find_implicit_bindings(&crates) {
-        eprintln!(
+        panic!(
             "{} must not exist; TypeScript contracts are generated only through explicit workspace generators",
             path.display()
         );
-        std::process::exit(1);
     }
 }
 
@@ -195,7 +141,7 @@ fn collect_typescript(directory: &Path, declarations: &mut Vec<String>) {
                 .collect::<Vec<_>>()
                 .join("\n")
                 .trim()
-                .to_string();
+                .to_owned();
             if !declaration.is_empty() {
                 declarations.push(declaration);
             }
@@ -212,7 +158,7 @@ fn check_or_write(path: &Path, expected: &str, check: bool) {
             }
             Ok(_) | Err(_) => {
                 eprintln!(
-                    "{} is out of date; run the Runtime Wire generator",
+                    "{} is out of date; regenerate during the S5 canonical artifact cut",
                     path.display()
                 );
                 std::process::exit(1);

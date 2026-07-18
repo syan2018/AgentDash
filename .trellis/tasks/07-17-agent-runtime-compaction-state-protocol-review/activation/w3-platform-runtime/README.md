@@ -1,44 +1,49 @@
-# W3 Platform Runtime activation input
+# W3 Platform Runtime S5 activation component
 
-本目录冻结 Platform Runtime bundle 在 S5 原子切换中交给 W8 的输入。当前代码只建立
-target-lane contract、Host repository seam 和可复现的行为证据，不改变 production
-composition，也不新增正式 migration。
+本目录冻结基于 `ed1a7d95aa9c4d10feda5cbed29cdb3c4bad02a7` 的 Platform
+Runtime 激活组件。组件已经把四个 Platform library root 切到最终 Managed Runtime
+Contract / Runtime transaction / Complete Agent Host / Runtime Wire revision 4，并删除这些
+crate 内的 Driver、RuntimeJournal、Context Activation 与 revision 3 实现。
+
+该提交不是可单独落到稳定分支的 checkpoint。`manifest.json` 精确列出 33 个仍由 W2、
+W6、W7、W8 持有的 production consumer；它们必须在同一个 S5 staging 集成中完成切换。
+本组件不修改 root Cargo/lockfile、正式 migration、production composition 或 canonical
+generated artifacts。
+
+## Runtime durable authority
+
+`ManagedRuntimeStateRepository` 的一次 `ManagedRuntimeStateCommit` 是一个 Runtime
+transaction。admission 读取已提交 projection revision 与 command availability；同一次
+CAS 原子写入 operation、idempotency、pending effect intent、projection、typed change
+与 outbox。外部 Complete Agent 调用只能发生在该 durable intent 提交之后。
+
+`CompleteAgentStateRepository` 保存 source-normalized projection 与 source change
+reconcile 证据。W8 的 PostgreSQL adapter 必须在最终 Runtime schema 中同时实现它和
+`ManagedRuntimeStateRepository`，并把 source reconcile 产生的 Managed Runtime
+projection/change 纳入 Runtime transaction。
 
 ## Host durable authority
 
-`CompleteAgentHostRepository` 是 service instance、offer、binding、source coordinate、
-generation、effect、inspection、lease 与 lease epoch 的唯一持久化端口。Host 的
-`CompleteAgentServiceRegistry` 只解析当前进程可调用句柄；service descriptor 与所有
-coordination facts 均从 repository 恢复。Host 本身不持有锁或内存 map。
+`CompleteAgentHostRepository` 是 service instance、exact Runtime offer、placement、
+binding、source coordinate、generation、effect、inspection、lease 与 lease epoch 的
+唯一持久化端口。`CompleteAgentServiceRegistry` 只解析当前进程可调用句柄，不持有业务
+事实。
 
-一次 `CompleteAgentHostCommit` 是一个 Host transaction：
+一次 `CompleteAgentHostCommit` 是一个 Host transaction。adapter 必须锁定 revision，
+整体校验 descriptor/offer/placement、binding/source/generation、effect/attempt evidence
+与 lease fence，再原子推进 revision。exact committed fact graph replay 幂等返回；不同
+graph 的 stale revision 返回 typed conflict。
 
-- adapter 必须锁定并比较 `CompleteAgentHostRevision`；
-- exact committed fact graph replay 幂等返回当前 snapshot；
-- revision 相同的不同 graph 原子提交并推进 revision；
-- stale revision 的不同 graph 返回 typed `Conflict`；
-- 当前 revision 到候选 revision 的 descriptor/offer、binding/source/generation、
-  effect identity/evidence、lease token/epoch/expiry 约束在提交前整体校验；
-- effect intent 在调用 Complete Agent 前提交，receipt/inspection 在调用后以
-  当前 durable binding generation 与 active lease owner/token/epoch/expiry 再次 fence；
-- revoke terminal receipt 与 binding applied surface 清理在同一 Host transaction
-  结算，重启 replay 仍须完成未结清的 binding 清理。
+## S5 集成顺序
 
-W8 PostgreSQL adapter 与唯一 final migration 必须共同实现 `manifest.json` 冻结的表、
-约束与事务语义；不得通过 Host 内存 map、Runtime repository、兼容表或双写补造事实。
-`agent_runtime_host_revision` 是一次 Host transaction 的单调 CAS token，不承载业务事实。
+1. 应用本 Platform Runtime activation component。
+2. 应用 W2 Dash/Core 与 Native Complete Agent activation。
+3. 应用 W6 Codex/Remote Complete Agent activation。
+4. 应用 W7 Product/Protocol Managed Runtime callers。
+5. 由 W8 增加唯一 migration、PostgreSQL repositories、root Cargo/lock 和 production
+   composition。
+6. 只运行一次 canonical generators。
+7. 按 manifest 执行 33 个 consumer、legacy negative search 与 full-workspace gates。
 
-## S5 activation order
-
-1. 应用最终 Runtime Contract、Complete Agent Service API 与 Host repository shape。
-2. 应用 Dash/Core physical component 与 final consumers。
-3. 注册 Native、Codex、Remote Complete Agent services。
-4. 激活 Product Runtime callers 与 canonical generated contracts。
-5. W8 增加 PostgreSQL repositories、唯一 migration 和 production composition。
-6. 删除 legacy driver、journal、context activation、旧 wire revision 与生成根。
-7. 执行 manifest 中的 dependency、production-route、generator 与 deletion gates。
-
-`CompleteAgentHost` 与 `CompleteAgentStateReconciler` 必须由 production composition
-显式注入最终 PostgreSQL repositories；没有 repository 时 composition 失败，不存在
-默认内存实现或 fallback。状态型 repository/registry 测试实现只存在于私有测试夹具，
-production library 只公开持久化端口与纯 transaction validator。
+完整表、事务约束、live signatures、语义矩阵、逐文件 consumer action 和验证命令都以
+`manifest.json` 为准。

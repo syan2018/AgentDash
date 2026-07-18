@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingLease,
     CompleteAgentBindingState, CompleteAgentEffectAttemptEvidence, CompleteAgentEffectRecord,
-    CompleteAgentEffectState,
+    CompleteAgentEffectState, CompleteAgentPlacement,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -20,6 +20,7 @@ pub struct CompleteAgentHostRevision(pub u64);
 pub struct CompleteAgentHostFacts {
     pub service_instances: BTreeMap<AgentServiceInstanceId, AgentServiceDescriptor>,
     pub offers: BTreeMap<AgentServiceInstanceId, AgentRuntimeOffer>,
+    pub placements: BTreeMap<AgentServiceInstanceId, CompleteAgentPlacement>,
     pub bindings: BTreeMap<CompleteAgentBindingId, CompleteAgentBinding>,
     pub source_coordinates: BTreeMap<CompleteAgentBindingId, AgentSourceCoordinate>,
     pub effects: BTreeMap<AgentEffectIdentity, CompleteAgentEffectRecord>,
@@ -119,8 +120,12 @@ pub fn validate_complete_agent_host_facts(
     current: &CompleteAgentHostFacts,
     candidate: &CompleteAgentHostFacts,
 ) -> Result<(), CompleteAgentHostStoreError> {
-    if candidate.service_instances.len() != candidate.offers.len() {
-        return invariant("every service instance must have exactly one Runtime offer");
+    if candidate.service_instances.len() != candidate.offers.len()
+        || candidate.service_instances.len() != candidate.placements.len()
+    {
+        return invariant(
+            "every service instance must have exactly one Runtime offer and placement",
+        );
     }
     for (instance_id, descriptor) in &candidate.service_instances {
         let offer = candidate.offers.get(instance_id).ok_or_else(|| {
@@ -128,6 +133,14 @@ pub fn validate_complete_agent_host_facts(
                 reason: "service instance has no Runtime offer".to_owned(),
             }
         })?;
+        let placement = candidate.placements.get(instance_id).ok_or_else(|| {
+            CompleteAgentHostStoreError::Invariant {
+                reason: "service instance has no placement".to_owned(),
+            }
+        })?;
+        if !placement.is_valid() {
+            return invariant("service placement coordinates must not be empty");
+        }
         if offer.profile_digest != descriptor.profile_digest
             || offer.contributions != descriptor.profile.surface.facets
         {
@@ -143,6 +156,16 @@ pub fn validate_complete_agent_host_facts(
         if candidate.offers.get(instance_id) != current.offers.get(instance_id) {
             return invariant("published Runtime offer history is immutable");
         }
+        if candidate.placements.get(instance_id) != current.placements.get(instance_id) {
+            return invariant("service placement history is immutable");
+        }
+    }
+    if candidate
+        .placements
+        .keys()
+        .any(|instance_id| !candidate.service_instances.contains_key(instance_id))
+    {
+        return invariant("service placement has no owning service instance");
     }
 
     for (binding_id, binding) in &candidate.bindings {
@@ -798,6 +821,41 @@ mod tests {
         missing_offer.offers.clear();
         assert_invariant(validate_complete_agent_host_facts(&current, &missing_offer));
 
+        let mut placement_rewrite = current.clone();
+        placement_rewrite.placements.insert(
+            service_id(),
+            CompleteAgentPlacement::Remote {
+                host_id: "host-2".to_owned(),
+                transport_id: "transport-2".to_owned(),
+                host_incarnation_id: "incarnation-2".to_owned(),
+            },
+        );
+        assert_invariant(validate_complete_agent_host_facts(
+            &current,
+            &placement_rewrite,
+        ));
+
+        let mut missing_placement = current.clone();
+        missing_placement.placements.clear();
+        assert_invariant(validate_complete_agent_host_facts(
+            &current,
+            &missing_placement,
+        ));
+
+        let mut invalid_placement = current.clone();
+        invalid_placement.placements.insert(
+            service_id(),
+            CompleteAgentPlacement::Remote {
+                host_id: String::new(),
+                transport_id: "transport".to_owned(),
+                host_incarnation_id: "incarnation".to_owned(),
+            },
+        );
+        assert_invariant(validate_complete_agent_host_facts(
+            &current,
+            &invalid_placement,
+        ));
+
         let mut zero_generation = current.clone();
         zero_generation
             .bindings
@@ -1304,7 +1362,13 @@ mod tests {
         };
         CompleteAgentHostFacts {
             service_instances: BTreeMap::from([(service_id.clone(), descriptor)]),
-            offers: BTreeMap::from([(service_id, offer)]),
+            offers: BTreeMap::from([(service_id.clone(), offer)]),
+            placements: BTreeMap::from([(
+                service_id.clone(),
+                CompleteAgentPlacement::InProcess {
+                    host_incarnation_id: "fixture-host".to_owned(),
+                },
+            )]),
             bindings: BTreeMap::from([(binding_id.clone(), binding)]),
             source_coordinates: BTreeMap::from([(binding_id.clone(), source)]),
             effects: BTreeMap::from([(effect_id, effect)]),

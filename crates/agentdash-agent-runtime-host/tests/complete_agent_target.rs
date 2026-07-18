@@ -15,8 +15,8 @@ use agentdash_agent_runtime_host::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingState,
     CompleteAgentCallbackBroker, CompleteAgentCallbackRoute, CompleteAgentHookHandler,
     CompleteAgentHost, CompleteAgentHostCommit, CompleteAgentHostRepository,
-    CompleteAgentHostSnapshot, CompleteAgentHostStoreError, CompleteAgentServiceRegistry,
-    CompleteAgentToolHandler, apply_complete_agent_host_commit,
+    CompleteAgentHostSnapshot, CompleteAgentHostStoreError, CompleteAgentPlacement,
+    CompleteAgentServiceRegistry, CompleteAgentToolHandler, apply_complete_agent_host_commit,
 };
 use agentdash_agent_service_api::*;
 use async_trait::async_trait;
@@ -174,7 +174,13 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         Arc::new(FixtureServiceRegistry::default()),
     );
     let descriptor = host
-        .register_service(service_id.clone(), service.clone())
+        .register_service(
+            service_id.clone(),
+            CompleteAgentPlacement::InProcess {
+                host_incarnation_id: "fixture-host".to_owned(),
+            },
+            service.clone(),
+        )
         .await
         .expect("register service");
     let offer = host

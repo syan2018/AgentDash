@@ -48,6 +48,7 @@
     "execute_prepare": "调用 provider 或修改 Dash history 前，以 expected_effect=None 持久提交 Accepted receipt 占用 effect identity",
     "execute_reconcile": "Dash execute 后以 expected Accepted record CAS 为 terminal record；若进程在两者之间退出，重开后由同 request fingerprint 调用 Dash effect/history authority 幂等恢复",
     "inspect": "只读取 Complete Agent durable effect ledger；Accepted reservation 必须可跨实例观察，未占用 identity 才能返回 NotApplied",
+    "live_surface_reconcile": "open、exact effect replay、atomic commit 成功与 uncertain error 都从 durable source metadata 运行同一 materializer；完整 applied/callback surface/binding 三元组重建 callbacks，全部为空则恢复 base callbacks，部分或不一致 metadata 拒绝为 invalid durable state",
     "surface_staging": [
       "DashAgentService::stage_surface_apply",
       "DashAgentService::stage_surface_revoke"

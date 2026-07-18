@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "owner": "Dash/Native",
-  "code_tip": "884913d8aa7fb355dcd15a92d43b853ab85a0b32",
+  "code_tip": "ce46985701e40db72a40a6b2e68d69f831f005a6",
   "physically_deleted_paths": [
     "crates/agentdash-integration-native-agent/src/context.rs",
     "crates/agentdash-integration-native-agent/src/core_projection.rs",
@@ -10,7 +10,8 @@
     "crates/agentdash-integration-native-agent/src/mapping.rs",
     "crates/agentdash-integration-native-agent/src/presentation.rs",
     "crates/agentdash-integration-native-agent/src/tool.rs",
-    "crates/agentdash-integration-native-agent/tests/native_driver.rs"
+    "crates/agentdash-integration-native-agent/tests/native_driver.rs",
+    "crates/agentdash-integration-native-agent/fixtures/main-oracle-presentation.json"
   ],
   "physically_removed_symbols": [
     "NativeAgentDriver",
@@ -40,6 +41,30 @@
     "callbacks": "Arc<dyn AgentHostCallbacks>",
     "dual_registration_allowed": false
   },
+  "exact_atomic_consumers": [
+    {
+      "path": "crates/agentdash-integration-native-agent/src/service.rs",
+      "symbols": [
+        "DashAgentCompleteService",
+        "DashCompleteAgentStore::commit",
+        "DashCompleteAtomicCommit",
+        "DashCompleteSourceMutation"
+      ]
+    },
+    {
+      "path": "crates/agentdash-integration-native-agent/tests/complete_agent_service.rs",
+      "symbols": [
+        "RecordingCompleteStore",
+        "atomic_commits_recover_lost_receipts_without_duplicate_source_fork_or_surface_mutation",
+        "lost_surface_receipts_reconcile_live_callbacks_on_the_same_service"
+      ]
+    },
+    {
+      "owner": "W8",
+      "consumer": "PostgreSQL DashCompleteAgentStore adapter",
+      "requirement": "match both Create and CompareAndSwap variants and commit effect plus every source mutation in one database transaction"
+    }
+  ],
   "cross_owner_consumers": [
     {
       "owner": "W8",
@@ -84,5 +109,34 @@
       "Native legacy source deletion",
       "Native Complete Agent behavior"
     ]
-  }
+  },
+  "session_parity_zero_consumer_cleanup": [
+    {
+      "path": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/scenario-catalog.json",
+      "physical_owner": "W8 zero-consumer shared deletion",
+      "semantic_owners_after_cleanup": ["W4 Codex", "W6 tool owner", "W7 application producer"]
+    },
+    {
+      "path": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/inventory.json",
+      "physical_owner": "W8 zero-consumer shared deletion",
+      "action": "delete the native inventory entry and reassign surviving scenario evidence to canonical owners"
+    },
+    {
+      "path": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/evidence-manifest.json",
+      "physical_owner": "W8 zero-consumer shared deletion",
+      "action": "delete native_pinned_main_capture, native_7_scenario_strict_golden and every covered deleted test symbol"
+    }
+  ],
+  "exact_negative_gates": [
+    {
+      "scope": "W5 Native owner",
+      "command": "rg -n \"NativeAgentDriver|NativeAgentRuntimeIntegration|project_native_core|native_runtime_profile|native_w5_scenarios_match_main_oracle_golden_strictly|main-oracle-presentation.json\" crates/agentdash-integration-native-agent",
+      "expected_matches": 0
+    },
+    {
+      "scope": "W8 final session-parity cleanup",
+      "command": "rg -n \"W5 Native|native_pinned_main_capture|native_7_scenario_strict_golden|native_w5_scenarios_match_main_oracle_golden_strictly|agentdash-integration-native-agent/fixtures/main-oracle-presentation.json\" crates/agentdash-agent-runtime-test-support/fixtures/session-parity/scenario-catalog.json crates/agentdash-agent-runtime-test-support/fixtures/session-parity/inventory.json crates/agentdash-agent-runtime-test-support/fixtures/session-parity/evidence-manifest.json",
+      "expected_matches": 0
+    }
+  ]
 }

@@ -6,10 +6,12 @@
     {
       "id": "dash_repository_contract",
       "owned_here": [
-        "crates/agentdash-integration-native-agent/src/service.rs"
+        "crates/agentdash-integration-native-agent/src/service.rs",
+        "DashCompleteAtomicCommit",
+        "DashCompleteSourceMutation"
       ],
       "shared_with": ["W2", "W8"],
-      "handoff": "W5 defines DashCompleteAgentStore durable source/effect truth on top of W2 per-source repositories; W8 implements both ports"
+      "handoff": "W5 defines the exact effect CAS plus repository/metadata mutation transaction; W8 implements the PostgreSQL port without splitting receipt and source mutation"
     },
     {
       "id": "native_complete_service",
@@ -21,12 +23,29 @@
       "handoff": "W5 owns typed tool/hook materialization and stable surface effects; W8 only composes the service and repositories"
     },
     {
+      "id": "native_legacy_deletion",
+      "owned_here": [
+        "crates/agentdash-integration-native-agent/src/driver.rs",
+        "crates/agentdash-integration-native-agent/src/context.rs",
+        "crates/agentdash-integration-native-agent/src/core_projection.rs",
+        "crates/agentdash-integration-native-agent/src/hook.rs",
+        "crates/agentdash-integration-native-agent/src/mapping.rs",
+        "crates/agentdash-integration-native-agent/src/presentation.rs",
+        "crates/agentdash-integration-native-agent/src/tool.rs",
+        "crates/agentdash-integration-native-agent/tests/native_driver.rs",
+        "crates/agentdash-integration-native-agent/fixtures/main-oracle-presentation.json"
+      ],
+      "status": "physically_deleted_by_w5",
+      "shared_with": ["W7", "W8"],
+      "handoff": "W7 removes code consumers; W8 removes zero-consumer shared session-parity references only"
+    },
+    {
       "id": "production_registration",
       "owned_here": [
         "native_complete_agent_registration"
       ],
       "shared_with": ["W8"],
-      "handoff": "W8 registers this Complete Agent and deletes the legacy Native driver route in the same revision"
+      "handoff": "W8 registers this Complete Agent in production; Native legacy source deletion is already complete in W5"
     }
   ]
 }

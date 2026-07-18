@@ -5,10 +5,10 @@
 - Frozen base: `fc26d3ffb951461d8e9214b6b4639b88c18d533d`
 - Source branch: `codex/agent-runtime-s5-dash-activation`
 - Source worktree: `F:\Projects\AgentDash-s5-dash-activation`
-- Code tip: `884913d8`
+- Code tip: `ce469857`
 - Component patch: `0001-refactor-agent-runtime-Dash-Core.patch`
 - Patch SHA-256:
-  `ABAB53192296ABDFFCBCF67246E8D63D5F8E2612D8E0BC8DEA2787F398C9EC1C`
+  `050933092652A05BC49F36102D4E48CD14A585A1C6127BE61F4C02B7C5886A15`
 - Consumer manifest: `consumer-manifest.json`
 - W8 repository input: `dash-repository-contract.json`
 - Native deletion/consumer handoff: `native-owner-deletion-manifest.json`
@@ -34,8 +34,12 @@
 - Complete Agent 的 effect receipt/inspection、source metadata 与 Dash repository
   create/CAS 由 `DashCompleteAtomicCommit` 一次提交；execute 先持久占用 effect identity，
   再用 Dash effect/history authority 跨重启 reconcile。
-- component patch 明确排除 `Cargo.lock`；依赖图 lock 更新、migration、PostgreSQL adapter
-  与 production composition 全部由 W8 在同一 staging revision 生成。
+- apply/revoke 与 replay/open 都通过 durable source metadata 的同一 live surface
+  materializer；commit response 丢失不会留下旧 binding generation，也不会让 revoke 后的
+  callback 继续存活。
+- repository `Cargo.lock` 精确恢复 frozen base；component patch 明确排除 lock，W8 从最终
+  manifests 生成 activation lock，并与 migration、PostgreSQL adapter、production
+  composition 在同一 staging revision 提交。
 
 ## Direct consumer proof
 
@@ -69,8 +73,8 @@ Application -> Core 反向依赖、facade、re-export 或兼容 reader。
 ```powershell
 cargo metadata --format-version 1 --no-deps
 cargo tree -p agentdash-agent-core --edges normal
-cargo test -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent
-cargo test -p agentdash-application-agentrun fork_
+cargo test --locked -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent
+cargo test --locked -p agentdash-application-agentrun fork_
 rg -n "NativeAgentDriver|NativeAgentRuntimeIntegration|project_native_core|native_runtime_profile" crates/agentdash-integration-native-agent
 pnpm run test-support:guard
 git diff --check -- . ':(exclude)*.patch'
@@ -84,4 +88,5 @@ git diff --check -- . ':(exclude)*.patch'
   repository 或 vendor；
 - Native owner crate 中不再存在旧 driver registration；W8 在最终 staging revision
   装配唯一 Complete Agent registration，不能双注册。
-- component patch 中不得出现 `Cargo.lock`；W8 必须从最终 manifests 重新生成 lock。
+- `git diff fc26d3ff..HEAD -- Cargo.lock` 为零，component patch 也不得出现
+  `Cargo.lock`；W8 必须从最终 manifests 重新生成 activation lock。

@@ -8,14 +8,33 @@
       "consumes": [
         "DashAgentRepository",
         "DashAgentRepositoryStore",
-        "DashCompleteAgentStore"
+        "DashCompleteAgentStore",
+        "DashCompleteAtomicCommit",
+        "DashCompleteSourceMutation"
       ],
       "owns": [
         "PostgreSQL adapters",
         "database migration",
         "transactional source/effect persistence"
       ],
-      "must_not": "reconstruct a second repository path or keep source/effect truth in process memory"
+      "tables": [
+        "dash_agent_session",
+        "dash_agent_branch",
+        "dash_agent_history",
+        "dash_agent_command",
+        "dash_agent_effect",
+        "dash_agent_change",
+        "dash_complete_source",
+        "dash_complete_effect"
+      ],
+      "transaction": [
+        "lock effect identity and every affected source aggregate",
+        "compare expected effect, repository state and source metadata",
+        "write Create or CompareAndSwap repository plus metadata mutation",
+        "write replacement effect request fingerprint, typed receipt and inspection evidence",
+        "commit source/history/surface and effect evidence as one visibility boundary"
+      ],
+      "must_not": "reconstruct a second repository path, split source mutation from receipt evidence, or keep source/effect truth in process memory"
     },
     {
       "id": "production_registration",
@@ -24,9 +43,18 @@
       ],
       "owns": [
         "CompleteAgentHost production composition",
-        "legacy Native driver deletion",
         "single registration switch"
-      ]
+      ],
+      "consumes_completed_w5_deletion": true
+    },
+    {
+      "id": "zero_consumer_shared_cleanup",
+      "owns": [
+        "remove Native legacy references from session-parity scenario-catalog.json",
+        "remove Native legacy entry from session-parity inventory.json",
+        "remove native_pinned_main_capture/native_7_scenario_strict_golden from session-parity evidence-manifest.json"
+      ],
+      "must_not": "recreate Native driver tests or retain references to the deleted Native Main oracle fixture"
     },
     {
       "id": "cargo_dependency_graph",

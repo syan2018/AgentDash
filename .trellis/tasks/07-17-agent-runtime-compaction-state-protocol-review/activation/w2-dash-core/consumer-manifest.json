@@ -18,7 +18,7 @@
     {
       "crate": "agentdash-agent-protocol",
       "owner": "W8",
-      "action": "删除 legacy protocol；Native-owned projector 保留 Core 反腐投影"
+      "action": "删除 legacy protocol；Native journal/context projector 已由 W5 物理删除，不再保留协议到 Core 的 adapter"
     },
     {
       "crate": "agentdash-api",

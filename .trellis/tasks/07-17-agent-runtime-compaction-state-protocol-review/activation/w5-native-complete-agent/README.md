@@ -21,17 +21,24 @@ registry。
   deadline materialize 为 typed tool/hook callbacks；BeforeTool/AfterTool 支持
   allow、deny、rewrite input/result，duplicate effect 不重复触发；
 - create/resume/fork/execute/apply/revoke receipts 与 inspect 全部进入
-  `DashCompleteAgentStore` durable ledger；跨服务实例从同一 store 恢复；
+  `DashCompleteAgentStore` durable ledger；`DashCompleteAtomicCommit` 把 effect
+  receipt/inspection 与 `DashCompleteSourceMutation` 的 repository/metadata 变更放入同一
+  CAS transaction，跨服务实例从同一 store 恢复；
+- live surface 始终由 durable source metadata 的单一 materializer 重建；apply/revoke
+  即使 durable commit 成功后响应丢失，同实例 replay 也会应用新 binding generation 或
+  清除旧 callbacks；
 - manual/automatic compaction、read、ordered change page 与 inspect 全部由同一
   `DashAgentService` history/effect authority 提供；
-- Native-owned typed projector 恢复 provider transcript，不从 journal JSON 同构转码；
-- registration 仅作为 W8 composition 输入；旧 driver registration 删除与新 Complete
-  Agent registration 必须在同一 commit，禁止 production 双注册。
+- Native legacy driver、journal/context projector、presentation/tool route、旧 driver
+  tests 与 Main oracle fixture 已由 W5 owner component 物理删除；
+- registration 仅作为 W8 composition 输入；W8 只负责 PostgreSQL store 与 production
+  composition，禁止 production 双注册。
 
 ## Activation boundary
 
-当前 frozen revision 的 production Host 仍选择 legacy driver route。W8 消费本组件时必须
-按 manifest 删除 Native-owned driver/journal/tool 路径，并把 registration 注册到唯一
-`CompleteAgentHost`，同时实现 `DashCompleteAgentStore` 与 `DashAgentRepositoryStore`
-PostgreSQL adapter。在 W7 caller 和 W8 durable Host/Dash repositories 尚未同时进入
-staging set 前，本组件不单独激活。
+Native owner deletion 已在本组件完成。W7 负责清除 Infrastructure worker 与 API/Product
+对已删 legacy symbols 的 consumers；W8 实现 `DashCompleteAgentStore` /
+`DashAgentRepositoryStore` PostgreSQL adapter，把 registration 注册到唯一
+`CompleteAgentHost`，并删除 test-support session-parity 中已经零 consumer 的 Native
+golden 引用。在 W7 caller 和 W8 durable composition 尚未同时进入 staging set 前，本组件
+不单独激活。

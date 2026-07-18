@@ -3182,6 +3182,76 @@ index 53ea0850..c898adc9 100644
 -agentdash-agent-runtime = { workspace = true }
 -agentdash-agent-runtime-test-support = { workspace = true }
 +futures = { workspace = true }
+diff --git a/crates/agentdash-integration-native-agent/fixtures/main-oracle-presentation.json b/crates/agentdash-integration-native-agent/fixtures/main-oracle-presentation.json
+deleted file mode 100644
+index d9794133..00000000
+--- a/crates/agentdash-integration-native-agent/fixtures/main-oracle-presentation.json
++++ /dev/null
+@@ -1,64 +0,0 @@
+-{
+-  "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+-  "source": "crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs",
+-  "source_sha256": "d2e1cea154e40e8f66aa8e5ec36ef0cd57ebee78332f157a22c639a4db4bbb05",
+-  "oracle_source_path": "crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs",
+-  "oracle_source_sha256": "d2e1cea154e40e8f66aa8e5ec36ef0cd57ebee78332f157a22c639a4db4bbb05",
+-  "oracle_source_blob": "ec0cfdf485a231090ba538c546c9c681d6ece1fb",
+-  "oracle_test_source": "crates/agentdash-executor/src/connectors/pi_agent/connector_tests.rs",
+-  "oracle_test_source_sha256": "43eb493aaf08cf749ba857ce97f6fc4c55367203eb7f9c0e9792613032f5e94d",
+-  "oracle_test_source_blob": "2e0edfdf25aba4dda36d1d6100fa09fa4475ba99",
+-  "capture_harness_path": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+-  "capture_test_function": "pinned_main_native_mapper_matches_all_committed_scenarios",
+-  "capture_build_path": "crates/agentdash-agent-runtime-test-support/build.rs",
+-  "capture_method": "The pinned-main-capture feature compiles the fixed Main stream mapper, executes the seven AgentEvent scenario inputs, applies only the declared Codex 0.144.1 nullable overlay and deterministic capture clock, and compares every protected event body to this committed fixture.",
+-  "compatibility_transforms": [
+-    "ErrorNotification.codex_error_info Option wrapping",
+-    "TurnError.additional_details Option wrapping",
+-    "CodexErrorInfo.http_status_code Option wrapping",
+-    "AgentMessage phase and memoryCitation canonical null",
+-    "DynamicToolCall namespace/contentItems/durationMs/success canonical null",
+-    "deterministic capture clock for presentation timestamps"
+-  ],
+-  "fixed_event_timestamp_ms": 1783684800000,
+-  "source_entry_index": 0,
+-  "scenarios": {
+-    "assistant_message_delta_terminal": [
+-      { "durability": "ephemeral", "event": { "type": "agent_message_delta", "payload": { "delta": "answer", "itemId": "runtime-turn:0:msg", "threadId": "native-thread", "turnId": "runtime-turn" } } },
+-      { "durability": "durable", "event": { "type": "item_completed", "payload": { "item": { "type": "agentMessage", "id": "runtime-turn:0:msg", "memoryCitation": null, "phase": null, "text": "answer" }, "threadId": "native-thread", "turnId": "runtime-turn", "completedAtMs": 1783684800000 } } }
+-    ],
+-    "reasoning_text_summary_terminal": [
+-      { "durability": "ephemeral", "event": { "type": "reasoning_text_delta", "payload": { "contentIndex": 0, "delta": "thought", "itemId": "runtime-turn:0:reason", "threadId": "native-thread", "turnId": "runtime-turn" } } },
+-      { "durability": "durable", "event": { "type": "item_completed", "payload": { "item": { "type": "reasoning", "content": ["thought"], "id": "runtime-turn:0:reason", "summary": [] }, "threadId": "native-thread", "turnId": "runtime-turn", "completedAtMs": 1783684800000 } } }
+-    ],
+-    "item_started_updated_completed": [
+-      { "durability": "durable", "event": { "type": "item_started", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "path": "main://README.md" }, "contentItems": null, "durationMs": null, "id": "turn_001:tool_001", "namespace": null, "status": "inProgress", "success": null, "tool": "read" }, "threadId": "native-thread", "turnId": "runtime-turn", "startedAtMs": 1783684800000 } } },
+-      { "durability": "ephemeral", "event": { "type": "item_updated", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "path": "main://README.md" }, "contentItems": [{ "type": "inputText", "text": "partial" }], "durationMs": null, "id": "turn_001:tool_001", "namespace": null, "status": "inProgress", "success": null, "tool": "read" }, "threadId": "native-thread", "turnId": "runtime-turn", "updatedAtMs": 1783684800000 } } },
+-      { "durability": "durable", "event": { "type": "item_completed", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "path": "main://README.md" }, "contentItems": [{ "type": "inputText", "text": "complete" }], "durationMs": null, "id": "turn_001:tool_001", "namespace": null, "status": "completed", "success": true, "tool": "read" }, "threadId": "native-thread", "turnId": "runtime-turn", "completedAtMs": 1783684800000 } } }
+-    ],
+-    "usage_context": [
+-      { "durability": "ephemeral", "event": { "type": "agent_message_delta", "payload": { "delta": "answer", "itemId": "runtime-turn:0:msg", "threadId": "native-thread", "turnId": "runtime-turn" } } },
+-      { "durability": "durable", "event": { "type": "item_completed", "payload": { "item": { "type": "agentMessage", "id": "runtime-turn:0:msg", "memoryCitation": null, "phase": null, "text": "answer" }, "threadId": "native-thread", "turnId": "runtime-turn", "completedAtMs": 1783684800000 } } },
+-      { "durability": "durable", "event": { "type": "token_usage_updated", "payload": { "threadId": "native-thread", "turnId": "runtime-turn", "tokenUsage": { "total": { "totalTokens": 19, "inputTokens": 10, "cachedInputTokens": 5, "outputTokens": 4, "reasoningOutputTokens": 0 }, "last": { "totalTokens": 19, "inputTokens": 10, "cachedInputTokens": 5, "outputTokens": 4, "reasoningOutputTokens": 0 }, "modelContextWindow": 200000, "context": { "providerContextTokens": 15, "pendingEstimateTokens": 0, "currentContextTokens": 15, "cumulativeTotalTokens": 19, "modelContextWindow": 200000, "effectiveContextWindow": 200000, "reserveTokens": 0, "source": "provider" } } } } }
+-    ],
+-    "provider_phases_error": [
+-      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "connecting", "attempt": 1, "max_attempts": 2, "will_retry": false, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+-      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "connected_waiting_first_delta", "attempt": 1, "max_attempts": 2, "will_retry": false, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+-      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "streaming", "attempt": 1, "max_attempts": 2, "will_retry": false, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+-      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "retry_scheduled", "attempt": 1, "max_attempts": 2, "will_retry": true, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+-      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "retrying", "attempt": 1, "max_attempts": 2, "will_retry": true, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+-      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "failed", "attempt": 1, "max_attempts": 2, "will_retry": false, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+-      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "succeeded", "attempt": 1, "max_attempts": 2, "will_retry": false, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+-      { "durability": "durable", "event": { "type": "platform", "payload": { "kind": "runtime_terminal_diagnostic", "data": { "kind": "provider", "message": "provider failed", "retryable": false } } } },
+-      { "durability": "durable", "event": { "type": "error", "payload": { "error": { "additionalDetails": "kind=Provider", "codexErrorInfo": "other", "message": "provider failed" }, "threadId": "native-thread", "turnId": "runtime-turn", "willRetry": false } } }
+-    ],
+-    "thread_status_title_compaction": [
+-      { "durability": "durable", "event": { "type": "platform", "payload": { "kind": "session_meta_update", "data": { "key": "context_compaction_failed", "value": { "lifecycle_item_id": "compaction-1", "status": "failed", "error": "compaction failed", "metadata": null } } } } },
+-      { "durability": "durable", "event": { "type": "error", "payload": { "error": { "additionalDetails": "context_compaction_item_id=compaction-1", "codexErrorInfo": null, "message": "compaction failed" }, "threadId": "native-thread", "turnId": "runtime-turn", "willRetry": false } } }
+-    ],
+-    "interactions_all_connectors": [
+-      { "durability": "durable", "event": { "type": "platform", "payload": { "kind": "session_meta_update", "data": { "key": "approval_requested", "value": { "tool_call_id": "approval-1", "tool_name": "shell_exec", "reason": "permission required", "args": { "command": "echo ok" }, "details": { "scope": "workspace" }, "entry_index": 0 } } } } },
+-      { "durability": "durable", "event": { "type": "platform", "payload": { "kind": "session_meta_update", "data": { "key": "approval_resolved", "value": { "tool_call_id": "approval-1", "tool_name": "shell_exec", "approved": true, "reason": "approved", "args": { "command": "echo ok" }, "entry_index": 0 } } } } }
+-    ]
+-  }
+-}
 diff --git a/crates/agentdash-integration-native-agent/src/context.rs b/crates/agentdash-integration-native-agent/src/context.rs
 deleted file mode 100644
 index 54682d0c..00000000
@@ -10740,7 +10810,7 @@ index c02f9d19..00000000
 -    }
 -}
 diff --git a/crates/agentdash-integration-native-agent/src/service.rs b/crates/agentdash-integration-native-agent/src/service.rs
-index 12f573df..79631d1f 100644
+index 12f573df..cf4416f5 100644
 --- a/crates/agentdash-integration-native-agent/src/service.rs
 +++ b/crates/agentdash-integration-native-agent/src/service.rs
 @@ -6,12 +6,10 @@ use std::{
@@ -10794,13 +10864,14 @@ index 12f573df..79631d1f 100644
  use async_trait::async_trait;
  use sha2::{Digest, Sha256};
 -use tokio::sync::RwLock;
- 
+-
 -#[derive(Clone)]
 -struct DashSource {
 -    service: DashAgentService,
 -    applied_surface: Option<AppliedAgentSurface>,
 -    dash_surface: Option<DashSurface>,
 -    initial_context: Option<AppliedInitialContextEvidence>,
++
 +use crate::DashAgentCoreToolCallbacks;
 +
 +#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -10934,75 +11005,24 @@ index 12f573df..79631d1f 100644
          }
      }
  
-@@ -220,71 +267,50 @@ impl DashAgentCompleteService {
+@@ -220,71 +267,110 @@ impl DashAgentCompleteService {
                  .expect("effect identity produces a source coordinate")
          })
      }
 -}
--
--struct UnavailableDashProvider;
  
+-struct UnavailableDashProvider;
+-
 -#[async_trait]
 -impl DashProvider for UnavailableDashProvider {
 -    async fn stream(
--        &self,
++    async fn open_source(
+         &self,
 -        _: DashProviderRequest,
 -    ) -> Result<DashProviderEventStream, DashCoreError> {
 -        Err(DashCoreError::Provider {
 -            message: "Dash Agent provider is not configured".into(),
 -            retryable: true,
--        })
--    }
--}
--
--struct NoDashTools;
--
--#[async_trait]
--impl DashToolCallbacks for NoDashTools {
--    async fn invoke(
--        &self,
--        _: &DashTurnId,
--        _: DashToolCall,
--    ) -> Result<DashToolResult, DashCoreError> {
--        Err(DashCoreError::Tool {
--            message: "Dash Agent tool callback is not configured".into(),
--            retryable: true,
--        })
--    }
--}
--
--struct NoDashExecutionCallbacks;
--
--#[async_trait]
--impl DashExecutionCallbacks for NoDashExecutionCallbacks {
--    async fn emit(&self, _: DashCoreEvent) -> Result<(), DashCoreError> {
--        Ok(())
--    }
--}
--
--struct NativeDashCompactor;
--
--#[async_trait]
--impl DashCompactor for NativeDashCompactor {
--    async fn compact(
-+    async fn open_source(
-         &self,
--        request: DashCompactionRequest,
--    ) -> Result<DashCompactionResult, DashServiceError> {
--        Ok(DashCompactionResult {
--            revision: agentdash_agent::dash::ContextRevision::new(format!(
--                "context:{}",
--                request.source_digest
--            )),
--            summary: format!(
--                "Dash Agent compacted {} history entries",
--                request.history.entries().len()
--            ),
--            retained_from: request
--                .history
--                .entries()
--                .last()
--                .map(|entry| entry.entry_id.clone()),
 -        })
 +        source: &AgentSourceCoordinate,
 +    ) -> Result<(DashAgentService, DashCompleteSourceMetadata), AgentServiceError> {
@@ -11028,27 +11048,131 @@ index 12f573df..79631d1f 100644
 +                .insert(source.clone(), service.clone());
 +            service
 +        };
-+        if let (Some(callbacks), Some(surface), Some(binding)) = (
-+            &self.host_callbacks,
++        self.materialize_live_surface(source, &service, &metadata)
++            .await?;
++        Ok((service, metadata))
+     }
+-}
+-
+-struct NoDashTools;
+ 
+-#[async_trait]
+-impl DashToolCallbacks for NoDashTools {
+-    async fn invoke(
++    async fn reconcile_live_surface_from_durable_metadata(
+         &self,
+-        _: &DashTurnId,
+-        _: DashToolCall,
+-    ) -> Result<DashToolResult, DashCoreError> {
+-        Err(DashCoreError::Tool {
+-            message: "Dash Agent tool callback is not configured".into(),
+-            retryable: true,
+-        })
+-    }
+-}
+-
+-struct NoDashExecutionCallbacks;
+-
+-#[async_trait]
+-impl DashExecutionCallbacks for NoDashExecutionCallbacks {
+-    async fn emit(&self, _: DashCoreEvent) -> Result<(), DashCoreError> {
+-        Ok(())
++        source: &AgentSourceCoordinate,
++        service: &DashAgentService,
++    ) -> Result<DashCompleteSourceMetadata, AgentServiceError> {
++        let metadata = self
++            .store
++            .load_source(source)
++            .await?
++            .ok_or_else(|| not_found("Dash Agent source does not exist"))?;
++        self.materialize_live_surface(source, service, &metadata)
++            .await?;
++        Ok(metadata)
+     }
+-}
+ 
+-struct NativeDashCompactor;
+-
+-#[async_trait]
+-impl DashCompactor for NativeDashCompactor {
+-    async fn compact(
++    async fn materialize_live_surface(
+         &self,
+-        request: DashCompactionRequest,
+-    ) -> Result<DashCompactionResult, DashServiceError> {
+-        Ok(DashCompactionResult {
+-            revision: agentdash_agent::dash::ContextRevision::new(format!(
+-                "context:{}",
+-                request.source_digest
++        source: &AgentSourceCoordinate,
++        service: &DashAgentService,
++        metadata: &DashCompleteSourceMetadata,
++    ) -> Result<(), AgentServiceError> {
++        match (
++            &metadata.applied_surface,
 +            &metadata.callback_surface,
 +            &metadata.callback_binding,
 +        ) {
-+            service
-+                .replace_tool_callbacks(Arc::new(DashAgentCoreToolCallbacks::from_bound_surface(
-+                    callbacks.clone(),
-+                    binding.route_id.clone(),
-+                    binding.binding_generation,
-+                    source.clone(),
-+                    binding.default_deadline_ms,
-+                    surface,
-+                )))
-+                .await;
++            (None, None, None) => {
++                service
++                    .replace_tool_callbacks(self.execution.tools.clone())
++                    .await;
++                Ok(())
++            }
++            (Some(applied), Some(surface), Some(binding))
++                if applied_surface_matches_bound(applied, surface) =>
++            {
++                let requires_callbacks = surface.contributions.iter().any(|contribution| {
++                    matches!(
++                        contribution.semantics,
++                        AgentSurfaceSemanticFacet::Tool(_) | AgentSurfaceSemanticFacet::Hook(_)
++                    )
++                });
++                if let Some(callbacks) = &self.host_callbacks {
++                    service
++                        .replace_tool_callbacks(Arc::new(
++                            DashAgentCoreToolCallbacks::from_bound_surface(
++                                callbacks.clone(),
++                                binding.route_id.clone(),
++                                binding.binding_generation,
++                                source.clone(),
++                                binding.default_deadline_ms,
++                                surface,
++                            ),
++                        ))
++                        .await;
++                    Ok(())
++                } else if requires_callbacks {
++                    Err(AgentServiceError::new(
++                        AgentServiceErrorCode::Unavailable,
++                        "Dash Agent cannot materialize durable native callbacks without AgentHostCallbacks",
++                        true,
++                    ))
++                } else {
++                    service
++                        .replace_tool_callbacks(self.execution.tools.clone())
++                        .await;
++                    Ok(())
++                }
++            }
++            _ => Err(internal(
++                "Dash Agent durable surface metadata is incomplete or inconsistent",
+             )),
+-            summary: format!(
+-                "Dash Agent compacted {} history entries",
+-                request.history.entries().len()
+-            ),
+-            retained_from: request
+-                .history
+-                .entries()
+-                .last()
+-                .map(|entry| entry.entry_id.clone()),
+-        })
 +        }
-+        Ok((service, metadata))
      }
  }
  
-@@ -298,12 +324,16 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -298,12 +384,16 @@ impl CompleteAgentService for DashAgentCompleteService {
          &self,
          command: CreateAgentCommand,
      ) -> Result<AgentCommandReceipt, AgentServiceError> {
@@ -11069,7 +11193,7 @@ index 12f573df..79631d1f 100644
              return Err(conflict("requested Dash Agent source already exists"));
          }
  
-@@ -327,26 +357,22 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -327,26 +417,22 @@ impl CompleteAgentService for DashAgentCompleteService {
                      renderer_version: None,
                      materialized_digest: None,
                  });
@@ -11107,7 +11231,7 @@ index 12f573df..79631d1f 100644
          let receipt = AgentCommandReceipt {
              command_id: command.meta.command_id.clone(),
              effect_id: command.meta.effect_id.clone(),
-@@ -357,22 +383,33 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -357,22 +443,33 @@ impl CompleteAgentService for DashAgentCompleteService {
              snapshot_revision: Some(revision),
              initial_context: initial_evidence.clone(),
          };
@@ -11155,7 +11279,7 @@ index 12f573df..79631d1f 100644
          Ok(receipt)
      }
  
-@@ -380,16 +417,16 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -380,16 +477,16 @@ impl CompleteAgentService for DashAgentCompleteService {
          &self,
          command: ResumeAgentCommand,
      ) -> Result<AgentCommandReceipt, AgentServiceError> {
@@ -11181,7 +11305,7 @@ index 12f573df..79631d1f 100644
              .read()
              .await
              .map_err(map_dash_error)?
-@@ -403,56 +440,52 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -403,56 +500,52 @@ impl CompleteAgentService for DashAgentCompleteService {
                  outcome: AgentTerminalOutcome::Succeeded,
              },
              snapshot_revision: Some(AgentSnapshotRevision(revision)),
@@ -11264,7 +11388,7 @@ index 12f573df..79631d1f 100644
          let receipt = ForkAgentReceipt {
              command_id: command.meta.command_id.clone(),
              effect_id: command.meta.effect_id.clone(),
-@@ -464,22 +497,33 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -464,22 +557,33 @@ impl CompleteAgentService for DashAgentCompleteService {
                  outcome: AgentTerminalOutcome::Succeeded,
              },
          };
@@ -11312,7 +11436,7 @@ index 12f573df..79631d1f 100644
          Ok(receipt)
      }
  
-@@ -487,18 +531,44 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -487,18 +591,44 @@ impl CompleteAgentService for DashAgentCompleteService {
          &self,
          command: AgentCommandEnvelope,
      ) -> Result<AgentCommandReceipt, AgentServiceError> {
@@ -11369,7 +11493,7 @@ index 12f573df..79631d1f 100644
          let dash_receipt = service
              .execute(DashCommandRequest {
                  command_id: CommandId::new(command.meta.command_id.as_str()),
-@@ -527,27 +597,26 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -527,27 +657,26 @@ impl CompleteAgentService for DashAgentCompleteService {
              snapshot_revision: Some(AgentSnapshotRevision(revision)),
              initial_context: None,
          };
@@ -11409,7 +11533,7 @@ index 12f573df..79631d1f 100644
          let history_state = read.state;
          let revision = AgentSnapshotRevision(history_state.entry_count);
          if query
-@@ -596,8 +665,8 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -596,8 +725,8 @@ impl CompleteAgentService for DashAgentCompleteService {
                  fidelity: SemanticFidelity::Exact,
                  observed_at_ms: 0,
              },
@@ -11420,7 +11544,7 @@ index 12f573df..79631d1f 100644
          })
      }
  
-@@ -605,15 +674,7 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -605,15 +734,7 @@ impl CompleteAgentService for DashAgentCompleteService {
          &self,
          query: AgentChangesQuery,
      ) -> Result<AgentChangePage, AgentServiceError> {
@@ -11437,7 +11561,7 @@ index 12f573df..79631d1f 100644
          let after = query
              .after
              .as_ref()
-@@ -650,43 +711,8 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -650,43 +771,8 @@ impl CompleteAgentService for DashAgentCompleteService {
          &self,
          identity: AgentEffectIdentity,
      ) -> Result<AgentEffectInspection, AgentServiceError> {
@@ -11483,7 +11607,7 @@ index 12f573df..79631d1f 100644
          }
          Ok(AgentEffectInspection {
              effect_id: identity,
-@@ -699,11 +725,15 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -699,11 +785,17 @@ impl CompleteAgentService for DashAgentCompleteService {
          &self,
          command: ApplyBoundAgentSurface,
      ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
@@ -11494,17 +11618,19 @@ index 12f573df..79631d1f 100644
 -            .ok_or_else(|| not_found("Dash Agent source does not exist"))?;
 +        let request_fingerprint = request_fingerprint(&command)?;
 +        if let Some(recorded) = self.store.load_effect(&command.effect_id).await? {
-+            return recorded.apply_surface_receipt_for(
++            let receipt = recorded.apply_surface_receipt_for(
 +                &command.source,
 +                &command.command_id,
 +                &request_fingerprint,
-+            );
++            )?;
++            self.open_source(&command.source).await?;
++            return Ok(receipt);
 +        }
 +        let (service, metadata) = self.open_source(&command.source).await?;
          let dash_surface = dash_surface_from_bound(&command.bound_surface)?;
          let profile = Self::descriptor().profile.surface;
          if let Some(unsupported) = command
-@@ -721,6 +751,25 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -721,6 +813,25 @@ impl CompleteAgentService for DashAgentCompleteService {
                  false,
              ));
          }
@@ -11530,7 +11656,7 @@ index 12f573df..79631d1f 100644
          let applied = AppliedAgentSurface {
              revision: command.bound_surface.revision,
              digest: command.bound_surface.digest,
-@@ -739,80 +788,192 @@ impl CompleteAgentService for DashAgentCompleteService {
+@@ -739,80 +850,187 @@ impl CompleteAgentService for DashAgentCompleteService {
                  })
                  .collect(),
          };
@@ -11574,9 +11700,10 @@ index 12f573df..79631d1f 100644
 +            },
 +            receipt: DashCompleteRecordedReceipt::ApplySurface(receipt.clone()),
 +        };
-+        self.store
++        let commit_result = self
++            .store
 +            .commit(DashCompleteAtomicCommit {
-+                effect_id: command.effect_id,
++                effect_id: command.effect_id.clone(),
 +                expected_effect: None,
 +                replacement_effect: record,
 +                source_mutations: vec![DashCompleteSourceMutation::CompareAndSwap {
@@ -11587,19 +11714,10 @@ index 12f573df..79631d1f 100644
 +                    replacement_metadata: Box::new(replacement),
 +                }],
 +            })
++            .await;
++        self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
 +            .await?;
-+        if let Some(callbacks) = &self.host_callbacks {
-+            service
-+                .replace_tool_callbacks(Arc::new(DashAgentCoreToolCallbacks::from_bound_surface(
-+                    callbacks.clone(),
-+                    command.callbacks.route_id,
-+                    command.callbacks.binding_generation,
-+                    command.source,
-+                    command.callbacks.default_deadline_ms,
-+                    &callback_surface,
-+                )))
-+                .await;
-+        }
++        commit_result?;
 +        Ok(receipt)
      }
  
@@ -11615,11 +11733,13 @@ index 12f573df..79631d1f 100644
 -        if source
 +        let request_fingerprint = request_fingerprint(&command)?;
 +        if let Some(recorded) = self.store.load_effect(&command.effect_id).await? {
-+            return recorded.command_receipt_for(
++            let receipt = recorded.command_receipt_for(
 +                &command.source,
 +                &command.command_id,
 +                &request_fingerprint,
-+            );
++            )?;
++            self.open_source(&command.source).await?;
++            return Ok(receipt);
 +        }
 +        let (service, metadata) = self.open_source(&command.source).await?;
 +        if metadata
@@ -11681,13 +11801,14 @@ index 12f573df..79631d1f 100644
 +            receipt.clone(),
 +            Some(AgentTerminalOutcome::Succeeded),
 +        );
-+        self.store
++        let commit_result = self
++            .store
 +            .commit(DashCompleteAtomicCommit {
-+                effect_id: command.effect_id,
++                effect_id: command.effect_id.clone(),
 +                expected_effect: None,
 +                replacement_effect: record,
 +                source_mutations: vec![DashCompleteSourceMutation::CompareAndSwap {
-+                    source: command.source,
++                    source: command.source.clone(),
 +                    expected_repository: Box::new(expected_repository),
 +                    replacement_repository: Box::new(replacement_repository),
 +                    expected_metadata: Box::new(metadata.clone()),
@@ -11699,14 +11820,15 @@ index 12f573df..79631d1f 100644
 +                    }),
 +                }],
 +            })
-+            .await?;
-+        service
-+            .replace_tool_callbacks(self.execution.tools.clone())
 +            .await;
++        self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
++            .await?;
++        commit_result?;
 +        Ok(receipt)
-+    }
-+}
-+
+     }
+ }
+ 
+-impl RecordedEffect {
 +pub struct NativeCompleteAgentRegistration {
 +    pub instance_id: AgentServiceInstanceId,
 +    pub service: Arc<dyn CompleteAgentService>,
@@ -11725,10 +11847,9 @@ index 12f573df..79631d1f 100644
 +            host_callbacks,
 +            store,
 +        )),
-     }
- }
- 
--impl RecordedEffect {
++    }
++}
++
 +impl DashCompleteEffectRecord {
      fn command_receipt_for(
          &self,
@@ -11760,7 +11881,7 @@ index 12f573df..79631d1f 100644
          }
      }
  
-@@ -820,21 +981,46 @@ impl RecordedEffect {
+@@ -820,21 +1038,46 @@ impl RecordedEffect {
          &self,
          source: &AgentSourceCoordinate,
          command_id: &agentdash_agent_service_api::AgentCommandId,
@@ -11811,13 +11932,29 @@ index 12f573df..79631d1f 100644
  }
  
  fn translate_initial_context(
-@@ -1224,34 +1410,36 @@ fn surface_contribution_supported(
+@@ -1224,34 +1467,52 @@ fn surface_contribution_supported(
          })
  }
  
 -fn record_command_effect(
 -    state: &mut DashServiceState,
 -    effect_id: AgentEffectIdentity,
++fn applied_surface_matches_bound(applied: &AppliedAgentSurface, bound: &BoundAgentSurface) -> bool {
++    applied.revision == bound.revision
++        && applied.digest == bound.digest
++        && applied.contributions.len() == bound.contributions.len()
++        && bound.contributions.iter().all(|expected| {
++            applied.contributions.iter().any(|actual| {
++                actual.key == expected.key
++                    && actual.route == expected.route
++                    && actual.fidelity == expected.fidelity
++                    && actual.semantics == expected.semantics
++                    && actual.payload_digest == expected.payload_digest
++                    && actual.status == AppliedContributionStatus::Applied
++            })
++        })
++}
++
 +fn command_effect_record(
 +    request_fingerprint: String,
      command_id: agentdash_agent_service_api::AgentCommandId,
@@ -12576,7 +12713,7 @@ index 7dca8203..00000000
 -    }
 -}
 diff --git a/crates/agentdash-integration-native-agent/tests/complete_agent_service.rs b/crates/agentdash-integration-native-agent/tests/complete_agent_service.rs
-index 2a90bc89..21acad4b 100644
+index 2a90bc89..9bee0260 100644
 --- a/crates/agentdash-integration-native-agent/tests/complete_agent_service.rs
 +++ b/crates/agentdash-integration-native-agent/tests/complete_agent_service.rs
 @@ -1,34 +1,269 @@
@@ -12864,7 +13001,7 @@ index 2a90bc89..21acad4b 100644
  
  struct FixtureProvider;
  
-@@ -76,6 +311,121 @@ impl DashExecutionCallbacks for FixtureCallbacks {
+@@ -76,6 +311,185 @@ impl DashExecutionCallbacks for FixtureCallbacks {
      }
  }
  
@@ -12932,6 +13069,70 @@ index 2a90bc89..21acad4b 100644
 +    }
 +}
 +
++struct SurfaceGenerationProvider {
++    calls: AtomicUsize,
++}
++
++#[async_trait]
++impl DashProvider for SurfaceGenerationProvider {
++    async fn stream(
++        &self,
++        _: DashProviderRequest,
++    ) -> Result<DashProviderEventStream, DashCoreError> {
++        let call = self.calls.fetch_add(1, Ordering::SeqCst);
++        if call.is_multiple_of(2) {
++            Ok(Box::pin(stream::iter([
++                Ok(DashProviderEvent::ToolCall {
++                    call: DashToolCall {
++                        call_id: format!("surface-call-{call}"),
++                        name: "read".into(),
++                        arguments: serde_json::json!({"call": call}),
++                    },
++                }),
++                Ok(DashProviderEvent::Completed {
++                    finish_reason: DashFinishReason::ToolCalls,
++                    input_tokens: 1,
++                    output_tokens: 1,
++                }),
++            ])))
++        } else {
++            Ok(Box::pin(stream::iter([Ok(DashProviderEvent::Completed {
++                finish_reason: DashFinishReason::Stop,
++                input_tokens: 1,
++                output_tokens: 1,
++            })])))
++        }
++    }
++}
++
++#[derive(Default)]
++struct SurfaceGenerationHostCallbacks {
++    generations: Mutex<Vec<AgentBindingGeneration>>,
++}
++
++#[async_trait]
++impl AgentHostCallbacks for SurfaceGenerationHostCallbacks {
++    async fn invoke_tool(
++        &self,
++        call: AgentToolInvocation,
++    ) -> Result<AgentToolResult, AgentHostCallbackError> {
++        self.generations
++            .lock()
++            .unwrap()
++            .push(call.meta.binding_generation);
++        Ok(AgentToolResult::Completed {
++            output: serde_json::json!({"ok": true}),
++        })
++    }
++
++    async fn invoke_hook(
++        &self,
++        _: AgentHookInvocation,
++    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
++        Ok(AgentHookDecision::Allow)
++    }
++}
++
 +#[derive(Default)]
 +struct HookExecutionCallbacks {
 +    before: AtomicUsize,
@@ -12986,7 +13187,7 @@ index 2a90bc89..21acad4b 100644
  struct FixtureCompactor;
  
  #[async_trait]
-@@ -97,12 +447,47 @@ impl DashCompactor for FixtureCompactor {
+@@ -97,12 +511,47 @@ impl DashCompactor for FixtureCompactor {
  }
  
  fn service() -> DashAgentCompleteService {
@@ -13040,7 +13241,7 @@ index 2a90bc89..21acad4b 100644
  }
  
  fn service_with_provider(provider: Arc<dyn DashProvider>) -> DashAgentCompleteService {
-@@ -113,12 +498,16 @@ fn service_with(
+@@ -113,12 +562,16 @@ fn service_with(
      provider: Arc<dyn DashProvider>,
      compactor: Arc<dyn DashCompactor>,
  ) -> DashAgentCompleteService {
@@ -13063,7 +13264,7 @@ index 2a90bc89..21acad4b 100644
  }
  
  struct ErrorProvider {
-@@ -519,7 +908,8 @@ async fn unsupported_input_is_rejected_before_history_changes() {
+@@ -519,7 +972,8 @@ async fn unsupported_input_is_rejected_before_history_changes() {
  
  #[tokio::test]
  async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitution() {
@@ -13073,7 +13274,7 @@ index 2a90bc89..21acad4b 100644
      let source = AgentSourceCoordinate::new("dash-surface").unwrap();
      service
          .create(CreateAgentCommand {
-@@ -583,6 +973,33 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
+@@ -583,6 +1037,33 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
          receipt.applied.contributions[0].fidelity,
          SemanticFidelity::Exact
      );
@@ -13107,7 +13308,7 @@ index 2a90bc89..21acad4b 100644
  
      let error = service
          .apply_surface(apply(
-@@ -595,6 +1012,577 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
+@@ -595,6 +1076,779 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
          error.code,
          agentdash_agent_service_api::AgentServiceErrorCode::Unsupported
      );
@@ -13130,6 +13331,181 @@ index 2a90bc89..21acad4b 100644
 +            .state,
 +        AgentEffectInspectionState::Applied { .. }
 +    ));
++}
++
++#[tokio::test]
++async fn lost_surface_receipts_reconcile_live_callbacks_on_the_same_service() {
++    let store = Arc::new(RecordingCompleteStore::default());
++    let provider = Arc::new(SurfaceGenerationProvider {
++        calls: AtomicUsize::new(0),
++    });
++    let host = Arc::new(SurfaceGenerationHostCallbacks::default());
++    let service = DashAgentCompleteService::with_host_callbacks(
++        DashExecutionDependencies {
++            provider: provider.clone(),
++            tools: Arc::new(FixtureTools),
++            callbacks: Arc::new(FixtureCallbacks),
++            compactor: Arc::new(FixtureCompactor),
++        },
++        host.clone(),
++        store.clone(),
++    );
++    let source = AgentSourceCoordinate::new("dash-live-surface-reconcile").unwrap();
++    service
++        .create(CreateAgentCommand {
++            meta: meta("live-surface-create", "live-surface-create-effect"),
++            requested_source: Some(source.clone()),
++            initial_context: None,
++        })
++        .await
++        .unwrap();
++
++    let apply = |revision, generation, effect: &str| ApplyBoundAgentSurface {
++        command_id: AgentCommandId::new(format!("{effect}-command")).unwrap(),
++        effect_id: AgentEffectIdentity::new(effect).unwrap(),
++        idempotency_key: AgentIdempotencyKey::new(format!("{effect}-idem")).unwrap(),
++        source: source.clone(),
++        bound_surface: generation_surface(revision),
++        callbacks: AgentHostCallbackBinding {
++            route_id: AgentCallbackRouteId::new(format!("live-route-{generation}")).unwrap(),
++            binding_generation: AgentBindingGeneration(generation),
++            delivery: AgentSurfaceRoute::AgentNativeCallback,
++            default_deadline_ms: 5_000,
++        },
++    };
++
++    service
++        .apply_surface(apply(1, 1, "live-apply-1"))
++        .await
++        .unwrap();
++    service
++        .execute(submit_envelope(
++            source.clone(),
++            "generation one",
++            "live-execute-1",
++        ))
++        .await
++        .unwrap();
++    assert_eq!(
++        host.generations.lock().unwrap().as_slice(),
++        &[AgentBindingGeneration(1)]
++    );
++
++    let apply_two = apply(2, 2, "live-apply-2");
++    store.lose_next_commit_receipt();
++    assert_eq!(
++        service
++            .apply_surface(apply_two.clone())
++            .await
++            .unwrap_err()
++            .code,
++        AgentServiceErrorCode::Unavailable
++    );
++    let replayed = service.apply_surface(apply_two.clone()).await.unwrap();
++    assert_eq!(replayed.applied.revision, AgentSurfaceRevision(2));
++    let mut conflicting = apply_two.clone();
++    conflicting.callbacks.binding_generation = AgentBindingGeneration(3);
++    assert_eq!(
++        service.apply_surface(conflicting).await.unwrap_err().code,
++        AgentServiceErrorCode::Conflict
++    );
++    service
++        .execute(submit_envelope(
++            source.clone(),
++            "generation two",
++            "live-execute-2",
++        ))
++        .await
++        .unwrap();
++    assert_eq!(
++        host.generations.lock().unwrap().as_slice(),
++        &[AgentBindingGeneration(1), AgentBindingGeneration(2),]
++    );
++
++    let reopened = DashAgentCompleteService::with_host_callbacks(
++        DashExecutionDependencies {
++            provider: provider.clone(),
++            tools: Arc::new(FixtureTools),
++            callbacks: Arc::new(FixtureCallbacks),
++            compactor: Arc::new(FixtureCompactor),
++        },
++        host.clone(),
++        store.clone(),
++    );
++    assert_eq!(reopened.apply_surface(apply_two).await.unwrap(), replayed);
++    reopened
++        .execute(submit_envelope(
++            source.clone(),
++            "generation two reopened",
++            "live-execute-3",
++        ))
++        .await
++        .unwrap();
++    assert_eq!(
++        host.generations.lock().unwrap().as_slice(),
++        &[
++            AgentBindingGeneration(1),
++            AgentBindingGeneration(2),
++            AgentBindingGeneration(2),
++        ]
++    );
++
++    let revoke = RevokeBoundAgentSurface {
++        command_id: AgentCommandId::new("live-revoke-command").unwrap(),
++        effect_id: AgentEffectIdentity::new("live-revoke-effect").unwrap(),
++        idempotency_key: AgentIdempotencyKey::new("live-revoke-idem").unwrap(),
++        binding_generation: AgentBindingGeneration(2),
++        source: source.clone(),
++        expected_revision: AgentSurfaceRevision(2),
++    };
++    store.lose_next_commit_receipt();
++    assert_eq!(
++        service
++            .revoke_surface(revoke.clone())
++            .await
++            .unwrap_err()
++            .code,
++        AgentServiceErrorCode::Unavailable
++    );
++    service.revoke_surface(revoke.clone()).await.unwrap();
++    let mut conflicting_revoke = revoke;
++    conflicting_revoke.binding_generation = AgentBindingGeneration(3);
++    assert_eq!(
++        service
++            .revoke_surface(conflicting_revoke)
++            .await
++            .unwrap_err()
++            .code,
++        AgentServiceErrorCode::Conflict
++    );
++    service
++        .execute(submit_envelope(
++            source.clone(),
++            "after revoke",
++            "live-execute-after-revoke",
++        ))
++        .await
++        .unwrap();
++    assert_eq!(
++        host.generations.lock().unwrap().as_slice(),
++        &[
++            AgentBindingGeneration(1),
++            AgentBindingGeneration(2),
++            AgentBindingGeneration(2),
++        ],
++        "revoke must clear the old live callback materializer"
++    );
++    assert!(
++        reopened
++            .read(AgentReadQuery {
++                source,
++                at_revision: None,
++            })
++            .await
++            .unwrap()
++            .applied_surface
++            .is_none()
++    );
 +}
 +
 +fn hook_execution_surface() -> BoundAgentSurface {
@@ -13202,6 +13578,33 @@ index 2a90bc89..21acad4b 100644
 +                AgentHookMutationKind::RewriteResult,
 +            ),
 +        ],
++    }
++}
++
++fn generation_surface(revision: u64) -> BoundAgentSurface {
++    BoundAgentSurface {
++        revision: AgentSurfaceRevision(revision),
++        digest: AgentSurfaceDigest::new(format!("generation-surface-{revision}")).unwrap(),
++        offer_profile_digest: AgentProfileDigest::new("dash-agent-profile-v1").unwrap(),
++        contributions: vec![BoundAgentSurfaceContribution {
++            key: "tool:read".into(),
++            required: true,
++            route: AgentSurfaceRoute::AgentNativeCallback,
++            fidelity: SemanticFidelity::Exact,
++            semantics: AgentSurfaceSemanticFacet::Tool(AgentToolSemanticFacet {
++                delivery: AgentToolDelivery::AgentNativeCallback,
++                invocation: SemanticFidelity::Exact,
++                update: AgentToolUpdateSemantics::HotUpdate,
++            }),
++            payload: AgentSurfaceContributionPayload::Tool {
++                name: AgentToolName::new("read").unwrap(),
++                description: "read".into(),
++                input_schema: serde_json::json!({"type": "object"}),
++                output_schema: None,
++            },
++            payload_digest: AgentPayloadDigest::new(format!("sha256:generation-tool-{revision}"))
++                .unwrap(),
++        }],
 +    }
 +}
 +

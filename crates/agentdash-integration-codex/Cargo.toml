@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 agentdash-agent-protocol = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }
+agentdash-agent-service-api = { workspace = true }
 agentdash-integration-api = { workspace = true }
 agentdash-process = { workspace = true }
 async-trait = { workspace = true }

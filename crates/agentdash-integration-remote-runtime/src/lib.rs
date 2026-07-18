@@ -13,6 +13,10 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use thiserror::Error;
 
+mod complete_agent;
+
+pub use complete_agent::*;
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RemoteRuntimeTransportError {
     #[error("remote runtime placement is unavailable: {reason}")]

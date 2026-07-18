@@ -962,7 +962,7 @@ struct RegistryToolExecutor {
 }
 
 fn project_agent_tool_content(
-    content: &[agentdash_agent::ContentPart],
+    content: &[agentdash_agent_types::ContentPart],
 ) -> Result<
     Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
     agentdash_agent_runtime::ToolBrokerError,
@@ -970,17 +970,17 @@ fn project_agent_tool_content(
     content
         .iter()
         .map(|part| match part {
-            agentdash_agent::ContentPart::Text { text } => Ok(
+            agentdash_agent_types::ContentPart::Text { text } => Ok(
                 agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
                     text: text.clone(),
                 },
             ),
-            agentdash_agent::ContentPart::Image { data, .. } => Ok(
+            agentdash_agent_types::ContentPart::Image { data, .. } => Ok(
                 agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputImage {
                     image_url: data.clone(),
                 },
             ),
-            agentdash_agent::ContentPart::Reasoning { .. } => {
+            agentdash_agent_types::ContentPart::Reasoning { .. } => {
                 Err(agentdash_agent_runtime::ToolBrokerError::Execution(
                     "tool result contains unsupported reasoning content for DynamicToolCall output"
                         .to_string(),
@@ -1047,7 +1047,7 @@ impl agentdash_agent_runtime::ToolExecutionPort for RegistryToolExecutor {
                 Some({
                     let updates = request.updates.clone();
                     let update_projection_error = update_projection_error.clone();
-                    Arc::new(move |result: agentdash_agent::AgentToolResult| {
+                    Arc::new(move |result: agentdash_agent_types::AgentToolResult| {
                         let content_items = match project_agent_tool_content(&result.content) {
                             Ok(content_items) => content_items,
                             Err(error) => {
@@ -2864,7 +2864,7 @@ mod tests {
 
     #[test]
     fn registry_tool_projection_rejects_unrepresentable_content_parts() {
-        let error = project_agent_tool_content(&[agentdash_agent::ContentPart::reasoning(
+        let error = project_agent_tool_content(&[agentdash_agent_types::ContentPart::reasoning(
             "private reasoning",
             None,
             None,
@@ -2879,7 +2879,7 @@ mod tests {
     struct MalformedUpdateTool;
 
     #[async_trait]
-    impl agentdash_agent::AgentTool for MalformedUpdateTool {
+    impl agentdash_agent_types::AgentTool for MalformedUpdateTool {
         fn name(&self) -> &str {
             "malformed_update"
         }
@@ -2897,16 +2897,17 @@ mod tests {
             _: &str,
             _: serde_json::Value,
             _: tokio_util::sync::CancellationToken,
-            on_update: Option<agentdash_agent::ToolUpdateCallback>,
-        ) -> Result<agentdash_agent::AgentToolResult, agentdash_agent::AgentToolError> {
+            on_update: Option<agentdash_agent_types::ToolUpdateCallback>,
+        ) -> Result<agentdash_agent_types::AgentToolResult, agentdash_agent_types::AgentToolError>
+        {
             let update = on_update.expect("update callback");
-            update(agentdash_agent::AgentToolResult {
-                content: vec![agentdash_agent::ContentPart::text("legal update")],
+            update(agentdash_agent_types::AgentToolResult {
+                content: vec![agentdash_agent_types::ContentPart::text("legal update")],
                 is_error: false,
                 details: None,
             });
-            update(agentdash_agent::AgentToolResult {
-                content: vec![agentdash_agent::ContentPart::reasoning(
+            update(agentdash_agent_types::AgentToolResult {
+                content: vec![agentdash_agent_types::ContentPart::reasoning(
                     "unrepresentable update",
                     None,
                     None,
@@ -2914,8 +2915,8 @@ mod tests {
                 is_error: false,
                 details: None,
             });
-            Ok(agentdash_agent::AgentToolResult {
-                content: vec![agentdash_agent::ContentPart::text("terminal result")],
+            Ok(agentdash_agent_types::AgentToolResult {
+                content: vec![agentdash_agent_types::ContentPart::text("terminal result")],
                 is_error: false,
                 details: None,
             })
@@ -3386,7 +3387,7 @@ mod tests {
 
     struct MissingProjectorTool;
     #[async_trait]
-    impl agentdash_agent::AgentTool for MissingProjectorTool {
+    impl agentdash_agent_types::AgentTool for MissingProjectorTool {
         fn name(&self) -> &str {
             "missing_projector"
         }
@@ -3401,15 +3402,16 @@ mod tests {
             _: &str,
             _: serde_json::Value,
             _: tokio_util::sync::CancellationToken,
-            _: Option<agentdash_agent::ToolUpdateCallback>,
-        ) -> Result<agentdash_agent::AgentToolResult, agentdash_agent::AgentToolError> {
+            _: Option<agentdash_agent_types::ToolUpdateCallback>,
+        ) -> Result<agentdash_agent_types::AgentToolResult, agentdash_agent_types::AgentToolError>
+        {
             unreachable!("admission fails before execution")
         }
     }
 
     struct MissingFixtureTool;
     #[async_trait]
-    impl agentdash_agent::AgentTool for MissingFixtureTool {
+    impl agentdash_agent_types::AgentTool for MissingFixtureTool {
         fn name(&self) -> &str {
             "missing_fixture"
         }
@@ -3419,16 +3421,17 @@ mod tests {
         fn parameters_schema(&self) -> serde_json::Value {
             serde_json::json!({"type":"object"})
         }
-        fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
-            Some(agentdash_agent::ToolProtocolProjector::Dynamic { namespace: None })
+        fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+            Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
         }
         async fn execute(
             &self,
             _: &str,
             _: serde_json::Value,
             _: tokio_util::sync::CancellationToken,
-            _: Option<agentdash_agent::ToolUpdateCallback>,
-        ) -> Result<agentdash_agent::AgentToolResult, agentdash_agent::AgentToolError> {
+            _: Option<agentdash_agent_types::ToolUpdateCallback>,
+        ) -> Result<agentdash_agent_types::AgentToolResult, agentdash_agent_types::AgentToolError>
+        {
             unreachable!("admission fails before execution")
         }
     }

@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-// ─── re-exports from agent-types ────────────────────────────
+// ─── Core-owned primitive re-exports ────────────────────────
 
-pub use agentdash_agent_types::{
+pub use crate::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegateSet, AgentRuntimeError,
     AgentTool, AgentToolError, AgentToolResult, BeforeProviderRequestInput, BeforeStopInput,

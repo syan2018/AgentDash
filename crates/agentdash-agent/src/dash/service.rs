@@ -161,12 +161,12 @@ pub trait DashAgentRepository: Send + Sync {
     ) -> Result<(), DashServiceError>;
 }
 
-pub struct MemoryDashAgentRepository {
+struct RecordingDashAgentRepository {
     state: tokio::sync::RwLock<DashAgentRepositoryState>,
 }
 
-impl MemoryDashAgentRepository {
-    pub fn new(state: DashAgentRepositoryState) -> Self {
+impl RecordingDashAgentRepository {
+    fn new(state: DashAgentRepositoryState) -> Self {
         Self {
             state: tokio::sync::RwLock::new(state),
         }
@@ -174,7 +174,7 @@ impl MemoryDashAgentRepository {
 }
 
 #[async_trait]
-impl DashAgentRepository for MemoryDashAgentRepository {
+impl DashAgentRepository for RecordingDashAgentRepository {
     async fn load(&self) -> Result<DashAgentRepositoryState, DashServiceError> {
         Ok(self.state.read().await.clone())
     }
@@ -198,7 +198,7 @@ impl DashAgentRepository for MemoryDashAgentRepository {
 #[derive(Clone)]
 pub struct DashAgentService {
     repository: Arc<dyn DashAgentRepository>,
-    execution: Arc<DashExecutionDependencies>,
+    execution: Arc<tokio::sync::RwLock<DashExecutionDependencies>>,
     cancellation: Arc<tokio::sync::Mutex<Option<(AgentTurnId, DashCancellation)>>>,
 }
 
@@ -241,10 +241,18 @@ impl DashAgentService {
 
     pub fn reopen(state: DashAgentRepositoryState, execution: DashExecutionDependencies) -> Self {
         Self {
-            repository: Arc::new(MemoryDashAgentRepository::new(state)),
-            execution: Arc::new(execution),
+            repository: Arc::new(RecordingDashAgentRepository::new(state)),
+            execution: Arc::new(tokio::sync::RwLock::new(execution)),
             cancellation: Arc::new(tokio::sync::Mutex::new(None)),
         }
+    }
+
+    pub async fn replace_tool_callbacks(&self, tools: Arc<dyn DashToolCallbacks>) {
+        self.execution.write().await.tools = tools;
+    }
+
+    async fn execution_dependencies(&self) -> DashExecutionDependencies {
+        self.execution.read().await.clone()
     }
 
     pub async fn fork(
@@ -258,6 +266,7 @@ impl DashAgentService {
             .store
             .history()
             .fork(child_session_id, child_branch_id, cutoff)?;
+        let execution = self.execution_dependencies().await;
         Ok(Self::reopen(
             DashAgentRepositoryState {
                 store: DashAgentStore::new(child)?,
@@ -265,12 +274,7 @@ impl DashAgentService {
                 surface: current.surface,
                 active: None,
             },
-            DashExecutionDependencies {
-                provider: self.execution.provider.clone(),
-                tools: self.execution.tools.clone(),
-                callbacks: self.execution.callbacks.clone(),
-                compactor: self.execution.compactor.clone(),
-            },
+            execution,
         ))
     }
 
@@ -501,6 +505,7 @@ impl DashAgentService {
         }
 
         let context = self.materialize_context(&turn_id).await?;
+        let execution = self.execution_dependencies().await;
         let result = DashCoreTurn {
             turn_id: turn_id.clone(),
             input: content.clone(),
@@ -516,9 +521,9 @@ impl DashAgentService {
             terminal_entry_id: HistoryEntryId::new(format!("{effect_prefix}:turn-completed")),
         }
         .run(
-            self.execution.provider.as_ref(),
-            self.execution.tools.as_ref(),
-            self.execution.callbacks.as_ref(),
+            execution.provider.as_ref(),
+            execution.tools.as_ref(),
+            execution.callbacks.as_ref(),
             cancellation,
         )
         .await;
@@ -678,9 +683,8 @@ impl DashAgentService {
                 Ok(store.history().clone())
             })
             .await?;
-        let compacted = match self
-            .execution
-            .compactor
+        let compactor = self.execution_dependencies().await.compactor;
+        let compacted = match compactor
             .compact(DashCompactionRequest {
                 compaction_id: compaction_id.clone(),
                 mode: CompactionMode::AutomaticOverflow,
@@ -781,6 +785,7 @@ impl DashAgentService {
                 continuation_cancellation.clone(),
             ));
         }
+        let execution = self.execution_dependencies().await;
         let continuation = DashCoreTurn {
             turn_id: continuation_turn_id.clone(),
             input: content,
@@ -799,9 +804,9 @@ impl DashAgentService {
             terminal_entry_id: HistoryEntryId::new(format!("{prefix}:C-completed")),
         }
         .run(
-            self.execution.provider.as_ref(),
-            self.execution.tools.as_ref(),
-            self.execution.callbacks.as_ref(),
+            execution.provider.as_ref(),
+            execution.tools.as_ref(),
+            execution.callbacks.as_ref(),
             continuation_cancellation,
         )
         .await;
@@ -902,7 +907,11 @@ impl DashAgentService {
         content: String,
     ) -> Result<DashCommandReceipt, DashServiceError> {
         self.require_active_turn(&turn_id).await?;
-        self.execution.provider.steer(&turn_id, &content).await?;
+        self.execution_dependencies()
+            .await
+            .provider
+            .steer(&turn_id, &content)
+            .await?;
         let (_, receipt) = self
             .update_repository(|repository| {
                 repository.store.commit(DashAgentCommit {
@@ -1003,9 +1012,8 @@ impl DashAgentService {
                 Ok(history)
             })
             .await?;
-        let result = self
-            .execution
-            .compactor
+        let compactor = self.execution_dependencies().await.compactor;
+        let result = compactor
             .compact(DashCompactionRequest {
                 compaction_id: compaction_id.clone(),
                 mode,

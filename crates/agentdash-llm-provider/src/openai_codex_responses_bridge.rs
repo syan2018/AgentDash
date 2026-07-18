@@ -7,7 +7,7 @@ use std::pin::Pin;
 use async_trait::async_trait;
 use base64::Engine;
 
-use agentdash_agent::bridge::{
+use agentdash_agent_core::bridge::{
     BridgeError, BridgeRequest, LlmBridge, ProviderErrorClassification, StreamChunk,
 };
 
@@ -312,8 +312,8 @@ fn is_codex_usage_or_rate_limit_error(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_agent::bridge::ProviderErrorKind;
-    use agentdash_agent::types::{AgentMessage, ToolDefinition};
+    use agentdash_agent_core::bridge::ProviderErrorKind;
+    use agentdash_agent_core::types::{AgentMessage, ToolDefinition};
 
     fn jwt_with_account(account_id: &str) -> String {
         let payload = serde_json::json!({

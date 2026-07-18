@@ -9,8 +9,7 @@ agentdash-domain = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
-agentdash-agent = { workspace = true }
-agentdash-agent-types = { workspace = true }
+agentdash-agent-core = { workspace = true }
 agentdash-agent-runtime = { workspace = true }
 agentdash-agent-runtime-host = { workspace = true }
 agentdash-integration-api = { workspace = true }

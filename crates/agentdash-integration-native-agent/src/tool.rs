@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
+use agentdash_agent_core::{
+    AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
+};
 use agentdash_agent_runtime_contract::{
     DriverItemId, DriverThreadId, DriverTurnId, PresentationItemId, PresentationTurnId,
     RuntimeBindingId, RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId,
     ToolSetRevision,
-};
-use agentdash_agent_types::{
-    AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
 };
 use agentdash_integration_api::{
     AgentRuntimeToolCallback, AuthIdentity, DriverToolDefinition, DriverToolInvocation,
@@ -101,18 +101,18 @@ impl AgentTool for NativeRuntimeTool {
     fn parameters_schema(&self) -> serde_json::Value {
         self.definition.parameters_schema.clone()
     }
-    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+    fn protocol_projector(&self) -> Option<agentdash_agent_core::ToolProtocolProjector> {
         use agentdash_agent_runtime_contract::ToolProtocolProjection as P;
         Some(match &self.definition.protocol_projection {
-            P::Command => agentdash_agent_types::ToolProtocolProjector::Command,
-            P::FileChange => agentdash_agent_types::ToolProtocolProjector::FileChange,
-            P::FsRead => agentdash_agent_types::ToolProtocolProjector::FsRead,
-            P::FsGrep => agentdash_agent_types::ToolProtocolProjector::FsGrep,
-            P::FsGlob => agentdash_agent_types::ToolProtocolProjector::FsGlob,
-            P::Mcp { server_key } => agentdash_agent_types::ToolProtocolProjector::Mcp {
+            P::Command => agentdash_agent_core::ToolProtocolProjector::Command,
+            P::FileChange => agentdash_agent_core::ToolProtocolProjector::FileChange,
+            P::FsRead => agentdash_agent_core::ToolProtocolProjector::FsRead,
+            P::FsGrep => agentdash_agent_core::ToolProtocolProjector::FsGrep,
+            P::FsGlob => agentdash_agent_core::ToolProtocolProjector::FsGlob,
+            P::Mcp { server_key } => agentdash_agent_core::ToolProtocolProjector::Mcp {
                 server_key: server_key.clone(),
             },
-            P::Dynamic { namespace } => agentdash_agent_types::ToolProtocolProjector::Dynamic {
+            P::Dynamic { namespace } => agentdash_agent_core::ToolProtocolProjector::Dynamic {
                 namespace: namespace.clone(),
             },
         })

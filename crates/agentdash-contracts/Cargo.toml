@@ -12,7 +12,6 @@ name = "generate_contracts_ts"
 path = "src/generate_ts.rs"
 
 [dependencies]
-agentdash-agent-types = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
 agentdash-spi = { workspace = true }

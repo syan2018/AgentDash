@@ -1,9 +1,9 @@
 use std::{collections::BTreeMap, pin::Pin, sync::Arc};
 
-use agentdash_agent::{BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, TokenUsage};
+use agentdash_agent_core::{AgentMessage, ContentPart};
+use agentdash_agent_core::{BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, TokenUsage};
 use agentdash_agent_runtime_contract::*;
 use agentdash_agent_runtime_test_support::RuntimeTraceValidator;
-use agentdash_agent_types::{AgentMessage, ContentPart};
 use agentdash_integration_api::*;
 use agentdash_integration_native_agent::{
     NativeAgentServiceConfig, NativeBridgeResolveError, NativeBridgeResolver,

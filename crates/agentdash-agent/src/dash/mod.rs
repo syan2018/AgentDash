@@ -27,7 +27,6 @@ pub use service::{
     DashCommandReceipt, DashCommandRequest, DashCompactionRequest, DashCompactionResult,
     DashCompactor, DashEffectInspection, DashExecutionDependencies, DashPublicCommand,
     DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome,
-    MemoryDashAgentRepository,
 };
 pub use store::{
     CommandSettlement, DashAgentChange, DashAgentChangePayload, DashAgentCommit, DashAgentStore,

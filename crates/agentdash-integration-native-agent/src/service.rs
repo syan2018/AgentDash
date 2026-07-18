@@ -21,25 +21,27 @@ use agentdash_agent_service_api::{
     AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
     AgentEffectInspectionState, AgentEntityStatus, AgentForkCapability, AgentForkCutoffKind,
     AgentForkPoint, AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint,
-    AgentHookSemanticFacet, AgentHookTiming, AgentInput, AgentInputContent, AgentInteractionKind,
-    AgentInteractionSnapshot, AgentItemContent, AgentItemSnapshot, AgentLifecycleCapability,
-    AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
-    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
-    AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
-    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
-    AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolName,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnSnapshot, AppliedAgentSurface,
-    AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
-    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurfaceContribution,
-    CompleteAgentService, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
-    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContributionKind,
-    InitialContextDeliveryFidelity, InitialContextProfile, ResumeAgentCommand,
-    RevokeBoundAgentSurface, SemanticFidelity,
+    AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbacks, AgentInput, AgentInputContent,
+    AgentInteractionKind, AgentInteractionSnapshot, AgentItemContent, AgentItemSnapshot,
+    AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest,
+    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
+    AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot,
+    AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel,
+    AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet,
+    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
+    AgentToolDelivery, AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    AgentTurnSnapshot, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedInitialContextEvidence,
+    ApplyBoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
+    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
+    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
+    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
+
+use crate::DashAgentCoreToolCallbacks;
 
 #[derive(Clone)]
 struct DashSource {
@@ -74,6 +76,7 @@ struct DashServiceState {
 pub struct DashAgentCompleteService {
     state: RwLock<DashServiceState>,
     execution: DashExecutionDependencies,
+    host_callbacks: Option<Arc<dyn AgentHostCallbacks>>,
 }
 
 impl Default for DashAgentCompleteService {
@@ -96,6 +99,18 @@ impl DashAgentCompleteService {
         Self {
             state: RwLock::new(DashServiceState::default()),
             execution,
+            host_callbacks: None,
+        }
+    }
+
+    pub fn with_host_callbacks(
+        execution: DashExecutionDependencies,
+        host_callbacks: Arc<dyn AgentHostCallbacks>,
+    ) -> Self {
+        Self {
+            state: RwLock::new(DashServiceState::default()),
+            execution,
+            host_callbacks: Some(host_callbacks),
         }
     }
 
@@ -739,6 +754,18 @@ impl CompleteAgentService for DashAgentCompleteService {
                 })
                 .collect(),
         };
+        if let Some(callbacks) = &self.host_callbacks {
+            source
+                .service
+                .replace_tool_callbacks(Arc::new(DashAgentCoreToolCallbacks::from_bound_surface(
+                    callbacks.clone(),
+                    command.callbacks.route_id.clone(),
+                    command.callbacks.binding_generation,
+                    command.source.clone(),
+                    command.callbacks.default_deadline_ms,
+                )))
+                .await;
+        }
         source
             .service
             .apply_surface(dash_surface.clone())
@@ -794,6 +821,25 @@ impl CompleteAgentService for DashAgentCompleteService {
             snapshot_revision: Some(AgentSnapshotRevision(revision)),
             initial_context: None,
         })
+    }
+}
+
+pub struct NativeCompleteAgentRegistration {
+    pub instance_id: AgentServiceInstanceId,
+    pub service: Arc<dyn CompleteAgentService>,
+}
+
+pub fn native_complete_agent_registration(
+    instance_id: AgentServiceInstanceId,
+    execution: DashExecutionDependencies,
+    host_callbacks: Arc<dyn AgentHostCallbacks>,
+) -> NativeCompleteAgentRegistration {
+    NativeCompleteAgentRegistration {
+        instance_id,
+        service: Arc::new(DashAgentCompleteService::with_host_callbacks(
+            execution,
+            host_callbacks,
+        )),
     }
 }
 

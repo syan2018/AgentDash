@@ -1,11 +1,12 @@
+use agentdash_agent_core::{AgentMessage, ContentPart};
 use agentdash_agent_protocol::{
     AgentDashThreadItem, UserInputBlock, codex_app_server_protocol as codex,
-    user_input_blocks_to_content_parts,
 };
 use agentdash_agent_runtime_contract::{
     ContextBlock, DriverError, RuntimeInput, RuntimeItemContent,
 };
-use agentdash_agent_types::{AgentMessage, ContentPart};
+
+use crate::core_projection::project_native_core_input;
 
 pub(crate) fn inputs_to_message(input: Vec<RuntimeInput>) -> Result<AgentMessage, DriverError> {
     validate_inputs(&input)?;
@@ -27,7 +28,11 @@ pub(crate) fn inputs_to_message(input: Vec<RuntimeInput>) -> Result<AgentMessage
             }
         }
     }
-    let parts = user_input_blocks_to_content_parts(&user_input);
+    let parts =
+        project_native_core_input(&user_input).map_err(|error| DriverError::ProtocolViolation {
+            reason: format!("native input cannot cross the protocol/Core boundary: {error}"),
+            critical: true,
+        })?;
     if parts.is_empty() {
         return Err(DriverError::Rejected {
             reason: "native Agent Core input has no deliverable content".to_string(),

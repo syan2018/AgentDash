@@ -6,7 +6,7 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 
-use agentdash_agent::bridge::{BridgeError, BridgeRequest, LlmBridge, StreamChunk};
+use agentdash_agent_core::bridge::{BridgeError, BridgeRequest, LlmBridge, StreamChunk};
 
 use super::openai_responses_common::{
     ResponsesRequestOptions, build_responses_request_body, process_responses_stream,

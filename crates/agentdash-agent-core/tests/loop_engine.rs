@@ -5,8 +5,8 @@ use std::{
 
 use agentdash_agent_core::{
     CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput, CoreMessage, CoreProvider,
-    CoreTool, CoreToolCall, CoreToolCallbacks, CoreToolResult, FinishReason, ProviderEvent,
-    ProviderEventStream, ProviderRequest, TokenUsage, run_agent_loop,
+    CoreTokenUsage, CoreTool, CoreToolCall, CoreToolCallbacks, CoreToolResult, FinishReason,
+    ProviderEvent, ProviderEventStream, ProviderRequest, run_agent_loop,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -70,7 +70,7 @@ async fn provider_tool_loop_has_only_explicit_state() {
                 },
                 ProviderEvent::Completed {
                     finish_reason: FinishReason::ToolCalls,
-                    usage: TokenUsage {
+                    usage: CoreTokenUsage {
                         input_tokens: 10,
                         output_tokens: 2,
                     },
@@ -82,7 +82,7 @@ async fn provider_tool_loop_has_only_explicit_state() {
                 },
                 ProviderEvent::Completed {
                     finish_reason: FinishReason::Stop,
-                    usage: TokenUsage {
+                    usage: CoreTokenUsage {
                         input_tokens: 12,
                         output_tokens: 3,
                     },

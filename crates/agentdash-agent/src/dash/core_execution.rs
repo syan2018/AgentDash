@@ -2,8 +2,9 @@ use std::pin::Pin;
 
 use agentdash_agent_core::{
     CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput, CoreMessage, CoreOutput,
-    CoreProvider, CoreRole, CoreTool, CoreToolCall, CoreToolCallbacks, CoreToolResult,
-    FinishReason, ProviderEvent, ProviderEventStream, ProviderRequest, TokenUsage, run_agent_loop,
+    CoreProvider, CoreRole, CoreTokenUsage, CoreTool, CoreToolCall, CoreToolCallbacks,
+    CoreToolResult, FinishReason, ProviderEvent, ProviderEventStream, ProviderRequest,
+    run_agent_loop,
 };
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
@@ -430,7 +431,7 @@ fn provider_event(event: DashProviderEvent) -> ProviderEvent {
                 DashFinishReason::Stop => FinishReason::Stop,
                 DashFinishReason::ToolCalls => FinishReason::ToolCalls,
             },
-            usage: TokenUsage {
+            usage: CoreTokenUsage {
                 input_tokens,
                 output_tokens,
             },

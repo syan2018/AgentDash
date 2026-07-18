@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use agentdash_agent::{
+use agentdash_agent_core::{
     AgentMessage, BridgeRequest, BridgeResponse, ContentPart, LlmBridge, StopReason, StreamChunk,
     TokenUsage, ToolCallInfo,
 };

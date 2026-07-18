@@ -1269,7 +1269,7 @@ pub fn resolve_tool_capability(
 }
 
 pub fn project_tool_protocol(
-    tool: &dyn agentdash_agent::AgentTool,
+    tool: &dyn agentdash_agent_types::AgentTool,
     name: &str,
 ) -> Result<(ToolProtocolProjection, String), String> {
     let projection = tool.protocol_projector().ok_or_else(|| {
@@ -1283,15 +1283,17 @@ pub fn project_tool_protocol(
         })?
         .to_string();
     let projection = match projection {
-        agentdash_agent::ToolProtocolProjector::Command => ToolProtocolProjection::Command,
-        agentdash_agent::ToolProtocolProjector::FileChange => ToolProtocolProjection::FileChange,
-        agentdash_agent::ToolProtocolProjector::FsRead => ToolProtocolProjection::FsRead,
-        agentdash_agent::ToolProtocolProjector::FsGrep => ToolProtocolProjection::FsGrep,
-        agentdash_agent::ToolProtocolProjector::FsGlob => ToolProtocolProjection::FsGlob,
-        agentdash_agent::ToolProtocolProjector::Mcp { server_key } => {
+        agentdash_agent_types::ToolProtocolProjector::Command => ToolProtocolProjection::Command,
+        agentdash_agent_types::ToolProtocolProjector::FileChange => {
+            ToolProtocolProjection::FileChange
+        }
+        agentdash_agent_types::ToolProtocolProjector::FsRead => ToolProtocolProjection::FsRead,
+        agentdash_agent_types::ToolProtocolProjector::FsGrep => ToolProtocolProjection::FsGrep,
+        agentdash_agent_types::ToolProtocolProjector::FsGlob => ToolProtocolProjection::FsGlob,
+        agentdash_agent_types::ToolProtocolProjector::Mcp { server_key } => {
             ToolProtocolProjection::Mcp { server_key }
         }
-        agentdash_agent::ToolProtocolProjector::Dynamic { namespace } => {
+        agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace } => {
             ToolProtocolProjection::Dynamic { namespace }
         }
     };

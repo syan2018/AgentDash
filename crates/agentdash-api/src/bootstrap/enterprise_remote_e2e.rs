@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use agentdash_agent::{
+use agentdash_agent_core::{
     AgentMessage, BridgeRequest, BridgeResponse, ContentPart, LlmBridge, StopReason, StreamChunk,
     TokenUsage, ToolCallInfo,
 };
@@ -15,7 +15,8 @@ use agentdash_agent_runtime::{RuntimeRepository, RuntimeTransientEvents, Runtime
 use agentdash_agent_runtime_contract::*;
 use agentdash_agent_runtime_host::*;
 use agentdash_agent_types::{
-    AgentTool, AgentToolError, AgentToolResult, DynAgentTool, ToolUpdateCallback,
+    AgentTool, AgentToolError, AgentToolResult, ContentPart as ToolContentPart, DynAgentTool,
+    ToolUpdateCallback,
 };
 use agentdash_application_agentrun::agent_run::{
     AgentFrameHookRuntime, AgentRunCommandGuard, AgentRunRuntime, EnqueueRuntimeMailboxMessage,
@@ -210,8 +211,8 @@ impl AgentTool for EnterpriseEchoTool {
     fn parameters_schema(&self) -> serde_json::Value {
         json!({"type":"object"})
     }
-    fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
-        Some(agentdash_agent::ToolProtocolProjector::Dynamic {
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::Dynamic {
             namespace: Some("enterprise_test".to_string()),
         })
     }
@@ -229,7 +230,7 @@ impl AgentTool for EnterpriseEchoTool {
         self.0.fetch_add(1, Ordering::SeqCst);
         let is_error = args.get("ordinal").and_then(serde_json::Value::as_str) == Some("second");
         Ok(AgentToolResult {
-            content: vec![ContentPart::text(if is_error {
+            content: vec![ToolContentPart::text(if is_error {
                 "enterprise echo business error"
             } else {
                 "enterprise echo completed"

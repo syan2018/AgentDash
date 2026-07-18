@@ -6,11 +6,13 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 
-use agentdash_agent::bridge::{
+use agentdash_agent_core::bridge::{
     BridgeError, BridgeRequest, BridgeResponse, LlmBridge, ProviderErrorClassification,
     StreamChunk, ToolCallDeltaContent,
 };
-use agentdash_agent::types::{AgentMessage, ContentPart, TokenUsage, ToolCallInfo, now_millis};
+use agentdash_agent_core::types::{
+    AgentMessage, ContentPart, TokenUsage, ToolCallInfo, now_millis,
+};
 
 use super::openai_content::{
     chat_tool_result_image_followup, chat_user_content, tool_result_output_text,
@@ -166,7 +168,7 @@ fn build_request_body(model_id: &str, request: &BridgeRequest) -> serde_json::Va
 }
 
 fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
-    use agentdash_agent::types::StopReason;
+    use agentdash_agent_core::types::StopReason;
 
     let mut messages = Vec::new();
 

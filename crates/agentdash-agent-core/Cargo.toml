@@ -1,15 +1,20 @@
 [package]
 name = "agentdash-agent-core"
-description = "Dash Agent 使用的平台无关 provider/tool loop"
+description = "Dash Agent 使用的平台无关 provider/tool loop 与纯计算 primitive"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
+jsonschema = "0.30"
+schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros"] }
-tokio-util = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = { workspace = true }

@@ -9,7 +9,7 @@ mod tests {
     use agentdash_application_vfs::*;
     use agentdash_spi::{MountCapability, Vfs};
 
-    use agentdash_agent::AgentTool;
+    use agentdash_agent_types::AgentTool;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
     use agentdash_relay::RelayMessage;
     use agentdash_test_support::inline_file::MemoryInlineFileRepository;

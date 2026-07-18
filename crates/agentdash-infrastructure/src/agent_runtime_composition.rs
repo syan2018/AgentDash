@@ -2213,7 +2213,7 @@ mod tests {
     use std::pin::Pin;
 
     use super::*;
-    use agentdash_agent::{
+    use agentdash_agent_core::{
         AgentMessage, BridgeRequest, BridgeResponse, ContentPart, LlmBridge, StreamChunk,
         TokenUsage,
     };

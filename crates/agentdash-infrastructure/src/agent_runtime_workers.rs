@@ -7,11 +7,15 @@ use crate::{
     PostgresAgentRuntimeCompositionRepository, PostgresAgentRuntimeContextBroker,
     PostgresRuntimeRepository, agent_runtime_driver_sink::admit_driver_event_to_pump,
 };
-use agentdash_agent::compaction::execute_compaction;
-use agentdash_agent::{
+use agentdash_agent_core::compaction::execute_compaction;
+use agentdash_agent_core::{
     AgentMessage, CompactionParams, ContentPart, MessageRef, StopReason, ToolCallInfo,
 };
-use agentdash_agent_protocol::{BackboneEvent, TranscriptProjectionEvent, project_transcript};
+use agentdash_agent_core::{
+    CompactionImplementation, CompactionMetadata, CompactionPhase, CompactionReason,
+    CompactionStrategy, CompactionTrigger, CompactionTriggerStats, ProjectedTranscript,
+};
+use agentdash_agent_protocol::BackboneEvent;
 use agentdash_agent_runtime::CompactionPresentationFacts;
 use agentdash_agent_runtime::{
     ActivationObservation, CompactionPreparation, ContextPreparationStatus, HookEffect,
@@ -27,10 +31,6 @@ use agentdash_agent_runtime_contract::{
 };
 use agentdash_agent_runtime_host::AgentRuntimeHostRepository;
 use agentdash_agent_runtime_host::{IntegrationDriverHost, RouteDriverCommand};
-use agentdash_agent_types::{
-    CompactionImplementation, CompactionMetadata, CompactionPhase, CompactionReason,
-    CompactionStrategy, CompactionTrigger, CompactionTriggerStats, ProjectedTranscript,
-};
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
@@ -38,7 +38,10 @@ use agentdash_domain::llm_provider::{
 use agentdash_integration_api::{
     AgentRuntimeContextBroker, DriverTranscript, DriverTranscriptRequest,
 };
-use agentdash_integration_native_agent::{NativeAgentServiceConfig, NativeCredentialScope};
+use agentdash_integration_native_agent::{
+    NativeAgentServiceConfig, NativeCoreProjectionEvent, NativeCredentialScope,
+    project_native_core_input, project_native_core_transcript,
+};
 use agentdash_llm_provider::{
     ProviderCredentialScope, resolve_effective_bridge_with_model_for_scope,
 };
@@ -199,7 +202,7 @@ impl ManagedCompactionPreparationEngine for NativeManagedCompactionEngine {
             .collect::<Vec<_>>();
         let tokens_before = messages
             .iter()
-            .map(agentdash_agent_types::estimate_message_tokens)
+            .map(agentdash_agent_core::estimate_message_tokens)
             .sum();
         let metadata = CompactionMetadata {
             trigger: match work.trigger {
@@ -423,7 +426,7 @@ fn managed_compaction_input(
             let (messages, kept_source) = match block {
                 ContextBlock::Instruction { .. } => continue,
                 ContextBlock::Input { input } => (
-                    vec![compaction_input_message(input)],
+                    vec![compaction_input_message(input)?],
                     Some(ManagedCompactionKeptSource {
                         key: format!("base:block:{block_index}"),
                         block: block.clone(),
@@ -544,7 +547,7 @@ fn project_durable_compaction_tail(
                 );
             }
         }
-        projected_events.push(TranscriptProjectionEvent {
+        projected_events.push(NativeCoreProjectionEvent {
             event_seq: sequence,
             turn_id: record
                 .carrier()
@@ -556,7 +559,8 @@ fn project_durable_compaction_tail(
             event: &presentation.event,
         });
     }
-    let projected: ProjectedTranscript = project_transcript(projected_events);
+    let projected: ProjectedTranscript = project_native_core_transcript(projected_events)
+        .map_err(|error| RuntimeDurableWorkerError::Processing(error.to_string()))?;
     Ok(projected
         .entries
         .into_iter()
@@ -577,15 +581,15 @@ fn project_durable_compaction_tail(
 
 fn compaction_input_message(
     input: &[agentdash_agent_runtime_contract::RuntimeInput],
-) -> AgentMessage {
+) -> Result<AgentMessage, RuntimeDurableWorkerError> {
     let mut parts = Vec::new();
     for input in input {
         match input {
             agentdash_agent_runtime_contract::RuntimeInput::UserInput { block } => {
                 parts.extend(
-                    agentdash_agent_protocol::user_input_blocks_to_content_parts(
-                        std::slice::from_ref(block),
-                    ),
+                    project_native_core_input(std::slice::from_ref(block)).map_err(|error| {
+                        RuntimeDurableWorkerError::Processing(error.to_string())
+                    })?,
                 );
             }
             agentdash_agent_runtime_contract::RuntimeInput::Structured { schema, value } => {
@@ -595,7 +599,7 @@ fn compaction_input_message(
             }
         }
     }
-    AgentMessage::user_parts(parts)
+    Ok(AgentMessage::user_parts(parts))
 }
 
 fn presentation_source_item_id(event: &BackboneEvent) -> Option<&str> {

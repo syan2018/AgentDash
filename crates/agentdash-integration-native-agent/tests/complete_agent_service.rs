@@ -14,18 +14,22 @@ use agentdash_agent_service_api::{
     AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentContextPackageId,
     AgentContextSchemaVersion, AgentContextSourceCoordinate, AgentContextSourceRevision,
     AgentEffectIdentity, AgentEffectInspectionState, AgentForkCutoffKind, AgentForkPoint,
-    AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint, AgentHostCallbackBinding,
+    AgentHookBlockingSemantics, AgentHookDecision, AgentHookInvocation, AgentHookMutationKind,
+    AgentHookPoint, AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbacks,
     AgentIdempotencyKey, AgentInput, AgentInputContent, AgentPayloadDigest, AgentProfileDigest,
-    AgentReadQuery, AgentReceiptState, AgentSnapshotRevision, AgentSourceCoordinate,
-    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolName,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
+    AgentReadQuery, AgentReceiptState, AgentServiceInstanceId, AgentSnapshotRevision,
+    AgentSourceCoordinate, AgentSurfaceContributionPayload, AgentSurfaceDigest,
+    AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
+    AgentToolDelivery, AgentToolInvocation, AgentToolName, AgentToolResult, AgentToolSemanticFacet,
+    AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
     BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind, ContextProvenance,
     CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
     InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
     InitialContextMode, ResumeAgentCommand, SemanticFidelity,
 };
-use agentdash_integration_native_agent::DashAgentCompleteService;
+use agentdash_integration_native_agent::{
+    DashAgentCompleteService, native_complete_agent_registration,
+};
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
 use tokio::sync::Notify;
@@ -76,6 +80,27 @@ impl DashExecutionCallbacks for FixtureCallbacks {
     }
 }
 
+struct FixtureHostCallbacks;
+
+#[async_trait]
+impl AgentHostCallbacks for FixtureHostCallbacks {
+    async fn invoke_tool(
+        &self,
+        _: AgentToolInvocation,
+    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+        Ok(AgentToolResult::Completed {
+            output: serde_json::json!({"ok": true}),
+        })
+    }
+
+    async fn invoke_hook(
+        &self,
+        _: AgentHookInvocation,
+    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+        Ok(AgentHookDecision::Allow)
+    }
+}
+
 struct FixtureCompactor;
 
 #[async_trait]
@@ -103,6 +128,32 @@ fn service() -> DashAgentCompleteService {
         callbacks: Arc::new(FixtureCallbacks),
         compactor: Arc::new(FixtureCompactor),
     })
+}
+
+#[tokio::test]
+async fn production_registration_packages_the_complete_dash_service_without_registering_a_driver() {
+    let registration = native_complete_agent_registration(
+        AgentServiceInstanceId::new("native-complete-1").unwrap(),
+        DashExecutionDependencies {
+            provider: Arc::new(FixtureProvider),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+        },
+        Arc::new(FixtureHostCallbacks),
+    );
+
+    assert_eq!(registration.instance_id.as_str(), "native-complete-1");
+    assert_eq!(
+        registration
+            .service
+            .describe()
+            .await
+            .unwrap()
+            .definition_id
+            .as_str(),
+        "dash-agent"
+    );
 }
 
 fn service_with_provider(provider: Arc<dyn DashProvider>) -> DashAgentCompleteService {

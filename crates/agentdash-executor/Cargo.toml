@@ -8,7 +8,6 @@ edition.workspace = true
 agentdash-application-ports = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-domain = { workspace = true }
-agentdash-agent-types = { workspace = true }
 agentdash-mcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

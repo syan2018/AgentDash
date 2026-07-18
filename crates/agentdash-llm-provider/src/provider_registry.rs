@@ -6,7 +6,7 @@ use super::AnthropicBridge;
 use super::OpenAiCodexResponsesBridge;
 use super::OpenAiCompletionsBridge;
 use super::OpenAiResponsesBridge;
-use agentdash_agent::LlmBridge;
+use agentdash_agent_core::LlmBridge;
 use agentdash_domain::llm_provider::{
     LlmCredentialMode, LlmCredentialSource, LlmProvider, LlmProviderCredentialRepository,
     LlmProviderRepository, LlmSecretCodec, WireProtocol, provider_allows_empty_api_key,

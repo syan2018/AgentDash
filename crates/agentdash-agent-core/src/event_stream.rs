@@ -1,4 +1,3 @@
-use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -54,13 +53,8 @@ impl<T: Clone + Send + 'static> Stream for EventReceiver<T> {
             match Pin::new(&mut self.inner).poll_next(cx) {
                 Poll::Ready(Some(Ok(item))) => return Poll::Ready(Some(item)),
                 Poll::Ready(Some(Err(err))) => {
-                    let diagnostic_context =
-                        DiagnosticErrorContext::new("agent.event_stream", "consumer_lagged");
-                    diag_error!(
-                        Warn,
-                        Subsystem::AgentRun,
-                        context = &diagnostic_context,
-                        error = &err,
+                    tracing::warn!(
+                        error = %err,
                         channel_capacity = DEFAULT_CHANNEL_CAPACITY,
                         consumer = "broadcast_stream",
                         "Agent event stream consumer lagged; stale events were skipped"

@@ -13,7 +13,12 @@ pub struct DashAgentCoreToolCallbacks {
     route_id: AgentCallbackRouteId,
     binding_generation: AgentBindingGeneration,
     source: AgentSourceCoordinate,
-    deadline_at_ms: u64,
+    deadline: DashCallbackDeadline,
+}
+
+enum DashCallbackDeadline {
+    Absolute(u64),
+    FromInvocation(u64),
 }
 
 impl DashAgentCoreToolCallbacks {
@@ -29,7 +34,36 @@ impl DashAgentCoreToolCallbacks {
             route_id,
             binding_generation,
             source,
-            deadline_at_ms,
+            deadline: DashCallbackDeadline::Absolute(deadline_at_ms),
+        }
+    }
+
+    pub fn from_bound_surface(
+        callbacks: Arc<dyn AgentHostCallbacks>,
+        route_id: AgentCallbackRouteId,
+        binding_generation: AgentBindingGeneration,
+        source: AgentSourceCoordinate,
+        default_deadline_ms: u64,
+    ) -> Self {
+        Self {
+            callbacks,
+            route_id,
+            binding_generation,
+            source,
+            deadline: DashCallbackDeadline::FromInvocation(default_deadline_ms),
+        }
+    }
+
+    fn deadline_at_ms(&self) -> u64 {
+        match self.deadline {
+            DashCallbackDeadline::Absolute(deadline_at_ms) => deadline_at_ms,
+            DashCallbackDeadline::FromInvocation(duration_ms) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                now.saturating_add(duration_ms)
+            }
         }
     }
 }
@@ -70,7 +104,7 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
                         message: error.to_string(),
                         retryable: false,
                     })?,
-                deadline_at_ms: self.deadline_at_ms,
+                deadline_at_ms: self.deadline_at_ms(),
             },
             tool: AgentToolName::new(call.name).map_err(|error| DashCoreError::Tool {
                 message: error.to_string(),

@@ -14,8 +14,10 @@ use thiserror::Error;
 use crate::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingLease,
     CompleteAgentBindingState, CompleteAgentCallbackRoute, CompleteAgentEffectAttemptEvidence,
-    CompleteAgentEffectRecord, CompleteAgentEffectState, CompleteAgentPlacement,
+    CompleteAgentEffectRecord, CompleteAgentEffectState, CompleteAgentLifecycleEffectRecord,
+    CompleteAgentPlacement, CompleteAgentRuntimeTarget,
 };
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CompleteAgentHostRevision(pub u64);
@@ -32,6 +34,8 @@ pub struct CompleteAgentHostFacts {
     pub effects: BTreeMap<AgentEffectIdentity, CompleteAgentEffectRecord>,
     pub leases: BTreeMap<CompleteAgentBindingId, CompleteAgentBindingLease>,
     pub lease_epochs: BTreeMap<CompleteAgentBindingId, u64>,
+    pub runtime_targets: BTreeMap<RuntimeThreadId, CompleteAgentRuntimeTarget>,
+    pub lifecycle_effects: BTreeMap<AgentEffectIdentity, CompleteAgentLifecycleEffectRecord>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -487,6 +491,65 @@ pub fn validate_complete_agent_host_facts(
         .any(|binding_id| !candidate.bindings.contains_key(binding_id))
     {
         return invariant("lease epoch has no owning binding");
+    }
+    for (thread_id, target) in &candidate.runtime_targets {
+        if thread_id != &target.runtime_thread_id
+            || target.generation.0 == 0
+            || target.callbacks.binding_generation != target.generation
+        {
+            return invariant("Runtime target identity or generation is invalid");
+        }
+        let descriptor = candidate
+            .service_instances
+            .get(&target.service_instance_id)
+            .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
+                reason: "Runtime target has no registered service instance".to_owned(),
+            })?;
+        if target.profile_digest != descriptor.profile_digest
+            || target.bound_surface.offer_profile_digest != target.profile_digest
+        {
+            return invariant("Runtime target does not match its service profile");
+        }
+    }
+    for (thread_id, target) in &current.runtime_targets {
+        if candidate.runtime_targets.get(thread_id) != Some(target) {
+            return invariant("Runtime target history cannot be removed or rewritten");
+        }
+    }
+    for (effect_id, effect) in &candidate.lifecycle_effects {
+        if effect_id != &effect.effect_id {
+            return invariant("lifecycle effect map key does not match effect identity");
+        }
+        let target = candidate
+            .runtime_targets
+            .get(&effect.runtime_thread_id)
+            .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
+                reason: "lifecycle effect has no Runtime target".to_owned(),
+            })?;
+        if effect.service_instance_id != target.service_instance_id
+            || effect.generation != target.generation
+        {
+            return invariant("lifecycle effect does not match its Runtime target");
+        }
+    }
+    for (effect_id, effect) in &current.lifecycle_effects {
+        let next = candidate.lifecycle_effects.get(effect_id).ok_or_else(|| {
+            CompleteAgentHostStoreError::Invariant {
+                reason: "lifecycle effect history cannot be removed".to_owned(),
+            }
+        })?;
+        if effect.effect_id != next.effect_id
+            || effect.runtime_thread_id != next.runtime_thread_id
+            || effect.child_thread_id != next.child_thread_id
+            || effect.kind != next.kind
+            || effect.service_instance_id != next.service_instance_id
+            || effect.generation != next.generation
+            || effect.initial_context != next.initial_context
+            || effect.fork_cutoff != next.fork_cutoff
+            || (effect.outcome.is_some() && effect.outcome != next.outcome)
+        {
+            return invariant("lifecycle effect coordinates or outcome were rewritten");
+        }
     }
     Ok(())
 }
@@ -1689,6 +1752,8 @@ mod tests {
             effects: BTreeMap::from([(effect_id, effect)]),
             leases: BTreeMap::from([(binding_id.clone(), lease)]),
             lease_epochs: BTreeMap::from([(binding_id, 1)]),
+            runtime_targets: BTreeMap::new(),
+            lifecycle_effects: BTreeMap::new(),
         }
     }
 }

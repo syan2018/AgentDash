@@ -4,20 +4,22 @@ use std::{
 };
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeAvailabilityEvidence, ManagedRuntimeChangeDelta,
+    ManagedRuntimeAvailabilityEvidence, ManagedRuntimeChangeDelta, ManagedRuntimeCommand,
     ManagedRuntimeCommandAvailability, ManagedRuntimeCommandEnvelope, ManagedRuntimeCommandKind,
-    ManagedRuntimeOperation, ManagedRuntimeOperationReceipt, ManagedRuntimeOperationStatus,
-    ManagedRuntimePlatformChange, ManagedRuntimeSnapshot, ManagedRuntimeUnavailabilityReason,
-    RuntimeChangeSequence, RuntimeIdempotencyKey, RuntimeOperationId, RuntimeProjectionRevision,
-    RuntimeThreadId,
+    ManagedRuntimeLifecycleStatus, ManagedRuntimeOperation, ManagedRuntimeOperationEvidence,
+    ManagedRuntimeOperationReceipt, ManagedRuntimeOperationStatus, ManagedRuntimePlatformChange,
+    ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot,
+    ManagedRuntimeSourceBindingEvidence, ManagedRuntimeUnavailabilityReason, RuntimeChangeSequence,
+    RuntimeIdempotencyKey, RuntimeOperationId, RuntimeProjectionRevision, RuntimeSourceRef,
+    RuntimeThreadId, SurfaceRevision,
 };
 use agentdash_agent_service_api::AgentEffectIdentity;
 use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::{
-    CompleteAgentRuntimeIdentityMap, NormalizedAgentPlatformChange, NormalizedAgentProjection,
-    validate_complete_agent_source_facts,
+    CompleteAgentRuntimeIdentityMap, ManagedRuntimeAgentBinding, NormalizedAgentPlatformChange,
+    NormalizedAgentProjection, validate_complete_agent_source_facts,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +50,35 @@ pub struct ManagedRuntimeOperationRecord {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ManagedRuntimeBindingFact {
+    pub source_ref: RuntimeSourceRef,
+    pub binding: ManagedRuntimeAgentBinding,
+    pub committed_at_revision: RuntimeProjectionRevision,
+    pub activated_at_revision: Option<RuntimeProjectionRevision>,
+}
+
+impl ManagedRuntimeBindingFact {
+    pub fn evidence(&self) -> ManagedRuntimeSourceBindingEvidence {
+        ManagedRuntimeSourceBindingEvidence {
+            source_ref: self.source_ref.clone(),
+            committed_at_revision: self.committed_at_revision,
+            applied_surface_revision: SurfaceRevision(self.binding.applied_surface.revision.0),
+            activated_at_revision: self.activated_at_revision,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ManagedRuntimeSettlement {
+    pub status: ManagedRuntimeOperationStatus,
+    pub evidence: Option<ManagedRuntimeOperationEvidence>,
+    pub binding: Option<ManagedRuntimeBindingFact>,
+    pub lifecycle: Option<ManagedRuntimeLifecycleStatus>,
+    pub pending_state: ManagedRuntimePendingCommandState,
+    pub captured_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ManagedRuntimeOutboxEntry {
     pub sequence: RuntimeChangeSequence,
     pub operation_id: Option<RuntimeOperationId>,
@@ -57,6 +88,7 @@ pub struct ManagedRuntimeOutboxEntry {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ManagedRuntimeFacts {
     pub projection: Option<ManagedRuntimeSnapshot>,
+    pub binding: Option<ManagedRuntimeBindingFact>,
     pub source_projection: Option<NormalizedAgentProjection>,
     pub source_identities: Option<CompleteAgentRuntimeIdentityMap>,
     pub source_changes: Vec<NormalizedAgentPlatformChange>,
@@ -147,9 +179,11 @@ pub fn validate_managed_runtime_facts(
             || operation_id != &operation.operation.id
             || operation.receipt.thread_id != operation.command.thread_id
             || operation.receipt.status != operation.operation.status
+            || operation.receipt.evidence != operation.operation.evidence
         {
             return invariant("operation identity or thread coordinates are inconsistent");
         }
+        validate_operation_evidence(operation)?;
         if candidate
             .idempotency
             .get(&operation.command.idempotency_key)
@@ -220,7 +254,7 @@ pub fn validate_managed_runtime_facts(
                         .get(&operation.id)
                         .is_none_or(|record| {
                             record.operation.turn_id != operation.turn_id
-                                || !operation_status_can_advance(
+                                || !operation_status_can_reach(
                                     operation.status,
                                     record.operation.status,
                                 )
@@ -266,10 +300,18 @@ pub fn validate_managed_runtime_facts(
             || operation.receipt.thread_id != next.receipt.thread_id
             || operation.receipt.accepted_revision != next.receipt.accepted_revision
             || operation.receipt.duplicate != next.receipt.duplicate
+            || !operation_evidence_can_advance(
+                operation.receipt.evidence.as_ref(),
+                next.receipt.evidence.as_ref(),
+            )
             || operation.operation.id != next.operation.id
             || operation.operation.turn_id != next.operation.turn_id
             || !operation_status_can_advance(operation.receipt.status, next.receipt.status)
             || !operation_status_can_advance(operation.operation.status, next.operation.status)
+            || !operation_evidence_can_advance(
+                operation.operation.evidence.as_ref(),
+                next.operation.evidence.as_ref(),
+            )
         {
             return invariant("operation command, receipt, or status was rewritten");
         }
@@ -339,6 +381,7 @@ fn validate_projection(facts: &ManagedRuntimeFacts) -> Result<(), ManagedRuntime
     let Some(projection) = &facts.projection else {
         if facts.operations.is_empty()
             && facts.source_projection.is_none()
+            && facts.binding.is_none()
             && facts.source_identities.is_none()
             && facts.source_changes.is_empty()
             && facts.idempotency.is_empty()
@@ -350,6 +393,15 @@ fn validate_projection(facts: &ManagedRuntimeFacts) -> Result<(), ManagedRuntime
         }
         return invariant("managed Runtime facts require one authoritative projection");
     };
+    if projection.source_binding.as_ref()
+        != facts
+            .binding
+            .as_ref()
+            .map(|binding| binding.evidence())
+            .as_ref()
+    {
+        return invariant("Runtime projection binding evidence does not match binding authority");
+    }
     for command in ManagedRuntimeCommandKind::ALL {
         let availability = projection
             .command_availability
@@ -429,6 +481,196 @@ fn operation_status_can_advance(
         }
 }
 
+fn operation_status_can_reach(
+    current: ManagedRuntimeOperationStatus,
+    next: ManagedRuntimeOperationStatus,
+) -> bool {
+    operation_status_can_advance(current, next)
+        || current == ManagedRuntimeOperationStatus::Accepted
+            && matches!(
+                next,
+                ManagedRuntimeOperationStatus::Succeeded
+                    | ManagedRuntimeOperationStatus::Interrupted
+            )
+}
+
+fn operation_evidence_can_advance(
+    current: Option<&ManagedRuntimeOperationEvidence>,
+    next: Option<&ManagedRuntimeOperationEvidence>,
+) -> bool {
+    current == next || current.is_none() && next.is_some()
+}
+
+fn validate_operation_evidence(
+    record: &ManagedRuntimeOperationRecord,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    let Some(evidence) = &record.operation.evidence else {
+        return Ok(());
+    };
+    match (&record.command.command, record.operation.status, evidence) {
+        (
+            ManagedRuntimeCommand::Create { initial_context },
+            ManagedRuntimeOperationStatus::Succeeded,
+            ManagedRuntimeOperationEvidence::Create {
+                binding,
+                initial_context: applied,
+            },
+        ) => {
+            validate_binding_evidence(binding, false)?;
+            match (initial_context, applied) {
+                (None, None) => {}
+                (Some(package), Some(applied)) => {
+                    if !package.validate()
+                        || package.package_id != applied.package_id
+                        || package.digest != applied.package_digest
+                        || package.contributions.len() != applied.contributions.len()
+                    {
+                        return invariant(
+                            "Create context evidence does not match its admitted package",
+                        );
+                    }
+                    for contribution in &package.contributions {
+                        let applied = applied
+                            .contributions
+                            .iter()
+                            .find(|applied| applied.contribution_id == contribution.contribution_id)
+                            .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                                reason: "Create context contribution has no exact applied evidence"
+                                    .to_owned(),
+                            })?;
+                        if applied.contribution_digest != contribution.digest {
+                            return invariant(
+                                "Create context contribution digest evidence drifted",
+                            );
+                        }
+                        let (kind, provenance) = match &contribution.content {
+                            agentdash_agent_runtime_contract::ManagedRuntimeInitialContextContributionContent::CompactSummary {
+                                provenance,
+                                ..
+                            } => (
+                                agentdash_agent_runtime_contract::ManagedRuntimeInitialContextContributionKind::CompactSummary,
+                                provenance,
+                            ),
+                            agentdash_agent_runtime_contract::ManagedRuntimeInitialContextContributionContent::WorkflowContext {
+                                provenance,
+                                ..
+                            } => (
+                                agentdash_agent_runtime_contract::ManagedRuntimeInitialContextContributionKind::WorkflowContext,
+                                provenance,
+                            ),
+                            agentdash_agent_runtime_contract::ManagedRuntimeInitialContextContributionContent::ConstraintSet {
+                                provenance,
+                                ..
+                            } => (
+                                agentdash_agent_runtime_contract::ManagedRuntimeInitialContextContributionKind::ConstraintSet,
+                                provenance,
+                            ),
+                        };
+                        if applied.kind != kind
+                            || applied.provenance.authority != provenance.authority
+                            || applied.provenance.source != provenance.source
+                            || applied.provenance.revision != provenance.revision
+                            || applied.provenance.digest != provenance.digest
+                        {
+                            return invariant(
+                                "Create context contribution provenance evidence drifted",
+                            );
+                        }
+                        if let agentdash_agent_runtime_contract::ManagedRuntimeInitialContextAppliedFidelity::CanonicalRendered {
+                            renderer_version,
+                            ..
+                        } = &applied.fidelity
+                            && renderer_version.trim().is_empty()
+                        {
+                            return invariant(
+                                "canonical rendered context evidence requires a renderer version",
+                            );
+                        }
+                    }
+                }
+                _ => return invariant("Create context applied evidence is incomplete"),
+            }
+        }
+        (
+            ManagedRuntimeCommand::Resume,
+            ManagedRuntimeOperationStatus::Succeeded,
+            ManagedRuntimeOperationEvidence::Resume { binding },
+        ) => validate_binding_evidence(binding, false)?,
+        (
+            ManagedRuntimeCommand::Activate,
+            ManagedRuntimeOperationStatus::Succeeded,
+            ManagedRuntimeOperationEvidence::Activate { binding },
+        ) => validate_binding_evidence(binding, true)?,
+        (
+            ManagedRuntimeCommand::Fork {
+                child_thread_id,
+                through_completed_turn_id,
+            },
+            status,
+            ManagedRuntimeOperationEvidence::Fork {
+                parent_binding,
+                progress,
+            },
+        ) => {
+            validate_binding_evidence(parent_binding, true)?;
+            let expected_cutoff = through_completed_turn_id.as_ref().map_or(
+                agentdash_agent_runtime_contract::ManagedRuntimeForkCutoff::Head,
+                |turn_id| {
+                    agentdash_agent_runtime_contract::ManagedRuntimeForkCutoff::CompletedTurn {
+                        turn_id: turn_id.clone(),
+                    }
+                },
+            );
+            match progress {
+                agentdash_agent_runtime_contract::ManagedRuntimeForkProgressEvidence::ChildKnown {
+                    child_thread_id: evidence_child,
+                    cutoff,
+                    ..
+                } => {
+                    if status != ManagedRuntimeOperationStatus::Lost
+                        || evidence_child != child_thread_id
+                        || cutoff != &expected_cutoff
+                    {
+                        return invariant("Fork partial evidence has invalid terminal coordinates");
+                    }
+                }
+                agentdash_agent_runtime_contract::ManagedRuntimeForkProgressEvidence::Provisioned {
+                    child_thread_id: evidence_child,
+                    child_binding,
+                    cutoff,
+                    ..
+                } => {
+                    if status != ManagedRuntimeOperationStatus::Succeeded
+                        || evidence_child != child_thread_id
+                        || cutoff != &expected_cutoff
+                    {
+                        return invariant("Fork provisioned evidence has invalid coordinates");
+                    }
+                    validate_binding_evidence(child_binding, false)?;
+                }
+            }
+        }
+        _ => return invariant("operation evidence does not match its command or terminal status"),
+    }
+    Ok(())
+}
+
+fn validate_binding_evidence(
+    binding: &ManagedRuntimeSourceBindingEvidence,
+    requires_active: bool,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    if binding.committed_at_revision.0 == 0
+        || binding.applied_surface_revision.0 == 0
+        || requires_active && binding.activated_at_revision.is_none()
+        || binding
+            .activated_at_revision
+            .is_some_and(|revision| revision < binding.committed_at_revision)
+    {
+        return invariant("Runtime source binding evidence has invalid revisions");
+    }
+    Ok(())
+}
+
 fn pending_state_can_advance(
     current: ManagedRuntimePendingCommandState,
     next: ManagedRuntimePendingCommandState,
@@ -445,6 +687,7 @@ fn pending_state_can_advance(
                 ManagedRuntimePendingCommandState::Pending
                     | ManagedRuntimePendingCommandState::Delivered
                     | ManagedRuntimePendingCommandState::InspectionRequired
+                    | ManagedRuntimePendingCommandState::Settled
                     | ManagedRuntimePendingCommandState::Lost
             ),
             ManagedRuntimePendingCommandState::Delivered => matches!(
@@ -455,7 +698,8 @@ fn pending_state_can_advance(
             ),
             ManagedRuntimePendingCommandState::InspectionRequired => matches!(
                 next,
-                ManagedRuntimePendingCommandState::Settled
+                ManagedRuntimePendingCommandState::Pending
+                    | ManagedRuntimePendingCommandState::Settled
                     | ManagedRuntimePendingCommandState::Lost
             ),
             ManagedRuntimePendingCommandState::Settled
@@ -469,11 +713,11 @@ fn invariant<T>(reason: &str) -> Result<T, ManagedRuntimeStateStoreError> {
     })
 }
 
-pub struct ManagedRuntimeCoordinator<R> {
+pub struct ManagedRuntimeCoordinator<R: ?Sized> {
     repository: Arc<R>,
 }
 
-impl<R> ManagedRuntimeCoordinator<R>
+impl<R: ?Sized> ManagedRuntimeCoordinator<R>
 where
     R: ManagedRuntimeStateRepository,
 {
@@ -487,7 +731,7 @@ where
         effect_id: AgentEffectIdentity,
         captured_at_ms: u64,
     ) -> Result<ManagedRuntimeOperationReceipt, ManagedRuntimeStateStoreError> {
-        let snapshot = self.repository.load(&command.thread_id).await?;
+        let mut snapshot = self.repository.load(&command.thread_id).await?;
         if let Some(operation_id) = snapshot.facts.idempotency.get(&command.idempotency_key) {
             let operation = snapshot
                 .facts
@@ -501,6 +745,21 @@ where
             receipt.duplicate = true;
             return Ok(receipt);
         }
+        if snapshot.facts.projection.is_none()
+            && matches!(command.command, ManagedRuntimeCommand::Create { .. })
+        {
+            if command.expected_revision.is_some()
+                || snapshot.facts != ManagedRuntimeFacts::default()
+            {
+                return invariant(
+                    "Create requires one empty Runtime thread and no expected revision",
+                );
+            }
+            snapshot.facts.projection = Some(initial_projection(
+                command.thread_id.clone(),
+                captured_at_ms,
+            ));
+        }
         let projection = snapshot.facts.projection.as_ref().ok_or_else(|| {
             ManagedRuntimeStateStoreError::Invariant {
                 reason: "managed Runtime thread has no admitted projection".to_owned(),
@@ -509,7 +768,16 @@ where
         if projection.thread_id != command.thread_id {
             return invariant("command thread does not match the admitted projection");
         }
-        if command.expected_revision != Some(projection.revision) {
+        let expected_revision = if matches!(command.command, ManagedRuntimeCommand::Create { .. }) {
+            command.expected_revision.unwrap_or_default()
+        } else {
+            command
+                .expected_revision
+                .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                    reason: "command requires an expected Runtime revision".to_owned(),
+                })?
+        };
+        if expected_revision != projection.revision {
             return invariant("command expected revision does not match the admitted projection");
         }
         if !matches!(
@@ -638,6 +906,585 @@ where
             })
             .await?;
         Ok(receipt)
+    }
+
+    pub async fn mark_running(
+        &self,
+        thread_id: &RuntimeThreadId,
+        operation_id: &RuntimeOperationId,
+        claim_owner: String,
+        captured_at_ms: u64,
+    ) -> Result<ManagedRuntimeOperationReceipt, ManagedRuntimeStateStoreError> {
+        if claim_owner.trim().is_empty() {
+            return invariant("Runtime dispatch claim owner must not be empty");
+        }
+        let snapshot = self.repository.load(thread_id).await?;
+        let mut facts = snapshot.facts;
+        let record = facts.operations.get(operation_id).ok_or_else(|| {
+            ManagedRuntimeStateStoreError::Invariant {
+                reason: "managed Runtime operation was not found".to_owned(),
+            }
+        })?;
+        if record.operation.status != ManagedRuntimeOperationStatus::Accepted {
+            let receipt = record.receipt.clone();
+            if record.operation.status == ManagedRuntimeOperationStatus::Running
+                && facts
+                    .pending_commands
+                    .get(operation_id)
+                    .is_some_and(|pending| {
+                        pending.state == ManagedRuntimePendingCommandState::Pending
+                    })
+            {
+                let pending = facts
+                    .pending_commands
+                    .get_mut(operation_id)
+                    .expect("pending command was read from the same facts");
+                pending.state = ManagedRuntimePendingCommandState::Claimed;
+                pending.claim_owner = Some(claim_owner);
+                pending.claim_epoch = pending.claim_epoch.checked_add(1).ok_or_else(|| {
+                    ManagedRuntimeStateStoreError::Invariant {
+                        reason: "managed Runtime dispatch claim epoch is exhausted".to_owned(),
+                    }
+                })?;
+                self.repository
+                    .commit(ManagedRuntimeStateCommit {
+                        thread_id: thread_id.clone(),
+                        expected_revision: snapshot.revision,
+                        facts,
+                    })
+                    .await?;
+            }
+            return Ok(receipt);
+        }
+        let record = facts
+            .operations
+            .get_mut(operation_id)
+            .expect("operation was read from the same facts");
+        record.operation.status = ManagedRuntimeOperationStatus::Running;
+        record.receipt.status = ManagedRuntimeOperationStatus::Running;
+        let operation = record.operation.clone();
+        let receipt = record.receipt.clone();
+        let pending = facts
+            .pending_commands
+            .get_mut(operation_id)
+            .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                reason: "managed Runtime pending operation was not found".to_owned(),
+            })?;
+        pending.state = ManagedRuntimePendingCommandState::Claimed;
+        pending.claim_owner = Some(claim_owner);
+        pending.claim_epoch = pending.claim_epoch.checked_add(1).ok_or_else(|| {
+            ManagedRuntimeStateStoreError::Invariant {
+                reason: "managed Runtime dispatch claim epoch is exhausted".to_owned(),
+            }
+        })?;
+        let revision = next_projection_revision(&facts)?;
+        let mut deltas = vec![ManagedRuntimeChangeDelta::OperationUpserted { operation }];
+        let availability = facts
+            .projection
+            .as_ref()
+            .expect("operation facts require a projection")
+            .command_availability
+            .clone();
+        for (command, mut availability) in availability {
+            availability.evidence_mut().decided_at_revision = revision;
+            facts
+                .projection
+                .as_mut()
+                .expect("operation facts require a projection")
+                .command_availability
+                .insert(command, availability.clone());
+            deltas.push(ManagedRuntimeChangeDelta::CommandAvailabilityChanged {
+                command,
+                availability,
+            });
+        }
+        append_runtime_transition(&mut facts, operation_id, captured_at_ms, deltas)?;
+        self.repository
+            .commit(ManagedRuntimeStateCommit {
+                thread_id: thread_id.clone(),
+                expected_revision: snapshot.revision,
+                facts,
+            })
+            .await?;
+        Ok(receipt)
+    }
+
+    pub async fn settle(
+        &self,
+        thread_id: &RuntimeThreadId,
+        operation_id: &RuntimeOperationId,
+        settlement: ManagedRuntimeSettlement,
+    ) -> Result<ManagedRuntimeOperationReceipt, ManagedRuntimeStateStoreError> {
+        let ManagedRuntimeSettlement {
+            status,
+            evidence,
+            binding,
+            lifecycle,
+            pending_state,
+            captured_at_ms,
+        } = settlement;
+        let snapshot = self.repository.load(thread_id).await?;
+        let mut facts = snapshot.facts;
+        let command_kind = facts
+            .operations
+            .get(operation_id)
+            .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                reason: "managed Runtime operation was not found".to_owned(),
+            })?
+            .command
+            .command
+            .kind();
+        {
+            let record = facts
+                .operations
+                .get_mut(operation_id)
+                .expect("operation was read from the same facts");
+            if !operation_status_can_advance(record.operation.status, status) {
+                if record.operation.status == status
+                    && record.operation.evidence.as_ref() == evidence.as_ref()
+                {
+                    return Ok(record.receipt.clone());
+                }
+                return invariant("managed Runtime operation settlement moved backwards");
+            }
+            record.operation.status = status;
+            record.operation.evidence = evidence.clone();
+            record.receipt.status = status;
+            record.receipt.evidence = evidence;
+        }
+        let pending = facts
+            .pending_commands
+            .get_mut(operation_id)
+            .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                reason: "managed Runtime pending operation was not found".to_owned(),
+            })?;
+        pending.state = pending_state;
+        pending.claim_owner = None;
+        if let Some(binding) = binding {
+            facts.binding = Some(binding);
+        }
+        let operation = facts
+            .operations
+            .get(operation_id)
+            .expect("operation exists")
+            .operation
+            .clone();
+        let receipt = facts
+            .operations
+            .get(operation_id)
+            .expect("operation exists")
+            .receipt
+            .clone();
+        let mut deltas = vec![ManagedRuntimeChangeDelta::OperationUpserted { operation }];
+        if facts
+            .binding
+            .as_ref()
+            .map(ManagedRuntimeBindingFact::evidence)
+            != facts
+                .projection
+                .as_ref()
+                .and_then(|projection| projection.source_binding.clone())
+        {
+            deltas.push(ManagedRuntimeChangeDelta::SourceBindingChanged {
+                binding: facts
+                    .binding
+                    .as_ref()
+                    .map(ManagedRuntimeBindingFact::evidence),
+            });
+        }
+        let revision = next_projection_revision(&facts)?;
+        {
+            let projection = facts
+                .projection
+                .as_mut()
+                .expect("operation facts require a projection");
+            projection.source_binding = facts
+                .binding
+                .as_ref()
+                .map(ManagedRuntimeBindingFact::evidence);
+            if let Some(lifecycle) = lifecycle {
+                projection.lifecycle = lifecycle;
+                deltas.push(ManagedRuntimeChangeDelta::RuntimeLifecycleChanged { lifecycle });
+            }
+        }
+        append_settled_availability(
+            &mut facts,
+            operation_id,
+            command_kind,
+            revision,
+            &mut deltas,
+        )?;
+        append_runtime_transition(&mut facts, operation_id, captured_at_ms, deltas)?;
+        self.repository
+            .commit(ManagedRuntimeStateCommit {
+                thread_id: thread_id.clone(),
+                expected_revision: snapshot.revision,
+                facts,
+            })
+            .await?;
+        Ok(receipt)
+    }
+
+    pub async fn reset_for_redispatch(
+        &self,
+        thread_id: &RuntimeThreadId,
+        operation_id: &RuntimeOperationId,
+    ) -> Result<ManagedRuntimeOperationReceipt, ManagedRuntimeStateStoreError> {
+        let snapshot = self.repository.load(thread_id).await?;
+        let mut facts = snapshot.facts;
+        let pending = facts
+            .pending_commands
+            .get_mut(operation_id)
+            .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                reason: "managed Runtime pending operation was not found".to_owned(),
+            })?;
+        if pending.state != ManagedRuntimePendingCommandState::InspectionRequired {
+            return invariant("only a confirmed NotApplied effect can be reset for redispatch");
+        }
+        pending.state = ManagedRuntimePendingCommandState::Pending;
+        pending.claim_owner = None;
+        let receipt = facts
+            .operations
+            .get(operation_id)
+            .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                reason: "managed Runtime operation was not found".to_owned(),
+            })?
+            .receipt
+            .clone();
+        self.repository
+            .commit(ManagedRuntimeStateCommit {
+                thread_id: thread_id.clone(),
+                expected_revision: snapshot.revision,
+                facts,
+            })
+            .await?;
+        Ok(receipt)
+    }
+
+    pub async fn provision_child(
+        &self,
+        child_thread_id: RuntimeThreadId,
+        binding: ManagedRuntimeBindingFact,
+        captured_at_ms: u64,
+    ) -> Result<ManagedRuntimeSnapshot, ManagedRuntimeStateStoreError> {
+        let snapshot = self.repository.load(&child_thread_id).await?;
+        if let Some(projection) = &snapshot.facts.projection {
+            if snapshot.facts.binding.as_ref() == Some(&binding) {
+                return Ok(projection.clone());
+            }
+            return invariant("fork child Runtime thread is already provisioned differently");
+        }
+        if snapshot.facts != ManagedRuntimeFacts::default() {
+            return invariant("fork child Runtime thread contains partial facts");
+        }
+        let mut facts = ManagedRuntimeFacts {
+            projection: Some(initial_projection(child_thread_id.clone(), captured_at_ms)),
+            binding: Some(binding.clone()),
+            ..ManagedRuntimeFacts::default()
+        };
+        let projection = facts
+            .projection
+            .as_mut()
+            .expect("child projection was initialized");
+        projection.revision = RuntimeProjectionRevision(1);
+        projection.source_binding = Some(binding.evidence());
+        projection.command_availability = provisioning_availability(
+            RuntimeProjectionRevision(1),
+            None,
+            Some(binding.evidence().applied_surface_revision),
+        );
+        let mut deltas = vec![ManagedRuntimeChangeDelta::SourceBindingChanged {
+            binding: Some(binding.evidence()),
+        }];
+        for (command, availability) in &projection.command_availability {
+            deltas.push(ManagedRuntimeChangeDelta::CommandAvailabilityChanged {
+                command: *command,
+                availability: availability.clone(),
+            });
+        }
+        let mut sequence = 0_u64;
+        for delta in deltas {
+            sequence = sequence.checked_add(1).ok_or_else(|| {
+                ManagedRuntimeStateStoreError::Invariant {
+                    reason: "fork child change sequence is exhausted".to_owned(),
+                }
+            })?;
+            let change = ManagedRuntimePlatformChange {
+                thread_id: child_thread_id.clone(),
+                sequence: RuntimeChangeSequence(sequence),
+                revision: RuntimeProjectionRevision(1),
+                delta,
+            };
+            facts.changes.push(change.clone());
+            facts.outbox.push(ManagedRuntimeOutboxEntry {
+                sequence: change.sequence,
+                operation_id: None,
+                change,
+            });
+        }
+        facts
+            .projection
+            .as_mut()
+            .expect("child projection exists")
+            .latest_change_sequence = RuntimeChangeSequence(sequence);
+        let committed = self
+            .repository
+            .commit(ManagedRuntimeStateCommit {
+                thread_id: child_thread_id,
+                expected_revision: snapshot.revision,
+                facts,
+            })
+            .await?;
+        committed
+            .facts
+            .projection
+            .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                reason: "committed fork child projection is missing".to_owned(),
+            })
+    }
+}
+
+fn next_projection_revision(
+    facts: &ManagedRuntimeFacts,
+) -> Result<RuntimeProjectionRevision, ManagedRuntimeStateStoreError> {
+    let revision = facts
+        .projection
+        .as_ref()
+        .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+            reason: "managed Runtime projection is missing".to_owned(),
+        })?
+        .revision
+        .0
+        .checked_add(1)
+        .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+            reason: "managed Runtime projection revision is exhausted".to_owned(),
+        })?;
+    Ok(RuntimeProjectionRevision(revision))
+}
+
+fn append_runtime_transition(
+    facts: &mut ManagedRuntimeFacts,
+    operation_id: &RuntimeOperationId,
+    captured_at_ms: u64,
+    deltas: Vec<ManagedRuntimeChangeDelta>,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    let revision = next_projection_revision(facts)?;
+    let projection = facts
+        .projection
+        .as_mut()
+        .expect("projection revision was read from the same facts");
+    projection.revision = revision;
+    projection.captured_at_ms = captured_at_ms;
+    for availability in projection.command_availability.values_mut() {
+        availability.evidence_mut().decided_at_revision = revision;
+    }
+    let mut sequence = projection.latest_change_sequence.0;
+    for delta in deltas {
+        sequence =
+            sequence
+                .checked_add(1)
+                .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                    reason: "managed Runtime change sequence is exhausted".to_owned(),
+                })?;
+        let change = ManagedRuntimePlatformChange {
+            thread_id: projection.thread_id.clone(),
+            sequence: RuntimeChangeSequence(sequence),
+            revision,
+            delta,
+        };
+        facts.changes.push(change.clone());
+        facts.outbox.push(ManagedRuntimeOutboxEntry {
+            sequence: change.sequence,
+            operation_id: Some(operation_id.clone()),
+            change,
+        });
+    }
+    projection.latest_change_sequence = RuntimeChangeSequence(sequence);
+    if let Some(operation) = facts.operations.get(operation_id) {
+        let projected = projection
+            .operations
+            .iter_mut()
+            .find(|projected| projected.id == *operation_id)
+            .expect("operation projection was committed during acceptance");
+        *projected = operation.operation.clone();
+    }
+    Ok(())
+}
+
+fn append_settled_availability(
+    facts: &mut ManagedRuntimeFacts,
+    operation_id: &RuntimeOperationId,
+    _command_kind: ManagedRuntimeCommandKind,
+    revision: RuntimeProjectionRevision,
+    deltas: &mut Vec<ManagedRuntimeChangeDelta>,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    let projection =
+        facts
+            .projection
+            .as_mut()
+            .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
+                reason: "managed Runtime projection is missing".to_owned(),
+            })?;
+    let blocking = facts.operations.values().find_map(|record| {
+        matches!(
+            record.operation.status,
+            ManagedRuntimeOperationStatus::Accepted | ManagedRuntimeOperationStatus::Running
+        )
+        .then(|| record.operation.id.clone())
+    });
+    let applied_surface_revision = facts
+        .binding
+        .as_ref()
+        .map(|binding| binding.evidence().applied_surface_revision);
+    let availability = if blocking.is_some() {
+        ManagedRuntimeCommandKind::ALL
+            .into_iter()
+            .map(|command| {
+                (
+                    command,
+                    ManagedRuntimeCommandAvailability::Unavailable {
+                        reason: ManagedRuntimeUnavailabilityReason::OperationInFlight,
+                        evidence: ManagedRuntimeAvailabilityEvidence {
+                            decided_at_revision: revision,
+                            blocking_operation_id: blocking.clone(),
+                            bound_surface_revision: applied_surface_revision,
+                            applied_surface_revision,
+                        },
+                    },
+                )
+            })
+            .collect()
+    } else if projection.lifecycle == ManagedRuntimeLifecycleStatus::Active {
+        active_availability(
+            revision,
+            projection.active_turn_id.is_some(),
+            !projection.interactions.is_empty(),
+            applied_surface_revision,
+        )
+    } else {
+        provisioning_availability(revision, None, applied_surface_revision)
+    };
+    for (command, availability) in availability {
+        projection
+            .command_availability
+            .insert(command, availability.clone());
+        deltas.push(ManagedRuntimeChangeDelta::CommandAvailabilityChanged {
+            command,
+            availability,
+        });
+    }
+    let _ = operation_id;
+    Ok(())
+}
+
+fn provisioning_availability(
+    revision: RuntimeProjectionRevision,
+    blocking_operation_id: Option<RuntimeOperationId>,
+    applied_surface_revision: Option<SurfaceRevision>,
+) -> BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability> {
+    ManagedRuntimeCommandKind::ALL
+        .into_iter()
+        .map(|command| {
+            let evidence = ManagedRuntimeAvailabilityEvidence {
+                decided_at_revision: revision,
+                blocking_operation_id: blocking_operation_id.clone(),
+                bound_surface_revision: applied_surface_revision,
+                applied_surface_revision,
+            };
+            let availability = if matches!(
+                command,
+                ManagedRuntimeCommandKind::Activate | ManagedRuntimeCommandKind::Resume
+            ) {
+                ManagedRuntimeCommandAvailability::Available { evidence }
+            } else {
+                ManagedRuntimeCommandAvailability::Unavailable {
+                    reason: ManagedRuntimeUnavailabilityReason::RuntimeNotActive,
+                    evidence,
+                }
+            };
+            (command, availability)
+        })
+        .collect()
+}
+
+fn active_availability(
+    revision: RuntimeProjectionRevision,
+    has_active_turn: bool,
+    has_pending_interaction: bool,
+    applied_surface_revision: Option<SurfaceRevision>,
+) -> BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability> {
+    ManagedRuntimeCommandKind::ALL
+        .into_iter()
+        .map(|command| {
+            let evidence = ManagedRuntimeAvailabilityEvidence {
+                decided_at_revision: revision,
+                blocking_operation_id: None,
+                bound_surface_revision: applied_surface_revision,
+                applied_surface_revision,
+            };
+            let available = match command {
+                ManagedRuntimeCommandKind::SubmitInput
+                | ManagedRuntimeCommandKind::RequestCompaction
+                | ManagedRuntimeCommandKind::Close
+                | ManagedRuntimeCommandKind::Fork => true,
+                ManagedRuntimeCommandKind::Steer | ManagedRuntimeCommandKind::Interrupt => {
+                    has_active_turn
+                }
+                ManagedRuntimeCommandKind::ResolveInteraction => has_pending_interaction,
+                ManagedRuntimeCommandKind::Create
+                | ManagedRuntimeCommandKind::Resume
+                | ManagedRuntimeCommandKind::Activate => false,
+            };
+            let availability = if available {
+                ManagedRuntimeCommandAvailability::Available { evidence }
+            } else {
+                ManagedRuntimeCommandAvailability::Unavailable {
+                    reason: ManagedRuntimeUnavailabilityReason::RuntimeNotActive,
+                    evidence,
+                }
+            };
+            (command, availability)
+        })
+        .collect()
+}
+
+fn initial_projection(thread_id: RuntimeThreadId, captured_at_ms: u64) -> ManagedRuntimeSnapshot {
+    let revision = RuntimeProjectionRevision(0);
+    let command_availability = ManagedRuntimeCommandKind::ALL
+        .into_iter()
+        .map(|command| {
+            let evidence = ManagedRuntimeAvailabilityEvidence {
+                decided_at_revision: revision,
+                blocking_operation_id: None,
+                bound_surface_revision: None,
+                applied_surface_revision: None,
+            };
+            let availability = if command == ManagedRuntimeCommandKind::Create {
+                ManagedRuntimeCommandAvailability::Available { evidence }
+            } else {
+                ManagedRuntimeCommandAvailability::Unavailable {
+                    reason: ManagedRuntimeUnavailabilityReason::RuntimeNotActive,
+                    evidence,
+                }
+            };
+            (command, availability)
+        })
+        .collect();
+    ManagedRuntimeSnapshot {
+        thread_id,
+        revision,
+        latest_change_sequence: RuntimeChangeSequence(0),
+        captured_at_ms,
+        lifecycle: ManagedRuntimeLifecycleStatus::Provisioning,
+        active_turn_id: None,
+        turns: Vec::new(),
+        items: Vec::new(),
+        interactions: Vec::new(),
+        operations: Vec::new(),
+        source_binding: None,
+        authority: ManagedRuntimeProjectionAuthority::RuntimeDerived,
+        fidelity: ManagedRuntimeProjectionFidelity::Observed,
+        command_availability,
     }
 }
 

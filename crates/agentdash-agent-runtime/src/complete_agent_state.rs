@@ -943,6 +943,34 @@ impl CompleteAgentRuntimeIdentityMap {
         &self.thread_id
     }
 
+    pub fn source_turn_id(
+        &self,
+        runtime_turn_id: &RuntimeTurnId,
+    ) -> Result<AgentTurnId, CompleteAgentRuntimeProjectionError> {
+        self.turns
+            .iter()
+            .find_map(|(source, runtime)| (runtime == runtime_turn_id).then(|| source.clone()))
+            .ok_or_else(|| CompleteAgentRuntimeProjectionError::MissingIdentity {
+                kind: "Runtime turn",
+                source_identity: runtime_turn_id.to_string(),
+            })
+    }
+
+    pub fn source_interaction_id(
+        &self,
+        runtime_interaction_id: &RuntimeInteractionId,
+    ) -> Result<AgentInteractionId, CompleteAgentRuntimeProjectionError> {
+        self.interactions
+            .iter()
+            .find_map(|(source, identity)| {
+                (&identity.runtime_interaction_id == runtime_interaction_id).then(|| source.clone())
+            })
+            .ok_or_else(|| CompleteAgentRuntimeProjectionError::MissingIdentity {
+                kind: "Runtime interaction",
+                source_identity: runtime_interaction_id.to_string(),
+            })
+    }
+
     pub(crate) fn validate_extension_of(
         &self,
         current: &Self,

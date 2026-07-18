@@ -7,11 +7,12 @@ use ts_rs::TS;
 
 use crate::{
     RuntimeChangeSequence, RuntimeContextContributionId, RuntimeContextPackageId,
-    RuntimeInteractionId, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
-    RuntimeProjectionRevision, RuntimeSourceRef, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
+    RuntimeContextSourceRef, RuntimeContextSourceRevision, RuntimeInteractionId, RuntimeItemId,
+    RuntimeOperationId, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeSourceRef,
+    RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ManagedRuntimeProjectionAuthority {
     SourceAuthoritative,
@@ -158,12 +159,16 @@ pub enum ManagedRuntimeOperationStatus {
     Lost,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub enum ManagedRuntimeInitialContextDeliveryFidelity {
-    Unsupported,
-    CanonicalRendered,
-    TypedNative,
+pub enum ManagedRuntimeInitialContextAppliedFidelity {
+    TypedNative {
+        applied_digest: RuntimePayloadDigest,
+    },
+    CanonicalRendered {
+        renderer_version: String,
+        rendered_digest: RuntimePayloadDigest,
+    },
 }
 
 #[derive(
@@ -182,9 +187,17 @@ pub struct ManagedRuntimeInitialContextContributionEvidence {
     pub contribution_id: RuntimeContextContributionId,
     pub kind: ManagedRuntimeInitialContextContributionKind,
     pub contribution_digest: RuntimePayloadDigest,
-    pub fidelity: ManagedRuntimeInitialContextDeliveryFidelity,
-    pub renderer_version: Option<String>,
-    pub materialized_digest: Option<RuntimePayloadDigest>,
+    pub provenance: ManagedRuntimeAppliedContextProvenance,
+    pub fidelity: ManagedRuntimeInitialContextAppliedFidelity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ManagedRuntimeAppliedContextProvenance {
+    pub authority: crate::ManagedRuntimeContextAuthority,
+    pub source: RuntimeContextSourceRef,
+    pub revision: RuntimeContextSourceRevision,
+    pub digest: RuntimePayloadDigest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -203,10 +216,20 @@ pub enum ManagedRuntimeForkCutoff {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeForkHistoryEvidence {
-    pub cutoff: ManagedRuntimeForkCutoff,
-    pub history_digest: RuntimePayloadDigest,
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ManagedRuntimeForkProgressEvidence {
+    ChildKnown {
+        child_thread_id: RuntimeThreadId,
+        child_source_ref: RuntimeSourceRef,
+        cutoff: ManagedRuntimeForkCutoff,
+        child_history_digest: Option<RuntimePayloadDigest>,
+    },
+    Provisioned {
+        child_thread_id: RuntimeThreadId,
+        child_binding: ManagedRuntimeSourceBindingEvidence,
+        cutoff: ManagedRuntimeForkCutoff,
+        child_history_digest: RuntimePayloadDigest,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -230,9 +253,7 @@ pub enum ManagedRuntimeOperationEvidence {
     },
     Fork {
         parent_binding: ManagedRuntimeSourceBindingEvidence,
-        child_thread_id: RuntimeThreadId,
-        child_binding: ManagedRuntimeSourceBindingEvidence,
-        history: ManagedRuntimeForkHistoryEvidence,
+        progress: ManagedRuntimeForkProgressEvidence,
     },
     Activate {
         binding: ManagedRuntimeSourceBindingEvidence,
@@ -430,6 +451,9 @@ pub enum ManagedRuntimeChangeDelta {
     SourceBindingChanged {
         binding: Option<ManagedRuntimeSourceBindingEvidence>,
     },
+    RuntimeLifecycleChanged {
+        lifecycle: ManagedRuntimeLifecycleStatus,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -587,18 +611,18 @@ mod tests {
                     applied_surface_revision: SurfaceRevision(4),
                     activated_at_revision: Some(RuntimeProjectionRevision(3)),
                 },
-                child_thread_id,
-                child_binding: ManagedRuntimeSourceBindingEvidence {
-                    source_ref: child_source_ref,
-                    committed_at_revision: RuntimeProjectionRevision(8),
-                    applied_surface_revision: SurfaceRevision(9),
-                    activated_at_revision: None,
-                },
-                history: ManagedRuntimeForkHistoryEvidence {
+                progress: ManagedRuntimeForkProgressEvidence::Provisioned {
+                    child_thread_id,
+                    child_binding: ManagedRuntimeSourceBindingEvidence {
+                        source_ref: child_source_ref,
+                        committed_at_revision: RuntimeProjectionRevision(8),
+                        applied_surface_revision: SurfaceRevision(9),
+                        activated_at_revision: None,
+                    },
                     cutoff: ManagedRuntimeForkCutoff::CompletedTurn {
                         turn_id: id("runtime-turn-4", RuntimeTurnId::new),
                     },
-                    history_digest: id("sha256:history", RuntimePayloadDigest::new),
+                    child_history_digest: id("sha256:history", RuntimePayloadDigest::new),
                 },
             }),
         };
@@ -606,7 +630,7 @@ mod tests {
         let json = serde_json::to_value(&operation).expect("serialize operation evidence");
         assert_eq!(json["evidence"]["kind"], "fork");
         assert_eq!(
-            json["evidence"]["history"]["cutoff"]["kind"],
+            json["evidence"]["progress"]["cutoff"]["kind"],
             "completed_turn"
         );
         assert_eq!(

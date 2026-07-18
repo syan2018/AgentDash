@@ -76,6 +76,8 @@ runtime_id!(RuntimeIdempotencyKey);
 runtime_id!(RuntimeSourceRef);
 runtime_id!(RuntimeContextPackageId);
 runtime_id!(RuntimeContextContributionId);
+runtime_id!(RuntimeContextSourceRef);
+runtime_id!(RuntimeContextSourceRevision);
 
 macro_rules! revision {
     ($name:ident) => {

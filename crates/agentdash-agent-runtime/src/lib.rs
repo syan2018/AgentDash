@@ -6,8 +6,12 @@
 
 mod complete_agent_state;
 mod complete_agent_surface;
+mod gateway;
+mod lifecycle;
 mod managed_runtime;
 
 pub use complete_agent_state::*;
 pub use complete_agent_surface::*;
+pub use gateway::*;
+pub use lifecycle::*;
 pub use managed_runtime::*;

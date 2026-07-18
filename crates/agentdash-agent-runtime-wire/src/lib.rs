@@ -59,7 +59,7 @@ pub enum RuntimeWireRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "result", rename_all = "snake_case")]
 pub enum RuntimeWireResponse {
-    RuntimeExecute(RuntimeWireExecuteResult),
+    RuntimeExecute(Box<RuntimeWireExecuteResult>),
     RuntimeRead(RuntimeWireReadResult),
     RuntimeChanges(RuntimeWireChangesResult),
     #[ts(skip)]
@@ -71,7 +71,7 @@ pub enum RuntimeWireResponse {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "status", content = "value", rename_all = "snake_case")]
 pub enum RuntimeWireExecuteResult {
-    Ok(ManagedRuntimeOperationReceipt),
+    Ok(Box<ManagedRuntimeOperationReceipt>),
     Error(ManagedRuntimeGatewayError),
 }
 

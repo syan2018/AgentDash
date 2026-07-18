@@ -36,10 +36,10 @@
 | Task status | `in_progress` |
 | Branch | `codex/agent-runtime-final-convergence-plan` |
 | Planning base | `263b990e` |
-| Current wave | Wave 4 — Activation-ready freeze |
-| Current checkpoint | S4 Product Lane — committed；S5 inputs in progress |
+| Current wave | Wave 5 — S5 staging integration |
+| Current checkpoint | S4 Product Lane — committed；Wave 4 inputs frozen；S5 staging ready |
 | Production path | Current Runtime → Driver Host → Native/Codex driver |
-| Active implementation bundles | Platform Runtime、Dash / Native、External Agents、Product / Protocol activation refresh |
+| Active implementation bundles | Hard Cut W8 shared foundation；Product caller activation reserved |
 | Shared hotspot owner | main dispatcher |
 
 ## Checkpoint ledger
@@ -156,8 +156,76 @@
 - W7 generated activation evidence is frozen under `activation/w7-product-protocol/` as a
   deterministic schemars output plus schema/frontend fixture hashes. Canonical generated artifacts
   and production callers remain unchanged until S5.
+- Wave 4 External Agents activation component is frozen at
+  `ffaf54a7` in `F:\Projects\AgentDash-s5-external-activation`. Independent recheck signed
+  `component_ready: pass`: Codex/Remote no longer own the legacy driver/journal/context-activation
+  path, Codex process initialization has a typed ready boundary, and the exact 20-consumer
+  deletion manifest, Wire/Relay gates and no-lockfile patch all passed.
+- Wave 4 Platform Runtime activation component is frozen at
+  `ed1a7d95aa9c4d10feda5cbed29cdb3c4bad02a7` in
+  `F:\Projects\AgentDash-s5-platform-activation`. Independent recheck signed
+  `component_ready: pass`: the durable Host repository owns service/offer/binding/source/effect/
+  lease facts; redispatch atomically archives the prior attempt state, receipt, surface receipt and
+  inspection; attempt history is continuous and append-only; the W8 manifest freezes the matching
+  schema and transaction constraints.
+- Platform Runtime owner then produced the real legacy-cut activation tip `b078b3ba`, including
+  final public roots, a new Managed Runtime transaction aggregate, immutable placement, the sole
+  Runtime Wire revision 4 and 33 exact cross-owner consumer records. Independent full review
+  rejected this tip before S5: the fact-graph validator can mismatch pending commands and duplicate
+  projection operations; source reconcile and Runtime projection/change are still separate
+  commits; callback idempotency outcomes are process-local; and first ordered-source sync can pair
+  a partial-page cursor with a latest snapshot. Those findings were routed back to the owner before
+  the final tip below.
+- Platform Runtime final activation tip is
+  `30d9a55597e36fc5af0591c420346c3217c1dbae`. Independent review returned
+  `component_ready: pass` after the complete fact graph, source observation causal changes/outbox,
+  single Runtime CAS, durable callback outcome, Host-atomic callback route/tombstone, trusted-cursor
+  rules and concrete source-section delta mapping all passed their mutation and restart tests.
+  Four Platform crates passed 78 locked tests and strict clippy; the committed tip retains the
+  frozen base lock and leaves migration/composition/generated outputs to W8.
+- Wave 4 Dash / Native activation tip
+  `b8b2ba0e0d21691afd45b18f0d9bb95e9ffd6734` passed Core purity, injectable Dash/Native durable
+  stores, exact Tool/Hook callbacks, consumer reduction and direct tests, but independent review
+  found a remaining component blocker: `DashCompleteAgentStore` persists source/surface mutation
+  before its effect receipt. The owner is revising create/fork/apply/revoke into one durable
+  CAS/atomic commit contract and adding receipt-loss crash-gap coverage before recheck.
+- Dash/Native owner subsequently produced `884913d8` + evidence `4822327a`: create/fork/apply/
+  revoke now atomically commit effect evidence with source repository/metadata mutations, execute
+  uses an Accepted reservation and recovery CAS, and Native legacy driver/context/projection/hook/
+  mapping/presentation/tool files are physically deleted. Recheck confirmed the durable gap is
+  closed but found one remaining live-process gap: a committed-but-lost surface response could
+  leave the same service instance's callback materialization stale. That finding and its evidence
+  inconsistencies were routed back to the owner before the final tip below.
+- Dash/Native final activation tip is
+  `6c38dd3de7527859f21e21b28a6b7cb37c7e0f5c` with production code through
+  `ce46985701e40db72a40a6b2e68d69f831f005a6`. Independent review returned
+  `fixed-and-pass / component_ready: pass`: same-instance surface response loss now reconciles live
+  callbacks from durable metadata; Core/Dash/Native locked tests pass against the recorded
+  temporary component lock; the committed tip retains the frozen base lock; Native deletion and
+  W8/session-parity ownership manifests are consistent.
+- Wave 4 Product / Protocol activation tip `92f562f5` passed target Fork/Companion/feed behavior,
+  but independent review found three W7 owner blockers: the prepared Product graph transaction does
+  not yet carry the real Lifecycle/Frame/Lineage rows; initial context remains a parallel contract
+  without a proved canonical service-API mapping; and the six caller manifests are not precise
+  enough to execute the hard cut. The owner is freezing the aggregate transaction payload,
+  lossless mapping tests and per-symbol activation inventory before recheck.
+- Product/Protocol fixes are committed as `7f79e21f`, `66ef2a67` and `a08e871b`. The domain
+  component now carries a complete immutable Product graph transaction payload, CAS/visibility
+  behavior, dev-only canonical context parity and an executable per-symbol caller inventory.
+  Production caller activation remains an explicit S5 sequence dependency: W8 must first provide
+  the frozen AppState repository bindings and canonical Managed Runtime TypeScript outputs, then
+  Product/Protocol receives temporary ownership of the S5 staging caller files to perform the real
+  source switch before W8 completes composition/deletion. No parallel DTO or compatibility shim is
+  permitted.
+- Product/Protocol shared-foundation input is finally signed at
+  `67d9eef5f078dcb10077bbdb2eab1a05d2a33674`. Independent review confirmed the real two-parameter
+  Companion coordinator signature, 78 per-file/per-symbol caller records, exact API/frontend/
+  generated records, canonical context parity, complete Product graph transaction payload and the
+  precise W8-only lock delta. Its status remains intentionally
+  `production_caller_activation_pending_w8_prerequisites`; it is an accepted S5 input, not a claim
+  that production callers have already switched.
 
-## Known blockers
+## S5 entry state
 
 - S2 has no remaining blocker. The current production checkpoint tracers passed:
   AgentRun fork 5、Native fork 1、ordinary first send 1 and reconnect 1.
@@ -166,12 +234,17 @@
 - S4 has no remaining Product blocker. Main integration verified Product target 35、API artifact 3、
   Runtime projection 2、Runtime reconcile 11、frontend feed 5、typecheck、current fork 18、
   ordinary first-send 1、current reconnect 1、contracts check and migration guard.
-- Complete combined `activation_ready` remains a Wave 4 gate. Platform Runtime must add a durable
-  `CompleteAgentHost` repository seam; W8 will implement its PostgreSQL adapter together with the
-  final migration. Dash/Native must refresh the W2 physical component to the S4 frozen revision.
-  Platform and Dash owners must also clear the two remaining `test-support:guard` target repository
-  findings before S5.
-- Product/Application callers、Complete Agent production registration、canonical generated
-  Runtime/Agent contracts、formal repositories/schema and all legacy deletion must be refreshed on
-  the same frozen revision. The detailed owner/hotspot/order inventory is recorded in
-  `research/current-s5-hard-cut-readiness.md`.
+- Wave 4 combined inputs are frozen under `activation/s5-combined/`. The mechanical verification
+  passes for all four exact tips, clean worktrees, common base, zero component lockfile diffs, task
+  artifacts and the sole same-file overlap
+  `crates/agentdash-application-agentrun/Cargo.toml`.
+- Platform Runtime, Dash/Native and External Agents are `component_ready: pass`.
+  Product/Protocol is `shared_foundation_input: pass` with an explicit S5 sequence dependency:
+  W8 first creates the final repository/AppState/generated prerequisites, then the original Product
+  owner performs the real caller switch in the same staging worktree.
+- W8 owns only migration, PostgreSQL adapters, workspace/lockfile, production composition,
+  canonical generation and zero-consumer physical deletion. Domain behavior findings return to
+  Platform, Dash/Native, External or Product owners.
+- There is no remaining Wave 4 blocker. S5 is not a stable checkpoint until component integration,
+  Product caller activation, final deletion/lock generation and both independent cutover checks
+  pass on one staging tip.

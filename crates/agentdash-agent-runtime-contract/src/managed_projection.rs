@@ -276,6 +276,39 @@ pub enum ManagedRuntimeProjectionSection {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ManagedRuntimeSourceProjectionDelta {
+    SnapshotReplaced {
+        lifecycle: ManagedRuntimeLifecycleStatus,
+        active_turn_id: Option<RuntimeTurnId>,
+        turns: Vec<ManagedRuntimeTurn>,
+        items: Vec<ManagedRuntimeItem>,
+        interactions: Vec<ManagedRuntimeInteraction>,
+        authority: ManagedRuntimeProjectionAuthority,
+        fidelity: ManagedRuntimeProjectionFidelity,
+        applied_surface_revision: Option<SurfaceRevision>,
+    },
+    LifecycleChanged {
+        lifecycle: ManagedRuntimeLifecycleStatus,
+    },
+    ActiveTurnChanged {
+        active_turn_id: Option<RuntimeTurnId>,
+    },
+    TurnsChanged {
+        turns: Vec<ManagedRuntimeTurn>,
+    },
+    ItemsChanged {
+        items: Vec<ManagedRuntimeItem>,
+    },
+    InteractionsChanged {
+        interactions: Vec<ManagedRuntimeInteraction>,
+    },
+    SurfaceChanged {
+        applied_surface_revision: Option<SurfaceRevision>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ManagedRuntimeChangeDelta {
     SourceObservationApplied {
         source_change_sequence: u64,
@@ -286,25 +319,13 @@ pub enum ManagedRuntimeChangeDelta {
         source_cursor_digest: Option<RuntimePayloadDigest>,
         changed_sections: BTreeSet<ManagedRuntimeProjectionSection>,
     },
-    SnapshotReplaced {
-        authority: ManagedRuntimeProjectionAuthority,
-        fidelity: ManagedRuntimeProjectionFidelity,
-    },
-    LifecycleChanged {
-        lifecycle: ManagedRuntimeLifecycleStatus,
-    },
-    ActiveTurnChanged {
-        active_turn_id: Option<RuntimeTurnId>,
-    },
-    TurnUpserted {
-        turn: ManagedRuntimeTurn,
-        items: Vec<ManagedRuntimeItem>,
-    },
-    ItemUpserted {
-        item: ManagedRuntimeItem,
-    },
-    InteractionUpserted {
-        interaction: ManagedRuntimeInteraction,
+    SourceProjectionChanged {
+        source_change_sequence: u64,
+        source_projection_revision: RuntimeProjectionRevision,
+        observation_digest: RuntimePayloadDigest,
+        section: ManagedRuntimeProjectionSection,
+        section_digest: RuntimePayloadDigest,
+        delta: ManagedRuntimeSourceProjectionDelta,
     },
     OperationUpserted {
         operation: ManagedRuntimeOperation,

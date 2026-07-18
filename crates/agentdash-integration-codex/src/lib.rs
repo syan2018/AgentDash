@@ -10,7 +10,6 @@ mod registration;
 pub use complete_agent::{
     CODEX_APP_SERVER_PROTOCOL_REVISION, CODEX_INITIAL_CONTEXT_RENDERER_VERSION,
     CodexAppServerObservation, CodexAppServerObservationPage, CodexAppServerTransport,
-    CodexCompleteAgentConfig, CodexCompleteAgentService, CodexCompleteAgentTransportError,
+    CodexCompleteAgentConfig, CodexCompleteAgentTransportError,
 };
-pub use process_transport::CodexProcessTransport;
 pub use registration::CodexCompleteAgentRegistration;

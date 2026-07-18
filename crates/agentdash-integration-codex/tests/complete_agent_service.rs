@@ -20,7 +20,7 @@ use agentdash_agent_service_api::{
 use agentdash_integration_codex::{
     CODEX_INITIAL_CONTEXT_RENDERER_VERSION, CodexAppServerObservation,
     CodexAppServerObservationPage, CodexAppServerTransport, CodexCompleteAgentConfig,
-    CodexCompleteAgentRegistration, CodexCompleteAgentService, CodexCompleteAgentTransportError,
+    CodexCompleteAgentRegistration, CodexCompleteAgentTransportError,
 };
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -33,6 +33,7 @@ struct RecordingTransport {
     observations: Mutex<VecDeque<CodexAppServerObservationPage>>,
     responses_to_server: Mutex<Vec<(Value, Value)>>,
     server_response_results: Mutex<VecDeque<Result<(), CodexCompleteAgentTransportError>>>,
+    notifications: Mutex<Vec<(String, Option<Value>)>>,
 }
 
 impl RecordingTransport {
@@ -101,6 +102,18 @@ impl CodexAppServerTransport for RecordingTransport {
             .unwrap_or(Ok(()))
     }
 
+    async fn notify(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<(), CodexCompleteAgentTransportError> {
+        self.notifications
+            .lock()
+            .await
+            .push((method.to_owned(), params));
+        Ok(())
+    }
+
     async fn observations(
         &self,
         _: &str,
@@ -120,8 +133,18 @@ impl CodexAppServerTransport for RecordingTransport {
     }
 }
 
-fn service(transport: Arc<RecordingTransport>) -> CodexCompleteAgentService {
-    CodexCompleteAgentService::new(
+async fn service(transport: Arc<RecordingTransport>) -> Arc<dyn CompleteAgentService> {
+    transport.responses.lock().await.push_front((
+        "initialize".to_owned(),
+        Ok(json!({
+            "userAgent": "codex-test",
+            "codexHome": std::env::current_dir().expect("cwd"),
+            "platformFamily": "windows",
+            "platformOs": "windows"
+        })),
+    ));
+    let registration = CodexCompleteAgentRegistration::new(
+        AgentServiceInstanceId::new("codex-test-instance").expect("instance"),
         CodexCompleteAgentConfig {
             definition_id: AgentServiceDefinitionId::new("codex").expect("definition"),
             title: "Codex".to_owned(),
@@ -132,13 +155,28 @@ fn service(transport: Arc<RecordingTransport>) -> CodexCompleteAgentService {
             developer_instructions: Some("developer".to_owned()),
             runtime_workspace_roots: vec![std::env::current_dir().expect("root")],
         },
-        transport,
+        transport.clone(),
     )
-    .expect("service")
+    .await
+    .expect("registration");
+    transport.requests.lock().await.clear();
+    registration.service()
 }
 
 #[tokio::test]
 async fn registration_exposes_one_complete_agent_instance_without_driver_contribution() {
+    let transport = Arc::new(RecordingTransport::default());
+    transport
+        .push_response(
+            "initialize",
+            json!({
+                "userAgent": "codex-test",
+                "codexHome": std::env::current_dir().expect("cwd"),
+                "platformFamily": "windows",
+                "platformOs": "windows"
+            }),
+        )
+        .await;
     let registration = CodexCompleteAgentRegistration::new(
         AgentServiceInstanceId::new("codex-instance").expect("instance"),
         CodexCompleteAgentConfig {
@@ -151,10 +189,16 @@ async fn registration_exposes_one_complete_agent_instance_without_driver_contrib
             developer_instructions: None,
             runtime_workspace_roots: vec![std::env::current_dir().expect("root")],
         },
-        Arc::new(RecordingTransport::default()),
+        transport.clone(),
     )
+    .await
     .expect("registration");
 
+    assert_eq!(transport.methods().await, vec!["initialize"]);
+    assert_eq!(
+        transport.notifications.lock().await.as_slice(),
+        &[("initialized".to_owned(), None)]
+    );
     assert_eq!(registration.instance_id().as_str(), "codex-instance");
     let (instance_id, service) = registration.into_parts();
     assert_eq!(instance_id.as_str(), "codex-instance");
@@ -205,7 +249,7 @@ fn initial_package() -> InitialAgentContextPackage {
 }
 
 async fn immutable_surface_command(
-    service: &CodexCompleteAgentService,
+    service: &dyn CompleteAgentService,
     source: AgentSourceCoordinate,
     id: &str,
 ) -> agentdash_agent_service_api::ApplyBoundAgentSurface {
@@ -246,7 +290,7 @@ async fn immutable_surface_command(
 }
 
 async fn create_source(
-    service: &CodexCompleteAgentService,
+    service: &dyn CompleteAgentService,
     transport: &RecordingTransport,
 ) -> AgentSourceCoordinate {
     transport
@@ -265,7 +309,7 @@ async fn create_source(
 
 #[tokio::test]
 async fn descriptor_is_truthful_about_codex_context_change_and_surface_boundaries() {
-    let service = service(Arc::new(RecordingTransport::default()));
+    let service = service(Arc::new(RecordingTransport::default())).await;
     let descriptor = service.describe().await.expect("descriptor");
 
     assert_eq!(
@@ -306,7 +350,7 @@ async fn create_installs_initial_package_as_rendered_configuration_before_first_
     transport
         .push_response("thread/start", json!({"thread": {"id": "thread-1"}}))
         .await;
-    let service = service(transport.clone());
+    let service = service(transport.clone()).await;
     let package = initial_package();
 
     let receipt = service
@@ -362,8 +406,8 @@ async fn create_installs_initial_package_as_rendered_configuration_before_first_
 #[tokio::test]
 async fn completed_turn_fork_uses_last_turn_id_and_verifies_the_child_with_thread_read() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .push_response("thread/fork", json!({"thread": {"id": "thread-child"}}))
         .await;
@@ -403,8 +447,8 @@ async fn completed_turn_fork_uses_last_turn_id_and_verifies_the_child_with_threa
 #[tokio::test]
 async fn fork_child_verification_mismatch_becomes_unknown_and_is_not_retried() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .push_response("thread/fork", json!({"thread": {"id": "thread-child"}}))
         .await;
@@ -444,8 +488,8 @@ async fn fork_child_verification_mismatch_becomes_unknown_and_is_not_retried() {
 #[tokio::test]
 async fn snapshot_is_observed_and_live_gap_requires_thread_read_reconciliation() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .push_response(
             "thread/read",
@@ -505,8 +549,8 @@ async fn snapshot_is_observed_and_live_gap_requires_thread_read_reconciliation()
 #[tokio::test]
 async fn live_server_request_maps_to_interaction_and_resolves_through_the_same_rpc_request() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .observations
         .lock()
@@ -580,7 +624,7 @@ async fn live_server_request_maps_to_interaction_and_resolves_through_the_same_r
 #[tokio::test]
 async fn historical_snapshot_revision_is_rejected_before_app_server_read() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
+    let service = service(transport.clone()).await;
     let error = service
         .read(AgentReadQuery {
             source: AgentSourceCoordinate::new("thread-1").expect("source"),
@@ -596,8 +640,8 @@ async fn historical_snapshot_revision_is_rejected_before_app_server_read() {
 #[tokio::test]
 async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agent_surface() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
 
     transport
         .push_response("thread/resume", json!({"thread": {"id": "thread-parent"}}))
@@ -726,8 +770,8 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
 #[tokio::test]
 async fn apply_surface_rejects_unadvertised_dynamic_tools_before_side_effect() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     let descriptor = service.describe().await.expect("descriptor");
     let payload_digest = AgentPayloadDigest::new("sha256:tool").expect("digest");
     let command = agentdash_agent_service_api::ApplyBoundAgentSurface {
@@ -784,7 +828,7 @@ async fn unknown_create_outcome_is_inspectable_and_never_retried_with_same_effec
             CodexCompleteAgentTransportError::unavailable("response lost", true),
         )
         .await;
-    let service = service(transport.clone());
+    let service = service(transport.clone()).await;
     let command = CreateAgentCommand {
         meta: meta("unknown"),
         requested_source: None,
@@ -812,7 +856,7 @@ async fn malformed_create_and_fork_success_payloads_settle_unknown_without_retry
     create_transport
         .push_response("thread/start", json!({}))
         .await;
-    let create_service = service(create_transport.clone());
+    let create_service = service(create_transport.clone()).await;
     let create = CreateAgentCommand {
         meta: meta("malformed-create"),
         requested_source: None,
@@ -840,8 +884,8 @@ async fn malformed_create_and_fork_success_payloads_settle_unknown_without_retry
     assert_eq!(create_transport.methods().await, vec!["thread/start"]);
 
     let fork_transport = Arc::new(RecordingTransport::default());
-    let fork_service = service(fork_transport.clone());
-    let parent = create_source(&fork_service, &fork_transport).await;
+    let fork_service = service(fork_transport.clone()).await;
+    let parent = create_source(fork_service.as_ref(), &fork_transport).await;
     fork_transport.push_response("thread/fork", json!({})).await;
     let fork = ForkAgentCommand {
         meta: meta("malformed-fork"),
@@ -877,9 +921,10 @@ async fn malformed_create_and_fork_success_payloads_settle_unknown_without_retry
 #[tokio::test]
 async fn malformed_surface_apply_and_revoke_settle_unknown_without_retry() {
     let apply_transport = Arc::new(RecordingTransport::default());
-    let apply_service = service(apply_transport.clone());
-    let apply_source = create_source(&apply_service, &apply_transport).await;
-    let apply = immutable_surface_command(&apply_service, apply_source, "malformed-apply").await;
+    let apply_service = service(apply_transport.clone()).await;
+    let apply_source = create_source(apply_service.as_ref(), &apply_transport).await;
+    let apply =
+        immutable_surface_command(apply_service.as_ref(), apply_source, "malformed-apply").await;
     let apply_effect = apply.effect_id.clone();
     apply_transport
         .push_response("thread/resume", json!({}))
@@ -908,10 +953,14 @@ async fn malformed_surface_apply_and_revoke_settle_unknown_without_retry() {
     );
 
     let revoke_transport = Arc::new(RecordingTransport::default());
-    let revoke_service = service(revoke_transport.clone());
-    let revoke_source = create_source(&revoke_service, &revoke_transport).await;
-    let apply =
-        immutable_surface_command(&revoke_service, revoke_source.clone(), "before-revoke").await;
+    let revoke_service = service(revoke_transport.clone()).await;
+    let revoke_source = create_source(revoke_service.as_ref(), &revoke_transport).await;
+    let apply = immutable_surface_command(
+        revoke_service.as_ref(),
+        revoke_source.clone(),
+        "before-revoke",
+    )
+    .await;
     revoke_transport
         .push_response("thread/resume", json!({"thread": {"id": "thread-parent"}}))
         .await;
@@ -958,8 +1007,8 @@ async fn malformed_surface_apply_and_revoke_settle_unknown_without_retry() {
 #[tokio::test]
 async fn unknown_interaction_response_outcome_enters_effect_ledger_and_is_not_retried() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .observations
         .lock()
@@ -1024,8 +1073,8 @@ async fn unknown_interaction_response_outcome_enters_effect_ledger_and_is_not_re
 #[tokio::test]
 async fn missing_and_unknown_vendor_statuses_never_project_as_terminal() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .push_response(
             "thread/read",

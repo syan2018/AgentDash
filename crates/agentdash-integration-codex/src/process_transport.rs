@@ -13,8 +13,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin},
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
+    process::Child,
     sync::{Mutex, RwLock, oneshot},
 };
 
@@ -27,6 +27,8 @@ const CODEX_APP_SERVER_PACKAGE: &str = "@openai/codex@0.144.1";
 const OBSERVATION_RETENTION: usize = 4096;
 
 type PendingResponse = oneshot::Sender<Result<Value, CodexCompleteAgentTransportError>>;
+type ProcessInput = Box<dyn AsyncWrite + Unpin + Send>;
+type ProcessOutput = Box<dyn AsyncRead + Unpin + Send>;
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -87,8 +89,8 @@ struct ObservationState {
 /// remains authoritative; a tail gap is reported so the Complete Agent service reconciles through
 /// `thread/read`.
 pub struct CodexProcessTransport {
-    _child: Mutex<Child>,
-    stdin: Mutex<ChildStdin>,
+    _child: Option<Mutex<Child>>,
+    stdin: Mutex<ProcessInput>,
     next_request_id: AtomicI64,
     next_observation_sequence: AtomicU64,
     pending: Mutex<BTreeMap<i64, PendingResponse>>,
@@ -96,7 +98,7 @@ pub struct CodexProcessTransport {
 }
 
 impl CodexProcessTransport {
-    pub fn spawn(cwd: &Path) -> Result<Arc<Self>, CodexCompleteAgentTransportError> {
+    pub(crate) fn spawn(cwd: &Path) -> Result<Arc<Self>, CodexCompleteAgentTransportError> {
         if !cwd.is_absolute() {
             return Err(CodexCompleteAgentTransportError::protocol(
                 "Codex process cwd must be absolute",
@@ -131,15 +133,23 @@ impl CodexProcessTransport {
                 false,
             )
         })?;
+        Ok(Self::from_io(
+            Some(child),
+            Box::new(stdin),
+            Box::new(stdout),
+        ))
+    }
+
+    fn from_io(child: Option<Child>, stdin: ProcessInput, stdout: ProcessOutput) -> Arc<Self> {
         let transport = Arc::new(Self {
-            _child: Mutex::new(child),
+            _child: child.map(Mutex::new),
             stdin: Mutex::new(stdin),
             next_request_id: AtomicI64::new(1),
             next_observation_sequence: AtomicU64::new(1),
             pending: Mutex::new(BTreeMap::new()),
             observations: RwLock::new(ObservationState::default()),
         });
-        let pump = transport.clone();
+        let pump = Arc::downgrade(&transport);
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             loop {
@@ -158,16 +168,19 @@ impl CodexProcessTransport {
                         true,
                     )),
                 };
+                let Some(transport) = pump.upgrade() else {
+                    break;
+                };
                 match inbound {
-                    Ok(frame) => pump.handle_inbound(frame).await,
+                    Ok(frame) => transport.handle_inbound(frame).await,
                     Err(error) => {
-                        pump.disconnect(error).await;
+                        transport.disconnect(error).await;
                         break;
                     }
                 }
             }
         });
-        Ok(transport)
+        transport
     }
 
     async fn handle_inbound(&self, inbound: RpcInbound) {
@@ -297,6 +310,19 @@ impl CodexAppServerTransport for CodexProcessTransport {
             .await
     }
 
+    async fn notify(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<(), CodexCompleteAgentTransportError> {
+        let mut notification =
+            serde_json::Map::from_iter([("method".to_owned(), Value::String(method.to_owned()))]);
+        if let Some(params) = params {
+            notification.insert("params".to_owned(), params);
+        }
+        self.write(Value::Object(notification)).await
+    }
+
     async fn observations(
         &self,
         source_thread_id: &str,
@@ -344,6 +370,206 @@ fn source_thread_id(params: &Value) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    use agentdash_agent_service_api::{
+        AgentServiceDefinitionId, AgentServiceErrorCode, AgentServiceInstanceId,
+    };
+    use tokio::io::{AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
+
+    use crate::{CodexCompleteAgentConfig, CodexCompleteAgentRegistration};
+
+    fn config() -> CodexCompleteAgentConfig {
+        let cwd = std::env::current_dir().expect("cwd");
+        CodexCompleteAgentConfig {
+            definition_id: AgentServiceDefinitionId::new("codex").expect("definition"),
+            title: "Codex".to_owned(),
+            cwd: cwd.clone(),
+            model: None,
+            model_provider: None,
+            base_instructions: None,
+            developer_instructions: None,
+            runtime_workspace_roots: vec![cwd],
+        }
+    }
+
+    fn fixture() -> (
+        Arc<CodexProcessTransport>,
+        tokio::io::Lines<BufReader<ReadHalf<DuplexStream>>>,
+        WriteHalf<DuplexStream>,
+    ) {
+        let (client, server) = tokio::io::duplex(16 * 1024);
+        let (client_read, client_write) = tokio::io::split(client);
+        let (server_read, server_write) = tokio::io::split(server);
+        (
+            CodexProcessTransport::from_io(None, Box::new(client_write), Box::new(client_read)),
+            BufReader::new(server_read).lines(),
+            server_write,
+        )
+    }
+
+    async fn write_frame(writer: &mut WriteHalf<DuplexStream>, frame: Value) {
+        let mut bytes = serde_json::to_vec(&frame).expect("encode frame");
+        bytes.push(b'\n');
+        writer.write_all(&bytes).await.expect("write frame");
+    }
+
+    fn valid_initialize_response(id: Value) -> Value {
+        json!({
+            "id": id,
+            "result": {
+                "userAgent": "codex-test",
+                "codexHome": std::env::current_dir().expect("cwd"),
+                "platformFamily": "windows",
+                "platformOs": "windows"
+            }
+        })
+    }
+
+    async fn next_frame(lines: &mut tokio::io::Lines<BufReader<ReadHalf<DuplexStream>>>) -> Value {
+        let line = lines.next_line().await.expect("read frame").expect("frame");
+        serde_json::from_str(&line).expect("decode frame")
+    }
+
+    async fn assert_no_frame(lines: &mut tokio::io::Lines<BufReader<ReadHalf<DuplexStream>>>) {
+        match tokio::time::timeout(Duration::from_millis(30), lines.next_line()).await {
+            Err(_) | Ok(Ok(None)) => {}
+            Ok(Ok(Some(line))) => panic!("unexpected frame after failed initialize: {line}"),
+            Ok(Err(error)) => panic!("failed while checking frame absence: {error}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn registration_orders_initialize_initialized_then_first_thread_method() {
+        let (transport, mut lines, mut writer) = fixture();
+        let registration = tokio::spawn(CodexCompleteAgentRegistration::new(
+            AgentServiceInstanceId::new("codex-instance").expect("instance"),
+            config(),
+            transport.clone(),
+        ));
+
+        let initialize = next_frame(&mut lines).await;
+        assert_eq!(initialize["method"], "initialize");
+        assert_eq!(initialize["params"]["clientInfo"]["name"], "agentdash");
+        assert_eq!(initialize["params"]["clientInfo"]["title"], "AgentDash");
+        assert_eq!(
+            initialize["params"]["clientInfo"]["version"],
+            env!("CARGO_PKG_VERSION")
+        );
+        assert_eq!(
+            initialize["params"]["capabilities"],
+            json!({
+                "experimentalApi": true,
+                "requestAttestation": false,
+                "optOutNotificationMethods": null
+            })
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), lines.next_line())
+                .await
+                .is_err(),
+            "initialized must wait for a valid initialize response"
+        );
+
+        write_frame(
+            &mut writer,
+            valid_initialize_response(initialize["id"].clone()),
+        )
+        .await;
+        let initialized = next_frame(&mut lines).await;
+        assert_eq!(initialized, json!({ "method": "initialized" }));
+        registration
+            .await
+            .expect("registration task")
+            .expect("ready registration");
+
+        let first_thread = {
+            let transport = transport.clone();
+            tokio::spawn(async move {
+                transport
+                    .request("thread/read", json!({ "threadId": "thread-1" }))
+                    .await
+            })
+        };
+        let thread_read = next_frame(&mut lines).await;
+        assert_eq!(thread_read["method"], "thread/read");
+        write_frame(
+            &mut writer,
+            json!({ "id": thread_read["id"].clone(), "result": {} }),
+        )
+        .await;
+        first_thread
+            .await
+            .expect("thread task")
+            .expect("thread response");
+    }
+
+    #[tokio::test]
+    async fn initialize_error_rejects_registration_without_thread_command() {
+        let (transport, mut lines, mut writer) = fixture();
+        let registration = tokio::spawn(CodexCompleteAgentRegistration::new(
+            AgentServiceInstanceId::new("codex-instance").expect("instance"),
+            config(),
+            transport,
+        ));
+        let initialize = next_frame(&mut lines).await;
+        write_frame(
+            &mut writer,
+            json!({
+                "id": initialize["id"].clone(),
+                "error": { "code": -32602, "message": "invalid client" }
+            }),
+        )
+        .await;
+        let error = match registration.await.expect("registration task") {
+            Ok(_) => panic!("initialize error must reject registration"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+        assert_no_frame(&mut lines).await;
+    }
+
+    #[tokio::test]
+    async fn initialize_eof_rejects_registration_without_thread_command() {
+        let (transport, mut lines, mut writer) = fixture();
+        let registration = tokio::spawn(CodexCompleteAgentRegistration::new(
+            AgentServiceInstanceId::new("codex-instance").expect("instance"),
+            config(),
+            transport,
+        ));
+        let initialize = next_frame(&mut lines).await;
+        assert_eq!(initialize["method"], "initialize");
+        writer.shutdown().await.expect("shutdown server output");
+        drop(writer);
+        let error = match registration.await.expect("registration task") {
+            Ok(_) => panic!("initialize EOF must reject registration"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, AgentServiceErrorCode::Unavailable);
+        assert_no_frame(&mut lines).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_initialize_response_rejects_registration_without_initialized_or_thread() {
+        let (transport, mut lines, mut writer) = fixture();
+        let registration = tokio::spawn(CodexCompleteAgentRegistration::new(
+            AgentServiceInstanceId::new("codex-instance").expect("instance"),
+            config(),
+            transport,
+        ));
+        let initialize = next_frame(&mut lines).await;
+        write_frame(
+            &mut writer,
+            json!({ "id": initialize["id"].clone(), "result": { "capabilities": {} } }),
+        )
+        .await;
+        let error = match registration.await.expect("registration task") {
+            Ok(_) => panic!("invalid initialize response must reject registration"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+        assert_no_frame(&mut lines).await;
+    }
 
     #[test]
     fn source_thread_identity_is_read_without_vendor_dto_leakage() {

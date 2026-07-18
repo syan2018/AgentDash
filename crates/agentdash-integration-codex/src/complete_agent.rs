@@ -106,6 +106,12 @@ pub trait CodexAppServerTransport: Send + Sync {
         result: Value,
     ) -> Result<(), CodexCompleteAgentTransportError>;
 
+    async fn notify(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<(), CodexCompleteAgentTransportError>;
+
     async fn observations(
         &self,
         source_thread_id: &str,
@@ -184,7 +190,7 @@ pub struct CodexCompleteAgentService {
 }
 
 impl CodexCompleteAgentService {
-    pub fn new(
+    pub(crate) fn new(
         config: CodexCompleteAgentConfig,
         transport: Arc<dyn CodexAppServerTransport>,
     ) -> Result<Self, AgentServiceError> {

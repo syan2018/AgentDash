@@ -17,10 +17,12 @@ transaction。admission 读取已提交 projection revision 与 command availabi
 CAS 原子写入 operation、idempotency、pending effect intent、projection、typed change
 与 outbox。外部 Complete Agent 调用只能发生在该 durable intent 提交之后。
 
-`CompleteAgentStateRepository` 保存 source-normalized projection 与 source change
-reconcile 证据。W8 的 PostgreSQL adapter 必须在最终 Runtime schema 中同时实现它和
-`ManagedRuntimeStateRepository`，并把 source reconcile 产生的 Managed Runtime
-projection/change 纳入 Runtime transaction。
+source-normalized projection、source identity mapping、source change，以及由该 observation
+导出的 Managed Runtime projection/change/outbox 都属于同一个
+`ManagedRuntimeStateCommit`。normalize/project 只准备候选事实，不存在独立 source
+repository 提交。CAS 或持久化失败时整组事实均不推进。只有已提交的可信 cursor 才能
+消费连续有序 change page；首次同步、断档或 partial page 都回到 snapshot authority，
+而 snapshot contract 尚未提供可信 cursor 时将 `source_cursor` 保持为 `null`。
 
 ## Host durable authority
 
@@ -34,14 +36,21 @@ binding、source coordinate、generation、effect、inspection、lease 与 lease
 与 lease fence，再原子推进 revision。exact committed fact graph replay 幂等返回；不同
 graph 的 stale revision 返回 typed conflict。
 
+`CompleteAgentCallbackRepository` 是 reverse callback route、reservation 与 outcome 的
+Host-owned 持久化端口。route 注册/撤销必须和对应 Host binding/surface transition 共用
+数据库事务；每次 Tool/Hook 在调用 platform handler 前先 CAS 写入 `Pending` reservation，
+随后用第二次 CAS 结算 typed outcome。进程重启后 `Settled` 精确 replay，
+`Pending`、`InspectionRequired` 与 `Unknown` 都禁止自动重执行，只能通过公开 inspect
+与显式 reconcile/settle 收敛。
+
 ## S5 集成顺序
 
 1. 应用本 Platform Runtime activation component。
 2. 应用 W2 Dash/Core 与 Native Complete Agent activation。
 3. 应用 W6 Codex/Remote Complete Agent activation。
 4. 应用 W7 Product/Protocol Managed Runtime callers。
-5. 由 W8 增加唯一 migration、PostgreSQL repositories、root Cargo/lock 和 production
-   composition。
+5. 由 W8 增加唯一 migration、PostgreSQL Runtime/Host/callback repositories、root
+   Cargo/lock 和 production composition。
 6. 只运行一次 canonical generators。
 7. 按 manifest 执行 33 个 consumer、legacy negative search 与 full-workspace gates。
 

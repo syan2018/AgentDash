@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use agentdash_agent_runtime_contract::{
     ManagedRuntimeAvailabilityEvidence, ManagedRuntimeChangeDelta,
@@ -187,6 +190,16 @@ pub fn validate_managed_runtime_facts(
     if candidate.outbox.len() != candidate.changes.len() {
         return invariant("every Runtime change must have exactly one outbox entry");
     }
+    let operation_change_revisions = candidate
+        .changes
+        .iter()
+        .filter_map(|change| match &change.delta {
+            ManagedRuntimeChangeDelta::OperationUpserted { operation } => {
+                Some((operation.id.clone(), change.revision))
+            }
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
     let mut last_changed_operations = BTreeMap::new();
     for (entry, change) in candidate.outbox.iter().zip(&candidate.changes) {
         if entry.sequence.0 == 0
@@ -199,28 +212,41 @@ pub fn validate_managed_runtime_facts(
         {
             return invariant("Runtime outbox sequence or operation coordinates are invalid");
         }
-        if let ManagedRuntimeChangeDelta::OperationUpserted { operation } = &entry.change.delta {
-            if entry.operation_id.as_ref() != Some(&operation.id)
-                || candidate
-                    .operations
-                    .get(&operation.id)
-                    .is_none_or(|record| {
-                        record.operation.turn_id != operation.turn_id
-                            || !operation_status_can_advance(
-                                operation.status,
-                                record.operation.status,
-                            )
-                    })
-            {
-                return invariant("operation change outbox does not match operation authority");
+        match &entry.change.delta {
+            ManagedRuntimeChangeDelta::OperationUpserted { operation } => {
+                if entry.operation_id.as_ref() != Some(&operation.id)
+                    || candidate
+                        .operations
+                        .get(&operation.id)
+                        .is_none_or(|record| {
+                            record.operation.turn_id != operation.turn_id
+                                || !operation_status_can_advance(
+                                    operation.status,
+                                    record.operation.status,
+                                )
+                        })
+                {
+                    return invariant("operation change outbox does not match operation authority");
+                }
+                if let Some(previous) =
+                    last_changed_operations.insert(operation.id.clone(), operation.clone())
+                    && (previous.turn_id != operation.turn_id
+                        || !operation_status_can_advance(previous.status, operation.status))
+                {
+                    return invariant(
+                        "operation change history moved backwards or changed payload",
+                    );
+                }
             }
-            if let Some(previous) =
-                last_changed_operations.insert(operation.id.clone(), operation.clone())
-                && (previous.turn_id != operation.turn_id
-                    || !operation_status_can_advance(previous.status, operation.status))
+            _ if entry.operation_id.as_ref().is_some_and(|operation_id| {
+                !operation_change_revisions.contains(&(operation_id.clone(), change.revision))
+            }) =>
             {
-                return invariant("operation change history moved backwards or changed payload");
+                return invariant(
+                    "Runtime change operation association has no same-revision operation fact",
+                );
             }
+            _ => {}
         }
     }
     for (operation_id, record) in &candidate.operations {
@@ -274,6 +300,26 @@ pub fn validate_managed_runtime_facts(
     }
     if !candidate.changes.starts_with(&current.changes) {
         return invariant("Runtime change history is append-only");
+    }
+    let appended_changes = &candidate.changes[current.changes.len()..];
+    if !appended_changes.is_empty() {
+        let current_revision = current
+            .projection
+            .as_ref()
+            .map_or(0, |projection| projection.revision.0);
+        let candidate_revision = candidate
+            .projection
+            .as_ref()
+            .map_or(0, |projection| projection.revision.0);
+        if candidate_revision <= current_revision
+            || appended_changes
+                .iter()
+                .any(|change| change.revision.0 != candidate_revision)
+        {
+            return invariant(
+                "new Runtime changes must share one strictly advanced projection revision",
+            );
+        }
     }
     match (&current.projection, &candidate.projection) {
         (Some(current), Some(candidate))
@@ -924,5 +970,39 @@ mod tests {
         });
 
         validate_managed_runtime_facts(&current, &candidate).expect("exact monotonic transition");
+    }
+
+    #[test]
+    fn facts_reject_change_outbox_operation_misassociation() {
+        let current = operation_facts();
+        let operation_id = command().operation_id;
+        let mut candidate = current.clone();
+        let projection = candidate.projection.as_mut().expect("projection");
+        projection.revision = RuntimeProjectionRevision(8);
+        for availability in projection.command_availability.values_mut() {
+            availability.evidence_mut().decided_at_revision = RuntimeProjectionRevision(8);
+        }
+        projection.latest_change_sequence = RuntimeChangeSequence(2);
+        let change = ManagedRuntimePlatformChange {
+            thread_id: projection.thread_id.clone(),
+            sequence: RuntimeChangeSequence(2),
+            revision: RuntimeProjectionRevision(8),
+            delta: ManagedRuntimeChangeDelta::CommandAvailabilityChanged {
+                command: ManagedRuntimeCommandKind::Close,
+                availability: projection
+                    .command_availability
+                    .get(&ManagedRuntimeCommandKind::Close)
+                    .expect("availability")
+                    .clone(),
+            },
+        };
+        candidate.changes.push(change.clone());
+        candidate.outbox.push(ManagedRuntimeOutboxEntry {
+            sequence: change.sequence,
+            operation_id: Some(operation_id),
+            change,
+        });
+
+        assert!(validate_managed_runtime_facts(&current, &candidate).is_err());
     }
 }

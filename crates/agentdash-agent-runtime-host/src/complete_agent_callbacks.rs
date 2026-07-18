@@ -157,12 +157,11 @@ pub enum CompleteAgentCallbackStoreError {
     Persistence { reason: String },
 }
 
-/// Host-owned durability boundary for reverse callback routes, reservations, and outcomes.
+/// Host 持有的反向回调路由、reservation 与 outcome 持久化边界。
 ///
-/// A production adapter must persist route registration or revocation in the same database
-/// transaction as the corresponding Host binding/surface transition. Callback reservation and
-/// outcome transitions form their own CAS aggregate: the reservation commit must become durable
-/// before the platform handler is invoked.
+/// 生产 adapter 必须把路由注册或撤销与对应的 Host binding/surface 状态转换放进同一个
+/// 数据库事务。回调 reservation 与 outcome 转换形成独立 CAS 聚合；调用平台 handler
+/// 之前必须先持久化 reservation。
 #[async_trait]
 pub trait CompleteAgentCallbackRepository: Send + Sync {
     async fn load(&self) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError>;

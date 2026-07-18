@@ -73,12 +73,12 @@ impl CompleteAgentServiceRegistry for FixtureServiceRegistry {
 }
 
 #[derive(Default)]
-struct FixtureCompleteAgentStateRepository {
+struct FixtureManagedRuntimeStateRepository {
     snapshot: Mutex<ManagedRuntimeStateSnapshot>,
 }
 
 #[async_trait]
-impl ManagedRuntimeStateRepository for FixtureCompleteAgentStateRepository {
+impl ManagedRuntimeStateRepository for FixtureManagedRuntimeStateRepository {
     async fn load(
         &self,
         _thread_id: &RuntimeThreadId,
@@ -221,7 +221,7 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         AgentReceiptState::AlreadyApplied { .. }
     ));
 
-    let state_repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+    let state_repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
     let runtime_thread_id = RuntimeThreadId::new("runtime-thread").expect("runtime thread");
     let mut identities =
         CompleteAgentRuntimeIdentityMap::new(source.clone(), runtime_thread_id.clone());

@@ -45,10 +45,11 @@
     {
       "file": "crates/agentdash-agent-runtime/src/complete_agent_state.rs",
       "symbols": [
-        "CompleteAgentStateRepository::load_projection",
-        "CompleteAgentStateRepository::commit_projection",
-        "CompleteAgentStateRepository::platform_changes",
-        "CompleteAgentStateReconciler",
+        "CompleteAgentStateReconciler::new(Arc<ManagedRuntimeStateRepository>, CompleteAgentRuntimeIdentityMap, BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability>)",
+        "CompleteAgentStateReconciler::reconcile_snapshot",
+        "CompleteAgentStateReconciler::reconcile_change_page",
+        "CompleteAgentStateReconciler::synchronize_source",
+        "PreparedCompleteAgentObservation",
         "project_managed_runtime_snapshot",
         "project_managed_runtime_change_page"
       ]
@@ -81,7 +82,15 @@
     {
       "file": "crates/agentdash-agent-runtime-host/src/complete_agent_callbacks.rs",
       "symbols": [
-        "CompleteAgentCallbackBroker"
+        "CompleteAgentCallbackRepository::load() -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError>",
+        "CompleteAgentCallbackRepository::commit(CompleteAgentCallbackCommit) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError>",
+        "CompleteAgentCallbackBroker::register_route",
+        "CompleteAgentCallbackBroker::revoke_route",
+        "CompleteAgentCallbackBroker::inspect_callback",
+        "CompleteAgentCallbackBroker::mark_inspection_required",
+        "CompleteAgentCallbackBroker::mark_unknown",
+        "CompleteAgentCallbackBroker::reconcile_tool",
+        "CompleteAgentCallbackBroker::reconcile_hook"
       ]
     },
     {
@@ -189,6 +198,9 @@
     "authority": "one ManagedRuntimeStateCommit is one Runtime transaction",
     "tables": [
       "agent_runtime_state_revision",
+      "agent_runtime_source_projection",
+      "agent_runtime_source_identity",
+      "agent_runtime_source_change",
       "agent_runtime_projection",
       "agent_runtime_operation",
       "agent_runtime_idempotency",
@@ -199,6 +211,8 @@
     "required_transaction": [
       "lock and compare ManagedRuntimeStateRevision for one Runtime thread",
       "admit against the committed projection revision and command availability",
+      "prepare source normalization and Runtime projection candidates without an independent write",
+      "write source projection, source identity mappings and source changes in the same ManagedRuntimeStateCommit as their Runtime projection, typed changes and outbox",
       "write immutable operation identity and idempotency mapping",
       "write pending effect intent before any external dispatch",
       "advance projection operation and availability facts",
@@ -209,12 +223,43 @@
     "required_constraints": [
       "operation identity, thread and command are immutable",
       "idempotency key uniquely maps to one immutable operation command",
-      "projection operations exactly equal operation authority",
+      "pending command exactly equals its authoritative operation command",
+      "projection operations have one entry per authoritative operation id with exact payload, turn and status",
       "availability evidence is complete and decided at the committed projection revision",
       "pending effect identity and command coordinates are immutable",
       "operation and pending delivery states cannot move backwards",
+      "source authority, fidelity, revision, identity mapping and source change history are monotonic",
+      "a source observation and every Runtime projection/change/outbox fact derived from it commit or fail together",
+      "without a trusted local source cursor, or after a gap/partial page, snapshot reconcile keeps source_cursor null instead of trusting page.next",
       "Runtime change sequence is continuous and append-only",
       "every Runtime change has exactly one matching append-only outbox entry"
+    ]
+  },
+  "callback_repository_contract": {
+    "authority": "Host-owned PostgreSQL route facts and callback CAS outcomes are the only reverse-callback authority",
+    "tables": [
+      "agent_runtime_callback_revision",
+      "agent_runtime_callback_route",
+      "agent_runtime_callback_reservation",
+      "agent_runtime_callback_outcome"
+    ],
+    "required_transaction": [
+      "persist callback route registration or revocation in the same database transaction as the corresponding Host binding/surface transition",
+      "load the durable route and validate source, binding generation, revocation and semantic deadline before reservation",
+      "lock and compare CompleteAgentCallbackRevision",
+      "commit an immutable Pending reservation before invoking any Tool or Hook handler",
+      "invoke the platform handler only after the reservation transaction commits",
+      "settle the typed Tool or Hook outcome with a second callback CAS",
+      "after restart, replay Settled outcomes and block Pending, InspectionRequired or Unknown records without re-execution",
+      "expose durable inspection plus explicit reconciliation or settlement for ambiguous outcomes"
+    ],
+    "required_constraints": [
+      "route identity, generation, source, delivery, deadline and bound surface are immutable",
+      "route revocation is append-only",
+      "idempotency key fixes callback kind, request digest, generation, source and deadline",
+      "Pending can advance only to InspectionRequired, Unknown or a typed Settled outcome",
+      "InspectionRequired and Unknown never cause automatic handler re-execution",
+      "typed terminal outcomes are immutable and exact duplicate replay performs no write"
     ]
   },
   "host_repository_contract": {
@@ -263,6 +308,10 @@
       ],
       "tests": [
         "managed_runtime::tests::command_acceptance_atomically_writes_operation_pending_intent_and_outbox",
+        "managed_runtime::tests::facts_reject_pending_command_rebinding",
+        "managed_runtime::tests::facts_reject_duplicate_omitted_extra_or_tampered_projected_operations",
+        "managed_runtime::tests::facts_accept_exact_monotonic_operation_transition",
+        "managed_runtime::tests::facts_reject_change_outbox_operation_misassociation",
         "managed_runtime::tests::facts_reject_removed_idempotency_pending_or_outbox_history",
         "managed_runtime::tests::commit_rejects_projection_from_another_runtime_thread"
       ]
@@ -276,6 +325,11 @@
         "project_managed_runtime_change_page"
       ],
       "tests": [
+        "complete_agent_state::tests::source_observation_commit_failure_leaves_no_normalized_or_platform_gap",
+        "complete_agent_state::tests::stale_source_candidate_cannot_commit_without_its_platform_change",
+        "complete_agent_state::tests::restarted_reconciler_continues_from_one_atomic_source_and_runtime_state",
+        "complete_agent_state::tests::first_partial_ordered_page_is_not_used_as_snapshot_head",
+        "complete_agent_state::tests::trusted_ordered_cursor_drains_multiple_pages_without_replay_or_regression",
         "complete_agent_state::tests::weaker_snapshot_authority_cannot_replace_authoritative_projection",
         "complete_agent_state::tests::source_sync_reloads_snapshot_at_gap_cursor",
         "complete_agent_state::tests::managed_change_page_maps_runtime_ids_and_exposes_typed_retention_gap",
@@ -308,13 +362,16 @@
       ]
     },
     {
-      "duty": "Tool/Hook route, deadline, idempotency and stale-generation fencing",
+      "duty": "durable Tool/Hook route, pre-effect reservation, restart replay, ambiguous-outcome inspection and stale-generation fencing",
       "symbols": [
+        "CompleteAgentCallbackRepository",
+        "CompleteAgentCallbackReservationState",
         "CompleteAgentCallbackBroker"
       ],
       "tests": [
         "complete_agent_callbacks::tests::callback_route_is_created_only_from_agent_native_apply_binding",
         "complete_agent_callbacks::tests::duplicate_tool_callback_replays_one_result",
+        "complete_agent_callbacks::tests::pending_callback_survives_restart_and_requires_explicit_reconciliation",
         "complete_agent_callbacks::tests::stale_generation_and_elapsed_deadline_are_rejected",
         "complete_agent_callbacks::tests::hook_decision_outside_bound_actions_is_rejected_and_replayed_once"
       ]
@@ -375,10 +432,10 @@
     {"file":"crates/agentdash-application-agentrun/src/agent_run/thread_name_projection.rs","symbols":["RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W7 Product/Protocol","action":"derive thread name from typed Runtime/Agent output"},
     {"file":"crates/agentdash-application-agentrun/tests/runtime_application_presentation.rs","symbols":["RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W7 Product/Protocol","action":"rewrite fixture to Runtime changes"},
     {"file":"crates/agentdash-application-agentrun/tests/runtime_facade.rs","symbols":["RuntimeJournalFact"],"owner":"W7 Product/Protocol","action":"rewrite facade fixture to Managed Runtime contract"},
-    {"file":"crates/agentdash-infrastructure/src/agent_runtime_composition.rs","symbols":["AgentRuntimeDriverContribution","ContextActivation","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W8 integration","action":"construct PostgreSQL Runtime/Host repositories and Complete Agent registry"},
-    {"file":"crates/agentdash-infrastructure/src/agent_runtime_workers.rs","symbols":["ContextActivation","ContextActivationId","ContextActivationOutboxEntry","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W8 integration","action":"replace legacy workers with pending Runtime effect and Host recovery workers"},
+    {"file":"crates/agentdash-infrastructure/src/agent_runtime_composition.rs","symbols":["AgentRuntimeDriverContribution","ContextActivation","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W8 integration","action":"construct PostgreSQL Runtime/Host/callback repositories and Complete Agent registry"},
+    {"file":"crates/agentdash-infrastructure/src/agent_runtime_workers.rs","symbols":["ContextActivation","ContextActivationId","ContextActivationOutboxEntry","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W8 integration","action":"replace legacy workers with pending Runtime effect, Host recovery and ambiguous callback inspection workers"},
     {"file":"crates/agentdash-infrastructure/src/persistence/postgres/agent_runtime_context_broker.rs","symbols":["DriverContextActivation","RuntimeJournalFact"],"owner":"W8 integration","action":"delete after final Runtime projection/surface persistence is active"},
-    {"file":"crates/agentdash-infrastructure/src/persistence/postgres/runtime_repository.rs","symbols":["ContextActivation","ContextActivationId","ContextActivationOutboxEntry","ContextActivationStatus","RuntimeJournalBatch","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W8 integration","action":"implement ManagedRuntimeStateRepository, CompleteAgentStateRepository and CompleteAgentHostRepository using the single final migration"},
+    {"file":"crates/agentdash-infrastructure/src/persistence/postgres/runtime_repository.rs","symbols":["ContextActivation","ContextActivationId","ContextActivationOutboxEntry","ContextActivationStatus","RuntimeJournalBatch","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W8 integration","action":"implement ManagedRuntimeStateRepository, CompleteAgentHostRepository and CompleteAgentCallbackRepository using the single final migration; source-normalized facts belong to ManagedRuntimeStateRepository"},
     {"file":"crates/agentdash-infrastructure/tests/runtime_recovery_context.rs","symbols":["AgentRuntimeDriver","AgentRuntimeDriverContribution","AgentRuntimeDriverFactory","DriverContextActivation"],"owner":"W8 integration","action":"replace with Runtime pending-effect and Complete Agent recovery evidence"},
     {"file":"crates/agentdash-integration-api/src/agent_runtime.rs","symbols":["AgentRuntimeDriver","AgentRuntimeDriverContribution","AgentRuntimeDriverFactory","DriverContextActivation","RuntimeJournalRecord"],"owner":"W2 Dash/Native","action":"delete legacy driver contribution API after all Complete Agent registrations land"},
     {"file":"crates/agentdash-integration-api/src/integration.rs","symbols":["AgentRuntimeDriverContribution"],"owner":"W2 Dash/Native","action":"expose Complete Agent service contribution only"},
@@ -414,8 +471,8 @@
     "combined_only": [
       "all 33 external consumer entries are removed or switched by their owner",
       "root Cargo.toml and Cargo.lock expose only final dependencies",
-      "the one final forward migration implements both Runtime and Host repository contracts",
-      "production composition injects PostgreSQL repositories and Complete Agent registrations without in-memory defaults",
+      "the one final forward migration implements Runtime, Host and callback repository contracts",
+      "production composition injects PostgreSQL Runtime/Host/callback repositories and Complete Agent registrations without in-memory defaults",
       "revision 4 is the only registered and generated Runtime Wire revision",
       "canonical generators produce no legacy Driver, Journal or Context Activation declarations",
       "cargo test --workspace --all-targets",

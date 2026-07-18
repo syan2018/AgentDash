@@ -1153,8 +1153,8 @@ pub(crate) fn validate_complete_agent_source_facts(
                 reason: error.to_string(),
             })?;
     }
-    if let Some(current_source) = &current.source_projection {
-        if source.source != current_source.source
+    if let Some(current_source) = &current.source_projection
+        && (source.source != current_source.source
             || source.snapshot_revision.0 < current_source.snapshot_revision.0
             || authority_rank(source.source_info.authority)
                 < authority_rank(current_source.source_info.authority)
@@ -1162,13 +1162,12 @@ pub(crate) fn validate_complete_agent_source_facts(
                 .source_info
                 .fidelity
                 .satisfies(current_source.source_info.fidelity)
-            || source.platform_revision < current_source.platform_revision
-        {
-            return Err(ManagedRuntimeStateStoreError::Invariant {
-                reason: "Complete Agent source authority, fidelity, or revision moved backwards"
-                    .to_owned(),
-            });
-        }
+            || source.platform_revision < current_source.platform_revision)
+    {
+        return Err(ManagedRuntimeStateStoreError::Invariant {
+            reason: "Complete Agent source authority, fidelity, or revision moved backwards"
+                .to_owned(),
+        });
     }
     if !candidate
         .source_changes
@@ -1797,13 +1796,13 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct FixtureCompleteAgentStateRepository {
+    struct FixtureManagedRuntimeStateRepository {
         states: Mutex<BTreeMap<RuntimeThreadId, ManagedRuntimeStateSnapshot>>,
         fail_next_commit: AtomicUsize,
     }
 
     #[async_trait]
-    impl ManagedRuntimeStateRepository for FixtureCompleteAgentStateRepository {
+    impl ManagedRuntimeStateRepository for FixtureManagedRuntimeStateRepository {
         async fn load(
             &self,
             thread_id: &RuntimeThreadId,
@@ -1833,8 +1832,8 @@ mod tests {
     }
 
     fn fixture_reconciler(
-        repository: Arc<FixtureCompleteAgentStateRepository>,
-    ) -> CompleteAgentStateReconciler<FixtureCompleteAgentStateRepository> {
+        repository: Arc<FixtureManagedRuntimeStateRepository>,
+    ) -> CompleteAgentStateReconciler<FixtureManagedRuntimeStateRepository> {
         CompleteAgentStateReconciler::new(
             repository,
             identity_map(),
@@ -1843,7 +1842,7 @@ mod tests {
     }
 
     async fn fixture_state(
-        repository: &FixtureCompleteAgentStateRepository,
+        repository: &FixtureManagedRuntimeStateRepository,
     ) -> ManagedRuntimeStateSnapshot {
         repository
             .load(identity_map().thread_id())
@@ -1852,7 +1851,7 @@ mod tests {
     }
 
     async fn fixture_source_projection(
-        repository: &FixtureCompleteAgentStateRepository,
+        repository: &FixtureManagedRuntimeStateRepository,
     ) -> NormalizedAgentProjection {
         fixture_state(repository)
             .await
@@ -1863,7 +1862,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_is_normalized_and_reconnects_from_platform_changes() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository.clone());
         let source = source();
         reconciler
@@ -1917,7 +1916,7 @@ mod tests {
 
     #[tokio::test]
     async fn source_observation_commit_failure_leaves_no_normalized_or_platform_gap() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         repository.fail_next_commit.store(1, Ordering::SeqCst);
         let reconciler = fixture_reconciler(repository.clone());
 
@@ -1940,7 +1939,7 @@ mod tests {
 
     #[tokio::test]
     async fn stale_source_candidate_cannot_commit_without_its_platform_change() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository.clone());
         let base = fixture_state(&repository).await;
         let first = prepare_snapshot_observation(
@@ -1996,7 +1995,7 @@ mod tests {
 
     #[tokio::test]
     async fn restarted_reconciler_continues_from_one_atomic_source_and_runtime_state() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         fixture_reconciler(repository.clone())
             .reconcile_snapshot(
                 snapshot(1, AgentSnapshotAuthority::AgentObserved),
@@ -2055,7 +2054,7 @@ mod tests {
 
     #[tokio::test]
     async fn managed_snapshot_uses_explicit_runtime_ids_and_committed_availability() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository.clone());
         reconciler
             .reconcile_snapshot(
@@ -2100,7 +2099,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_or_drifting_identity_is_rejected() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository.clone());
         reconciler
             .reconcile_snapshot(
@@ -2140,7 +2139,7 @@ mod tests {
 
     #[tokio::test]
     async fn availability_must_be_complete_and_committed_at_snapshot_revision() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository.clone());
         reconciler
             .reconcile_snapshot(
@@ -2219,7 +2218,7 @@ mod tests {
 
     #[tokio::test]
     async fn active_turn_change_is_applied_as_an_explicit_source_fact() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository.clone());
         let source = source();
         reconciler
@@ -2282,7 +2281,7 @@ mod tests {
 
     #[tokio::test]
     async fn weaker_snapshot_authority_cannot_replace_authoritative_projection() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository);
         reconciler
             .reconcile_snapshot(
@@ -2301,7 +2300,7 @@ mod tests {
 
     #[tokio::test]
     async fn stronger_authority_can_confirm_the_same_snapshot_revision() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository);
         reconciler
             .reconcile_snapshot(
@@ -2327,7 +2326,7 @@ mod tests {
 
     #[tokio::test]
     async fn cursor_gap_requires_snapshot_reload_without_partial_change_apply() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository.clone());
         let source = source();
         reconciler
@@ -2365,7 +2364,7 @@ mod tests {
 
     #[tokio::test]
     async fn source_sync_reloads_snapshot_at_gap_cursor() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository.clone());
         reconciler
             .reconcile_snapshot(
@@ -2398,7 +2397,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_only_sync_never_calls_the_unsupported_changes_endpoint() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository);
         let service = GapService {
             reads: AtomicUsize::new(0),
@@ -2420,7 +2419,7 @@ mod tests {
 
     #[tokio::test]
     async fn first_partial_ordered_page_is_not_used_as_snapshot_head() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository);
         let service = GapService {
             reads: AtomicUsize::new(0),
@@ -2455,7 +2454,7 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_ordered_cursor_drains_multiple_pages_without_replay_or_regression() {
-        let repository = Arc::new(FixtureCompleteAgentStateRepository::default());
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
         let reconciler = fixture_reconciler(repository);
         reconciler
             .reconcile_snapshot(

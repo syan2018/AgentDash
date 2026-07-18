@@ -12,6 +12,7 @@ mod backend_execution_lease_repository;
 mod backend_repository;
 mod canvas_repository;
 mod canvas_runtime_state_repository;
+mod complete_agent_repositories;
 mod dash_complete_agent_store;
 mod extension_package_artifact_repository;
 mod inline_file_repository;
@@ -168,6 +169,10 @@ pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseReposit
 pub use backend_repository::PostgresBackendRepository;
 pub use canvas_repository::PostgresCanvasRepository;
 pub use canvas_runtime_state_repository::PostgresCanvasRuntimeStateRepository;
+pub use complete_agent_repositories::{
+    PostgresCompleteAgentCallbackRepository, PostgresCompleteAgentHostRepository,
+    PostgresManagedRuntimeStateRepository,
+};
 pub use dash_complete_agent_store::{
     PostgresDashAgentRepositoryStore, PostgresDashCompleteAgentStore,
 };

@@ -1,0 +1,1116 @@
+use agentdash_agent_runtime::{
+    ManagedRuntimeStateCommit, ManagedRuntimeStateRepository, ManagedRuntimeStateSnapshot,
+    ManagedRuntimeStateStoreError, apply_managed_runtime_state_commit,
+    decode_managed_runtime_state_snapshot, encode_managed_runtime_state_snapshot,
+};
+use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_agent_runtime_host::{
+    CompleteAgentCallbackCommit, CompleteAgentCallbackRepository, CompleteAgentCallbackSnapshot,
+    CompleteAgentCallbackStoreError, CompleteAgentHostCommit, CompleteAgentHostRepository,
+    CompleteAgentHostSnapshot, CompleteAgentHostStoreError, apply_complete_agent_callback_commit,
+    apply_complete_agent_host_commit, decode_complete_agent_callback_snapshot,
+    decode_complete_agent_host_snapshot, encode_complete_agent_callback_snapshot,
+    encode_complete_agent_host_snapshot,
+};
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use sqlx::{PgPool, Postgres, Row, Transaction};
+
+#[derive(Clone)]
+pub struct PostgresManagedRuntimeStateRepository {
+    pool: PgPool,
+}
+
+impl PostgresManagedRuntimeStateRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[derive(Clone)]
+pub struct PostgresCompleteAgentHostRepository {
+    pool: PgPool,
+}
+
+impl PostgresCompleteAgentHostRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[derive(Clone)]
+pub struct PostgresCompleteAgentCallbackRepository {
+    pool: PgPool,
+}
+
+impl PostgresCompleteAgentCallbackRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl ManagedRuntimeStateRepository for PostgresManagedRuntimeStateRepository {
+    async fn load(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+        let row = sqlx::query(
+            "SELECT revision, facts FROM agent_runtime_state_revision WHERE thread_id = $1",
+        )
+        .bind(thread_id.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(runtime_persistence)?;
+        let Some(row) = row else {
+            return Ok(ManagedRuntimeStateSnapshot::default());
+        };
+        let snapshot = runtime_snapshot(
+            thread_id,
+            row.try_get::<i64, _>("revision")
+                .map_err(runtime_persistence)?,
+            row.try_get("facts").map_err(runtime_persistence)?,
+        )?;
+        verify_runtime_projection(&self.pool, thread_id, &snapshot).await?;
+        Ok(snapshot)
+    }
+
+    async fn commit(
+        &self,
+        commit: ManagedRuntimeStateCommit,
+    ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+        let mut tx = self.pool.begin().await.map_err(runtime_persistence)?;
+        let thread_id = commit.thread_id.clone();
+        let row = sqlx::query(
+            "SELECT revision, facts FROM agent_runtime_state_revision
+             WHERE thread_id = $1 FOR UPDATE",
+        )
+        .bind(commit.thread_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(runtime_persistence)?;
+        let mut current = match row {
+            Some(row) => runtime_snapshot(
+                &commit.thread_id,
+                row.try_get::<i64, _>("revision")
+                    .map_err(runtime_persistence)?,
+                row.try_get("facts").map_err(runtime_persistence)?,
+            )?,
+            None => ManagedRuntimeStateSnapshot::default(),
+        };
+        let previous = current.clone();
+        let committed = apply_managed_runtime_state_commit(&mut current, commit)?;
+        if committed == previous {
+            tx.commit().await.map_err(runtime_persistence)?;
+            return Ok(committed);
+        }
+        let facts = encode_managed_runtime_state_snapshot(&committed)?
+            .get("facts")
+            .cloned()
+            .ok_or_else(|| runtime_invariant("encoded Runtime snapshot omitted facts"))?;
+        replace_runtime_projection(&mut tx, &thread_id, &committed, &facts).await?;
+        tx.commit().await.map_err(runtime_persistence)?;
+        Ok(committed)
+    }
+}
+
+#[async_trait]
+impl CompleteAgentHostRepository for PostgresCompleteAgentHostRepository {
+    async fn load(&self) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+        let row = sqlx::query(
+            "SELECT revision, facts FROM agent_runtime_host_revision WHERE singleton = TRUE",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(host_persistence)?;
+        let snapshot = host_snapshot(
+            row.try_get::<i64, _>("revision")
+                .map_err(host_persistence)?,
+            row.try_get("facts").map_err(host_persistence)?,
+        )?;
+        verify_host_projection(&self.pool, &snapshot).await?;
+        Ok(snapshot)
+    }
+
+    async fn commit(
+        &self,
+        commit: CompleteAgentHostCommit,
+    ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+        let mut tx = self.pool.begin().await.map_err(host_persistence)?;
+        let row = sqlx::query(
+            "SELECT revision, facts FROM agent_runtime_host_revision
+             WHERE singleton = TRUE FOR UPDATE",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(host_persistence)?;
+        let mut current = host_snapshot(
+            row.try_get::<i64, _>("revision")
+                .map_err(host_persistence)?,
+            row.try_get("facts").map_err(host_persistence)?,
+        )?;
+        let previous = current.clone();
+        let committed = apply_complete_agent_host_commit(&mut current, commit)?;
+        if committed == previous {
+            tx.commit().await.map_err(host_persistence)?;
+            return Ok(committed);
+        }
+        let facts = encode_complete_agent_host_snapshot(&committed)?
+            .get("facts")
+            .cloned()
+            .ok_or_else(|| host_invariant("encoded Host snapshot omitted facts"))?;
+        replace_host_projection(&mut tx, &committed, &facts).await?;
+        tx.commit().await.map_err(host_persistence)?;
+        Ok(committed)
+    }
+}
+
+#[async_trait]
+impl CompleteAgentCallbackRepository for PostgresCompleteAgentCallbackRepository {
+    async fn load(&self) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
+        let row = sqlx::query(
+            "SELECT revision, facts FROM agent_runtime_callback_revision WHERE singleton = TRUE",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(callback_persistence)?;
+        let snapshot = callback_snapshot(
+            row.try_get::<i64, _>("revision")
+                .map_err(callback_persistence)?,
+            row.try_get("facts").map_err(callback_persistence)?,
+        )?;
+        verify_callback_projection(&self.pool, &snapshot).await?;
+        Ok(snapshot)
+    }
+
+    async fn commit(
+        &self,
+        commit: CompleteAgentCallbackCommit,
+    ) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
+        let mut tx = self.pool.begin().await.map_err(callback_persistence)?;
+        let row = sqlx::query(
+            "SELECT revision, facts FROM agent_runtime_callback_revision
+             WHERE singleton = TRUE FOR UPDATE",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(callback_persistence)?;
+        let mut current = callback_snapshot(
+            row.try_get::<i64, _>("revision")
+                .map_err(callback_persistence)?,
+            row.try_get("facts").map_err(callback_persistence)?,
+        )?;
+        let previous = current.clone();
+        let committed = apply_complete_agent_callback_commit(&mut current, commit)?;
+        if committed == previous {
+            tx.commit().await.map_err(callback_persistence)?;
+            return Ok(committed);
+        }
+        let facts = encode_complete_agent_callback_snapshot(&committed)?
+            .get("facts")
+            .cloned()
+            .ok_or_else(|| callback_invariant("encoded callback snapshot omitted facts"))?;
+        replace_callback_projection(&mut tx, &committed, &facts).await?;
+        tx.commit().await.map_err(callback_persistence)?;
+        Ok(committed)
+    }
+}
+
+fn runtime_snapshot(
+    thread_id: &RuntimeThreadId,
+    revision: i64,
+    facts: Value,
+) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+    let revision = u64::try_from(revision)
+        .map_err(|_| runtime_invariant("Runtime revision cannot be represented as u64"))?;
+    decode_managed_runtime_state_snapshot(
+        thread_id,
+        json!({ "revision": revision, "facts": facts }),
+    )
+}
+
+fn host_snapshot(
+    revision: i64,
+    facts: Value,
+) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+    let revision = u64::try_from(revision)
+        .map_err(|_| host_invariant("Host revision cannot be represented as u64"))?;
+    decode_complete_agent_host_snapshot(json!({ "revision": revision, "facts": facts }))
+}
+
+fn callback_snapshot(
+    revision: i64,
+    facts: Value,
+) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
+    let revision = u64::try_from(revision)
+        .map_err(|_| callback_invariant("callback revision cannot be represented as u64"))?;
+    decode_complete_agent_callback_snapshot(json!({ "revision": revision, "facts": facts }))
+}
+
+async fn replace_runtime_projection(
+    tx: &mut Transaction<'_, Postgres>,
+    runtime_thread_id: &RuntimeThreadId,
+    snapshot: &ManagedRuntimeStateSnapshot,
+    facts: &Value,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    let thread_id = runtime_thread_id.as_str();
+    let revision = i64::try_from(snapshot.revision.0)
+        .map_err(|_| runtime_invariant("Runtime revision exceeds PostgreSQL BIGINT"))?;
+    sqlx::query(
+        "INSERT INTO agent_runtime_state_revision(thread_id, revision, facts)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (thread_id) DO UPDATE
+         SET revision = EXCLUDED.revision, facts = EXCLUDED.facts",
+    )
+    .bind(thread_id)
+    .bind(revision)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+
+    for table in [
+        "agent_runtime_pending_command",
+        "agent_runtime_idempotency",
+        "agent_runtime_thread_binding",
+        "agent_runtime_source_identity",
+        "agent_runtime_source_projection",
+        "agent_runtime_projection",
+    ] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE thread_id = $1"))
+            .bind(thread_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(runtime_persistence)?;
+    }
+
+    sqlx::query(
+        "INSERT INTO agent_runtime_projection(thread_id, projection_revision, change_head, projection)
+         SELECT $1, (p->>'revision')::BIGINT, (p->>'latest_change_sequence')::BIGINT, p
+         FROM (SELECT $2::JSONB->'projection' AS p) facts
+         WHERE p IS NOT NULL AND p <> 'null'::JSONB",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+
+    sqlx::query(
+        "INSERT INTO agent_runtime_thread_binding(
+             thread_id, source_ref, binding, committed_at_revision, activated_at_revision
+         )
+         SELECT $1, b->'source_ref', b->'binding',
+                (b->>'committed_at_revision')::BIGINT,
+                NULLIF(b->>'activated_at_revision', '')::BIGINT
+         FROM (SELECT $2::JSONB->'binding' AS b) facts
+         WHERE b IS NOT NULL AND b <> 'null'::JSONB",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+
+    sqlx::query(
+        "INSERT INTO agent_runtime_source_projection(
+             thread_id, projection_revision, authority, fidelity, source_revision,
+             source_cursor, projection_digest, projection
+         )
+         SELECT $1, (p->>'platform_revision')::BIGINT,
+                COALESCE(p#>>'{source_info,authority}', 'source_observed'),
+                COALESCE(p#>>'{source_info,fidelity}', 'observed'),
+                p#>>'{source_info,revision}', p->>'source_cursor',
+                md5(p::TEXT), p
+         FROM (SELECT $2::JSONB->'source_projection' AS p) facts
+         WHERE p IS NOT NULL AND p <> 'null'::JSONB",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+
+    sqlx::query(
+        "WITH identities AS (
+             SELECT $1::TEXT AS thread_id, $2::JSONB->'source_identities' AS value
+         ), rows AS (
+             SELECT thread_id, 'turn' AS kind, entry.key AS source_identity,
+                    entry.value #>> '{}' AS runtime_identity
+             FROM identities, LATERAL jsonb_each(value->'turns') entry
+             UNION ALL
+             SELECT thread_id, 'item', entry.key,
+                    entry.value->>'runtime_item_id'
+             FROM identities, LATERAL jsonb_each(value->'items') entry
+             UNION ALL
+             SELECT thread_id, 'interaction', entry.key,
+                    entry.value->>'runtime_interaction_id'
+             FROM identities, LATERAL jsonb_each(value->'interactions') entry
+             UNION ALL
+             SELECT thread_id, 'surface_revision', entry.key,
+                    entry.value #>> '{}'
+             FROM identities, LATERAL jsonb_each(value->'surface_revisions') entry
+         )
+         INSERT INTO agent_runtime_source_identity(
+             thread_id, identity_kind, source_identity, runtime_identity
+         )
+         SELECT thread_id, kind, source_identity, runtime_identity FROM rows",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+
+    sqlx::query(
+        "INSERT INTO agent_runtime_source_change(
+             thread_id, source_sequence, projection_revision, observation_digest,
+             source_revision, source_cursor, changed_sections, change
+         )
+         SELECT $1, (value->>'sequence')::BIGINT,
+                (value->>'platform_revision')::BIGINT, md5(value::TEXT),
+                value#>>'{payload,source_revision}',
+                value#>>'{payload,source_cursor}',
+                value->'changed_sections', value
+         FROM jsonb_array_elements($2::JSONB->'source_changes')
+         ON CONFLICT (thread_id, source_sequence) DO NOTHING",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+
+    sqlx::query(
+        "INSERT INTO agent_runtime_operation(
+             thread_id, operation_id, command_kind, command, receipt, operation
+         )
+         SELECT $1, entry.key, entry.value#>>'{command,command,kind}',
+                entry.value->'command', entry.value->'receipt', entry.value->'operation'
+         FROM jsonb_each($2::JSONB->'operations') entry
+         ON CONFLICT (thread_id, operation_id) DO NOTHING",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+    ensure_runtime_operation_prefix(tx, thread_id, facts).await?;
+
+    sqlx::query(
+        "INSERT INTO agent_runtime_idempotency(thread_id, idempotency_key, operation_id)
+         SELECT $1, entry.key, entry.value #>> '{}'
+         FROM jsonb_each($2::JSONB->'idempotency') entry",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+    sqlx::query(
+        "INSERT INTO agent_runtime_pending_command(
+             thread_id, operation_id, effect_id, state, command, claim_owner, claim_epoch
+         )
+         SELECT $1, entry.key, entry.value->>'effect_id', entry.value->>'state',
+                entry.value->'command', entry.value->>'claim_owner',
+                (entry.value->>'claim_epoch')::BIGINT
+         FROM jsonb_each($2::JSONB->'pending_commands') entry",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+
+    sqlx::query(
+        "INSERT INTO agent_runtime_change(thread_id, sequence, operation_id, change)
+         SELECT $1, (value->>'sequence')::BIGINT, NULL, value
+         FROM jsonb_array_elements($2::JSONB->'changes')
+         ON CONFLICT (thread_id, sequence) DO NOTHING",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+    sqlx::query(
+        "INSERT INTO agent_runtime_outbox(thread_id, sequence, operation_id, change)
+         SELECT $1, (value->>'sequence')::BIGINT, value->>'operation_id', value->'change'
+         FROM jsonb_array_elements($2::JSONB->'outbox')
+         ON CONFLICT (thread_id, sequence) DO NOTHING",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+    sqlx::query(
+        "INSERT INTO agent_runtime_surface_snapshot(
+             thread_id, surface_revision, surface_digest, surface
+         )
+         SELECT $1, (surface->>'revision')::BIGINT, surface->>'digest', surface
+         FROM (
+             SELECT $2::JSONB#>'{binding,binding,applied_surface}' AS surface
+         ) candidate
+         WHERE surface IS NOT NULL AND surface <> 'null'::JSONB
+         ON CONFLICT (thread_id, surface_revision) DO NOTHING",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+    ensure_runtime_ledger_prefix(tx, thread_id, facts).await?;
+    Ok(())
+}
+
+async fn ensure_runtime_operation_prefix(
+    tx: &mut Transaction<'_, Postgres>,
+    thread_id: &str,
+    facts: &Value,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    let drift: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM jsonb_each($2::JSONB->'operations') entry
+             LEFT JOIN agent_runtime_operation stored
+               ON stored.thread_id = $1 AND stored.operation_id = entry.key
+             WHERE stored.operation_id IS NULL
+                OR stored.command <> entry.value->'command'
+                OR stored.receipt <> entry.value->'receipt'
+                OR stored.operation <> entry.value->'operation'
+         )",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+    if drift {
+        return Err(runtime_invariant(
+            "Runtime operation projection drifted from canonical facts",
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_runtime_ledger_prefix(
+    tx: &mut Transaction<'_, Postgres>,
+    thread_id: &str,
+    facts: &Value,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    let drift: bool = sqlx::query_scalar(
+        "SELECT
+           EXISTS (
+             SELECT 1 FROM agent_runtime_source_change stored
+             LEFT JOIN jsonb_array_elements($2::JSONB->'source_changes') candidate
+               ON (candidate->>'sequence')::BIGINT = stored.source_sequence
+             WHERE stored.thread_id = $1
+               AND (candidate IS NULL OR stored.change <> candidate)
+           )
+           OR EXISTS (
+             SELECT 1 FROM agent_runtime_change stored
+             LEFT JOIN jsonb_array_elements($2::JSONB->'changes') candidate
+               ON (candidate->>'sequence')::BIGINT = stored.sequence
+             WHERE stored.thread_id = $1
+               AND (candidate IS NULL OR stored.change <> candidate)
+           )
+           OR EXISTS (
+             SELECT 1 FROM agent_runtime_outbox stored
+             LEFT JOIN jsonb_array_elements($2::JSONB->'outbox') candidate
+               ON (candidate->>'sequence')::BIGINT = stored.sequence
+             WHERE stored.thread_id = $1
+               AND (candidate IS NULL OR stored.change <> candidate->'change')
+           )",
+    )
+    .bind(thread_id)
+    .bind(facts)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(runtime_persistence)?;
+    if drift {
+        return Err(runtime_invariant(
+            "Runtime change/outbox ledger is not an exact canonical prefix",
+        ));
+    }
+    Ok(())
+}
+
+async fn replace_host_projection(
+    tx: &mut Transaction<'_, Postgres>,
+    snapshot: &CompleteAgentHostSnapshot,
+    facts: &Value,
+) -> Result<(), CompleteAgentHostStoreError> {
+    let revision = i64::try_from(snapshot.revision.0)
+        .map_err(|_| host_invariant("Host revision exceeds PostgreSQL BIGINT"))?;
+    sqlx::query(
+        "UPDATE agent_runtime_host_revision SET revision = $1, facts = $2
+         WHERE singleton = TRUE",
+    )
+    .bind(revision)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(host_persistence)?;
+
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_service_instance(
+             service_instance_id, descriptor_digest, descriptor
+         )
+         SELECT entry.key, entry.value->>'profile_digest', entry.value
+         FROM jsonb_each($1::JSONB->'service_instances') entry
+         ON CONFLICT (service_instance_id) DO UPDATE
+         SET descriptor_digest = EXCLUDED.descriptor_digest,
+             descriptor = EXCLUDED.descriptor",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_offer(service_instance_id, profile_digest, offer)
+         SELECT entry.key, entry.value->>'profile_digest', entry.value
+         FROM jsonb_each($1::JSONB->'offers') entry
+         ON CONFLICT (service_instance_id) DO UPDATE
+         SET profile_digest = EXCLUDED.profile_digest, offer = EXCLUDED.offer",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_placement(
+             service_instance_id, placement_kind, host_id, transport_id,
+             host_incarnation_id, placement
+         )
+         SELECT entry.key, entry.value->>'kind', entry.value->>'host_id',
+                entry.value->>'transport_id', entry.value->>'host_incarnation_id', entry.value
+         FROM jsonb_each($1::JSONB->'placements') entry
+         ON CONFLICT (service_instance_id) DO UPDATE SET
+             placement_kind = EXCLUDED.placement_kind,
+             host_id = EXCLUDED.host_id,
+             transport_id = EXCLUDED.transport_id,
+             host_incarnation_id = EXCLUDED.host_incarnation_id,
+             placement = EXCLUDED.placement",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_lifecycle_target(
+             runtime_thread_id, service_instance_id, generation, profile_digest,
+             bound_surface_digest, target
+         )
+         SELECT entry.key, entry.value->>'service_instance_id',
+                (entry.value->>'generation')::BIGINT, entry.value->>'profile_digest',
+                entry.value#>>'{bound_surface,digest}', entry.value
+         FROM jsonb_each($1::JSONB->'runtime_targets') entry
+         ON CONFLICT (runtime_thread_id) DO UPDATE SET
+             service_instance_id = EXCLUDED.service_instance_id,
+             generation = EXCLUDED.generation,
+             profile_digest = EXCLUDED.profile_digest,
+             bound_surface_digest = EXCLUDED.bound_surface_digest,
+             target = EXCLUDED.target",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_binding(
+             binding_id, service_instance_id, generation, source_coordinate,
+             profile_digest, bound_surface_digest, state, binding
+         )
+         SELECT entry.key, entry.value->>'service_instance_id',
+                (entry.value->>'generation')::BIGINT, entry.value->>'source',
+                entry.value->>'profile_digest', entry.value#>>'{bound_surface,digest}',
+                entry.value->>'state', entry.value
+         FROM jsonb_each($1::JSONB->'bindings') entry
+         ON CONFLICT (binding_id) DO UPDATE SET
+             service_instance_id = EXCLUDED.service_instance_id,
+             generation = EXCLUDED.generation,
+             source_coordinate = EXCLUDED.source_coordinate,
+             profile_digest = EXCLUDED.profile_digest,
+             bound_surface_digest = EXCLUDED.bound_surface_digest,
+             state = EXCLUDED.state,
+             binding = EXCLUDED.binding",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_source_coordinate(
+             binding_id, service_instance_id, generation, source_coordinate
+         )
+         SELECT entry.key, binding.service_instance_id, binding.generation,
+                entry.value #>> '{}'
+         FROM jsonb_each($1::JSONB->'source_coordinates') entry
+         JOIN agent_runtime_binding binding ON binding.binding_id = entry.key
+         ON CONFLICT (binding_id) DO UPDATE SET
+             service_instance_id = EXCLUDED.service_instance_id,
+             generation = EXCLUDED.generation,
+             source_coordinate = EXCLUDED.source_coordinate",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_callback_route(
+             route_id, binding_id, generation, source_coordinate, delivery,
+             default_deadline_ms, bound_surface_digest, route
+         )
+         SELECT entry.key, entry.value->>'binding_id',
+                (entry.value->>'generation')::BIGINT, entry.value->>'source',
+                entry.value->>'delivery', (entry.value->>'default_deadline_ms')::BIGINT,
+                entry.value#>>'{bound_surface,digest}', entry.value
+         FROM jsonb_each($1::JSONB->'callback_routes') entry
+         ON CONFLICT (route_id) DO UPDATE SET
+             binding_id = EXCLUDED.binding_id,
+             generation = EXCLUDED.generation,
+             source_coordinate = EXCLUDED.source_coordinate,
+             delivery = EXCLUDED.delivery,
+             default_deadline_ms = EXCLUDED.default_deadline_ms,
+             bound_surface_digest = EXCLUDED.bound_surface_digest,
+             route = EXCLUDED.route",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_callback_route_tombstone(route_id)
+         SELECT value #>> '{}' FROM jsonb_array_elements(
+             $1::JSONB->'revoked_callback_routes'
+         )
+         ON CONFLICT (route_id) DO NOTHING",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_lifecycle_effect(
+             effect_id, runtime_thread_id, child_thread_id, operation_kind,
+             service_instance_id, generation, initial_context_digest,
+             fork_cutoff, outcome, effect
+         )
+         SELECT entry.key, entry.value->>'runtime_thread_id',
+                entry.value->>'child_thread_id', entry.value->>'kind',
+                entry.value->>'service_instance_id',
+                (entry.value->>'generation')::BIGINT,
+                entry.value#>>'{initial_context,digest}',
+                entry.value->'fork_cutoff', entry.value->'outcome', entry.value
+         FROM jsonb_each($1::JSONB->'lifecycle_effects') entry
+         ON CONFLICT (effect_id) DO UPDATE SET
+             outcome = EXCLUDED.outcome, effect = EXCLUDED.effect",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_effect(
+             effect_id, command_id, binding_id, service_instance_id, generation,
+             source_coordinate, payload_digest, delivery_epoch, dispatch_attempt,
+             state, effect
+         )
+         SELECT entry.key, entry.value->>'command_id', entry.value->>'binding_id',
+                entry.value->>'service_instance_id',
+                (entry.value->>'generation')::BIGINT, entry.value->>'source',
+                entry.value->>'payload_digest',
+                (entry.value->>'delivery_epoch')::BIGINT,
+                (entry.value->>'dispatch_attempt')::BIGINT,
+                entry.value->>'state', entry.value
+         FROM jsonb_each($1::JSONB->'effects') entry
+         ON CONFLICT (effect_id) DO UPDATE SET
+             delivery_epoch = EXCLUDED.delivery_epoch,
+             dispatch_attempt = EXCLUDED.dispatch_attempt,
+             state = EXCLUDED.state,
+             effect = EXCLUDED.effect",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_effect_attempt_history(
+             effect_id, dispatch_attempt, delivery_epoch, state, evidence
+         )
+         SELECT effect.key, (attempt.value->>'dispatch_attempt')::BIGINT,
+                (attempt.value->>'delivery_epoch')::BIGINT,
+                attempt.value->>'state', attempt.value
+         FROM jsonb_each($1::JSONB->'effects') effect,
+              LATERAL jsonb_array_elements(effect.value->'attempt_history') attempt
+         ON CONFLICT (effect_id, dispatch_attempt) DO NOTHING",
+    )
+    .await?;
+    ensure_host_attempt_prefix(tx, facts).await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_lease_epoch(binding_id, epoch)
+         SELECT entry.key, generate_series(0, (entry.value #>> '{}')::BIGINT)
+         FROM jsonb_each($1::JSONB->'lease_epochs') entry
+         ON CONFLICT (binding_id, epoch) DO NOTHING",
+    )
+    .await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "INSERT INTO agent_runtime_lease(
+             binding_id, generation, owner, token, epoch, expires_at
+         )
+         SELECT entry.key, (entry.value->>'generation')::BIGINT,
+                entry.value->>'owner', entry.value->>'token',
+                (entry.value->>'epoch')::BIGINT,
+                to_timestamp((entry.value->>'expires_at_ms')::DOUBLE PRECISION / 1000.0)
+         FROM jsonb_each($1::JSONB->'leases') entry
+         ON CONFLICT (binding_id) DO UPDATE SET
+             generation = EXCLUDED.generation, owner = EXCLUDED.owner,
+             token = EXCLUDED.token, epoch = EXCLUDED.epoch,
+             expires_at = EXCLUDED.expires_at",
+    )
+    .await?;
+    Ok(())
+}
+
+async fn execute_host_projection(
+    tx: &mut Transaction<'_, Postgres>,
+    facts: &Value,
+    sql: &str,
+) -> Result<(), CompleteAgentHostStoreError> {
+    sqlx::query(sql)
+        .bind(facts)
+        .execute(&mut **tx)
+        .await
+        .map_err(host_persistence)?;
+    Ok(())
+}
+
+async fn ensure_host_attempt_prefix(
+    tx: &mut Transaction<'_, Postgres>,
+    facts: &Value,
+) -> Result<(), CompleteAgentHostStoreError> {
+    let drift: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM agent_runtime_effect_attempt_history stored
+             LEFT JOIN jsonb_each($1::JSONB->'effects') effect
+               ON effect.key = stored.effect_id
+             LEFT JOIN LATERAL jsonb_array_elements(effect.value->'attempt_history') attempt
+               ON (attempt->>'dispatch_attempt')::BIGINT = stored.dispatch_attempt
+             WHERE attempt IS NULL OR stored.evidence <> attempt
+         )",
+    )
+    .bind(facts)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(host_persistence)?;
+    if drift {
+        return Err(host_invariant(
+            "Host effect attempt ledger is not an exact canonical prefix",
+        ));
+    }
+    Ok(())
+}
+
+async fn replace_callback_projection(
+    tx: &mut Transaction<'_, Postgres>,
+    snapshot: &CompleteAgentCallbackSnapshot,
+    facts: &Value,
+) -> Result<(), CompleteAgentCallbackStoreError> {
+    let revision = i64::try_from(snapshot.revision.0)
+        .map_err(|_| callback_invariant("callback revision exceeds PostgreSQL BIGINT"))?;
+    sqlx::query(
+        "UPDATE agent_runtime_callback_revision SET revision = $1, facts = $2
+         WHERE singleton = TRUE",
+    )
+    .bind(revision)
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(callback_persistence)?;
+    sqlx::query(
+        "INSERT INTO agent_runtime_callback_reservation(
+             route_id, idempotency_key, callback_kind, request_digest, generation,
+             source_coordinate, bound_surface_digest, deadline_at, state, reservation
+         )
+         SELECT value#>>'{key,route_id}', value#>>'{key,idempotency_key}',
+                value->>'kind', value->>'request_digest',
+                (value->>'generation')::BIGINT, value->>'source',
+                value->>'bound_surface_digest',
+                to_timestamp((value->>'deadline_at_ms')::DOUBLE PRECISION / 1000.0),
+                value#>>'{state,state}', value
+         FROM jsonb_array_elements($1::JSONB->'callbacks')
+         ON CONFLICT (route_id, idempotency_key) DO UPDATE SET
+             state = EXCLUDED.state, reservation = EXCLUDED.reservation",
+    )
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(callback_persistence)?;
+    sqlx::query(
+        "INSERT INTO agent_runtime_callback_outcome(route_id, idempotency_key, outcome)
+         SELECT value#>>'{key,route_id}', value#>>'{key,idempotency_key}',
+                value#>'{state,outcome}'
+         FROM jsonb_array_elements($1::JSONB->'callbacks')
+         WHERE value#>>'{state,state}' = 'settled'
+         ON CONFLICT (route_id, idempotency_key) DO NOTHING",
+    )
+    .bind(facts)
+    .execute(&mut **tx)
+    .await
+    .map_err(callback_persistence)?;
+    ensure_callback_prefix(tx, facts).await
+}
+
+async fn ensure_callback_prefix(
+    tx: &mut Transaction<'_, Postgres>,
+    facts: &Value,
+) -> Result<(), CompleteAgentCallbackStoreError> {
+    let drift: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM agent_runtime_callback_reservation stored
+             LEFT JOIN jsonb_array_elements($1::JSONB->'callbacks') candidate
+               ON candidate#>>'{key,route_id}' = stored.route_id
+              AND candidate#>>'{key,idempotency_key}' = stored.idempotency_key
+             WHERE candidate IS NULL
+                OR stored.request_digest <> candidate->>'request_digest'
+                OR stored.generation <> (candidate->>'generation')::BIGINT
+                OR stored.source_coordinate <> candidate->>'source'
+                OR stored.bound_surface_digest <> candidate->>'bound_surface_digest'
+           )
+           OR EXISTS (
+             SELECT 1 FROM agent_runtime_callback_outcome stored
+             LEFT JOIN jsonb_array_elements($1::JSONB->'callbacks') candidate
+               ON candidate#>>'{key,route_id}' = stored.route_id
+              AND candidate#>>'{key,idempotency_key}' = stored.idempotency_key
+             WHERE candidate IS NULL
+                OR candidate#>>'{state,state}' <> 'settled'
+                OR stored.outcome <> candidate#>'{state,outcome}'
+           )",
+    )
+    .bind(facts)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(callback_persistence)?;
+    if drift {
+        return Err(callback_invariant(
+            "callback reservation/outcome ledger is not an exact canonical prefix",
+        ));
+    }
+    Ok(())
+}
+
+async fn verify_runtime_projection(
+    pool: &PgPool,
+    thread_id: &RuntimeThreadId,
+    snapshot: &ManagedRuntimeStateSnapshot,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    let facts = encode_managed_runtime_state_snapshot(snapshot)?
+        .get("facts")
+        .cloned()
+        .ok_or_else(|| runtime_invariant("encoded Runtime snapshot omitted facts"))?;
+    let drift: bool = sqlx::query_scalar(
+        "SELECT
+           EXISTS (
+             SELECT 1
+             FROM jsonb_array_elements($2::JSONB->'changes') candidate
+             LEFT JOIN agent_runtime_change stored
+               ON stored.thread_id = $1
+              AND stored.sequence = (candidate->>'sequence')::BIGINT
+             WHERE stored.change IS DISTINCT FROM candidate
+           )
+           OR EXISTS (
+             SELECT 1
+             FROM jsonb_array_elements($2::JSONB->'outbox') candidate
+             LEFT JOIN agent_runtime_outbox stored
+               ON stored.thread_id = $1
+              AND stored.sequence = (candidate->>'sequence')::BIGINT
+             WHERE stored.change IS DISTINCT FROM candidate->'change'
+           )
+           OR EXISTS (
+             SELECT 1 FROM agent_runtime_projection stored
+             WHERE stored.thread_id = $1
+               AND stored.projection IS DISTINCT FROM $2::JSONB->'projection'
+           )",
+    )
+    .bind(thread_id.as_str())
+    .bind(&facts)
+    .fetch_one(pool)
+    .await
+    .map_err(runtime_persistence)?;
+    if drift {
+        return Err(runtime_invariant(
+            "Runtime normalized rows drifted from canonical facts",
+        ));
+    }
+    Ok(())
+}
+
+async fn verify_host_projection(
+    pool: &PgPool,
+    snapshot: &CompleteAgentHostSnapshot,
+) -> Result<(), CompleteAgentHostStoreError> {
+    let facts = encode_complete_agent_host_snapshot(snapshot)?
+        .get("facts")
+        .cloned()
+        .ok_or_else(|| host_invariant("encoded Host snapshot omitted facts"))?;
+    let drift: bool = sqlx::query_scalar(
+        "SELECT
+           EXISTS (
+             SELECT 1 FROM jsonb_each($1::JSONB->'service_instances') candidate
+             LEFT JOIN agent_service_instance stored
+               ON stored.service_instance_id = candidate.key
+             WHERE stored.descriptor IS DISTINCT FROM candidate.value
+           )
+           OR EXISTS (
+             SELECT 1 FROM jsonb_each($1::JSONB->'bindings') candidate
+             LEFT JOIN agent_runtime_binding stored ON stored.binding_id = candidate.key
+             WHERE stored.binding IS DISTINCT FROM candidate.value
+           )
+           OR EXISTS (
+             SELECT 1 FROM jsonb_each($1::JSONB->'callback_routes') candidate
+             LEFT JOIN agent_runtime_callback_route stored ON stored.route_id = candidate.key
+             WHERE stored.route IS DISTINCT FROM candidate.value
+           )
+           OR EXISTS (
+             SELECT 1 FROM jsonb_each($1::JSONB->'effects') candidate
+             LEFT JOIN agent_runtime_effect stored ON stored.effect_id = candidate.key
+             WHERE stored.effect IS DISTINCT FROM candidate.value
+           )",
+    )
+    .bind(&facts)
+    .fetch_one(pool)
+    .await
+    .map_err(host_persistence)?;
+    if drift {
+        return Err(host_invariant(
+            "Host normalized rows drifted from canonical facts",
+        ));
+    }
+    Ok(())
+}
+
+async fn verify_callback_projection(
+    pool: &PgPool,
+    snapshot: &CompleteAgentCallbackSnapshot,
+) -> Result<(), CompleteAgentCallbackStoreError> {
+    let facts = encode_complete_agent_callback_snapshot(snapshot)?
+        .get("facts")
+        .cloned()
+        .ok_or_else(|| callback_invariant("encoded callback snapshot omitted facts"))?;
+    let drift: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM jsonb_array_elements($1::JSONB->'callbacks') candidate
+             LEFT JOIN agent_runtime_callback_reservation stored
+               ON stored.route_id = candidate#>>'{key,route_id}'
+              AND stored.idempotency_key = candidate#>>'{key,idempotency_key}'
+             WHERE stored.reservation IS DISTINCT FROM candidate
+         )",
+    )
+    .bind(&facts)
+    .fetch_one(pool)
+    .await
+    .map_err(callback_persistence)?;
+    if drift {
+        return Err(callback_invariant(
+            "callback normalized rows drifted from canonical facts",
+        ));
+    }
+    Ok(())
+}
+
+fn runtime_persistence(error: sqlx::Error) -> ManagedRuntimeStateStoreError {
+    ManagedRuntimeStateStoreError::Persistence {
+        reason: error.to_string(),
+    }
+}
+
+fn runtime_invariant(reason: &str) -> ManagedRuntimeStateStoreError {
+    ManagedRuntimeStateStoreError::Invariant {
+        reason: reason.to_owned(),
+    }
+}
+
+fn host_persistence(error: sqlx::Error) -> CompleteAgentHostStoreError {
+    CompleteAgentHostStoreError::Persistence {
+        reason: error.to_string(),
+    }
+}
+
+fn host_invariant(reason: &str) -> CompleteAgentHostStoreError {
+    CompleteAgentHostStoreError::Invariant {
+        reason: reason.to_owned(),
+    }
+}
+
+fn callback_persistence(error: sqlx::Error) -> CompleteAgentCallbackStoreError {
+    CompleteAgentCallbackStoreError::Persistence {
+        reason: error.to_string(),
+    }
+}
+
+fn callback_invariant(reason: &str) -> CompleteAgentCallbackStoreError {
+    CompleteAgentCallbackStoreError::Invariant {
+        reason: reason.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_agent_runtime::{ManagedRuntimeFacts, ManagedRuntimeStateRevision};
+
+    #[tokio::test]
+    async fn final_repositories_replay_exact_facts_without_advancing_revision() {
+        let Some(pool) = crate::persistence::postgres::test_pg_pool("final repositories").await
+        else {
+            return;
+        };
+        let thread_id = RuntimeThreadId::new(format!("runtime-{}", uuid::Uuid::new_v4()))
+            .expect("valid Runtime thread identity");
+        let runtime = PostgresManagedRuntimeStateRepository::new(pool.clone());
+        assert_eq!(
+            runtime
+                .load(&thread_id)
+                .await
+                .expect("load empty Runtime")
+                .revision,
+            ManagedRuntimeStateRevision(0)
+        );
+        let first = runtime
+            .commit(ManagedRuntimeStateCommit {
+                thread_id: thread_id.clone(),
+                expected_revision: ManagedRuntimeStateRevision(0),
+                facts: ManagedRuntimeFacts::default(),
+            })
+            .await
+            .expect("commit Runtime facts");
+        assert_eq!(first.revision, ManagedRuntimeStateRevision(1));
+        let replay = runtime
+            .commit(ManagedRuntimeStateCommit {
+                thread_id,
+                expected_revision: ManagedRuntimeStateRevision(0),
+                facts: ManagedRuntimeFacts::default(),
+            })
+            .await
+            .expect("replay exact Runtime facts");
+        assert_eq!(replay.revision, ManagedRuntimeStateRevision(1));
+
+        let host = PostgresCompleteAgentHostRepository::new(pool.clone());
+        let host_before = host.load().await.expect("load Host facts");
+        let host_replay = host
+            .commit(CompleteAgentHostCommit {
+                expected_revision: host_before.revision,
+                facts: host_before.facts.clone(),
+            })
+            .await
+            .expect("replay exact Host facts");
+        assert_eq!(host_replay, host_before);
+
+        let callback = PostgresCompleteAgentCallbackRepository::new(pool);
+        let callback_before = callback.load().await.expect("load callback facts");
+        let callback_replay = callback
+            .commit(CompleteAgentCallbackCommit {
+                expected_revision: callback_before.revision,
+                facts: callback_before.facts.clone(),
+            })
+            .await
+            .expect("replay exact callback facts");
+        assert_eq!(callback_replay, callback_before);
+    }
+}

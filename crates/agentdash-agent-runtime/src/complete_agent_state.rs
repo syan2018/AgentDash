@@ -23,7 +23,7 @@ use agentdash_agent_service_api::{
     AgentSourceRevision, AgentTurnId, AgentTurnSnapshot, AppliedAgentSurface,
     AppliedInitialContextEvidence, CompleteAgentService,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -32,20 +32,20 @@ use crate::{
     ManagedRuntimeStateRepository, ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedAgentTurn {
     pub id: AgentTurnId,
     pub status: AgentEntityStatus,
     pub item_ids: Vec<AgentItemId>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedAgentItem {
     pub turn_id: AgentTurnId,
     pub item: AgentItemSnapshot,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedAgentProjection {
     pub source: AgentSourceCoordinate,
     pub platform_revision: u64,
@@ -61,7 +61,8 @@ pub struct NormalizedAgentProjection {
     pub initial_context: Option<AppliedInitialContextEvidence>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NormalizedAgentPlatformChangePayload {
     SnapshotReplaced {
         snapshot_revision: AgentSnapshotRevision,
@@ -77,7 +78,7 @@ pub enum NormalizedAgentPlatformChangePayload {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedAgentPlatformChange {
     pub sequence: u64,
     pub platform_revision: u64,
@@ -897,13 +898,13 @@ fn changed_sections(
     sections
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CompleteAgentRuntimeItemIdentity {
     source_turn_id: AgentTurnId,
     runtime_item_id: RuntimeItemId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CompleteAgentRuntimeInteractionIdentity {
     source_turn_id: AgentTurnId,
     runtime_interaction_id: RuntimeInteractionId,
@@ -913,7 +914,7 @@ struct CompleteAgentRuntimeInteractionIdentity {
 ///
 /// Runtime identities must be allocated independently and then bound explicitly. A source
 /// coordinate is never parsed or copied into a Runtime identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompleteAgentRuntimeIdentityMap {
     source: AgentSourceCoordinate,
     thread_id: RuntimeThreadId,
@@ -2835,6 +2836,15 @@ mod tests {
             ManagedRuntimeLifecycleStatus::Closed
         );
         assert_eq!(committed.facts.changes.len(), committed.facts.outbox.len());
+        let encoded = crate::encode_managed_runtime_state_snapshot(&committed)
+            .expect("encode source projection state");
+        let decoded =
+            crate::decode_managed_runtime_state_snapshot(identity_map().thread_id(), encoded)
+                .expect("decode source projection state");
+        assert_eq!(decoded, committed);
+        assert!(decoded.facts.source_projection.is_some());
+        assert!(decoded.facts.source_identities.is_some());
+        assert_eq!(decoded.facts.source_changes.len(), 2);
     }
 
     #[tokio::test]

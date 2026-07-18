@@ -27,11 +27,12 @@ use agentdash_agent_service_api::{
     InitialAgentContextPackage, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct CompleteAgentBindingId(String);
 
 impl CompleteAgentBindingId {
@@ -50,7 +51,7 @@ impl CompleteAgentBindingId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentBinding {
     pub id: CompleteAgentBindingId,
     pub service_instance_id: AgentServiceInstanceId,
@@ -62,7 +63,7 @@ pub struct CompleteAgentBinding {
     pub state: CompleteAgentBindingState,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentRuntimeTarget {
     pub runtime_thread_id: RuntimeThreadId,
     pub service_instance_id: AgentServiceInstanceId,
@@ -72,7 +73,8 @@ pub struct CompleteAgentRuntimeTarget {
     pub callbacks: AgentHostCallbackBinding,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CompleteAgentLifecycleOperationKind {
     Create,
     Resume,
@@ -80,7 +82,8 @@ pub enum CompleteAgentLifecycleOperationKind {
     Execute,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CompleteAgentLifecycleOutcome {
     Agent {
         receipt: AgentCommandReceipt,
@@ -92,13 +95,14 @@ pub enum CompleteAgentLifecycleOutcome {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "receipt", rename_all = "snake_case")]
 pub enum CompleteAgentLifecycleAppliedReceipt {
     Agent(AppliedAgentCommandReceipt),
     Fork(AppliedForkAgentReceipt),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentLifecycleEffectRecord {
     pub effect_id: AgentEffectIdentity,
     pub runtime_thread_id: RuntimeThreadId,
@@ -118,7 +122,8 @@ enum CompleteAgentLifecycleBegin {
     Settled(Box<CompleteAgentLifecycleOutcome>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CompleteAgentPlacement {
     InProcess {
         host_incarnation_id: String,
@@ -167,7 +172,8 @@ impl CompleteAgentBinding {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CompleteAgentBindingState {
     PendingSurface,
     Available,
@@ -176,7 +182,7 @@ pub enum CompleteAgentBindingState {
     Closed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompleteAgentBindingLease {
     pub binding_id: CompleteAgentBindingId,
     pub generation: AgentBindingGeneration,
@@ -186,7 +192,8 @@ pub struct CompleteAgentBindingLease {
     pub expires_at_ms: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CompleteAgentEffectState {
     Dispatching,
     Accepted,
@@ -197,7 +204,7 @@ pub enum CompleteAgentEffectState {
     Lost,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompleteAgentEffectAttemptEvidence {
     pub dispatch_attempt: u64,
     pub delivery_epoch: u64,
@@ -207,7 +214,7 @@ pub struct CompleteAgentEffectAttemptEvidence {
     pub inspection: Option<AgentEffectInspection>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompleteAgentEffectRecord {
     pub effect_id: AgentEffectIdentity,
     pub command_id: AgentCommandId,
@@ -3498,6 +3505,19 @@ mod tests {
                 .bindings
                 .get(&runtime_binding_id(&child_thread).expect("binding id"))
                 .is_some_and(CompleteAgentBinding::dispatch_admitted)
+        );
+        let encoded =
+            crate::encode_complete_agent_host_snapshot(&after_fork).expect("encode Host snapshot");
+        let decoded =
+            crate::decode_complete_agent_host_snapshot(encoded).expect("decode Host snapshot");
+        assert_eq!(decoded, after_fork);
+        assert_eq!(decoded.facts.runtime_targets.len(), 2);
+        assert!(
+            decoded
+                .facts
+                .lifecycle_effects
+                .values()
+                .all(|record| { record.outcome.is_some() && record.applied_receipt.is_some() })
         );
     }
 

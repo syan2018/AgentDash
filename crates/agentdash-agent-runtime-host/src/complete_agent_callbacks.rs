@@ -12,7 +12,7 @@ use agentdash_agent_service_api::{
     AgentToolResult, BoundAgentSurface,
 };
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -52,7 +52,7 @@ impl AgentCallbackClock for SystemAgentCallbackClock {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentCallbackRoute {
     pub route_id: AgentCallbackRouteId,
     pub binding_id: CompleteAgentBindingId,
@@ -91,19 +91,21 @@ impl CompleteAgentCallbackRoute {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CompleteAgentCallbackKey {
     pub route_id: AgentCallbackRouteId,
     pub idempotency_key: agentdash_agent_service_api::AgentIdempotencyKey,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CompleteAgentCallbackKind {
     Tool,
     Hook,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CompleteAgentCallbackTerminalOutcome {
     Tool {
         result: Result<AgentToolResult, AgentHostCallbackError>,
@@ -113,7 +115,8 @@ pub enum CompleteAgentCallbackTerminalOutcome {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", content = "outcome", rename_all = "snake_case")]
 pub enum CompleteAgentCallbackReservationState {
     Pending,
     InspectionRequired { reason: String },
@@ -121,7 +124,7 @@ pub enum CompleteAgentCallbackReservationState {
     Unknown { reason: String },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentCallbackRecord {
     pub key: CompleteAgentCallbackKey,
     pub kind: CompleteAgentCallbackKind,
@@ -133,15 +136,49 @@ pub struct CompleteAgentCallbackRecord {
     pub state: CompleteAgentCallbackReservationState,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct CompleteAgentCallbackRevision(pub u64);
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentCallbackFacts {
+    #[serde(with = "callback_records")]
     pub callbacks: BTreeMap<CompleteAgentCallbackKey, CompleteAgentCallbackRecord>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+mod callback_records {
+    use super::*;
+
+    pub fn serialize<S>(
+        callbacks: &BTreeMap<CompleteAgentCallbackKey, CompleteAgentCallbackRecord>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        callbacks.values().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<BTreeMap<CompleteAgentCallbackKey, CompleteAgentCallbackRecord>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let records = Vec::<CompleteAgentCallbackRecord>::deserialize(deserializer)?;
+        let mut callbacks = BTreeMap::new();
+        for record in records {
+            if callbacks.insert(record.key.clone(), record).is_some() {
+                return Err(serde::de::Error::custom(
+                    "duplicate Complete Agent callback key",
+                ));
+            }
+        }
+        Ok(callbacks)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentCallbackSnapshot {
     pub revision: CompleteAgentCallbackRevision,
     pub facts: CompleteAgentCallbackFacts,
@@ -178,6 +215,27 @@ pub trait CompleteAgentCallbackRepository: Send + Sync {
     ) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError>;
 }
 
+pub fn encode_complete_agent_callback_snapshot(
+    snapshot: &CompleteAgentCallbackSnapshot,
+) -> Result<serde_json::Value, CompleteAgentCallbackStoreError> {
+    serde_json::to_value(snapshot).map_err(|error| CompleteAgentCallbackStoreError::Persistence {
+        reason: format!("failed to encode Complete Agent callback snapshot: {error}"),
+    })
+}
+
+pub fn decode_complete_agent_callback_snapshot(
+    value: serde_json::Value,
+) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
+    let snapshot: CompleteAgentCallbackSnapshot =
+        serde_json::from_value(value).map_err(|error| {
+            CompleteAgentCallbackStoreError::Invariant {
+                reason: format!("failed to decode Complete Agent callback snapshot: {error}"),
+            }
+        })?;
+    validate_complete_agent_callback_facts(&snapshot.facts, &snapshot.facts)?;
+    Ok(snapshot)
+}
+
 pub fn apply_complete_agent_callback_commit(
     current: &mut CompleteAgentCallbackSnapshot,
     commit: CompleteAgentCallbackCommit,
@@ -204,11 +262,35 @@ pub fn validate_complete_agent_callback_facts(
     candidate: &CompleteAgentCallbackFacts,
 ) -> Result<(), CompleteAgentCallbackStoreError> {
     for (key, record) in &candidate.callbacks {
-        if key != &record.key
+        let terminal_kind_matches = matches!(
+            (&record.kind, &record.state),
+            (
+                CompleteAgentCallbackKind::Tool,
+                CompleteAgentCallbackReservationState::Settled(
+                    CompleteAgentCallbackTerminalOutcome::Tool { .. },
+                ),
+            ) | (
+                CompleteAgentCallbackKind::Hook,
+                CompleteAgentCallbackReservationState::Settled(
+                    CompleteAgentCallbackTerminalOutcome::Hook { .. },
+                ),
+            ) | (
+                _,
+                CompleteAgentCallbackReservationState::Pending
+                    | CompleteAgentCallbackReservationState::InspectionRequired { .. }
+                    | CompleteAgentCallbackReservationState::Unknown { .. },
+            )
+        );
+        if key.route_id.as_str().trim().is_empty()
+            || key.idempotency_key.as_str().trim().is_empty()
+            || record.source.as_str().trim().is_empty()
+            || record.bound_surface_digest.as_str().trim().is_empty()
+            || key != &record.key
             || key.route_id != record.key.route_id
             || record.request_digest.trim().is_empty()
             || record.generation.0 == 0
             || record.deadline_at_ms == 0
+            || !terminal_kind_matches
         {
             return callback_invariant("callback reservation coordinates are invalid");
         }
@@ -1002,13 +1084,42 @@ mod tests {
             tool_handler.clone(),
             Arc::new(AllowHookHandler),
             host_repository,
-            repository,
+            repository.clone(),
             Arc::new(FixedClock(10)),
         );
         let second = restarted.invoke_tool(call).await.expect("replay");
 
         assert_eq!(first, second);
         assert_eq!(tool_handler.calls.load(Ordering::SeqCst), 1);
+
+        let snapshot = repository.load().await.expect("callback snapshot");
+        let encoded =
+            encode_complete_agent_callback_snapshot(&snapshot).expect("encode callback snapshot");
+        let decoded =
+            decode_complete_agent_callback_snapshot(encoded).expect("decode callback snapshot");
+        assert_eq!(decoded, snapshot);
+        assert!(decoded.facts.callbacks.values().any(|record| {
+            matches!(
+                record.state,
+                CompleteAgentCallbackReservationState::Settled(
+                    CompleteAgentCallbackTerminalOutcome::Tool { .. }
+                )
+            )
+        }));
+
+        let mut wrong_kind = snapshot;
+        wrong_kind
+            .facts
+            .callbacks
+            .values_mut()
+            .next()
+            .expect("callback")
+            .kind = CompleteAgentCallbackKind::Hook;
+        let encoded = serde_json::to_value(wrong_kind).expect("encode invalid callback snapshot");
+        assert!(matches!(
+            decode_complete_agent_callback_snapshot(encoded),
+            Err(CompleteAgentCallbackStoreError::Invariant { .. })
+        ));
     }
 
     #[tokio::test]

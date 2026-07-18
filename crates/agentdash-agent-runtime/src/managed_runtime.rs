@@ -15,6 +15,7 @@ use agentdash_agent_runtime_contract::{
 };
 use agentdash_agent_service_api::AgentEffectIdentity;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -22,7 +23,8 @@ use crate::{
     NormalizedAgentProjection, validate_complete_agent_source_facts,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ManagedRuntimePendingCommandState {
     Pending,
     Claimed,
@@ -32,7 +34,7 @@ pub enum ManagedRuntimePendingCommandState {
     Lost,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManagedRuntimePendingCommand {
     pub operation_id: RuntimeOperationId,
     pub effect_id: AgentEffectIdentity,
@@ -42,14 +44,14 @@ pub struct ManagedRuntimePendingCommand {
     pub claim_epoch: u64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManagedRuntimeOperationRecord {
     pub receipt: ManagedRuntimeOperationReceipt,
     pub command: ManagedRuntimeCommandEnvelope,
     pub operation: ManagedRuntimeOperation,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManagedRuntimeBindingFact {
     pub source_ref: RuntimeSourceRef,
     pub binding: ManagedRuntimeAgentBinding,
@@ -68,7 +70,7 @@ impl ManagedRuntimeBindingFact {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManagedRuntimeSettlement {
     pub status: ManagedRuntimeOperationStatus,
     pub evidence: Option<ManagedRuntimeOperationEvidence>,
@@ -78,14 +80,14 @@ pub struct ManagedRuntimeSettlement {
     pub captured_at_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManagedRuntimeOutboxEntry {
     pub sequence: RuntimeChangeSequence,
     pub operation_id: Option<RuntimeOperationId>,
     pub change: ManagedRuntimePlatformChange,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ManagedRuntimeFacts {
     pub projection: Option<ManagedRuntimeSnapshot>,
     pub binding: Option<ManagedRuntimeBindingFact>,
@@ -99,10 +101,11 @@ pub struct ManagedRuntimeFacts {
     pub outbox: Vec<ManagedRuntimeOutboxEntry>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct ManagedRuntimeStateRevision(pub u64);
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ManagedRuntimeStateSnapshot {
     pub revision: ManagedRuntimeStateRevision,
     pub facts: ManagedRuntimeFacts,
@@ -136,6 +139,68 @@ pub trait ManagedRuntimeStateRepository: Send + Sync {
         &self,
         commit: ManagedRuntimeStateCommit,
     ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError>;
+}
+
+pub fn encode_managed_runtime_state_snapshot(
+    snapshot: &ManagedRuntimeStateSnapshot,
+) -> Result<serde_json::Value, ManagedRuntimeStateStoreError> {
+    serde_json::to_value(snapshot).map_err(|error| ManagedRuntimeStateStoreError::Persistence {
+        reason: format!("failed to encode managed Runtime state snapshot: {error}"),
+    })
+}
+
+pub fn decode_managed_runtime_state_snapshot(
+    thread_id: &RuntimeThreadId,
+    value: serde_json::Value,
+) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+    let snapshot: ManagedRuntimeStateSnapshot = serde_json::from_value(value).map_err(|error| {
+        ManagedRuntimeStateStoreError::Invariant {
+            reason: format!("failed to decode managed Runtime state snapshot: {error}"),
+        }
+    })?;
+    validate_managed_runtime_state_snapshot(thread_id, &snapshot)?;
+    Ok(snapshot)
+}
+
+pub fn validate_managed_runtime_state_snapshot(
+    thread_id: &RuntimeThreadId,
+    snapshot: &ManagedRuntimeStateSnapshot,
+) -> Result<(), ManagedRuntimeStateStoreError> {
+    if thread_id.as_str().trim().is_empty() {
+        return invariant("Runtime repository thread identity must not be empty");
+    }
+    if snapshot
+        .facts
+        .projection
+        .as_ref()
+        .is_some_and(|projection| &projection.thread_id != thread_id)
+        || snapshot
+            .facts
+            .source_identities
+            .as_ref()
+            .is_some_and(|identities| identities.thread_id() != thread_id)
+        || snapshot.facts.operations.values().any(|operation| {
+            &operation.command.thread_id != thread_id || &operation.receipt.thread_id != thread_id
+        })
+        || snapshot
+            .facts
+            .pending_commands
+            .values()
+            .any(|pending| &pending.command.thread_id != thread_id)
+        || snapshot
+            .facts
+            .changes
+            .iter()
+            .any(|change| &change.thread_id != thread_id)
+        || snapshot
+            .facts
+            .outbox
+            .iter()
+            .any(|entry| &entry.change.thread_id != thread_id)
+    {
+        return invariant("loaded Runtime state contains facts for another thread");
+    }
+    validate_managed_runtime_facts(&snapshot.facts, &snapshot.facts)
 }
 
 pub fn apply_managed_runtime_state_commit(
@@ -173,8 +238,25 @@ pub fn validate_managed_runtime_facts(
 ) -> Result<(), ManagedRuntimeStateStoreError> {
     validate_projection(candidate)?;
     validate_complete_agent_source_facts(current, candidate)?;
+    if candidate.binding.as_ref().is_some_and(|binding| {
+        binding.source_ref.as_str().trim().is_empty()
+            || binding.binding.source.as_str().trim().is_empty()
+            || binding.binding.generation.0 == 0
+    }) || candidate
+        .source_identities
+        .as_ref()
+        .is_some_and(|identities| {
+            identities.source().as_str().trim().is_empty()
+                || identities.thread_id().as_str().trim().is_empty()
+        })
+    {
+        return invariant("Runtime binding or source identity coordinates are invalid");
+    }
     for (operation_id, operation) in &candidate.operations {
-        if operation_id != &operation.receipt.operation_id
+        if operation_id.as_str().trim().is_empty()
+            || operation.command.idempotency_key.as_str().trim().is_empty()
+            || operation.command.thread_id.as_str().trim().is_empty()
+            || operation_id != &operation.receipt.operation_id
             || operation_id != &operation.command.operation_id
             || operation_id != &operation.operation.id
             || operation.receipt.thread_id != operation.command.thread_id
@@ -192,17 +274,16 @@ pub fn validate_managed_runtime_facts(
             return invariant("operation idempotency index is missing or inconsistent");
         }
     }
-    if candidate
-        .idempotency
-        .values()
-        .any(|operation_id| !candidate.operations.contains_key(operation_id))
-    {
+    if candidate.idempotency.iter().any(|(key, operation_id)| {
+        key.as_str().trim().is_empty() || !candidate.operations.contains_key(operation_id)
+    }) {
         return invariant("idempotency index references an unknown operation");
     }
     for (operation_id, pending) in &candidate.pending_commands {
-        if operation_id != &pending.operation_id
-            || operation_id != &pending.command.operation_id
+        if operation_id.as_str().trim().is_empty()
             || pending.effect_id.as_str().trim().is_empty()
+            || operation_id != &pending.operation_id
+            || operation_id != &pending.command.operation_id
             || (pending.state == ManagedRuntimePendingCommandState::Claimed
                 && pending
                     .claim_owner
@@ -1700,6 +1781,53 @@ mod tests {
             applied_surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(4),
             activated_at_revision: Some(RuntimeProjectionRevision(7)),
         }
+    }
+
+    #[test]
+    fn persisted_runtime_state_round_trips_operation_delivery_and_outbox_facts() {
+        let thread_id = RuntimeThreadId::new("thread").expect("thread");
+        let snapshot = ManagedRuntimeStateSnapshot {
+            revision: ManagedRuntimeStateRevision(8),
+            facts: operation_facts(),
+        };
+
+        let encoded = encode_managed_runtime_state_snapshot(&snapshot).expect("encode snapshot");
+        let decoded =
+            decode_managed_runtime_state_snapshot(&thread_id, encoded).expect("decode snapshot");
+
+        assert_eq!(decoded, snapshot);
+        assert_eq!(decoded.facts.operations.len(), 1);
+        assert_eq!(decoded.facts.idempotency.len(), 1);
+        assert_eq!(decoded.facts.pending_commands.len(), 1);
+        assert_eq!(decoded.facts.changes.len(), 1);
+        assert_eq!(decoded.facts.outbox.len(), 1);
+    }
+
+    #[test]
+    fn persisted_runtime_state_rejects_cross_thread_and_incomplete_fact_graphs() {
+        let snapshot = ManagedRuntimeStateSnapshot {
+            revision: ManagedRuntimeStateRevision(8),
+            facts: operation_facts(),
+        };
+        let encoded = encode_managed_runtime_state_snapshot(&snapshot).expect("encode snapshot");
+
+        assert!(matches!(
+            decode_managed_runtime_state_snapshot(
+                &RuntimeThreadId::new("other-thread").expect("thread"),
+                encoded.clone(),
+            ),
+            Err(ManagedRuntimeStateStoreError::Invariant { .. })
+        ));
+
+        let mut incomplete = encoded;
+        incomplete["facts"]["outbox"] = serde_json::json!([]);
+        assert!(matches!(
+            decode_managed_runtime_state_snapshot(
+                &RuntimeThreadId::new("thread").expect("thread"),
+                incomplete,
+            ),
+            Err(ManagedRuntimeStateStoreError::Invariant { .. })
+        ));
     }
 
     fn lifecycle_succeeded_without_evidence(

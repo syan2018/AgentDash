@@ -9,6 +9,7 @@ use agentdash_agent_service_api::{
     AgentSurfaceRoute, CompleteAgentService,
 };
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -20,10 +21,11 @@ use crate::{
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct CompleteAgentHostRevision(pub u64);
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentHostFacts {
     pub service_instances: BTreeMap<AgentServiceInstanceId, AgentServiceDescriptor>,
     pub offers: BTreeMap<AgentServiceInstanceId, AgentRuntimeOffer>,
@@ -39,7 +41,7 @@ pub struct CompleteAgentHostFacts {
     pub lifecycle_effects: BTreeMap<AgentEffectIdentity, CompleteAgentLifecycleEffectRecord>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentHostSnapshot {
     pub revision: CompleteAgentHostRevision,
     pub facts: CompleteAgentHostFacts,
@@ -79,6 +81,25 @@ pub trait CompleteAgentHostRepository: Send + Sync {
         &self,
         commit: CompleteAgentHostCommit,
     ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError>;
+}
+
+pub fn encode_complete_agent_host_snapshot(
+    snapshot: &CompleteAgentHostSnapshot,
+) -> Result<serde_json::Value, CompleteAgentHostStoreError> {
+    serde_json::to_value(snapshot).map_err(|error| CompleteAgentHostStoreError::Persistence {
+        reason: format!("failed to encode Complete Agent Host snapshot: {error}"),
+    })
+}
+
+pub fn decode_complete_agent_host_snapshot(
+    value: serde_json::Value,
+) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+    let snapshot: CompleteAgentHostSnapshot =
+        serde_json::from_value(value).map_err(|error| CompleteAgentHostStoreError::Invariant {
+            reason: format!("failed to decode Complete Agent Host snapshot: {error}"),
+        })?;
+    validate_complete_agent_host_facts(&snapshot.facts, &snapshot.facts)?;
+    Ok(snapshot)
 }
 
 /// Process-local resolver for live Complete Agent service handles.
@@ -139,6 +160,14 @@ pub fn validate_complete_agent_host_facts(
         );
     }
     for (instance_id, descriptor) in &candidate.service_instances {
+        if instance_id.as_str().trim().is_empty()
+            || descriptor.definition_id.as_str().trim().is_empty()
+            || descriptor.title.trim().is_empty()
+            || descriptor.protocol_revision == 0
+            || descriptor.profile_digest.as_str().trim().is_empty()
+        {
+            return invariant("service instance descriptor coordinates are invalid");
+        }
         let offer = candidate.offers.get(instance_id).ok_or_else(|| {
             CompleteAgentHostStoreError::Invariant {
                 reason: "service instance has no Runtime offer".to_owned(),
@@ -180,11 +209,21 @@ pub fn validate_complete_agent_host_facts(
     }
 
     for (binding_id, binding) in &candidate.bindings {
-        if binding_id != &binding.id {
-            return invariant("binding map key does not match binding identity");
-        }
-        if binding.generation.0 == 0 {
-            return invariant("binding generation must be positive");
+        if binding_id.as_str().trim().is_empty()
+            || binding.service_instance_id.as_str().trim().is_empty()
+            || binding.source.as_str().trim().is_empty()
+            || binding.profile_digest.as_str().trim().is_empty()
+            || binding.bound_surface.digest.as_str().trim().is_empty()
+            || binding
+                .bound_surface
+                .offer_profile_digest
+                .as_str()
+                .trim()
+                .is_empty()
+            || binding_id != &binding.id
+            || binding.generation.0 == 0
+        {
+            return invariant("binding coordinates or generation are invalid");
         }
         let descriptor = candidate
             .service_instances
@@ -236,7 +275,10 @@ pub fn validate_complete_agent_host_facts(
         }
     }
     for (binding_id, source) in &candidate.source_coordinates {
-        if !candidate.bindings.contains_key(binding_id) {
+        if binding_id.as_str().trim().is_empty()
+            || source.as_str().trim().is_empty()
+            || !candidate.bindings.contains_key(binding_id)
+        {
             return invariant("source coordinate has no owning binding");
         }
         if candidate
@@ -253,7 +295,10 @@ pub fn validate_complete_agent_host_facts(
         }
     }
     for (route_id, route) in &candidate.callback_routes {
-        if route_id != &route.route_id
+        if route_id.as_str().trim().is_empty()
+            || route.binding_id.as_str().trim().is_empty()
+            || route.source.as_str().trim().is_empty()
+            || route_id != &route.route_id
             || route.generation.0 == 0
             || route.delivery != AgentSurfaceRoute::AgentNativeCallback
             || route.default_deadline_ms == 0
@@ -286,6 +331,13 @@ pub fn validate_complete_agent_host_facts(
             .any(|route_id| !candidate.callback_routes.contains_key(route_id))
     {
         return invariant("callback route revocation history is invalid");
+    }
+    if candidate
+        .revoked_callback_routes
+        .iter()
+        .any(|route_id| route_id.as_str().trim().is_empty())
+    {
+        return invariant("callback route tombstone identity is invalid");
     }
     for (binding_id, binding) in &candidate.bindings {
         let active_routes = candidate
@@ -354,8 +406,15 @@ pub fn validate_complete_agent_host_facts(
 
     let mut command_effects = BTreeMap::new();
     for (effect_id, effect) in &candidate.effects {
-        if effect_id != &effect.effect_id {
-            return invariant("effect map key does not match effect identity");
+        if effect_id.as_str().trim().is_empty()
+            || effect.command_id.as_str().trim().is_empty()
+            || effect.binding_id.as_str().trim().is_empty()
+            || effect.service_instance_id.as_str().trim().is_empty()
+            || effect.source.as_str().trim().is_empty()
+            || effect.payload_digest.as_str().trim().is_empty()
+            || effect_id != &effect.effect_id
+        {
+            return invariant("effect coordinates or payload digest are invalid");
         }
         if command_effects
             .insert(effect.command_id.clone(), effect_id)
@@ -439,6 +498,13 @@ pub fn validate_complete_agent_host_facts(
             return invariant("lease epoch history moved backwards or was removed");
         }
     }
+    if candidate
+        .lease_epochs
+        .iter()
+        .any(|(binding_id, epoch)| binding_id.as_str().trim().is_empty() || *epoch == 0)
+    {
+        return invariant("lease epoch history contains invalid coordinates");
+    }
     for (binding_id, lease) in &candidate.leases {
         let binding = candidate.bindings.get(binding_id).ok_or_else(|| {
             CompleteAgentHostStoreError::Invariant {
@@ -494,7 +560,11 @@ pub fn validate_complete_agent_host_facts(
         return invariant("lease epoch has no owning binding");
     }
     for (thread_id, target) in &candidate.runtime_targets {
-        if thread_id != &target.runtime_thread_id
+        if thread_id.as_str().trim().is_empty()
+            || target.service_instance_id.as_str().trim().is_empty()
+            || target.profile_digest.as_str().trim().is_empty()
+            || target.callbacks.route_id.as_str().trim().is_empty()
+            || thread_id != &target.runtime_thread_id
             || target.generation.0 == 0
             || target.callbacks.binding_generation != target.generation
         {
@@ -518,8 +588,16 @@ pub fn validate_complete_agent_host_facts(
         }
     }
     for (effect_id, effect) in &candidate.lifecycle_effects {
-        if effect_id != &effect.effect_id {
-            return invariant("lifecycle effect map key does not match effect identity");
+        if effect_id.as_str().trim().is_empty()
+            || effect.runtime_thread_id.as_str().trim().is_empty()
+            || effect
+                .child_thread_id
+                .as_ref()
+                .is_some_and(|thread_id| thread_id.as_str().trim().is_empty())
+            || effect.service_instance_id.as_str().trim().is_empty()
+            || effect_id != &effect.effect_id
+        {
+            return invariant("lifecycle effect coordinates are invalid");
         }
         let target = candidate
             .runtime_targets
@@ -1065,6 +1143,42 @@ mod tests {
 
         assert_eq!(first, replay);
         assert_eq!(replay.revision, CompleteAgentHostRevision(1));
+    }
+
+    #[test]
+    fn persisted_host_state_round_trips_service_binding_effect_and_lease_facts() {
+        let snapshot = CompleteAgentHostSnapshot {
+            revision: CompleteAgentHostRevision(8),
+            facts: valid_facts(),
+        };
+
+        let encoded = encode_complete_agent_host_snapshot(&snapshot).expect("encode Host snapshot");
+        let decoded = decode_complete_agent_host_snapshot(encoded).expect("decode Host snapshot");
+
+        assert_eq!(decoded, snapshot);
+        assert_eq!(decoded.facts.service_instances.len(), 1);
+        assert_eq!(decoded.facts.offers.len(), 1);
+        assert_eq!(decoded.facts.bindings.len(), 1);
+        assert_eq!(decoded.facts.source_coordinates.len(), 1);
+        assert_eq!(decoded.facts.effects.len(), 1);
+        assert_eq!(decoded.facts.leases.len(), 1);
+        assert_eq!(decoded.facts.lease_epochs.len(), 1);
+    }
+
+    #[test]
+    fn persisted_host_state_rejects_an_incomplete_fact_graph() {
+        let snapshot = CompleteAgentHostSnapshot {
+            revision: CompleteAgentHostRevision(8),
+            facts: valid_facts(),
+        };
+        let mut encoded =
+            encode_complete_agent_host_snapshot(&snapshot).expect("encode Host snapshot");
+        encoded["facts"]["offers"] = json!({});
+
+        assert!(matches!(
+            decode_complete_agent_host_snapshot(encoded),
+            Err(CompleteAgentHostStoreError::Invariant { .. })
+        ));
     }
 
     #[tokio::test]

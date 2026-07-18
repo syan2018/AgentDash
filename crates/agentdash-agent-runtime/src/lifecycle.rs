@@ -16,9 +16,10 @@ use agentdash_agent_service_api::{
     InitialContextDeliveryFidelity, InitialContextMode, TypedContextPayload,
 };
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManagedRuntimeAgentBinding {
     pub source: AgentSourceCoordinate,
     pub generation: AgentBindingGeneration,

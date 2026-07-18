@@ -8,7 +8,7 @@ export type ManagedRuntimeAppliedInitialContextEvidence = { package_id: RuntimeC
 
 export type ManagedRuntimeAvailabilityEvidence = { decided_at_revision: RuntimeProjectionRevision, blocking_operation_id: RuntimeOperationId | null, bound_surface_revision: SurfaceRevision | null, applied_surface_revision: SurfaceRevision | null, };
 
-export type ManagedRuntimeChangeDelta = { "kind": "source_observation_applied", source_change_sequence: bigint, source_projection_revision: RuntimeProjectionRevision, source_identity_digest: RuntimePayloadDigest, observation_digest: RuntimePayloadDigest, source_revision_digest: RuntimePayloadDigest | null, source_cursor_digest: RuntimePayloadDigest | null, changed_sections: Array<ManagedRuntimeProjectionSection>, } | { "kind": "source_projection_changed", source_change_sequence: bigint, source_projection_revision: RuntimeProjectionRevision, observation_digest: RuntimePayloadDigest, section: ManagedRuntimeProjectionSection, section_digest: RuntimePayloadDigest, delta: ManagedRuntimeSourceProjectionDelta, } | { "kind": "operation_upserted", operation: ManagedRuntimeOperation, } | { "kind": "command_availability_changed", command: ManagedRuntimeCommandKind, availability: ManagedRuntimeCommandAvailability, } | { "kind": "surface_evidence_changed", bound_surface_revision: SurfaceRevision | null, applied_surface_revision: SurfaceRevision | null, } | { "kind": "source_binding_changed", binding: ManagedRuntimeSourceBindingEvidence | null, } | { "kind": "runtime_lifecycle_changed", lifecycle: ManagedRuntimeLifecycleStatus, };
+export type ManagedRuntimeChangeDelta = { "kind": "source_observation_applied", source_change_sequence: number, source_projection_revision: RuntimeProjectionRevision, source_identity_digest: RuntimePayloadDigest, observation_digest: RuntimePayloadDigest, source_revision_digest: RuntimePayloadDigest | null, source_cursor_digest: RuntimePayloadDigest | null, changed_sections: Array<ManagedRuntimeProjectionSection>, } | { "kind": "source_projection_changed", source_change_sequence: number, source_projection_revision: RuntimeProjectionRevision, observation_digest: RuntimePayloadDigest, section: ManagedRuntimeProjectionSection, section_digest: RuntimePayloadDigest, delta: ManagedRuntimeSourceProjectionDelta, } | { "kind": "operation_upserted", operation: ManagedRuntimeOperation, } | { "kind": "command_availability_changed", command: ManagedRuntimeCommandKind, availability: ManagedRuntimeCommandAvailability, } | { "kind": "surface_evidence_changed", bound_surface_revision: SurfaceRevision | null, applied_surface_revision: SurfaceRevision | null, } | { "kind": "source_binding_changed", binding: ManagedRuntimeSourceBindingEvidence | null, } | { "kind": "runtime_lifecycle_changed", lifecycle: ManagedRuntimeLifecycleStatus, };
 
 export type ManagedRuntimeChangeGap = { requested_after: RuntimeChangeSequence | null, earliest_available: RuntimeChangeSequence, latest_available: RuntimeChangeSequence, snapshot_revision: RuntimeProjectionRevision, };
 
@@ -88,7 +88,7 @@ export type ManagedRuntimeProjectionSection = "snapshot" | "lifecycle" | "active
 
 export type ManagedRuntimeReadRequest = { thread_id: RuntimeThreadId, };
 
-export type ManagedRuntimeSnapshot = { thread_id: RuntimeThreadId, revision: RuntimeProjectionRevision, latest_change_sequence: RuntimeChangeSequence, captured_at_ms: bigint, lifecycle: ManagedRuntimeLifecycleStatus, active_turn_id: RuntimeTurnId | null, turns: Array<ManagedRuntimeTurn>, items: Array<ManagedRuntimeItem>, interactions: Array<ManagedRuntimeInteraction>, operations: Array<ManagedRuntimeOperation>, source_binding: ManagedRuntimeSourceBindingEvidence | null, authority: ManagedRuntimeProjectionAuthority, fidelity: ManagedRuntimeProjectionFidelity, command_availability: { [key in ManagedRuntimeCommandKind]?: ManagedRuntimeCommandAvailability }, };
+export type ManagedRuntimeSnapshot = { thread_id: RuntimeThreadId, revision: RuntimeProjectionRevision, latest_change_sequence: RuntimeChangeSequence, captured_at_ms: number, lifecycle: ManagedRuntimeLifecycleStatus, active_turn_id: RuntimeTurnId | null, turns: Array<ManagedRuntimeTurn>, items: Array<ManagedRuntimeItem>, interactions: Array<ManagedRuntimeInteraction>, operations: Array<ManagedRuntimeOperation>, source_binding: ManagedRuntimeSourceBindingEvidence | null, authority: ManagedRuntimeProjectionAuthority, fidelity: ManagedRuntimeProjectionFidelity, command_availability: { [key in ManagedRuntimeCommandKind]?: ManagedRuntimeCommandAvailability }, };
 
 export type ManagedRuntimeSourceBindingEvidence = { source_ref: RuntimeSourceRef, committed_at_revision: RuntimeProjectionRevision, applied_surface_revision: SurfaceRevision, activated_at_revision: RuntimeProjectionRevision | null, };
 
@@ -98,7 +98,7 @@ export type ManagedRuntimeTurn = { id: RuntimeTurnId, status: ManagedRuntimeEnti
 
 export type ManagedRuntimeUnavailabilityReason = "runtime_not_active" | "admission_denied" | "bound_surface_unavailable" | "applied_surface_mismatch" | "active_turn_required" | "no_active_turn_required" | "pending_interaction_required" | "operation_in_flight" | "source_unavailable";
 
-export type RuntimeChangeSequence = bigint;
+export type RuntimeChangeSequence = number;
 
 export type RuntimeContextContributionId = string;
 
@@ -118,7 +118,7 @@ export type RuntimeOperationId = string;
 
 export type RuntimePayloadDigest = string;
 
-export type RuntimeProjectionRevision = bigint;
+export type RuntimeProjectionRevision = number;
 
 export type RuntimeSourceRef = string;
 
@@ -126,4 +126,4 @@ export type RuntimeThreadId = string;
 
 export type RuntimeTurnId = string;
 
-export type SurfaceRevision = bigint;
+export type SurfaceRevision = number;

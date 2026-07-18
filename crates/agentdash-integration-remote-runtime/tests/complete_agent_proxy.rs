@@ -2,7 +2,7 @@ use std::{
     collections::BTreeSet,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -38,6 +38,7 @@ struct LoopbackPlacement {
     events_rx: Mutex<mpsc::UnboundedReceiver<RuntimeWirePlacementEvent>>,
     next_remote_frame_id: AtomicU64,
     execute_requests: AtomicU64,
+    mismatch_execute_coordinates: AtomicBool,
 }
 
 impl LoopbackPlacement {
@@ -49,6 +50,7 @@ impl LoopbackPlacement {
             events_rx: Mutex::new(events_rx),
             next_remote_frame_id: AtomicU64::new(1),
             execute_requests: AtomicU64::new(0),
+            mismatch_execute_coordinates: AtomicBool::new(false),
         })
     }
 
@@ -107,7 +109,11 @@ impl RuntimeWirePlacement for LoopbackPlacement {
                     agentdash_agent_service_api::AgentCommandReceipt {
                         command_id: command.meta.command_id,
                         effect_id: command.meta.effect_id,
-                        source: command.source,
+                        source: if self.mismatch_execute_coordinates.load(Ordering::Relaxed) {
+                            AgentSourceCoordinate::new("different-source").expect("source")
+                        } else {
+                            command.source
+                        },
                         state: AgentReceiptState::Accepted,
                         snapshot_revision: None,
                         initial_context: None,
@@ -990,6 +996,27 @@ async fn stale_local_generation_is_fenced_before_remote_dispatch() {
 
     assert_eq!(error.code, AgentServiceErrorCode::StaleBindingGeneration);
     assert_eq!(placement.execute_requests.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn proxy_rejects_a_success_receipt_for_different_command_coordinates() {
+    let placement = LoopbackPlacement::new();
+    placement
+        .mismatch_execute_coordinates
+        .store(true, Ordering::Relaxed);
+    let proxy = RemoteCompleteAgentService::new(
+        AgentBindingGeneration(3),
+        target(),
+        placement,
+        Arc::new(RecordingCallbacks::default()),
+    );
+
+    let error = proxy
+        .execute(execute("mismatched-receipt", 3))
+        .await
+        .expect_err("foreign source receipt must be rejected");
+
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
 }
 
 #[tokio::test]

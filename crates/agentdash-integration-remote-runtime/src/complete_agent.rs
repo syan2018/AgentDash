@@ -479,9 +479,18 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::Create(result)) =
             self.cached(&command.meta.effect_id).await
         {
-            return result.map(|value| *value);
+            return result.and_then(|value| {
+                validate_command_receipt(
+                    &command.meta.command_id,
+                    &command.meta.effect_id,
+                    command.requested_source.as_ref(),
+                    *value,
+                )
+            });
         }
         let effect_id = command.meta.effect_id.clone();
+        let command_id = command.meta.command_id.clone();
+        let requested_source = command.requested_source.clone();
         command.meta.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::Create {
@@ -492,7 +501,10 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         let result = match &response {
             RuntimeWireAgentServiceResponse::Create(result) => result.clone().map(|value| *value),
             _ => Err(protocol("create received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| {
+            validate_command_receipt(&command_id, &effect_id, requested_source.as_ref(), receipt)
+        });
         self.cache(effect_id, response).await;
         result
     }
@@ -505,9 +517,18 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::Resume(result)) =
             self.cached(&command.meta.effect_id).await
         {
-            return result.map(|value| *value);
+            return result.and_then(|value| {
+                validate_command_receipt(
+                    &command.meta.command_id,
+                    &command.meta.effect_id,
+                    Some(&command.source),
+                    *value,
+                )
+            });
         }
         let effect_id = command.meta.effect_id.clone();
+        let command_id = command.meta.command_id.clone();
+        let source = command.source.clone();
         command.meta.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::Resume {
@@ -518,7 +539,10 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         let result = match &response {
             RuntimeWireAgentServiceResponse::Resume(result) => result.clone().map(|value| *value),
             _ => Err(protocol("resume received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| {
+            validate_command_receipt(&command_id, &effect_id, Some(&source), receipt)
+        });
         self.cache(effect_id, response).await;
         result
     }
@@ -531,9 +555,12 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::Fork(result)) =
             self.cached(&command.meta.effect_id).await
         {
-            return result.map(|value| *value);
+            return result
+                .map(|value| *value)
+                .and_then(|receipt| validate_fork_receipt(&command, receipt));
         }
         let effect_id = command.meta.effect_id.clone();
+        let expected = command.clone();
         command.meta.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::Fork {
@@ -544,7 +571,8 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         let result = match &response {
             RuntimeWireAgentServiceResponse::Fork(result) => result.clone().map(|value| *value),
             _ => Err(protocol("fork received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| validate_fork_receipt(&expected, receipt));
         self.cache(effect_id, response).await;
         result
     }
@@ -557,9 +585,18 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::Execute(result)) =
             self.cached(&command.meta.effect_id).await
         {
-            return result.map(|value| *value);
+            return result.and_then(|value| {
+                validate_command_receipt(
+                    &command.meta.command_id,
+                    &command.meta.effect_id,
+                    Some(&command.source),
+                    *value,
+                )
+            });
         }
         let effect_id = command.meta.effect_id.clone();
+        let command_id = command.meta.command_id.clone();
+        let source = command.source.clone();
         command.meta.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::Execute {
@@ -570,7 +607,10 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         let result = match &response {
             RuntimeWireAgentServiceResponse::Execute(result) => result.clone().map(|value| *value),
             _ => Err(protocol("execute received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| {
+            validate_command_receipt(&command_id, &effect_id, Some(&source), receipt)
+        });
         self.cache(effect_id, response).await;
         result
     }
@@ -683,9 +723,12 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::ApplySurface(result)) =
             self.cached(&command.effect_id).await
         {
-            return result.map(|value| *value);
+            return result
+                .map(|value| *value)
+                .and_then(|receipt| validate_surface_receipt(&command, receipt));
         }
         let effect_id = command.effect_id.clone();
+        let expected = command.clone();
         command.callbacks.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::ApplySurface {
@@ -698,7 +741,8 @@ impl CompleteAgentService for RemoteCompleteAgentService {
                 result.clone().map(|value| *value)
             }
             _ => Err(protocol("apply surface received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| validate_surface_receipt(&expected, receipt));
         self.cache(effect_id, response).await;
         result
     }
@@ -711,9 +755,18 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::RevokeSurface(result)) =
             self.cached(&command.effect_id).await
         {
-            return result.map(|value| *value);
+            return result.and_then(|value| {
+                validate_command_receipt(
+                    &command.command_id,
+                    &command.effect_id,
+                    Some(&command.source),
+                    *value,
+                )
+            });
         }
         let effect_id = command.effect_id.clone();
+        let command_id = command.command_id.clone();
+        let source = command.source.clone();
         command.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::RevokeSurface {
@@ -726,7 +779,10 @@ impl CompleteAgentService for RemoteCompleteAgentService {
                 result.clone().map(|value| *value)
             }
             _ => Err(protocol("revoke surface received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| {
+            validate_command_receipt(&command_id, &effect_id, Some(&source), receipt)
+        });
         self.cache(effect_id, response).await;
         result
     }
@@ -1259,6 +1315,60 @@ fn validate_inspection(
         ));
     }
     Ok(inspection)
+}
+
+fn validate_command_receipt(
+    expected_command_id: &agentdash_agent_service_api::AgentCommandId,
+    expected_effect_id: &AgentEffectIdentity,
+    expected_source: Option<&AgentSourceCoordinate>,
+    receipt: AgentCommandReceipt,
+) -> Result<AgentCommandReceipt, AgentServiceError> {
+    if &receipt.command_id != expected_command_id
+        || &receipt.effect_id != expected_effect_id
+        || expected_source.is_some_and(|source| source != &receipt.source)
+    {
+        return Err(protocol(
+            "remote Complete Agent returned a command receipt for different coordinates",
+        ));
+    }
+    Ok(receipt)
+}
+
+fn validate_fork_receipt(
+    command: &ForkAgentCommand,
+    receipt: ForkAgentReceipt,
+) -> Result<ForkAgentReceipt, AgentServiceError> {
+    if receipt.command_id != command.meta.command_id
+        || receipt.effect_id != command.meta.effect_id
+        || receipt.parent_source != command.source
+        || receipt.cutoff != command.cutoff
+        || command
+            .requested_child_source
+            .as_ref()
+            .is_some_and(|source| receipt.child_source.as_ref() != Some(source))
+    {
+        return Err(protocol(
+            "remote Complete Agent returned a fork receipt for different coordinates",
+        ));
+    }
+    Ok(receipt)
+}
+
+fn validate_surface_receipt(
+    command: &ApplyBoundAgentSurface,
+    receipt: AppliedAgentSurfaceReceipt,
+) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
+    if receipt.command_id != command.command_id
+        || receipt.effect_id != command.effect_id
+        || receipt.source != command.source
+        || receipt.applied.revision != command.bound_surface.revision
+        || receipt.applied.digest != command.bound_surface.digest
+    {
+        return Err(protocol(
+            "remote Complete Agent returned a surface receipt for different coordinates",
+        ));
+    }
+    Ok(receipt)
 }
 
 fn response_error(

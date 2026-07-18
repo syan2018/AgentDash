@@ -313,10 +313,16 @@ impl CodexCompleteAgentService {
         &self,
         effect_id: &AgentEffectIdentity,
         expected_family: CommandEffectFamily,
+        expected_command_id: &agentdash_agent_service_api::AgentCommandId,
+        expected_source: Option<&AgentSourceCoordinate>,
     ) -> Result<Option<AgentCommandReceipt>, AgentServiceError> {
         let state = self.state.read().await;
         match state.effects.get(effect_id) {
-            Some(RecordedReceipt::Command { family, receipt }) if *family == expected_family => {
+            Some(RecordedReceipt::Command { family, receipt })
+                if *family == expected_family
+                    && &receipt.command_id == expected_command_id
+                    && expected_source.is_none_or(|source| source == &receipt.source) =>
+            {
                 Ok(Some(receipt.clone()))
             }
             Some(RecordedReceipt::Unknown(_)) => Err(unknown_outcome_error()),
@@ -480,7 +486,12 @@ impl CompleteAgentService for CodexCompleteAgentService {
         command: CreateAgentCommand,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
         if let Some(receipt) = self
-            .replay_command(&command.meta.effect_id, CommandEffectFamily::Create)
+            .replay_command(
+                &command.meta.effect_id,
+                CommandEffectFamily::Create,
+                &command.meta.command_id,
+                command.requested_source.as_ref(),
+            )
             .await?
         {
             return Ok(receipt);
@@ -558,7 +569,12 @@ impl CompleteAgentService for CodexCompleteAgentService {
         command: ResumeAgentCommand,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
         if let Some(receipt) = self
-            .replay_command(&command.meta.effect_id, CommandEffectFamily::Resume)
+            .replay_command(
+                &command.meta.effect_id,
+                CommandEffectFamily::Resume,
+                &command.meta.command_id,
+                Some(&command.source),
+            )
             .await?
         {
             return Ok(receipt);
@@ -626,7 +642,17 @@ impl CompleteAgentService for CodexCompleteAgentService {
         {
             let state = self.state.read().await;
             match state.effects.get(&command.meta.effect_id) {
-                Some(RecordedReceipt::Fork { receipt, .. }) => return Ok(receipt.clone()),
+                Some(RecordedReceipt::Fork { receipt, .. })
+                    if receipt.command_id == command.meta.command_id
+                        && receipt.parent_source == command.source
+                        && receipt.cutoff == command.cutoff
+                        && command
+                            .requested_child_source
+                            .as_ref()
+                            .is_none_or(|source| receipt.child_source.as_ref() == Some(source)) =>
+                {
+                    return Ok(receipt.clone());
+                }
                 Some(RecordedReceipt::Unknown(_)) => return Err(unknown_outcome_error()),
                 Some(_) => {
                     return Err(service_error(
@@ -811,7 +837,12 @@ impl CompleteAgentService for CodexCompleteAgentService {
         command: AgentCommandEnvelope,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
         if let Some(receipt) = self
-            .replay_command(&command.meta.effect_id, CommandEffectFamily::Command)
+            .replay_command(
+                &command.meta.effect_id,
+                CommandEffectFamily::Command,
+                &command.meta.command_id,
+                Some(&command.source),
+            )
             .await?
         {
             return Ok(receipt);
@@ -1082,7 +1113,9 @@ impl CompleteAgentService for CodexCompleteAgentService {
             None => AgentEffectInspection {
                 effect_id: identity,
                 command_id: None,
-                state: AgentEffectInspectionState::NotApplied,
+                // Codex has no source-native effect lookup. An empty adapter ledger after process
+                // restart therefore cannot prove non-application and must not authorize a resend.
+                state: AgentEffectInspectionState::Unknown,
             },
         })
     }
@@ -1094,7 +1127,14 @@ impl CompleteAgentService for CodexCompleteAgentService {
         {
             let state = self.state.read().await;
             match state.effects.get(&command.effect_id) {
-                Some(RecordedReceipt::SurfaceApply(receipt)) => return Ok(receipt.clone()),
+                Some(RecordedReceipt::SurfaceApply(receipt))
+                    if receipt.command_id == command.command_id
+                        && receipt.source == command.source
+                        && receipt.applied.revision == command.bound_surface.revision
+                        && receipt.applied.digest == command.bound_surface.digest =>
+                {
+                    return Ok(receipt.clone());
+                }
                 Some(RecordedReceipt::Unknown(_)) => return Err(unknown_outcome_error()),
                 Some(_) => {
                     return Err(service_error(
@@ -1257,7 +1297,12 @@ impl CompleteAgentService for CodexCompleteAgentService {
         command: RevokeBoundAgentSurface,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
         if let Some(receipt) = self
-            .replay_command(&command.effect_id, CommandEffectFamily::SurfaceRevoke)
+            .replay_command(
+                &command.effect_id,
+                CommandEffectFamily::SurfaceRevoke,
+                &command.command_id,
+                Some(&command.source),
+            )
             .await?
         {
             return Ok(receipt);
@@ -1463,17 +1508,23 @@ fn verify_codex_fork_cutoff(
     match cutoff {
         AgentForkPoint::Head => Ok(()),
         AgentForkPoint::CompletedTurn { turn_id } => {
-            let verified_turn_id = result
+            let verified_turn = result
                 .pointer("/thread/turns")
                 .and_then(Value::as_array)
-                .and_then(|turns| turns.last())
+                .and_then(|turns| turns.last());
+            let verified_turn_id = verified_turn
                 .and_then(|turn| turn.get("id"))
                 .and_then(Value::as_str);
-            if verified_turn_id == Some(turn_id.as_str()) {
+            let verified_turn_status = verified_turn
+                .and_then(|turn| turn.get("status"))
+                .and_then(Value::as_str);
+            if verified_turn_id == Some(turn_id.as_str())
+                && verified_turn_status == Some("completed")
+            {
                 Ok(())
             } else {
                 Err(protocol_violation(
-                    "thread/read child history does not end at the requested fork cutoff",
+                    "thread/read child history does not end at the requested completed-turn cutoff",
                 ))
             }
         }

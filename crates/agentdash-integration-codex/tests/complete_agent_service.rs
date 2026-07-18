@@ -438,7 +438,12 @@ async fn completed_turn_fork_uses_last_turn_id_and_verifies_the_child_with_threa
     transport
         .push_response(
             "thread/read",
-            json!({"thread": {"id": "thread-child", "turns": [{"id": "turn-7"}]}}),
+            json!({
+                "thread": {
+                    "id": "thread-child",
+                    "turns": [{"id": "turn-7", "status": "completed"}]
+                }
+            }),
         )
         .await;
 
@@ -538,7 +543,12 @@ async fn fork_cutoff_verification_mismatch_becomes_unknown_and_is_not_retried() 
     transport
         .push_response(
             "thread/read",
-            json!({"thread": {"id": "thread-child", "turns": [{"id": "turn-6"}]}}),
+            json!({
+                "thread": {
+                    "id": "thread-child",
+                    "turns": [{"id": "turn-6", "status": "completed"}]
+                }
+            }),
         )
         .await;
     let command = ForkAgentCommand {
@@ -555,6 +565,54 @@ async fn fork_cutoff_verification_mismatch_becomes_unknown_and_is_not_retried() 
         .fork(command.clone())
         .await
         .expect_err("child cutoff mismatch");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+    assert!(matches!(
+        service.inspect(effect_id).await.expect("inspect").state,
+        AgentEffectInspectionState::Unknown
+    ));
+    service
+        .fork(command)
+        .await
+        .expect_err("unknown fork effect must not be retried");
+    assert_eq!(
+        transport.methods().await,
+        vec!["thread/start", "thread/fork", "thread/read"]
+    );
+}
+
+#[tokio::test]
+async fn fork_cutoff_with_matching_id_but_non_completed_status_stays_unknown() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport
+        .push_response("thread/fork", json!({"thread": {"id": "thread-child"}}))
+        .await;
+    transport
+        .push_response(
+            "thread/read",
+            json!({
+                "thread": {
+                    "id": "thread-child",
+                    "turns": [{"id": "turn-7", "status": "inProgress"}]
+                }
+            }),
+        )
+        .await;
+    let command = ForkAgentCommand {
+        meta: meta("fork-running-cutoff"),
+        source,
+        requested_child_source: None,
+        cutoff: AgentForkPoint::CompletedTurn {
+            turn_id: AgentTurnId::new("turn-7").expect("turn"),
+        },
+    };
+    let effect_id = command.meta.effect_id.clone();
+
+    let error = service
+        .fork(command.clone())
+        .await
+        .expect_err("running cutoff cannot prove a completed-turn fork");
     assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
     assert!(matches!(
         service.inspect(effect_id).await.expect("inspect").state,
@@ -969,6 +1027,60 @@ async fn unknown_create_outcome_is_inspectable_and_never_retried_with_same_effec
         .expect_err("must not retry unknown effect");
     assert_eq!(duplicate.code, AgentServiceErrorCode::Unavailable);
     assert_eq!(transport.methods().await, vec!["thread/start"]);
+}
+
+#[tokio::test]
+async fn missing_local_effect_after_adapter_restart_is_unknown_not_not_applied() {
+    let transport = Arc::new(RecordingTransport::default());
+    let restarted_service = service(transport.clone()).await;
+    let inspection = restarted_service
+        .inspect(AgentEffectIdentity::new("pre-restart-effect").expect("effect"))
+        .await
+        .expect("inspect after restart");
+
+    assert!(matches!(
+        inspection.state,
+        AgentEffectInspectionState::Unknown
+    ));
+    assert!(
+        transport.methods().await.is_empty(),
+        "inspection must not redispatch a vendor command"
+    );
+}
+
+#[tokio::test]
+async fn reused_effect_rejects_a_different_command_or_source_without_dispatch() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport.push_response("turn/start", json!({})).await;
+    let first = AgentCommandEnvelope {
+        meta: meta("effect-coordinate"),
+        source: source.clone(),
+        command: AgentCommand::SubmitInput {
+            input: AgentInput {
+                content: vec![AgentInputContent::Text {
+                    text: "first".to_owned(),
+                }],
+            },
+        },
+    };
+    service.execute(first.clone()).await.expect("first command");
+
+    let mut conflicting = first;
+    conflicting.meta.command_id =
+        AgentCommandId::new("different-command").expect("command identity");
+    conflicting.source = AgentSourceCoordinate::new("different-source").expect("source");
+    let error = service
+        .execute(conflicting)
+        .await
+        .expect_err("effect identity cannot move to another command/source");
+
+    assert_eq!(error.code, AgentServiceErrorCode::Conflict);
+    assert_eq!(
+        transport.methods().await,
+        vec!["thread/start", "turn/start"]
+    );
 }
 
 #[tokio::test]

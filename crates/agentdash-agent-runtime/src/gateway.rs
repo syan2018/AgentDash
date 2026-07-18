@@ -498,52 +498,27 @@ impl ProductionManagedAgentRuntimeGateway {
                 child_history_digest,
                 ..
             } => {
-                let ManagedRuntimeCommand::Fork {
-                    child_thread_id,
-                    through_completed_turn_id,
-                } = &command.command
-                else {
-                    return Err(ManagedRuntimeGatewayError::Invalid {
-                        reason: "Fork partial evidence was attached to another command".to_owned(),
-                    });
-                };
-                let child_thread_id = child_thread_id.clone();
-                let through_completed_turn_id = through_completed_turn_id.clone();
-                let parent = self
-                    .repository
-                    .load(&command.thread_id)
-                    .await
-                    .map_err(map_store_error)?
-                    .facts
-                    .binding
-                    .ok_or(ManagedRuntimeGatewayError::NotFound)?;
-                let child_source_ref = source_ref(&child_thread_id, &child_source)?;
-                let cutoff = through_completed_turn_id.as_ref().map_or(
-                    ManagedRuntimeForkCutoff::Head,
-                    |turn_id| ManagedRuntimeForkCutoff::CompletedTurn {
-                        turn_id: turn_id.clone(),
-                    },
-                );
-                let child_history_digest = child_history_digest
-                    .map(|digest| RuntimePayloadDigest::new(digest.into_inner()))
-                    .transpose()
-                    .map_err(|error| ManagedRuntimeGatewayError::Invalid {
-                        reason: error.to_string(),
-                    })?;
-                self.finish(
+                self.settle_fork_child_known(
                     command,
+                    child_source,
+                    child_history_digest,
                     ManagedRuntimeOperationStatus::Lost,
-                    Some(ManagedRuntimeOperationEvidence::Fork {
-                        parent_binding: parent.evidence(),
-                        progress: ManagedRuntimeForkProgressEvidence::ChildKnown {
-                            child_thread_id,
-                            child_source_ref,
-                            cutoff,
-                            child_history_digest,
-                        },
-                    }),
-                    None,
-                    None,
+                    ManagedRuntimePendingCommandState::Lost,
+                    now_ms,
+                )
+                .await
+            }
+            ManagedRuntimeLifecycleError::ForkInspectionRequired {
+                child_source,
+                child_history_digest,
+                ..
+            } => {
+                self.settle_fork_child_known(
+                    command,
+                    child_source,
+                    child_history_digest,
+                    ManagedRuntimeOperationStatus::Running,
+                    ManagedRuntimePendingCommandState::InspectionRequired,
                     now_ms,
                 )
                 .await
@@ -580,18 +555,98 @@ impl ProductionManagedAgentRuntimeGateway {
         }
     }
 
+    async fn settle_fork_child_known(
+        &self,
+        command: ManagedRuntimeCommandEnvelope,
+        child_source: agentdash_agent_service_api::AgentSourceCoordinate,
+        child_history_digest: Option<AgentPayloadDigest>,
+        status: ManagedRuntimeOperationStatus,
+        pending_state: ManagedRuntimePendingCommandState,
+        now_ms: u64,
+    ) -> Result<ManagedRuntimeOperationReceipt, ManagedRuntimeGatewayError> {
+        let ManagedRuntimeCommand::Fork {
+            child_thread_id,
+            through_completed_turn_id,
+        } = &command.command
+        else {
+            return Err(ManagedRuntimeGatewayError::Invalid {
+                reason: "Fork partial evidence was attached to another command".to_owned(),
+            });
+        };
+        let child_thread_id = child_thread_id.clone();
+        let through_completed_turn_id = through_completed_turn_id.clone();
+        let parent = self
+            .repository
+            .load(&command.thread_id)
+            .await
+            .map_err(map_store_error)?
+            .facts
+            .binding
+            .ok_or(ManagedRuntimeGatewayError::NotFound)?;
+        let child_source_ref = source_ref(&child_thread_id, &child_source)?;
+        let cutoff =
+            through_completed_turn_id
+                .as_ref()
+                .map_or(ManagedRuntimeForkCutoff::Head, |turn_id| {
+                    ManagedRuntimeForkCutoff::CompletedTurn {
+                        turn_id: turn_id.clone(),
+                    }
+                });
+        let child_history_digest = child_history_digest
+            .map(|digest| RuntimePayloadDigest::new(digest.into_inner()))
+            .transpose()
+            .map_err(|error| ManagedRuntimeGatewayError::Invalid {
+                reason: error.to_string(),
+            })?;
+        ManagedRuntimeCoordinator::new(self.repository.clone())
+            .settle(
+                &command.thread_id,
+                &command.operation_id,
+                ManagedRuntimeSettlement {
+                    status,
+                    evidence: Some(ManagedRuntimeOperationEvidence::Fork {
+                        parent_binding: parent.evidence(),
+                        progress: ManagedRuntimeForkProgressEvidence::ChildKnown {
+                            child_thread_id,
+                            child_source_ref,
+                            cutoff,
+                            child_history_digest,
+                        },
+                    }),
+                    binding: None,
+                    lifecycle: None,
+                    pending_state,
+                    captured_at_ms: now_ms,
+                },
+            )
+            .await
+            .map_err(map_store_error)
+    }
+
     async fn keep_inspection_required(
         &self,
         command: ManagedRuntimeCommandEnvelope,
         now_ms: u64,
     ) -> Result<ManagedRuntimeOperationReceipt, ManagedRuntimeGatewayError> {
+        let evidence = self
+            .repository
+            .load(&command.thread_id)
+            .await
+            .map_err(map_store_error)?
+            .facts
+            .operations
+            .get(&command.operation_id)
+            .ok_or(ManagedRuntimeGatewayError::NotFound)?
+            .operation
+            .evidence
+            .clone();
         ManagedRuntimeCoordinator::new(self.repository.clone())
             .settle(
                 &command.thread_id,
                 &command.operation_id,
                 ManagedRuntimeSettlement {
                     status: ManagedRuntimeOperationStatus::Running,
-                    evidence: None,
+                    evidence,
                     binding: None,
                     lifecycle: None,
                     pending_state: ManagedRuntimePendingCommandState::InspectionRequired,
@@ -1199,7 +1254,8 @@ fn map_lifecycle_error(error: ManagedRuntimeLifecycleError) -> ManagedRuntimeGat
         | ManagedRuntimeLifecycleError::InspectionRequired { reason } => {
             ManagedRuntimeGatewayError::Unavailable { reason }
         }
-        ManagedRuntimeLifecycleError::ForkChildKnown { reason, .. } => {
+        ManagedRuntimeLifecycleError::ForkChildKnown { reason, .. }
+        | ManagedRuntimeLifecycleError::ForkInspectionRequired { reason, .. } => {
             ManagedRuntimeGatewayError::Unavailable { reason }
         }
         ManagedRuntimeLifecycleError::Invalid { reason } => {
@@ -1283,6 +1339,8 @@ mod tests {
         fork_calls: AtomicU64,
         recover_create_from_inspect: std::sync::atomic::AtomicBool,
         leave_fork_child_unprovisioned: std::sync::atomic::AtomicBool,
+        require_fork_inspection: std::sync::atomic::AtomicBool,
+        recover_fork_from_inspect: std::sync::atomic::AtomicBool,
     }
 
     impl FixtureLifecycle {
@@ -1293,6 +1351,8 @@ mod tests {
                 fork_calls: AtomicU64::new(0),
                 recover_create_from_inspect: std::sync::atomic::AtomicBool::new(false),
                 leave_fork_child_unprovisioned: std::sync::atomic::AtomicBool::new(false),
+                require_fork_inspection: std::sync::atomic::AtomicBool::new(false),
+                recover_fork_from_inspect: std::sync::atomic::AtomicBool::new(false),
             }
         }
 
@@ -1365,6 +1425,15 @@ mod tests {
                     reason: "simulated child provisioning failure".to_owned(),
                 });
             }
+            if self.require_fork_inspection.load(Ordering::SeqCst) {
+                return Err(ManagedRuntimeLifecycleError::ForkInspectionRequired {
+                    child_source: child_binding.source,
+                    child_history_digest: Some(
+                        AgentPayloadDigest::new("sha256:child-history").expect("digest"),
+                    ),
+                    reason: "simulated Host settlement failure".to_owned(),
+                });
+            }
             Ok(ManagedRuntimeForkOutcome {
                 receipt: ForkAgentReceipt {
                     command_id: AgentCommandId::new(format!(
@@ -1421,6 +1490,34 @@ mod tests {
                         binding,
                         initial_context: None,
                         contribution_fidelity: BTreeMap::new(),
+                    },
+                ));
+            }
+            if self.recover_fork_from_inspect.load(Ordering::SeqCst) {
+                let child_binding = binding("source-child");
+                return Ok(ManagedRuntimeLifecycleInspection::ForkApplied(
+                    ManagedRuntimeForkOutcome {
+                        receipt: ForkAgentReceipt {
+                            command_id: AgentCommandId::new(format!(
+                                "runtime-command:{}",
+                                context.effect_id
+                            ))
+                            .expect("command"),
+                            effect_id: context.effect_id,
+                            parent_source: AgentSourceCoordinate::new("source-parent")
+                                .expect("source"),
+                            child_source: Some(child_binding.source.clone()),
+                            cutoff: AgentForkPoint::Head,
+                            child_history_digest: Some(
+                                AgentPayloadDigest::new("sha256:child-history").expect("digest"),
+                            ),
+                            state: AgentReceiptState::Terminal {
+                                outcome: AgentTerminalOutcome::Succeeded,
+                            },
+                        },
+                        child_binding,
+                        child_history_digest: AgentPayloadDigest::new("sha256:child-history")
+                            .expect("digest"),
                     },
                 ));
             }
@@ -1767,5 +1864,104 @@ mod tests {
                 .expect_err("partial child was not provisioned"),
             ManagedRuntimeGatewayError::NotFound
         );
+    }
+
+    #[tokio::test]
+    async fn fork_child_known_settlement_failure_recovers_to_provisioned_by_same_effect() {
+        let repository = Arc::new(FixtureRepository::default());
+        let lifecycle = Arc::new(FixtureLifecycle::new(repository.clone()));
+        let gateway = gateway(repository, lifecycle.clone());
+        let parent = RuntimeThreadId::new("inspection-parent").expect("thread");
+        gateway
+            .execute(command(
+                parent.clone(),
+                "inspection-create",
+                None,
+                ManagedRuntimeCommand::Create {
+                    initial_context: None,
+                },
+            ))
+            .await
+            .expect("create parent");
+        let parent_snapshot = gateway
+            .read(ManagedRuntimeReadRequest {
+                thread_id: parent.clone(),
+            })
+            .await
+            .expect("read parent");
+        gateway
+            .execute(command(
+                parent.clone(),
+                "inspection-activate",
+                Some(parent_snapshot.revision),
+                ManagedRuntimeCommand::Activate,
+            ))
+            .await
+            .expect("activate parent");
+        let active = gateway
+            .read(ManagedRuntimeReadRequest {
+                thread_id: parent.clone(),
+            })
+            .await
+            .expect("read active parent");
+        lifecycle
+            .require_fork_inspection
+            .store(true, Ordering::SeqCst);
+        let child = RuntimeThreadId::new("inspection-child").expect("thread");
+        let fork = command(
+            parent,
+            "inspection-fork",
+            Some(active.revision),
+            ManagedRuntimeCommand::Fork {
+                child_thread_id: child.clone(),
+                through_completed_turn_id: None,
+            },
+        );
+        let uncertain = gateway.execute(fork.clone()).await.expect("uncertain Fork");
+        assert_eq!(uncertain.status, ManagedRuntimeOperationStatus::Running);
+        assert!(matches!(
+            uncertain.evidence,
+            Some(ManagedRuntimeOperationEvidence::Fork {
+                progress: ManagedRuntimeForkProgressEvidence::ChildKnown { .. },
+                ..
+            })
+        ));
+        let still_unknown = gateway
+            .execute(fork.clone())
+            .await
+            .expect("keep inspecting Fork");
+        assert_eq!(still_unknown.status, ManagedRuntimeOperationStatus::Running);
+        assert!(matches!(
+            still_unknown.evidence,
+            Some(ManagedRuntimeOperationEvidence::Fork {
+                progress: ManagedRuntimeForkProgressEvidence::ChildKnown { .. },
+                ..
+            })
+        ));
+
+        lifecycle
+            .require_fork_inspection
+            .store(false, Ordering::SeqCst);
+        lifecycle
+            .recover_fork_from_inspect
+            .store(true, Ordering::SeqCst);
+        let recovered = gateway.execute(fork).await.expect("recover Fork");
+        assert_eq!(recovered.status, ManagedRuntimeOperationStatus::Succeeded);
+        assert!(matches!(
+            recovered.evidence,
+            Some(ManagedRuntimeOperationEvidence::Fork {
+                progress: ManagedRuntimeForkProgressEvidence::Provisioned { .. },
+                ..
+            })
+        ));
+        assert_eq!(
+            gateway
+                .read(ManagedRuntimeReadRequest { thread_id: child })
+                .await
+                .expect("read provisioned child")
+                .lifecycle,
+            ManagedRuntimeLifecycleStatus::Provisioning
+        );
+        assert_eq!(lifecycle.fork_calls.load(Ordering::SeqCst), 1);
     }
 }

@@ -15,7 +15,8 @@ use crate::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingLease,
     CompleteAgentBindingState, CompleteAgentCallbackRoute, CompleteAgentEffectAttemptEvidence,
     CompleteAgentEffectRecord, CompleteAgentEffectState, CompleteAgentLifecycleEffectRecord,
-    CompleteAgentPlacement, CompleteAgentRuntimeTarget,
+    CompleteAgentLifecycleOperationKind, CompleteAgentLifecycleOutcome, CompleteAgentPlacement,
+    CompleteAgentRuntimeTarget,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 
@@ -531,6 +532,7 @@ pub fn validate_complete_agent_host_facts(
         {
             return invariant("lifecycle effect does not match its Runtime target");
         }
+        validate_lifecycle_effect(effect)?;
     }
     for (effect_id, effect) in &current.lifecycle_effects {
         let next = candidate.lifecycle_effects.get(effect_id).ok_or_else(|| {
@@ -552,6 +554,40 @@ pub fn validate_complete_agent_host_facts(
         }
     }
     Ok(())
+}
+
+fn validate_lifecycle_effect(
+    effect: &CompleteAgentLifecycleEffectRecord,
+) -> Result<(), CompleteAgentHostStoreError> {
+    let is_fork = effect.kind == CompleteAgentLifecycleOperationKind::Fork;
+    if effect.child_thread_id.is_some() != is_fork || effect.fork_cutoff.is_some() != is_fork {
+        return invariant("lifecycle effect child and cutoff coordinates do not match its kind");
+    }
+    if effect.initial_context.is_some()
+        && effect.kind != CompleteAgentLifecycleOperationKind::Create
+    {
+        return invariant("only Create lifecycle effects may carry initial context");
+    }
+    let Some(outcome) = &effect.outcome else {
+        return Ok(());
+    };
+    match (effect.kind, outcome) {
+        (
+            CompleteAgentLifecycleOperationKind::Create
+            | CompleteAgentLifecycleOperationKind::Resume
+            | CompleteAgentLifecycleOperationKind::Execute,
+            CompleteAgentLifecycleOutcome::Agent { receipt, .. },
+        ) if receipt.effect_id == effect.effect_id => Ok(()),
+        (
+            CompleteAgentLifecycleOperationKind::Fork,
+            CompleteAgentLifecycleOutcome::Fork { receipt, .. },
+        ) if receipt.effect_id == effect.effect_id
+            && Some(&receipt.cutoff) == effect.fork_cutoff.as_ref() =>
+        {
+            Ok(())
+        }
+        _ => invariant("lifecycle outcome does not match its durable effect identity and kind"),
+    }
 }
 
 fn binding_requires_callback_route(binding: &CompleteAgentBinding) -> bool {
@@ -902,14 +938,14 @@ mod tests {
         AgentBindingGeneration, AgentCallbackRouteId, AgentCapabilityProfile,
         AgentCommandCapability, AgentCommandId, AgentCommandReceipt, AgentCompactionMode,
         AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
-        AgentForkCapability, AgentForkCutoffKind, AgentLifecycleCapability, AgentPayloadDigest,
-        AgentProfileDigest, AgentReceiptState, AgentRuntimeOffer, AgentServiceDefinitionId,
-        AgentSourceChangeLevel, AgentSurfaceContributionPayload, AgentSurfaceDigest,
-        AgentSurfaceProfile, AgentSurfaceRevision, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
-        AgentToolDelivery, AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
-        AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedContributionStatus,
-        BoundAgentSurface, BoundAgentSurfaceContribution, InitialContextAppliedEvidence,
-        InitialContextProfile, SemanticFidelity,
+        AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentLifecycleCapability,
+        AgentPayloadDigest, AgentProfileDigest, AgentReceiptState, AgentRuntimeOffer,
+        AgentServiceDefinitionId, AgentSourceChangeLevel, AgentSurfaceContributionPayload,
+        AgentSurfaceDigest, AgentSurfaceProfile, AgentSurfaceRevision, AgentSurfaceSemanticFacet,
+        AgentTerminalOutcome, AgentToolDelivery, AgentToolName, AgentToolSemanticFacet,
+        AgentToolUpdateSemantics, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+        AppliedContributionStatus, BoundAgentSurface, BoundAgentSurfaceContribution,
+        ForkAgentReceipt, InitialContextAppliedEvidence, InitialContextProfile, SemanticFidelity,
     };
     use serde_json::json;
     use tokio::sync::Mutex;
@@ -981,6 +1017,53 @@ mod tests {
             repository.load().await.expect("snapshot"),
             CompleteAgentHostSnapshot::default()
         );
+    }
+
+    #[test]
+    fn lifecycle_effect_kind_and_outcome_coordinates_are_durable_invariants() {
+        let effect_id = AgentEffectIdentity::new("lifecycle-effect").expect("effect");
+        let thread_id = RuntimeThreadId::new("runtime-thread").expect("thread");
+        let service_id = service_id();
+        let invalid_create_coordinates = CompleteAgentLifecycleEffectRecord {
+            effect_id: effect_id.clone(),
+            runtime_thread_id: thread_id.clone(),
+            child_thread_id: Some(RuntimeThreadId::new("child-thread").expect("child")),
+            kind: CompleteAgentLifecycleOperationKind::Create,
+            service_instance_id: service_id.clone(),
+            generation: AgentBindingGeneration(1),
+            initial_context: None,
+            fork_cutoff: None,
+            outcome: None,
+        };
+        assert_invariant(validate_lifecycle_effect(&invalid_create_coordinates));
+
+        let mismatched_outcome = CompleteAgentLifecycleEffectRecord {
+            effect_id: effect_id.clone(),
+            runtime_thread_id: thread_id,
+            child_thread_id: None,
+            kind: CompleteAgentLifecycleOperationKind::Create,
+            service_instance_id: service_id,
+            generation: AgentBindingGeneration(1),
+            initial_context: None,
+            fork_cutoff: None,
+            outcome: Some(CompleteAgentLifecycleOutcome::Fork {
+                receipt: ForkAgentReceipt {
+                    command_id: AgentCommandId::new("fork-command").expect("command"),
+                    effect_id,
+                    parent_source: AgentSourceCoordinate::new("parent").expect("source"),
+                    child_source: Some(AgentSourceCoordinate::new("child").expect("child source")),
+                    cutoff: AgentForkPoint::Head,
+                    child_history_digest: Some(
+                        AgentPayloadDigest::new("sha256:history").expect("digest"),
+                    ),
+                    state: AgentReceiptState::Terminal {
+                        outcome: AgentTerminalOutcome::Succeeded,
+                    },
+                },
+                child_applied_surface: None,
+            }),
+        };
+        assert_invariant(validate_lifecycle_effect(&mismatched_outcome));
     }
 
     #[test]

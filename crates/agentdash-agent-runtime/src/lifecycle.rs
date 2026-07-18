@@ -85,6 +85,12 @@ pub enum ManagedRuntimeLifecycleError {
         child_history_digest: Option<AgentPayloadDigest>,
         reason: String,
     },
+    #[error("managed Runtime Fork child is known but its outcome requires inspection: {reason}")]
+    ForkInspectionRequired {
+        child_source: AgentSourceCoordinate,
+        child_history_digest: Option<AgentPayloadDigest>,
+        reason: String,
+    },
     #[error("managed Runtime lifecycle persistence failed: {reason}")]
     Persistence { reason: String },
 }

@@ -498,7 +498,40 @@ fn operation_evidence_can_advance(
     current: Option<&ManagedRuntimeOperationEvidence>,
     next: Option<&ManagedRuntimeOperationEvidence>,
 ) -> bool {
-    current == next || current.is_none() && next.is_some()
+    if current == next || current.is_none() && next.is_some() {
+        return true;
+    }
+    matches!(
+        (current, next),
+        (
+            Some(ManagedRuntimeOperationEvidence::Fork {
+                parent_binding,
+                progress:
+                    agentdash_agent_runtime_contract::ManagedRuntimeForkProgressEvidence::ChildKnown {
+                        child_thread_id,
+                        child_source_ref,
+                        cutoff,
+                        child_history_digest,
+                    },
+            }),
+            Some(ManagedRuntimeOperationEvidence::Fork {
+                parent_binding: next_parent_binding,
+                progress:
+                    agentdash_agent_runtime_contract::ManagedRuntimeForkProgressEvidence::Provisioned {
+                        child_thread_id: next_child_thread_id,
+                        child_binding,
+                        cutoff: next_cutoff,
+                        child_history_digest: next_child_history_digest,
+                    },
+            }),
+        ) if parent_binding == next_parent_binding
+            && child_thread_id == next_child_thread_id
+            && child_source_ref == &child_binding.source_ref
+            && cutoff == next_cutoff
+            && child_history_digest
+                .as_ref()
+                .is_none_or(|digest| digest == next_child_history_digest)
+    )
 }
 
 fn validate_operation_evidence(
@@ -638,11 +671,15 @@ fn validate_operation_evidence(
                     cutoff,
                     ..
                 } => {
-                    if status != ManagedRuntimeOperationStatus::Lost
+                    if !matches!(
+                        status,
+                        ManagedRuntimeOperationStatus::Running
+                            | ManagedRuntimeOperationStatus::Lost
+                    )
                         || evidence_child != child_thread_id
                         || cutoff != &expected_cutoff
                     {
-                        return invariant("Fork partial evidence has invalid terminal coordinates");
+                        return invariant("Fork child-known evidence has invalid coordinates");
                     }
                 }
                 agentdash_agent_runtime_contract::ManagedRuntimeForkProgressEvidence::Provisioned {

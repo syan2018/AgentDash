@@ -997,19 +997,27 @@ impl CompleteAgentHost {
 
         match service.apply_surface(command.clone()).await {
             Ok(receipt) => {
-                self.record_surface_receipt(
-                    lease,
-                    binding_id,
-                    &command.effect_id,
-                    receipt.clone(),
-                    callback_route.as_ref(),
-                )
-                .await?;
+                if self
+                    .record_surface_receipt(
+                        lease,
+                        binding_id,
+                        &command.effect_id,
+                        receipt.clone(),
+                        callback_route.as_ref(),
+                    )
+                    .await
+                    .is_err()
+                {
+                    return Err(CompleteAgentHostError::EffectPending {
+                        effect_id: command.effect_id,
+                    });
+                }
                 Ok(receipt)
             }
-            Err(error) => {
-                self.mark_unknown(lease, &command.effect_id).await?;
-                Err(error.into())
+            Err(_) => {
+                let effect_id = command.effect_id;
+                let _ = self.mark_unknown(lease, &effect_id).await;
+                Err(CompleteAgentHostError::EffectPending { effect_id })
             }
         }
     }
@@ -1453,6 +1461,28 @@ impl CompleteAgentHost {
         source: AgentSourceCoordinate,
     ) -> Result<ManagedRuntimeAgentBinding, CompleteAgentHostError> {
         let binding_id = runtime_binding_id(&target.runtime_thread_id)?;
+        if let Some(binding) = self.binding(&binding_id).await?
+            && binding.dispatch_admitted()
+        {
+            if binding.service_instance_id != target.service_instance_id
+                || binding.generation != target.generation
+                || binding.source != source
+                || binding.profile_digest != target.profile_digest
+                || binding.bound_surface != target.bound_surface
+            {
+                return Err(CompleteAgentHostError::Invariant {
+                    reason: "dispatch-admitted Runtime binding conflicts with lifecycle intent"
+                        .to_owned(),
+                });
+            }
+            return Ok(ManagedRuntimeAgentBinding {
+                source,
+                generation: binding.generation,
+                applied_surface: binding
+                    .applied_surface
+                    .expect("dispatch-admitted binding has applied surface"),
+            });
+        }
         let binding = CompleteAgentBinding {
             id: binding_id.clone(),
             service_instance_id: target.service_instance_id.clone(),
@@ -1464,17 +1494,6 @@ impl CompleteAgentHost {
             state: CompleteAgentBindingState::PendingSurface,
         };
         self.register_binding(binding).await?;
-        if let Some(binding) = self.binding(&binding_id).await?
-            && binding.dispatch_admitted()
-        {
-            return Ok(ManagedRuntimeAgentBinding {
-                source,
-                generation: binding.generation,
-                applied_surface: binding
-                    .applied_surface
-                    .expect("dispatch-admitted binding has applied surface"),
-            });
-        }
         let now_ms = context.now_ms.max(current_time_ms());
         let expires_at_ms = now_ms
             .checked_add(context.lease_duration_ms)
@@ -1564,7 +1583,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             return self
                 .stored_create_outcome(&target, outcome)
                 .await
-                .map_err(map_lifecycle_host_error);
+                .map_err(map_applied_lifecycle_host_error);
         }
         let service = self
             .service(&target.service_instance_id)
@@ -1602,7 +1621,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
         let binding = self
             .provision_runtime_binding(&context, &target, receipt.source.clone())
             .await
-            .map_err(map_lifecycle_host_error)?;
+            .map_err(map_applied_lifecycle_host_error)?;
         self.settle_lifecycle_effect(
             &context.effect_id,
             CompleteAgentLifecycleOutcome::Agent {
@@ -1611,9 +1630,9 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             },
         )
         .await
-        .map_err(map_lifecycle_host_error)?;
+        .map_err(map_applied_lifecycle_host_error)?;
         let descriptor = service.describe().await.map_err(|error| {
-            ManagedRuntimeLifecycleError::Unavailable {
+            ManagedRuntimeLifecycleError::InspectionRequired {
                 reason: error.to_string(),
             }
         })?;
@@ -1681,7 +1700,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             },
         )
         .await
-        .map_err(map_lifecycle_host_error)?;
+        .map_err(map_applied_lifecycle_host_error)?;
         Ok(ManagedRuntimeResumeOutcome { receipt, binding })
     }
 
@@ -1748,7 +1767,9 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             }
         })?;
         if receipt.parent_source != parent.source || receipt.cutoff != cutoff {
-            return Err(ManagedRuntimeLifecycleError::Invalid {
+            return Err(ManagedRuntimeLifecycleError::ForkInspectionRequired {
+                child_source,
+                child_history_digest: Some(history_digest),
                 reason: "Fork receipt coordinates do not match the durable intent".to_owned(),
             });
         }
@@ -1758,24 +1779,32 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             "runtime-callback:{}",
             child_target.runtime_thread_id
         ))
-        .map_err(|error| ManagedRuntimeLifecycleError::Invalid {
-            reason: error.to_string(),
-        })?;
-        self.register_runtime_target(child_target.clone())
-            .await
-            .map_err(|error| ManagedRuntimeLifecycleError::ForkChildKnown {
+        .map_err(
+            |error| ManagedRuntimeLifecycleError::ForkInspectionRequired {
                 child_source: child_source.clone(),
                 child_history_digest: Some(history_digest.clone()),
                 reason: error.to_string(),
-            })?;
+            },
+        )?;
+        self.register_runtime_target(child_target.clone())
+            .await
+            .map_err(
+                |error| ManagedRuntimeLifecycleError::ForkInspectionRequired {
+                    child_source: child_source.clone(),
+                    child_history_digest: Some(history_digest.clone()),
+                    reason: error.to_string(),
+                },
+            )?;
         let child_binding = self
             .provision_runtime_binding(&context, &child_target, child_source.clone())
             .await
-            .map_err(|error| ManagedRuntimeLifecycleError::ForkChildKnown {
-                child_source,
-                child_history_digest: Some(history_digest.clone()),
-                reason: error.to_string(),
-            })?;
+            .map_err(
+                |error| ManagedRuntimeLifecycleError::ForkInspectionRequired {
+                    child_source: child_source.clone(),
+                    child_history_digest: Some(history_digest.clone()),
+                    reason: error.to_string(),
+                },
+            )?;
         self.settle_lifecycle_effect(
             &context.effect_id,
             CompleteAgentLifecycleOutcome::Fork {
@@ -1784,7 +1813,13 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             },
         )
         .await
-        .map_err(map_lifecycle_host_error)?;
+        .map_err(
+            |error| ManagedRuntimeLifecycleError::ForkInspectionRequired {
+                child_source: child_source.clone(),
+                child_history_digest: Some(history_digest.clone()),
+                reason: error.to_string(),
+            },
+        )?;
         Ok(ManagedRuntimeForkOutcome {
             receipt,
             child_binding,
@@ -2209,6 +2244,12 @@ fn map_lifecycle_host_error(error: CompleteAgentHostError) -> ManagedRuntimeLife
     }
 }
 
+fn map_applied_lifecycle_host_error(error: CompleteAgentHostError) -> ManagedRuntimeLifecycleError {
+    ManagedRuntimeLifecycleError::InspectionRequired {
+        reason: error.to_string(),
+    }
+}
+
 fn ensure_generation(
     binding: &CompleteAgentBinding,
     actual: AgentBindingGeneration,
@@ -2611,6 +2652,78 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    enum LifecycleFailpoint {
+        BindingProvision,
+        RuntimeTargetProvision,
+        SurfaceSettlement,
+        LifecycleSettlement,
+    }
+
+    struct FailLifecycleCommitOnceRepository {
+        inner: Arc<FixtureHostRepository>,
+        failpoint: LifecycleFailpoint,
+        armed: AtomicBool,
+    }
+
+    impl FailLifecycleCommitOnceRepository {
+        fn arm(&self) {
+            self.armed.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl CompleteAgentHostRepository for FailLifecycleCommitOnceRepository {
+        async fn load(&self) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+            self.inner.load().await
+        }
+
+        async fn commit(
+            &self,
+            commit: CompleteAgentHostCommit,
+        ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+            if self.armed.load(Ordering::SeqCst) {
+                let current = self.inner.load().await?;
+                let should_fail = match self.failpoint {
+                    LifecycleFailpoint::BindingProvision => {
+                        commit.facts.bindings.len() > current.facts.bindings.len()
+                    }
+                    LifecycleFailpoint::RuntimeTargetProvision => {
+                        commit.facts.runtime_targets.len() > current.facts.runtime_targets.len()
+                    }
+                    LifecycleFailpoint::SurfaceSettlement => {
+                        commit.facts.effects.iter().any(|(effect_id, effect)| {
+                            effect.surface_receipt.is_some()
+                                && current
+                                    .facts
+                                    .effects
+                                    .get(effect_id)
+                                    .is_none_or(|current| current.surface_receipt.is_none())
+                        })
+                    }
+                    LifecycleFailpoint::LifecycleSettlement => commit
+                        .facts
+                        .lifecycle_effects
+                        .iter()
+                        .any(|(effect_id, effect)| {
+                            effect.outcome.is_some()
+                                && current
+                                    .facts
+                                    .lifecycle_effects
+                                    .get(effect_id)
+                                    .is_none_or(|current| current.outcome.is_none())
+                        }),
+                };
+                if should_fail && self.armed.swap(false, Ordering::SeqCst) {
+                    return Err(CompleteAgentHostStoreError::Persistence {
+                        reason: "simulated crash before durable Host lifecycle commit".to_owned(),
+                    });
+                }
+            }
+            self.inner.commit(commit).await
+        }
+    }
+
     #[derive(Default)]
     struct FixtureServiceRegistry {
         handles: RwLock<BTreeMap<AgentServiceInstanceId, Arc<dyn CompleteAgentService>>>,
@@ -2618,6 +2731,35 @@ mod tests {
 
     struct LifecycleService {
         create_calls: AtomicUsize,
+        resume_calls: AtomicUsize,
+        fork_calls: AtomicUsize,
+        apply_calls: AtomicUsize,
+        inspections:
+            Mutex<BTreeMap<AgentEffectIdentity, (AgentCommandId, AgentEffectInspectionState)>>,
+        applied_surface: Mutex<Option<AppliedAgentSurface>>,
+    }
+
+    impl LifecycleService {
+        async fn record_applied(
+            &self,
+            effect_id: AgentEffectIdentity,
+            command_id: AgentCommandId,
+            source: AgentSourceCoordinate,
+            child_source: Option<AgentSourceCoordinate>,
+        ) {
+            self.inspections.lock().await.insert(
+                effect_id,
+                (
+                    command_id,
+                    AgentEffectInspectionState::Applied {
+                        source,
+                        terminal: None,
+                        initial_context: None,
+                        child_source,
+                    },
+                ),
+            );
+        }
     }
 
     #[async_trait]
@@ -2631,10 +2773,18 @@ mod tests {
             command: CreateAgentCommand,
         ) -> Result<AgentCommandReceipt, AgentServiceError> {
             self.create_calls.fetch_add(1, Ordering::SeqCst);
+            let source = AgentSourceCoordinate::new("lifecycle-parent").expect("source");
+            self.record_applied(
+                command.meta.effect_id.clone(),
+                command.meta.command_id.clone(),
+                source.clone(),
+                None,
+            )
+            .await;
             Ok(AgentCommandReceipt {
                 command_id: command.meta.command_id,
                 effect_id: command.meta.effect_id,
-                source: AgentSourceCoordinate::new("lifecycle-parent").expect("source"),
+                source,
                 state: AgentReceiptState::Terminal {
                     outcome: agentdash_agent_service_api::AgentTerminalOutcome::Succeeded,
                 },
@@ -2647,6 +2797,14 @@ mod tests {
             &self,
             command: ResumeAgentCommand,
         ) -> Result<AgentCommandReceipt, AgentServiceError> {
+            self.resume_calls.fetch_add(1, Ordering::SeqCst);
+            self.record_applied(
+                command.meta.effect_id.clone(),
+                command.meta.command_id.clone(),
+                command.source.clone(),
+                None,
+            )
+            .await;
             Ok(AgentCommandReceipt {
                 command_id: command.meta.command_id,
                 effect_id: command.meta.effect_id,
@@ -2661,13 +2819,20 @@ mod tests {
             &self,
             command: ForkAgentCommand,
         ) -> Result<ForkAgentReceipt, AgentServiceError> {
+            self.fork_calls.fetch_add(1, Ordering::SeqCst);
+            let child_source = AgentSourceCoordinate::new("lifecycle-child").expect("child source");
+            self.record_applied(
+                command.meta.effect_id.clone(),
+                command.meta.command_id.clone(),
+                command.source.clone(),
+                Some(child_source.clone()),
+            )
+            .await;
             Ok(ForkAgentReceipt {
                 command_id: command.meta.command_id,
                 effect_id: command.meta.effect_id,
                 parent_source: command.source,
-                child_source: Some(
-                    AgentSourceCoordinate::new("lifecycle-child").expect("child source"),
-                ),
+                child_source: Some(child_source),
                 cutoff: command.cutoff,
                 child_history_digest: Some(
                     AgentPayloadDigest::new("sha256:child-history").expect("history digest"),
@@ -2694,9 +2859,25 @@ mod tests {
 
         async fn read(
             &self,
-            _query: AgentReadQuery,
+            query: AgentReadQuery,
         ) -> Result<agentdash_agent_service_api::AgentSnapshot, AgentServiceError> {
-            Err(unsupported())
+            Ok(agentdash_agent_service_api::AgentSnapshot {
+                source: query.source,
+                revision: agentdash_agent_service_api::AgentSnapshotRevision(1),
+                lifecycle: agentdash_agent_service_api::AgentLifecycleStatus::Active,
+                active_turn_id: None,
+                turns: Vec::new(),
+                interactions: Vec::new(),
+                source_info: agentdash_agent_service_api::AgentSnapshotSource {
+                    authority:
+                        agentdash_agent_service_api::AgentSnapshotAuthority::AgentAuthoritative,
+                    source_revision: None,
+                    fidelity: SemanticFidelity::Exact,
+                    observed_at_ms: current_time_ms(),
+                },
+                applied_surface: self.applied_surface.lock().await.clone(),
+                initial_context: None,
+            })
         }
 
         async fn changes(
@@ -2710,10 +2891,13 @@ mod tests {
             &self,
             identity: AgentEffectIdentity,
         ) -> Result<AgentEffectInspection, AgentServiceError> {
+            let stored = self.inspections.lock().await.get(&identity).cloned();
             Ok(AgentEffectInspection {
                 effect_id: identity,
-                command_id: None,
-                state: AgentEffectInspectionState::Unknown,
+                command_id: stored.as_ref().map(|(command_id, _)| command_id.clone()),
+                state: stored
+                    .map(|(_, state)| state)
+                    .unwrap_or(AgentEffectInspectionState::Unknown),
             })
         }
 
@@ -2721,15 +2905,25 @@ mod tests {
             &self,
             command: ApplyBoundAgentSurface,
         ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
+            self.apply_calls.fetch_add(1, Ordering::SeqCst);
+            let applied = AppliedAgentSurface {
+                revision: command.bound_surface.revision,
+                digest: command.bound_surface.digest,
+                contributions: Vec::new(),
+            };
+            self.record_applied(
+                command.effect_id.clone(),
+                command.command_id.clone(),
+                command.source.clone(),
+                None,
+            )
+            .await;
+            *self.applied_surface.lock().await = Some(applied.clone());
             Ok(AppliedAgentSurfaceReceipt {
                 command_id: command.command_id,
                 effect_id: command.effect_id,
                 source: command.source,
-                applied: AppliedAgentSurface {
-                    revision: command.bound_surface.revision,
-                    digest: command.bound_surface.digest,
-                    contributions: Vec::new(),
-                },
+                applied,
             })
         }
 
@@ -2759,6 +2953,73 @@ mod tests {
         }
     }
 
+    fn lifecycle_service() -> Arc<LifecycleService> {
+        Arc::new(LifecycleService {
+            create_calls: AtomicUsize::new(0),
+            resume_calls: AtomicUsize::new(0),
+            fork_calls: AtomicUsize::new(0),
+            apply_calls: AtomicUsize::new(0),
+            inspections: Mutex::new(BTreeMap::new()),
+            applied_surface: Mutex::new(None),
+        })
+    }
+
+    async fn lifecycle_host(
+        repository: Arc<dyn CompleteAgentHostRepository>,
+    ) -> (CompleteAgentHost, Arc<LifecycleService>, RuntimeThreadId) {
+        let service = lifecycle_service();
+        let host = CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
+        let instance_id = AgentServiceInstanceId::new("lifecycle-service").expect("service");
+        host.register_service(instance_id.clone(), fixture_placement(), service.clone())
+            .await
+            .expect("register lifecycle service");
+        let parent_thread = RuntimeThreadId::new("runtime-parent").expect("thread");
+        host.register_runtime_target(CompleteAgentRuntimeTarget {
+            runtime_thread_id: parent_thread.clone(),
+            service_instance_id: instance_id,
+            generation: AgentBindingGeneration(1),
+            profile_digest: descriptor().profile_digest,
+            bound_surface: empty_bound_surface(),
+            callbacks: AgentHostCallbackBinding {
+                route_id: AgentCallbackRouteId::new("runtime-parent-callback").expect("route"),
+                binding_generation: AgentBindingGeneration(1),
+                delivery: agentdash_agent_service_api::AgentSurfaceRoute::AgentNativeCallback,
+                default_deadline_ms: 1_000,
+            },
+        })
+        .await
+        .expect("register Runtime target");
+        (host, service, parent_thread)
+    }
+
+    async fn restarted_lifecycle_host(
+        repository: Arc<dyn CompleteAgentHostRepository>,
+        service: Arc<LifecycleService>,
+    ) -> CompleteAgentHost {
+        let host = CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
+        host.register_service(
+            AgentServiceInstanceId::new("lifecycle-service").expect("service"),
+            fixture_placement(),
+            service,
+        )
+        .await
+        .expect("reattach lifecycle service");
+        host
+    }
+
+    fn lifecycle_context(
+        runtime_thread_id: RuntimeThreadId,
+        effect_id: &str,
+    ) -> ManagedRuntimeDispatchContext {
+        ManagedRuntimeDispatchContext {
+            runtime_thread_id,
+            effect_id: AgentEffectIdentity::new(effect_id).expect("effect"),
+            dispatch_owner: "runtime-worker".to_owned(),
+            now_ms: current_time_ms(),
+            lease_duration_ms: 10_000,
+        }
+    }
+
     #[test]
     fn different_payload_cannot_reuse_effect_identity() {
         let record = effect_record("sha256:a");
@@ -2774,6 +3035,11 @@ mod tests {
         let repository = Arc::new(FixtureHostRepository::default());
         let service = Arc::new(LifecycleService {
             create_calls: AtomicUsize::new(0),
+            resume_calls: AtomicUsize::new(0),
+            fork_calls: AtomicUsize::new(0),
+            apply_calls: AtomicUsize::new(0),
+            inspections: Mutex::new(BTreeMap::new()),
+            applied_surface: Mutex::new(None),
         });
         let host = CompleteAgentHost::new(
             repository.clone(),
@@ -2863,6 +3129,382 @@ mod tests {
                 .bindings
                 .get(&runtime_binding_id(&child_thread).expect("binding id"))
                 .is_some_and(CompleteAgentBinding::dispatch_admitted)
+        );
+    }
+
+    #[tokio::test]
+    async fn create_binding_commit_failure_remains_inspection_required() {
+        let durable = Arc::new(FixtureHostRepository::default());
+        let failing = Arc::new(FailLifecycleCommitOnceRepository {
+            inner: durable.clone(),
+            failpoint: LifecycleFailpoint::BindingProvision,
+            armed: AtomicBool::new(false),
+        });
+        let (host, service, parent_thread) = lifecycle_host(failing.clone()).await;
+        let context = lifecycle_context(parent_thread.clone(), "create-binding-fail");
+        failing.arm();
+
+        assert!(matches!(
+            ManagedRuntimeLifecyclePort::create(&host, context.clone(), None).await,
+            Err(ManagedRuntimeLifecycleError::InspectionRequired { .. })
+        ));
+        assert_eq!(service.create_calls.load(Ordering::SeqCst), 1);
+        let facts = durable.load().await.expect("durable Host facts").facts;
+        assert!(
+            facts
+                .lifecycle_effects
+                .get(&context.effect_id)
+                .is_some_and(|record| record.outcome.is_none())
+        );
+        assert!(
+            !facts
+                .bindings
+                .contains_key(&runtime_binding_id(&parent_thread).expect("binding"))
+        );
+        let restarted = restarted_lifecycle_host(failing, service.clone()).await;
+        assert!(matches!(
+            ManagedRuntimeLifecyclePort::inspect(&restarted, context, None).await,
+            Ok(ManagedRuntimeLifecycleInspection::CreateApplied(_))
+        ));
+        assert_eq!(service.create_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(service.apply_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn apply_settlement_commit_failure_remains_unknown_and_inspectable() {
+        let durable = Arc::new(FixtureHostRepository::default());
+        let failing = Arc::new(FailLifecycleCommitOnceRepository {
+            inner: durable.clone(),
+            failpoint: LifecycleFailpoint::SurfaceSettlement,
+            armed: AtomicBool::new(false),
+        });
+        let (host, service, parent_thread) = lifecycle_host(failing.clone()).await;
+        let context = lifecycle_context(parent_thread.clone(), "create-surface-fail");
+        failing.arm();
+
+        assert!(matches!(
+            ManagedRuntimeLifecyclePort::create(&host, context.clone(), None).await,
+            Err(ManagedRuntimeLifecycleError::InspectionRequired { .. })
+        ));
+        assert_eq!(service.create_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(service.apply_calls.load(Ordering::SeqCst), 1);
+        let surface_effect =
+            derived_effect_id(&context.effect_id, "surface").expect("surface effect");
+        let facts = durable.load().await.expect("durable Host facts").facts;
+        assert_eq!(
+            facts
+                .effects
+                .get(&surface_effect)
+                .expect("durable Apply intent")
+                .state,
+            CompleteAgentEffectState::Dispatching
+        );
+        assert!(
+            facts
+                .effects
+                .get(&surface_effect)
+                .expect("durable Apply intent")
+                .surface_receipt
+                .is_none()
+        );
+        assert!(
+            facts
+                .bindings
+                .get(&runtime_binding_id(&parent_thread).expect("binding"))
+                .is_some_and(|binding| binding.state == CompleteAgentBindingState::PendingSurface)
+        );
+        let restarted = restarted_lifecycle_host(failing, service.clone()).await;
+        assert!(matches!(
+            ManagedRuntimeLifecyclePort::inspect(&restarted, context, None).await,
+            Ok(ManagedRuntimeLifecycleInspection::CreateApplied(_))
+        ));
+        assert_eq!(service.create_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(service.apply_calls.load(Ordering::SeqCst), 1);
+        let recovered = durable.load().await.expect("recovered Host facts").facts;
+        assert!(
+            recovered
+                .effects
+                .get(&surface_effect)
+                .is_some_and(|effect| effect.surface_receipt.is_some())
+        );
+        assert!(
+            recovered
+                .bindings
+                .get(&runtime_binding_id(&parent_thread).expect("binding"))
+                .is_some_and(CompleteAgentBinding::dispatch_admitted)
+        );
+    }
+
+    #[tokio::test]
+    async fn create_outcome_commit_failure_recovers_the_same_effect() {
+        let durable = Arc::new(FixtureHostRepository::default());
+        let failing = Arc::new(FailLifecycleCommitOnceRepository {
+            inner: durable.clone(),
+            failpoint: LifecycleFailpoint::LifecycleSettlement,
+            armed: AtomicBool::new(false),
+        });
+        let (host, service, parent_thread) = lifecycle_host(failing.clone()).await;
+        let context = lifecycle_context(parent_thread.clone(), "create-settlement-fail");
+        failing.arm();
+
+        assert!(matches!(
+            ManagedRuntimeLifecyclePort::create(&host, context.clone(), None).await,
+            Err(ManagedRuntimeLifecycleError::InspectionRequired { .. })
+        ));
+        assert_eq!(service.create_calls.load(Ordering::SeqCst), 1);
+        let facts = durable.load().await.expect("durable Host facts").facts;
+        assert!(
+            facts
+                .bindings
+                .get(&runtime_binding_id(&parent_thread).expect("binding"))
+                .is_some_and(CompleteAgentBinding::dispatch_admitted)
+        );
+        assert!(
+            facts
+                .lifecycle_effects
+                .get(&context.effect_id)
+                .is_some_and(|record| record.outcome.is_none())
+        );
+
+        drop(host);
+        let restarted = restarted_lifecycle_host(failing, service.clone()).await;
+        let ManagedRuntimeLifecycleInspection::CreateApplied(recovered) =
+            ManagedRuntimeLifecyclePort::inspect(&restarted, context.clone(), None)
+                .await
+                .expect("inspect the same Create effect")
+        else {
+            panic!("Create inspection must recover its applied outcome");
+        };
+        assert_eq!(recovered.receipt.effect_id, context.effect_id);
+        assert_eq!(service.create_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(service.apply_calls.load(Ordering::SeqCst), 1);
+        assert!(
+            durable
+                .load()
+                .await
+                .expect("settled Host facts")
+                .facts
+                .lifecycle_effects
+                .get(&context.effect_id)
+                .is_some_and(|record| record.outcome.is_some())
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_outcome_commit_failure_recovers_the_same_effect() {
+        let durable = Arc::new(FixtureHostRepository::default());
+        let failing = Arc::new(FailLifecycleCommitOnceRepository {
+            inner: durable.clone(),
+            failpoint: LifecycleFailpoint::LifecycleSettlement,
+            armed: AtomicBool::new(false),
+        });
+        let (host, service, parent_thread) = lifecycle_host(failing.clone()).await;
+        let create_context = lifecycle_context(parent_thread.clone(), "resume-parent-create");
+        let created = ManagedRuntimeLifecyclePort::create(&host, create_context, None)
+            .await
+            .expect("create parent");
+        let resume_context = lifecycle_context(parent_thread, "resume-settlement-fail");
+        failing.arm();
+
+        assert!(matches!(
+            ManagedRuntimeLifecyclePort::resume(
+                &host,
+                resume_context.clone(),
+                created.binding.clone(),
+            )
+            .await,
+            Err(ManagedRuntimeLifecycleError::InspectionRequired { .. })
+        ));
+        assert_eq!(service.resume_calls.load(Ordering::SeqCst), 1);
+        assert!(
+            durable
+                .load()
+                .await
+                .expect("durable Host facts")
+                .facts
+                .lifecycle_effects
+                .get(&resume_context.effect_id)
+                .is_some_and(|record| record.outcome.is_none())
+        );
+
+        drop(host);
+        let restarted = restarted_lifecycle_host(failing, service.clone()).await;
+        let ManagedRuntimeLifecycleInspection::ResumeApplied(recovered) =
+            ManagedRuntimeLifecyclePort::inspect(
+                &restarted,
+                resume_context.clone(),
+                Some(created.binding),
+            )
+            .await
+            .expect("inspect the same Resume effect")
+        else {
+            panic!("Resume inspection must recover its applied outcome");
+        };
+        assert_eq!(recovered.receipt.effect_id, resume_context.effect_id);
+        assert_eq!(service.resume_calls.load(Ordering::SeqCst), 2);
+        assert!(
+            durable
+                .load()
+                .await
+                .expect("settled Host facts")
+                .facts
+                .lifecycle_effects
+                .get(&resume_context.effect_id)
+                .is_some_and(|record| record.outcome.is_some())
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_provision_commit_failure_preserves_child_known_for_inspection() {
+        let durable = Arc::new(FixtureHostRepository::default());
+        let failing = Arc::new(FailLifecycleCommitOnceRepository {
+            inner: durable.clone(),
+            failpoint: LifecycleFailpoint::RuntimeTargetProvision,
+            armed: AtomicBool::new(false),
+        });
+        let (host, service, parent_thread) = lifecycle_host(failing.clone()).await;
+        let created = ManagedRuntimeLifecyclePort::create(
+            &host,
+            lifecycle_context(parent_thread.clone(), "fork-parent-create"),
+            None,
+        )
+        .await
+        .expect("create parent");
+        let fork_context = lifecycle_context(parent_thread, "fork-provision-fail");
+        let child_thread = RuntimeThreadId::new("runtime-child-failpoint").expect("child");
+        failing.arm();
+
+        let error = ManagedRuntimeLifecyclePort::fork(
+            &host,
+            fork_context.clone(),
+            created.binding.clone(),
+            child_thread.clone(),
+            AgentForkPoint::Head,
+        )
+        .await
+        .expect_err("Host target provision commit fails");
+        let ManagedRuntimeLifecycleError::ForkInspectionRequired {
+            child_source,
+            child_history_digest,
+            ..
+        } = error
+        else {
+            panic!("Fork must remain inspection-required after its Agent child exists");
+        };
+        assert_eq!(child_source.as_str(), "lifecycle-child");
+        assert_eq!(
+            child_history_digest
+                .as_ref()
+                .map(AgentPayloadDigest::as_str),
+            Some("sha256:child-history")
+        );
+        assert_eq!(service.fork_calls.load(Ordering::SeqCst), 1);
+        assert!(
+            durable
+                .load()
+                .await
+                .expect("durable Host facts")
+                .facts
+                .lifecycle_effects
+                .get(&fork_context.effect_id)
+                .is_some_and(|record| record.outcome.is_none())
+        );
+
+        drop(host);
+        let restarted = restarted_lifecycle_host(failing, service.clone()).await;
+        let ManagedRuntimeLifecycleInspection::ForkApplied(recovered) =
+            ManagedRuntimeLifecyclePort::inspect(
+                &restarted,
+                fork_context.clone(),
+                Some(created.binding),
+            )
+            .await
+            .expect("inspect the same Fork effect")
+        else {
+            panic!("Fork inspection must recover its applied outcome");
+        };
+        assert_eq!(recovered.receipt.effect_id, fork_context.effect_id);
+        assert_eq!(
+            recovered.child_binding.source.as_str(),
+            child_source.as_str()
+        );
+        assert_eq!(service.fork_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn fork_outcome_commit_failure_preserves_child_known_and_recovers_by_inspection() {
+        let durable = Arc::new(FixtureHostRepository::default());
+        let failing = Arc::new(FailLifecycleCommitOnceRepository {
+            inner: durable.clone(),
+            failpoint: LifecycleFailpoint::LifecycleSettlement,
+            armed: AtomicBool::new(false),
+        });
+        let (host, service, parent_thread) = lifecycle_host(failing.clone()).await;
+        let created = ManagedRuntimeLifecyclePort::create(
+            &host,
+            lifecycle_context(parent_thread.clone(), "fork-settle-parent-create"),
+            None,
+        )
+        .await
+        .expect("create parent");
+        let fork_context = lifecycle_context(parent_thread, "fork-settlement-fail");
+        let child_thread = RuntimeThreadId::new("runtime-child-settlement").expect("child");
+        failing.arm();
+
+        let error = ManagedRuntimeLifecyclePort::fork(
+            &host,
+            fork_context.clone(),
+            created.binding.clone(),
+            child_thread.clone(),
+            AgentForkPoint::Head,
+        )
+        .await
+        .expect_err("Host Fork outcome settlement fails");
+        assert!(matches!(
+            error,
+            ManagedRuntimeLifecycleError::ForkInspectionRequired {
+                ref child_source,
+                child_history_digest: Some(ref digest),
+                ..
+            } if child_source.as_str() == "lifecycle-child"
+                && digest.as_str() == "sha256:child-history"
+        ));
+        let facts = durable.load().await.expect("durable Host facts").facts;
+        assert!(
+            facts
+                .bindings
+                .get(&runtime_binding_id(&child_thread).expect("binding"))
+                .is_some_and(CompleteAgentBinding::dispatch_admitted)
+        );
+        assert!(
+            facts
+                .lifecycle_effects
+                .get(&fork_context.effect_id)
+                .is_some_and(|record| record.outcome.is_none())
+        );
+
+        drop(host);
+        let restarted = restarted_lifecycle_host(failing, service.clone()).await;
+        assert!(matches!(
+            ManagedRuntimeLifecyclePort::inspect(
+                &restarted,
+                fork_context.clone(),
+                Some(created.binding),
+            )
+            .await,
+            Ok(ManagedRuntimeLifecycleInspection::ForkApplied(ref outcome))
+                if outcome.receipt.effect_id == fork_context.effect_id
+        ));
+        assert_eq!(service.fork_calls.load(Ordering::SeqCst), 2);
+        assert!(
+            durable
+                .load()
+                .await
+                .expect("settled Host facts")
+                .facts
+                .lifecycle_effects
+                .get(&fork_context.effect_id)
+                .is_some_and(|record| record.outcome.is_some())
         );
     }
 

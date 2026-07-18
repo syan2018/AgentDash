@@ -640,8 +640,11 @@ impl AgentRunForkSaga {
                 known_child,
             } => {
                 if let Some(progress) = known_child {
-                    let progress_identity = progress.identity.clone();
-                    self.pin_child_progress(&progress_identity, progress)?;
+                    if identity.operation == AgentRunForkRuntimeOperation::Fork {
+                        self.pin_child_progress(&identity, progress)?;
+                    } else if self.child_progress.as_ref() != Some(&progress) {
+                        return Err(AgentRunForkSagaError::ChildProgressDrift);
+                    }
                 }
                 self.lost = Some(LostRuntimeOperation {
                     identity,
@@ -1576,6 +1579,42 @@ mod tests {
     }
 
     #[test]
+    fn lost_known_child_must_match_the_pending_operation_identity() {
+        let mut saga = saga();
+        let AgentRunForkSagaStep::DispatchRuntime(identity) = saga.next_step() else {
+            panic!("fork");
+        };
+        saga.mark_runtime_dispatched(identity.clone())
+            .expect("dispatch");
+        let receipt = accepted(&identity);
+        let mut drifted = identity.clone();
+        drifted.runtime_operation_id =
+            RuntimeOperationId::new("agent-run-fork:drifted").expect("operation");
+        let progress = RuntimeForkChildProgress {
+            identity: drifted.clone(),
+            child_thread_id: saga.child.runtime_thread_id.clone(),
+            child_source_ref: child_binding(None).source_ref,
+            child_history_digest: Some(
+                RuntimePayloadDigest::new("sha256:known-prefix").expect("digest"),
+            ),
+            receipt,
+        };
+
+        assert_eq!(
+            saga.record_runtime_outcome(
+                identity,
+                RuntimeOperationOutcome::Lost {
+                    reason: "inspection horizon expired".to_owned(),
+                    known_child: Some(progress),
+                },
+            ),
+            Err(AgentRunForkSagaError::ChildProgressDrift)
+        );
+        assert!(saga.lost().is_none());
+        assert!(saga.child_progress().is_none());
+    }
+
+    #[test]
     fn lost_result_retains_known_child_and_forbids_second_fork() {
         let mut saga = saga();
         apply_runtime(&mut saga);
@@ -1587,11 +1626,12 @@ mod tests {
         };
         saga.mark_runtime_dispatched(identity.clone())
             .expect("dispatch marker");
+        let known_progress = saga.child_progress().cloned().expect("known child");
         saga.record_runtime_outcome(
             identity,
             RuntimeOperationOutcome::Lost {
                 reason: "inspection horizon expired".to_owned(),
-                known_child: None,
+                known_child: Some(known_progress),
             },
         )
         .expect("lost");

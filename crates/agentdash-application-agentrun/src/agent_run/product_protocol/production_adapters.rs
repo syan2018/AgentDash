@@ -247,7 +247,8 @@ mod tests {
                     "runtime-parent",
                 )
                 .expect("parent thread"),
-                through_turn_id: "turn-7".to_owned(),
+                through_turn_id: agentdash_agent_runtime_contract::RuntimeTurnId::new("turn-7")
+                    .expect("turn id"),
             },
             PreallocatedAgentRunChild {
                 agent_run_id: Uuid::new_v4(),

@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use agentdash_agent_runtime_contract::{
     RuntimeOperationId, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId,
+    RuntimeTurnId,
 };
 use agentdash_application_ports::agent_run_fork::AgentRunForkGraph;
 #[cfg(test)]
@@ -26,6 +27,7 @@ pub struct AgentRunForkRequestId(pub Uuid);
 ///
 /// ```compile_fail
 /// use agentdash_application_agentrun::agent_run::product_protocol::AgentRunForkParent;
+/// use agentdash_agent_runtime_contract::RuntimeTurnId;
 /// use uuid::Uuid;
 ///
 /// let opaque_agent_source = String::from("agent-source");
@@ -33,7 +35,7 @@ pub struct AgentRunForkRequestId(pub Uuid);
 ///     run_id: Uuid::nil(),
 ///     agent_id: Uuid::nil(),
 ///     runtime_thread_id: opaque_agent_source,
-///     through_turn_id: "turn-1".to_owned(),
+///     through_turn_id: RuntimeTurnId::new("turn-1").expect("turn id"),
 /// };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,7 +43,7 @@ pub struct AgentRunForkParent {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub runtime_thread_id: RuntimeThreadId,
-    pub through_turn_id: String,
+    pub through_turn_id: RuntimeTurnId,
 }
 
 /// Stable Product and Runtime coordinates allocated before dispatch.
@@ -1198,7 +1200,7 @@ mod tests {
                 run_id: Uuid::new_v4(),
                 agent_id: Uuid::new_v4(),
                 runtime_thread_id: RuntimeThreadId::new("parent-thread").expect("thread id"),
-                through_turn_id: "turn-7".to_owned(),
+                through_turn_id: RuntimeTurnId::new("turn-7").expect("turn id"),
             },
             PreallocatedAgentRunChild {
                 agent_run_id: Uuid::new_v4(),

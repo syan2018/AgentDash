@@ -20,6 +20,8 @@ pub enum ManagedRuntimeFeedContractError {
     },
     #[error("change page contains a change for a different Runtime thread")]
     ChangeThreadMismatch,
+    #[error("Runtime change page belongs to a different Runtime thread")]
+    ChangePageThreadMismatch,
     #[error("change sequence {actual:?} does not follow retained sequence {expected_after:?}")]
     ChangeSequenceNotIncreasing {
         expected_after: RuntimeChangeSequence,
@@ -53,7 +55,7 @@ pub enum ManagedRuntimeReconnectOutcome {
     },
     SnapshotReloaded {
         reported_gap: ManagedRuntimeChangeGap,
-        snapshot: ManagedRuntimeSnapshot,
+        snapshot: Box<ManagedRuntimeSnapshot>,
         change_page: ManagedRuntimeChangePage,
     },
 }
@@ -77,7 +79,7 @@ impl<'a> AgentRunTargetFeedReconnect<'a> {
             .load_changes(thread_id, after)
             .await
             .map_err(ManagedRuntimeFeedContractError::ChangeLoad)?;
-        let change_page = consume_managed_runtime_change_page(change_page)?;
+        let change_page = consume_managed_runtime_change_page_for_thread(thread_id, change_page)?;
         if let Some(gap) = change_page.gap.clone() {
             let snapshot = self
                 .snapshot_port
@@ -92,14 +94,15 @@ impl<'a> AgentRunTargetFeedReconnect<'a> {
                 .load_changes(thread_id, Some(snapshot.latest_change_sequence))
                 .await
                 .map_err(ManagedRuntimeFeedContractError::ChangeLoad)?;
-            let change_page = consume_managed_runtime_change_page(change_page)?;
+            let change_page =
+                consume_managed_runtime_change_page_for_thread(thread_id, change_page)?;
             if change_page.gap.is_some() {
                 return Err(ManagedRuntimeFeedContractError::GapAfterSnapshotReload);
             }
             validate_contiguous_tail(&change_page, snapshot.latest_change_sequence)?;
             return Ok(ManagedRuntimeReconnectOutcome::SnapshotReloaded {
                 reported_gap: gap,
-                snapshot,
+                snapshot: Box::new(snapshot),
                 change_page,
             });
         }
@@ -202,6 +205,17 @@ pub fn consume_managed_runtime_change_page(
             );
         }
         previous = change.sequence;
+    }
+    Ok(page)
+}
+
+fn consume_managed_runtime_change_page_for_thread(
+    thread_id: &RuntimeThreadId,
+    page: ManagedRuntimeChangePage,
+) -> Result<ManagedRuntimeChangePage, ManagedRuntimeFeedContractError> {
+    let page = consume_managed_runtime_change_page(page)?;
+    if &page.thread_id != thread_id {
+        return Err(ManagedRuntimeFeedContractError::ChangePageThreadMismatch);
     }
     Ok(page)
 }
@@ -389,6 +403,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn continuous_reconnect_rejects_an_empty_page_for_another_thread() {
+        let thread_id = RuntimeThreadId::new("runtime-thread-feed").expect("thread");
+        let other_thread_id = RuntimeThreadId::new("runtime-thread-other").expect("thread");
+        let page = ManagedRuntimeChangePage {
+            thread_id: other_thread_id,
+            changes: Vec::new(),
+            next: RuntimeChangeSequence(8),
+            gap: None,
+        };
+        let port = RecordingSnapshotPort::with_results(Vec::new(), vec![page]);
+
+        assert_eq!(
+            AgentRunTargetFeedReconnect::new(&port)
+                .reconnect(&thread_id, Some(RuntimeChangeSequence(8)))
+                .await,
+            Err(ManagedRuntimeFeedContractError::ChangePageThreadMismatch)
+        );
+        assert_eq!(port.calls(), vec!["changes:runtime-thread-feed:8"]);
+    }
+
+    #[tokio::test]
+    async fn gap_reconnect_rejects_the_initial_page_for_another_thread() {
+        let thread_id = RuntimeThreadId::new("runtime-thread-feed").expect("thread");
+        let other_thread_id = RuntimeThreadId::new("runtime-thread-other").expect("thread");
+        let gap_page = ManagedRuntimeChangePage {
+            thread_id: other_thread_id,
+            changes: Vec::new(),
+            next: RuntimeChangeSequence(12),
+            gap: Some(ManagedRuntimeChangeGap {
+                requested_after: Some(RuntimeChangeSequence(4)),
+                earliest_available: RuntimeChangeSequence(9),
+                latest_available: RuntimeChangeSequence(12),
+                snapshot_revision: RuntimeProjectionRevision(8),
+            }),
+        };
+        let port = RecordingSnapshotPort::with_results(Vec::new(), vec![gap_page]);
+
+        assert_eq!(
+            AgentRunTargetFeedReconnect::new(&port)
+                .reconnect(&thread_id, Some(RuntimeChangeSequence(4)))
+                .await,
+            Err(ManagedRuntimeFeedContractError::ChangePageThreadMismatch)
+        );
+        assert_eq!(port.calls(), vec!["changes:runtime-thread-feed:4"]);
+    }
+
+    #[tokio::test]
     async fn typed_gap_reloads_and_validates_snapshot_before_reading_its_tail() {
         let thread_id = RuntimeThreadId::new("runtime-thread-feed").expect("thread");
         let gap = ManagedRuntimeChangeGap {
@@ -424,9 +485,48 @@ mod tests {
             outcome,
             ManagedRuntimeReconnectOutcome::SnapshotReloaded {
                 reported_gap: gap,
-                snapshot,
+                snapshot: Box::new(snapshot),
                 change_page: tail,
             }
+        );
+        assert_eq!(
+            port.calls(),
+            vec![
+                "changes:runtime-thread-feed:4",
+                "snapshot:runtime-thread-feed",
+                "changes:runtime-thread-feed:12",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn gap_reconnect_rejects_the_reloaded_tail_for_another_thread() {
+        let thread_id = RuntimeThreadId::new("runtime-thread-feed").expect("thread");
+        let gap_page = ManagedRuntimeChangePage {
+            thread_id: thread_id.clone(),
+            changes: Vec::new(),
+            next: RuntimeChangeSequence(12),
+            gap: Some(ManagedRuntimeChangeGap {
+                requested_after: Some(RuntimeChangeSequence(4)),
+                earliest_available: RuntimeChangeSequence(9),
+                latest_available: RuntimeChangeSequence(12),
+                snapshot_revision: RuntimeProjectionRevision(8),
+            }),
+        };
+        let snapshot = snapshot_for("runtime-thread-feed", 8, 12);
+        let tail = ManagedRuntimeChangePage {
+            thread_id: RuntimeThreadId::new("runtime-thread-other").expect("thread"),
+            changes: Vec::new(),
+            next: RuntimeChangeSequence(12),
+            gap: None,
+        };
+        let port = RecordingSnapshotPort::with_results(vec![snapshot], vec![gap_page, tail]);
+
+        assert_eq!(
+            AgentRunTargetFeedReconnect::new(&port)
+                .reconnect(&thread_id, Some(RuntimeChangeSequence(4)))
+                .await,
+            Err(ManagedRuntimeFeedContractError::ChangePageThreadMismatch)
         );
         assert_eq!(
             port.calls(),

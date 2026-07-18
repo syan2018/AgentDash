@@ -1,3 +1,8 @@
+param(
+    [ValidateSet("Inventory", "Activated")]
+    [string]$Mode = "Inventory"
+)
+
 $ErrorActionPreference = "Stop"
 
 $cutoverRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -50,10 +55,14 @@ $expected = @($manifest.w7_consumer_cut.activation_roots) |
     ForEach-Object { ($_ -split "::")[0].Replace("\", "/") } |
     Sort-Object -Unique
 
-$missing = @($actual | Where-Object { $_ -notin $expected })
-$stale = @($expected | Where-Object { $_ -notin $actual })
-if ($missing.Count -gt 0 -or $stale.Count -gt 0) {
-    throw "caller inventory drift; missing=[$($missing -join ', ')]; stale=[$($stale -join ', ')]"
+if ($Mode -eq "Inventory") {
+    $missing = @($actual | Where-Object { $_ -notin $expected })
+    $stale = @($expected | Where-Object { $_ -notin $actual })
+    if ($missing.Count -gt 0 -or $stale.Count -gt 0) {
+        throw "caller inventory drift; missing=[$($missing -join ', ')]; stale=[$($stale -join ', ')]"
+    }
+} elseif ($actual.Count -gt 0) {
+    throw "activated caller roots still contain legacy symbols: $($actual -join ', ')"
 }
 
 $requiredCallerFiles = @(
@@ -87,4 +96,4 @@ foreach ($path in @(
     }
 }
 
-Write-Output "caller inventory exactness: passed"
+Write-Output "caller inventory $Mode gate: passed"

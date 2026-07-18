@@ -378,6 +378,84 @@
       "generator 为 W7 schema 建立第二套 canonical root"
     ]
   },
+  "w8_live_prerequisite_contracts": [
+    {
+      "owner": "W8 Hard Cut shared foundation",
+      "rust_output": "crates/agentdash-api/src/app_state.rs::AppState",
+      "required_signatures": [
+        "Arc<dyn AgentRunForkSagaRepository>",
+        "Arc<dyn AgentRunForkRuntimePort>",
+        "Arc<dyn AgentRunForkProductGraphPort>",
+        "Arc<dyn CompanionFreshSagaRepository>",
+        "Arc<dyn CompanionFreshRuntimePort>",
+        "Arc<dyn AgentRunRuntimeProjectionPort>"
+      ],
+      "consumer_construction": [
+        "AgentRunForkFacade::new(repository, runtime, product_graph)",
+        "CompanionDispatchCoordinator::new(fork_repository, fork_runtime, fork_product_graph, fresh_repository, fresh_runtime)",
+        "AgentRunRuntimeFeedReconnect::new(projection)"
+      ],
+      "gate": "AppState production constructor receives PostgreSQL saga repositories and Platform Runtime adapters; API caller tests construct these exact traits without recording repositories."
+    },
+    {
+      "owner": "W8 Hard Cut canonical generator",
+      "rust_root": "agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeProjectionSchema",
+      "typescript_outputs": [
+        "packages/app-web/src/generated/agent-runtime-contracts.ts::ManagedRuntimeSnapshot",
+        "packages/app-web/src/generated/agent-runtime-contracts.ts::ManagedRuntimeChangePage",
+        "packages/app-web/src/generated/agent-runtime-validators.ts::ManagedRuntimeProjectionSchema"
+      ],
+      "gate": "pnpm run contracts:check emits the Managed Runtime roots and leaves generated/schema diff empty."
+    }
+  ],
+  "pending_product_caller_activation": [
+    {
+      "order": 1,
+      "caller": "agentdash-application-agentrun",
+      "patch": "切 AgentRun fork/context/workspace/presentation 到 durable saga 与 canonical projection，移除 journal/RuntimeSession public exports。",
+      "gate": "product_protocol restart matrix + agentrun crate check"
+    },
+    {
+      "order": 2,
+      "caller": "agentdash-application",
+      "patch": "切 Companion Full/Fresh、task、wait 与 VFS owner 到 Companion coordinator 和 Business Surface contribution。",
+      "gate": "Companion crash-window matrix + application crate check"
+    },
+    {
+      "order": 3,
+      "caller": "agentdash-application-lifecycle",
+      "patch": "切 workflow projection 与 lifecycle tool/VFS surface contribution。",
+      "gate": "lifecycle projection/surface tests"
+    },
+    {
+      "order": 4,
+      "caller": "agentdash-application-ports",
+      "patch": "移除 RuntimeSession delivery/live 与 DynAgentTool ports，使用 Runtime Contract / Complete Agent callback vocabulary。",
+      "gate": "ports crate check + no re-export/shim"
+    },
+    {
+      "order": 5,
+      "caller": "agentdash-application-vfs",
+      "patch": "切 VFS descriptors 与 execution 到 Business Surface + Host callback Tool Broker。",
+      "gate": "VFS descriptor/callback tests"
+    },
+    {
+      "order": 6,
+      "caller": "agentdash-api + app-web",
+      "patch": "切 fork、snapshot/change/gap routes 与 frontend feed；availability 只读同 revision canonical snapshot。",
+      "gate": "API projection 3 tests + frontend feed 5 tests + app-web typecheck"
+    }
+  ],
+  "combined_activation_gates": [
+    "powershell -File .trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w7-product-cutover/verify-caller-inventory.ps1 -Mode Activated",
+    "rg -n \"AgentRunJournalService|AgentRunJournal|RuntimeJournalFact|RuntimeJournalRecord|RuntimeSession|RuntimeToolProvider|DynAgentTool|AgentTool\" crates/agentdash-api/src crates/agentdash-application/src crates/agentdash-application-agentrun/src crates/agentdash-application-lifecycle/src crates/agentdash-application-ports/src crates/agentdash-application-vfs/src",
+    "cargo test -p agentdash-application-agentrun product_protocol",
+    "cargo test -p agentdash-api --test agent_runtime_target_projection",
+    "pnpm --filter app-web test -- src/features/session/model/targetRuntimeFeed.test.ts",
+    "pnpm --filter app-web typecheck",
+    "pnpm run contracts:check",
+    "node scripts/check-migration-history.js"
+  ],
   "activation_order": [
     "固定 Platform Runtime Contract、Complete Agent Host persistence 与 Tool Broker symbols",
     "固定 Dash/Native exact fork 与 fresh context evidence receipts",

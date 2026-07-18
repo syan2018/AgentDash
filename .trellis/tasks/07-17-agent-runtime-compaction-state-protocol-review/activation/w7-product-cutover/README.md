@@ -37,3 +37,8 @@ cargo tree -p agentdash-application-agentrun -e normal --depth 1
 只有 manifest 中 Platform Runtime、Dash/Native 与 W8 三组 shared-owner prerequisites 全部
 固定后，才能依序应用六 caller cut、canonical generator cut 和 legacy deletion。任一 caller
 仍读取 journal、`RuntimeSession`、Core `AgentTool` 或 `RuntimeToolProvider` 时均不得激活。
+
+当前状态为 `domain_component_ready`；production caller source switch 等待 manifest 的两项
+`w8_live_prerequisite_contracts`。W8 shared foundation 落地后，Product owner 按
+`pending_product_caller_activation` 的六步顺序完成 caller patch，再交回 W8 继续
+composition/deletion/lock 收口。

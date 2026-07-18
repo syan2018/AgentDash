@@ -27,7 +27,7 @@
       "id": "cargo_dependency_graph",
       "owned_here": ["crate Cargo.toml dependency ownership"],
       "shared_with": ["W8"],
-      "handoff": "W2 patch excludes Cargo.lock; W8 regenerates lock from the final atomic manifests"
+      "handoff": "W2 patch and clean tip exclude lock changes; component tests use a temporary resolved lock and restore frozen base; W8 regenerates and commits the only activation lock from combined final manifests"
     }
   ]
 }

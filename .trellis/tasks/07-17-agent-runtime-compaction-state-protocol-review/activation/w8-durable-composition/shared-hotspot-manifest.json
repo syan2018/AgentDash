@@ -62,6 +62,8 @@
         "Cargo.lock regeneration from the final manifests",
         "agentdash-agent-types workspace deletion"
       ],
+      "combined_locked_gate": "after every W2/W7/W8 manifest is present, regenerate and commit the final Cargo.lock, then run the combined --locked test/clippy gates",
+      "component_evidence": "W2 clean tip keeps frozen-base Cargo.lock; its temporary component-resolution lock is verification evidence only and must be restored before commit",
       "must_not": "copy a component-local Cargo.lock"
     }
   ]

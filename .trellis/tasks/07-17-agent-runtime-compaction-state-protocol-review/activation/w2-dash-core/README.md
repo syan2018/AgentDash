@@ -70,10 +70,22 @@ Application -> Core 反向依赖、facade、re-export 或兼容 reader。
 
 ## Verification
 
+Clean component tip 必须保留 frozen-base `Cargo.lock`，因此此时直接执行 Cargo
+`--locked` 会因 component manifests 已变化而拒绝更新 lock。组件验证使用临时 lock：
+
+1. 确认 `git diff fc26d3ff..HEAD -- Cargo.lock` 为零；
+2. 用当前 component manifests 临时解析 lock；
+3. 记录临时 lock 的 SHA-256 与相对 frozen base 的精确 diff；
+4. 使用该临时 lock 执行下列 `--locked` tests/clippy；
+5. 验证完成后把 repository `Cargo.lock` 恢复 frozen base，不把临时 lock 写入 patch 或
+   commit。
+
 ```powershell
 cargo metadata --format-version 1 --no-deps
 cargo tree -p agentdash-agent-core --edges normal
+cargo test -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent --no-run
 cargo test --locked -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent
+cargo clippy --locked -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent --all-targets --no-deps -- -D warnings
 cargo test --locked -p agentdash-application-agentrun fork_
 rg -n "NativeAgentDriver|NativeAgentRuntimeIntegration|project_native_core|native_runtime_profile" crates/agentdash-integration-native-agent
 pnpm run test-support:guard
@@ -89,4 +101,6 @@ git diff --check -- . ':(exclude)*.patch'
 - Native owner crate 中不再存在旧 driver registration；W8 在最终 staging revision
   装配唯一 Complete Agent registration，不能双注册。
 - `git diff fc26d3ff..HEAD -- Cargo.lock` 为零，component patch 也不得出现
-  `Cargo.lock`；W8 必须从最终 manifests 重新生成 activation lock。
+  `Cargo.lock`。临时 component lock 只用于验证局部 manifests，不是 activation lock；
+  W8 必须从 combined final manifests 唯一生成并提交 activation lock，之后才运行最终
+  combined `--locked` gate。

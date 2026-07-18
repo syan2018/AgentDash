@@ -107,7 +107,7 @@
     {
       "path": "Cargo.lock",
       "owner": "W8",
-      "action": "从最终 manifests 生成"
+      "action": "clean component tip 保持 frozen base；局部验证临时解析后恢复，W8 从 combined final manifests 唯一生成并提交"
     }
   ],
   "forbidden": [

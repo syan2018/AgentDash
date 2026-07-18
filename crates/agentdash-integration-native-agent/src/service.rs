@@ -179,7 +179,7 @@ impl DashAgentCompleteService {
                     cutoffs: BTreeMap::from([
                         (AgentForkCutoffKind::Head, SemanticFidelity::Exact),
                         (AgentForkCutoffKind::CompletedTurn, SemanticFidelity::Exact),
-                        (AgentForkCutoffKind::Item, SemanticFidelity::Exact),
+                        (AgentForkCutoffKind::Item, SemanticFidelity::Unsupported),
                         (
                             AgentForkCutoffKind::SourceCursor,
                             SemanticFidelity::Unsupported,
@@ -1152,9 +1152,11 @@ fn translate_fork_cutoff(cutoff: &AgentForkPoint) -> Result<ForkCutoff, AgentSer
         AgentForkPoint::CompletedTurn { turn_id } => Ok(ForkCutoff::CompletedTurn {
             turn_id: agentdash_agent::dash::AgentTurnId::new(turn_id.as_str()),
         }),
-        AgentForkPoint::Item { item_id } => Ok(ForkCutoff::CompletedItem {
-            item_id: agentdash_agent::dash::AgentItemId::new(item_id.as_str()),
-        }),
+        AgentForkPoint::Item { .. } => Err(AgentServiceError::new(
+            AgentServiceErrorCode::Unsupported,
+            "Dash Agent does not advertise item-cutoff fork",
+            false,
+        )),
         AgentForkPoint::SourceCursor { .. } => Err(AgentServiceError::new(
             AgentServiceErrorCode::Unsupported,
             "Dash Agent does not advertise source-cursor fork",

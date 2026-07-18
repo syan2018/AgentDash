@@ -943,6 +943,143 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
 }
 
 #[tokio::test]
+async fn fork_profile_only_advertises_recoverable_exact_cutoffs() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    let service = service_with_store(store.clone());
+    let parent = create_source(&service, "dash-cutoff-parent").await;
+    service
+        .execute(submit_envelope(
+            parent.clone(),
+            "cutoff-parent-input",
+            "cutoff-parent-effect",
+        ))
+        .await
+        .unwrap();
+    let parent_snapshot = service
+        .read(AgentReadQuery {
+            source: parent.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    let completed_turn = parent_snapshot.turns[0].id.clone();
+    let completed_item = parent_snapshot.turns[0].items[0].id.clone();
+
+    let descriptor = service.describe().await.unwrap();
+    assert_eq!(
+        descriptor
+            .profile
+            .fork
+            .cutoffs
+            .get(&AgentForkCutoffKind::CompletedTurn),
+        Some(&SemanticFidelity::Exact)
+    );
+    assert_eq!(
+        descriptor
+            .profile
+            .fork
+            .cutoffs
+            .get(&AgentForkCutoffKind::Item),
+        Some(&SemanticFidelity::Unsupported)
+    );
+
+    let child = AgentSourceCoordinate::new("dash-cutoff-child").unwrap();
+    let fork_command = ForkAgentCommand {
+        meta: meta("cutoff-fork", "cutoff-fork-effect"),
+        source: parent.clone(),
+        requested_child_source: Some(child.clone()),
+        cutoff: AgentForkPoint::CompletedTurn {
+            turn_id: completed_turn.clone(),
+        },
+    };
+    let forked = service.fork(fork_command.clone()).await.unwrap();
+    let history_digest = forked.child_history_digest.clone().unwrap();
+
+    let restarted = service_with_store(store.clone());
+    let inspection = restarted
+        .inspect(fork_command.meta.effect_id.clone())
+        .await
+        .unwrap();
+    assert!(inspection.validate());
+    assert!(matches!(
+        inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Fork { receipt }
+        } if receipt.parent_source == parent
+            && receipt.child_source == child
+            && receipt.cutoff == fork_command.cutoff
+            && receipt.child_history_digest == history_digest
+            && receipt.terminal == Some(AgentTerminalOutcome::Succeeded)
+    ));
+    let child_snapshot = restarted
+        .read(AgentReadQuery {
+            source: child.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    let digest = history_digest
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("Dash fork digest is sha256");
+    let expected_source_revision = format!("history:{digest}");
+    assert_eq!(
+        child_snapshot
+            .source_info
+            .source_revision
+            .as_ref()
+            .map(|revision| revision.as_str()),
+        Some(expected_source_revision.as_str())
+    );
+    assert!(child_snapshot.active_turn_id.is_none());
+    assert!(matches!(
+        restarted
+            .execute(submit_envelope(
+                child.clone(),
+                "cutoff-child-input",
+                "cutoff-child-effect",
+            ))
+            .await
+            .unwrap()
+            .state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Succeeded
+        }
+    ));
+
+    let repositories_before = store.durable.read().await.repositories.len();
+    let item_child = AgentSourceCoordinate::new("dash-item-cutoff-child").unwrap();
+    let error = restarted
+        .fork(ForkAgentCommand {
+            meta: meta("item-cutoff-fork", "item-cutoff-fork-effect"),
+            source: parent,
+            requested_child_source: Some(item_child.clone()),
+            cutoff: AgentForkPoint::Item {
+                item_id: completed_item,
+            },
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, AgentServiceErrorCode::Unsupported);
+    assert_eq!(
+        store.durable.read().await.repositories.len(),
+        repositories_before,
+        "unsupported item cutoff must be rejected before creating a child source"
+    );
+    assert_eq!(
+        restarted
+            .read(AgentReadQuery {
+                source: item_child,
+                at_revision: None,
+            })
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::NotFound
+    );
+}
+
+#[tokio::test]
 async fn unsupported_input_is_rejected_before_history_changes() {
     let service = service();
     let source = AgentSourceCoordinate::new("dash-text-only").unwrap();
@@ -1690,22 +1827,40 @@ async fn atomic_commits_recover_lost_receipts_without_duplicate_source_fork_or_s
         AgentServiceErrorCode::Unavailable
     );
     let reopened = service_with_store(store.clone());
-    let forked = reopened.fork(fork.clone()).await.unwrap();
-    assert_eq!(forked.child_source.as_ref(), Some(&child));
-    assert_eq!(reopened.fork(fork.clone()).await.unwrap(), forked);
-    assert_eq!(store.durable.read().await.repositories.len(), 2);
     let fork_inspection = reopened.inspect(fork.meta.effect_id.clone()).await.unwrap();
     assert!(fork_inspection.validate());
-    assert!(matches!(
-        fork_inspection.state,
+    let inspected_history_digest = match fork_inspection.state {
         AgentEffectInspectionState::Applied {
-            outcome: AgentAppliedEffectOutcome::Fork { receipt }
+            outcome: AgentAppliedEffectOutcome::Fork { receipt },
         } if receipt.parent_source == parent
             && receipt.child_source == child
             && receipt.cutoff == fork.cutoff
-            && Some(&receipt.child_history_digest) == forked.child_history_digest.as_ref()
-            && receipt.terminal == Some(AgentTerminalOutcome::Succeeded)
-    ));
+            && receipt.terminal == Some(AgentTerminalOutcome::Succeeded) =>
+        {
+            receipt.child_history_digest
+        }
+        state => panic!("unexpected fork inspection after lost receipt: {state:?}"),
+    };
+    assert_eq!(
+        reopened
+            .read(AgentReadQuery {
+                source: child.clone(),
+                at_revision: None,
+            })
+            .await
+            .unwrap()
+            .source,
+        child,
+        "inspect-only recovery must expose the already-created child"
+    );
+    let forked = reopened.fork(fork.clone()).await.unwrap();
+    assert_eq!(forked.child_source.as_ref(), Some(&child));
+    assert_eq!(
+        forked.child_history_digest.as_ref(),
+        Some(&inspected_history_digest)
+    );
+    assert_eq!(reopened.fork(fork.clone()).await.unwrap(), forked);
+    assert_eq!(store.durable.read().await.repositories.len(), 2);
     let mut conflicting_fork = fork;
     conflicting_fork.requested_child_source =
         Some(AgentSourceCoordinate::new("dash-atomic-other-child").unwrap());
@@ -1751,19 +1906,20 @@ async fn atomic_commits_recover_lost_receipts_without_duplicate_source_fork_or_s
             .map(|surface| surface.revision),
         Some(AgentSurfaceRevision(1))
     );
+    let apply_inspection = reopened.inspect(apply.effect_id.clone()).await.unwrap();
+    assert!(apply_inspection.validate());
+    let inspected_apply = match apply_inspection.state {
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::SurfaceApply { receipt },
+        } => receipt,
+        state => panic!("unexpected surface apply inspection after lost receipt: {state:?}"),
+    };
     let applied = reopened.apply_surface(apply.clone()).await.unwrap();
+    assert_eq!(applied, inspected_apply);
     assert_eq!(
         reopened.apply_surface(apply.clone()).await.unwrap(),
         applied
     );
-    let apply_inspection = reopened.inspect(apply.effect_id.clone()).await.unwrap();
-    assert!(apply_inspection.validate());
-    assert!(matches!(
-        apply_inspection.state,
-        AgentEffectInspectionState::Applied {
-            outcome: AgentAppliedEffectOutcome::SurfaceApply { receipt }
-        } if receipt == applied
-    ));
     let mut conflicting_apply = apply;
     conflicting_apply.bound_surface.digest =
         AgentSurfaceDigest::new("atomic-conflicting-surface").unwrap();
@@ -1805,23 +1961,30 @@ async fn atomic_commits_recover_lost_receipts_without_duplicate_source_fork_or_s
             .applied_surface
             .is_none()
     );
+    let revoke_inspection = reopened.inspect(revoke.effect_id.clone()).await.unwrap();
+    assert!(revoke_inspection.validate());
+    let inspected_revoke = match revoke_inspection.state {
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::SurfaceRevoke { receipt },
+        } => receipt,
+        state => panic!("unexpected surface revoke inspection after lost receipt: {state:?}"),
+    };
     let revoked = reopened.revoke_surface(revoke.clone()).await.unwrap();
+    assert_eq!(revoked.command_id, inspected_revoke.command_id);
+    assert_eq!(revoked.effect_id, inspected_revoke.effect_id);
+    assert_eq!(revoked.source, inspected_revoke.source);
+    assert_eq!(
+        revoked.snapshot_revision,
+        inspected_revoke.snapshot_revision
+    );
+    assert_eq!(
+        inspected_revoke.terminal,
+        Some(AgentTerminalOutcome::Succeeded)
+    );
     assert_eq!(
         reopened.revoke_surface(revoke.clone()).await.unwrap(),
         revoked
     );
-    let revoke_inspection = reopened.inspect(revoke.effect_id.clone()).await.unwrap();
-    assert!(revoke_inspection.validate());
-    assert!(matches!(
-        revoke_inspection.state,
-        AgentEffectInspectionState::Applied {
-            outcome: AgentAppliedEffectOutcome::SurfaceRevoke { receipt }
-        } if receipt.command_id == revoked.command_id
-            && receipt.effect_id == revoked.effect_id
-            && receipt.source == revoked.source
-            && receipt.terminal == Some(AgentTerminalOutcome::Succeeded)
-            && receipt.snapshot_revision == revoked.snapshot_revision
-    ));
     let mut conflicting_revoke = revoke;
     conflicting_revoke.expected_revision = AgentSurfaceRevision(2);
     assert_eq!(

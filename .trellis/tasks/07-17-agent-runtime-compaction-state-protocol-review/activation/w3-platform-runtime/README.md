@@ -20,7 +20,11 @@ CAS 原子写入 operation、idempotency、pending effect intent、projection、
 source-normalized projection、source identity mapping、source change，以及由该 observation
 导出的 Managed Runtime projection/change/outbox 都属于同一个
 `ManagedRuntimeStateCommit`。normalize/project 只准备候选事实，不存在独立 source
-repository 提交。CAS 或持久化失败时整组事实均不推进。只有已提交的可信 cursor 才能
+repository 提交。每条 source change 都有且只有一条 `SourceObservationApplied` typed
+change 与对应 outbox，固化 source、projection revision、observation、source revision、
+cursor digest 和 changed sections。normalized payload 即使没有改变 projection，也会以
+空 `changed_sections` 保留因果 observation；只有真实改变才追加具体 projection delta。
+CAS 或持久化失败时整组事实均不推进。只有已提交的可信 cursor 才能
 消费连续有序 change page；首次同步、断档或 partial page 都回到 snapshot authority，
 而 snapshot contract 尚未提供可信 cursor 时将 `source_cursor` 保持为 `null`。
 
@@ -36,10 +40,14 @@ binding、source coordinate、generation、effect、inspection、lease 与 lease
 与 lease fence，再原子推进 revision。exact committed fact graph replay 幂等返回；不同
 graph 的 stale revision 返回 typed conflict。
 
-`CompleteAgentCallbackRepository` 是 reverse callback route、reservation 与 outcome 的
-Host-owned 持久化端口。route 注册/撤销必须和对应 Host binding/surface transition 共用
-数据库事务；每次 Tool/Hook 在调用 platform handler 前先 CAS 写入 `Pending` reservation，
-随后用第二次 CAS 结算 typed outcome。进程重启后 `Settled` 精确 replay，
+callback route 与 tombstone 属于 `CompleteAgentHostFacts`：callback-bound surface
+进入 Applied/Available 时必须在同一个 Host commit 插入唯一 route，revoke/lost 时在同一个
+Host commit 保留不可变 route fence 并追加 tombstone；没有 callback contribution 的
+surface 不产生 route。`CompleteAgentCallbackRepository` 只持有 reservation 与 outcome，
+reservation 固化已提交 route 的 generation 与 bound-surface digest，并由 PostgreSQL
+compound reference 约束到仍 active 的 Host route。每次 Tool/Hook 在调用 platform handler
+前先 CAS 写入 `Pending` reservation，随后用第二次 CAS 结算 typed outcome。进程重启后
+`Settled` 精确 replay；route tombstone 则优先拒绝旧 generation callback。
 `Pending`、`InspectionRequired` 与 `Unknown` 都禁止自动重执行，只能通过公开 inspect
 与显式 reconcile/settle 收敛。
 

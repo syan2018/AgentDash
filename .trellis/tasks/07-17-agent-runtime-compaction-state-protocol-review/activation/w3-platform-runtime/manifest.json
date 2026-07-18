@@ -24,6 +24,16 @@
       "Product Runtime callers"
     ]
   },
+  "dependency_delta": {
+    "owned_manifest_additions": [
+      "crates/agentdash-agent-runtime/Cargo.toml: serde.workspace = true",
+      "crates/agentdash-agent-runtime/Cargo.toml: sha2.workspace = true"
+    ],
+    "root_manifest_owner": "W8 composition",
+    "root_lock_owner": "W8 composition",
+    "component_modifies_root_lock": false,
+    "reason": "source observation evidence uses canonical serialization and SHA-256 digests at the Runtime authority boundary"
+  },
   "live_contracts": [
     {
       "file": "crates/agentdash-agent-runtime-contract/src/gateway.rs",
@@ -52,6 +62,13 @@
         "PreparedCompleteAgentObservation",
         "project_managed_runtime_snapshot",
         "project_managed_runtime_change_page"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime-contract/src/managed_projection.rs",
+      "symbols": [
+        "ManagedRuntimeChangeDelta::SourceObservationApplied",
+        "ManagedRuntimeProjectionSection"
       ]
     },
     {
@@ -84,8 +101,7 @@
       "symbols": [
         "CompleteAgentCallbackRepository::load() -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError>",
         "CompleteAgentCallbackRepository::commit(CompleteAgentCallbackCommit) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError>",
-        "CompleteAgentCallbackBroker::register_route",
-        "CompleteAgentCallbackBroker::revoke_route",
+        "CompleteAgentCallbackBroker::new(tool_handler, hook_handler, SharedCompleteAgentHostRepository, SharedCompleteAgentCallbackRepository)",
         "CompleteAgentCallbackBroker::inspect_callback",
         "CompleteAgentCallbackBroker::mark_inspection_required",
         "CompleteAgentCallbackBroker::mark_unknown",
@@ -213,6 +229,7 @@
       "admit against the committed projection revision and command availability",
       "prepare source normalization and Runtime projection candidates without an independent write",
       "write source projection, source identity mappings and source changes in the same ManagedRuntimeStateCommit as their Runtime projection, typed changes and outbox",
+      "append exactly one SourceObservationApplied change and matching outbox row for every appended source change, including normalized no-op observations",
       "write immutable operation identity and idempotency mapping",
       "write pending effect intent before any external dispatch",
       "advance projection operation and availability facts",
@@ -229,34 +246,33 @@
       "pending effect identity and command coordinates are immutable",
       "operation and pending delivery states cannot move backwards",
       "source authority, fidelity, revision, identity mapping and source change history are monotonic",
-      "a source observation and every Runtime projection/change/outbox fact derived from it commit or fail together",
+      "each source change has exactly one causal SourceObservationApplied delta with exact source, projection revision, observation, source revision, cursor and changed-section digests",
+      "a source observation and every causal or concrete Runtime projection/change/outbox fact derived from it commit or fail together",
+      "a normalized no-op source observation has empty changed_sections and no concrete projection delta, but retains its causal change and outbox",
       "without a trusted local source cursor, or after a gap/partial page, snapshot reconcile keeps source_cursor null instead of trusting page.next",
       "Runtime change sequence is continuous and append-only",
       "every Runtime change has exactly one matching append-only outbox entry"
     ]
   },
   "callback_repository_contract": {
-    "authority": "Host-owned PostgreSQL route facts and callback CAS outcomes are the only reverse-callback authority",
+    "authority": "callback CAS outcomes are durable execution facts and reference the Host-owned route fence",
     "tables": [
       "agent_runtime_callback_revision",
-      "agent_runtime_callback_route",
       "agent_runtime_callback_reservation",
       "agent_runtime_callback_outcome"
     ],
     "required_transaction": [
-      "persist callback route registration or revocation in the same database transaction as the corresponding Host binding/surface transition",
-      "load the durable route and validate source, binding generation, revocation and semantic deadline before reservation",
+      "load the committed Host route and validate source, binding generation, tombstone and semantic deadline before reservation",
       "lock and compare CompleteAgentCallbackRevision",
-      "commit an immutable Pending reservation before invoking any Tool or Hook handler",
+      "commit an immutable Pending reservation carrying the committed route generation and bound-surface digest before invoking any Tool or Hook handler",
       "invoke the platform handler only after the reservation transaction commits",
       "settle the typed Tool or Hook outcome with a second callback CAS",
       "after restart, replay Settled outcomes and block Pending, InspectionRequired or Unknown records without re-execution",
       "expose durable inspection plus explicit reconciliation or settlement for ambiguous outcomes"
     ],
     "required_constraints": [
-      "route identity, generation, source, delivery, deadline and bound surface are immutable",
-      "route revocation is append-only",
-      "idempotency key fixes callback kind, request digest, generation, source and deadline",
+      "reservation route_id, generation and bound_surface_digest have a compound reference to one active committed Host route fence",
+      "idempotency key fixes callback kind, request digest, generation, bound surface, source and deadline",
       "Pending can advance only to InspectionRequired, Unknown or a typed Settled outcome",
       "InspectionRequired and Unknown never cause automatic handler re-execution",
       "typed terminal outcomes are immutable and exact duplicate replay performs no write"
@@ -271,6 +287,8 @@
       "agent_runtime_placement",
       "agent_runtime_binding",
       "agent_runtime_source_coordinate",
+      "agent_runtime_callback_route",
+      "agent_runtime_callback_route_tombstone",
       "agent_runtime_effect",
       "agent_runtime_effect_attempt_history",
       "agent_runtime_lease",
@@ -280,6 +298,8 @@
       "lock and compare CompleteAgentHostRevision",
       "validate one immutable descriptor, offer and placement per service instance",
       "validate binding/source/generation/profile/surface coordinates",
+      "when a callback-bound surface becomes Applied/Available, insert its unique route in the same Host revision transaction",
+      "when a callback-bound applied surface is revoked or lost, retain the immutable route and append its tombstone in the same Host revision transaction",
       "validate effect identity, payload and append-only attempt evidence",
       "validate active lease owner, token, epoch, generation and database-clock expiry",
       "fence external receipt and inspection against the current lease",
@@ -291,6 +311,10 @@
       "service instance identity fixes descriptor, exact Runtime offer and placement",
       "placement is exactly one of in_process, local_process or remote and all coordinates are non-empty",
       "binding generation is positive and binding/source mapping is bidirectionally unique",
+      "an Available callback-bound applied surface has exactly one active route with exact binding, generation, source and bound-surface digest",
+      "an Available surface without AgentNativeCallback contributions has no active route",
+      "route identity, request fence, binding generation, source, delivery, deadline and bound surface are immutable",
+      "route tombstones are append-only and permanently fence callbacks from the old route generation",
       "effect identity fixes command, payload, binding, source and generation",
       "attempt history is continuous, immutable and append-only",
       "terminal effect evidence cannot be downgraded or rewritten",
@@ -326,6 +350,8 @@
       ],
       "tests": [
         "complete_agent_state::tests::source_observation_commit_failure_leaves_no_normalized_or_platform_gap",
+        "complete_agent_state::tests::no_op_source_observation_keeps_causal_change_and_empty_sections",
+        "complete_agent_state::tests::source_observation_causal_delta_rejects_omission_duplication_and_wrong_evidence",
         "complete_agent_state::tests::stale_source_candidate_cannot_commit_without_its_platform_change",
         "complete_agent_state::tests::restarted_reconciler_continues_from_one_atomic_source_and_runtime_state",
         "complete_agent_state::tests::first_partial_ordered_page_is_not_used_as_snapshot_head",
@@ -358,6 +384,7 @@
         "complete_agent_repository::tests::descriptor_offer_and_binding_contracts_reject_cross_revision_rewrites",
         "complete_agent_repository::tests::effect_identity_payload_and_observation_evidence_are_monotonic",
         "complete_agent_repository::tests::lease_identity_epoch_and_terminal_binding_rules_are_enforced",
+        "complete_agent_repository::tests::callback_route_is_atomic_with_apply_and_revoke_binding_transitions",
         "complete_agent::tests::lease_reclaim_fences_old_owner_and_binding_loss_converges_state"
       ]
     },
@@ -369,8 +396,8 @@
         "CompleteAgentCallbackBroker"
       ],
       "tests": [
-        "complete_agent_callbacks::tests::callback_route_is_created_only_from_agent_native_apply_binding",
         "complete_agent_callbacks::tests::duplicate_tool_callback_replays_one_result",
+        "complete_agent_callbacks::tests::missing_or_tombstoned_host_route_never_reserves_or_replays_callback",
         "complete_agent_callbacks::tests::pending_callback_survives_restart_and_requires_explicit_reconciliation",
         "complete_agent_callbacks::tests::stale_generation_and_elapsed_deadline_are_rejected",
         "complete_agent_callbacks::tests::hook_decision_outside_bound_actions_is_rejected_and_replayed_once"

@@ -12,7 +12,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunTerminalProjectionRevision, AgentRunTerminalProjectionStoreError,
     AgentRunTerminalProjectionUnitOfWork, AgentRunTerminalSnapshot,
 };
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_workspace_module::workspace_module::presentation_protocol::{
     WorkspaceModulePresentationAckId, WorkspaceModulePresentationAcknowledgePort,
     WorkspaceModulePresentationAcknowledgeRequest, WorkspaceModulePresentationAcknowledgement,
@@ -79,7 +79,7 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
                 .transpose()
                 .map_err(|error| error.to_string())?,
         )
-        .bind(binding_json)
+        .bind(&binding_json)
         .execute(&mut *tx)
         .await
         .map_err(string_db_error)?;
@@ -105,7 +105,7 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
 impl AgentRunProductRuntimeBindingRepository for PostgresAgentRunProductRuntimeBindingRepository {
     async fn load_product_binding(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
         let row = sqlx::query(
             "SELECT runtime_thread_id,source_ref,source_committed_revision,
@@ -178,7 +178,7 @@ impl PostgresWorkspaceModulePresentationStore {
 impl WorkspaceModulePresentationRepository for PostgresWorkspaceModulePresentationStore {
     async fn load_head(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<WorkspaceModulePresentationHead, WorkspaceModulePresentationStoreError> {
         let row = sqlx::query(
             "SELECT revision,latest_change_sequence
@@ -195,7 +195,7 @@ impl WorkspaceModulePresentationRepository for PostgresWorkspaceModulePresentati
 
     async fn load_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<WorkspaceModulePresentationSnapshot, WorkspaceModulePresentationStoreError> {
         let head = self.load_head(target).await?;
         let values = sqlx::query_scalar::<_, Value>(
@@ -212,7 +212,7 @@ impl WorkspaceModulePresentationRepository for PostgresWorkspaceModulePresentati
         for value in values {
             let intent: WorkspaceModulePresentationIntent =
                 decode(value).map_err(workspace_serde_error)?;
-            let sequence = sqlx::query_scalar::<_, i64>(
+            let sequence = sqlx::query_scalar::<_, Option<i64>>(
                 "SELECT MIN(change_sequence)
                  FROM workspace_module_presentation_change
                  WHERE target_run_id=$1 AND target_agent_id=$2
@@ -221,10 +221,9 @@ impl WorkspaceModulePresentationRepository for PostgresWorkspaceModulePresentati
             .bind(target.run_id.to_string())
             .bind(target.agent_id.to_string())
             .bind(transparent_string(&intent.intent_id).map_err(workspace_serde_error)?)
-            .fetch_optional(&self.pool)
+            .fetch_one(&self.pool)
             .await
             .map_err(workspace_db_error)?
-            .flatten()
             .ok_or_else(|| {
                 WorkspaceModulePresentationStoreError::Persistence(
                     "pending workspace intent has no pending change".to_string(),
@@ -246,7 +245,7 @@ impl WorkspaceModulePresentationRepository for PostgresWorkspaceModulePresentati
 
     async fn load_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<WorkspaceModulePresentationChangeSequence>,
         limit: usize,
     ) -> Result<WorkspaceModulePresentationChangePage, WorkspaceModulePresentationStoreError> {
@@ -297,7 +296,8 @@ impl WorkspaceModulePresentationRepository for PostgresWorkspaceModulePresentati
         .fetch_all(&self.pool)
         .await
         .map_err(workspace_db_error)?;
-        let changes = decode_all(values).map_err(workspace_serde_error)?;
+        let changes: Vec<WorkspaceModulePresentationChange> =
+            decode_all(values).map_err(workspace_serde_error)?;
         let next = changes.last().map_or(
             WorkspaceModulePresentationChangeSequence(after_value),
             |change| change.sequence,
@@ -368,7 +368,7 @@ impl WorkspaceModulePresentationAcknowledgePort for PostgresWorkspaceModulePrese
         let intent: WorkspaceModulePresentationIntent =
             decode(row.try_get("intent").map_err(workspace_db_error)?)
                 .map_err(workspace_serde_error)?;
-        let pending_sequence = sqlx::query_scalar::<_, i64>(
+        let pending_sequence = sqlx::query_scalar::<_, Option<i64>>(
             "SELECT MIN(change_sequence)
              FROM workspace_module_presentation_change
              WHERE target_run_id=$1 AND target_agent_id=$2
@@ -612,7 +612,7 @@ impl PostgresAgentRunTerminalProjectionStore {
 impl AgentRunTerminalProjectionRepository for PostgresAgentRunTerminalProjectionStore {
     async fn load_head(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<AgentRunTerminalProjectionHead, AgentRunTerminalProjectionStoreError> {
         let row = sqlx::query(
             "SELECT revision,latest_change_sequence
@@ -629,7 +629,7 @@ impl AgentRunTerminalProjectionRepository for PostgresAgentRunTerminalProjection
 
     async fn load_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<AgentRunTerminalSnapshot, AgentRunTerminalProjectionStoreError> {
         let head = self.load_head(target).await?;
         let values = sqlx::query_scalar::<_, Value>(
@@ -652,7 +652,7 @@ impl AgentRunTerminalProjectionRepository for PostgresAgentRunTerminalProjection
 
     async fn load_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<AgentRunTerminalChangeSequence>,
         limit: usize,
     ) -> Result<
@@ -728,7 +728,7 @@ impl AgentRunTerminalProjectionRepository for PostgresAgentRunTerminalProjection
 impl AgentRunTerminalControlRoutingRepository for PostgresAgentRunTerminalProjectionStore {
     async fn resolve_control_route(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         terminal_id: &agentdash_application_agentrun::agent_run::AgentRunTerminalId,
     ) -> Result<Option<AgentRunTerminalControlRoute>, AgentRunTerminalProjectionStoreError> {
         let value = sqlx::query_scalar::<_, Value>(
@@ -1134,7 +1134,7 @@ fn terminal_delta_kind(delta: &AgentRunTerminalProjectionDelta) -> &'static str 
 
 async fn load_project_id(
     tx: &mut Transaction<'_, Postgres>,
-    target: &AgentRunRuntimeTarget,
+    target: &AgentRunTarget,
 ) -> Result<String, sqlx::Error> {
     sqlx::query_scalar("SELECT project_id FROM lifecycle_agents WHERE id=$1 AND run_id=$2")
         .bind(target.agent_id.to_string())
@@ -1145,7 +1145,7 @@ async fn load_project_id(
 
 async fn ensure_workspace_head(
     tx: &mut Transaction<'_, Postgres>,
-    target: &AgentRunRuntimeTarget,
+    target: &AgentRunTarget,
 ) -> Result<(), WorkspaceModulePresentationStoreError> {
     let project_id = load_project_id(tx, target)
         .await
@@ -1155,7 +1155,7 @@ async fn ensure_workspace_head(
 
 async fn ensure_workspace_head_with_project(
     tx: &mut Transaction<'_, Postgres>,
-    target: &AgentRunRuntimeTarget,
+    target: &AgentRunTarget,
     project_id: &str,
 ) -> Result<(), WorkspaceModulePresentationStoreError> {
     sqlx::query(
@@ -1174,7 +1174,7 @@ async fn ensure_workspace_head_with_project(
 
 async fn lock_workspace_head(
     tx: &mut Transaction<'_, Postgres>,
-    target: &AgentRunRuntimeTarget,
+    target: &AgentRunTarget,
 ) -> Result<WorkspaceModulePresentationHead, WorkspaceModulePresentationStoreError> {
     let row = sqlx::query(
         "SELECT revision,latest_change_sequence
@@ -1191,7 +1191,7 @@ async fn lock_workspace_head(
 
 async fn advance_workspace_head(
     tx: &mut Transaction<'_, Postgres>,
-    target: &AgentRunRuntimeTarget,
+    target: &AgentRunTarget,
     expected: WorkspaceModulePresentationRevision,
     revision: WorkspaceModulePresentationRevision,
     sequence: WorkspaceModulePresentationChangeSequence,
@@ -1216,7 +1216,7 @@ async fn advance_workspace_head(
 }
 
 fn workspace_head(
-    target: &AgentRunRuntimeTarget,
+    target: &AgentRunTarget,
     row: Option<sqlx::postgres::PgRow>,
 ) -> Result<WorkspaceModulePresentationHead, WorkspaceModulePresentationStoreError> {
     let (revision, latest) = match row {
@@ -1237,7 +1237,7 @@ fn workspace_head(
 
 async fn ensure_terminal_head(
     tx: &mut Transaction<'_, Postgres>,
-    target: &AgentRunRuntimeTarget,
+    target: &AgentRunTarget,
     project_id: &str,
 ) -> Result<(), AgentRunTerminalProjectionStoreError> {
     sqlx::query(
@@ -1256,7 +1256,7 @@ async fn ensure_terminal_head(
 
 async fn lock_terminal_head(
     tx: &mut Transaction<'_, Postgres>,
-    target: &AgentRunRuntimeTarget,
+    target: &AgentRunTarget,
 ) -> Result<AgentRunTerminalProjectionHead, AgentRunTerminalProjectionStoreError> {
     let row = sqlx::query(
         "SELECT revision,latest_change_sequence
@@ -1273,7 +1273,7 @@ async fn lock_terminal_head(
 
 async fn advance_terminal_head(
     tx: &mut Transaction<'_, Postgres>,
-    target: &AgentRunRuntimeTarget,
+    target: &AgentRunTarget,
     expected: AgentRunTerminalProjectionRevision,
     revision: AgentRunTerminalProjectionRevision,
     sequence: AgentRunTerminalChangeSequence,
@@ -1298,7 +1298,7 @@ async fn advance_terminal_head(
 }
 
 fn terminal_head(
-    target: &AgentRunRuntimeTarget,
+    target: &AgentRunTarget,
     row: Option<sqlx::postgres::PgRow>,
 ) -> Result<AgentRunTerminalProjectionHead, AgentRunTerminalProjectionStoreError> {
     let (revision, latest) = match row {

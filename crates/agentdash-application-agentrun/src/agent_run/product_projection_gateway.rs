@@ -4,7 +4,7 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeChangeDelta, ManagedRuntimeChangePage, ManagedRuntimeSnapshot,
     ManagedRuntimeSourceBindingEvidence, RuntimeChangeSequence, RuntimeThreadId,
 };
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_workspace_module::workspace_module::presentation_protocol::{
     WorkspaceModulePresentationAcknowledgePort, WorkspaceModulePresentationAcknowledgeRequest,
     WorkspaceModulePresentationChange, WorkspaceModulePresentationChangePage,
@@ -22,7 +22,7 @@ use super::terminal_projection_protocol::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunProductRuntimeBinding {
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub runtime_thread_id: RuntimeThreadId,
     pub source_binding: ManagedRuntimeSourceBindingEvidence,
 }
@@ -31,7 +31,7 @@ pub struct AgentRunProductRuntimeBinding {
 pub trait AgentRunProductRuntimeBindingRepository: Send + Sync {
     async fn load_product_binding(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<Option<AgentRunProductRuntimeBinding>, String>;
 }
 
@@ -64,7 +64,7 @@ impl AgentRunProductProjectionGateway {
 
     async fn binding(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<AgentRunProductRuntimeBinding, AgentRunProductProjectionError> {
         let binding = self
             .runtime_bindings
@@ -80,7 +80,7 @@ impl AgentRunProductProjectionGateway {
 
     pub async fn runtime_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
         let snapshot = self
@@ -99,7 +99,7 @@ impl AgentRunProductProjectionGateway {
 
     pub async fn runtime_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<RuntimeChangeSequence>,
     ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
@@ -141,7 +141,7 @@ impl AgentRunProductProjectionGateway {
 
     pub async fn workspace_presentation_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<WorkspaceModulePresentationSnapshot, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
         let snapshot = self
@@ -164,7 +164,7 @@ impl AgentRunProductProjectionGateway {
 
     pub async fn workspace_presentation_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<WorkspaceModulePresentationChangeSequence>,
         limit: usize,
     ) -> Result<WorkspaceModulePresentationChangePage, AgentRunProductProjectionError> {
@@ -210,7 +210,7 @@ impl AgentRunProductProjectionGateway {
 
     pub async fn terminal_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<AgentRunTerminalSnapshot, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
         let snapshot = self
@@ -232,7 +232,7 @@ impl AgentRunProductProjectionGateway {
 
     pub async fn terminal_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<AgentRunTerminalChangeSequence>,
         limit: usize,
     ) -> Result<AgentRunTerminalChangePage, AgentRunProductProjectionError> {
@@ -260,20 +260,20 @@ impl AgentRunProductProjectionGateway {
 pub trait AgentRunProductProjectionQueryPort: Send + Sync {
     async fn runtime_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError>;
     async fn runtime_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<RuntimeChangeSequence>,
     ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError>;
     async fn workspace_presentation_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<WorkspaceModulePresentationSnapshot, AgentRunProductProjectionError>;
     async fn workspace_presentation_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<WorkspaceModulePresentationChangeSequence>,
         limit: usize,
     ) -> Result<WorkspaceModulePresentationChangePage, AgentRunProductProjectionError>;
@@ -283,11 +283,11 @@ pub trait AgentRunProductProjectionQueryPort: Send + Sync {
     ) -> Result<WorkspaceModulePresentationChange, AgentRunProductProjectionError>;
     async fn terminal_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<AgentRunTerminalSnapshot, AgentRunProductProjectionError>;
     async fn terminal_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<AgentRunTerminalChangeSequence>,
         limit: usize,
     ) -> Result<AgentRunTerminalChangePage, AgentRunProductProjectionError>;
@@ -297,14 +297,14 @@ pub trait AgentRunProductProjectionQueryPort: Send + Sync {
 impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
     async fn runtime_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
         AgentRunProductProjectionGateway::runtime_snapshot(self, target).await
     }
 
     async fn runtime_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<RuntimeChangeSequence>,
     ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
         AgentRunProductProjectionGateway::runtime_changes(self, target, after).await
@@ -312,14 +312,14 @@ impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
 
     async fn workspace_presentation_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<WorkspaceModulePresentationSnapshot, AgentRunProductProjectionError> {
         AgentRunProductProjectionGateway::workspace_presentation_snapshot(self, target).await
     }
 
     async fn workspace_presentation_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<WorkspaceModulePresentationChangeSequence>,
         limit: usize,
     ) -> Result<WorkspaceModulePresentationChangePage, AgentRunProductProjectionError> {
@@ -336,14 +336,14 @@ impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
 
     async fn terminal_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<AgentRunTerminalSnapshot, AgentRunProductProjectionError> {
         AgentRunProductProjectionGateway::terminal_snapshot(self, target).await
     }
 
     async fn terminal_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<AgentRunTerminalChangeSequence>,
         limit: usize,
     ) -> Result<AgentRunTerminalChangePage, AgentRunProductProjectionError> {

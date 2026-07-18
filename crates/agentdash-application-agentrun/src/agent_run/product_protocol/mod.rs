@@ -10,6 +10,16 @@ mod feed;
 mod fork_saga;
 mod production_adapters;
 
+use agentdash_domain::workflow::{AgentFrame, AgentRunLineage, LifecycleAgent, LifecycleRun};
+
+#[derive(Debug, Clone)]
+pub struct AgentRunForkGraph {
+    pub child_run: LifecycleRun,
+    pub child_agent: LifecycleAgent,
+    pub child_frame: AgentFrame,
+    pub lineage: AgentRunLineage,
+}
+
 pub use activation::*;
 pub use companion::*;
 pub use feed::*;

@@ -1,10 +1,4 @@
 pub mod presentation_protocol;
-pub mod runtime_bridge;
-mod runtime_context;
-pub mod runtime_tool_provider;
-mod surface;
-mod tools;
-pub mod visibility;
 
 use agentdash_application_runtime_gateway::{
     RuntimeActionDescriptor, RuntimeActionKind, validate_json_schema_subset,
@@ -33,35 +27,6 @@ use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::extension_runtime::{
     ExtensionBackendServiceProjection, ExtensionGeneratedOperationDispatch,
     ExtensionGeneratedOperationProjection, ExtensionGeneratedOperationVisibility,
-};
-
-pub use runtime_bridge::{
-    ResolvedInvocationBackend, SharedWorkspaceModuleAgentRunBridgeHandle,
-    SharedWorkspaceModulePresentationAppendHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
-    WorkspaceModuleAgentRunBridge, WorkspaceModulePresentationAppendPort,
-    effective_capability_view_from_context, project_authorization_context_from_identity,
-    project_id_from_context, request_existing_canvas_visibility_for_runtime,
-    resolve_invocation_backend, runtime_thread_id_from_context, shared_runtime_vfs_from_context,
-    submit_canvas_runtime_surface_update,
-};
-pub(crate) use runtime_context::WorkspaceModuleRuntimeContext;
-pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
-pub(crate) use surface::{
-    WorkspaceModuleAgentSurface, WorkspaceModuleAgentSurfaceCommand,
-    WorkspaceModuleCanvasBindingResult, WorkspaceModuleCommandDiagnostic,
-    WorkspaceModuleInvokeCommand, WorkspaceModuleOperateCommand, WorkspaceModuleOperationOutcome,
-    WorkspaceModuleOperationRuntimeSource, WorkspaceModulePresentCommand,
-    WorkspaceModuleResolveContext, WorkspaceModuleSurfaceError, WorkspaceModuleVisibilitySource,
-};
-pub use tools::{
-    WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
-    WorkspaceModuleOperateTool, WorkspaceModulePresentTool,
-};
-pub use visibility::{
-    WorkspaceModuleVisibilityDiagnostic, WorkspaceModuleVisibilityInput,
-    WorkspaceModuleVisibilityProjection, project_agent_run_workspace_module_visibility,
-    project_workspace_module_visibility, resolve_workspace_module_visibility,
-    resolve_workspace_module_visibility_with_operation_context,
 };
 
 pub const MODULE_ID_EXTENSION_PREFIX: &str = "ext:";

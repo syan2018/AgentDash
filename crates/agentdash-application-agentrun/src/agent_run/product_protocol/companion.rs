@@ -1275,6 +1275,7 @@ impl<'a> CompanionDispatchCoordinator<'a> {
 mod tests {
     use std::collections::HashSet;
 
+    use crate::agent_run::product_protocol::AgentRunForkGraph;
     use crate::agent_run::product_protocol::{
         AgentRunForkOperationIdentity, AgentRunForkProductGraphPort, AgentRunForkRuntimeOperation,
         AgentRunForkRuntimePort, AgentRunForkSagaPhase, AgentRunForkSagaWorker,
@@ -1282,7 +1283,6 @@ mod tests {
         RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
     };
     use agentdash_agent_service_api as service_api;
-    use agentdash_application_ports::agent_run_fork::AgentRunForkGraph;
     use agentdash_domain::workflow::{
         AgentFrame, AgentRunLineage, AgentSource, LifecycleAgent, LifecycleRun,
     };

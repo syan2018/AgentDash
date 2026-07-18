@@ -1,7 +1,7 @@
 use agentdash_agent_runtime_contract::{
     ManagedRuntimeSourceBindingEvidence, RuntimePayloadDigest, RuntimeThreadId,
 };
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -175,7 +175,7 @@ pub enum AgentRunTerminalCapability {
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunTerminalOwnerFence {
     pub terminal_owner_epoch_id: AgentRunTerminalOwnerEpochId,
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub runtime_thread_id: RuntimeThreadId,
     pub source_binding: ManagedRuntimeSourceBindingEvidence,
     pub backend_id: String,
@@ -289,7 +289,7 @@ impl AgentRunTerminalProjectionDelta {
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunTerminalChange {
     pub change_id: AgentRunTerminalChangeId,
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub sequence: AgentRunTerminalChangeSequence,
     pub revision: AgentRunTerminalProjectionRevision,
     pub origin: AgentRunTerminalChangeOrigin,
@@ -301,7 +301,7 @@ pub struct AgentRunTerminalChange {
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunTerminalOutboxEntry {
     pub change_id: AgentRunTerminalChangeId,
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub sequence: AgentRunTerminalChangeSequence,
 }
 
@@ -436,7 +436,7 @@ impl AgentRunTerminalProjectionCommit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunTerminalProjectionHead {
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub revision: AgentRunTerminalProjectionRevision,
     pub latest_change_sequence: AgentRunTerminalChangeSequence,
 }
@@ -444,7 +444,7 @@ pub struct AgentRunTerminalProjectionHead {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunTerminalSnapshot {
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub revision: AgentRunTerminalProjectionRevision,
     pub latest_change_sequence: AgentRunTerminalChangeSequence,
     pub captured_at_ms: u64,
@@ -463,13 +463,13 @@ pub struct AgentRunTerminalChangeGap {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunTerminalChangePage {
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub changes: Vec<AgentRunTerminalChange>,
     pub next: AgentRunTerminalChangeSequence,
     pub gap: Option<AgentRunTerminalChangeGap>,
 }
 
-fn wire_target(target: AgentRunRuntimeTarget) -> wire::AgentRunProjectionTarget {
+fn wire_target(target: AgentRunTarget) -> wire::AgentRunProjectionTarget {
     wire::AgentRunProjectionTarget {
         run_id: target.run_id.to_string(),
         agent_id: target.agent_id.to_string(),
@@ -749,7 +749,7 @@ pub struct AgentRunTerminalSourceDelta {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunTerminalReconcileRequest {
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub terminal_id: AgentRunTerminalId,
     pub terminal_owner_epoch_id: AgentRunTerminalOwnerEpochId,
     pub after_source_sequence: AgentRunTerminalSourceSequence,
@@ -851,17 +851,17 @@ pub struct AgentRunTerminalControlRoute {
 pub trait AgentRunTerminalProjectionRepository: Send + Sync {
     async fn load_head(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<AgentRunTerminalProjectionHead, AgentRunTerminalProjectionStoreError>;
 
     async fn load_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<AgentRunTerminalSnapshot, AgentRunTerminalProjectionStoreError>;
 
     async fn load_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<AgentRunTerminalChangeSequence>,
         limit: usize,
     ) -> Result<AgentRunTerminalChangePage, AgentRunTerminalProjectionStoreError>;
@@ -879,7 +879,7 @@ pub trait AgentRunTerminalSourceReconcilePort: Send + Sync {
 pub trait AgentRunTerminalControlRoutingRepository: Send + Sync {
     async fn resolve_control_route(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         terminal_id: &AgentRunTerminalId,
     ) -> Result<Option<AgentRunTerminalControlRoute>, AgentRunTerminalProjectionStoreError>;
 }
@@ -964,7 +964,7 @@ mod tests {
         AgentRunTerminalOwnerFence {
             terminal_owner_epoch_id: AgentRunTerminalOwnerEpochId::new("owner-epoch-1")
                 .expect("owner epoch"),
-            target: AgentRunRuntimeTarget {
+            target: AgentRunTarget {
                 run_id: Uuid::nil(),
                 agent_id: Uuid::max(),
             },

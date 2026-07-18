@@ -258,8 +258,8 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
                     .fetch_optional(&mut *tx)
                     .await
                     .map_err(agent_database_error)?;
-                    let current_metadata = current_metadata
-                        .map(|value| serde_json::from_value(value))
+                    let current_metadata: DashCompleteSourceMetadata = current_metadata
+                        .map(serde_json::from_value)
                         .transpose()
                         .map_err(|error| {
                             agent_internal_error(format!(
@@ -673,6 +673,7 @@ async fn insert_repository_children(
     state: &DashAgentRepositoryState,
 ) -> Result<(), DashServiceError> {
     let history = state.history();
+    let document = dash_state_json(state)?;
     let head_revision = history.entries().last().map_or(0, |entry| entry.sequence);
     sqlx::query(
         "INSERT INTO dash_agent_branch \

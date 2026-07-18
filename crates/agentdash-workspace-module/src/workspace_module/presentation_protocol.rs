@@ -2,8 +2,8 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeSourceBindingEvidence, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
     RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
 use agentdash_contracts::workspace_module::WorkspaceModulePresentation;
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -136,7 +136,7 @@ impl WorkspaceModulePresentationCurrentnessFence {
 pub struct WorkspaceModulePresentationIntent {
     pub intent_id: WorkspaceModulePresentationIntentId,
     pub effect_id: WorkspaceModulePresentationEffectId,
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub actor: WorkspaceModulePresentationActor,
     pub cause: WorkspaceModulePresentationCause,
     pub currentness_fence: WorkspaceModulePresentationCurrentnessFence,
@@ -156,7 +156,7 @@ pub enum WorkspaceModulePresentationIntentStatus {
 #[serde(rename_all = "snake_case")]
 pub struct WorkspaceModulePresentationAcknowledgement {
     pub ack_id: WorkspaceModulePresentationAckId,
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub intent_id: WorkspaceModulePresentationIntentId,
     pub effect_id: WorkspaceModulePresentationEffectId,
     pub acknowledged_change_sequence: WorkspaceModulePresentationChangeSequence,
@@ -189,7 +189,7 @@ impl WorkspaceModulePresentationIntent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkspaceModulePresentationHead {
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub revision: WorkspaceModulePresentationRevision,
     pub latest_change_sequence: WorkspaceModulePresentationChangeSequence,
 }
@@ -198,7 +198,7 @@ pub struct WorkspaceModulePresentationHead {
 #[serde(rename_all = "snake_case")]
 pub struct WorkspaceModulePresentationChange {
     pub change_id: WorkspaceModulePresentationChangeId,
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub sequence: WorkspaceModulePresentationChangeSequence,
     pub revision: WorkspaceModulePresentationRevision,
     pub status: WorkspaceModulePresentationIntentStatus,
@@ -211,7 +211,7 @@ pub struct WorkspaceModulePresentationChange {
 pub struct WorkspaceModulePresentationOutboxEntry {
     pub effect_id: WorkspaceModulePresentationEffectId,
     pub change_id: WorkspaceModulePresentationChangeId,
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub sequence: WorkspaceModulePresentationChangeSequence,
 }
 
@@ -265,7 +265,7 @@ impl WorkspaceModulePresentationCommit {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkspaceModulePresentationSnapshot {
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub revision: WorkspaceModulePresentationRevision,
     pub latest_change_sequence: WorkspaceModulePresentationChangeSequence,
     pub captured_at_ms: u64,
@@ -292,13 +292,13 @@ pub struct WorkspaceModulePresentationChangeGap {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkspaceModulePresentationChangePage {
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub changes: Vec<WorkspaceModulePresentationChange>,
     pub next: WorkspaceModulePresentationChangeSequence,
     pub gap: Option<WorkspaceModulePresentationChangeGap>,
 }
 
-fn wire_target(target: AgentRunRuntimeTarget) -> wire::AgentRunProjectionTarget {
+fn wire_target(target: AgentRunTarget) -> wire::AgentRunProjectionTarget {
     wire::AgentRunProjectionTarget {
         run_id: target.run_id.to_string(),
         agent_id: target.agent_id.to_string(),
@@ -431,17 +431,17 @@ impl From<WorkspaceModulePresentationChangePage> for wire::WorkspaceModulePresen
 pub trait WorkspaceModulePresentationRepository: Send + Sync {
     async fn load_head(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<WorkspaceModulePresentationHead, WorkspaceModulePresentationStoreError>;
 
     async fn load_snapshot(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
     ) -> Result<WorkspaceModulePresentationSnapshot, WorkspaceModulePresentationStoreError>;
 
     async fn load_changes(
         &self,
-        target: &AgentRunRuntimeTarget,
+        target: &AgentRunTarget,
         after: Option<WorkspaceModulePresentationChangeSequence>,
         limit: usize,
     ) -> Result<WorkspaceModulePresentationChangePage, WorkspaceModulePresentationStoreError>;
@@ -458,7 +458,7 @@ pub trait WorkspaceModulePresentationUnitOfWork: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkspaceModulePresentationAcknowledgeRequest {
-    pub target: AgentRunRuntimeTarget,
+    pub target: AgentRunTarget,
     pub intent_id: WorkspaceModulePresentationIntentId,
     pub observed_change_sequence: WorkspaceModulePresentationChangeSequence,
 }
@@ -518,7 +518,7 @@ mod tests {
     use uuid::Uuid;
 
     fn commit() -> WorkspaceModulePresentationCommit {
-        let target = AgentRunRuntimeTarget {
+        let target = AgentRunTarget {
             run_id: Uuid::nil(),
             agent_id: Uuid::max(),
         };

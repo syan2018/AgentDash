@@ -37,7 +37,7 @@
 | Branch | `codex/agent-runtime-final-convergence-plan` |
 | Planning base | `263b990e` |
 | Current wave | Wave 2 — External Agents target lane |
-| Current checkpoint | S3 Complete Agent Lane — ready to commit |
+| Current checkpoint | S4 Product Lane — in progress |
 | Production path | Current Runtime → Driver Host → Native/Codex driver |
 | Active implementation bundles | Product / Protocol；Platform Runtime projection contract |
 | Shared hotspot owner | main dispatcher |
@@ -49,7 +49,7 @@
 | S0 Baseline | committed | `32ecfd2c` | 5 AgentRun fork + 1 Native fork；Runtime 129 tests；ordinary send/reconnect；migration guard |
 | S1 Contract Freeze | committed | `09bff131` | final Service API 15 tests + clippy；Runtime admission 3；Host target 5；dependency/negative gates |
 | S2 Target Domains Ready | committed | `7b9f0ab4` | Platform/Runtime/Host/Dash/Core/Native target checks；W2 activation component signed；5+1 fork、ordinary send、reconnect tracers |
-| S3 Complete Agent Lane | ready | checkpoint commit pending | Native/Codex/Remote Complete Agent target；Wire 8、Codex 14、Remote 11、Relay 5；ordinary send/reconnect |
+| S3 Complete Agent Lane | committed | `179bd9c3` | Native/Codex/Remote Complete Agent target；Wire 8、Codex 14、Remote 11、Relay 5；ordinary send/reconnect |
 | S4 Product Lane Ready | pending | — | — |
 | S5 Atomic Hard Cut | pending | — | — |
 | S6 Final Conformance | pending | — | — |

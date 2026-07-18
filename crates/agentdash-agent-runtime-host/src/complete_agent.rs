@@ -1389,7 +1389,7 @@ fn payload_digest(value: &impl Serialize) -> Result<AgentPayloadDigest, Complete
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{BTreeMap, BTreeSet},
+        collections::{BTreeMap, BTreeSet, VecDeque},
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -1600,6 +1600,7 @@ mod tests {
             execute_receipt: None,
             execute_gate: None,
             inspect_gate: None,
+            inspection_states: Mutex::new(VecDeque::new()),
             revoke_receipt: None,
         });
         let instance_id = AgentServiceInstanceId::new("service").expect("service");
@@ -1664,6 +1665,7 @@ mod tests {
             execute_receipt: None,
             execute_gate: None,
             inspect_gate: None,
+            inspection_states: Mutex::new(VecDeque::new()),
             revoke_receipt: None,
         });
         let repository = Arc::new(FixtureHostRepository::default());
@@ -1786,6 +1788,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn repeated_inspect_advances_unknown_to_applied_across_restarts() {
+        assert_inspection_progression_survives_restarts(AgentEffectInspectionState::Unknown).await;
+    }
+
+    #[tokio::test]
+    async fn repeated_inspect_advances_accepted_to_applied_across_restarts() {
+        assert_inspection_progression_survives_restarts(AgentEffectInspectionState::Accepted {
+            source: AgentSourceCoordinate::new("source").expect("source"),
+        })
+        .await;
+    }
+
+    #[tokio::test]
     async fn lease_takeover_rejects_receipt_returned_by_paused_old_execute() {
         let gate = Arc::new(ExternalOutcomeGate::default());
         let source = AgentSourceCoordinate::new("source").expect("source");
@@ -1801,6 +1816,7 @@ mod tests {
             execute_receipt: Some(receipt),
             execute_gate: Some(gate.clone()),
             inspect_gate: None,
+            inspection_states: Mutex::new(VecDeque::new()),
             revoke_receipt: None,
         });
         let (host, binding_id, lease) =
@@ -1853,6 +1869,7 @@ mod tests {
             execute_receipt: None,
             execute_gate: None,
             inspect_gate: Some(gate.clone()),
+            inspection_states: Mutex::new(VecDeque::new()),
             revoke_receipt: None,
         });
         let (host, binding_id, lease) =
@@ -1965,6 +1982,7 @@ mod tests {
             execute_receipt: None,
             execute_gate: None,
             inspect_gate: None,
+            inspection_states: Mutex::new(VecDeque::new()),
             revoke_receipt: Some(receipt.clone()),
         });
         let durable = Arc::new(FixtureHostRepository::default());
@@ -2040,6 +2058,7 @@ mod tests {
             execute_receipt: None,
             execute_gate: None,
             inspect_gate: None,
+            inspection_states: Mutex::new(VecDeque::new()),
             revoke_receipt: None,
         });
         host.register_service(instance_id.clone(), service)
@@ -2279,6 +2298,100 @@ mod tests {
         )
     }
 
+    async fn assert_inspection_progression_survives_restarts(
+        first_inspection: AgentEffectInspectionState,
+    ) {
+        let source = AgentSourceCoordinate::new("source").expect("source");
+        let command_id = AgentCommandId::new("command").expect("command");
+        let effect_id = AgentEffectIdentity::new("effect").expect("effect");
+        let service = Arc::new(UnknownThenAppliedService {
+            descriptor: descriptor(),
+            source: source.clone(),
+            command_id: command_id.clone(),
+            execute_calls: AtomicUsize::new(0),
+            revoke_calls: AtomicUsize::new(0),
+            execute_receipt: None,
+            execute_gate: None,
+            inspect_gate: None,
+            inspection_states: Mutex::new(VecDeque::from([
+                first_inspection.clone(),
+                AgentEffectInspectionState::Applied {
+                    source: source.clone(),
+                    terminal: None,
+                    initial_context: None,
+                    child_source: None,
+                },
+            ])),
+            revoke_receipt: None,
+        });
+        let repository = Arc::new(FixtureHostRepository::default());
+        let (host, binding_id, lease) = available_host(repository.clone(), service.clone()).await;
+        let command = execute_command(command_id, effect_id.clone(), source);
+
+        assert!(matches!(
+            host.dispatch_execute(&lease, &binding_id, command.clone())
+                .await,
+            Err(CompleteAgentHostError::Service(_))
+        ));
+        let first_receipt = host
+            .dispatch_execute(&lease, &binding_id, command.clone())
+            .await
+            .expect("first inspection");
+        assert_eq!(
+            receipt_state(&first_receipt.state),
+            inspection_state(&first_inspection)
+        );
+        drop(host);
+
+        let restarted = Arc::new(CompleteAgentHost::new(
+            repository.clone(),
+            Arc::new(FixtureServiceRegistry::default()),
+        ));
+        restarted
+            .register_service(
+                AgentServiceInstanceId::new("service").expect("service"),
+                service.clone(),
+            )
+            .await
+            .expect("reattach service");
+        assert!(matches!(
+            restarted
+                .dispatch_execute(&lease, &binding_id, command.clone())
+                .await
+                .expect("advanced inspection")
+                .state,
+            AgentReceiptState::AlreadyApplied { .. }
+        ));
+        drop(restarted);
+
+        let replayed =
+            CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
+        replayed
+            .register_service(
+                AgentServiceInstanceId::new("service").expect("service"),
+                service,
+            )
+            .await
+            .expect("reattach service again");
+        assert!(matches!(
+            replayed
+                .dispatch_execute(&lease, &binding_id, command)
+                .await
+                .expect("repeat terminal inspection")
+                .state,
+            AgentReceiptState::AlreadyApplied { .. }
+        ));
+        assert_eq!(
+            replayed
+                .effect(&effect_id)
+                .await
+                .expect("read effect")
+                .expect("effect")
+                .state,
+            CompleteAgentEffectState::Applied
+        );
+    }
+
     async fn available_host(
         repository: Arc<dyn CompleteAgentHostRepository>,
         service: Arc<UnknownThenAppliedService>,
@@ -2435,6 +2548,7 @@ mod tests {
         execute_receipt: Option<AgentCommandReceipt>,
         execute_gate: Option<Arc<ExternalOutcomeGate>>,
         inspect_gate: Option<Arc<ExternalOutcomeGate>>,
+        inspection_states: Mutex<VecDeque<AgentEffectInspectionState>>,
         revoke_receipt: Option<AgentCommandReceipt>,
     }
 
@@ -2517,15 +2631,21 @@ mod tests {
             if let Some(gate) = &self.inspect_gate {
                 gate.pause().await;
             }
-            Ok(AgentEffectInspection {
-                effect_id: identity,
-                command_id: Some(self.command_id.clone()),
-                state: AgentEffectInspectionState::Applied {
+            let state = self
+                .inspection_states
+                .lock()
+                .await
+                .pop_front()
+                .unwrap_or_else(|| AgentEffectInspectionState::Applied {
                     source: self.source.clone(),
                     terminal: None,
                     initial_context: None,
                     child_source: None,
-                },
+                });
+            Ok(AgentEffectInspection {
+                effect_id: identity,
+                command_id: Some(self.command_id.clone()),
+                state,
             })
         }
 

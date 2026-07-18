@@ -277,7 +277,7 @@ pub fn validate_complete_agent_host_facts(
             &next.surface_receipt,
             "surface receipt",
         )?;
-        immutable_optional_evidence(&effect.inspection, &next.inspection, "effect inspection")?;
+        validate_latest_inspection_evidence(effect, next)?;
     }
 
     for (binding_id, epoch) in &current.lease_epochs {
@@ -453,6 +453,56 @@ fn immutable_optional_evidence<T: PartialEq>(
     Ok(())
 }
 
+fn validate_latest_inspection_evidence(
+    current: &CompleteAgentEffectRecord,
+    candidate: &CompleteAgentEffectRecord,
+) -> Result<(), CompleteAgentHostStoreError> {
+    let Some(current_inspection) = &current.inspection else {
+        return Ok(());
+    };
+    let Some(candidate_inspection) = &candidate.inspection else {
+        return invariant("effect inspection was removed");
+    };
+    if current_inspection == candidate_inspection {
+        return Ok(());
+    }
+    if current_inspection.effect_id != candidate_inspection.effect_id
+        || current_inspection
+            .command_id
+            .as_ref()
+            .is_some_and(|command_id| candidate_inspection.command_id.as_ref() != Some(command_id))
+    {
+        return invariant("effect inspection identity evidence was removed or rewritten");
+    }
+
+    let current_state = inspection_state(&current_inspection.state);
+    let candidate_state = inspection_state(&candidate_inspection.state);
+    let advances = match current_state {
+        CompleteAgentEffectState::Unknown => matches!(
+            candidate_state,
+            CompleteAgentEffectState::Accepted
+                | CompleteAgentEffectState::NotApplied
+                | CompleteAgentEffectState::Applied
+        ),
+        CompleteAgentEffectState::Accepted => candidate_state == CompleteAgentEffectState::Applied,
+        CompleteAgentEffectState::NotApplied => {
+            current.state == CompleteAgentEffectState::Dispatching
+                && matches!(
+                    candidate_state,
+                    CompleteAgentEffectState::Accepted | CompleteAgentEffectState::Applied
+                )
+        }
+        CompleteAgentEffectState::Dispatching
+        | CompleteAgentEffectState::Applied
+        | CompleteAgentEffectState::Rejected
+        | CompleteAgentEffectState::Lost => false,
+    };
+    if !advances {
+        return invariant("effect inspection state or evidence moved backwards or was rewritten");
+    }
+    Ok(())
+}
+
 fn receipt_state(state: &AgentReceiptState) -> CompleteAgentEffectState {
     match state {
         AgentReceiptState::Accepted => CompleteAgentEffectState::Accepted,
@@ -494,11 +544,11 @@ mod tests {
     use agentdash_agent_service_api::{
         AgentBindingGeneration, AgentCapabilityProfile, AgentCommandCapability, AgentCommandId,
         AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity,
-        AgentForkCapability, AgentForkCutoffKind, AgentLifecycleCapability, AgentPayloadDigest,
-        AgentProfileDigest, AgentReceiptState, AgentRuntimeOffer, AgentServiceDefinitionId,
-        AgentSourceChangeLevel, AgentSurfaceDigest, AgentSurfaceProfile, AgentSurfaceRevision,
-        AgentTerminalOutcome, BoundAgentSurface, InitialContextAppliedEvidence,
-        InitialContextProfile, SemanticFidelity,
+        AgentEffectInspection, AgentForkCapability, AgentForkCutoffKind, AgentLifecycleCapability,
+        AgentPayloadDigest, AgentProfileDigest, AgentReceiptState, AgentRuntimeOffer,
+        AgentServiceDefinitionId, AgentSourceChangeLevel, AgentSurfaceDigest, AgentSurfaceProfile,
+        AgentSurfaceRevision, AgentTerminalOutcome, BoundAgentSurface,
+        InitialContextAppliedEvidence, InitialContextProfile, SemanticFidelity,
     };
     use tokio::sync::Mutex;
 
@@ -688,6 +738,72 @@ mod tests {
     }
 
     #[test]
+    fn latest_inspection_evidence_advances_without_downgrade_or_terminal_rewrite() {
+        let unknown = facts_with_inspection(
+            CompleteAgentEffectState::Unknown,
+            AgentEffectInspectionState::Unknown,
+        );
+        let applied = facts_with_inspection(
+            CompleteAgentEffectState::Applied,
+            AgentEffectInspectionState::Applied {
+                source: AgentSourceCoordinate::new("source").expect("source"),
+                terminal: None,
+                initial_context: None,
+                child_source: None,
+            },
+        );
+        validate_complete_agent_host_facts(&unknown, &applied)
+            .expect("Unknown inspection advances to Applied");
+        validate_complete_agent_host_facts(&applied, &applied)
+            .expect("exact terminal inspection replay");
+
+        let accepted = facts_with_inspection(
+            CompleteAgentEffectState::Accepted,
+            AgentEffectInspectionState::Accepted {
+                source: AgentSourceCoordinate::new("source").expect("source"),
+            },
+        );
+        validate_complete_agent_host_facts(&accepted, &applied)
+            .expect("Accepted inspection advances to Applied");
+
+        assert_invariant(validate_complete_agent_host_facts(&applied, &unknown));
+        assert_invariant(validate_complete_agent_host_facts(&applied, &accepted));
+
+        let mut same_state_different_evidence = unknown.clone();
+        same_state_different_evidence
+            .effects
+            .get_mut(&effect_id())
+            .expect("effect")
+            .inspection
+            .as_mut()
+            .expect("inspection")
+            .command_id = None;
+        assert_invariant(validate_complete_agent_host_facts(
+            &unknown,
+            &same_state_different_evidence,
+        ));
+
+        let mut rewritten_terminal = applied.clone();
+        rewritten_terminal
+            .effects
+            .get_mut(&effect_id())
+            .expect("effect")
+            .inspection
+            .as_mut()
+            .expect("inspection")
+            .state = AgentEffectInspectionState::Applied {
+            source: AgentSourceCoordinate::new("source").expect("source"),
+            terminal: Some(AgentTerminalOutcome::Succeeded),
+            initial_context: None,
+            child_source: None,
+        };
+        assert_invariant(validate_complete_agent_host_facts(
+            &applied,
+            &rewritten_terminal,
+        ));
+    }
+
+    #[test]
     fn lease_identity_epoch_and_terminal_binding_rules_are_enforced() {
         let current = valid_facts();
 
@@ -780,6 +896,21 @@ mod tests {
 
     fn effect_id() -> AgentEffectIdentity {
         AgentEffectIdentity::new("effect").expect("effect")
+    }
+
+    fn facts_with_inspection(
+        state: CompleteAgentEffectState,
+        inspection_state: AgentEffectInspectionState,
+    ) -> CompleteAgentHostFacts {
+        let mut facts = valid_facts();
+        let effect = facts.effects.get_mut(&effect_id()).expect("effect");
+        effect.state = state;
+        effect.inspection = Some(AgentEffectInspection {
+            effect_id: effect.effect_id.clone(),
+            command_id: Some(effect.command_id.clone()),
+            state: inspection_state,
+        });
+        facts
     }
 
     fn valid_facts() -> CompleteAgentHostFacts {

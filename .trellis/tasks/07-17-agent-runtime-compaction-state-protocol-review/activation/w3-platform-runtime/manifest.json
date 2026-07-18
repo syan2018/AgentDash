@@ -47,7 +47,7 @@
       "binding identity is unique and fixes service instance, source, generation, profile and surface",
       "source coordinate is unique and references the same binding generation",
       "effect identity is globally stable and fixes command, payload, binding, source and generation",
-      "effect observations are monotonic and evidence is immutable",
+      "receipt evidence is immutable; latest inspection may only advance Unknown or Accepted to stronger evidence, or replace NotApplied after an explicit redispatch; terminal and same-state inspection evidence is immutable",
       "lease key is binding generation; owner/token/epoch fence stale workers",
       "lease epoch never decreases and binding Lost invalidates the active lease",
       "terminal revoke replay completes binding cleanup before returning the stored receipt"

@@ -374,12 +374,11 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
 
 struct FixtureService {
     descriptor: AgentServiceDescriptor,
-    source: AgentSourceCoordinate,
     applied_surface: Mutex<Option<AppliedAgentSurface>>,
 }
 
 impl FixtureService {
-    fn new(source: AgentSourceCoordinate) -> Self {
+    fn new(_source: AgentSourceCoordinate) -> Self {
         let tool = AgentToolSemanticFacet {
             delivery: AgentToolDelivery::AgentNativeCallback,
             invocation: SemanticFidelity::Exact,
@@ -421,7 +420,6 @@ impl FixtureService {
                 profile_digest: AgentProfileDigest::new("profile-1").expect("profile"),
                 configuration_boundary: AgentConfigurationBoundary::Binding,
             },
-            source,
             applied_surface: Mutex::new(None),
         }
     }
@@ -503,12 +501,7 @@ impl CompleteAgentService for FixtureService {
         Ok(AgentEffectInspection {
             effect_id: identity,
             command_id: None,
-            state: AgentEffectInspectionState::Applied {
-                source: self.source.clone(),
-                terminal: None,
-                initial_context: None,
-                child_source: None,
-            },
+            state: AgentEffectInspectionState::Unknown,
         })
     }
 

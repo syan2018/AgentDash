@@ -14,9 +14,9 @@ use thiserror::Error;
 use crate::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingLease,
     CompleteAgentBindingState, CompleteAgentCallbackRoute, CompleteAgentEffectAttemptEvidence,
-    CompleteAgentEffectRecord, CompleteAgentEffectState, CompleteAgentLifecycleEffectRecord,
-    CompleteAgentLifecycleOperationKind, CompleteAgentLifecycleOutcome, CompleteAgentPlacement,
-    CompleteAgentRuntimeTarget,
+    CompleteAgentEffectRecord, CompleteAgentEffectState, CompleteAgentLifecycleAppliedReceipt,
+    CompleteAgentLifecycleEffectRecord, CompleteAgentLifecycleOperationKind,
+    CompleteAgentLifecycleOutcome, CompleteAgentPlacement, CompleteAgentRuntimeTarget,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 
@@ -548,9 +548,10 @@ pub fn validate_complete_agent_host_facts(
             || effect.generation != next.generation
             || effect.initial_context != next.initial_context
             || effect.fork_cutoff != next.fork_cutoff
+            || (effect.applied_receipt.is_some() && effect.applied_receipt != next.applied_receipt)
             || (effect.outcome.is_some() && effect.outcome != next.outcome)
         {
-            return invariant("lifecycle effect coordinates or outcome were rewritten");
+            return invariant("lifecycle effect coordinates or applied evidence were rewritten");
         }
     }
     Ok(())
@@ -568,26 +569,96 @@ fn validate_lifecycle_effect(
     {
         return invariant("only Create lifecycle effects may carry initial context");
     }
+    if let Some(applied_receipt) = &effect.applied_receipt {
+        match (effect.kind, applied_receipt) {
+            (
+                CompleteAgentLifecycleOperationKind::Create
+                | CompleteAgentLifecycleOperationKind::Resume
+                | CompleteAgentLifecycleOperationKind::Execute,
+                CompleteAgentLifecycleAppliedReceipt::Agent(receipt),
+            ) if receipt.effect_id == effect.effect_id => {}
+            (
+                CompleteAgentLifecycleOperationKind::Fork,
+                CompleteAgentLifecycleAppliedReceipt::Fork(receipt),
+            ) if receipt.effect_id == effect.effect_id
+                && Some(&receipt.cutoff) == effect.fork_cutoff.as_ref() => {}
+            _ => {
+                return invariant(
+                    "lifecycle applied receipt does not match its durable effect identity and kind",
+                );
+            }
+        }
+    }
     let Some(outcome) = &effect.outcome else {
         return Ok(());
     };
-    match (effect.kind, outcome) {
+    let valid_outcome = match (effect.kind, outcome) {
         (
             CompleteAgentLifecycleOperationKind::Create
             | CompleteAgentLifecycleOperationKind::Resume
             | CompleteAgentLifecycleOperationKind::Execute,
             CompleteAgentLifecycleOutcome::Agent { receipt, .. },
-        ) if receipt.effect_id == effect.effect_id => Ok(()),
+        ) if receipt.effect_id == effect.effect_id => true,
         (
             CompleteAgentLifecycleOperationKind::Fork,
             CompleteAgentLifecycleOutcome::Fork { receipt, .. },
         ) if receipt.effect_id == effect.effect_id
             && Some(&receipt.cutoff) == effect.fork_cutoff.as_ref() =>
         {
-            Ok(())
+            true
         }
-        _ => invariant("lifecycle outcome does not match its durable effect identity and kind"),
+        _ => false,
+    };
+    if !valid_outcome {
+        return invariant("lifecycle outcome does not match its durable effect identity and kind");
     }
+    match (&effect.applied_receipt, outcome) {
+        (
+            Some(CompleteAgentLifecycleAppliedReceipt::Agent(applied)),
+            CompleteAgentLifecycleOutcome::Agent { receipt, .. },
+        ) if agent_outcome_matches_applied(applied, receipt) => Ok(()),
+        (
+            Some(CompleteAgentLifecycleAppliedReceipt::Fork(applied)),
+            CompleteAgentLifecycleOutcome::Fork { receipt, .. },
+        ) if fork_outcome_matches_applied(applied, receipt) => Ok(()),
+        (None, _) => invariant("settled lifecycle outcome has no durable applied receipt"),
+        _ => invariant("settled lifecycle outcome rewrites its durable applied receipt"),
+    }
+}
+
+fn agent_outcome_matches_applied(
+    applied: &agentdash_agent_service_api::AppliedAgentCommandReceipt,
+    receipt: &agentdash_agent_service_api::AgentCommandReceipt,
+) -> bool {
+    let terminal = match &receipt.state {
+        AgentReceiptState::AlreadyApplied { terminal } => *terminal,
+        AgentReceiptState::Terminal { outcome } => Some(*outcome),
+        _ => return false,
+    };
+    applied.command_id == receipt.command_id
+        && applied.effect_id == receipt.effect_id
+        && applied.source == receipt.source
+        && applied.terminal == terminal
+        && applied.snapshot_revision == receipt.snapshot_revision
+        && applied.initial_context == receipt.initial_context
+}
+
+fn fork_outcome_matches_applied(
+    applied: &agentdash_agent_service_api::AppliedForkAgentReceipt,
+    receipt: &agentdash_agent_service_api::ForkAgentReceipt,
+) -> bool {
+    let terminal = match &receipt.state {
+        AgentReceiptState::AlreadyApplied { terminal } => *terminal,
+        AgentReceiptState::Terminal { outcome } => Some(*outcome),
+        _ => return false,
+    };
+    applied.command_id == receipt.command_id
+        && applied.effect_id == receipt.effect_id
+        && applied.parent_source == receipt.parent_source
+        && receipt.child_source.as_ref() == Some(&applied.child_source)
+        && applied.cutoff == receipt.cutoff
+        && receipt.child_history_digest.as_ref() == Some(&applied.child_history_digest)
+        && applied.terminal == terminal
 }
 
 fn binding_requires_callback_route(binding: &CompleteAgentBinding) -> bool {
@@ -918,8 +989,8 @@ fn inspection_state(state: &AgentEffectInspectionState) -> CompleteAgentEffectSt
 
 fn inspection_source(state: &AgentEffectInspectionState) -> Option<&AgentSourceCoordinate> {
     match state {
-        AgentEffectInspectionState::Accepted { source }
-        | AgentEffectInspectionState::Applied { source, .. } => Some(source),
+        AgentEffectInspectionState::Accepted { source } => Some(source),
+        AgentEffectInspectionState::Applied { outcome } => Some(outcome.source()),
         AgentEffectInspectionState::NotApplied | AgentEffectInspectionState::Unknown => None,
     }
 }
@@ -935,15 +1006,16 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use agentdash_agent_service_api::{
-        AgentBindingGeneration, AgentCallbackRouteId, AgentCapabilityProfile,
-        AgentCommandCapability, AgentCommandId, AgentCommandReceipt, AgentCompactionMode,
-        AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
-        AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentLifecycleCapability,
-        AgentPayloadDigest, AgentProfileDigest, AgentReceiptState, AgentRuntimeOffer,
-        AgentServiceDefinitionId, AgentSourceChangeLevel, AgentSurfaceContributionPayload,
-        AgentSurfaceDigest, AgentSurfaceProfile, AgentSurfaceRevision, AgentSurfaceSemanticFacet,
-        AgentTerminalOutcome, AgentToolDelivery, AgentToolName, AgentToolSemanticFacet,
-        AgentToolUpdateSemantics, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+        AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId,
+        AgentCapabilityProfile, AgentCommandCapability, AgentCommandId, AgentCommandReceipt,
+        AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity,
+        AgentEffectInspection, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
+        AgentLifecycleCapability, AgentPayloadDigest, AgentProfileDigest, AgentReceiptState,
+        AgentRuntimeOffer, AgentServiceDefinitionId, AgentSourceChangeLevel,
+        AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceProfile,
+        AgentSurfaceRevision, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery,
+        AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+        AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
         AppliedContributionStatus, BoundAgentSurface, BoundAgentSurfaceContribution,
         ForkAgentReceipt, InitialContextAppliedEvidence, InitialContextProfile, SemanticFidelity,
     };
@@ -1033,6 +1105,7 @@ mod tests {
             generation: AgentBindingGeneration(1),
             initial_context: None,
             fork_cutoff: None,
+            applied_receipt: None,
             outcome: None,
         };
         assert_invariant(validate_lifecycle_effect(&invalid_create_coordinates));
@@ -1046,6 +1119,7 @@ mod tests {
             generation: AgentBindingGeneration(1),
             initial_context: None,
             fork_cutoff: None,
+            applied_receipt: None,
             outcome: Some(CompleteAgentLifecycleOutcome::Fork {
                 receipt: ForkAgentReceipt {
                     command_id: AgentCommandId::new("fork-command").expect("command"),
@@ -1359,12 +1433,7 @@ mod tests {
         );
         let applied = facts_with_inspection(
             CompleteAgentEffectState::Applied,
-            AgentEffectInspectionState::Applied {
-                source: AgentSourceCoordinate::new("source").expect("source"),
-                terminal: None,
-                initial_context: None,
-                child_source: None,
-            },
+            applied_inspection_state(None),
         );
         validate_complete_agent_host_facts(&unknown, &applied)
             .expect("Unknown inspection advances to Applied");
@@ -1406,10 +1475,12 @@ mod tests {
             .as_mut()
             .expect("inspection")
             .state = AgentEffectInspectionState::Applied {
-            source: AgentSourceCoordinate::new("source").expect("source"),
-            terminal: Some(AgentTerminalOutcome::Succeeded),
-            initial_context: None,
-            child_source: None,
+            outcome: AgentAppliedEffectOutcome::Command {
+                receipt: AppliedAgentCommandReceipt {
+                    terminal: Some(AgentTerminalOutcome::Succeeded),
+                    ..applied_command_inspection_receipt()
+                },
+            },
         };
         assert_invariant(validate_complete_agent_host_facts(
             &applied,
@@ -1743,6 +1814,30 @@ mod tests {
             state: inspection_state,
         });
         facts
+    }
+
+    fn applied_inspection_state(
+        terminal: Option<AgentTerminalOutcome>,
+    ) -> AgentEffectInspectionState {
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Command {
+                receipt: AppliedAgentCommandReceipt {
+                    terminal,
+                    ..applied_command_inspection_receipt()
+                },
+            },
+        }
+    }
+
+    fn applied_command_inspection_receipt() -> AppliedAgentCommandReceipt {
+        AppliedAgentCommandReceipt {
+            command_id: AgentCommandId::new("command").expect("command"),
+            effect_id: effect_id(),
+            source: AgentSourceCoordinate::new("source").expect("source"),
+            terminal: None,
+            snapshot_revision: None,
+            initial_context: None,
+        }
     }
 
     fn valid_facts() -> CompleteAgentHostFacts {

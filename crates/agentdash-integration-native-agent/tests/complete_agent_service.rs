@@ -375,6 +375,70 @@ impl DashProvider for HookRoundProvider {
     }
 }
 
+struct SurfaceGenerationProvider {
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl DashProvider for SurfaceGenerationProvider {
+    async fn stream(
+        &self,
+        _: DashProviderRequest,
+    ) -> Result<DashProviderEventStream, DashCoreError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call % 2 == 0 {
+            Ok(Box::pin(stream::iter([
+                Ok(DashProviderEvent::ToolCall {
+                    call: DashToolCall {
+                        call_id: format!("surface-call-{call}"),
+                        name: "read".into(),
+                        arguments: serde_json::json!({"call": call}),
+                    },
+                }),
+                Ok(DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::ToolCalls,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                }),
+            ])))
+        } else {
+            Ok(Box::pin(stream::iter([Ok(DashProviderEvent::Completed {
+                finish_reason: DashFinishReason::Stop,
+                input_tokens: 1,
+                output_tokens: 1,
+            })])))
+        }
+    }
+}
+
+#[derive(Default)]
+struct SurfaceGenerationHostCallbacks {
+    generations: Mutex<Vec<AgentBindingGeneration>>,
+}
+
+#[async_trait]
+impl AgentHostCallbacks for SurfaceGenerationHostCallbacks {
+    async fn invoke_tool(
+        &self,
+        call: AgentToolInvocation,
+    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+        self.generations
+            .lock()
+            .unwrap()
+            .push(call.meta.binding_generation);
+        Ok(AgentToolResult::Completed {
+            output: serde_json::json!({"ok": true}),
+        })
+    }
+
+    async fn invoke_hook(
+        &self,
+        _: AgentHookInvocation,
+    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+        Ok(AgentHookDecision::Allow)
+    }
+}
+
 #[derive(Default)]
 struct HookExecutionCallbacks {
     before: AtomicUsize,
@@ -1033,6 +1097,181 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
     ));
 }
 
+#[tokio::test]
+async fn lost_surface_receipts_reconcile_live_callbacks_on_the_same_service() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    let provider = Arc::new(SurfaceGenerationProvider {
+        calls: AtomicUsize::new(0),
+    });
+    let host = Arc::new(SurfaceGenerationHostCallbacks::default());
+    let service = DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider: provider.clone(),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+        },
+        host.clone(),
+        store.clone(),
+    );
+    let source = AgentSourceCoordinate::new("dash-live-surface-reconcile").unwrap();
+    service
+        .create(CreateAgentCommand {
+            meta: meta("live-surface-create", "live-surface-create-effect"),
+            requested_source: Some(source.clone()),
+            initial_context: None,
+        })
+        .await
+        .unwrap();
+
+    let apply = |revision, generation, effect: &str| ApplyBoundAgentSurface {
+        command_id: AgentCommandId::new(format!("{effect}-command")).unwrap(),
+        effect_id: AgentEffectIdentity::new(effect).unwrap(),
+        idempotency_key: AgentIdempotencyKey::new(format!("{effect}-idem")).unwrap(),
+        source: source.clone(),
+        bound_surface: generation_surface(revision),
+        callbacks: AgentHostCallbackBinding {
+            route_id: AgentCallbackRouteId::new(format!("live-route-{generation}")).unwrap(),
+            binding_generation: AgentBindingGeneration(generation),
+            delivery: AgentSurfaceRoute::AgentNativeCallback,
+            default_deadline_ms: 5_000,
+        },
+    };
+
+    service
+        .apply_surface(apply(1, 1, "live-apply-1"))
+        .await
+        .unwrap();
+    service
+        .execute(submit_envelope(
+            source.clone(),
+            "generation one",
+            "live-execute-1",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        host.generations.lock().unwrap().as_slice(),
+        &[AgentBindingGeneration(1)]
+    );
+
+    let apply_two = apply(2, 2, "live-apply-2");
+    store.lose_next_commit_receipt();
+    assert_eq!(
+        service
+            .apply_surface(apply_two.clone())
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Unavailable
+    );
+    let replayed = service.apply_surface(apply_two.clone()).await.unwrap();
+    assert_eq!(replayed.applied.revision, AgentSurfaceRevision(2));
+    let mut conflicting = apply_two.clone();
+    conflicting.callbacks.binding_generation = AgentBindingGeneration(3);
+    assert_eq!(
+        service.apply_surface(conflicting).await.unwrap_err().code,
+        AgentServiceErrorCode::Conflict
+    );
+    service
+        .execute(submit_envelope(
+            source.clone(),
+            "generation two",
+            "live-execute-2",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        host.generations.lock().unwrap().as_slice(),
+        &[AgentBindingGeneration(1), AgentBindingGeneration(2),]
+    );
+
+    let reopened = DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider: provider.clone(),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+        },
+        host.clone(),
+        store.clone(),
+    );
+    assert_eq!(reopened.apply_surface(apply_two).await.unwrap(), replayed);
+    reopened
+        .execute(submit_envelope(
+            source.clone(),
+            "generation two reopened",
+            "live-execute-3",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        host.generations.lock().unwrap().as_slice(),
+        &[
+            AgentBindingGeneration(1),
+            AgentBindingGeneration(2),
+            AgentBindingGeneration(2),
+        ]
+    );
+
+    let revoke = RevokeBoundAgentSurface {
+        command_id: AgentCommandId::new("live-revoke-command").unwrap(),
+        effect_id: AgentEffectIdentity::new("live-revoke-effect").unwrap(),
+        idempotency_key: AgentIdempotencyKey::new("live-revoke-idem").unwrap(),
+        binding_generation: AgentBindingGeneration(2),
+        source: source.clone(),
+        expected_revision: AgentSurfaceRevision(2),
+    };
+    store.lose_next_commit_receipt();
+    assert_eq!(
+        service
+            .revoke_surface(revoke.clone())
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Unavailable
+    );
+    service.revoke_surface(revoke.clone()).await.unwrap();
+    let mut conflicting_revoke = revoke;
+    conflicting_revoke.binding_generation = AgentBindingGeneration(3);
+    assert_eq!(
+        service
+            .revoke_surface(conflicting_revoke)
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Conflict
+    );
+    service
+        .execute(submit_envelope(
+            source.clone(),
+            "after revoke",
+            "live-execute-after-revoke",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        host.generations.lock().unwrap().as_slice(),
+        &[
+            AgentBindingGeneration(1),
+            AgentBindingGeneration(2),
+            AgentBindingGeneration(2),
+        ],
+        "revoke must clear the old live callback materializer"
+    );
+    assert!(
+        reopened
+            .read(AgentReadQuery {
+                source,
+                at_revision: None,
+            })
+            .await
+            .unwrap()
+            .applied_surface
+            .is_none()
+    );
+}
+
 fn hook_execution_surface() -> BoundAgentSurface {
     let hook = |id: &str,
                 point: AgentHookPoint,
@@ -1103,6 +1342,33 @@ fn hook_execution_surface() -> BoundAgentSurface {
                 AgentHookMutationKind::RewriteResult,
             ),
         ],
+    }
+}
+
+fn generation_surface(revision: u64) -> BoundAgentSurface {
+    BoundAgentSurface {
+        revision: AgentSurfaceRevision(revision),
+        digest: AgentSurfaceDigest::new(format!("generation-surface-{revision}")).unwrap(),
+        offer_profile_digest: AgentProfileDigest::new("dash-agent-profile-v1").unwrap(),
+        contributions: vec![BoundAgentSurfaceContribution {
+            key: "tool:read".into(),
+            required: true,
+            route: AgentSurfaceRoute::AgentNativeCallback,
+            fidelity: SemanticFidelity::Exact,
+            semantics: AgentSurfaceSemanticFacet::Tool(AgentToolSemanticFacet {
+                delivery: AgentToolDelivery::AgentNativeCallback,
+                invocation: SemanticFidelity::Exact,
+                update: AgentToolUpdateSemantics::HotUpdate,
+            }),
+            payload: AgentSurfaceContributionPayload::Tool {
+                name: AgentToolName::new("read").unwrap(),
+                description: "read".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                output_schema: None,
+            },
+            payload_digest: AgentPayloadDigest::new(format!("sha256:generation-tool-{revision}"))
+                .unwrap(),
+        }],
     }
 }
 

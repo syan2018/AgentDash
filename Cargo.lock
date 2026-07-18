@@ -89,32 +89,39 @@ name = "agentdash-agent"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-core",
+ "agentdash-agent-types",
+ "agentdash-diagnostics",
+ "anyhow",
  "async-trait",
  "futures",
+ "globset",
+ "jsonschema",
+ "regex",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
  "tokio-util",
+ "tracing",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]
 name = "agentdash-agent-core"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures",
- "jsonschema",
- "schemars 1.2.1",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
- "tokio-stream",
  "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -260,7 +267,7 @@ dependencies = [
 name = "agentdash-api"
 version = "0.1.0"
 dependencies = [
- "agentdash-agent-core",
+ "agentdash-agent",
  "agentdash-agent-protocol",
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
@@ -328,6 +335,7 @@ dependencies = [
 name = "agentdash-application"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent",
  "agentdash-agent-protocol",
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
@@ -385,6 +393,7 @@ dependencies = [
 name = "agentdash-application-agentrun"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent",
  "agentdash-agent-protocol",
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
@@ -602,6 +611,7 @@ name = "agentdash-contracts"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
+ "agentdash-agent-types",
  "agentdash-domain",
  "agentdash-spi",
  "chrono",
@@ -639,6 +649,7 @@ dependencies = [
 name = "agentdash-executor"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-types",
  "agentdash-application-ports",
  "agentdash-diagnostics",
  "agentdash-domain",
@@ -670,11 +681,12 @@ name = "agentdash-infrastructure"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
- "agentdash-agent-core",
+ "agentdash-agent",
  "agentdash-agent-protocol",
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-host",
+ "agentdash-agent-types",
  "agentdash-application-ports",
  "agentdash-diagnostics",
  "agentdash-domain",
@@ -750,16 +762,15 @@ name = "agentdash-integration-native-agent"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent",
- "agentdash-agent-core",
  "agentdash-agent-protocol",
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
  "agentdash-agent-service-api",
+ "agentdash-agent-types",
  "agentdash-diagnostics",
  "agentdash-integration-api",
  "async-trait",
- "base64 0.22.1",
  "futures",
  "serde",
  "serde_json",
@@ -791,7 +802,7 @@ dependencies = [
 name = "agentdash-llm-provider"
 version = "0.1.0"
 dependencies = [
- "agentdash-agent-core",
+ "agentdash-agent",
  "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",

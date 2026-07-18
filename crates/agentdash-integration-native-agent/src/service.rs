@@ -294,23 +294,83 @@ impl DashAgentCompleteService {
                 .insert(source.clone(), service.clone());
             service
         };
-        if let (Some(callbacks), Some(surface), Some(binding)) = (
-            &self.host_callbacks,
+        self.materialize_live_surface(source, &service, &metadata)
+            .await?;
+        Ok((service, metadata))
+    }
+
+    async fn reconcile_live_surface_from_durable_metadata(
+        &self,
+        source: &AgentSourceCoordinate,
+        service: &DashAgentService,
+    ) -> Result<DashCompleteSourceMetadata, AgentServiceError> {
+        let metadata = self
+            .store
+            .load_source(source)
+            .await?
+            .ok_or_else(|| not_found("Dash Agent source does not exist"))?;
+        self.materialize_live_surface(source, service, &metadata)
+            .await?;
+        Ok(metadata)
+    }
+
+    async fn materialize_live_surface(
+        &self,
+        source: &AgentSourceCoordinate,
+        service: &DashAgentService,
+        metadata: &DashCompleteSourceMetadata,
+    ) -> Result<(), AgentServiceError> {
+        match (
+            &metadata.applied_surface,
             &metadata.callback_surface,
             &metadata.callback_binding,
         ) {
-            service
-                .replace_tool_callbacks(Arc::new(DashAgentCoreToolCallbacks::from_bound_surface(
-                    callbacks.clone(),
-                    binding.route_id.clone(),
-                    binding.binding_generation,
-                    source.clone(),
-                    binding.default_deadline_ms,
-                    surface,
-                )))
-                .await;
+            (None, None, None) => {
+                service
+                    .replace_tool_callbacks(self.execution.tools.clone())
+                    .await;
+                Ok(())
+            }
+            (Some(applied), Some(surface), Some(binding))
+                if applied_surface_matches_bound(applied, surface) =>
+            {
+                let requires_callbacks = surface.contributions.iter().any(|contribution| {
+                    matches!(
+                        contribution.semantics,
+                        AgentSurfaceSemanticFacet::Tool(_) | AgentSurfaceSemanticFacet::Hook(_)
+                    )
+                });
+                if let Some(callbacks) = &self.host_callbacks {
+                    service
+                        .replace_tool_callbacks(Arc::new(
+                            DashAgentCoreToolCallbacks::from_bound_surface(
+                                callbacks.clone(),
+                                binding.route_id.clone(),
+                                binding.binding_generation,
+                                source.clone(),
+                                binding.default_deadline_ms,
+                                surface,
+                            ),
+                        ))
+                        .await;
+                    Ok(())
+                } else if requires_callbacks {
+                    Err(AgentServiceError::new(
+                        AgentServiceErrorCode::Unavailable,
+                        "Dash Agent cannot materialize durable native callbacks without AgentHostCallbacks",
+                        true,
+                    ))
+                } else {
+                    service
+                        .replace_tool_callbacks(self.execution.tools.clone())
+                        .await;
+                    Ok(())
+                }
+            }
+            _ => Err(internal(
+                "Dash Agent durable surface metadata is incomplete or inconsistent",
+            )),
         }
-        Ok((service, metadata))
     }
 }
 
@@ -727,11 +787,13 @@ impl CompleteAgentService for DashAgentCompleteService {
     ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
         let request_fingerprint = request_fingerprint(&command)?;
         if let Some(recorded) = self.store.load_effect(&command.effect_id).await? {
-            return recorded.apply_surface_receipt_for(
+            let receipt = recorded.apply_surface_receipt_for(
                 &command.source,
                 &command.command_id,
                 &request_fingerprint,
-            );
+            )?;
+            self.open_source(&command.source).await?;
+            return Ok(receipt);
         }
         let (service, metadata) = self.open_source(&command.source).await?;
         let dash_surface = dash_surface_from_bound(&command.bound_surface)?;
@@ -818,9 +880,10 @@ impl CompleteAgentService for DashAgentCompleteService {
             },
             receipt: DashCompleteRecordedReceipt::ApplySurface(receipt.clone()),
         };
-        self.store
+        let commit_result = self
+            .store
             .commit(DashCompleteAtomicCommit {
-                effect_id: command.effect_id,
+                effect_id: command.effect_id.clone(),
                 expected_effect: None,
                 replacement_effect: record,
                 source_mutations: vec![DashCompleteSourceMutation::CompareAndSwap {
@@ -831,19 +894,10 @@ impl CompleteAgentService for DashAgentCompleteService {
                     replacement_metadata: Box::new(replacement),
                 }],
             })
+            .await;
+        self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
             .await?;
-        if let Some(callbacks) = &self.host_callbacks {
-            service
-                .replace_tool_callbacks(Arc::new(DashAgentCoreToolCallbacks::from_bound_surface(
-                    callbacks.clone(),
-                    command.callbacks.route_id,
-                    command.callbacks.binding_generation,
-                    command.source,
-                    command.callbacks.default_deadline_ms,
-                    &callback_surface,
-                )))
-                .await;
-        }
+        commit_result?;
         Ok(receipt)
     }
 
@@ -853,11 +907,13 @@ impl CompleteAgentService for DashAgentCompleteService {
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
         let request_fingerprint = request_fingerprint(&command)?;
         if let Some(recorded) = self.store.load_effect(&command.effect_id).await? {
-            return recorded.command_receipt_for(
+            let receipt = recorded.command_receipt_for(
                 &command.source,
                 &command.command_id,
                 &request_fingerprint,
-            );
+            )?;
+            self.open_source(&command.source).await?;
+            return Ok(receipt);
         }
         let (service, metadata) = self.open_source(&command.source).await?;
         if metadata
@@ -903,13 +959,14 @@ impl CompleteAgentService for DashAgentCompleteService {
             receipt.clone(),
             Some(AgentTerminalOutcome::Succeeded),
         );
-        self.store
+        let commit_result = self
+            .store
             .commit(DashCompleteAtomicCommit {
-                effect_id: command.effect_id,
+                effect_id: command.effect_id.clone(),
                 expected_effect: None,
                 replacement_effect: record,
                 source_mutations: vec![DashCompleteSourceMutation::CompareAndSwap {
-                    source: command.source,
+                    source: command.source.clone(),
                     expected_repository: Box::new(expected_repository),
                     replacement_repository: Box::new(replacement_repository),
                     expected_metadata: Box::new(metadata.clone()),
@@ -921,10 +978,10 @@ impl CompleteAgentService for DashAgentCompleteService {
                     }),
                 }],
             })
-            .await?;
-        service
-            .replace_tool_callbacks(self.execution.tools.clone())
             .await;
+        self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
+            .await?;
+        commit_result?;
         Ok(receipt)
     }
 }
@@ -1407,6 +1464,22 @@ fn surface_contribution_supported(
             facet.routes.contains(&contribution.route)
                 && facet.fidelity.satisfies(contribution.fidelity)
                 && facet.semantics.satisfies(&contribution.semantics)
+        })
+}
+
+fn applied_surface_matches_bound(applied: &AppliedAgentSurface, bound: &BoundAgentSurface) -> bool {
+    applied.revision == bound.revision
+        && applied.digest == bound.digest
+        && applied.contributions.len() == bound.contributions.len()
+        && bound.contributions.iter().all(|expected| {
+            applied.contributions.iter().any(|actual| {
+                actual.key == expected.key
+                    && actual.route == expected.route
+                    && actual.fidelity == expected.fidelity
+                    && actual.semantics == expected.semantics
+                    && actual.payload_digest == expected.payload_digest
+                    && actual.status == AppliedContributionStatus::Applied
+            })
         })
 }
 

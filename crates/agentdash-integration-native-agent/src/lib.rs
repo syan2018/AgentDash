@@ -1,32 +1,16 @@
-//! First-party adapter from Dash Agent and its provider-neutral Agent Core to Agent Runtime.
+//! First-party adapter from Dash Agent to the Complete Agent service boundary.
 //!
-//! This crate owns lifecycle/context/surface translation and the Backbone-to-Core
-//! anti-corruption projection. Dash Agent depends one-way on the pure Core; neither layer imports
-//! Runtime, Integration, repository, or vendor vocabulary.
+//! This crate owns lifecycle/context/surface translation and materializes typed host callbacks.
+//! Dash Agent depends one-way on the pure Core; neither layer imports Runtime, Integration,
+//! repository, legacy driver, journal, or vendor protocol vocabulary.
 
-mod context;
 mod core_callbacks;
-mod core_projection;
-mod driver;
-mod hook;
-mod mapping;
-mod presentation;
 mod service;
-mod tool;
 
 pub use core_callbacks::DashAgentCoreToolCallbacks;
-pub use core_projection::{
-    NativeCoreProjectionError, NativeCoreProjectionEvent, project_native_core_input,
-    project_native_core_transcript,
-};
-pub use driver::{
-    NATIVE_STREAM_USAGE_RESERVE_TOKENS, NativeAgentDriver, NativeAgentDriverFactory,
-    NativeAgentRuntimeIntegration, NativeAgentServiceConfig, NativeBridgeResolveError,
-    NativeBridgeResolver, NativeCredentialScope, NativePresentationMetadata, ResolvedNativeBridge,
-    native_agent_contribution, native_runtime_profile, native_runtime_trust_manifest,
-};
 pub use service::{
-    DashAgentCompleteService, DashCompleteAgentStore, DashCompleteEffectRecord,
-    DashCompleteRecordedReceipt, DashCompleteSourceMetadata, NativeCompleteAgentRegistration,
+    DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
+    DashCompleteEffectRecord, DashCompleteRecordedReceipt, DashCompleteSourceMetadata,
+    DashCompleteSourceMutation, NativeCompleteAgentRegistration,
     native_complete_agent_registration,
 };

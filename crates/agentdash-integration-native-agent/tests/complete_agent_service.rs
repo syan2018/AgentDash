@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -34,36 +34,39 @@ use agentdash_agent_service_api::{
     InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_native_agent::{
-    DashAgentCompleteService, DashCompleteAgentStore, DashCompleteEffectRecord,
-    DashCompleteSourceMetadata, native_complete_agent_registration,
+    DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
+    DashCompleteEffectRecord, DashCompleteSourceMetadata, DashCompleteSourceMutation,
+    native_complete_agent_registration,
 };
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
 use tokio::sync::{Notify, RwLock};
 
-#[derive(Default)]
 struct RecordingDashRepository {
-    state: RwLock<Option<DashAgentRepositoryState>>,
+    source: String,
+    durable: Arc<RwLock<RecordingCompleteDurableState>>,
 }
 
 #[async_trait]
 impl DashAgentRepository for RecordingDashRepository {
     async fn initialize(&self, initial: DashAgentRepositoryState) -> Result<(), DashServiceError> {
-        let mut state = self.state.write().await;
-        if state.is_some() {
+        let mut durable = self.durable.write().await;
+        if durable.repositories.contains_key(&self.source) {
             return Err(DashServiceError::Conflict {
                 message: "test Dash repository already initialized".into(),
             });
         }
-        *state = Some(initial);
+        durable.repositories.insert(self.source.clone(), initial);
         Ok(())
     }
 
     async fn load(&self) -> Result<DashAgentRepositoryState, DashServiceError> {
-        self.state
+        self.durable
             .read()
             .await
-            .clone()
+            .repositories
+            .get(&self.source)
+            .cloned()
             .ok_or_else(|| DashServiceError::InvalidState {
                 message: "test Dash repository is not initialized".into(),
             })
@@ -74,22 +77,41 @@ impl DashAgentRepository for RecordingDashRepository {
         expected: DashAgentRepositoryState,
         replacement: DashAgentRepositoryState,
     ) -> Result<(), DashServiceError> {
-        let mut state = self.state.write().await;
-        if state.as_ref() != Some(&expected) {
+        let mut durable = self.durable.write().await;
+        if durable.repositories.get(&self.source) != Some(&expected) {
             return Err(DashServiceError::Conflict {
                 message: "test Dash repository revision changed".into(),
             });
         }
-        *state = Some(replacement);
+        durable
+            .repositories
+            .insert(self.source.clone(), replacement);
         Ok(())
     }
 }
 
 #[derive(Default)]
+struct RecordingCompleteDurableState {
+    repositories: BTreeMap<String, DashAgentRepositoryState>,
+    sources: BTreeMap<AgentSourceCoordinate, DashCompleteSourceMetadata>,
+    effects: BTreeMap<AgentEffectIdentity, DashCompleteEffectRecord>,
+}
+
+#[derive(Default)]
 struct RecordingCompleteStore {
-    repositories: RwLock<BTreeMap<String, Arc<RecordingDashRepository>>>,
-    sources: RwLock<BTreeMap<AgentSourceCoordinate, DashCompleteSourceMetadata>>,
-    effects: RwLock<BTreeMap<AgentEffectIdentity, DashCompleteEffectRecord>>,
+    durable: Arc<RwLock<RecordingCompleteDurableState>>,
+    lose_next_commit_receipt: AtomicBool,
+    fail_next_terminal_commit: AtomicBool,
+}
+
+impl RecordingCompleteStore {
+    fn lose_next_commit_receipt(&self) {
+        self.lose_next_commit_receipt.store(true, Ordering::SeqCst);
+    }
+
+    fn fail_next_terminal_commit(&self) {
+        self.fail_next_terminal_commit.store(true, Ordering::SeqCst);
+    }
 }
 
 #[async_trait]
@@ -99,31 +121,36 @@ impl DashAgentRepositoryStore for RecordingCompleteStore {
         source: &AgentSessionId,
         initial: DashAgentRepositoryState,
     ) -> Result<Arc<dyn DashAgentRepository>, DashServiceError> {
-        let repository = Arc::new(RecordingDashRepository::default());
-        repository.initialize(initial).await?;
-        let mut repositories = self.repositories.write().await;
-        if repositories
-            .insert(source.0.clone(), repository.clone())
-            .is_some()
-        {
+        let mut durable = self.durable.write().await;
+        if durable.repositories.contains_key(&source.0) {
             return Err(DashServiceError::Conflict {
                 message: "test Dash source already exists".into(),
             });
         }
-        Ok(repository)
+        durable.repositories.insert(source.0.clone(), initial);
+        Ok(Arc::new(RecordingDashRepository {
+            source: source.0.clone(),
+            durable: self.durable.clone(),
+        }))
     }
 
     async fn open(
         &self,
         source: &AgentSessionId,
     ) -> Result<Option<Arc<dyn DashAgentRepository>>, DashServiceError> {
-        Ok(self
-            .repositories
+        if !self
+            .durable
             .read()
             .await
-            .get(&source.0)
-            .cloned()
-            .map(|repository| repository as Arc<dyn DashAgentRepository>))
+            .repositories
+            .contains_key(&source.0)
+        {
+            return Ok(None);
+        }
+        Ok(Some(Arc::new(RecordingDashRepository {
+            source: source.0.clone(),
+            durable: self.durable.clone(),
+        })))
     }
 }
 
@@ -133,80 +160,109 @@ impl DashCompleteAgentStore for RecordingCompleteStore {
         self
     }
 
-    async fn create_source(
-        &self,
-        source: AgentSourceCoordinate,
-        repository: DashAgentRepositoryState,
-        metadata: DashCompleteSourceMetadata,
-    ) -> Result<(), AgentServiceError> {
-        if self.sources.read().await.contains_key(&source) {
-            return Err(test_conflict("test Complete Agent source already exists"));
-        }
-        DashAgentRepositoryStore::create(self, &AgentSessionId::new(source.as_str()), repository)
-            .await
-            .map_err(test_store_error)?;
-        self.sources.write().await.insert(source, metadata);
-        Ok(())
-    }
-
     async fn load_source(
         &self,
         source: &AgentSourceCoordinate,
     ) -> Result<Option<DashCompleteSourceMetadata>, AgentServiceError> {
-        Ok(self.sources.read().await.get(source).cloned())
-    }
-
-    async fn replace_source(
-        &self,
-        source: &AgentSourceCoordinate,
-        expected: DashCompleteSourceMetadata,
-        replacement: DashCompleteSourceMetadata,
-    ) -> Result<(), AgentServiceError> {
-        let mut sources = self.sources.write().await;
-        if sources.get(source) != Some(&expected) {
-            return Err(test_conflict("test Complete Agent source revision changed"));
-        }
-        sources.insert(source.clone(), replacement);
-        Ok(())
-    }
-
-    async fn list_sources(&self) -> Result<Vec<AgentSourceCoordinate>, AgentServiceError> {
-        Ok(self.sources.read().await.keys().cloned().collect())
+        Ok(self.durable.read().await.sources.get(source).cloned())
     }
 
     async fn load_effect(
         &self,
         identity: &AgentEffectIdentity,
     ) -> Result<Option<DashCompleteEffectRecord>, AgentServiceError> {
-        Ok(self.effects.read().await.get(identity).cloned())
+        Ok(self.durable.read().await.effects.get(identity).cloned())
     }
 
-    async fn record_effect(
-        &self,
-        identity: AgentEffectIdentity,
-        record: DashCompleteEffectRecord,
-    ) -> Result<(), AgentServiceError> {
-        let mut effects = self.effects.write().await;
-        if let Some(existing) = effects.get(&identity) {
-            return if existing == &record {
-                Ok(())
-            } else {
-                Err(test_conflict(
-                    "test Complete Agent effect identity conflict",
-                ))
-            };
+    async fn commit(&self, commit: DashCompleteAtomicCommit) -> Result<(), AgentServiceError> {
+        if matches!(
+            commit.replacement_effect.inspection.state,
+            AgentEffectInspectionState::Applied { .. }
+        ) && self.fail_next_terminal_commit.swap(false, Ordering::SeqCst)
+        {
+            return Err(AgentServiceError::new(
+                AgentServiceErrorCode::Unavailable,
+                "test Complete Agent crashed before the terminal commit",
+                true,
+            ));
         }
-        effects.insert(identity, record);
+        let mut durable = self.durable.write().await;
+        if durable.effects.get(&commit.effect_id) != commit.expected_effect.as_ref() {
+            return Err(test_conflict(
+                "test Complete Agent effect identity conflict",
+            ));
+        }
+
+        for mutation in &commit.source_mutations {
+            match mutation {
+                DashCompleteSourceMutation::Create { source, .. } => {
+                    if durable.sources.contains_key(source)
+                        || durable.repositories.contains_key(source.as_str())
+                    {
+                        return Err(test_conflict("test Complete Agent source already exists"));
+                    }
+                }
+                DashCompleteSourceMutation::CompareAndSwap {
+                    source,
+                    expected_repository,
+                    expected_metadata,
+                    ..
+                } => {
+                    if durable.sources.get(source) != Some(expected_metadata.as_ref())
+                        || durable.repositories.get(source.as_str())
+                            != Some(expected_repository.as_ref())
+                    {
+                        return Err(test_conflict(
+                            "test Complete Agent source aggregate revision changed",
+                        ));
+                    }
+                }
+            }
+        }
+
+        for mutation in commit.source_mutations {
+            match mutation {
+                DashCompleteSourceMutation::Create {
+                    source,
+                    repository,
+                    metadata,
+                } => {
+                    durable
+                        .repositories
+                        .insert(source.as_str().to_owned(), *repository);
+                    durable.sources.insert(source, *metadata);
+                }
+                DashCompleteSourceMutation::CompareAndSwap {
+                    source,
+                    replacement_repository,
+                    replacement_metadata,
+                    ..
+                } => {
+                    durable
+                        .repositories
+                        .insert(source.as_str().to_owned(), *replacement_repository);
+                    durable.sources.insert(source, *replacement_metadata);
+                }
+            }
+        }
+        durable
+            .effects
+            .insert(commit.effect_id, commit.replacement_effect);
+        drop(durable);
+
+        if self.lose_next_commit_receipt.swap(false, Ordering::SeqCst) {
+            return Err(AgentServiceError::new(
+                AgentServiceErrorCode::Unavailable,
+                "test Complete Agent committed but lost the response",
+                true,
+            ));
+        }
         Ok(())
     }
 }
 
 fn test_conflict(message: &str) -> AgentServiceError {
     AgentServiceError::new(AgentServiceErrorCode::Conflict, message, false)
-}
-
-fn test_store_error(error: DashServiceError) -> AgentServiceError {
-    AgentServiceError::new(AgentServiceErrorCode::Internal, error.to_string(), false)
 }
 
 struct FixtureProvider;
@@ -1241,6 +1297,292 @@ async fn shared_durable_store_reopens_source_fork_tail_initial_context_and_effec
             .state,
         AgentEffectInspectionState::NotApplied
     ));
+}
+
+#[tokio::test]
+async fn atomic_commits_recover_lost_receipts_without_duplicate_source_fork_or_surface_mutation() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    let parent = AgentSourceCoordinate::new("dash-atomic-parent").unwrap();
+    let create = CreateAgentCommand {
+        meta: meta("atomic-create", "atomic-effect-create"),
+        requested_source: Some(parent.clone()),
+        initial_context: None,
+    };
+
+    store.lose_next_commit_receipt();
+    assert_eq!(
+        service_with_store(store.clone())
+            .create(create.clone())
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Unavailable
+    );
+    let reopened = service_with_store(store.clone());
+    assert!(matches!(
+        reopened
+            .inspect(create.meta.effect_id.clone())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::Applied { .. }
+    ));
+    let created = reopened.create(create.clone()).await.unwrap();
+    assert_eq!(
+        reopened.create(create.clone()).await.unwrap(),
+        created,
+        "create replay must not create another source"
+    );
+    assert_eq!(store.durable.read().await.repositories.len(), 1);
+    let mut conflicting_create = create;
+    conflicting_create.initial_context = Some(initial_package());
+    assert_eq!(
+        reopened.create(conflicting_create).await.unwrap_err().code,
+        AgentServiceErrorCode::Conflict
+    );
+
+    let child = AgentSourceCoordinate::new("dash-atomic-child").unwrap();
+    let fork = ForkAgentCommand {
+        meta: meta("atomic-fork", "atomic-effect-fork"),
+        source: parent.clone(),
+        requested_child_source: Some(child.clone()),
+        cutoff: AgentForkPoint::Head,
+    };
+    store.lose_next_commit_receipt();
+    assert_eq!(
+        reopened.fork(fork.clone()).await.unwrap_err().code,
+        AgentServiceErrorCode::Unavailable
+    );
+    let reopened = service_with_store(store.clone());
+    let forked = reopened.fork(fork.clone()).await.unwrap();
+    assert_eq!(forked.child_source.as_ref(), Some(&child));
+    assert_eq!(reopened.fork(fork.clone()).await.unwrap(), forked);
+    assert_eq!(store.durable.read().await.repositories.len(), 2);
+    assert!(matches!(
+        reopened
+            .inspect(fork.meta.effect_id.clone())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::Applied {
+            child_source: Some(recovered),
+            ..
+        } if recovered == child
+    ));
+    let mut conflicting_fork = fork;
+    conflicting_fork.requested_child_source =
+        Some(AgentSourceCoordinate::new("dash-atomic-other-child").unwrap());
+    assert_eq!(
+        reopened.fork(conflicting_fork).await.unwrap_err().code,
+        AgentServiceErrorCode::Conflict
+    );
+
+    let apply = ApplyBoundAgentSurface {
+        command_id: AgentCommandId::new("atomic-apply").unwrap(),
+        effect_id: AgentEffectIdentity::new("atomic-effect-apply").unwrap(),
+        idempotency_key: AgentIdempotencyKey::new("atomic-idem-apply").unwrap(),
+        source: parent.clone(),
+        bound_surface: hook_execution_surface(),
+        callbacks: AgentHostCallbackBinding {
+            route_id: AgentCallbackRouteId::new("atomic-route").unwrap(),
+            binding_generation: AgentBindingGeneration(7),
+            delivery: AgentSurfaceRoute::AgentNativeCallback,
+            default_deadline_ms: 5_000,
+        },
+    };
+    store.lose_next_commit_receipt();
+    assert_eq!(
+        reopened
+            .apply_surface(apply.clone())
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Unavailable
+    );
+    let reopened = service_with_store(store.clone());
+    let applied_snapshot = reopened
+        .read(AgentReadQuery {
+            source: parent.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        applied_snapshot
+            .applied_surface
+            .as_ref()
+            .map(|surface| surface.revision),
+        Some(AgentSurfaceRevision(1))
+    );
+    let applied = reopened.apply_surface(apply.clone()).await.unwrap();
+    assert_eq!(
+        reopened.apply_surface(apply.clone()).await.unwrap(),
+        applied
+    );
+    let mut conflicting_apply = apply;
+    conflicting_apply.bound_surface.digest =
+        AgentSurfaceDigest::new("atomic-conflicting-surface").unwrap();
+    assert_eq!(
+        reopened
+            .apply_surface(conflicting_apply)
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Conflict
+    );
+
+    let revoke = RevokeBoundAgentSurface {
+        command_id: AgentCommandId::new("atomic-revoke").unwrap(),
+        effect_id: AgentEffectIdentity::new("atomic-effect-revoke").unwrap(),
+        idempotency_key: AgentIdempotencyKey::new("atomic-idem-revoke").unwrap(),
+        binding_generation: AgentBindingGeneration(7),
+        source: parent.clone(),
+        expected_revision: AgentSurfaceRevision(1),
+    };
+    store.lose_next_commit_receipt();
+    assert_eq!(
+        reopened
+            .revoke_surface(revoke.clone())
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Unavailable
+    );
+    let reopened = service_with_store(store.clone());
+    assert!(
+        reopened
+            .read(AgentReadQuery {
+                source: parent,
+                at_revision: None,
+            })
+            .await
+            .unwrap()
+            .applied_surface
+            .is_none()
+    );
+    let revoked = reopened.revoke_surface(revoke.clone()).await.unwrap();
+    assert_eq!(
+        reopened.revoke_surface(revoke.clone()).await.unwrap(),
+        revoked
+    );
+    let mut conflicting_revoke = revoke;
+    conflicting_revoke.expected_revision = AgentSurfaceRevision(2);
+    assert_eq!(
+        reopened
+            .revoke_surface(conflicting_revoke)
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Conflict
+    );
+    assert_eq!(store.durable.read().await.repositories.len(), 2);
+}
+
+#[tokio::test]
+async fn execute_reservation_survives_lost_response_and_reconciles_dash_once_after_reopen() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    let service = service_with_store(store.clone());
+    let source = AgentSourceCoordinate::new("dash-atomic-execute").unwrap();
+    service
+        .create(CreateAgentCommand {
+            meta: meta("atomic-execute-create", "atomic-execute-create-effect"),
+            requested_source: Some(source.clone()),
+            initial_context: None,
+        })
+        .await
+        .unwrap();
+    let execute = submit_envelope(
+        source.clone(),
+        "atomic durable input",
+        "atomic-execute-effect",
+    );
+
+    store.lose_next_commit_receipt();
+    assert_eq!(
+        service.execute(execute.clone()).await.unwrap_err().code,
+        AgentServiceErrorCode::Unavailable
+    );
+    assert!(matches!(
+        service
+            .inspect(execute.meta.effect_id.clone())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::Accepted { .. }
+    ));
+
+    let reopened = service_with_store(store.clone());
+    let applied = reopened.execute(execute.clone()).await.unwrap();
+    assert!(matches!(
+        applied.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Succeeded
+        }
+    ));
+    assert_eq!(reopened.execute(execute.clone()).await.unwrap(), applied);
+    let mut conflicting_execute = execute;
+    conflicting_execute.command = AgentCommand::Close;
+    assert_eq!(
+        reopened
+            .execute(conflicting_execute)
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Conflict
+    );
+    assert!(matches!(
+        reopened
+            .inspect(AgentEffectIdentity::new("atomic-execute-effect").unwrap())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::Applied { .. }
+    ));
+
+    let crash_gap_execute = submit_envelope(
+        source.clone(),
+        "atomic crash gap input",
+        "atomic-crash-gap-effect",
+    );
+    store.fail_next_terminal_commit();
+    assert_eq!(
+        reopened
+            .execute(crash_gap_execute.clone())
+            .await
+            .unwrap_err()
+            .code,
+        AgentServiceErrorCode::Unavailable
+    );
+    assert!(matches!(
+        reopened
+            .inspect(crash_gap_execute.meta.effect_id.clone())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::Accepted { .. }
+    ));
+    let recovered = service_with_store(store);
+    let recovered_receipt = recovered.execute(crash_gap_execute.clone()).await.unwrap();
+    assert_eq!(
+        recovered.execute(crash_gap_execute).await.unwrap(),
+        recovered_receipt
+    );
+    assert!(matches!(
+        recovered
+            .inspect(AgentEffectIdentity::new("atomic-crash-gap-effect").unwrap())
+            .await
+            .unwrap()
+            .state,
+        AgentEffectInspectionState::Applied { .. }
+    ));
+    let snapshot = recovered
+        .read(AgentReadQuery {
+            source,
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(snapshot.turns.len(), 2);
 }
 
 #[tokio::test]

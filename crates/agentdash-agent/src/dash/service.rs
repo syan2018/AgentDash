@@ -351,39 +351,55 @@ impl DashAgentService {
     }
 
     pub async fn apply_surface(&self, surface: DashSurface) -> Result<(), DashServiceError> {
-        self.update_repository(|state| {
-            if state
-                .surface
-                .as_ref()
-                .is_some_and(|existing| surface.revision < existing.revision)
-            {
-                return Err(DashServiceError::Conflict {
-                    message: "Dash Agent surface revision moved backwards".into(),
-                });
-            }
-            state.surface = Some(surface);
-            Ok(())
-        })
-        .await
-        .map(|_| ())
+        let (expected, replacement) = self.stage_surface_apply(surface).await?;
+        self.repository
+            .compare_and_swap(expected, replacement)
+            .await
     }
 
     pub async fn revoke_surface(&self, expected_revision: u64) -> Result<(), DashServiceError> {
-        self.update_repository(|state| {
-            if state
-                .surface
-                .as_ref()
-                .is_some_and(|surface| surface.revision != expected_revision)
-            {
-                return Err(DashServiceError::Conflict {
-                    message: "Dash Agent surface revision does not match".into(),
-                });
-            }
-            state.surface = None;
-            Ok(())
-        })
-        .await
-        .map(|_| ())
+        let (expected, replacement) = self.stage_surface_revoke(expected_revision).await?;
+        self.repository
+            .compare_and_swap(expected, replacement)
+            .await
+    }
+
+    pub async fn stage_surface_apply(
+        &self,
+        surface: DashSurface,
+    ) -> Result<(DashAgentRepositoryState, DashAgentRepositoryState), DashServiceError> {
+        let expected = self.repository.load().await?;
+        let mut replacement = expected.clone();
+        if replacement
+            .surface
+            .as_ref()
+            .is_some_and(|existing| surface.revision < existing.revision)
+        {
+            return Err(DashServiceError::Conflict {
+                message: "Dash Agent surface revision moved backwards".into(),
+            });
+        }
+        replacement.surface = Some(surface);
+        Ok((expected, replacement))
+    }
+
+    pub async fn stage_surface_revoke(
+        &self,
+        expected_revision: u64,
+    ) -> Result<(DashAgentRepositoryState, DashAgentRepositoryState), DashServiceError> {
+        let expected = self.repository.load().await?;
+        let mut replacement = expected.clone();
+        if replacement
+            .surface
+            .as_ref()
+            .is_some_and(|surface| surface.revision != expected_revision)
+        {
+            return Err(DashServiceError::Conflict {
+                message: "Dash Agent surface revision does not match".into(),
+            });
+        }
+        replacement.surface = None;
+        Ok((expected, replacement))
     }
 
     pub async fn execute(

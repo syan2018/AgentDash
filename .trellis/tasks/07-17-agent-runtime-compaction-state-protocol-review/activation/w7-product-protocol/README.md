@@ -33,3 +33,7 @@ cargo test -p agentdash-api --test agent_runtime_target_projection
 S5 将 `ManagedRuntimeProjectionSchema` 纳入正式 Runtime Contract generator root 后，使用
 workspace 的 `contracts:generate` / `contracts:check` 原子更新 canonical bindings、schema
 和 Product caller。
+
+生产 caller、repository transaction、共享热点和硬切顺序冻结在相邻目录
+`activation/w7-product-cutover/`。这里的 schema 只作为 canonical generator input，不在
+Product component 中修改正式 generated root。

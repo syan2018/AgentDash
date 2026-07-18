@@ -6,7 +6,7 @@
 
 use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AgentConfig, CapabilityState, FragmentScope, RuntimeMcpServer, SessionContextBundle, Vfs,
 };
 use serde::{Deserialize, Serialize};
@@ -77,9 +77,9 @@ impl AgentContextSourceSnapshot {
                     runtime_agent_scope: fragment.scope.contains(FragmentScope::RuntimeAgent),
                     source: fragment.source.clone(),
                     content: fragment.content.clone(),
-                    context_usage_kind: agentdash_spi::ASSIGNMENT_CONTEXT_SLOTS
+                    context_usage_kind: agentdash_platform_spi::ASSIGNMENT_CONTEXT_SLOTS
                         .contains(&fragment.slot.as_str())
-                        .then(|| agentdash_spi::context_usage_kind::SYSTEM_DEVELOPER.to_string()),
+                        .then(|| agentdash_platform_spi::context_usage_kind::SYSTEM_DEVELOPER.to_string()),
                 })
                 .collect(),
         }
@@ -202,7 +202,7 @@ impl AgentFrameSurfaceExt for AgentFrame {
 mod tests {
     use super::*;
     use agentdash_domain::common::Mount;
-    use agentdash_spi::{McpTransportConfig, SessionContextBundle, ToolCluster};
+    use agentdash_platform_spi::{McpTransportConfig, SessionContextBundle, ToolCluster};
 
     fn test_mount(id: &str) -> Mount {
         Mount {

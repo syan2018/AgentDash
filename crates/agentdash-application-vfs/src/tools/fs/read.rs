@@ -2,10 +2,10 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use agentdash_spi::Vfs;
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::platform::mount::MountError;
-use agentdash_spi::{
+use agentdash_platform_spi::Vfs;
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::platform::mount::MountError;
+use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, RuntimeVfsOperation,
     ToolUpdateCallback,
 };
@@ -71,7 +71,7 @@ pub struct FsReadTool {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     dedup: DedupCache,
 }
 impl FsReadTool {
@@ -79,7 +79,7 @@ impl FsReadTool {
         service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
@@ -321,9 +321,9 @@ impl FsReadTool {
     async fn read_binary_entry(
         &self,
         vfs: &Vfs,
-        access_policy: &agentdash_spi::RuntimeVfsAccessPolicy,
+        access_policy: &agentdash_platform_spi::RuntimeVfsAccessPolicy,
         target: &ResourceRef,
-        entry: agentdash_spi::platform::mount::RuntimeFileEntry,
+        entry: agentdash_platform_spi::platform::mount::RuntimeFileEntry,
     ) -> Result<AgentToolResult, AgentToolError> {
         if entry.is_dir {
             return Err(AgentToolError::ExecutionFailed(format!(
@@ -395,12 +395,12 @@ mod fs_read_tests {
     use super::*;
     use crate::types::{RUNTIME_FILE_CONTENT_KIND_ATTR, RUNTIME_FILE_MIME_TYPE_ATTR};
     use crate::{BinaryReadResult, ListResult, MountProviderRegistry, ReadResult};
-    use agentdash_spi::platform::mount::{
+    use agentdash_platform_spi::platform::mount::{
         ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions,
         MountEditCapabilities, MountError, MountOperationContext, MountProvider, RuntimeFileEntry,
         SearchQuery, SearchResult,
     };
-    use agentdash_spi::{Mount, MountCapability};
+    use agentdash_platform_spi::{Mount, MountCapability};
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Mutex as StdMutex;

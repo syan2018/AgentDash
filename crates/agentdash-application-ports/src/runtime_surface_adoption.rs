@@ -1,5 +1,5 @@
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_spi::hooks::HookControlTarget;
+use agentdash_platform_spi::hooks::HookControlTarget;
 use async_trait::async_trait;
 use uuid::Uuid;
 

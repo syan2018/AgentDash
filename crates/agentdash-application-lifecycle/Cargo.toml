@@ -13,7 +13,7 @@ agentdash-application-vfs = { workspace = true }
 agentdash-application-workflow = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-workspace-module = { workspace = true }
-agentdash-spi = { workspace = true }
+agentdash-platform-spi = { workspace = true }
 async-trait = "0.1"
 chrono = { workspace = true }
 globset = "0.4"

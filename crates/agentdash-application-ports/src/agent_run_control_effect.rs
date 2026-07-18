@@ -7,7 +7,7 @@ use agentdash_agent_runtime_contract::{
     RuntimeDriverGeneration, RuntimeTerminalHookEffectBinding, RuntimeTerminalHookEffectHandlerRef,
     RuntimeThreadId, RuntimeTurnId, RuntimeTurnTerminal, SurfaceDigest, SurfaceRevision,
 };
-use agentdash_spi::hooks::HookEffect;
+use agentdash_platform_spi::hooks::HookEffect;
 use async_trait::async_trait;
 use uuid::Uuid;
 

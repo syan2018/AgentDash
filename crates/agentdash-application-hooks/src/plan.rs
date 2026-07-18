@@ -4,7 +4,7 @@ use agentdash_application_ports::agent_frame_hook_plan::{
     AgentFrameHookPlanCompiler, AgentFrameHookRequirement,
 };
 use agentdash_domain::workflow::WorkflowHookTrigger;
-use agentdash_spi::{AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ExecutionHookProvider};
+use agentdash_platform_spi::{AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ExecutionHookProvider};
 use async_trait::async_trait;
 
 use crate::AppExecutionHookProvider;
@@ -61,7 +61,7 @@ mod tests {
         HookExecutionLogAppendCommand, HookWorkflowProjection, HookWorkflowProjectionError,
         HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
     };
-    use agentdash_spi::{HookControlTarget, RuntimeAdapterProvenance};
+    use agentdash_platform_spi::{HookControlTarget, RuntimeAdapterProvenance};
     use uuid::Uuid;
 
     struct EmptyProjection;

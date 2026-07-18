@@ -6,8 +6,8 @@ use crate::launch::LaunchCommand;
 use agentdash_agent_protocol::UserInputBlock;
 use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::session_persistence::RuntimeCommandRecord;
-use agentdash_spi::{
+use agentdash_platform_spi::session_persistence::RuntimeCommandRecord;
+use agentdash_platform_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, MemoryDiscoveryOutput,
     RuntimeMcpServer, SessionContextBundle, Vfs,
 };
@@ -161,7 +161,7 @@ pub trait FrameLaunchEnvelopePort: Send + Sync {
     async fn build_launch_envelope(
         &self,
         input: FrameLaunchEnvelopeRequest,
-    ) -> Result<FrameLaunchEnvelope, agentdash_spi::ConnectorError>;
+    ) -> Result<FrameLaunchEnvelope, agentdash_platform_spi::PlatformRuntimeError>;
 }
 
 pub type SharedFrameLaunchEnvelopePort = Arc<dyn FrameLaunchEnvelopePort>;
@@ -212,7 +212,7 @@ pub trait AcceptedLaunchCommitPort: Send + Sync {
     async fn commit_accepted_launch(
         &self,
         input: AcceptedLaunchCommitInput,
-    ) -> Result<AcceptedLaunchCommitOutcome, agentdash_spi::ConnectorError>;
+    ) -> Result<AcceptedLaunchCommitOutcome, agentdash_platform_spi::PlatformRuntimeError>;
 }
 
 #[async_trait]
@@ -221,5 +221,5 @@ pub trait AcceptedLaunchHookRuntimeSync: Send + Sync {
         &self,
         target: crate::runtime_surface_adoption::AgentFrameRuntimeTarget,
         turn_id: &str,
-    ) -> Result<(), agentdash_spi::ConnectorError>;
+    ) -> Result<(), agentdash_platform_spi::PlatformRuntimeError>;
 }

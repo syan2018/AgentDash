@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use agentdash_spi::MountEditCapabilities;
+use agentdash_platform_spi::MountEditCapabilities;
 use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
 

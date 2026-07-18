@@ -25,7 +25,7 @@ use agentdash_application_ports::{
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
 };
-use agentdash_spi::{RuntimeVfsAccessPolicy, Vfs};
+use agentdash_platform_spi::{RuntimeVfsAccessPolicy, Vfs};
 use async_trait::async_trait;
 
 use super::AgentFrameSurfaceExt;
@@ -403,7 +403,7 @@ impl BusinessFrameSurfaceQuery {
                 field: "mcp",
             }
         })?;
-        let mcp_servers = serde_json::from_value::<Vec<agentdash_spi::RuntimeMcpServer>>(
+        let mcp_servers = serde_json::from_value::<Vec<agentdash_platform_spi::RuntimeMcpServer>>(
             mcp_surface.clone(),
         )
         .map_err(|error| AgentRunRuntimeSurfaceQueryError::Projection {
@@ -641,7 +641,7 @@ mod orchestration_evidence_tests {
         AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
         LifecycleRunRepository,
     };
-    use agentdash_spi::{Mount, MountCapability};
+    use agentdash_platform_spi::{Mount, MountCapability};
     use agentdash_test_support::workflow::{
         MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
     };

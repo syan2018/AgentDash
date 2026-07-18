@@ -34,7 +34,7 @@ use agentdash_application_vfs::provider::{
 };
 use agentdash_application_vfs::types::{ListOptions, ListResult, ReadResult};
 use agentdash_domain::common::Mount;
-use agentdash_spi::platform::mount::RuntimeFileEntry;
+use agentdash_platform_spi::platform::mount::RuntimeFileEntry;
 
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -1624,7 +1624,7 @@ mod tests {
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
     use agentdash_domain::skill_asset::SkillAsset;
     use agentdash_domain::workflow::{AgentSource, LifecycleAgent};
-    use agentdash_spi::PersistedSessionEvent;
+    use agentdash_platform_spi::PersistedSessionEvent;
     use std::collections::HashMap;
     use std::sync::Mutex;
 

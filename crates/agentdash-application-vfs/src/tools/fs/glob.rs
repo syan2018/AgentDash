@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -24,14 +24,14 @@ pub struct FsGlobTool {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
 }
 impl FsGlobTool {
     pub fn new(
         service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
@@ -166,7 +166,7 @@ mod fs_glob_tests {
     use crate::mount::PROVIDER_INLINE_FS;
     use crate::provider_inline::InlineFsMountProvider;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
-    use agentdash_spi::{Mount, MountCapability, Vfs};
+    use agentdash_platform_spi::{Mount, MountCapability, Vfs};
     use agentdash_test_support::inline_file::MemoryInlineFileRepository;
     use chrono::{DateTime, Duration, Utc};
     use serde_json::json;

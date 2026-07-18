@@ -4,10 +4,10 @@ use crate::lifecycle::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator, LifecycleOrchestratorDeps,
 };
-use agentdash_spi::ExecutionContext;
-use agentdash_spi::FunctionRunner;
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_platform_spi::ExecutionContext;
+use agentdash_platform_spi::FunctionRunner;
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -32,8 +32,8 @@ pub struct CompleteLifecycleNodeTool {
     session_services_handle: SharedSessionToolServicesHandle,
     function_runner: Option<Arc<dyn FunctionRunner>>,
     current_turn_id: String,
-    hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
-    owner: Option<agentdash_spi::PlatformToolExecutionContext>,
+    hook_runtime: Option<agentdash_platform_spi::hooks::SharedHookRuntime>,
+    owner: Option<agentdash_platform_spi::PlatformToolExecutionContext>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]

@@ -8,7 +8,7 @@ use agentdash_domain::workflow::{
     OrchestrationSourceRef, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
     workflow_script_source_digest,
 };
-use agentdash_spi::WorkflowScriptEvaluator;
+use agentdash_platform_spi::WorkflowScriptEvaluator;
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use uuid::Uuid;

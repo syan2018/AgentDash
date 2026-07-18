@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use agentdash_domain::canvas::CanvasDataBinding;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeBackendAnchor, RuntimeMcpServer, Vfs};
+use agentdash_platform_spi::{AuthIdentity, CapabilityState, RuntimeBackendAnchor, RuntimeMcpServer, Vfs};
 use thiserror::Error;
 use uuid::Uuid;
 

@@ -1,5 +1,5 @@
 use agentdash_application_ports::mcp_discovery::DiscoveredMcpTool;
-use agentdash_spi::{AgentToolError, DynAgentTool, sanitize_tool_schema};
+use agentdash_platform_spi::{AgentToolError, DynAgentTool, sanitize_tool_schema};
 
 use super::naming::namespaced_tool_name;
 

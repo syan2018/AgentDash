@@ -38,7 +38,7 @@ use crate::authz::{McpProjectPermission, require_project_permission};
 use crate::error::McpError;
 use crate::servers::{RelayMcpServer, StoryMcpServer, WorkflowMcpServer};
 use crate::services::McpServices;
-use agentdash_spi::platform::auth::AuthIdentity;
+use agentdash_platform_spi::platform::auth::AuthIdentity;
 
 type McpHttpService<S> = StreamableHttpService<S, LocalSessionManager>;
 type McpServiceCache<K, S> = Arc<Mutex<HashMap<K, McpHttpService<S>>>>;

@@ -12,7 +12,7 @@ pub struct ResolvedProjectAgentContext {
     pub key: String,
     pub display_name: String,
     pub description: String,
-    pub executor_config: agentdash_spi::AgentConfig,
+    pub executor_config: agentdash_platform_spi::AgentConfig,
     pub preset_config: AgentPresetConfig,
     pub preset_name: Option<String>,
     pub source: String,

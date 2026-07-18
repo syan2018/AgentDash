@@ -54,7 +54,7 @@ use agentdash_integration_api::AuthMode;
 use agentdash_integration_api::MarketplaceSourceProvider;
 use agentdash_integration_api::MemoryDiscoveryProvider;
 use agentdash_integration_api::SkillDiscoveryProvider;
-use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
+use agentdash_platform_spi::extension_package::ExtensionPackageArtifactStorage;
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
 const PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -327,7 +327,6 @@ pub struct ServiceSet {
         Arc<crate::agent_run_terminal_control::RuntimeTerminalApplicationEffectWorker>,
     pub project_agent_run_list_query: ProjectAgentRunListQuery,
     pub agent_runtime_host: Arc<agentdash_agent_runtime_host::IntegrationDriverHost>,
-    pub agent_runtime_inventory: Arc<crate::relay::CloudRemoteRuntimeInventory>,
     pub runtime_surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
     pub lifecycle_read_model_query: Arc<dyn LifecycleReadModelQueryPort>,
     pub resource_surface_query: Arc<dyn AgentRunResourceSurfaceQueryPort>,
@@ -374,7 +373,7 @@ pub struct ServiceSet {
     /// Extension package archive object 存储端口 — API 只通过 application use case 消费。
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
     /// Workflow function/local-effect executor port — orchestration scheduler 共享。
-    pub function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
+    pub function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner>,
 }
 
 /// 应用级配置
@@ -482,7 +481,7 @@ impl AppState {
         let setup_action_transport = relay_bootstrap.setup_action_transport;
         let shell_output_registry = relay_bootstrap.shell_output_registry;
         let terminal_registry = relay_bootstrap.terminal_registry;
-        let function_runner: Arc<dyn agentdash_spi::FunctionRunner> =
+        let function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner> =
             Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new());
 
         let vfs_bootstrap = crate::bootstrap::vfs::build_vfs_kernel(
@@ -601,9 +600,9 @@ impl AppState {
             .with_presentation_append_handle(workspace_module_presentation_append.clone())
             .with_extension_channel_transport(backend_registry.clone())
             .with_extension_backend_service_transport(backend_registry.clone());
-        let runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider> =
+        let runtime_tool_provider: Arc<dyn agentdash_platform_spi::RuntimeToolProvider> =
             Arc::new(agentdash_application::runtime_tools::SessionRuntimeToolComposer::from_final_catalog_providers([
-                Arc::new(vfs_provider) as Arc<dyn agentdash_spi::connector::RuntimeToolProvider>,
+                Arc::new(vfs_provider) as Arc<dyn agentdash_platform_spi::RuntimeToolProvider>,
                 Arc::new(workflow_provider),
                 Arc::new(collaboration_provider),
                 Arc::new(task_provider),
@@ -886,9 +885,6 @@ impl AppState {
             )?,
         );
         let agent_runtime_host = runtime_composition.host;
-        let agent_runtime_inventory = Arc::new(crate::relay::CloudRemoteRuntimeInventory::new(
-            agent_runtime_host.clone(),
-        ));
         let lifecycle_read_model_query: Arc<dyn LifecycleReadModelQueryPort> = Arc::new(
             LifecycleReadModelQueryAdapter::new(repos.lifecycle_read_model_repos()),
         );
@@ -965,7 +961,6 @@ impl AppState {
                 terminal_application_effect_worker,
                 project_agent_run_list_query,
                 agent_runtime_host,
-                agent_runtime_inventory,
                 runtime_surface_query: runtime_surface_query_port,
                 lifecycle_read_model_query,
                 resource_surface_query,

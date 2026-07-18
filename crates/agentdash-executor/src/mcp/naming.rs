@@ -1,4 +1,4 @@
-use agentdash_spi::platform::tool_capability::{
+use agentdash_platform_spi::platform::tool_capability::{
     CAP_RELAY_MANAGEMENT, CAP_STORY_MANAGEMENT, CAP_WORKFLOW_MANAGEMENT,
 };
 

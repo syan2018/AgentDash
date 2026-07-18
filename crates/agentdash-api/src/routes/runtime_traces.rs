@@ -72,25 +72,25 @@ pub(crate) async fn load_runtime_trace_context_projection(
 /// Content preview 的最大字节数（超过时截断）。
 const CONTEXT_AUDIT_CONTENT_PREVIEW_MAX: usize = 2048;
 
-fn parse_scope_tag(tag: &str) -> Option<agentdash_spi::FragmentScope> {
+fn parse_scope_tag(tag: &str) -> Option<agentdash_platform_spi::FragmentScope> {
     match tag {
-        "runtime_agent" => Some(agentdash_spi::FragmentScope::RuntimeAgent),
-        "title_gen" => Some(agentdash_spi::FragmentScope::TitleGen),
-        "summarizer" => Some(agentdash_spi::FragmentScope::Summarizer),
-        "bridge_replay" => Some(agentdash_spi::FragmentScope::BridgeReplay),
-        "audit" => Some(agentdash_spi::FragmentScope::Audit),
+        "runtime_agent" => Some(agentdash_platform_spi::FragmentScope::RuntimeAgent),
+        "title_gen" => Some(agentdash_platform_spi::FragmentScope::TitleGen),
+        "summarizer" => Some(agentdash_platform_spi::FragmentScope::Summarizer),
+        "bridge_replay" => Some(agentdash_platform_spi::FragmentScope::BridgeReplay),
+        "audit" => Some(agentdash_platform_spi::FragmentScope::Audit),
         _ => None,
     }
 }
 
-fn scope_set_to_tags(scope: agentdash_spi::FragmentScopeSet) -> Vec<String> {
+fn scope_set_to_tags(scope: agentdash_platform_spi::FragmentScopeSet) -> Vec<String> {
     let mut tags = Vec::new();
     for (label, s) in [
-        ("runtime_agent", agentdash_spi::FragmentScope::RuntimeAgent),
-        ("title_gen", agentdash_spi::FragmentScope::TitleGen),
-        ("summarizer", agentdash_spi::FragmentScope::Summarizer),
-        ("bridge_replay", agentdash_spi::FragmentScope::BridgeReplay),
-        ("audit", agentdash_spi::FragmentScope::Audit),
+        ("runtime_agent", agentdash_platform_spi::FragmentScope::RuntimeAgent),
+        ("title_gen", agentdash_platform_spi::FragmentScope::TitleGen),
+        ("summarizer", agentdash_platform_spi::FragmentScope::Summarizer),
+        ("bridge_replay", agentdash_platform_spi::FragmentScope::BridgeReplay),
+        ("audit", agentdash_platform_spi::FragmentScope::Audit),
     ] {
         if scope.contains(s) {
             tags.push(label.to_string());

@@ -19,10 +19,10 @@ use agentdash_application_ports::runtime_session_live::{
     RuntimeSessionHookTargetPort, RuntimeSessionHookTargetRuntimeRequest,
     RuntimeSessionLivePortError,
 };
-use agentdash_spi::hooks::trace::{
+use agentdash_platform_spi::hooks::trace::{
     HookTraceStorageDisposition, hook_trace_entry_storage_disposition,
 };
-use agentdash_spi::hooks::{
+use agentdash_platform_spi::hooks::{
     AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
     AgentFrameRuntimeSnapshot, ContextTokenStats, ExecutionHookProvider, HookControlTarget,
     HookDiagnosticEntry, HookError, HookPendingAction, HookPendingActionResolutionKind,
@@ -85,7 +85,7 @@ impl RuntimeSessionHookTargetPort for AgentRunHookTargetRuntimeAdapter {
     async fn build_hook_runtime(
         &self,
         request: RuntimeSessionHookTargetRuntimeRequest,
-    ) -> Result<Option<agentdash_spi::hooks::SharedHookRuntime>, RuntimeSessionLivePortError> {
+    ) -> Result<Option<agentdash_platform_spi::hooks::SharedHookRuntime>, RuntimeSessionLivePortError> {
         Ok(Some(Arc::new(AgentFrameHookRuntime::new(
             request.control_target.run_id,
             request.control_target.agent_id,
@@ -599,8 +599,8 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    use agentdash_spi::hooks::NoopExecutionHookProvider;
-    use agentdash_spi::hooks::{
+    use agentdash_platform_spi::hooks::NoopExecutionHookProvider;
+    use agentdash_platform_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshotQuery,
         RuntimeAdapterProvenance,
     };

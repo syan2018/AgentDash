@@ -1,8 +1,8 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::workflow::WorkflowHookRuleSpec;
 #[cfg(test)]
-use agentdash_spi::HookEvaluationQuery;
-use agentdash_spi::{
+use agentdash_platform_spi::HookEvaluationQuery;
+use agentdash_platform_spi::{
     AgentFrameHookEvaluationQuery, AgentFrameHookSnapshot, HookControlTarget, HookDiagnosticEntry,
     HookResolution, HookTrigger, RuntimeAdapterProvenance,
 };
@@ -29,7 +29,7 @@ pub(crate) struct HookRuleEvaluationQuery {
     pub(crate) tool_call_id: Option<String>,
     pub(crate) subagent_type: Option<String>,
     pub(crate) payload: Option<serde_json::Value>,
-    pub(crate) token_stats: Option<agentdash_spi::ContextTokenStats>,
+    pub(crate) token_stats: Option<agentdash_platform_spi::ContextTokenStats>,
 }
 
 impl HookRuleEvaluationQuery {
@@ -228,7 +228,7 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_domain::workflow::{EffectiveSessionContract, WorkflowHookRuleSpec};
-    use agentdash_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot, HookInjection, HookTrigger};
+    use agentdash_platform_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot, HookInjection, HookTrigger};
 
     use super::super::presets::builtin_preset_scripts;
     use super::super::test_fixtures::*;
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn enabled_contract_rule_makes_trigger_applicable() {
         let snapshot = AgentFrameHookSnapshot {
-            metadata: Some(agentdash_spi::SessionSnapshotMetadata {
+            metadata: Some(agentdash_platform_spi::SessionSnapshotMetadata {
                 active_workflow: Some(ActiveWorkflowMeta {
                     effective_contract: Some(EffectiveSessionContract {
                         hook_rules: vec![WorkflowHookRuleSpec {
@@ -268,7 +268,7 @@ mod tests {
                     }),
                     ..ActiveWorkflowMeta::default()
                 }),
-                ..agentdash_spi::SessionSnapshotMetadata::default()
+                ..agentdash_platform_spi::SessionSnapshotMetadata::default()
             }),
             ..AgentFrameHookSnapshot::default()
         };
@@ -496,8 +496,8 @@ mod tests {
         let snapshot = AgentFrameHookSnapshot {
             runtime_adapter_session_id: "sess-test".to_string(),
             sources: vec!["workflow:trellis_dev_task:check".to_string()],
-            run_context: Some(agentdash_spi::hooks::SubjectRunContext {
-                scope: agentdash_spi::CapabilityScope::Story,
+            run_context: Some(agentdash_platform_spi::hooks::SubjectRunContext {
+                scope: agentdash_platform_spi::CapabilityScope::Story,
                 project_id: uuid::Uuid::new_v4(),
                 story_id: Some(uuid::Uuid::new_v4()),
                 task_id: None,
@@ -516,8 +516,8 @@ mod tests {
                     source: "workflow:trellis_dev_task:check".to_string(),
                 },
             ],
-            metadata: Some(agentdash_spi::SessionSnapshotMetadata {
-                active_workflow: Some(agentdash_spi::ActiveWorkflowMeta {
+            metadata: Some(agentdash_platform_spi::SessionSnapshotMetadata {
+                active_workflow: Some(agentdash_platform_spi::ActiveWorkflowMeta {
                     effective_contract: Some(EffectiveSessionContract {
                         hook_rules: vec![WorkflowHookRuleSpec {
                             key: "inherit_ctx".to_string(),

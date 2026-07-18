@@ -766,7 +766,7 @@ pub async fn submit_agent_run_composer_input(
     let executor_config = match req
         .executor_config
         .clone()
-        .map(serde_json::from_value::<agentdash_spi::AgentConfig>)
+        .map(serde_json::from_value::<agentdash_platform_spi::AgentConfig>)
         .transpose()
     {
         Ok(config) => config,
@@ -1418,7 +1418,7 @@ async fn fork_submit_agent_run(
     let executor_config = body
         .executor_config
         .clone()
-        .map(serde_json::from_value::<agentdash_spi::AgentConfig>)
+        .map(serde_json::from_value::<agentdash_platform_spi::AgentConfig>)
         .transpose()
         .map_err(|error| ApiError::BadRequest(format!("executor_config 格式错误: {error}")))?;
     let presentation = AgentRunPresentationDraft {
@@ -4101,7 +4101,7 @@ mod composer_submission_http_tests {
         workflow::{AgentFrame, AgentSource, LifecycleAgent, LifecycleRun},
     };
     use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
-    use agentdash_spi::{AgentConfig, AuthIdentity, AuthMode};
+    use agentdash_platform_spi::{AgentConfig, AuthIdentity, AuthMode};
     use async_trait::async_trait;
     use axum::{Extension, Router};
     use serde_json::{Value, json};

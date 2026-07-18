@@ -9,7 +9,7 @@ use agentdash_domain::workflow::{ApiRequestExecutorSpec, BashExecExecutorSpec};
 use agentdash_process::{
     ProcessDomain, background_tokio_command, background_tokio_command_with_cwd,
 };
-use agentdash_spi::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
+use agentdash_platform_spi::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
 use async_trait::async_trait;
 use serde_json::Value;
 

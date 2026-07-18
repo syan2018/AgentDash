@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_spi::hooks::HookContextPresentationFacts;
-use agentdash_spi::{
+use agentdash_platform_spi::hooks::HookContextPresentationFacts;
+use agentdash_platform_spi::{
     HookApprovalRequest, HookCompactionDecision, HookCompletionStatus, HookDiagnosticEntry,
     HookEffect, HookInjection, HookScriptEvaluator,
 };
@@ -340,7 +340,7 @@ mod tests {
     use super::*;
     use crate::rules::HookRuleEvaluationQuery;
     use crate::test_script_evaluator::TestHookScriptEvaluator;
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         AgentFrameHookSnapshot, HookControlTarget, HookEvaluationQuery, HookTrigger,
         RuntimeAdapterProvenance,
     };

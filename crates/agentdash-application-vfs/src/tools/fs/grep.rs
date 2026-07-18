@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -40,14 +40,14 @@ pub struct FsGrepTool {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
 }
 impl FsGrepTool {
     pub fn new(
         service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
@@ -205,7 +205,7 @@ impl AgentTool for FsGrepTool {
                     after_lines,
                     multiline: params.multiline,
                     // service 始终按 Content 收集；output_mode 转换在 tool 层做。
-                    output_mode: agentdash_spi::platform::mount::SearchOutputMode::Content,
+                    output_mode: agentdash_platform_spi::platform::mount::SearchOutputMode::Content,
                 },
             )
             .await
@@ -333,8 +333,8 @@ mod fs_grep_tests {
     use crate::tools::common::SharedRuntimeVfs;
     use crate::{MountProviderRegistry, ReadResult};
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
-    use agentdash_spi::platform::mount::{MountError, MountOperationContext, RuntimeFileEntry};
-    use agentdash_spi::{Mount, MountCapability, Vfs};
+    use agentdash_platform_spi::platform::mount::{MountError, MountOperationContext, RuntimeFileEntry};
+    use agentdash_platform_spi::{Mount, MountCapability, Vfs};
     use agentdash_test_support::inline_file::MemoryInlineFileRepository;
     use serde_json::json;
     use std::sync::Arc;

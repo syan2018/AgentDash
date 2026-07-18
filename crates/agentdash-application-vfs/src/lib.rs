@@ -32,7 +32,7 @@ pub use access_policy::{
 };
 pub use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
 pub use agentdash_application_ports::vfs_surface_runtime::VfsSurfaceRuntimeProjection;
-pub use agentdash_spi::{
+pub use agentdash_platform_spi::{
     RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
     RuntimeVfsPathPattern,
 };

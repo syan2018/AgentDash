@@ -1,4 +1,3 @@
-pub mod connector;
 pub mod context;
 pub mod extension_package;
 pub mod hooks;
@@ -36,23 +35,26 @@ pub use agentdash_domain::common::{
     AgentConfig, AgentPresetConfig, Mount, MountCapability, MountLink, ThinkingLevel, Vfs,
 };
 
-// ─── connector ──────────────────────────────────────────────
+// ─── platform runtime surface ───────────────────────────────
 
 pub use agentdash_domain::backend::{
     MissingRuntimeBackendAnchor, RuntimeBackendAnchor, RuntimeBackendAnchorError,
     RuntimeBackendAnchorSource,
 };
-pub use connector::{
-    CapabilityState, CapabilityStateDelta, ChannelDimension, CompanionDimension, ConnectorError,
-    DefaultMountDelta, DiscoveredGuideline, DiscoveryContext, ExecutionBackendPlacement,
-    ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, ExecutionTurnMode, McpEnvVar,
-    McpHttpHeader, McpServerReadinessSummary, McpTransportConfig, NamedEntityDelta,
+pub use platform::capability_delta::{
+    CapabilityStateDelta, DefaultMountDelta, McpServerReadinessSummary, NamedEntityDelta, SetDelta,
+    VfsSurfaceDelta, compute_capability_state_delta,
+};
+pub use platform::runtime_surface::{
+    CapabilityState, ChannelDimension, CompanionDimension, DiscoveredGuideline, DiscoveryContext,
+    ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame,
+    ExecutionTurnMode, McpEnvVar, McpHttpHeader, McpTransportConfig, PlatformRuntimeError,
     PlatformToolExecutionContext, PlatformToolInvocationCoordinates, PromptPayload,
-    RestoredSessionState, RuntimeMcpServer, RuntimeMcpSourceReadiness, RuntimeVfsAccessPolicy,
-    RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern,
-    SetDelta, SkillClusterMeta, SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension,
-    VfsDimension, VfsSurfaceDelta, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
-    compute_capability_state_delta, partition_runtime_mcp_servers, workspace_path_from_context,
+    RestoredSessionState, RuntimeMcpServer, RuntimeMcpSourceReadiness, RuntimeToolProvider,
+    RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
+    RuntimeVfsPathPattern, SkillClusterMeta, SkillDimension, ToolCapabilityFilter, ToolCluster,
+    ToolDimension, VfsDimension, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
+    partition_runtime_mcp_servers, workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────

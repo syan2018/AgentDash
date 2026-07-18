@@ -1,4 +1,4 @@
-use agentdash_spi::{ExecutionContext, PlatformToolExecutionContext};
+use agentdash_platform_spi::{ExecutionContext, PlatformToolExecutionContext};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +77,7 @@ mod tests {
                     frame_id: Uuid::new_v4(),
                     runtime_thread_id: runtime_id("session-1"),
                     presentation_thread_id: "presentation-1".parse().expect("presentation thread"),
-                    invocation: Some(agentdash_spi::PlatformToolInvocationCoordinates {
+                    invocation: Some(agentdash_platform_spi::PlatformToolInvocationCoordinates {
                         runtime_turn_id: runtime_id("turn-1"),
                         runtime_item_id: runtime_id("item-1"),
                         presentation_item_id: runtime_id("turn-1:tool-1"),

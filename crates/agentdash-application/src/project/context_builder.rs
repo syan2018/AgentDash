@@ -1,5 +1,5 @@
 use agentdash_domain::{project::Project, workspace::Workspace};
-use agentdash_spi::{ContextFragment, FragmentScope, FragmentScopeSet, MergeStrategy};
+use agentdash_platform_spi::{ContextFragment, FragmentScope, FragmentScopeSet, MergeStrategy};
 
 use crate::context::{Contribution, trim_or_dash, workspace_context_fragment};
 
@@ -63,7 +63,7 @@ pub fn contribute_project_context(input: ProjectContextBuildInput<'_>) -> Contri
 #[cfg(test)]
 mod tests {
     use agentdash_domain::project::Project;
-    use agentdash_spi::FragmentScope;
+    use agentdash_platform_spi::FragmentScope;
 
     use super::*;
 

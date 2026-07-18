@@ -9,7 +9,7 @@ use agentdash_domain::shared_library::{
 use agentdash_domain::skill_asset::{
     SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository, SkillAssetSource,
 };
-use agentdash_spi::{
+use agentdash_platform_spi::{
     RemoteSkillFetch, RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource,
     RemoteSkillSourceError,
 };

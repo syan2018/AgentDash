@@ -46,8 +46,6 @@ pub struct CapabilitiesPayload {
     pub mcp_servers: Vec<McpServerInfoRelay>,
     #[serde(default)]
     pub capability_health: Vec<CapabilityHealthItemRelay>,
-    #[serde(default)]
-    pub agent_runtime_offers: Vec<crate::RuntimeOfferAdvertisement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

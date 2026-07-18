@@ -42,7 +42,7 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-pub use crate::connector::SetDelta;
+pub use crate::platform::capability_delta::SetDelta;
 
 /// Session 的 run-derived 业务上下文。
 ///

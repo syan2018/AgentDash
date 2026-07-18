@@ -7,7 +7,7 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentProcedure, AgentProcedureContract, AgentProcedureExecutionSpec, ExecutorSpec,
     LifecycleAgent, LifecycleRun,
 };
-use agentdash_spi::ConnectorError;
+use agentdash_platform_spi::PlatformRuntimeError;
 
 use crate::agent_run::frame::AgentFrameSurfaceExt;
 use crate::agent_run::frame::FrameLaunchEnvelope;
@@ -24,7 +24,7 @@ pub(super) async fn compose(
     agent: LifecycleAgent,
     run: LifecycleRun,
     input: &FrameLaunchEnvelopeConstructionInput,
-) -> Result<FrameLaunchEnvelope, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
     let command = &input.command;
     let association = agentdash_application_lifecycle::resolve_activity_runtime_association_from_message_stream_trace(
         input.session_id.as_str(),
@@ -36,7 +36,7 @@ pub(super) async fn compose(
         .await
         .map_err(connector_internal)?
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
+            PlatformRuntimeError::InvalidConfig(format!(
                 "RuntimeSession {} 缺少 lifecycle runtime association",
                 input.session_id
             ))
@@ -49,7 +49,7 @@ pub(super) async fn compose(
         .iter()
         .find(|item| item.orchestration_id == orchestration_id)
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
+            PlatformRuntimeError::InvalidConfig(format!(
                 "LifecycleRun {} 中不存在 orchestration {}",
                 run.id, orchestration_id
             ))
@@ -60,7 +60,7 @@ pub(super) async fn compose(
         .iter()
         .find(|item| item.node_path == node_path)
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
+            PlatformRuntimeError::InvalidConfig(format!(
                 "Orchestration {} 中不存在 node_path `{}`",
                 orchestration_id, node_path
             ))
@@ -109,7 +109,7 @@ pub(super) async fn compose(
         Some(&agent.id.to_string()),
     )
     .await
-    .map_err(ConnectorError::InvalidConfig)?;
+    .map_err(PlatformRuntimeError::InvalidConfig)?;
 
     svc.compose_pending_frame(
         builder,

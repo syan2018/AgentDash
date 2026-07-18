@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_spi::context::capability::{
+use agentdash_platform_spi::context::capability::{
     SessionBaselineCapabilities, SkillCapabilityEntry, SkillEntry, SkillProviderCluster,
 };
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AuthIdentity, CapabilityState, DiscoveredGuideline, DiscoveredSkill, MemoryDiscoveryContext,
     MemoryDiscoveryDiagnostic, MemoryDiscoveryMount, MemoryDiscoveryOutput,
     MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
@@ -428,7 +428,7 @@ fn memory_discovery_mounts_from_vfs(vfs: &Vfs) -> Vec<MemoryDiscoveryMount> {
 }
 
 fn sanitized_memory_mount_metadata_summary(
-    mount: &agentdash_spi::Mount,
+    mount: &agentdash_platform_spi::Mount,
 ) -> Option<serde_json::Value> {
     let metadata = mount.metadata.as_object()?;
     let mut summary = serde_json::Map::new();
@@ -524,7 +524,7 @@ pub fn normalize_capability_state_dimensions(
     state.skill.cluster_meta = session_capabilities
         .skill_clusters
         .iter()
-        .map(|c| agentdash_spi::SkillClusterMeta {
+        .map(|c| agentdash_platform_spi::SkillClusterMeta {
             provider_key: c.provider_key.clone(),
             display_name: c.display_name.clone(),
             model_summary: c.model_summary.clone(),
@@ -896,18 +896,18 @@ mod tests {
 
     fn identity_for_projection() -> AuthIdentity {
         AuthIdentity {
-            auth_mode: agentdash_spi::AuthMode::Enterprise,
+            auth_mode: agentdash_platform_spi::AuthMode::Enterprise,
             user_id: "user-123".to_string(),
             subject: "subject-123".to_string(),
             display_name: Some("Ada Lovelace".to_string()),
             email: Some("ada@example.com".to_string()),
             avatar_url: Some("https://example.com/avatar.png".to_string()),
             groups: vec![
-                agentdash_spi::AuthGroup {
+                agentdash_platform_spi::AuthGroup {
                     group_id: "gameplay".to_string(),
                     display_name: Some("Gameplay".to_string()),
                 },
-                agentdash_spi::AuthGroup {
+                agentdash_platform_spi::AuthGroup {
                     group_id: "tools".to_string(),
                     display_name: None,
                 },
@@ -1056,8 +1056,8 @@ mod tests {
             "test.memory"
         }
 
-        fn vfs_discovery_rules(&self) -> Vec<agentdash_spi::MemoryDiscoveryVfsRule> {
-            let mut rule = agentdash_spi::MemoryDiscoveryVfsRule::new("memory-index");
+        fn vfs_discovery_rules(&self) -> Vec<agentdash_platform_spi::MemoryDiscoveryVfsRule> {
+            let mut rule = agentdash_platform_spi::MemoryDiscoveryVfsRule::new("memory-index");
             rule.exact_paths = vec!["MEMORY.md".to_string()];
             rule.max_size_bytes = self.max_size_bytes;
             vec![rule]
@@ -1067,8 +1067,8 @@ mod tests {
             &self,
             _context: MemoryDiscoveryContext,
             mounts: Vec<MemoryDiscoveryMount>,
-            files: Vec<agentdash_spi::MemoryDiscoveryVfsFile>,
-        ) -> Result<MemoryDiscoveryOutput, agentdash_spi::MemoryDiscoveryError> {
+            files: Vec<agentdash_platform_spi::MemoryDiscoveryVfsFile>,
+        ) -> Result<MemoryDiscoveryOutput, agentdash_platform_spi::MemoryDiscoveryError> {
             let Some(agent_mount) = mounts.into_iter().find(|mount| mount.mount_id == "agent")
             else {
                 return Ok(MemoryDiscoveryOutput::default());
@@ -1077,25 +1077,25 @@ mod tests {
                 .into_iter()
                 .find(|file| file.mount_id == "agent" && file.path == "MEMORY.md");
             Ok(MemoryDiscoveryOutput {
-                clusters: vec![agentdash_spi::MemoryDiscoveryCluster {
+                clusters: vec![agentdash_platform_spi::MemoryDiscoveryCluster {
                     provider_key: "test.memory".to_string(),
                     display_name: "Test Memory".to_string(),
-                    sources: vec![agentdash_spi::DiscoveredMemorySource {
+                    sources: vec![agentdash_platform_spi::DiscoveredMemorySource {
                         provider_key: "test.memory".to_string(),
                         source_key: "agent".to_string(),
                         display_name: agent_mount.display_name,
                         source_uri: "agent://".to_string(),
                         index_uri: "agent://MEMORY.md".to_string(),
                         mount_id: "agent".to_string(),
-                        scope: agentdash_spi::MemorySourceScope::Agent,
+                        scope: agentdash_platform_spi::MemorySourceScope::Agent,
                         capabilities: agent_mount.capabilities,
-                        format: agentdash_spi::MemorySourceFormat::AgentDash,
+                        format: agentdash_platform_spi::MemorySourceFormat::AgentDash,
                         index_status: if index_file.is_some() {
                             MemoryIndexStatus::Present
                         } else {
                             MemoryIndexStatus::Missing
                         },
-                        trust_level: agentdash_spi::MemorySourceTrustLevel::FirstParty,
+                        trust_level: agentdash_platform_spi::MemorySourceTrustLevel::FirstParty,
                         summary: None,
                         bounded_index_content: index_file.map(|file| file.content),
                     }],
@@ -1115,7 +1115,7 @@ mod tests {
         async fn discover(
             &self,
             context: SkillDiscoveryContext,
-        ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
+        ) -> Result<SkillDiscoveryOutput, agentdash_platform_spi::SkillDiscoveryError> {
             *self.context.lock().expect("context lock") = Some(context);
             Ok(SkillDiscoveryOutput::default())
         }
@@ -1129,8 +1129,8 @@ mod tests {
             "test.vfs"
         }
 
-        fn vfs_discovery_rules(&self) -> Vec<agentdash_spi::SkillDiscoveryVfsRule> {
-            let mut rule = agentdash_spi::SkillDiscoveryVfsRule::new("skill-md");
+        fn vfs_discovery_rules(&self) -> Vec<agentdash_platform_spi::SkillDiscoveryVfsRule> {
+            let mut rule = agentdash_platform_spi::SkillDiscoveryVfsRule::new("skill-md");
             rule.exact_paths = vec!["skills/review/SKILL.md".to_string()];
             vec![rule]
         }
@@ -1138,8 +1138,8 @@ mod tests {
         async fn discover_from_vfs(
             &self,
             _context: SkillDiscoveryContext,
-            files: Vec<agentdash_spi::SkillDiscoveryVfsFile>,
-        ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
+            files: Vec<agentdash_platform_spi::SkillDiscoveryVfsFile>,
+        ) -> Result<SkillDiscoveryOutput, agentdash_platform_spi::SkillDiscoveryError> {
             let skills = files
                 .into_iter()
                 .map(|file| {
@@ -1169,7 +1169,7 @@ mod tests {
         async fn discover(
             &self,
             _context: SkillDiscoveryContext,
-        ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
+        ) -> Result<SkillDiscoveryOutput, agentdash_platform_spi::SkillDiscoveryError> {
             Ok(SkillDiscoveryOutput::default())
         }
     }

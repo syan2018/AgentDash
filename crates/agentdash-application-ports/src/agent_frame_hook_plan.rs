@@ -1,7 +1,7 @@
 use agentdash_agent_runtime_contract::{
     HookDefinitionId, HookExecutionSite, HookPlanDigest, HookPlanRevision, HookRequirement,
 };
-use agentdash_spi::{HookControlTarget, RuntimeAdapterProvenance};
+use agentdash_platform_spi::{HookControlTarget, RuntimeAdapterProvenance};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

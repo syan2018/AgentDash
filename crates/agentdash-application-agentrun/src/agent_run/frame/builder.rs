@@ -16,7 +16,7 @@
 use agentdash_application_ports::lifecycle_surface_projection::ActivityActivation;
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
-use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, SessionContextBundle, Vfs};
+use agentdash_platform_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::runtime_capability::{
@@ -321,7 +321,7 @@ mod tests {
     use agentdash_application_ports::lifecycle_surface_projection::KickoffPromptFragment;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::MountDirective;
-    use agentdash_spi::{McpTransportConfig, SessionContextBundle, ToolCluster};
+    use agentdash_platform_spi::{McpTransportConfig, SessionContextBundle, ToolCluster};
     use std::{collections::BTreeSet, sync::Mutex};
 
     #[derive(Default)]

@@ -13,7 +13,7 @@ use agentdash_domain::canvas::{
 use agentdash_domain::common::{Mount, MountCapability};
 use agentdash_domain::project::{ProjectAuthorization, ProjectAuthorizationContext};
 use agentdash_domain::workflow::AgentFrameRepository;
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AuthIdentity, CapabilityState, RuntimeVfsAccessPolicy, RuntimeVfsAccessSource, Vfs,
 };
 use agentdash_workspace_module::canvas::{
@@ -42,7 +42,7 @@ pub struct AgentRunRuntimeSurfaceUpdateService {
     vfs_service: Option<Arc<VfsService>>,
     active_adopter: Arc<dyn RuntimeSurfaceAdoptionPort>,
     extra_skill_dirs: Vec<PathBuf>,
-    skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
+    skill_discovery_providers: Vec<Arc<dyn agentdash_platform_spi::SkillDiscoveryProvider>>,
 }
 
 #[derive(Clone)]
@@ -52,7 +52,7 @@ pub struct AgentRunRuntimeSurfaceUpdateDeps {
     pub vfs_service: Option<Arc<VfsService>>,
     pub active_adopter: Arc<dyn RuntimeSurfaceAdoptionPort>,
     pub extra_skill_dirs: Vec<PathBuf>,
-    pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
+    pub skill_discovery_providers: Vec<Arc<dyn agentdash_platform_spi::SkillDiscoveryProvider>>,
 }
 
 impl AgentRunRuntimeSurfaceUpdateService {
@@ -255,7 +255,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         &self,
         active_vfs: &Vfs,
         identity: Option<&AuthIdentity>,
-    ) -> Option<Vec<agentdash_spi::context::capability::SkillEntry>> {
+    ) -> Option<Vec<agentdash_platform_spi::context::capability::SkillEntry>> {
         derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
             vfs_service: self.vfs_service.as_deref(),
             active_vfs: Some(active_vfs),
@@ -496,7 +496,7 @@ mod tests {
     use agentdash_domain::canvas::{Canvas, CanvasDataBinding};
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         AgentConfig, AuthIdentity, AuthMode, RuntimeMcpServer, RuntimeVfsAccessPolicy,
         RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern,
         ToolCluster,
@@ -1009,7 +1009,7 @@ mod tests {
         vfs: Vfs,
         identity: Option<AuthIdentity>,
     ) -> AgentRunRuntimeSurface {
-        let vfs_access_policy = agentdash_spi::RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs);
+        let vfs_access_policy = agentdash_platform_spi::RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs);
         AgentRunRuntimeSurface {
             runtime_session_id: runtime_session_id.to_string(),
             presentation_thread_id: format!("presentation-{runtime_session_id}")

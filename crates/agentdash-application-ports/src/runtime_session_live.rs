@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use agentdash_agent_protocol::UserInputBlock;
 use agentdash_agent_types::DynRuntimeTurnBoundaryDelegate;
-use agentdash_spi::CapabilityState;
-use agentdash_spi::hooks::{
+use agentdash_platform_spi::CapabilityState;
+use agentdash_platform_spi::hooks::{
     AgentFrameHookSnapshot, ExecutionHookProvider, HookControlTarget, SharedHookRuntime,
 };
 use async_trait::async_trait;

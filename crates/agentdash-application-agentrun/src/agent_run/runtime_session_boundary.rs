@@ -4,15 +4,15 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, UserInputBlock, UserInputSource, UserInputSubmissionKind,
 };
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
-use agentdash_spi::ConnectorError;
-use agentdash_spi::context::capability::{
+use agentdash_platform_spi::PlatformRuntimeError;
+use agentdash_platform_spi::context::capability::{
     SessionBaselineCapabilities, SkillEntry, SkillProviderCluster,
 };
 use async_trait::async_trait;
 
 use crate::error::WorkflowApplicationError;
 
-pub use agentdash_spi::session_persistence::{
+pub use agentdash_platform_spi::session_persistence::{
     PersistedSessionEvent, RuntimeCommandRecord, SessionEventPage, SessionMeta, SessionStoreError,
 };
 
@@ -170,7 +170,7 @@ impl SessionCoreService {
 pub trait RuntimeSessionControlPort: Send + Sync {
     async fn supports_session_steering(&self, session_id: &str) -> bool;
 
-    async fn steer_session(&self, command: SessionTurnSteerCommand) -> Result<(), ConnectorError>;
+    async fn steer_session(&self, command: SessionTurnSteerCommand) -> Result<(), PlatformRuntimeError>;
 }
 
 #[derive(Clone)]
@@ -190,7 +190,7 @@ impl SessionControlService {
     pub async fn steer_session(
         &self,
         command: SessionTurnSteerCommand,
-    ) -> Result<(), ConnectorError> {
+    ) -> Result<(), PlatformRuntimeError> {
         self.port.steer_session(command).await
     }
 }
@@ -336,7 +336,7 @@ pub const INTEGRATION_STATIC_SKILL_PROVIDER_KEY: &str = "integration-static";
 
 pub fn build_session_baseline_capabilities_from_clusters(
     skill_clusters: Vec<SkillProviderCluster>,
-    skill_diagnostics: Vec<agentdash_spi::SkillDiscoveryDiagnostic>,
+    skill_diagnostics: Vec<agentdash_platform_spi::SkillDiscoveryDiagnostic>,
 ) -> SessionBaselineCapabilities {
     let skills = skill_clusters
         .iter()

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_spi::connector::RuntimeToolProvider;
-use agentdash_spi::platform::tool_capability::CAP_WORKFLOW;
-use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext, ToolCluster};
+use agentdash_platform_spi::RuntimeToolProvider;
+use agentdash_platform_spi::platform::tool_capability::CAP_WORKFLOW;
+use agentdash_platform_spi::{PlatformRuntimeError, DynAgentTool, ExecutionContext, ToolCluster};
 use async_trait::async_trait;
 
 use crate::lifecycle::LifecycleOrchestratorDeps;
@@ -14,14 +14,14 @@ use crate::lifecycle::tools::advance_node::{
 pub struct WorkflowRuntimeToolProvider {
     orchestrator_deps: LifecycleOrchestratorDeps,
     session_services_handle: SharedSessionToolServicesHandle,
-    function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
+    function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner>,
 }
 
 impl WorkflowRuntimeToolProvider {
     pub fn new(
         orchestrator_deps: LifecycleOrchestratorDeps,
         session_services_handle: SharedSessionToolServicesHandle,
-        function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
+        function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner>,
     ) -> Self {
         Self {
             orchestrator_deps,
@@ -36,7 +36,7 @@ impl RuntimeToolProvider for WorkflowRuntimeToolProvider {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
-    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
+    ) -> Result<Vec<DynAgentTool>, PlatformRuntimeError> {
         let flow = &context.turn.capability_state;
         if !flow.tool.enabled_clusters.contains(&ToolCluster::Workflow)
             || !flow.is_capability_tool_enabled(

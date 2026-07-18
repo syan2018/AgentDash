@@ -227,7 +227,7 @@ impl LifecycleGateResolver {
             "parent_session_id": command.parent_runtime_thread_id,
             "parent_runtime_thread_id": command.parent_runtime_thread_id,
             "request_type": "review",
-            "adoption_mode": agentdash_spi::action_type::FOLLOW_UP_REQUIRED,
+            "adoption_mode": agentdash_platform_spi::action_type::FOLLOW_UP_REQUIRED,
             "status": "pending",
             "summary": command.message,
             "turn_id": command.turn_id,

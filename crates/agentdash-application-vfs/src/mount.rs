@@ -26,12 +26,12 @@ pub enum SessionMountTarget {
     Task,
 }
 
-impl From<agentdash_spi::CapabilityScope> for SessionMountTarget {
-    fn from(scope: agentdash_spi::CapabilityScope) -> Self {
+impl From<agentdash_platform_spi::CapabilityScope> for SessionMountTarget {
+    fn from(scope: agentdash_platform_spi::CapabilityScope) -> Self {
         match scope {
-            agentdash_spi::CapabilityScope::Project => Self::Project,
-            agentdash_spi::CapabilityScope::Story => Self::Story,
-            agentdash_spi::CapabilityScope::Task => Self::Task,
+            agentdash_platform_spi::CapabilityScope::Project => Self::Project,
+            agentdash_platform_spi::CapabilityScope::Story => Self::Story,
+            agentdash_platform_spi::CapabilityScope::Task => Self::Task,
         }
     }
 }

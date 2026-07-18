@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{ActivityDefinition, AgentProcedureContract};
-use agentdash_spi::{AgentConfig, Vfs};
+use agentdash_platform_spi::{AgentConfig, Vfs};
 
 use crate::agent_frame_materialization::{
     AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError,

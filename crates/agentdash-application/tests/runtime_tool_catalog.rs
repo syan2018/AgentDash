@@ -46,8 +46,8 @@ use agentdash_domain::workflow::{
     PlanNode, PlanNodeKind, RuntimeNodeState, RuntimeNodeStatus,
 };
 use agentdash_infrastructure::*;
-use agentdash_spi::connector::RuntimeToolProvider;
-use agentdash_spi::{
+use agentdash_platform_spi::RuntimeToolProvider;
+use agentdash_platform_spi::{
     AgentConfig, AgentFrameHookSnapshot, ApiRequestOutcome, BashExecOutcome, CapabilityState,
     ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, FunctionRunner,
     NoopExecutionHookProvider, RuntimeVfsAccessPolicy, ToolCapability, ToolCluster, Vfs,
@@ -331,7 +331,7 @@ fn execution_context_for_owner(
                 Arc::new(NoopExecutionHookProvider),
                 AgentFrameHookSnapshot::default(),
             ))),
-            platform_tool_execution: Some(agentdash_spi::PlatformToolExecutionContext {
+            platform_tool_execution: Some(agentdash_platform_spi::PlatformToolExecutionContext {
                 run_id,
                 project_id,
                 agent_id,
@@ -340,7 +340,7 @@ fn execution_context_for_owner(
                 presentation_thread_id: presentation_thread_id
                     .parse()
                     .expect("presentation thread"),
-                invocation: Some(agentdash_spi::PlatformToolInvocationCoordinates {
+                invocation: Some(agentdash_platform_spi::PlatformToolInvocationCoordinates {
                     runtime_turn_id: "turn-production-catalog".parse().expect("runtime turn"),
                     runtime_item_id: "item-production-catalog".parse().expect("runtime item"),
                     presentation_item_id: "turn-production-catalog:tool-production-catalog"
@@ -886,7 +886,7 @@ fn load_main_tool_scenarios() -> Vec<ToolProjectionScenario> {
     serde_json::from_slice(&json).unwrap()
 }
 
-fn contribution_from_production_tool(tool: &dyn agentdash_spi::AgentTool) -> ToolContribution {
+fn contribution_from_production_tool(tool: &dyn agentdash_platform_spi::AgentTool) -> ToolContribution {
     let projection = match tool.protocol_projector().expect("owner projector") {
         agentdash_agent_types::ToolProtocolProjector::Command => ToolProtocolProjection::Command,
         agentdash_agent_types::ToolProtocolProjector::FileChange => {

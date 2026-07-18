@@ -15,8 +15,8 @@ use agentdash_domain::common::{Mount, MountCapability};
 use agentdash_domain::workflow::{
     AgentSource, LifecycleAgent, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
 };
-use agentdash_spi::session_persistence::SessionStoreResult;
-use agentdash_spi::{
+use agentdash_platform_spi::session_persistence::SessionStoreResult;
+use agentdash_platform_spi::{
     PersistedSessionEvent, SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord,
     SessionCompactionStatus, SessionCompactionStore, SessionMeta, SessionMetaStore,
 };

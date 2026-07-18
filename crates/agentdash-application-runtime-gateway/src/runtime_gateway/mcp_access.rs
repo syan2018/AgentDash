@@ -8,7 +8,7 @@ use agentdash_application_ports::runtime_gateway_mcp_surface::{
     RuntimeGatewayMcpSurfaceQueryError, RuntimeGatewayMcpSurfaceQueryPort,
     RuntimeGatewayMcpSurfaceQueryPurpose, RuntimeGatewayMcpSurfaceWithBackend,
 };
-use agentdash_spi::{ConnectorError, RelayMcpCallContext};
+use agentdash_platform_spi::{PlatformRuntimeError, RelayMcpCallContext};
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -142,17 +142,17 @@ fn runtime_surface_query_error_to_mcp(
     RuntimeSessionMcpError::SessionUnavailable(error.to_string())
 }
 
-fn runtime_mcp_error_from_connector(error: ConnectorError) -> RuntimeSessionMcpError {
+fn runtime_mcp_error_from_connector(error: PlatformRuntimeError) -> RuntimeSessionMcpError {
     match error {
-        ConnectorError::Runtime(message) | ConnectorError::InvalidConfig(message) => {
+        PlatformRuntimeError::Runtime(message) | PlatformRuntimeError::InvalidConfig(message) => {
             RuntimeSessionMcpError::SessionUnavailable(message)
         }
-        ConnectorError::ConnectionFailed(message) => {
+        PlatformRuntimeError::ConnectionFailed(message) => {
             RuntimeSessionMcpError::DiscoveryFailed(message)
         }
-        ConnectorError::SpawnFailed(message) => RuntimeSessionMcpError::DiscoveryFailed(message),
-        ConnectorError::Io(error) => RuntimeSessionMcpError::DiscoveryFailed(error.to_string()),
-        ConnectorError::Json(error) => RuntimeSessionMcpError::DiscoveryFailed(error.to_string()),
+        PlatformRuntimeError::SpawnFailed(message) => RuntimeSessionMcpError::DiscoveryFailed(message),
+        PlatformRuntimeError::Io(error) => RuntimeSessionMcpError::DiscoveryFailed(error.to_string()),
+        PlatformRuntimeError::Json(error) => RuntimeSessionMcpError::DiscoveryFailed(error.to_string()),
     }
 }
 
@@ -167,7 +167,7 @@ mod tests {
     use agentdash_application_ports::runtime_gateway_mcp_surface::RuntimeGatewayMcpSurface;
     use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorSource};
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         CapabilityState, McpTransportConfig, RuntimeMcpServer, RuntimeVfsAccessPolicy,
         ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs,
     };
@@ -238,7 +238,7 @@ mod tests {
         async fn discover_tool_entries(
             &self,
             request: McpToolDiscoveryRequest,
-        ) -> Result<McpToolDiscoveryOutcome, ConnectorError> {
+        ) -> Result<McpToolDiscoveryOutcome, PlatformRuntimeError> {
             *self
                 .captured_backend
                 .lock()
@@ -260,7 +260,7 @@ mod tests {
         async fn discover_tool_entries(
             &self,
             request: McpToolDiscoveryRequest,
-        ) -> Result<McpToolDiscoveryOutcome, ConnectorError> {
+        ) -> Result<McpToolDiscoveryOutcome, PlatformRuntimeError> {
             Ok(McpToolDiscoveryOutcome {
                 tools: entries_for_request(&request, true),
                 sources: Vec::new(),

@@ -1,7 +1,7 @@
 use agentdash_relay::{
     McpEnvVarRelay, McpHttpHeaderRelay, McpServerRelay, McpTransportConfigRelay,
 };
-use agentdash_spi::{McpEnvVar, McpHttpHeader, McpTransportConfig, RuntimeMcpServer};
+use agentdash_platform_spi::{McpEnvVar, McpHttpHeader, McpTransportConfig, RuntimeMcpServer};
 
 pub fn runtime_mcp_server_to_relay(server: &RuntimeMcpServer) -> McpServerRelay {
     mcp_server_parts_to_relay(&server.name, &server.transport)

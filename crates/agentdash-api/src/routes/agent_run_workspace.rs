@@ -38,7 +38,7 @@ pub(crate) async fn load(
     state: &AppState,
     run: LifecycleRun,
     agent: LifecycleAgent,
-    current_user: &agentdash_spi::AuthIdentity,
+    current_user: &agentdash_platform_spi::AuthIdentity,
 ) -> Result<AgentRunWorkspaceView, ApiError> {
     let runtime_projection = ApiVfsSurfaceRuntimeProjection::new(
         state.services.backend_registry.clone(),

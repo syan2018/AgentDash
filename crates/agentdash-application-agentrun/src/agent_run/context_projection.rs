@@ -15,7 +15,7 @@ use agentdash_contracts::session::{
     SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
     SessionToolContextContributionResponse,
 };
-use agentdash_spi::context_usage_kind;
+use agentdash_platform_spi::context_usage_kind;
 use serde::Deserialize;
 
 use super::{AgentRunJournalEvent, AgentRunJournalQuery, AgentRunJournalService};

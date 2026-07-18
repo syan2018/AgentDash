@@ -1,11 +1,11 @@
 use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
 use agentdash_domain::story::Story;
-use agentdash_spi::{
+use agentdash_platform_spi::{
     CapabilityScope, ContextFragment, FragmentScope, FragmentScopeSet, MergeStrategy,
 };
 use serde::Serialize;
 
-use agentdash_spi::{Mount, MountCapability, Vfs};
+use agentdash_platform_spi::{Mount, MountCapability, Vfs};
 
 use crate::runtime::McpServerSummary;
 

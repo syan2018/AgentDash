@@ -64,7 +64,7 @@ crates/
 ├── agentdash-infrastructure/      # 基础设施层（PostgreSQL + SQLite 实现）
 ├── agentdash-api/                 # 接口层（HTTP 路由、DTO、中间件）
 ├── agentdash-executor/            # 执行器（连接器、hook runtime）
-├── agentdash-spi/                 # SPI（Connector / Hook trait）
+├── agentdash-platform-spi/                 # 平台能力、工具与 Hook SPI
 ├── agentdash-agent/               # Agent Loop 引擎
 ├── agentdash-agent-types/         # Agent 领域通用类型
 ├── agentdash-mcp/                 # MCP Server 实现

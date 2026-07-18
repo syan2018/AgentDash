@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use agentdash_agent_types::DynAgentTool;
-use agentdash_spi::{
-    CapabilityState, ConnectorError, RelayMcpCallContext, RuntimeMcpServer,
+use agentdash_platform_spi::{
+    CapabilityState, PlatformRuntimeError, RelayMcpCallContext, RuntimeMcpServer,
     RuntimeMcpSourceReadiness,
 };
 
@@ -55,5 +55,5 @@ pub trait McpToolDiscovery: Send + Sync {
     async fn discover_tool_entries(
         &self,
         request: McpToolDiscoveryRequest,
-    ) -> Result<McpToolDiscoveryOutcome, ConnectorError>;
+    ) -> Result<McpToolDiscoveryOutcome, PlatformRuntimeError>;
 }

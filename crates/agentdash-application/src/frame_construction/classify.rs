@@ -3,7 +3,7 @@
 //! Companion 不是顶层互斥 route；它只能在 owner route 已经明确后作为 modifier 应用。
 
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
-use agentdash_spi::ConnectorError;
+use agentdash_platform_spi::PlatformRuntimeError;
 
 use crate::agent_run::frame::FrameLaunchEnvelope;
 use crate::agent_run::frame::FrameLaunchEnvelopeConstructionInput;
@@ -26,7 +26,7 @@ pub(super) async fn route_and_compose(
     agent: LifecycleAgent,
     run: LifecycleRun,
     input: FrameLaunchEnvelopeConstructionInput,
-) -> Result<FrameLaunchEnvelope, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
     let has_orchestration = if agent.project_agent_id.is_some() {
         false
     } else {
@@ -52,7 +52,7 @@ pub(super) async fn route_and_compose(
             .await;
         }
         (Some(ComposeRoute::LifecycleNode), Some(_)) => {
-            return Err(ConnectorError::InvalidConfig(format!(
+            return Err(PlatformRuntimeError::InvalidConfig(format!(
                 "RuntimeSession {} 的 LifecycleNode owner 收到 companion modifier，但缺少 companion.workflow owner facts",
                 input.session_id
             )));
@@ -61,7 +61,7 @@ pub(super) async fn route_and_compose(
             return super::composer_workflow_node::compose(svc, &frame, agent, run, &input).await;
         }
         (Some(ComposeRoute::ExistingSurface), Some(_)) => {
-            return Err(ConnectorError::InvalidConfig(format!(
+            return Err(PlatformRuntimeError::InvalidConfig(format!(
                 "RuntimeSession {} 的 ExistingSurface owner 不支持 companion modifier：缺少 ProjectAgent 或 LifecycleNode owner facts",
                 input.session_id
             )));
@@ -80,7 +80,7 @@ pub(super) async fn route_and_compose(
             return Ok(envelope);
         }
         (None, Some(_)) => {
-            return Err(ConnectorError::InvalidConfig(format!(
+            return Err(PlatformRuntimeError::InvalidConfig(format!(
                 "AgentFrame {} 无法判定 owner route，拒绝仅凭 companion modifier 启动",
                 frame.id
             )));
@@ -88,7 +88,7 @@ pub(super) async fn route_and_compose(
         (None, None) => {}
     }
 
-    Err(ConnectorError::InvalidConfig(format!(
+    Err(PlatformRuntimeError::InvalidConfig(format!(
         "AgentFrame {} 缺少 launch surface，且无法从 lifecycle anchor 推导 compose 路径",
         frame.id
     )))
@@ -119,7 +119,7 @@ fn classify_owner_route(
 async fn has_orchestration_anchor(
     svc: &FrameConstructionService,
     runtime_session_id: &str,
-) -> Result<bool, ConnectorError> {
+) -> Result<bool, PlatformRuntimeError> {
     let association = agentdash_application_lifecycle::resolve_activity_runtime_association_from_message_stream_trace(
         runtime_session_id,
         svc.repos.agent_frame_repo.as_ref(),

@@ -20,7 +20,7 @@ agentdash-workspace-module = { workspace = true }
 agentdash-contracts = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-relay = { workspace = true }
-agentdash-spi = { workspace = true }
+agentdash-platform-spi = { workspace = true }
 walkdir = "2.5"
 agentdash-agent-protocol = { workspace = true }
 serde = { workspace = true }

@@ -146,7 +146,7 @@ pub async fn create_project_agent_run(
     let executor_config_override = req
         .executor_config
         .clone()
-        .map(serde_json::from_value::<agentdash_spi::AgentConfig>)
+        .map(serde_json::from_value::<agentdash_platform_spi::AgentConfig>)
         .transpose()
         .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
     let backend_selection = req
@@ -444,8 +444,8 @@ fn conversation_effective_executor_config_to_contract(
     }
 }
 
-fn thinking_level_response(level: agentdash_spi::ThinkingLevel) -> ThinkingLevel {
-    use agentdash_spi::ThinkingLevel as SpiThinkingLevel;
+fn thinking_level_response(level: agentdash_platform_spi::ThinkingLevel) -> ThinkingLevel {
+    use agentdash_platform_spi::ThinkingLevel as SpiThinkingLevel;
 
     match level {
         SpiThinkingLevel::Off => ThinkingLevel::Off,

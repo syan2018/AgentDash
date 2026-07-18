@@ -11,12 +11,12 @@ use agentdash_domain::workflow::{
     ToolCapabilityDirective, ToolCapabilityReduction, ToolCapabilitySlotState,
     reduce_tool_capability_directives,
 };
-use agentdash_spi::context::capability::CompanionAgentEntry;
-use agentdash_spi::platform::tool_capability::{
+use agentdash_platform_spi::context::capability::CompanionAgentEntry;
+use agentdash_platform_spi::platform::tool_capability::{
     self, CAP_COLLABORATION, CAP_WORKFLOW, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS,
 };
-use agentdash_spi::{CapabilityScopeCtx, McpInjectionConfig};
-use agentdash_spi::{CapabilityState, CompanionSliceMode, ToolCapabilityFilter, ToolCluster};
+use agentdash_platform_spi::{CapabilityScopeCtx, McpInjectionConfig};
+use agentdash_platform_spi::{CapabilityState, CompanionSliceMode, ToolCapabilityFilter, ToolCluster};
 
 use crate::platform_config::PlatformConfig;
 
@@ -289,7 +289,7 @@ impl CapabilityResolver {
         // baseline：只包含 well-known key 的 agent-level 能力
         let mut effective_caps = default_visible_capabilities(&input.owner_ctx, &merged);
 
-        let mut resolved_mcp_servers = Vec::<agentdash_spi::RuntimeMcpServer>::new();
+        let mut resolved_mcp_servers = Vec::<agentdash_platform_spi::RuntimeMcpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
 
         // ── 按 directive 序列执行 slot 归约 ──
@@ -376,15 +376,15 @@ impl CapabilityResolver {
         let companion = if effective_caps.contains(&ToolCapability::new(CAP_COLLABORATION))
             && input.authority_state.allows_companion_dispatch()
         {
-            agentdash_spi::CompanionDimension {
+            agentdash_platform_spi::CompanionDimension {
                 agents: companion_candidates,
             }
         } else {
-            agentdash_spi::CompanionDimension::default()
+            agentdash_platform_spi::CompanionDimension::default()
         };
 
         Ok(CapabilityState {
-            tool: agentdash_spi::ToolDimension {
+            tool: agentdash_platform_spi::ToolDimension {
                 capabilities: effective_caps.clone(),
                 enabled_clusters,
                 tool_policy,
@@ -568,9 +568,9 @@ mod tests {
         }
     }
 
-    fn test_runtime_vfs() -> agentdash_spi::Vfs {
-        agentdash_spi::Vfs {
-            mounts: vec![agentdash_spi::Mount {
+    fn test_runtime_vfs() -> agentdash_platform_spi::Vfs {
+        agentdash_platform_spi::Vfs {
+            mounts: vec![agentdash_platform_spi::Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),
@@ -629,7 +629,7 @@ mod tests {
         output.tool.mcp_servers.iter().any(|server| {
             matches!(
                 &server.transport,
-                agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
+                agentdash_platform_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
             )
         })
     }
@@ -637,7 +637,7 @@ mod tests {
     fn state_mcp_server<'a>(
         output: &'a CapabilityResolverOutput,
         name: &str,
-    ) -> Option<&'a agentdash_spi::RuntimeMcpServer> {
+    ) -> Option<&'a agentdash_platform_spi::RuntimeMcpServer> {
         output
             .tool
             .mcp_servers
@@ -694,7 +694,7 @@ mod tests {
                 has_active_workflow: false,
             }),
             companion: Some(CompanionContribution {
-                available: vec![agentdash_spi::context::capability::CompanionAgentEntry {
+                available: vec![agentdash_platform_spi::context::capability::CompanionAgentEntry {
                     name: "reviewer".to_string(),
                     executor: "PI_AGENT".to_string(),
                     display_name: "Reviewer".to_string(),
@@ -985,7 +985,7 @@ mod tests {
         );
         let server = state_mcp_server(&output, "code_analyzer").expect("应注入 code_analyzer");
         match &server.transport {
-            agentdash_spi::McpTransportConfig::Http { url, .. } => {
+            agentdash_platform_spi::McpTransportConfig::Http { url, .. } => {
                 assert_eq!(url, "http://external:8080/mcp");
             }
             other => panic!("期望 Http transport, 实际: {other:?}"),
@@ -1041,7 +1041,7 @@ mod tests {
         let output =
             CapabilityResolver::resolve_checked(&input, &test_platform()).expect("resolved");
         let server = state_mcp_server(&output, "p4_local").expect("应注入 p4_local");
-        let agentdash_spi::McpTransportConfig::Http { url, .. } = &server.transport else {
+        let agentdash_platform_spi::McpTransportConfig::Http { url, .. } = &server.transport else {
             panic!("expected http transport");
         };
         let parsed = url::Url::parse(url).expect("resolved url");
@@ -1096,7 +1096,7 @@ mod tests {
         );
         let server = state_mcp_server(&output, "shared").expect("应注入 shared");
         match &server.transport {
-            agentdash_spi::McpTransportConfig::Http { url, .. } => {
+            agentdash_platform_spi::McpTransportConfig::Http { url, .. } => {
                 assert_eq!(url, "http://preset/mcp");
             }
             other => panic!("期望 Http transport, 实际: {other:?}"),
@@ -1392,7 +1392,7 @@ mod tests {
             .find(|server| {
                 matches!(
                     &server.transport,
-                    agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/relay")
+                    agentdash_platform_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/relay")
                 )
             })
             .expect("project owner 应注入 relay MCP");
@@ -1400,7 +1400,7 @@ mod tests {
         assert!(
             !output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
-                agentdash_spi::McpTransportConfig::Http { url, .. }
+                agentdash_platform_spi::McpTransportConfig::Http { url, .. }
                     if url.contains("/mcp/story/")
             )),
             "project owner 不应注入 story scope"
@@ -1432,11 +1432,11 @@ mod tests {
             .find(|server| {
                 matches!(
                     &server.transport,
-                    agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/story/")
+                    agentdash_platform_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/story/")
                 )
             })
             .expect("story owner 应注入 story MCP");
-        let agentdash_spi::McpTransportConfig::Http { url, .. } = &story.transport else {
+        let agentdash_platform_spi::McpTransportConfig::Http { url, .. } = &story.transport else {
             panic!("story MCP 应使用 HTTP transport");
         };
         assert!(url.contains(&story_id.to_string()));
@@ -1468,7 +1468,7 @@ mod tests {
         assert!(
             !output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
-                agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
+                agentdash_platform_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
             )),
             "task owner 不再注入 Task MCP"
         );

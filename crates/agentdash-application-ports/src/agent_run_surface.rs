@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use agentdash_agent_runtime_contract::PresentationThreadId;
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AuthIdentity, CapabilityState, RuntimeMcpServer, ToolCapability, ToolCluster, Vfs,
 };
 use async_trait::async_trait;
@@ -55,7 +55,7 @@ pub struct AgentRunRuntimeSurface {
     pub surface_revision: i32,
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
-    pub vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy,
+    pub vfs_access_policy: agentdash_platform_spi::RuntimeVfsAccessPolicy,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     pub active_turn_id: Option<String>,

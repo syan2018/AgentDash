@@ -1,4 +1,4 @@
-use agentdash_spi::HookInjection;
+use agentdash_platform_spi::HookInjection;
 
 use agentdash_application_ports::lifecycle_surface_projection::ActiveWorkflowProjection;
 

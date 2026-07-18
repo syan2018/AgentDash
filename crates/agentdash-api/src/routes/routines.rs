@@ -407,7 +407,7 @@ fn routine_dispatch_strategy_into_domain(strategy: RoutineDispatchStrategyDto) -
 
 async fn load_routine_with_permission(
     state: &AppState,
-    current_user: &agentdash_spi::platform::auth::AuthIdentity,
+    current_user: &agentdash_platform_spi::platform::auth::AuthIdentity,
     routine_id: &str,
     permission: ProjectPermission,
 ) -> Result<Routine, ApiError> {

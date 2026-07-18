@@ -3,8 +3,8 @@
 //! 合并平台内嵌工具（编译期静态元数据）和 MCP 外部工具（运行时发现），
 //! 返回 application read model 供 API adapter 投影为 browser-facing contract DTO。
 
-use agentdash_spi::connector::ToolCluster as SpiToolCluster;
-use agentdash_spi::platform::tool_capability::{
+use agentdash_platform_spi::ToolCluster as SpiToolCluster;
+use agentdash_platform_spi::platform::tool_capability::{
     self, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_RELAY_MANAGEMENT,
     CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK, CAP_WORKFLOW, CAP_WORKFLOW_MANAGEMENT,
     CAP_WORKSPACE_MODULE, CapabilityScope as SpiCapabilityScope,

@@ -11,7 +11,7 @@ use agentdash_domain::workflow::{
     CapabilityPolicy, ContextPolicy, ExecutionSource, LifecycleRunRepository, RunPolicy,
     RuntimePolicy, SubjectRef, WorkflowGraphRef,
 };
-use agentdash_spi::{AgentConfig, AuthIdentity};
+use agentdash_platform_spi::{AgentConfig, AuthIdentity};
 use serde::Serialize;
 use uuid::Uuid;
 

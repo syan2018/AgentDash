@@ -11,7 +11,7 @@ agentdash-agent-types = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-relay = { workspace = true }
-agentdash-spi = { workspace = true }
+agentdash-platform-spi = { workspace = true }
 async-trait = "0.1"
 base64 = "0.22"
 chrono = { workspace = true }

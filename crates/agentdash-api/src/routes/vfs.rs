@@ -11,7 +11,7 @@ use agentdash_contracts::vfs::{
     ConfigurableProviderInfo, ListEntriesResponse, ListVfssResponse, SelectorHint, VfsDescriptor,
     VfsEntry,
 };
-use agentdash_spi::VfsContext;
+use agentdash_platform_spi::VfsContext;
 
 use crate::{
     app_state::AppState,
@@ -211,7 +211,7 @@ pub async fn list_configurable_mount_providers(
     )
 }
 
-fn vfs_descriptor_from_spi(descriptor: agentdash_spi::VfsDescriptor) -> VfsDescriptor {
+fn vfs_descriptor_from_spi(descriptor: agentdash_platform_spi::VfsDescriptor) -> VfsDescriptor {
     VfsDescriptor {
         id: descriptor.id,
         label: descriptor.label,

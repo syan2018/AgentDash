@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AuthIdentity, ConnectorError, RuntimeMcpServer, RuntimeMcpSourceReadiness,
+    AuthIdentity, PlatformRuntimeError, RuntimeMcpServer, RuntimeMcpSourceReadiness,
     RuntimeVfsAccessPolicy, Vfs,
 };
 
@@ -122,7 +122,7 @@ pub trait McpRelayProvider: Send + Sync {
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
         context: Option<RelayMcpCallContext>,
-    ) -> Result<RelayMcpCallResult, ConnectorError>;
+    ) -> Result<RelayMcpCallResult, PlatformRuntimeError>;
 
     /// 一次性 probe：通过 relay 下发 transport 配置，探测连通性和工具列表。
     /// 失败返回 Err（relay 通道离线等）。
@@ -130,7 +130,7 @@ pub trait McpRelayProvider: Send + Sync {
         &self,
         transport: &agentdash_domain::mcp_preset::McpTransportConfig,
         target: RelayProbeTarget,
-    ) -> Result<RelayProbeResult, ConnectorError>;
+    ) -> Result<RelayProbeResult, PlatformRuntimeError>;
 }
 
 #[cfg(test)]

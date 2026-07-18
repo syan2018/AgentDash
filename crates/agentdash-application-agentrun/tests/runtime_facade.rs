@@ -557,7 +557,7 @@ async fn started_override_is_coordinated_once_after_stable_replay_precheck() {
     )
     .with_execution_profile_coordinator(coordinator.clone());
     let mut command = accept_message(send("profile-override"));
-    command.execution_profile_override = Some(agentdash_spi::AgentConfig::new("PI_AGENT"));
+    command.execution_profile_override = Some(agentdash_platform_spi::AgentConfig::new("PI_AGENT"));
 
     let first = facade
         .accept_message(command.clone())
@@ -613,7 +613,7 @@ async fn steer_ignores_execution_profile_override() {
     let mut steer = accept_message(send("steer with ignored override"));
     steer.client_command_id = "steer-profile-override".to_string();
     steer.delivery_preference = AgentRunMessageDeliveryPreference::PreferSteer;
-    steer.execution_profile_override = Some(agentdash_spi::AgentConfig::new("OTHER"));
+    steer.execution_profile_override = Some(agentdash_platform_spi::AgentConfig::new("OTHER"));
     let admission = facade.accept_message(steer).await.expect("steer");
 
     assert!(matches!(
@@ -716,10 +716,10 @@ async fn accepted_message_is_not_reversed_when_turn_start_context_acknowledgemen
             agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts {
                 runtime_snapshot: None,
                 pending_actions: Vec::new(),
-                notices: vec![agentdash_spi::HookTurnStartNotice {
+                notices: vec![agentdash_platform_spi::HookTurnStartNotice {
                     id: "ack-failure-notice".to_string(),
                     created_at_ms: 42,
-                    source: agentdash_spi::RuntimeEventSource::RuntimeContextUpdate,
+                    source: agentdash_platform_spi::RuntimeEventSource::RuntimeContextUpdate,
                     content: "retry acknowledgement".to_string(),
                     presentation: None,
                 }],
@@ -1328,19 +1328,19 @@ async fn compiled_full_bootstrap_is_committed_by_real_thread_start_in_main_order
     composition
         .set_turn_start_facts(
             agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts {
-                runtime_snapshot: Some(agentdash_spi::hooks::AgentFrameRuntimeSnapshot {
+                runtime_snapshot: Some(agentdash_platform_spi::hooks::AgentFrameRuntimeSnapshot {
                     revision: 1,
                     ..Default::default()
                 }),
-                pending_actions: vec![agentdash_spi::HookPendingAction {
+                pending_actions: vec![agentdash_platform_spi::HookPendingAction {
                     id: "bootstrap-pending".to_string(),
                     created_at_ms: 1_783_684_800_001,
                     title: "Bootstrap pending".to_string(),
                     summary: "pending action".to_string(),
                     action_type: "blocking_review".to_string(),
                     turn_id: None,
-                    source: agentdash_spi::RuntimeEventSource::RuntimeContextUpdate,
-                    status: agentdash_spi::HookPendingActionStatus::Pending,
+                    source: agentdash_platform_spi::RuntimeEventSource::RuntimeContextUpdate,
+                    status: agentdash_platform_spi::HookPendingActionStatus::Pending,
                     last_injected_at_ms: None,
                     resolved_at_ms: None,
                     resolution_kind: None,
@@ -1437,19 +1437,19 @@ async fn turn_start_pending_and_system_delivery_match_main_stream_family_and_ord
     composition
         .set_turn_start_facts(
             agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts {
-                runtime_snapshot: Some(agentdash_spi::hooks::AgentFrameRuntimeSnapshot {
+                runtime_snapshot: Some(agentdash_platform_spi::hooks::AgentFrameRuntimeSnapshot {
                     revision: 42,
                     ..Default::default()
                 }),
-                pending_actions: vec![agentdash_spi::HookPendingAction {
+                pending_actions: vec![agentdash_platform_spi::HookPendingAction {
                     id: "a1".to_string(),
                     created_at_ms: 9,
                     title: "Review".to_string(),
                     summary: "result".to_string(),
                     action_type: "blocking_review".to_string(),
                     turn_id: None,
-                    source: agentdash_spi::RuntimeEventSource::CompanionResult,
-                    status: agentdash_spi::HookPendingActionStatus::Pending,
+                    source: agentdash_platform_spi::RuntimeEventSource::CompanionResult,
+                    status: agentdash_platform_spi::HookPendingActionStatus::Pending,
                     last_injected_at_ms: None,
                     resolved_at_ms: None,
                     resolution_kind: None,
@@ -1457,10 +1457,10 @@ async fn turn_start_pending_and_system_delivery_match_main_stream_family_and_ord
                     resolution_turn_id: None,
                     injections: Vec::new(),
                 }],
-                notices: vec![agentdash_spi::HookTurnStartNotice {
+                notices: vec![agentdash_platform_spi::HookTurnStartNotice {
                     id: "notice-1".to_string(),
                     created_at_ms: 10,
-                    source: agentdash_spi::RuntimeEventSource::RuntimeContextUpdate,
+                    source: agentdash_platform_spi::RuntimeEventSource::RuntimeContextUpdate,
                     content: "notice".to_string(),
                     presentation: None,
                 }],

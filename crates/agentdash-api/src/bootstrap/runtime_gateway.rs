@@ -20,15 +20,15 @@ use agentdash_application_runtime_gateway::{
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
-use agentdash_spi::AuthIdentity;
-use agentdash_spi::platform::mcp_probe::McpProbeTransport;
-use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
+use agentdash_platform_spi::AuthIdentity;
+use agentdash_platform_spi::platform::mcp_probe::McpProbeTransport;
+use agentdash_platform_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
 use async_trait::async_trait;
 
 use crate::relay::registry::BackendRegistry;
 
 pub(crate) fn build_runtime_gateway(
-    mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider>,
+    mcp_probe_relay: Arc<dyn agentdash_platform_spi::McpRelayProvider>,
     repos: RepositorySet,
     backend_registry: Arc<BackendRegistry>,
     setup_action_transport: Arc<

@@ -16,7 +16,7 @@ use agentdash_application_ports::frame_launch_envelope as launch_port;
 use agentdash_domain::backend::{
     RuntimeBackendAnchor, RuntimeBackendAnchorError, RuntimeBackendAnchorSource,
 };
-use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, Vfs};
+use agentdash_platform_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
@@ -24,7 +24,7 @@ use crate::agent_run::frame::surface::FrameSurfaceDraft;
 // ─── 共享子结构：直接复用 ports 定义 ───
 //
 // context / diagnostics / frame / command 四组只承载共享类型
-// (agentdash-spi / agentdash-domain / agent-protocol)，因此直接复用 ports 中性 DTO
+// (agentdash-platform-spi / agentdash-domain / agent-protocol)，因此直接复用 ports 中性 DTO
 // 的定义，构造侧不再重复声明。只有 runtime surface（含 construction 专属的
 // `surface_draft`）与顶层 `FrameLaunchEnvelope` 保持 agentrun 独有。
 pub use launch_port::{
@@ -270,7 +270,7 @@ mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         DiscoveredGuideline, McpTransportConfig, MemoryDiscoveryOutput, ToolCluster,
     };
 

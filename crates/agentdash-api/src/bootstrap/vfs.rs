@@ -8,8 +8,8 @@ use agentdash_application::vfs_owner_providers::{
 };
 use agentdash_application_vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application_vfs::{VfsMaterializationService, VfsMutationDispatcher, VfsService};
-use agentdash_spi::VfsDiscoveryProvider;
-use agentdash_spi::platform::mount::MountProvider;
+use agentdash_platform_spi::VfsDiscoveryProvider;
+use agentdash_platform_spi::platform::mount::MountProvider;
 
 use crate::mount_providers::RelayFsMountProvider;
 use crate::relay::registry::BackendRegistry;
@@ -19,7 +19,7 @@ pub(crate) struct VfsBootstrapOutput {
     pub vfs_service: Arc<VfsService>,
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
     pub vfs_materialization_service: Arc<VfsMaterializationService>,
-    pub mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,
+    pub mcp_relay_provider: Arc<dyn agentdash_platform_spi::McpRelayProvider>,
     pub agent_run_journal_reader: SharedAgentRunJournalReaderHandle,
 }
 
@@ -61,7 +61,7 @@ pub(crate) fn build_vfs_kernel(
             vfs_service.clone(),
             materialization_transport,
         ));
-    let mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider> = Arc::new(
+    let mcp_relay_provider: Arc<dyn agentdash_platform_spi::McpRelayProvider> = Arc::new(
         crate::vfs_materialization::MaterializingMcpRelayProvider::new(
             backend_registry,
             materialization_service.clone(),

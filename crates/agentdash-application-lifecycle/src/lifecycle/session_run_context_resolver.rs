@@ -3,8 +3,8 @@ use agentdash_domain::workflow::{
     LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociation,
     LifecycleSubjectAssociationRepository,
 };
-use agentdash_spi::CapabilityScope;
-use agentdash_spi::hooks::SubjectRunContext;
+use agentdash_platform_spi::CapabilityScope;
+use agentdash_platform_spi::hooks::SubjectRunContext;
 use uuid::Uuid;
 
 use crate::lifecycle::WorkflowApplicationError;

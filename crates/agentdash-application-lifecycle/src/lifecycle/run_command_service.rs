@@ -9,7 +9,7 @@ use agentdash_domain::workflow::{
     LifecycleGateRepository, LifecycleRun, LifecycleRunRepository, LifecycleRunStartIntent,
     LifecycleSubjectAssociationRepository, WorkflowGraphRef, WorkflowGraphRepository,
 };
-use agentdash_spi::FunctionRunner;
+use agentdash_platform_spi::FunctionRunner;
 use uuid::Uuid;
 
 use crate::SharedPlatformConfig;

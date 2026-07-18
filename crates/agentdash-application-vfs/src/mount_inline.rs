@@ -5,7 +5,7 @@ use agentdash_domain::inline_file::InlineFileOwnerKind;
 use uuid::Uuid;
 
 use agentdash_domain::common::{Mount, MountCapability};
-use agentdash_spi::platform::mount::RuntimeFileEntry;
+use agentdash_platform_spi::platform::mount::RuntimeFileEntry;
 
 use super::mount::{
     CONTEXT_CONTAINER_ID_METADATA_KEY, CONTEXT_OWNER_ID_METADATA_KEY,

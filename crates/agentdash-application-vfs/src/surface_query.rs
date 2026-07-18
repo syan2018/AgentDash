@@ -10,7 +10,7 @@ pub async fn build_surface_summary(
     inline_file_repo: &dyn InlineFileRepository,
     runtime: &dyn VfsSurfaceRuntimeProjection,
     source: &ResolvedVfsSurfaceSource,
-    vfs: &agentdash_spi::Vfs,
+    vfs: &agentdash_platform_spi::Vfs,
 ) -> ResolvedVfsSurface {
     let mut mounts = Vec::with_capacity(vfs.mounts.len());
 

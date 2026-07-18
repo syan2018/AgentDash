@@ -90,7 +90,7 @@ fn is_local_workspace_mount(provider: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use agentdash_domain::common::{Mount, MountCapability, Vfs};
-    use agentdash_spi::RuntimeBackendAnchorSource;
+    use agentdash_platform_spi::RuntimeBackendAnchorSource;
 
     use super::*;
 

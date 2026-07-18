@@ -1,10 +1,10 @@
-use agentdash_spi::{HookDiagnosticEntry, HookResolution};
+use agentdash_platform_spi::{HookDiagnosticEntry, HookResolution};
 
 use super::super::{HookEvaluationContext, NormalizedHookRule};
 
 pub(super) const REGISTRY_ITEM: NormalizedHookRule = NormalizedHookRule {
     key: "tool:shell_exec:rewrite_absolute_cwd",
-    trigger: agentdash_spi::HookTrigger::BeforeTool,
+    trigger: agentdash_platform_spi::HookTrigger::BeforeTool,
     matches: matches_rule,
     apply: apply_rule,
 };

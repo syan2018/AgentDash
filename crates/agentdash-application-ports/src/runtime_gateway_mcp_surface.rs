@@ -1,5 +1,5 @@
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
-use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeMcpServer, RuntimeVfsAccessPolicy, Vfs};
+use agentdash_platform_spi::{AuthIdentity, CapabilityState, RuntimeMcpServer, RuntimeVfsAccessPolicy, Vfs};
 use async_trait::async_trait;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

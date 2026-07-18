@@ -6,19 +6,19 @@ use agentdash_domain::channel::{
 };
 use agentdash_domain::common::{MountLink, Vfs};
 use agentdash_domain::workflow::{AgentFrame, MountDirective, ToolCapabilityDirective};
-use agentdash_spi::{CapabilityState, RuntimeMcpServer};
+use agentdash_platform_spi::{CapabilityState, RuntimeMcpServer};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use uuid::Uuid;
 
-pub use agentdash_spi::{
+pub use agentdash_platform_spi::{
     CapabilityStateDelta, DefaultMountDelta, NamedEntityDelta, SetDelta, VfsSurfaceDelta,
     compute_capability_state_delta,
 };
 
-pub use agentdash_spi::AccumulationPolicy;
+pub use agentdash_platform_spi::AccumulationPolicy;
 
-use agentdash_spi::session_persistence::{
+use agentdash_platform_spi::session_persistence::{
     ApplyChannelDirectivesEffect, ApplyMountOperationsEffect, ApplyVfsOverlayEffect,
     CAPABILITY_DIMENSION_CHANNEL, CAPABILITY_DIMENSION_COMPANION, CAPABILITY_DIMENSION_MCP,
     CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS, CapabilityArtifactSource,
@@ -106,13 +106,13 @@ pub fn capability_state_to_frame_surfaces(state: &CapabilityState) -> FrameCapab
 /// 因此清空（空集）自然回到 All，而非把上一版名单捞回。
 pub fn project_workspace_module_dimension(
     refs: Option<&[String]>,
-) -> agentdash_spi::WorkspaceModuleDimension {
+) -> agentdash_platform_spi::WorkspaceModuleDimension {
     match refs {
-        Some(ids) if !ids.is_empty() => agentdash_spi::WorkspaceModuleDimension {
-            mode: agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist,
+        Some(ids) if !ids.is_empty() => agentdash_platform_spi::WorkspaceModuleDimension {
+            mode: agentdash_platform_spi::WorkspaceModuleVisibilityMode::Allowlist,
             allowed_module_ids: ids.to_vec(),
         },
-        _ => agentdash_spi::WorkspaceModuleDimension::all(),
+        _ => agentdash_platform_spi::WorkspaceModuleDimension::all(),
     }
 }
 
@@ -471,7 +471,7 @@ impl McpCapabilityDimensionModule {
 
 impl CompanionCapabilityDimensionModule {
     pub fn set_agent_roster_effect(
-        agents: Vec<agentdash_spi::context::capability::CompanionAgentEntry>,
+        agents: Vec<agentdash_platform_spi::context::capability::CompanionAgentEntry>,
     ) -> Result<RuntimeCapabilityEffectRecord, String> {
         RuntimeCapabilityEffectRecord::typed(
             CAPABILITY_DIMENSION_COMPANION,
@@ -976,7 +976,7 @@ mod tests {
     use super::*;
     use agentdash_domain::channel::{ChannelOperation, ChannelOwner, ChannelRef};
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_spi::{CapabilityDimensionKey, CapabilityState, McpTransportConfig};
+    use agentdash_platform_spi::{CapabilityDimensionKey, CapabilityState, McpTransportConfig};
 
     // ── AgentFrame 投影 round-trip 测试 ──────────────────────────────
 
@@ -998,7 +998,7 @@ mod tests {
 
     #[test]
     fn project_round_trip_preserves_capability_state() {
-        let mut state = CapabilityState::from_clusters([agentdash_spi::ToolCluster::Read]);
+        let mut state = CapabilityState::from_clusters([agentdash_platform_spi::ToolCluster::Read]);
         state.vfs.active = Some(Vfs {
             mounts: vec![mount("workspace", "relay_fs")],
             default_mount_id: Some("workspace".to_string()),
@@ -1006,16 +1006,16 @@ mod tests {
             source_story_id: None,
             links: Vec::new(),
         });
-        state.tool.mcp_servers = vec![agentdash_spi::RuntimeMcpServer {
+        state.tool.mcp_servers = vec![agentdash_platform_spi::RuntimeMcpServer {
             name: "test-server".to_string(),
-            transport: agentdash_spi::McpTransportConfig::Http {
+            transport: agentdash_platform_spi::McpTransportConfig::Http {
                 url: "http://localhost:3000".to_string(),
                 headers: vec![],
             },
             uses_relay: false,
             readiness: Default::default(),
         }];
-        state.companion.agents = vec![agentdash_spi::context::capability::CompanionAgentEntry {
+        state.companion.agents = vec![agentdash_platform_spi::context::capability::CompanionAgentEntry {
             name: "helper".to_string(),
             executor: "codex".to_string(),
             display_name: "Helper".to_string(),
@@ -1272,7 +1272,7 @@ mod tests {
         let mut capability_keys = BTreeSet::new();
         capability_keys.insert("file_read".to_string());
         let after_state = CapabilityState {
-            vfs: agentdash_spi::VfsDimension {
+            vfs: agentdash_platform_spi::VfsDimension {
                 active: Some(Vfs {
                     mounts: vec![mount("workspace", "relay_fs")],
                     default_mount_id: Some("workspace".to_string()),
@@ -1320,7 +1320,7 @@ mod tests {
     #[test]
     fn runtime_capability_transition_replays_vfs_overlay_without_persisting_full_state() {
         let mut base = CapabilityState {
-            vfs: agentdash_spi::VfsDimension {
+            vfs: agentdash_platform_spi::VfsDimension {
                 active: Some(Vfs {
                     mounts: vec![mount("workspace", "relay_fs")],
                     default_mount_id: Some("workspace".to_string()),
@@ -1333,9 +1333,9 @@ mod tests {
         };
         base.tool
             .enabled_clusters
-            .insert(agentdash_spi::ToolCluster::Read);
+            .insert(agentdash_platform_spi::ToolCluster::Read);
 
-        let mut target = CapabilityState::from_clusters([agentdash_spi::ToolCluster::Write]);
+        let mut target = CapabilityState::from_clusters([agentdash_platform_spi::ToolCluster::Write]);
         target.vfs.active = Some(Vfs {
             mounts: vec![mount("review", "inline_fs")],
             default_mount_id: None,
@@ -1369,13 +1369,13 @@ mod tests {
             replayed
                 .tool
                 .enabled_clusters
-                .contains(&agentdash_spi::ToolCluster::Write)
+                .contains(&agentdash_platform_spi::ToolCluster::Write)
         );
         assert!(
             !replayed
                 .tool
                 .enabled_clusters
-                .contains(&agentdash_spi::ToolCluster::Read)
+                .contains(&agentdash_platform_spi::ToolCluster::Read)
         );
         assert_eq!(
             apply_runtime_capability_transition(&base, &transition).expect("replay"),
@@ -1404,7 +1404,7 @@ mod tests {
     #[test]
     fn runtime_capability_transition_fold_replays_multiple_vfs_effects_in_order() {
         let base = CapabilityState {
-            vfs: agentdash_spi::VfsDimension {
+            vfs: agentdash_platform_spi::VfsDimension {
                 active: Some(Vfs {
                     mounts: vec![mount("workspace", "relay_fs")],
                     default_mount_id: Some("workspace".to_string()),
@@ -1518,7 +1518,7 @@ mod tests {
     #[test]
     fn project_to_base_workspace_module_all_when_none() {
         let dim = project_workspace_module_dimension(None);
-        assert_eq!(dim.mode, agentdash_spi::WorkspaceModuleVisibilityMode::All);
+        assert_eq!(dim.mode, agentdash_platform_spi::WorkspaceModuleVisibilityMode::All);
         assert!(dim.allowed_module_ids.is_empty());
     }
 
@@ -1526,7 +1526,7 @@ mod tests {
     fn project_to_base_workspace_module_all_when_empty() {
         // Cleared（显式空集）→ All —— carry-forward bug 回归锁。
         let dim = project_workspace_module_dimension(Some(&[]));
-        assert_eq!(dim.mode, agentdash_spi::WorkspaceModuleVisibilityMode::All);
+        assert_eq!(dim.mode, agentdash_platform_spi::WorkspaceModuleVisibilityMode::All);
         assert!(dim.allowed_module_ids.is_empty());
     }
 
@@ -1536,7 +1536,7 @@ mod tests {
         let dim = project_workspace_module_dimension(Some(&refs));
         assert_eq!(
             dim.mode,
-            agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist
+            agentdash_platform_spi::WorkspaceModuleVisibilityMode::Allowlist
         );
         assert_eq!(dim.allowed_module_ids, refs);
     }
@@ -1554,7 +1554,7 @@ mod tests {
         let projected = project_capability_state_from_frame(&frame);
         assert_eq!(
             projected.workspace_module.mode,
-            agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist
+            agentdash_platform_spi::WorkspaceModuleVisibilityMode::Allowlist
         );
         assert_eq!(
             projected.workspace_module.allowed_module_ids,
@@ -1572,7 +1572,7 @@ mod tests {
         let cleared_projected = project_capability_state_from_frame(&next_frame);
         assert_eq!(
             cleared_projected.workspace_module.mode,
-            agentdash_spi::WorkspaceModuleVisibilityMode::All
+            agentdash_platform_spi::WorkspaceModuleVisibilityMode::All
         );
     }
 
@@ -1599,10 +1599,10 @@ mod tests {
 
     #[test]
     fn workspace_module_dimension_default_is_empty_allowlist() {
-        let dim = agentdash_spi::WorkspaceModuleDimension::default();
+        let dim = agentdash_platform_spi::WorkspaceModuleDimension::default();
         assert_eq!(
             dim.mode,
-            agentdash_spi::WorkspaceModuleVisibilityMode::Allowlist
+            agentdash_platform_spi::WorkspaceModuleVisibilityMode::Allowlist
         );
         assert!(dim.allowed_module_ids.is_empty());
         assert!(!dim.allows("ext:demo"));

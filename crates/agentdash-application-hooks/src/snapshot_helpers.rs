@@ -1,5 +1,5 @@
 use agentdash_domain::workflow::{LifecycleRunStatus, WorkflowHookRuleSpec};
-use agentdash_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot};
+use agentdash_platform_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot};
 
 pub(crate) fn workflow_run_status_tag(status: LifecycleRunStatus) -> &'static str {
     match status {

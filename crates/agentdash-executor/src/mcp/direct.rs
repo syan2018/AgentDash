@@ -2,7 +2,7 @@ use agentdash_diagnostics::{Subsystem, diag};
 use std::{collections::HashMap, sync::Arc};
 
 use agentdash_application_ports::mcp_discovery::{McpToolDiscoveryOutcome, McpToolSourceOutcome};
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
     McpHttpHeader, McpTransportConfig, RuntimeMcpServer, ToolUpdateCallback,
 };
@@ -20,7 +20,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use agentdash_mcp::render_content;
-use agentdash_spi::ConnectorError;
+use agentdash_platform_spi::PlatformRuntimeError;
 
 use super::{
     DiscoveredMcpTool,
@@ -43,7 +43,7 @@ struct DirectMcpClientPool {
 }
 
 impl DirectMcpClientPool {
-    async fn list_tools(&self, server: &McpHttpServerSpec) -> Result<Vec<Tool>, ConnectorError> {
+    async fn list_tools(&self, server: &McpHttpServerSpec) -> Result<Vec<Tool>, PlatformRuntimeError> {
         let client = self.ensure_client(server).await?;
         let result = {
             let client = client.lock().await;
@@ -53,7 +53,7 @@ impl DirectMcpClientPool {
             Ok(tools) => Ok(tools),
             Err(error) => {
                 self.invalidate(server).await;
-                Err(ConnectorError::ConnectionFailed(format_service_error(
+                Err(PlatformRuntimeError::ConnectionFailed(format_service_error(
                     &error,
                 )))
             }
@@ -85,7 +85,7 @@ impl DirectMcpClientPool {
     async fn ensure_client(
         &self,
         server: &McpHttpServerSpec,
-    ) -> Result<Arc<Mutex<McpHttpClient>>, ConnectorError> {
+    ) -> Result<Arc<Mutex<McpHttpClient>>, PlatformRuntimeError> {
         let key = self.key(server);
         if let Some(client) = self.open_client(&key).await {
             return Ok(client);
@@ -174,8 +174,8 @@ impl AgentTool for McpToolAdapter {
     fn parameters_schema(&self) -> serde_json::Value {
         self.surface.parameters_schema.clone()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -216,7 +216,7 @@ impl AgentTool for McpToolAdapter {
 pub async fn discover_mcp_tools(
     servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
-) -> Result<Vec<DynAgentTool>, ConnectorError> {
+) -> Result<Vec<DynAgentTool>, PlatformRuntimeError> {
     Ok(discover_mcp_tool_outcome(servers, capability_state)
         .await?
         .tools
@@ -228,7 +228,7 @@ pub async fn discover_mcp_tools(
 pub async fn discover_mcp_tool_entries(
     servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
-) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
+) -> Result<Vec<DiscoveredMcpTool>, PlatformRuntimeError> {
     Ok(discover_mcp_tool_outcome(servers, capability_state)
         .await?
         .tools)
@@ -237,7 +237,7 @@ pub async fn discover_mcp_tool_entries(
 pub async fn discover_mcp_tool_outcome(
     servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
-) -> Result<McpToolDiscoveryOutcome, ConnectorError> {
+) -> Result<McpToolDiscoveryOutcome, PlatformRuntimeError> {
     let mut entries = Vec::new();
     let mut sources = Vec::new();
     let pool = Arc::new(DirectMcpClientPool::default());
@@ -313,25 +313,25 @@ fn build_direct_discovered_entries_from_listed_tools(
 async fn connect_http_server(
     url: &str,
     headers: &[McpHttpHeader],
-) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>, ConnectorError> {
+) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>, PlatformRuntimeError> {
     let config = StreamableHttpClientTransportConfig::with_uri(url.to_string())
         .custom_headers(build_header_map(headers)?);
     let worker = StreamableHttpClientWorker::new(reqwest::Client::new(), config);
     ().serve(worker)
         .await
-        .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))
+        .map_err(|e| PlatformRuntimeError::ConnectionFailed(e.to_string()))
 }
 
 fn build_header_map(
     headers: &[McpHttpHeader],
-) -> Result<HashMap<HeaderName, HeaderValue>, ConnectorError> {
+) -> Result<HashMap<HeaderName, HeaderValue>, PlatformRuntimeError> {
     let mut map = HashMap::new();
     for header in headers {
         let name = HeaderName::from_bytes(header.name.as_bytes()).map_err(|error| {
-            ConnectorError::InvalidConfig(format!("MCP HTTP header name 无效: {error}"))
+            PlatformRuntimeError::InvalidConfig(format!("MCP HTTP header name 无效: {error}"))
         })?;
         let value = HeaderValue::from_str(&header.value).map_err(|error| {
-            ConnectorError::InvalidConfig(format!("MCP HTTP header value 无效: {error}"))
+            PlatformRuntimeError::InvalidConfig(format!("MCP HTTP header value 无效: {error}"))
         })?;
         map.insert(name, value);
     }
@@ -395,7 +395,7 @@ mod tests {
     use super::*;
     use std::{borrow::Cow, sync::Arc};
 
-    use agentdash_spi::{ToolCapability, ToolCapabilityFilter};
+    use agentdash_platform_spi::{ToolCapability, ToolCapabilityFilter};
 
     fn header(value: &str) -> McpHttpHeader {
         McpHttpHeader {
@@ -528,7 +528,7 @@ mod tests {
         );
         assert!(matches!(
             adapter.protocol_projector(),
-            Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+            Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
         ));
     }
 
@@ -554,7 +554,7 @@ mod tests {
         assert_eq!(outcome.sources.len(), 1);
         assert!(matches!(
             &outcome.sources[0].server.readiness,
-            agentdash_spi::RuntimeMcpSourceReadiness::Unavailable { reason_code, .. }
+            agentdash_platform_spi::RuntimeMcpSourceReadiness::Unavailable { reason_code, .. }
                 if reason_code == "unsupported_transport"
         ));
     }

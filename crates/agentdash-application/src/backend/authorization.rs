@@ -6,7 +6,7 @@ use agentdash_domain::backend::{
     ProjectBackendAccessRepository,
 };
 use agentdash_domain::project::ProjectRepository;
-use agentdash_spi::platform::auth::{AuthIdentity, AuthMode};
+use agentdash_platform_spi::platform::auth::{AuthIdentity, AuthMode};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -295,7 +295,7 @@ mod tests {
         Project, ProjectConfig, ProjectRole, ProjectSubjectGrant, ProjectSubjectType,
         ProjectVisibility,
     };
-    use agentdash_spi::platform::auth::{AuthGroup, AuthIdentity, AuthMode};
+    use agentdash_platform_spi::platform::auth::{AuthGroup, AuthIdentity, AuthMode};
 
     use super::*;
 

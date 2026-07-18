@@ -17,7 +17,7 @@ use agentdash_domain::agent_run_mailbox::{
     MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity, NewAgentRunMailboxMessage,
 };
 use agentdash_domain::workflow::AgentRunAcceptedRefs;
-use agentdash_spi::{AgentConfig, AuthIdentity};
+use agentdash_platform_spi::{AgentConfig, AuthIdentity};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

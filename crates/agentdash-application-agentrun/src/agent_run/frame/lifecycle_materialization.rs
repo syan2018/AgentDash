@@ -8,7 +8,7 @@ use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
-use agentdash_spi::{CapabilityState, HookControlTarget, RuntimeAdapterProvenance};
+use agentdash_platform_spi::{CapabilityState, HookControlTarget, RuntimeAdapterProvenance};
 
 use crate::agent_run::frame::builder::{
     AgentFrameActivationSurfaceInput, AgentFrameBuilder, build_lifecycle_activation_surface,

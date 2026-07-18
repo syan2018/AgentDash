@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use agentdash_domain::common::{MountLink, Vfs};
 use serde::{Deserialize, Serialize};
 
-use super::{CapabilityState, RuntimeMcpSourceReadiness};
+use super::runtime_surface::{CapabilityState, RuntimeMcpSourceReadiness};
 use crate::platform::memory_discovery::DiscoveredMemorySource;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

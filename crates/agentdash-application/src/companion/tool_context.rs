@@ -1,5 +1,5 @@
-use agentdash_spi::hooks::{HookRuntimeAccess, RuntimeAdapterProvenance, SharedHookRuntime};
-use agentdash_spi::{AgentToolError, AuthIdentity, ExecutionContext};
+use agentdash_platform_spi::hooks::{HookRuntimeAccess, RuntimeAdapterProvenance, SharedHookRuntime};
+use agentdash_platform_spi::{AgentToolError, AuthIdentity, ExecutionContext};
 use uuid::Uuid;
 
 #[derive(Clone, Copy)]
@@ -17,7 +17,7 @@ pub(crate) struct CompanionToolContext {
     turn_id: String,
     identity: Option<AuthIdentity>,
     hook_runtime: Option<SharedHookRuntime>,
-    owner: Option<agentdash_spi::PlatformToolExecutionContext>,
+    owner: Option<agentdash_platform_spi::PlatformToolExecutionContext>,
 }
 
 impl CompanionToolContext {

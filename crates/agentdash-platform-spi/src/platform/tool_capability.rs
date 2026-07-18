@@ -12,7 +12,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::connector::ToolCluster;
+use crate::platform::runtime_surface::ToolCluster;
 
 /// 工具能力标识 — 开放 string key（非封闭枚举）。
 ///

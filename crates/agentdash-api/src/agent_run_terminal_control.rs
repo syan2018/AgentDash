@@ -25,7 +25,7 @@ use agentdash_application_workflow::gate::{
     GateProducerTerminalEvent, RuntimeTerminalDiagnostic as GateRuntimeTerminalDiagnostic,
 };
 use agentdash_domain::workflow::WaitProducerRef;
-use agentdash_spi::{HookRuntimeEvaluationQuery, HookTrigger, RuntimeAdapterProvenance};
+use agentdash_platform_spi::{HookRuntimeEvaluationQuery, HookTrigger, RuntimeAdapterProvenance};
 
 use crate::bootstrap::agent_runtime_surface::CompiledAgentRunToolRegistry;
 
@@ -305,7 +305,7 @@ fn bounded_message_preview(text: &str, limit: usize) -> String {
 
 fn journal_event_as_persisted(
     event: &agentdash_application_agentrun::agent_run::AgentRunJournalEvent,
-) -> Option<agentdash_spi::PersistedSessionEvent> {
+) -> Option<agentdash_platform_spi::PersistedSessionEvent> {
     let presentation = event.record.as_presentation()?;
     let carrier = event.record.carrier();
     let session_id = carrier
@@ -313,7 +313,7 @@ fn journal_event_as_persisted(
         .source_thread_id
         .clone()
         .unwrap_or_else(|| event.source_runtime_thread_id.to_string());
-    Some(agentdash_spi::PersistedSessionEvent {
+    Some(agentdash_platform_spi::PersistedSessionEvent {
         session_id: session_id.clone(),
         event_seq: event.journal_seq,
         occurred_at_ms: i64::try_from(carrier.recorded_at_ms).unwrap_or(i64::MAX),
@@ -502,7 +502,7 @@ mod tests {
         AgentRunPostTurnHandler, DynAgentRunPostTurnHandler,
     };
     use agentdash_infrastructure::agent_runtime_composition::AppliedNativeAgentRunSurface;
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
         AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookEffect, HookError, HookResolution,
     };

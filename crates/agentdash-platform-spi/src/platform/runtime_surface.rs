@@ -5,11 +5,7 @@ use std::{
 };
 
 use agentdash_agent_protocol::{ContextDeliveryPlan, ContextFrame};
-use agentdash_agent_runtime_contract::{
-    DriverItemId, DriverThreadId, DriverTurnId, PresentationItemId, PresentationThreadId,
-    RuntimeBindingId, RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId,
-    ToolSetRevision,
-};
+use agentdash_agent_runtime_contract::{RuntimeItemId, RuntimeThreadId, RuntimeTurnId};
 use agentdash_agent_types::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
@@ -20,15 +16,13 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::context::capability::SkillEntry;
-use crate::hooks::HookRuntimeAccess;
-use crate::platform::memory_discovery::MemoryDiscoveryOutput;
-pub mod capability_delta;
-
-pub use capability_delta::{
+pub use super::capability_delta::{
     CapabilityStateDelta, DefaultMountDelta, McpServerReadinessSummary, NamedEntityDelta, SetDelta,
     VfsSurfaceDelta, compute_capability_state_delta,
 };
+use crate::context::capability::SkillEntry;
+use crate::hooks::HookRuntimeAccess;
+use crate::platform::memory_discovery::MemoryDiscoveryOutput;
 
 /// Session 级执行上下文（Who + Where）。
 ///
@@ -42,15 +36,15 @@ pub struct ExecutionSessionFrame {
     pub executor_config: AgentConfig,
     /// 本轮完整 MCP 声明（内部类型，带 relay 标记）。
     ///
-    /// 云端内嵌 connector 不自行处理这里的 MCP，而是消费 Application 已经预构建好的
-    /// `turn.assembled_tools`。Relay/remote transport connector 可将该结构原样下发给
+    /// 云端 Managed Runtime 不自行处理这里的 MCP，而是消费 Application 已经预构建好的
+    /// `turn.assembled_tools`。Relay transport 可将该结构原样下发给
     /// 远端 agent，由远端 agent 自行建联。
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub vfs: Option<Vfs>,
     pub vfs_access_policy: Option<RuntimeVfsAccessPolicy>,
     /// Relay/backend execution placement resolved during session launch.
     ///
-    /// This field is set only for remote backend executions. It is the connector-facing
+    /// This field is set only for remote backend executions. It is the runtime-facing
     /// projection of the already claimed backend execution lease.
     pub backend_execution: Option<ExecutionBackendPlacement>,
     /// Lifecycle / AgentRun 生成的运行期 backend anchor。
@@ -216,16 +210,16 @@ pub struct ExecutionTurnFrame {
     pub capability_state: CapabilityState,
     pub runtime_delegates: AgentRuntimeDelegateSet,
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
-    /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
+    /// 会把重建出的消息历史放在这里，供 Managed Runtime 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
     /// 本轮可见的 ContextFrame 列表（含 identity / mission / capability / pending_action...）。
     pub context_frames: Vec<ContextFrame>,
-    /// 本轮 ContextFrame 的正式投递计划。connector 和前端应优先消费该计划表达的
+    /// 本轮 ContextFrame 的正式投递计划。Managed Runtime 和前端应优先消费该计划表达的
     /// phase/order/cache/channel/agent consumption，而不是从 frame 到达顺序推断。
     pub context_delivery_plan: Option<ContextDeliveryPlan>,
     /// Application 层预构建的工具列表（runtime + direct MCP + relay MCP）。
     ///
-    /// 内嵌 connector 只持有并调用这里的 `DynAgentTool`，不重新持有
+    /// Managed Runtime 只持有并调用这里的 `DynAgentTool`，不重新持有
     /// `McpServer` 声明，也不自行区分 direct / relay MCP。
     pub assembled_tools: Vec<agentdash_agent_types::DynAgentTool>,
 }
@@ -238,8 +232,6 @@ pub struct PlatformToolExecutionContext {
     pub frame_id: uuid::Uuid,
     /// Canonical runtime/control-plane thread owned by the Agent Runtime binding.
     pub runtime_thread_id: RuntimeThreadId,
-    /// Product delivery/presentation thread used by workflow and transcript associations.
-    pub presentation_thread_id: PresentationThreadId,
     /// Present only for a callable invocation. Definition/schema materialization retains the
     /// exact owner surface but has no fabricated per-call coordinates.
     pub invocation: Option<PlatformToolInvocationCoordinates>,
@@ -254,18 +246,11 @@ pub struct PlatformToolExecutionContext {
 pub struct PlatformToolInvocationCoordinates {
     pub runtime_turn_id: RuntimeTurnId,
     pub runtime_item_id: RuntimeItemId,
-    pub presentation_item_id: PresentationItemId,
-    pub source_thread_id: DriverThreadId,
-    pub source_turn_id: DriverTurnId,
-    pub source_item_id: DriverItemId,
-    pub binding_id: RuntimeBindingId,
-    pub binding_generation: RuntimeDriverGeneration,
-    pub tool_set_revision: ToolSetRevision,
 }
 
 /// 连接器拿到的一次 `prompt(...)` 调用上下文。
 ///
-/// 拆分为 `session`（Who/Where，不可变）与 `turn`（How，可变）两层，让 connector
+/// 拆分为 `session`（Who/Where，不可变）与 `turn`（How，可变）两层，让 Managed Runtime
 /// 能清晰区分"身份 + 执行环境"与"本轮工具 + 运行时控制面"。
 #[derive(Clone)]
 pub struct ExecutionContext {
@@ -331,17 +316,18 @@ impl std::fmt::Debug for ExecutionContext {
 }
 
 /// 从 `ExecutionContext.session.vfs` 的 default mount 解析工作区路径（`root_ref` 按本地路径处理）。
-pub fn workspace_path_from_context(context: &ExecutionContext) -> Result<PathBuf, ConnectorError> {
-    let space =
-        context.session.vfs.as_ref().ok_or_else(|| {
-            ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string())
-        })?;
+pub fn workspace_path_from_context(
+    context: &ExecutionContext,
+) -> Result<PathBuf, PlatformRuntimeError> {
+    let space = context.session.vfs.as_ref().ok_or_else(|| {
+        PlatformRuntimeError::InvalidConfig("ExecutionContext 缺少 vfs".to_string())
+    })?;
     let mount = space
         .default_mount()
-        .ok_or_else(|| ConnectorError::InvalidConfig("vfs 缺少 default_mount".to_string()))?;
+        .ok_or_else(|| PlatformRuntimeError::InvalidConfig("vfs 缺少 default_mount".to_string()))?;
     let path = PathBuf::from(mount.root_ref.trim());
     if path.as_os_str().is_empty() {
-        return Err(ConnectorError::InvalidConfig(
+        return Err(PlatformRuntimeError::InvalidConfig(
             "default mount 的 root_ref 为空".to_string(),
         ));
     }
@@ -956,11 +942,11 @@ pub trait RuntimeToolProvider: Send + Sync {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
-    ) -> Result<Vec<agentdash_agent_types::DynAgentTool>, ConnectorError>;
+    ) -> Result<Vec<agentdash_agent_types::DynAgentTool>, PlatformRuntimeError>;
 }
 
 #[derive(Debug, Error)]
-pub enum ConnectorError {
+pub enum PlatformRuntimeError {
     #[error("执行器配置无效: {0}")]
     InvalidConfig(String),
     #[error("执行器启动失败: {0}")]

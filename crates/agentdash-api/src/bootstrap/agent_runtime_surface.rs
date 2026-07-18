@@ -20,7 +20,7 @@ use agentdash_application_ports::runtime_surface_adoption::{
 };
 use agentdash_infrastructure::persistence::postgres::PostgresToolBrokerRepository;
 use agentdash_integration_api::*;
-use agentdash_spi::{
+use agentdash_platform_spi::{
     DynAgentTool, HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookTrigger,
     RuntimeAdapterProvenance, SharedHookRuntime, build_hook_trace_envelope,
     hook_trace_entry_storage_disposition,
@@ -40,10 +40,10 @@ pub trait AgentRunToolInvocationFactory: Send + Sync {
     async fn build_tools(
         &self,
         surface: &AgentRunRuntimeSurface,
-        executor: &agentdash_spi::AgentConfig,
+        executor: &agentdash_platform_spi::AgentConfig,
         coordinates: &agentdash_agent_runtime::ToolCallCoordinates,
         hook_runtime: SharedHookRuntime,
-        identity: Option<agentdash_spi::AuthIdentity>,
+        identity: Option<agentdash_platform_spi::AuthIdentity>,
     ) -> Result<Vec<DynAgentTool>, String>;
 }
 
@@ -52,10 +52,10 @@ impl AgentRunToolInvocationFactory for AgentBusinessSurfaceSource {
     async fn build_tools(
         &self,
         surface: &AgentRunRuntimeSurface,
-        executor: &agentdash_spi::AgentConfig,
+        executor: &agentdash_platform_spi::AgentConfig,
         coordinates: &agentdash_agent_runtime::ToolCallCoordinates,
         hook_runtime: SharedHookRuntime,
-        identity: Option<agentdash_spi::AuthIdentity>,
+        identity: Option<agentdash_platform_spi::AuthIdentity>,
     ) -> Result<Vec<DynAgentTool>, String> {
         self.build_tools_for_invocation(surface, executor, coordinates, hook_runtime, identity)
             .await
@@ -73,7 +73,7 @@ pub struct CompiledAgentRunToolBinding {
     pub catalog: agentdash_agent_runtime::ToolCatalogRevision,
     pub tool_factory: Arc<dyn AgentRunToolInvocationFactory>,
     pub surface: AgentRunRuntimeSurface,
-    pub executor: agentdash_spi::AgentConfig,
+    pub executor: agentdash_platform_spi::AgentConfig,
     pub tool_names: BTreeSet<String>,
     pub terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
 }
@@ -89,7 +89,7 @@ pub(crate) struct PendingCompiledAgentRunToolBinding {
     pub(crate) catalog: agentdash_agent_runtime::ToolCatalogRevision,
     pub(crate) tool_factory: Arc<dyn AgentRunToolInvocationFactory>,
     pub(crate) surface: AgentRunRuntimeSurface,
-    pub(crate) executor: agentdash_spi::AgentConfig,
+    pub(crate) executor: agentdash_platform_spi::AgentConfig,
     pub(crate) tool_names: BTreeSet<String>,
 }
 
@@ -178,10 +178,10 @@ impl AgentRunToolInvocationFactory for StaticTestToolInvocationFactory {
     async fn build_tools(
         &self,
         _surface: &AgentRunRuntimeSurface,
-        _executor: &agentdash_spi::AgentConfig,
+        _executor: &agentdash_platform_spi::AgentConfig,
         _coordinates: &agentdash_agent_runtime::ToolCallCoordinates,
         _hook_runtime: SharedHookRuntime,
-        _identity: Option<agentdash_spi::AuthIdentity>,
+        _identity: Option<agentdash_platform_spi::AuthIdentity>,
     ) -> Result<Vec<DynAgentTool>, String> {
         Ok(self.tools.clone())
     }
@@ -211,9 +211,9 @@ fn test_invocation_surface(
         launch_evidence_frame_id: frame_id,
         current_surface_frame_id: frame_id,
         surface_revision: i32::try_from(revision.0).expect("test surface revision"),
-        capability_state: agentdash_spi::CapabilityState::default(),
-        vfs: agentdash_spi::Vfs::default(),
-        vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy::default(),
+        capability_state: agentdash_platform_spi::CapabilityState::default(),
+        vfs: agentdash_platform_spi::Vfs::default(),
+        vfs_access_policy: agentdash_platform_spi::RuntimeVfsAccessPolicy::default(),
         mcp_servers: Vec::new(),
         runtime_backend_anchor: None,
         active_turn_id: None,
@@ -268,7 +268,7 @@ impl PendingCompiledAgentRunToolBinding {
                 frame_id,
                 applied.surface_revision,
             ),
-            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
             tool_names,
         }
     }
@@ -314,7 +314,7 @@ impl CanonicalAgentRuntimeHookCallback {
         binding: &CompiledAgentRunToolBinding,
         request: &DriverHookInvocation,
         hook_run_id: &HookRunId,
-        entry: &agentdash_spi::HookTraceEntry,
+        entry: &agentdash_platform_spi::HookTraceEntry,
     ) -> Result<(), DriverHookCallbackError> {
         let snapshot = self
             .runtime
@@ -390,27 +390,27 @@ impl CanonicalAgentRuntimeHookCallback {
 }
 
 fn hook_trace_presentation_durability(
-    entry: &agentdash_spi::HookTraceEntry,
+    entry: &agentdash_platform_spi::HookTraceEntry,
 ) -> Option<PresentationDurability> {
     match hook_trace_entry_storage_disposition(entry) {
-        agentdash_spi::HookTraceStorageDisposition::Durable => {
+        agentdash_platform_spi::HookTraceStorageDisposition::Durable => {
             Some(PresentationDurability::Durable)
         }
-        agentdash_spi::HookTraceStorageDisposition::Ephemeral => {
+        agentdash_platform_spi::HookTraceStorageDisposition::Ephemeral => {
             Some(PresentationDurability::Ephemeral)
         }
-        agentdash_spi::HookTraceStorageDisposition::Drop => None,
+        agentdash_platform_spi::HookTraceStorageDisposition::Drop => None,
     }
 }
 
 fn canonical_hook_trace_entry(
-    hook_runtime: &dyn agentdash_spi::HookRuntimeAccess,
+    hook_runtime: &dyn agentdash_platform_spi::HookRuntimeAccess,
     request: &DriverHookInvocation,
-    trigger: agentdash_spi::HookTraceTrigger,
-    resolution: &agentdash_spi::HookResolution,
-) -> agentdash_spi::HookTraceEntry {
+    trigger: agentdash_platform_spi::HookTraceTrigger,
+    resolution: &agentdash_platform_spi::HookResolution,
+) -> agentdash_platform_spi::HookTraceEntry {
     let decision = match trigger {
-        agentdash_spi::HookTraceTrigger::BeforeTool => {
+        agentdash_platform_spi::HookTraceTrigger::BeforeTool => {
             if resolution.block_reason.is_some() {
                 "deny"
             } else if resolution.approval_request.is_some() {
@@ -421,7 +421,7 @@ fn canonical_hook_trace_entry(
                 "allow"
             }
         }
-        agentdash_spi::HookTraceTrigger::AfterTool => {
+        agentdash_platform_spi::HookTraceTrigger::AfterTool => {
             if resolution.refresh_snapshot {
                 "refresh_requested"
             } else if !resolution.effects.is_empty() {
@@ -432,7 +432,7 @@ fn canonical_hook_trace_entry(
         }
         _ => "noop",
     };
-    agentdash_spi::HookTraceEntry {
+    agentdash_platform_spi::HookTraceEntry {
         sequence: hook_runtime.next_trace_sequence(),
         timestamp_ms: chrono::Utc::now().timestamp_millis(),
         revision: hook_runtime.revision(),
@@ -468,10 +468,10 @@ fn hook_invocation_coordinates_are_current(
 }
 
 fn hook_context_presentation_facts(
-    facts: agentdash_spi::hooks::HookContextPresentationFacts,
+    facts: agentdash_platform_spi::hooks::HookContextPresentationFacts,
 ) -> Result<agentdash_agent_runtime::ContextFrameFacts, DriverHookCallbackError> {
     let facts = match facts {
-        agentdash_spi::hooks::HookContextPresentationFacts::SystemNotice {
+        agentdash_platform_spi::hooks::HookContextPresentationFacts::SystemNotice {
             title,
             summary,
             body,
@@ -480,7 +480,7 @@ fn hook_context_presentation_facts(
             summary,
             body,
         },
-        agentdash_spi::hooks::HookContextPresentationFacts::AssignmentInjection {
+        agentdash_platform_spi::hooks::HookContextPresentationFacts::AssignmentInjection {
             title,
             summary,
             injections,
@@ -903,13 +903,13 @@ impl agentdash_agent_runtime::ToolBrokerPolicyPort for RegistryToolBrokerPolicy 
     {
         let binding = self.binding(invocation).await?;
         let required_operation = match &tool.protocol_projection {
-            ToolProtocolProjection::Command => Some(agentdash_spi::RuntimeVfsOperation::Exec),
+            ToolProtocolProjection::Command => Some(agentdash_platform_spi::RuntimeVfsOperation::Exec),
             ToolProtocolProjection::FileChange => {
-                Some(agentdash_spi::RuntimeVfsOperation::ApplyPatch)
+                Some(agentdash_platform_spi::RuntimeVfsOperation::ApplyPatch)
             }
-            ToolProtocolProjection::FsRead => Some(agentdash_spi::RuntimeVfsOperation::Read),
+            ToolProtocolProjection::FsRead => Some(agentdash_platform_spi::RuntimeVfsOperation::Read),
             ToolProtocolProjection::FsGrep | ToolProtocolProjection::FsGlob => {
-                Some(agentdash_spi::RuntimeVfsOperation::Search)
+                Some(agentdash_platform_spi::RuntimeVfsOperation::Search)
             }
             ToolProtocolProjection::Mcp { .. } | ToolProtocolProjection::Dynamic { .. } => None,
         };
@@ -958,7 +958,7 @@ impl agentdash_agent_runtime::ToolCredentialResolver for EmbeddedToolCredentialR
 
 struct RegistryToolExecutor {
     registry: Arc<CompiledAgentRunToolRegistry>,
-    authorization_identity: Option<agentdash_spi::AuthIdentity>,
+    authorization_identity: Option<agentdash_platform_spi::AuthIdentity>,
 }
 
 fn project_agent_tool_content(
@@ -2257,7 +2257,7 @@ mod tests {
     use super::*;
     use agentdash_agent_runtime::ToolExecutionPort;
     use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         CapabilityState, NoopExecutionHookProvider, ToolCapability, ToolCapabilityFilter,
         ToolCluster,
         platform::tool_capability::{CAP_FILE_READ, CAP_WORKSPACE_MODULE},
@@ -2341,7 +2341,7 @@ mod tests {
             1,
             session_id.to_string(),
             Arc::new(NoopExecutionHookProvider),
-            agentdash_spi::AgentFrameHookSnapshot::default(),
+            agentdash_platform_spi::AgentFrameHookSnapshot::default(),
         ))
     }
 
@@ -2355,10 +2355,10 @@ mod tests {
         async fn build_tools(
             &self,
             _surface: &AgentRunRuntimeSurface,
-            _executor: &agentdash_spi::AgentConfig,
+            _executor: &agentdash_platform_spi::AgentConfig,
             _coordinates: &agentdash_agent_runtime::ToolCallCoordinates,
             _hook_runtime: SharedHookRuntime,
-            _identity: Option<agentdash_spi::AuthIdentity>,
+            _identity: Option<agentdash_platform_spi::AuthIdentity>,
         ) -> Result<Vec<DynAgentTool>, String> {
             Ok(self.tools.clone())
         }
@@ -2373,7 +2373,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl agentdash_spi::AgentTool for OwnerEchoTool {
+    impl agentdash_platform_spi::AgentTool for OwnerEchoTool {
         fn name(&self) -> &str {
             "owner_echo"
         }
@@ -2391,10 +2391,10 @@ mod tests {
             _tool_use_id: &str,
             _args: serde_json::Value,
             _cancel: tokio_util::sync::CancellationToken,
-            _update: Option<agentdash_spi::ToolUpdateCallback>,
-        ) -> Result<agentdash_spi::AgentToolResult, agentdash_spi::AgentToolError> {
-            Ok(agentdash_spi::AgentToolResult {
-                content: vec![agentdash_spi::ContentPart::text("typed invocation owner")],
+            _update: Option<agentdash_platform_spi::ToolUpdateCallback>,
+        ) -> Result<agentdash_platform_spi::AgentToolResult, agentdash_platform_spi::AgentToolError> {
+            Ok(agentdash_platform_spi::AgentToolResult {
+                content: vec![agentdash_platform_spi::ContentPart::text("typed invocation owner")],
                 details: Some(self.owner.clone()),
                 is_error: false,
             })
@@ -2411,10 +2411,10 @@ mod tests {
         async fn build_tools(
             &self,
             surface: &AgentRunRuntimeSurface,
-            _executor: &agentdash_spi::AgentConfig,
+            _executor: &agentdash_platform_spi::AgentConfig,
             coordinates: &agentdash_agent_runtime::ToolCallCoordinates,
             _hook_runtime: SharedHookRuntime,
-            _identity: Option<agentdash_spi::AuthIdentity>,
+            _identity: Option<agentdash_platform_spi::AuthIdentity>,
         ) -> Result<Vec<DynAgentTool>, String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(vec![Arc::new(OwnerEchoTool {
@@ -2488,8 +2488,8 @@ mod tests {
             current_surface_frame_id: frame_id,
             surface_revision: i32::try_from(revision).unwrap(),
             capability_state: CapabilityState::default(),
-            vfs: agentdash_spi::Vfs::default(),
-            vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy::default(),
+            vfs: agentdash_platform_spi::Vfs::default(),
+            vfs_access_policy: agentdash_platform_spi::RuntimeVfsAccessPolicy::default(),
             mcp_servers: Vec::new(),
             runtime_backend_anchor: None,
             active_turn_id: None,
@@ -2518,7 +2518,7 @@ mod tests {
     #[test]
     fn hook_semantic_notice_derives_platform_metadata() {
         let facts = hook_context_presentation_facts(
-            agentdash_spi::hooks::HookContextPresentationFacts::SystemNotice {
+            agentdash_platform_spi::hooks::HookContextPresentationFacts::SystemNotice {
                 title: "Hook Notice".to_string(),
                 summary: "continue".to_string(),
                 body: Some("继续处理".to_string()),
@@ -2548,10 +2548,10 @@ mod tests {
     #[test]
     fn hook_semantic_assignment_rejects_empty_injection() {
         let result = hook_context_presentation_facts(
-            agentdash_spi::hooks::HookContextPresentationFacts::AssignmentInjection {
+            agentdash_platform_spi::hooks::HookContextPresentationFacts::AssignmentInjection {
                 title: "Assignment Context".to_string(),
                 summary: "Hook injection".to_string(),
-                injections: vec![agentdash_spi::HookInjection {
+                injections: vec![agentdash_platform_spi::HookInjection {
                     slot: "workflow".to_string(),
                     content: "  ".to_string(),
                     source: "hook:test".to_string(),
@@ -2649,7 +2649,7 @@ mod tests {
             },
             tool_factory: fixture_tool_factory(Vec::new()),
             surface,
-            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
             tool_names: BTreeSet::new(),
             terminal_hook_effect_binding: None,
         };
@@ -2740,7 +2740,7 @@ mod tests {
             7,
             runtime_thread_id.to_string(),
             Arc::new(NoopExecutionHookProvider),
-            agentdash_spi::AgentFrameHookSnapshot::default(),
+            agentdash_platform_spi::AgentFrameHookSnapshot::default(),
         ));
         let factory = Arc::new(OwnerEchoToolInvocationFactory::default());
         registry
@@ -2759,7 +2759,7 @@ mod tests {
                 },
                 tool_factory: factory.clone(),
                 surface,
-                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
                 tool_names: BTreeSet::from(["owner_echo".to_string()]),
                 terminal_hook_effect_binding: None,
             })
@@ -2946,7 +2946,7 @@ mod tests {
                 },
                 tool_factory: fixture_tool_factory(vec![malformed_tool]),
                 surface: fixture_runtime_surface(&runtime_session_id, uuid::Uuid::nil(), 1),
-                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
                 tool_names: BTreeSet::from(["malformed_update".to_string()]),
                 terminal_hook_effect_binding: None,
             })
@@ -3030,7 +3030,7 @@ mod tests {
                 },
                 tool_factory: fixture_tool_factory(Vec::new()),
                 surface: fixture_runtime_surface("presentation-applied", uuid::Uuid::nil(), 1),
-                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
                 tool_names: BTreeSet::new(),
                 terminal_hook_effect_binding: None,
             })
@@ -3052,7 +3052,7 @@ mod tests {
             },
             tool_factory: fixture_tool_factory(Vec::new()),
             surface: fixture_runtime_surface(pending_session, uuid::Uuid::nil(), 2),
-            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
             tool_names: BTreeSet::new(),
         };
 
@@ -3093,7 +3093,7 @@ mod tests {
             },
             tool_factory: fixture_tool_factory(Vec::new()),
             surface: fixture_runtime_surface(session, uuid::Uuid::nil(), 1),
-            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
             tool_names: BTreeSet::new(),
         };
         let first = pending(applied.runtime_thread_id.as_str());
@@ -3118,12 +3118,12 @@ mod tests {
         );
     }
 
-    fn hook_trace_entry(decision: &str) -> agentdash_spi::HookTraceEntry {
-        agentdash_spi::HookTraceEntry {
+    fn hook_trace_entry(decision: &str) -> agentdash_platform_spi::HookTraceEntry {
+        agentdash_platform_spi::HookTraceEntry {
             sequence: 1,
             timestamp_ms: 1_783_684_800_000,
             revision: 2,
-            trigger: agentdash_spi::HookTraceTrigger::BeforeTool,
+            trigger: agentdash_platform_spi::HookTraceTrigger::BeforeTool,
             decision: decision.into(),
             tool_name: Some("workspace_present".into()),
             tool_call_id: Some("tool-call-1".into()),
@@ -3198,7 +3198,7 @@ mod tests {
             },
             tool_factory: tool_factory.clone(),
             surface: surface.clone(),
-            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
             tool_names: BTreeSet::new(),
             terminal_hook_effect_binding: None,
         };
@@ -3239,7 +3239,7 @@ mod tests {
             },
             tool_factory: fixture_tool_factory(Vec::new()),
             surface: fixture_runtime_surface(&runtime_session_id, uuid::Uuid::nil(), 3),
-            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
             tool_names: BTreeSet::new(),
         };
 
@@ -3324,7 +3324,7 @@ mod tests {
                 uuid::Uuid::nil(),
                 revision,
             ),
-            executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
             tool_names: BTreeSet::new(),
             terminal_hook_effect_binding: None,
         };
@@ -3507,7 +3507,7 @@ mod tests {
                 },
                 tool_factory: fixture_tool_factory(Vec::new()),
                 surface: fixture_runtime_surface(&runtime_session_id, uuid::Uuid::nil(), 1),
-                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
                 tool_names: BTreeSet::from(["fs_read".to_string()]),
                 terminal_hook_effect_binding: None,
             })
@@ -3568,7 +3568,7 @@ mod tests {
             Arc::new(agentdash_application_vfs::VfsService::new(Arc::new(
                 agentdash_application_vfs::MountProviderRegistryBuilder::new().build(),
             ))),
-            agentdash_application_vfs::tools::SharedRuntimeVfs::new(agentdash_spi::Vfs {
+            agentdash_application_vfs::tools::SharedRuntimeVfs::new(agentdash_platform_spi::Vfs {
                 mounts: Vec::new(),
                 default_mount_id: None,
                 source_project_id: None,
@@ -3625,7 +3625,7 @@ mod tests {
                 },
                 tool_factory: fixture_tool_factory(vec![tool]),
                 surface: fixture_runtime_surface(&runtime_session_id, uuid::Uuid::nil(), 1),
-                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
                 tool_names: BTreeSet::from([tool_name]),
                 terminal_hook_effect_binding: None,
             })
@@ -3694,7 +3694,7 @@ mod tests {
             Arc::new(agentdash_application_vfs::VfsService::new(Arc::new(
                 agentdash_application_vfs::MountProviderRegistryBuilder::new().build(),
             ))),
-            agentdash_application_vfs::tools::SharedRuntimeVfs::new(agentdash_spi::Vfs {
+            agentdash_application_vfs::tools::SharedRuntimeVfs::new(agentdash_platform_spi::Vfs {
                 mounts: Vec::new(),
                 default_mount_id: None,
                 source_project_id: None,
@@ -3753,7 +3753,7 @@ mod tests {
                 },
                 tool_factory: fixture_tool_factory(vec![tool]),
                 surface: fixture_runtime_surface(&runtime_session_id, uuid::Uuid::nil(), 1),
-                executor: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                executor: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
                 tool_names: BTreeSet::from([tool_name]),
                 terminal_hook_effect_binding: None,
             })

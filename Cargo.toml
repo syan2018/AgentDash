@@ -25,7 +25,7 @@ members = [
     "crates/agentdash-workspace-module",
     "crates/agentdash-application",
     "crates/agentdash-infrastructure",
-    "crates/agentdash-spi",
+    "crates/agentdash-platform-spi",
     "crates/agentdash-executor",
     "crates/agentdash-first-party-integrations",
     "crates/agentdash-integration-api",
@@ -126,7 +126,7 @@ agentdash-process = { path = "crates/agentdash-process" }
 agentdash-workspace-module = { path = "crates/agentdash-workspace-module" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
-agentdash-spi = { path = "crates/agentdash-spi" }
+agentdash-platform-spi = { path = "crates/agentdash-platform-spi" }
 agentdash-executor = { path = "crates/agentdash-executor", default-features = false }
 agentdash-first-party-integrations = { path = "crates/agentdash-first-party-integrations" }
 

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use agentdash_application_ports::mcp_discovery::{
     DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryOutcome, McpToolDiscoveryRequest,
 };
-use agentdash_spi::{ConnectorError, McpRelayProvider};
+use agentdash_platform_spi::{PlatformRuntimeError, McpRelayProvider};
 use async_trait::async_trait;
 
 mod common;
@@ -38,9 +38,9 @@ impl McpToolDiscovery for ExecutorMcpToolDiscovery {
     async fn discover_tool_entries(
         &self,
         request: McpToolDiscoveryRequest,
-    ) -> Result<McpToolDiscoveryOutcome, ConnectorError> {
+    ) -> Result<McpToolDiscoveryOutcome, PlatformRuntimeError> {
         let (relay_servers, direct_servers) =
-            agentdash_spi::partition_runtime_mcp_servers(&request.servers);
+            agentdash_platform_spi::partition_runtime_mcp_servers(&request.servers);
         let mut outcome =
             direct::discover_mcp_tool_outcome(&direct_servers, &request.capability_state).await?;
 

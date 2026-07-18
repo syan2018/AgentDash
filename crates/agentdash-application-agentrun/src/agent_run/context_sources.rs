@@ -32,13 +32,13 @@ use agentdash_domain::{
     settings::{SettingScope, SettingsRepository},
     workflow::AgentFrame,
 };
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, AuthIdentity, DynAgentTool,
     ExecutionContext, ExecutionHookProvider, ExecutionSessionFrame, ExecutionTurnFrame,
     HookControlTarget, MemoryDiscoveryProvider, PlatformToolExecutionContext,
     PlatformToolInvocationCoordinates, RuntimeAdapterProvenance, RuntimeMcpSourceReadiness,
     SharedHookRuntime, SkillContextExposure, SkillDiscoveryProvider,
-    connector::RuntimeToolProvider,
+    RuntimeToolProvider,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -577,7 +577,7 @@ mod surface_closure_tests {
             launch_evidence_frame_id: launch_frame_id,
             current_surface_frame_id: current_frame_id,
             surface_revision: 7,
-            capability_state: agentdash_spi::CapabilityState::default(),
+            capability_state: agentdash_platform_spi::CapabilityState::default(),
             vfs: Vfs {
                 mounts: vec![Mount {
                     id: "workspace".to_string(),
@@ -594,7 +594,7 @@ mod surface_closure_tests {
                 source_story_id: None,
                 links: Vec::new(),
             },
-            vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy::default(),
+            vfs_access_policy: agentdash_platform_spi::RuntimeVfsAccessPolicy::default(),
             mcp_servers: Vec::new(),
             runtime_backend_anchor: None,
             active_turn_id: Some(turn_id.to_string()),
@@ -734,7 +734,7 @@ fn execution_context_for_surface(
 async fn build_bootstrap_context_facts(
     context_source: &AgentContextSurfaceSourceFacts,
     executor: &AgentConfig,
-    identity: Option<&agentdash_spi::AuthIdentity>,
+    identity: Option<&agentdash_platform_spi::AuthIdentity>,
     source_snapshot: Option<&AgentContextSourceSnapshot>,
     hook_snapshot: &AgentFrameHookSnapshot,
     discovery: &super::LaunchContextDiscoveryOutput,
@@ -822,7 +822,7 @@ async fn build_bootstrap_context_facts(
 
 async fn load_user_preferences(
     settings: &dyn SettingsRepository,
-    identity: Option<&agentdash_spi::AuthIdentity>,
+    identity: Option<&agentdash_platform_spi::AuthIdentity>,
 ) -> Vec<String> {
     let Some(identity) = identity else {
         return Vec::new();
@@ -889,15 +889,15 @@ fn assignment_context_facts(
                 runtime_agent_scope: true,
                 source: injection.source.clone(),
                 content: injection.content.clone(),
-                context_usage_kind: agentdash_spi::ASSIGNMENT_CONTEXT_SLOTS
+                context_usage_kind: agentdash_platform_spi::ASSIGNMENT_CONTEXT_SLOTS
                     .contains(&injection.slot.as_str())
-                    .then(|| agentdash_spi::context_usage_kind::SYSTEM_DEVELOPER.to_string()),
+                    .then(|| agentdash_platform_spi::context_usage_kind::SYSTEM_DEVELOPER.to_string()),
             })
             .collect(),
     }
 }
 
-fn memory_context_facts(inventory: &agentdash_spi::MemoryDiscoveryOutput) -> MemoryContextFacts {
+fn memory_context_facts(inventory: &agentdash_platform_spi::MemoryDiscoveryOutput) -> MemoryContextFacts {
     MemoryContextFacts {
         sources: inventory
             .clusters
@@ -921,7 +921,7 @@ fn memory_context_facts(inventory: &agentdash_spi::MemoryDiscoveryOutput) -> Mem
                 revision: memory_source_revision(source),
                 summary: source.summary.clone(),
                 bounded_index_content: source.bounded_index_content.clone(),
-                context_usage_kind: Some(agentdash_spi::context_usage_kind::MEMORY.to_string()),
+                context_usage_kind: Some(agentdash_platform_spi::context_usage_kind::MEMORY.to_string()),
             })
             .collect(),
         diagnostics: inventory
@@ -933,7 +933,7 @@ fn memory_context_facts(inventory: &agentdash_spi::MemoryDiscoveryOutput) -> Mem
                 message: diagnostic.message.clone(),
                 source_key: diagnostic.source_key.clone(),
                 uri: diagnostic.uri.clone(),
-                context_usage_kind: Some(agentdash_spi::context_usage_kind::MEMORY.to_string()),
+                context_usage_kind: Some(agentdash_platform_spi::context_usage_kind::MEMORY.to_string()),
             })
             .collect(),
     }
@@ -1144,7 +1144,7 @@ fn normalized_assignment_fragments(
         .iter()
         .filter(|fragment| fragment.runtime_agent_scope)
         .filter(|fragment| {
-            agentdash_spi::ASSIGNMENT_CONTEXT_SLOTS.contains(&fragment.slot.as_str())
+            agentdash_platform_spi::ASSIGNMENT_CONTEXT_SLOTS.contains(&fragment.slot.as_str())
         })
         .filter(|fragment| !fragment.content.trim().is_empty())
         .collect::<Vec<_>>();
@@ -1191,7 +1191,7 @@ fn runtime_memory_diagnostic_entry(
     }
 }
 
-fn memory_source_revision(source: &agentdash_spi::DiscoveredMemorySource) -> String {
+fn memory_source_revision(source: &agentdash_platform_spi::DiscoveredMemorySource) -> String {
     let payload = serde_json::to_string(source).unwrap_or_else(|_| {
         format!(
             "{}:{}:{}:{}",
@@ -1219,10 +1219,10 @@ fn fingerprint(value: &impl Serialize) -> Result<String, String> {
 }
 
 pub fn resolve_tool_capability(
-    state: &agentdash_spi::CapabilityState,
+    state: &agentdash_platform_spi::CapabilityState,
     tool_name: &str,
 ) -> Result<String, String> {
-    use agentdash_spi::platform::tool_capability::{ToolSource, platform_tool_descriptors};
+    use agentdash_platform_spi::platform::tool_capability::{ToolSource, platform_tool_descriptors};
     let descriptors = platform_tool_descriptors()
         .into_iter()
         .filter(|descriptor| descriptor.name == tool_name)
@@ -1248,7 +1248,7 @@ pub fn resolve_tool_capability(
                     && state
                         .tool
                         .capabilities
-                        .contains(&agentdash_spi::ToolCapability::new((*key).clone()))
+                        .contains(&agentdash_platform_spi::ToolCapability::new((*key).clone()))
             })
             .map(|(key, _)| key.clone()),
     );
@@ -1300,7 +1300,7 @@ pub fn project_tool_protocol(
     Ok((projection, fixture_id))
 }
 
-fn workspace_capabilities(vfs: &agentdash_spi::Vfs) -> BTreeSet<WorkspaceCapability> {
+fn workspace_capabilities(vfs: &agentdash_platform_spi::Vfs) -> BTreeSet<WorkspaceCapability> {
     let mut values = BTreeSet::new();
     for mount in &vfs.mounts {
         for capability in &mount.capabilities {

@@ -1,6 +1,6 @@
 [package]
-name = "agentdash-spi"
-description = "AgentDash 跨层 SPI 契约：Connector、Hook、Lifecycle、Tool 等 Service Provider Interface"
+name = "agentdash-platform-spi"
+description = "AgentDash 平台能力 SPI：认证、Hook、VFS、MCP、Marketplace 与运行表面契约"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

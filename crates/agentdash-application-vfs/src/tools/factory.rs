@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_spi::platform::tool_capability::{CAP_FILE_READ, CAP_FILE_WRITE, CAP_SHELL_EXECUTE};
-use agentdash_spi::{CapabilityState, DynAgentTool, ToolCluster};
+use agentdash_platform_spi::platform::tool_capability::{CAP_FILE_READ, CAP_FILE_WRITE, CAP_SHELL_EXECUTE};
+use agentdash_platform_spi::{CapabilityState, DynAgentTool, ToolCluster};
 
 use crate::VfsMaterializationService;
 use crate::inline_persistence::InlineContentOverlay;
@@ -150,7 +150,7 @@ impl VfsToolFactory {
 pub struct VfsToolFactoryInput<'a> {
     pub shared_vfs: SharedRuntimeVfs,
     pub overlay: Option<Arc<InlineContentOverlay>>,
-    pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    pub identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     pub session_id: String,
     pub turn_id: String,
     pub terminal_owner: ShellTerminalOwner,

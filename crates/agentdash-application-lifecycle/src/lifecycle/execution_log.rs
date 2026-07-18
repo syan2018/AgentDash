@@ -14,7 +14,7 @@ use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileR
 use agentdash_domain::workflow::{
     LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleRunRepository,
 };
-use agentdash_spi::hooks::PendingExecutionLogEntry;
+use agentdash_platform_spi::hooks::PendingExecutionLogEntry;
 
 fn parse_event_kind(s: &str) -> Option<LifecycleExecutionEventKind> {
     match s {

@@ -7,7 +7,7 @@ mod tests {
         InlineContentOverlay, InlineContentPersister,
     };
     use agentdash_application_vfs::*;
-    use agentdash_spi::{MountCapability, Vfs};
+    use agentdash_platform_spi::{MountCapability, Vfs};
 
     use agentdash_agent_types::AgentTool;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
@@ -23,7 +23,7 @@ mod tests {
         ShellExecTool,
     };
 
-    // `MountCapability` 统一使用 agentdash_spi 版本，避免重复导入
+    // `MountCapability` 统一使用 agentdash_platform_spi 版本，避免重复导入
     use agentdash_domain::context_container::{
         ContextContainerDefinition, ContextContainerFile, ContextContainerProvider,
     };
@@ -101,8 +101,8 @@ mod tests {
         owner_id: uuid::Uuid,
         capabilities: Vec<MountCapability>,
         default_write: bool,
-    ) -> agentdash_spi::Mount {
-        agentdash_spi::Mount {
+    ) -> agentdash_platform_spi::Mount {
+        agentdash_platform_spi::Mount {
             id: mount_id.to_string(),
             provider: PROVIDER_INLINE_FS.to_string(),
             backend_id: String::new(),
@@ -595,7 +595,7 @@ mod tests {
     fn runtime_tool_schemas_are_openai_compatible() {
         let service = Arc::new(VfsService::new(empty_mount_registry()));
         let vfs = Vfs {
-            mounts: vec![agentdash_spi::Mount {
+            mounts: vec![agentdash_platform_spi::Mount {
                 id: "brief".to_string(),
                 provider: PROVIDER_INLINE_FS.to_string(),
                 backend_id: String::new(),

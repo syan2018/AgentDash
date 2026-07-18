@@ -424,7 +424,7 @@ pub async fn persist_identity_snapshot(
 mod tests {
     use super::*;
     use agentdash_integration_api::{AuthError, AuthProvider};
-    use agentdash_spi::platform::auth::AuthMode;
+    use agentdash_platform_spi::platform::auth::AuthMode;
 
     struct StaticAuthorizeProvider {
         result: Result<bool, AuthError>,

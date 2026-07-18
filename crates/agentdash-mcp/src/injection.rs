@@ -1,1 +1,1 @@
-pub use agentdash_spi::McpInjectionConfig;
+pub use agentdash_platform_spi::McpInjectionConfig;

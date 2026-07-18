@@ -20,7 +20,7 @@ use agentdash_application_ports::launch::BackendSelectionInput;
 use agentdash_application_ports::request_digest::canonical_request_digest;
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::workflow::AgentFrameRepository;
-use agentdash_spi::{AgentConfig, AuthIdentity};
+use agentdash_platform_spi::{AgentConfig, AuthIdentity};
 use async_trait::async_trait;
 use chrono::Utc;
 use thiserror::Error;
@@ -603,15 +603,15 @@ impl ManagedAgentRunRuntime {
             .filter_map(|notice| {
                 if let Some(facts) = notice.presentation {
                     let source = match notice.source {
-                        agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate => {
+                        agentdash_platform_spi::hooks::RuntimeEventSource::RuntimeContextUpdate => {
                             agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate
                         }
-                        agentdash_spi::hooks::RuntimeEventSource::CompanionResult => {
+                        agentdash_platform_spi::hooks::RuntimeEventSource::CompanionResult => {
                             agentdash_agent_protocol::ContextFrameSource::CompanionResult
                         }
                     };
                     let facts = match facts {
-                        agentdash_spi::hooks::HookContextPresentationFacts::SystemNotice {
+                        agentdash_platform_spi::hooks::HookContextPresentationFacts::SystemNotice {
                             title,
                             summary,
                             body,
@@ -620,7 +620,7 @@ impl ManagedAgentRunRuntime {
                             summary,
                             body,
                         },
-                        agentdash_spi::hooks::HookContextPresentationFacts::AssignmentInjection {
+                        agentdash_platform_spi::hooks::HookContextPresentationFacts::AssignmentInjection {
                             title,
                             summary,
                             injections,
@@ -654,10 +654,10 @@ impl ManagedAgentRunRuntime {
                     &agentdash_agent_runtime::SystemNoticePresentationFacts {
                         id: notice.id,
                         source: match notice.source {
-                            agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate => {
+                            agentdash_platform_spi::hooks::RuntimeEventSource::RuntimeContextUpdate => {
                                 agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate
                             }
-                            agentdash_spi::hooks::RuntimeEventSource::CompanionResult => {
+                            agentdash_platform_spi::hooks::RuntimeEventSource::CompanionResult => {
                                 agentdash_agent_protocol::ContextFrameSource::CompanionResult
                             }
                         },
@@ -691,16 +691,16 @@ impl ManagedAgentRunRuntime {
                         },
                         &agentdash_agent_runtime::PendingActionPresentationFacts {
                             source: match action.source {
-                                agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate => agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
-                                agentdash_spi::hooks::RuntimeEventSource::CompanionResult => agentdash_agent_protocol::ContextFrameSource::CompanionResult,
+                                agentdash_platform_spi::hooks::RuntimeEventSource::RuntimeContextUpdate => agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
+                                agentdash_platform_spi::hooks::RuntimeEventSource::CompanionResult => agentdash_agent_protocol::ContextFrameSource::CompanionResult,
                             },
                             title: action.title,
                             summary: action.summary,
                             action_id: action.id,
                             action_type: action.action_type,
                             status: match action.status {
-                                agentdash_spi::hooks::HookPendingActionStatus::Pending => "pending",
-                                agentdash_spi::hooks::HookPendingActionStatus::Resolved => "resolved",
+                                agentdash_platform_spi::hooks::HookPendingActionStatus::Pending => "pending",
+                                agentdash_platform_spi::hooks::HookPendingActionStatus::Resolved => "resolved",
                             }.to_string(),
                             runtime_revision,
                             turn_id: action.turn_id,
@@ -709,10 +709,10 @@ impl ManagedAgentRunRuntime {
                             .injections
                             .into_iter()
                             .map(|injection| {
-                                let context_usage_kind = agentdash_spi::ASSIGNMENT_CONTEXT_SLOTS
+                                let context_usage_kind = agentdash_platform_spi::ASSIGNMENT_CONTEXT_SLOTS
                                     .contains(&injection.slot.as_str())
                                     .then(|| {
-                                        agentdash_spi::context_usage_kind::SYSTEM_DEVELOPER
+                                        agentdash_platform_spi::context_usage_kind::SYSTEM_DEVELOPER
                                             .to_string()
                                     });
                                 agentdash_agent_protocol::RuntimeHookInjectionEntry {

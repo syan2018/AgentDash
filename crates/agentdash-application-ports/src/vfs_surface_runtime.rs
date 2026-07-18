@@ -1,4 +1,4 @@
-use agentdash_spi::{Mount, Vfs};
+use agentdash_platform_spi::{Mount, Vfs};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

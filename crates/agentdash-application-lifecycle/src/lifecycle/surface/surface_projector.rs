@@ -9,7 +9,7 @@ use agentdash_domain::{
     companion::COMPANION_SYSTEM_SKILL_NAME, routine::ROUTINE_MEMORY_SKILL_NAME,
     workspace_module::WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
 };
-use agentdash_spi::Vfs;
+use agentdash_platform_spi::Vfs;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;

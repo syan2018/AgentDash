@@ -36,7 +36,7 @@
 | `agentdash-integration-remote-runtime` | 远端 Agent service 的通用 placement proxy，不拥有 Agent 业务语义 |
 | `agentdash-llm-provider` | Native Agent 使用的 provider bridge 与 credential-scoped resolver |
 | `agentdash-executor` | 非 Agent Runtime 的执行与 MCP adapter substrate |
-| `agentdash-spi` | 平台 feature、Hook policy、VFS/MCP 与 tool source ports |
+| `agentdash-platform-spi` | 平台 feature、Hook policy、VFS/MCP 与 tool source ports |
 | `agentdash-agent` | 无平台会话事实的 Agent Loop core |
 | `agentdash-agent-types` | Agent 领域通用类型 |
 | `agentdash-agent-protocol` | Backbone Protocol 与协议适配 |
@@ -74,7 +74,7 @@ Project extension runtime projection 归 `agentdash-application::extension_runti
 
 Project extension management 归 `agentdash-application::extension_management`，API 入口为 `agentdash-api/src/routes/project_extensions.rs`。Management list 从 `ProjectExtensionInstallation` 读取安装事实，并补充 source status、package mode、artifact summary 与 capability summary；runtime projection 继续只表达运行视图。
 
-Extension package artifact 归独立 `agentdash-domain::extension_package` / `agentdash-application::extension_package` 模块，API 入口为 `agentdash-api/src/routes/extension_package_artifacts.rs` 与 project-facing import route。正式 packaged extension 安装以平台保存的 archive artifact 为事实源：后端校验 manifest、bundle digest 与 archive digest，保存 package metadata、manifest snapshot、storage ref 和 source version。Artifact 归属使用 `owner_kind = project | library_asset` 与 `owner_id`：Project-owned artifact 服务本地导入和 Canvas promote，LibraryAsset-owned artifact 服务 Marketplace packaged template。Project extension installation 可引用 `package_artifact`；archive download access 通过当前 Project installation 判定。Archive object 读写通过 `agentdash-spi::extension_package::ExtensionPackageArtifactStorage` 端口进入 application use case，由 `agentdash-infrastructure::storage` 提供 filesystem adapter，原因是 API route 只表达入口语义，不能拥有 object storage path 与 filesystem normalization。
+Extension package artifact 归独立 `agentdash-domain::extension_package` / `agentdash-application::extension_package` 模块，API 入口为 `agentdash-api/src/routes/extension_package_artifacts.rs` 与 project-facing import route。正式 packaged extension 安装以平台保存的 archive artifact 为事实源：后端校验 manifest、bundle digest 与 archive digest，保存 package metadata、manifest snapshot、storage ref 和 source version。Artifact 归属使用 `owner_kind = project | library_asset` 与 `owner_id`：Project-owned artifact 服务本地导入和 Canvas promote，LibraryAsset-owned artifact 服务 Marketplace packaged template。Project extension installation 可引用 `package_artifact`；archive download access 通过当前 Project installation 判定。Archive object 读写通过 `agentdash-platform-spi::extension_package::ExtensionPackageArtifactStorage` 端口进入 application use case，由 `agentdash-infrastructure::storage` 提供 filesystem adapter，原因是 API route 只表达入口语义，不能拥有 object storage path 与 filesystem normalization。
 
 Canvas 发布为插件的用例归 `agentdash-application::canvas::promotion`，API 入口为 `POST /api/canvases/{id}/promote-extension`。该用例从 Canvas 聚合生成 `.agentdash-extension.tgz`，写入 Project scoped extension package artifact，再安装为 Project extension installation。
 
@@ -83,7 +83,7 @@ Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService`
 ## Local Decisions
 
 - Repository trait 按 aggregate 边界定义，原因是持久化接口应反映领域一致性边界，而不是表结构。
-- Session 事件、terminal effect outbox 与 runtime command store 的持久化 contract 放在 `agentdash-spi::session_persistence`，原因是这些 record 同时服务 application runtime 与 infrastructure adapter，不能把 infrastructure 绑定到 application 编排模块。
+- Session 事件、terminal effect outbox 与 runtime command store 的持久化 contract 放在 `agentdash-platform-spi::session_persistence`，原因是这些 record 同时服务 application runtime 与 infrastructure adapter，不能把 infrastructure 绑定到 application 编排模块。
 - `RepositorySet` 只作为 application/bootstrap composition result 保留，原因是启动期需要统一持有 repository ports；业务用例使用具名 deps struct，原因是 constructor 签名必须暴露真实 aggregate 依赖，避免 service locator 进入 application 逻辑。
 - PostgreSQL migration 与 SQLite 初始化策略分开维护，原因是云端业务库需要统一可审计 schema 历史，本机会话缓存则由本机 runtime 拥有 per-user 初始化生命周期。
 - Project 授权放在 domain，原因是角色、主体 grant 与 template 可见性属于 Project 聚合语义，MCP 与 API 都需要在不反向依赖 application 的情况下复用同一判定。`ProjectAuthorizationContext` 保留认证身份的 `user_id` 与 `subject` 别名，原因是企业目录解析、登录态 claim 与授权持久化可能使用不同但等价的用户标识，Project 角色判定需要在同一领域入口完成身份收束。Backend 授权放在 application，原因是 backend scope 可能需要组合 Backend 与 Project repository，属于跨聚合用例编排。
@@ -91,7 +91,7 @@ Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService`
 - Codex app-server bridge 归 `agentdash-integration-codex`，原因是 vendor protocol、进程生命周期与 native hook materialization 都是 Driver adapter 语义；AgentDash canonical state 与 capability truth 由 owned Runtime contract/Host 持有。
 - `agentdash-process` 承载 AgentDash 自有后台子进程启动 substrate，原因是本机 relay、MCP stdio、tool shell、workspace probe、function runner、desktop sidecar 和 Codex bridge 都可能从桌面 GUI 宿主触发 console 子进程；统一的 `ProcessVisibility` / `ProcessDomain` 边界让 Windows 后台启动静默、诊断可按 domain/program/cwd/visibility 回溯，且不记录 args/env 等 credential-bearing 值。
 - Extension package artifact 独立于 LibraryAsset payload，原因是正式插件包是平台可下载、可校验、可审计的运行产物；owner 模型让 Project 本地导入与 LibraryAsset Marketplace 模板共享同一套 digest、storage 与访问校验。
-- Extension package archive object storage 端口放在 `agentdash-spi`，原因是 application 需要消费该端口表达用例意图，而 infrastructure 需要实现该端口且不应反向依赖 application 编排层。
+- Extension package archive object storage 端口放在 `agentdash-platform-spi`，原因是 application 需要消费该端口表达用例意图，而 infrastructure 需要实现该端口且不应反向依赖 application 编排层。
 - Route module 自持 router 表，原因是 endpoint ownership 应与 handler/module ownership 对齐；根 router 只表达 secured/public 装配，避免跨资源长链路表成为协议事实源。
 - `agentdash-local-tauri` 通过 external origin 或 `agentdash-server` sidecar 连接 Dashboard API，原因是 AppState、migration、HTTP route 与 API diagnostics 的 composition ownership 属于 `agentdash-api`/`agentdash-server`，桌面壳只负责本机能力、进程生命周期和 readiness projection。
 

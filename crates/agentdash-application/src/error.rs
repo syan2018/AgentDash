@@ -1,6 +1,6 @@
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::DomainError;
-use agentdash_spi::ConnectorError;
+use agentdash_platform_spi::PlatformRuntimeError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApplicationError {
@@ -35,15 +35,15 @@ impl From<DomainError> for ApplicationError {
     }
 }
 
-impl From<ConnectorError> for ApplicationError {
-    fn from(error: ConnectorError) -> Self {
+impl From<PlatformRuntimeError> for ApplicationError {
+    fn from(error: PlatformRuntimeError) -> Self {
         match error {
-            ConnectorError::InvalidConfig(message) => Self::BadRequest(message),
-            ConnectorError::ConnectionFailed(message) => Self::Unavailable(message),
-            ConnectorError::SpawnFailed(message) | ConnectorError::Runtime(message) => {
+            PlatformRuntimeError::InvalidConfig(message) => Self::BadRequest(message),
+            PlatformRuntimeError::ConnectionFailed(message) => Self::Unavailable(message),
+            PlatformRuntimeError::SpawnFailed(message) | PlatformRuntimeError::Runtime(message) => {
                 Self::Internal(message)
             }
-            ConnectorError::Io(error) => {
+            PlatformRuntimeError::Io(error) => {
                 let context =
                     DiagnosticErrorContext::new("application.error_conversion", "connector_io")
                         .with_field("error_source", "connector");
@@ -57,7 +57,7 @@ impl From<ConnectorError> for ApplicationError {
                 );
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
-            ConnectorError::Json(error) => Self::BadRequest(error.to_string()),
+            PlatformRuntimeError::Json(error) => Self::BadRequest(error.to_string()),
         }
     }
 }

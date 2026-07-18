@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AgentToolResult, ContentPart, RuntimeVfsAccessPolicy, RuntimeVfsAccessSource, Vfs,
 };
 use tokio::sync::RwLock;
@@ -133,7 +133,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         Mount, MountCapability, RuntimeVfsAccessRule, RuntimeVfsOperation, RuntimeVfsPathPattern,
     };
 

@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 use agentdash_domain::workflow::WorkflowHookTrigger;
-use agentdash_spi::HookTrigger;
+use agentdash_platform_spi::HookTrigger;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

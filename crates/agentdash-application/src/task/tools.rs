@@ -2,8 +2,8 @@ use agentdash_domain::context_source::{
     ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
 };
 use agentdash_domain::workflow::{SubjectRef, TaskPlanStatus, TaskPriority};
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, ExecutionContext, ToolUpdateCallback,
 };
 use async_trait::async_trait;
@@ -425,8 +425,8 @@ impl AgentTool for TaskReadTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<TaskReadParams>()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -466,8 +466,8 @@ impl AgentTool for TaskWriteTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<TaskWriteParams>()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {

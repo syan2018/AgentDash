@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use agentdash_spi::HookScriptEvaluator;
+use agentdash_platform_spi::HookScriptEvaluator;
 
 pub struct TestHookScriptEvaluator {
     scripts: BTreeMap<String, String>,

@@ -2,7 +2,7 @@ use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::workflow::LifecycleGate;
-use agentdash_spi::{AgentConfig, ThinkingLevel};
+use agentdash_platform_spi::{AgentConfig, ThinkingLevel};
 
 use crate::agent_run::AgentRunExecutionState;
 use crate::agent_run::lifecycle_read_model_facade::LifecycleSubjectAssociationView;

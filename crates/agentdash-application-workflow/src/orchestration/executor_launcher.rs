@@ -7,7 +7,7 @@ use agentdash_domain::workflow::{
     AgentProcedureRepository, ArtifactAliasPolicy, ExecutorRunRef, LifecycleGateRepository,
     LifecycleRun, LifecycleRunRepository, PlanNode, PlanNodeKind, RuntimeNodeError,
 };
-use agentdash_spi::FunctionRunner;
+use agentdash_platform_spi::FunctionRunner;
 use serde_json::Value;
 use uuid::Uuid;
 

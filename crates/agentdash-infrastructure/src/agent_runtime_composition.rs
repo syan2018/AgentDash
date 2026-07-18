@@ -1950,6 +1950,11 @@ pub type AgentRuntimeCallbackFactory = Arc<
 
 pub struct AgentRuntimeComposition {
     pub gateway: Arc<dyn AgentRuntimeGateway>,
+    pub product_projection_gateway:
+        Arc<dyn agentdash_application_agentrun::agent_run::AgentRunProductProjectionQueryPort>,
+    pub product_runtime_bindings: Arc<crate::PostgresAgentRunProductRuntimeBindingRepository>,
+    pub workspace_presentations: Arc<crate::PostgresWorkspaceModulePresentationStore>,
+    pub terminal_projections: Arc<crate::PostgresAgentRunTerminalProjectionStore>,
     pub host: Arc<IntegrationDriverHost>,
     pub provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
     pub bindings: Arc<dyn AgentRunRuntimeBindingRepository>,
@@ -2013,6 +2018,31 @@ pub fn build_agent_runtime_composition(
         dyn agentdash_application_ports::agent_run_runtime::AgentRunRuntimePresentationPlanStore,
     > = composition_repository.clone();
     let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
+    let product_runtime_bindings = Arc::new(
+        crate::PostgresAgentRunProductRuntimeBindingRepository::new(input.pool.clone()),
+    );
+    let workspace_presentations = Arc::new(crate::PostgresWorkspaceModulePresentationStore::new(
+        input.pool.clone(),
+    ));
+    let terminal_projections = Arc::new(crate::PostgresAgentRunTerminalProjectionStore::new(
+        input.pool.clone(),
+    ));
+    let runtime_projection = Arc::new(
+        agentdash_application_agentrun::agent_run::product_protocol::ProductAgentRunRuntimeProjectionAdapter::new(
+            gateway.clone(),
+        ),
+    );
+    let product_projection_gateway: Arc<
+        dyn agentdash_application_agentrun::agent_run::AgentRunProductProjectionQueryPort,
+    > = Arc::new(
+        agentdash_application_agentrun::agent_run::AgentRunProductProjectionGateway::new(
+            product_runtime_bindings.clone(),
+            runtime_projection,
+            workspace_presentations.clone(),
+            workspace_presentations.clone(),
+            terminal_projections.clone(),
+        ),
+    );
     let provisioner: Arc<dyn AgentRunRuntimeProvisioner> =
         Arc::new(HostAgentRunRuntimeProvisioner::new(
             host.clone(),
@@ -2042,6 +2072,10 @@ pub fn build_agent_runtime_composition(
     ));
     Ok(AgentRuntimeComposition {
         gateway,
+        product_projection_gateway,
+        product_runtime_bindings,
+        workspace_presentations,
+        terminal_projections,
         host,
         provisioner,
         bindings,
@@ -2227,7 +2261,7 @@ mod tests {
         CodexAppServerLauncher, codex_runtime_contribution_with_launcher,
         codex_runtime_trust_manifest,
     };
-    use agentdash_spi::{AuthIdentity, AuthMode};
+    use agentdash_platform_spi::{AuthIdentity, AuthMode};
     use futures::stream;
     use sqlx::postgres::PgConnectOptions;
     use uuid::Uuid;

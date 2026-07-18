@@ -8,8 +8,8 @@ use agentdash_domain::workflow::{
     OrchestrationInstance, OrchestrationSourceRef, PlanNode, RuntimeNodeState,
     RuntimeSessionPolicy,
 };
-use agentdash_spi::Vfs;
-use agentdash_spi::{CapabilityState, RuntimeMcpServer};
+use agentdash_platform_spi::Vfs;
+use agentdash_platform_spi::{CapabilityState, RuntimeMcpServer};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

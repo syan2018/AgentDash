@@ -12,8 +12,8 @@ use agentdash_domain::mcp_preset::{
     McpHttpHeader, McpRoutePolicy, McpRuntimeBindingConfig, McpRuntimeBindingSource,
     McpTransportConfig,
 };
-use agentdash_spi::platform::mcp_probe::McpProbeTransport;
-use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
+use agentdash_platform_spi::platform::mcp_probe::McpProbeTransport;
+use agentdash_platform_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
@@ -198,8 +198,8 @@ mod tests {
     use super::*;
     use agentdash_domain::mcp_preset::{McpEnvVar, McpRuntimeBindingRule, McpRuntimeBindingTarget};
     use agentdash_infrastructure::RmcpProbeTransport;
-    use agentdash_spi::{
-        ConnectorError, RuntimeMcpServer,
+    use agentdash_platform_spi::{
+        PlatformRuntimeError, RuntimeMcpServer,
         platform::mcp_relay::{
             RelayMcpCallContext, RelayMcpCallResult, RelayMcpListOutcome, RelayProbeResult,
             RelayProbeTarget, RelayProbeTool,
@@ -218,7 +218,7 @@ mod tests {
             &self,
             _url: &str,
             headers: &[McpHttpHeader],
-        ) -> Result<Vec<agentdash_spi::platform::mcp_probe::McpProbedTool>, String> {
+        ) -> Result<Vec<agentdash_platform_spi::platform::mcp_probe::McpProbedTool>, String> {
             *self.headers.lock().expect("headers lock") = headers.to_vec();
             Ok(Vec::new())
         }
@@ -245,8 +245,8 @@ mod tests {
             _tool_name: &str,
             _arguments: Option<serde_json::Map<String, serde_json::Value>>,
             _context: Option<RelayMcpCallContext>,
-        ) -> Result<RelayMcpCallResult, ConnectorError> {
-            Err(ConnectorError::Runtime(
+        ) -> Result<RelayMcpCallResult, PlatformRuntimeError> {
+            Err(PlatformRuntimeError::Runtime(
                 "not implemented in probe test".to_string(),
             ))
         }
@@ -255,7 +255,7 @@ mod tests {
             &self,
             transport: &McpTransportConfig,
             _target: RelayProbeTarget,
-        ) -> Result<RelayProbeResult, ConnectorError> {
+        ) -> Result<RelayProbeResult, PlatformRuntimeError> {
             self.transports
                 .lock()
                 .expect("transports lock")

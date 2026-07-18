@@ -8,9 +8,9 @@ use agentdash_application_ports::vfs_materialization::{
 };
 use agentdash_application_vfs::{RewriteJsonArgumentsInput, VfsMaterializationService};
 use agentdash_relay::{RelayMessage, VfsMaterializePayload};
-use agentdash_spi::ConnectorError;
-use agentdash_spi::RuntimeMcpServer;
-use agentdash_spi::platform::mcp_relay::{
+use agentdash_platform_spi::PlatformRuntimeError;
+use agentdash_platform_spi::RuntimeMcpServer;
+use agentdash_platform_spi::platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpListOutcome,
     RelayProbeResult,
 };
@@ -212,14 +212,14 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
         context: Option<RelayMcpCallContext>,
-    ) -> Result<RelayMcpCallResult, ConnectorError> {
+    ) -> Result<RelayMcpCallResult, PlatformRuntimeError> {
         let server_name = server.name.as_str();
         let backend_id = self
             .backends
             .resolve_backend_for_relay_mcp(server_name, context.as_ref())
             .await
             .map_err(|error| {
-                ConnectorError::ConnectionFailed(format!(
+                PlatformRuntimeError::ConnectionFailed(format!(
                     "无法解析 relay MCP server '{server_name}' 的 runtime backend anchor: {error}"
                 ))
             })?;
@@ -244,7 +244,7 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
                         identity: context_ref.identity.as_ref(),
                     })
                     .await
-                    .map_err(ConnectorError::Runtime)?;
+                    .map_err(PlatformRuntimeError::Runtime)?;
                 if !output.rewrites.is_empty() {
                     diag!(Info, Subsystem::Vfs,
 
@@ -268,8 +268,8 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
     async fn probe_transport(
         &self,
         transport: &agentdash_domain::mcp_preset::McpTransportConfig,
-        target: agentdash_spi::platform::mcp_relay::RelayProbeTarget,
-    ) -> Result<RelayProbeResult, ConnectorError> {
+        target: agentdash_platform_spi::platform::mcp_relay::RelayProbeTarget,
+    ) -> Result<RelayProbeResult, PlatformRuntimeError> {
         self.backends.probe_transport(transport, target).await
     }
 }

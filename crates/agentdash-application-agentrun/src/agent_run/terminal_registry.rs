@@ -70,6 +70,7 @@ pub struct TerminalState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability: Option<String>,
     pub state: String,
+    pub availability: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,6 +190,7 @@ impl AgentRunTerminalRegistry {
             cwd: cwd.map(str::to_string),
             capability: capability.map(str::to_string),
             state: "starting".to_string(),
+            availability: "online".to_string(),
             exit_code: None,
             process_id,
             created_at: Utc::now().timestamp_millis(),
@@ -259,6 +261,7 @@ impl AgentRunTerminalRegistry {
         for terminals in cache.values_mut() {
             if let Some(entry) = terminals.get_mut(terminal_id) {
                 entry.state = new_state.to_string();
+                entry.availability = "online".to_string();
                 entry.exit_code = exit_code;
                 if new_state == "exited" || new_state == "killed" || new_state == "lost" {
                     entry.exited_at = Some(Utc::now().timestamp_millis());
@@ -291,6 +294,7 @@ impl AgentRunTerminalRegistry {
         let mut cache = self.inner.write().unwrap();
         for terminals in cache.values_mut() {
             if let Some(entry) = terminals.get_mut(terminal_id) {
+                entry.availability = "online".to_string();
                 let mut projection = entry.output_projection.clone().unwrap_or_default();
                 let (stdout_tail, stdout_clipped) = bounded_raw_tail(stdout);
                 let (stderr_tail, stderr_clipped) = bounded_raw_tail(stderr);
@@ -321,6 +325,7 @@ impl AgentRunTerminalRegistry {
         let mut cache = self.inner.write().unwrap();
         for terminals in cache.values_mut() {
             if let Some(entry) = terminals.get_mut(snapshot.terminal_id) {
+                entry.availability = "online".to_string();
                 let mut projection = entry.output_projection.clone().unwrap_or_default();
                 let mut watermark = projection.next_seq.unwrap_or_default();
                 let mut stdout_clipped = false;
@@ -389,6 +394,7 @@ impl AgentRunTerminalRegistry {
         let mut cache = self.inner.write().unwrap();
         for terminals in cache.values_mut() {
             if let Some(entry) = terminals.get_mut(terminal_id) {
+                entry.availability = "online".to_string();
                 let mut projection = entry.output_projection.clone().unwrap_or_default();
                 let (pty_tail, clipped) = append_bounded_raw_tail(&projection.pty_tail, data);
                 projection.pty_tail = pty_tail;
@@ -414,22 +420,22 @@ impl AgentRunTerminalRegistry {
         }
     }
 
-    /// Mark all terminals belonging to the given backend as Lost.
-    pub fn handle_backend_disconnect(&self, backend_id: &str) -> Vec<String> {
-        let mut lost_ids = Vec::new();
+    /// A transport disconnect only changes reachability. Process state is retained until a source
+    /// inventory proves that the owner epoch is unknown or no longer attributable.
+    pub fn mark_backend_offline(&self, backend_id: &str) -> Vec<String> {
+        let mut affected_ids = Vec::new();
         let mut cache = self.inner.write().unwrap();
         for terminals in cache.values_mut() {
             for entry in terminals.values_mut() {
                 if entry.backend_id == backend_id
                     && (entry.state == "running" || entry.state == "starting")
                 {
-                    entry.state = "lost".to_string();
-                    entry.exited_at = Some(Utc::now().timestamp_millis());
-                    lost_ids.push(entry.terminal_id.clone());
+                    entry.availability = "offline".to_string();
+                    affected_ids.push(entry.terminal_id.clone());
                 }
             }
         }
-        lost_ids
+        affected_ids
     }
 
     /// Register the binding between a runtime session and an AgentRun scope.
@@ -544,4 +550,36 @@ fn bounded_tail(text: &str) -> (String, bool) {
         start = idx;
     }
     (line_tail[start..].to_string(), true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_disconnect_only_changes_availability() {
+        let registry = AgentRunTerminalRegistry::default();
+        registry.register_terminal(
+            "00000000-0000-0000-0000-000000000001",
+            "00000000-0000-0000-0000-000000000002",
+            "terminal-1",
+            "backend-1",
+            Some(7),
+        );
+        registry.update_state("terminal-1", "running", None);
+
+        assert_eq!(
+            registry.mark_backend_offline("backend-1"),
+            vec!["terminal-1".to_owned()]
+        );
+        let disconnected = registry.get_terminal("terminal-1").expect("terminal");
+        assert_eq!(disconnected.state, "running");
+        assert_eq!(disconnected.availability, "offline");
+        assert_eq!(disconnected.exited_at, None);
+
+        registry.append_terminal_output("terminal-1", "still alive", false, 0);
+        let reconnected = registry.get_terminal("terminal-1").expect("terminal");
+        assert_eq!(reconnected.state, "running");
+        assert_eq!(reconnected.availability, "online");
+    }
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentdash_domain::auth_session::{AuthSession, AuthSessionRepository};
-use agentdash_spi::platform::auth::AuthIdentity;
+use agentdash_platform_spi::platform::auth::AuthIdentity;
 use base64::Engine;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};

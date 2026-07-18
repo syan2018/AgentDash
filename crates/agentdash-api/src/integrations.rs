@@ -9,8 +9,8 @@ use agentdash_integration_api::{
     IdentityDirectoryProvider, LibraryAssetType, MarketplaceSourceDescriptor,
     MarketplaceSourceProvider, MemoryDiscoveryProvider, SkillDiscoveryProvider,
 };
-use agentdash_spi::VfsDiscoveryProvider;
-use agentdash_spi::platform::mount::MountProvider;
+use agentdash_platform_spi::VfsDiscoveryProvider;
+use agentdash_platform_spi::platform::mount::MountProvider;
 use thiserror::Error;
 
 /// 开源版内置 Host Integration 集合。
@@ -614,7 +614,7 @@ mod tests {
         async fn discover(
             &self,
             _context: SkillDiscoveryContext,
-        ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
+        ) -> Result<SkillDiscoveryOutput, agentdash_platform_spi::SkillDiscoveryError> {
             Ok(SkillDiscoveryOutput::default())
         }
     }
@@ -628,7 +628,7 @@ mod tests {
         async fn discover(
             &self,
             _context: MemoryDiscoveryContext,
-        ) -> Result<MemoryDiscoveryOutput, agentdash_spi::MemoryDiscoveryError> {
+        ) -> Result<MemoryDiscoveryOutput, agentdash_platform_spi::MemoryDiscoveryError> {
             Ok(MemoryDiscoveryOutput::default())
         }
     }

@@ -3,10 +3,10 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use agentdash_application_ports::mcp_discovery::{McpToolDiscoveryOutcome, McpToolSourceOutcome};
-use agentdash_spi::platform::mcp_relay::{
+use agentdash_platform_spi::platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpListOutcome, RelayMcpToolInfo,
 };
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
     RuntimeMcpServer, ToolUpdateCallback,
 };
@@ -65,8 +65,8 @@ impl AgentTool for RelayMcpToolAdapter {
     fn parameters_schema(&self) -> serde_json::Value {
         self.surface.parameters_schema.clone()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -180,10 +180,10 @@ pub async fn discover_relay_mcp_tool_outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::platform::mcp_relay::{
+    use agentdash_platform_spi::platform::mcp_relay::{
         RelayMcpCallResult, RelayMcpSourceOutcome, RelayProbeResult,
     };
-    use agentdash_spi::{ConnectorError, ToolCapability, ToolCapabilityFilter};
+    use agentdash_platform_spi::{PlatformRuntimeError, ToolCapability, ToolCapabilityFilter};
     use async_trait::async_trait;
 
     #[derive(Debug)]
@@ -213,7 +213,7 @@ mod tests {
             _tool_name: &str,
             _arguments: Option<serde_json::Map<String, serde_json::Value>>,
             _context: Option<RelayMcpCallContext>,
-        ) -> Result<RelayMcpCallResult, ConnectorError> {
+        ) -> Result<RelayMcpCallResult, PlatformRuntimeError> {
             Ok(RelayMcpCallResult {
                 content: String::new(),
                 is_error: false,
@@ -223,8 +223,8 @@ mod tests {
         async fn probe_transport(
             &self,
             _transport: &agentdash_domain::mcp_preset::McpTransportConfig,
-            _target: agentdash_spi::platform::mcp_relay::RelayProbeTarget,
-        ) -> Result<RelayProbeResult, ConnectorError> {
+            _target: agentdash_platform_spi::platform::mcp_relay::RelayProbeTarget,
+        ) -> Result<RelayProbeResult, PlatformRuntimeError> {
             Ok(RelayProbeResult {
                 status: "ok".to_string(),
                 latency_ms: None,
@@ -237,7 +237,7 @@ mod tests {
     fn relay_server(name: &str) -> RuntimeMcpServer {
         RuntimeMcpServer {
             name: name.to_string(),
-            transport: agentdash_spi::McpTransportConfig::Http {
+            transport: agentdash_platform_spi::McpTransportConfig::Http {
                 url: format!("http://localhost/{name}"),
                 headers: vec![],
             },
@@ -269,7 +269,7 @@ mod tests {
         let mut flow = CapabilityState::default();
         flow.tool
             .capabilities
-            .insert(agentdash_spi::ToolCapability::new("workflow_management"));
+            .insert(agentdash_platform_spi::ToolCapability::new("workflow_management"));
         flow.tool.tool_policy.insert(
             "workflow_management".to_string(),
             ToolCapabilityFilter {
@@ -376,7 +376,7 @@ mod tests {
         );
         assert!(matches!(
             adapter.protocol_projector(),
-            Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+            Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
         ));
     }
 
@@ -420,7 +420,7 @@ mod tests {
         let mut flow = CapabilityState::default();
         flow.tool
             .capabilities
-            .insert(agentdash_spi::ToolCapability::new("mcp:other-tools"));
+            .insert(agentdash_platform_spi::ToolCapability::new("mcp:other-tools"));
 
         let tools =
             discover_relay_mcp_tools(provider, &[relay_server("requested-tools")], &flow, None)

@@ -1,5 +1,5 @@
 use crate::vfs::selected_workspace_binding;
-use agentdash_spi::{ContextFragment, MergeStrategy};
+use agentdash_platform_spi::{ContextFragment, MergeStrategy};
 
 use serde_json::{Value, json};
 
@@ -64,11 +64,11 @@ pub fn build_owner_context_resource_block(uri: &str, markdown: &str) -> Value {
 }
 
 /// MCP 能力注入片段 —— 同时把 `McpServerSummary` 声明挂到 `Contribution.mcp_servers`。
-pub fn contribute_mcp(config: &agentdash_spi::McpInjectionConfig) -> Contribution {
+pub fn contribute_mcp(config: &agentdash_platform_spi::McpInjectionConfig) -> Contribution {
     let label: &'static str = match config.scope {
-        agentdash_spi::ToolScope::Relay => "mcp_relay_tools",
-        agentdash_spi::ToolScope::Story => "mcp_story_tools",
-        agentdash_spi::ToolScope::Workflow => "mcp_workflow_tools",
+        agentdash_platform_spi::ToolScope::Relay => "mcp_relay_tools",
+        agentdash_platform_spi::ToolScope::Story => "mcp_story_tools",
+        agentdash_platform_spi::ToolScope::Workflow => "mcp_workflow_tools",
     };
 
     let runtime_mcp_server = config.to_runtime_mcp_server();

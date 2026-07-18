@@ -4,7 +4,7 @@
 //! `vfs` 模块只保留 provider / mount 的通用访问能力，不反向理解 lifecycle 领域对象。
 
 use agentdash_application_vfs::append_lifecycle_skill_asset_projection;
-use agentdash_spi::Vfs;
+use agentdash_platform_spi::Vfs;
 
 use uuid::Uuid;
 

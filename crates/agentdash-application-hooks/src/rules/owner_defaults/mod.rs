@@ -1,5 +1,5 @@
 use agentdash_domain::workflow::WorkflowHookRuleSpec;
-use agentdash_spi::AgentFrameHookSnapshot;
+use agentdash_platform_spi::AgentFrameHookSnapshot;
 
 pub(super) fn owner_default_hook_rules(
     snapshot: &AgentFrameHookSnapshot,

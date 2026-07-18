@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-pub use agentdash_spi::ToolScope;
+pub use agentdash_platform_spi::ToolScope;
 
 /// MCP 会话上下文
 ///

@@ -7,7 +7,7 @@ use agentdash_application_ports::agent_run_surface::{
 };
 use agentdash_application_vfs::PROVIDER_RELAY_FS;
 use agentdash_integration_api::AuthIdentity;
-use agentdash_spi::{RuntimeBackendAnchor, Vfs};
+use agentdash_platform_spi::{RuntimeBackendAnchor, Vfs};
 use uuid::Uuid;
 
 use crate::app_state::AppState;

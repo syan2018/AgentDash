@@ -62,30 +62,6 @@ pub enum RelayMessage {
     #[serde(rename = "pong")]
     Pong { id: String, payload: PongPayload },
 
-    #[serde(rename = "runtime_wire.open")]
-    RuntimeWireOpen {
-        id: String,
-        payload: crate::RuntimeRelayOpen,
-    },
-
-    #[serde(rename = "runtime_wire.open_ack")]
-    RuntimeWireOpenAck {
-        id: String,
-        payload: crate::RuntimeRelayOpenAck,
-    },
-
-    #[serde(rename = "runtime_wire.frame")]
-    RuntimeWireFrame {
-        id: String,
-        payload: Box<crate::RuntimeRelayFrame>,
-    },
-
-    #[serde(rename = "runtime_wire.ack")]
-    RuntimeWireAck {
-        id: String,
-        payload: crate::RuntimeRelayAck,
-    },
-
     // ── 命令（云端 → 本机）──
     /// 执行第三方 Agent prompt
     #[serde(rename = "command.prompt")]
@@ -603,6 +579,12 @@ pub enum RelayMessage {
         payload: TerminalKillPayload,
     },
 
+    #[serde(rename = "command.terminal.inventory")]
+    CommandTerminalInventory {
+        id: String,
+        payload: TerminalInventoryRequest,
+    },
+
     // ── 交互式终端响应（本机 → 云端）──
     #[serde(rename = "response.terminal.spawn")]
     ResponseTerminalSpawn {
@@ -640,6 +622,15 @@ pub enum RelayMessage {
         error: Option<RelayError>,
     },
 
+    #[serde(rename = "response.terminal.inventory")]
+    ResponseTerminalInventory {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<TerminalInventoryResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
     // ── 交互式终端事件（本机 → 云端）──
     #[serde(rename = "event.terminal.output")]
     EventTerminalOutput {
@@ -666,10 +657,6 @@ impl RelayMessage {
             | Self::RegisterAck { id, .. }
             | Self::Ping { id, .. }
             | Self::Pong { id, .. }
-            | Self::RuntimeWireOpen { id, .. }
-            | Self::RuntimeWireOpenAck { id, .. }
-            | Self::RuntimeWireFrame { id, .. }
-            | Self::RuntimeWireAck { id, .. }
             | Self::CommandPrompt { id, .. }
             | Self::CommandCancel { id, .. }
             | Self::CommandSteer { id, .. }
@@ -736,10 +723,12 @@ impl RelayMessage {
             | Self::CommandTerminalInput { id, .. }
             | Self::CommandTerminalResize { id, .. }
             | Self::CommandTerminalKill { id, .. }
+            | Self::CommandTerminalInventory { id, .. }
             | Self::ResponseTerminalSpawn { id, .. }
             | Self::ResponseTerminalInput { id, .. }
             | Self::ResponseTerminalResize { id, .. }
             | Self::ResponseTerminalKill { id, .. }
+            | Self::ResponseTerminalInventory { id, .. }
             | Self::EventTerminalOutput { id, .. }
             | Self::EventPtyTerminalStateChanged { id, .. }
             | Self::Error { id, .. } => id,
@@ -837,6 +826,10 @@ mod tests {
             id: "pty-terminal-1".to_string(),
             payload: PtyTerminalStateChangedPayload {
                 terminal_id: "terminal-1".to_string(),
+                source: TerminalSourceFence {
+                    terminal_owner_epoch_id: "owner-epoch-1".to_string(),
+                    source_sequence: 7,
+                },
                 state: PtyTerminalProcessState::Lost,
                 exit_code: None,
                 message: Some("backend disconnected".to_string()),

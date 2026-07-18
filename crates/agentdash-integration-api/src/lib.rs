@@ -32,9 +32,9 @@ pub use agentdash_agent_service_api::{
     AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceInstanceId, CompleteAgentService,
 };
 pub use agentdash_domain::context_source::ContextSourceKind;
-pub use agentdash_spi::platform::marketplace_source;
-pub use agentdash_spi::platform::memory_discovery;
-pub use agentdash_spi::{
+pub use agentdash_platform_spi::platform::marketplace_source;
+pub use agentdash_platform_spi::platform::memory_discovery;
+pub use agentdash_platform_spi::{
     DiscoveredMemorySource, DiscoveredSkill, MemoryDiscoveryCluster, MemoryDiscoveryContext,
     MemoryDiscoveryDiagnostic, MemoryDiscoveryError, MemoryDiscoveryMount, MemoryDiscoveryOutput,
     MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
@@ -45,7 +45,7 @@ pub use agentdash_spi::{
     SkillDiscoveryUserContext, SkillDiscoveryVfsFile, SkillDiscoveryVfsRule, SourceResolver,
     VfsDiscoveryProvider, is_controlled_vfs_memory_uri,
 };
-pub use agentdash_spi::{
+pub use agentdash_platform_spi::{
     MarketplaceAssetDetail, MarketplaceAssetListing, MarketplaceAssetPage, MarketplaceAssetQuery,
     MarketplaceFetchedAsset, MarketplaceFetchedAssetPayload, MarketplaceInstallRequirement,
     MarketplaceInstallRequirementKind, MarketplaceSourceDescriptor, MarketplaceSourceError,
@@ -74,4 +74,4 @@ pub use integration::{
 /// Mount I/O SPI — 供 Host Integration 实现文件系统级操作。
 ///
 /// 用法：`use agentdash_integration_api::mount::{MountProvider, ReadResult, ...};`
-pub use agentdash_spi::platform::mount;
+pub use agentdash_platform_spi::platform::mount;

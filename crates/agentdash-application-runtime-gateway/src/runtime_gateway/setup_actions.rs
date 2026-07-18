@@ -384,7 +384,7 @@ mod tests {
         McpProbeTarget, McpProbeTransportOutput, WorkspaceBrowseDirectoryEntry,
         WorkspaceBrowseDirectoryOutput, WorkspaceDetectGitOutput, WorkspaceDetectOutput,
     };
-    use agentdash_spi::{AuthIdentity, AuthMode};
+    use agentdash_platform_spi::{AuthIdentity, AuthMode};
 
     struct FakeBackendTransport {
         online: bool,

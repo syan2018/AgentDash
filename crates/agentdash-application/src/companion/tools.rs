@@ -18,18 +18,18 @@ use agentdash_domain::workflow::{
     CompleteGateResultParentContinuationRequest, GateResultDeliveryClaim, GateResultDeliveryMarker,
     LifecycleTaskPlanItem, RegisterGateResultWaiterRequest,
 };
-use agentdash_spi::CapabilityScope;
+use agentdash_platform_spi::CapabilityScope;
 #[cfg(test)]
-use agentdash_spi::RuntimeEventSource;
-use agentdash_spi::action_type as at;
-use agentdash_spi::context::capability::CompanionAgentEntry;
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::hooks::{HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery};
-use agentdash_spi::{
+use agentdash_platform_spi::RuntimeEventSource;
+use agentdash_platform_spi::action_type as at;
+use agentdash_platform_spi::context::capability::CompanionAgentEntry;
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::hooks::{HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery};
+use agentdash_platform_spi::{
     AgentConfig, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
     HookTraceEntry, HookTrigger, MountCapability, Vfs,
 };
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, Utc};
 use schemars::JsonSchema;
@@ -73,7 +73,7 @@ use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
 use agentdash_application_workflow::WorkflowScriptPreflightOutput;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 
-pub use agentdash_spi::CompanionSliceMode;
+pub use agentdash_platform_spi::CompanionSliceMode;
 
 const COMPANION_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 const COMPANION_WAIT_PREVIEW_CHARS: usize = 2_000;
@@ -1192,8 +1192,8 @@ impl AgentTool for CompanionRequestTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<CompanionRequestParams>()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -1406,7 +1406,7 @@ impl CompanionRequestTool {
         dispatch_plan
             .slice
             .injections
-            .push(agentdash_spi::HookInjection {
+            .push(agentdash_platform_spi::HookInjection {
                 slot: "companion".to_string(),
                 content: format!(
                     "Date: {} (UTC) | Platform: {} {} | Model: {}",
@@ -2148,8 +2148,8 @@ impl AgentTool for CompanionRespondTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<CompanionRespondParams>()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -2857,12 +2857,12 @@ fn hook_action_resolution_key(kind: HookPendingActionResolutionKind) -> &'static
 }
 
 async fn evaluate_subagent_hook(
-    hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
+    hook_runtime: &dyn agentdash_platform_spi::hooks::HookRuntimeAccess,
     trigger: HookTrigger,
     turn_id: Option<String>,
     subagent_type: &str,
     payload: Option<serde_json::Value>,
-) -> Result<agentdash_spi::HookResolution, AgentToolError> {
+) -> Result<agentdash_platform_spi::HookResolution, AgentToolError> {
     let provenance = CompanionHookProvenance::from_hook_runtime(hook_runtime, turn_id);
     let resolution = hook_runtime
         .evaluate_from_provenance(HookRuntimeEvaluationQuery {
@@ -2894,13 +2894,13 @@ async fn evaluate_subagent_hook(
 }
 
 async fn record_subagent_trace(
-    hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
+    hook_runtime: &dyn agentdash_platform_spi::hooks::HookRuntimeAccess,
     session_services: Option<&SessionToolServices>,
     turn_id: Option<&str>,
     trigger: HookTrigger,
     decision: &str,
     subagent_type: &str,
-    resolution: &agentdash_spi::HookResolution,
+    resolution: &agentdash_platform_spi::HookResolution,
 ) {
     let Some(trace_trigger) = trigger.trace_trigger() else {
         return;
@@ -2932,7 +2932,7 @@ fn build_subagent_pending_action(
     fallback_request_id: &str,
     companion_label: &str,
     payload: &serde_json::Value,
-    resolution: &agentdash_spi::HookResolution,
+    resolution: &agentdash_platform_spi::HookResolution,
 ) -> Option<HookPendingAction> {
     if resolution.injections.is_empty() {
         return None;
@@ -2990,7 +2990,7 @@ fn build_subagent_pending_action(
         action_type: adoption_mode,
         turn_id: Some(source_turn_id.to_string()),
         source: RuntimeEventSource::CompanionResult,
-        status: agentdash_spi::HookPendingActionStatus::Pending,
+        status: agentdash_platform_spi::HookPendingActionStatus::Pending,
         last_injected_at_ms: None,
         resolved_at_ms: None,
         resolution_kind: None,
@@ -3004,7 +3004,7 @@ fn build_subagent_pending_action(
 #[serde(rename_all = "snake_case")]
 pub struct CompanionDispatchSlice {
     pub mode: CompanionSliceMode,
-    pub injections: Vec<agentdash_spi::HookInjection>,
+    pub injections: Vec<agentdash_platform_spi::HookInjection>,
     pub inherited_fragment_labels: Vec<String>,
     pub inherited_constraint_keys: Vec<String>,
     pub omitted_fragment_count: usize,
@@ -3027,7 +3027,7 @@ pub struct CompanionDispatchPlan {
 #[derive(Debug, Clone)]
 pub struct CompanionExecutionSlice {
     pub vfs: Option<Vfs>,
-    pub mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
+    pub mcp_servers: Vec<agentdash_platform_spi::RuntimeMcpServer>,
 }
 
 pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt: &str) -> String {
@@ -3097,8 +3097,8 @@ struct CompanionDispatchConfig<'a> {
 }
 
 fn build_companion_dispatch_plan(
-    hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
-    resolution: &agentdash_spi::HookResolution,
+    hook_runtime: &dyn agentdash_platform_spi::hooks::HookRuntimeAccess,
+    resolution: &agentdash_platform_spi::HookResolution,
     config: &CompanionDispatchConfig<'_>,
 ) -> CompanionDispatchPlan {
     let dispatch_id = format!("dispatch-{}", uuid::Uuid::new_v4().simple());
@@ -3121,8 +3121,8 @@ fn build_companion_dispatch_plan(
 }
 
 pub fn build_companion_dispatch_slice(
-    snapshot: &agentdash_spi::AgentFrameHookSnapshot,
-    resolution: &agentdash_spi::HookResolution,
+    snapshot: &agentdash_platform_spi::AgentFrameHookSnapshot,
+    resolution: &agentdash_platform_spi::HookResolution,
     mode: CompanionSliceMode,
     max_fragments: usize,
     max_constraints: usize,
@@ -3155,7 +3155,7 @@ pub fn build_companion_dispatch_slice(
         CompanionSliceMode::Compact => {
             let mut compact = Vec::new();
             if let Some(owner_summary) = build_companion_owner_summary(snapshot) {
-                compact.push(agentdash_spi::HookInjection {
+                compact.push(agentdash_platform_spi::HookInjection {
                     slot: "companion".to_string(),
                     content: owner_summary,
                     source: "session:owner_summary".to_string(),
@@ -3229,7 +3229,7 @@ pub fn build_companion_dispatch_slice(
 
 pub fn build_companion_execution_slice(
     vfs: Option<&Vfs>,
-    mcp_servers: &[agentdash_spi::RuntimeMcpServer],
+    mcp_servers: &[agentdash_platform_spi::RuntimeMcpServer],
     mode: CompanionSliceMode,
 ) -> Result<CompanionExecutionSlice, String> {
     match mode {
@@ -3305,7 +3305,7 @@ fn filter_vfs_capabilities(vfs: &Vfs, allowed: &[MountCapability]) -> Vfs {
 }
 
 fn build_companion_owner_summary(
-    snapshot: &agentdash_spi::AgentFrameHookSnapshot,
+    snapshot: &agentdash_platform_spi::AgentFrameHookSnapshot,
 ) -> Option<String> {
     let ctx = snapshot.run_context.as_ref()?;
     let mut lines = Vec::new();
@@ -3322,7 +3322,7 @@ fn build_companion_owner_summary(
 }
 
 pub fn companion_owner_candidates(
-    snapshot: &agentdash_spi::AgentFrameHookSnapshot,
+    snapshot: &agentdash_platform_spi::AgentFrameHookSnapshot,
 ) -> Result<Vec<(CapabilityScope, Uuid, Option<String>)>, AgentToolError> {
     let mut owners = Vec::new();
     if let Some(ctx) = &snapshot.run_context {
@@ -3353,7 +3353,7 @@ pub fn companion_owner_candidates(
 
 #[allow(dead_code)]
 fn companion_project_id_for_owner(
-    snapshot: &agentdash_spi::AgentFrameHookSnapshot,
+    snapshot: &agentdash_platform_spi::AgentFrameHookSnapshot,
     _owner_type: CapabilityScope,
     _owner_id: Uuid,
 ) -> Result<Uuid, AgentToolError> {
@@ -3384,10 +3384,10 @@ mod companion_tests {
     use agentdash_domain::workflow::{
         GateWaitPolicyEnvelope, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
     };
-    use agentdash_spi::CapabilityScope;
-    use agentdash_spi::action_type as at;
-    use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-    use agentdash_spi::{McpTransportConfig, MountCapability, RuntimeMcpServer, Vfs};
+    use agentdash_platform_spi::CapabilityScope;
+    use agentdash_platform_spi::action_type as at;
+    use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+    use agentdash_platform_spi::{McpTransportConfig, MountCapability, RuntimeMcpServer, Vfs};
     use std::collections::HashMap;
     use std::sync::Mutex;
     use tokio_util::sync::CancellationToken;
@@ -3495,9 +3495,9 @@ mod companion_tests {
         let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let project_id = Uuid::new_v4();
-        let snapshot = agentdash_spi::AgentFrameHookSnapshot {
+        let snapshot = agentdash_platform_spi::AgentFrameHookSnapshot {
             runtime_adapter_session_id: "sess-test".to_string(),
-            run_context: Some(agentdash_spi::hooks::SubjectRunContext {
+            run_context: Some(agentdash_platform_spi::hooks::SubjectRunContext {
                 project_id,
                 story_id: Some(story_id),
                 task_id: Some(task_id),
@@ -3505,7 +3505,7 @@ mod companion_tests {
                 task_title: Some("Task A".to_string()),
                 scope: CapabilityScope::Task,
             }),
-            ..agentdash_spi::AgentFrameHookSnapshot::default()
+            ..agentdash_platform_spi::AgentFrameHookSnapshot::default()
         };
 
         let candidates = companion_owner_candidates(&snapshot).expect("candidates");
@@ -3523,7 +3523,7 @@ mod companion_tests {
         let error = platform_capability_grant_missing_broker_error();
 
         match error {
-            agentdash_spi::AgentToolError::ExecutionFailed(message) => {
+            agentdash_platform_spi::AgentToolError::ExecutionFailed(message) => {
                 assert!(message.contains("capability_grant_request"));
                 assert!(message.contains("AgentRun"));
                 assert!(message.contains("RuntimeInteraction"));
@@ -3621,11 +3621,11 @@ mod companion_tests {
         }
     }
 
-    fn assert_result_hides_runtime_session_refs(result: &agentdash_spi::AgentToolResult) {
+    fn assert_result_hides_runtime_session_refs(result: &agentdash_platform_spi::AgentToolResult) {
         let text = result
             .content
             .iter()
-            .filter_map(agentdash_spi::ContentPart::extract_text)
+            .filter_map(agentdash_platform_spi::ContentPart::extract_text)
             .collect::<Vec<_>>()
             .join("\n");
         let details = serde_json::to_string(&result.details).expect("details json");
@@ -3650,7 +3650,7 @@ mod companion_tests {
     }
 
     fn assert_result_retains_child_agent_only(
-        result: &agentdash_spi::AgentToolResult,
+        result: &agentdash_platform_spi::AgentToolResult,
         child_agent_id: &str,
     ) {
         let details = result.details.as_ref().expect("details");
@@ -3667,7 +3667,7 @@ mod companion_tests {
         let text = result
             .content
             .iter()
-            .filter_map(agentdash_spi::ContentPart::extract_text)
+            .filter_map(agentdash_platform_spi::ContentPart::extract_text)
             .collect::<Vec<_>>()
             .join("\n");
         assert!(text.contains(child_agent_id));
@@ -3956,9 +3956,9 @@ mod companion_tests {
 
     #[test]
     fn compact_companion_slice_keeps_owner_summary_and_limits_payload() {
-        let snapshot = agentdash_spi::AgentFrameHookSnapshot {
+        let snapshot = agentdash_platform_spi::AgentFrameHookSnapshot {
             runtime_adapter_session_id: "sess-parent".to_string(),
-            run_context: Some(agentdash_spi::hooks::SubjectRunContext {
+            run_context: Some(agentdash_platform_spi::hooks::SubjectRunContext {
                 project_id: Uuid::new_v4(),
                 story_id: None,
                 task_id: Some(Uuid::new_v4()),
@@ -3966,37 +3966,37 @@ mod companion_tests {
                 task_title: Some("Task A".to_string()),
                 scope: CapabilityScope::Task,
             }),
-            ..agentdash_spi::AgentFrameHookSnapshot::default()
+            ..agentdash_platform_spi::AgentFrameHookSnapshot::default()
         };
-        let resolution = agentdash_spi::HookResolution {
+        let resolution = agentdash_platform_spi::HookResolution {
             injections: vec![
-                agentdash_spi::HookInjection {
+                agentdash_platform_spi::HookInjection {
                     slot: "workflow".to_string(),
                     content: "step info".to_string(),
                     source: "active_workflow_step".to_string(),
                 },
-                agentdash_spi::HookInjection {
+                agentdash_platform_spi::HookInjection {
                     slot: "instruction_append".to_string(),
                     content: "follow rules".to_string(),
                     source: "workflow_step_constraints".to_string(),
                 },
-                agentdash_spi::HookInjection {
+                agentdash_platform_spi::HookInjection {
                     slot: "workflow".to_string(),
                     content: "should be omitted".to_string(),
                     source: "overflow".to_string(),
                 },
-                agentdash_spi::HookInjection {
+                agentdash_platform_spi::HookInjection {
                     slot: "constraint".to_string(),
                     content: "first".to_string(),
                     source: "constraint:1".to_string(),
                 },
-                agentdash_spi::HookInjection {
+                agentdash_platform_spi::HookInjection {
                     slot: "constraint".to_string(),
                     content: "second".to_string(),
                     source: "constraint:2".to_string(),
                 },
             ],
-            ..agentdash_spi::HookResolution::default()
+            ..agentdash_platform_spi::HookResolution::default()
         };
 
         let slice = build_companion_dispatch_slice(
@@ -4027,7 +4027,7 @@ mod companion_tests {
     #[test]
     fn compact_execution_slice_drops_write_and_mcp_servers() {
         let vfs = Vfs {
-            mounts: vec![agentdash_spi::Mount {
+            mounts: vec![agentdash_platform_spi::Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),
@@ -4083,7 +4083,7 @@ mod companion_tests {
     #[test]
     fn workflow_only_execution_slice_uses_empty_vfs() {
         let vfs = Vfs {
-            mounts: vec![agentdash_spi::Mount {
+            mounts: vec![agentdash_platform_spi::Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),
@@ -4139,12 +4139,12 @@ mod companion_tests {
             slice: CompanionDispatchSlice {
                 mode: CompanionSliceMode::Compact,
                 injections: vec![
-                    agentdash_spi::HookInjection {
+                    agentdash_platform_spi::HookInjection {
                         slot: "workflow".to_string(),
                         content: "step info".to_string(),
                         source: "active_workflow_step".to_string(),
                     },
-                    agentdash_spi::HookInjection {
+                    agentdash_platform_spi::HookInjection {
                         slot: "constraint".to_string(),
                         content: "first".to_string(),
                         source: "constraint:1".to_string(),
@@ -4214,13 +4214,13 @@ mod companion_tests {
 
     #[test]
     fn subagent_pending_action_uses_request_id_as_owner_key() {
-        let resolution = agentdash_spi::HookResolution {
-            injections: vec![agentdash_spi::HookInjection {
+        let resolution = agentdash_platform_spi::HookResolution {
+            injections: vec![agentdash_platform_spi::HookInjection {
                 slot: "workflow".to_string(),
                 content: "review context".to_string(),
                 source: "active_workflow_step".to_string(),
             }],
-            ..agentdash_spi::HookResolution::default()
+            ..agentdash_platform_spi::HookResolution::default()
         };
         let payload = serde_json::json!({
             "request_id": "gate-123",

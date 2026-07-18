@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use agentdash_application_runtime_gateway::RuntimeSurface;
 use agentdash_application_vfs::VfsService;
 use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasImportMap};
-use agentdash_spi::Vfs;
+use agentdash_platform_spi::Vfs;
 
 use super::{CanvasRuntimeResourceService, canvas_vfs_mount_id};
 

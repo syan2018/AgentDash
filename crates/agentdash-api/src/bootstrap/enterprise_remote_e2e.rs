@@ -43,7 +43,7 @@ use agentdash_integration_remote_runtime::{
 };
 use agentdash_local::{HostRuntimeDriverEndpointResolver, RuntimeWireCommandHandler};
 use agentdash_relay::{CapabilitiesPayload, RelayMessage, RuntimeRelayTransportDescriptor};
-use agentdash_spi::{AgentFrameHookSnapshot, NoopExecutionHookProvider};
+use agentdash_platform_spi::{AgentFrameHookSnapshot, NoopExecutionHookProvider};
 use agentdash_test_support::workflow::MemoryAgentRunMailboxRepository;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -630,7 +630,7 @@ impl CompiledAgentRunToolBindingRecovery for EnterpriseCompiledBindingRecovery {
                 reason: "recovered Enterprise surface is missing".to_string(),
             })?;
         let frame_id = Uuid::nil();
-        let hook_runtime: agentdash_spi::SharedHookRuntime = Arc::new(AgentFrameHookRuntime::new(
+        let hook_runtime: agentdash_platform_spi::SharedHookRuntime = Arc::new(AgentFrameHookRuntime::new(
             binding.target.run_id,
             binding.target.agent_id,
             frame_id,
@@ -687,7 +687,7 @@ impl AgentRunRuntimeSurfaceSource for EnterpriseSurfaceSource {
             hook_plan_digest: surface.hooks.digest.clone(),
             terminal_hook_effect_binding: None,
         };
-        let hook_runtime: agentdash_spi::SharedHookRuntime = Arc::new(AgentFrameHookRuntime::new(
+        let hook_runtime: agentdash_platform_spi::SharedHookRuntime = Arc::new(AgentFrameHookRuntime::new(
             request.target.run_id,
             request.target.agent_id,
             Uuid::nil(),

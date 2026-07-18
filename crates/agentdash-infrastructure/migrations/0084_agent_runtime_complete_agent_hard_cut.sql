@@ -38,6 +38,203 @@ DROP TABLE IF EXISTS agent_run_runtime_recovery_intent CASCADE;
 DROP TABLE IF EXISTS agent_run_runtime_binding_lineage CASCADE;
 DROP TABLE IF EXISTS agent_run_runtime_thread_anchor CASCADE;
 
+ALTER TABLE lifecycle_agents
+    ADD CONSTRAINT lifecycle_agents_id_run_project_key UNIQUE (id, run_id, project_id);
+
+CREATE TABLE workspace_module_presentation_head (
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    revision BIGINT NOT NULL CHECK (revision >= 0),
+    latest_change_sequence BIGINT NOT NULL CHECK (latest_change_sequence >= 0),
+    PRIMARY KEY (target_run_id, target_agent_id),
+    FOREIGN KEY (target_agent_id, target_run_id, project_id)
+        REFERENCES lifecycle_agents(id, run_id, project_id) ON DELETE CASCADE
+);
+
+CREATE TABLE workspace_module_presentation_intent (
+    intent_id TEXT PRIMARY KEY CHECK (btrim(intent_id) <> ''),
+    effect_id TEXT NOT NULL UNIQUE CHECK (btrim(effect_id) <> ''),
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'fulfilled', 'expired')),
+    presentation_digest TEXT NOT NULL CHECK (btrim(presentation_digest) <> ''),
+    module_id TEXT NOT NULL CHECK (btrim(module_id) <> ''),
+    view_key TEXT NOT NULL CHECK (btrim(view_key) <> ''),
+    renderer_kind TEXT NOT NULL CHECK (btrim(renderer_kind) <> ''),
+    presentation_uri TEXT NOT NULL CHECK (btrim(presentation_uri) <> ''),
+    runtime_thread_id TEXT NOT NULL CHECK (btrim(runtime_thread_id) <> ''),
+    runtime_operation_id TEXT,
+    runtime_turn_id TEXT NOT NULL CHECK (btrim(runtime_turn_id) <> ''),
+    runtime_item_id TEXT NOT NULL CHECK (btrim(runtime_item_id) <> ''),
+    source_ref TEXT NOT NULL CHECK (btrim(source_ref) <> ''),
+    source_committed_revision BIGINT NOT NULL CHECK (source_committed_revision >= 0),
+    source_applied_surface_revision BIGINT NOT NULL CHECK (source_applied_surface_revision >= 0),
+    source_activated_revision BIGINT CHECK (
+        source_activated_revision IS NULL OR source_activated_revision >= 0
+    ),
+    currentness_fence JSONB NOT NULL CHECK (jsonb_typeof(currentness_fence) = 'object'),
+    intent JSONB NOT NULL CHECK (jsonb_typeof(intent) = 'object'),
+    committed_at_ms BIGINT NOT NULL CHECK (committed_at_ms >= 0),
+    UNIQUE (intent_id, target_run_id, target_agent_id),
+    UNIQUE (intent_id, effect_id, target_run_id, target_agent_id),
+    FOREIGN KEY (target_agent_id, target_run_id, project_id)
+        REFERENCES lifecycle_agents(id, run_id, project_id) ON DELETE CASCADE
+);
+
+CREATE TABLE workspace_module_presentation_change (
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    revision BIGINT NOT NULL CHECK (revision > 0),
+    change_sequence BIGINT NOT NULL CHECK (change_sequence > 0),
+    change_id TEXT NOT NULL UNIQUE CHECK (btrim(change_id) <> ''),
+    intent_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'fulfilled', 'expired')),
+    change JSONB NOT NULL CHECK (jsonb_typeof(change) = 'object'),
+    PRIMARY KEY (target_run_id, target_agent_id, change_sequence),
+    UNIQUE (target_run_id, target_agent_id, revision),
+    FOREIGN KEY (intent_id, target_run_id, target_agent_id)
+        REFERENCES workspace_module_presentation_intent(
+            intent_id,
+            target_run_id,
+            target_agent_id
+        ) ON DELETE RESTRICT
+);
+
+CREATE TABLE workspace_module_presentation_ack (
+    ack_id TEXT PRIMARY KEY CHECK (btrim(ack_id) <> ''),
+    intent_id TEXT NOT NULL UNIQUE,
+    effect_id TEXT NOT NULL,
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    acknowledged_change_sequence BIGINT NOT NULL CHECK (acknowledged_change_sequence > 0),
+    fulfilled_at_ms BIGINT NOT NULL CHECK (fulfilled_at_ms >= 0),
+    acknowledgement JSONB NOT NULL CHECK (jsonb_typeof(acknowledgement) = 'object'),
+    FOREIGN KEY (intent_id, effect_id, target_run_id, target_agent_id)
+        REFERENCES workspace_module_presentation_intent(
+            intent_id,
+            effect_id,
+            target_run_id,
+            target_agent_id
+        ) ON DELETE RESTRICT
+);
+
+CREATE TABLE workspace_module_presentation_outbox (
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    change_sequence BIGINT NOT NULL CHECK (change_sequence > 0),
+    effect_id TEXT NOT NULL,
+    change_id TEXT NOT NULL UNIQUE,
+    entry JSONB NOT NULL CHECK (jsonb_typeof(entry) = 'object'),
+    PRIMARY KEY (target_run_id, target_agent_id, change_sequence),
+    FOREIGN KEY (target_run_id, target_agent_id, change_sequence)
+        REFERENCES workspace_module_presentation_change(
+            target_run_id,
+            target_agent_id,
+            change_sequence
+        ) ON DELETE CASCADE,
+    FOREIGN KEY (effect_id)
+        REFERENCES workspace_module_presentation_intent(effect_id) ON DELETE RESTRICT,
+    FOREIGN KEY (change_id)
+        REFERENCES workspace_module_presentation_change(change_id) ON DELETE RESTRICT
+);
+
+CREATE TABLE agent_run_terminal_projection_head (
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    revision BIGINT NOT NULL CHECK (revision >= 0),
+    latest_change_sequence BIGINT NOT NULL CHECK (latest_change_sequence >= 0),
+    PRIMARY KEY (target_run_id, target_agent_id),
+    FOREIGN KEY (target_agent_id, target_run_id, project_id)
+        REFERENCES lifecycle_agents(id, run_id, project_id) ON DELETE CASCADE
+);
+
+CREATE TABLE agent_run_terminal_projection (
+    terminal_id TEXT PRIMARY KEY CHECK (btrim(terminal_id) <> ''),
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    terminal_owner_epoch_id TEXT NOT NULL CHECK (btrim(terminal_owner_epoch_id) <> ''),
+    runtime_thread_id TEXT NOT NULL CHECK (btrim(runtime_thread_id) <> ''),
+    source_ref TEXT NOT NULL CHECK (btrim(source_ref) <> ''),
+    source_committed_revision BIGINT NOT NULL CHECK (source_committed_revision >= 0),
+    source_applied_surface_revision BIGINT NOT NULL CHECK (source_applied_surface_revision >= 0),
+    source_activated_revision BIGINT CHECK (
+        source_activated_revision IS NULL OR source_activated_revision >= 0
+    ),
+    backend_id TEXT NOT NULL CHECK (btrim(backend_id) <> ''),
+    process_state TEXT NOT NULL CHECK (
+        process_state IN ('starting', 'running', 'exited', 'killed', 'lost')
+    ),
+    availability TEXT NOT NULL CHECK (availability IN ('online', 'offline', 'reconciling')),
+    latest_source_sequence BIGINT NOT NULL CHECK (latest_source_sequence >= 0),
+    next_output_sequence BIGINT NOT NULL CHECK (next_output_sequence >= 0),
+    max_output_bytes BIGINT NOT NULL CHECK (max_output_bytes >= 0),
+    projection JSONB NOT NULL CHECK (jsonb_typeof(projection) = 'object'),
+    UNIQUE (terminal_id, target_run_id, target_agent_id),
+    UNIQUE (terminal_owner_epoch_id, terminal_id),
+    FOREIGN KEY (target_agent_id, target_run_id, project_id)
+        REFERENCES lifecycle_agents(id, run_id, project_id) ON DELETE CASCADE
+);
+
+CREATE TABLE agent_run_terminal_projection_change (
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    revision BIGINT NOT NULL CHECK (revision > 0),
+    change_sequence BIGINT NOT NULL CHECK (change_sequence > 0),
+    change_id TEXT NOT NULL UNIQUE CHECK (btrim(change_id) <> ''),
+    terminal_id TEXT NOT NULL CHECK (btrim(terminal_id) <> ''),
+    terminal_owner_epoch_id TEXT NOT NULL CHECK (btrim(terminal_owner_epoch_id) <> ''),
+    source_sequence BIGINT CHECK (source_sequence IS NULL OR source_sequence > 0),
+    output_sequence BIGINT CHECK (output_sequence IS NULL OR output_sequence >= 0),
+    payload_digest TEXT NOT NULL CHECK (btrim(payload_digest) <> ''),
+    delta_kind TEXT NOT NULL CHECK (btrim(delta_kind) <> ''),
+    change JSONB NOT NULL CHECK (jsonb_typeof(change) = 'object'),
+    PRIMARY KEY (target_run_id, target_agent_id, change_sequence),
+    UNIQUE (target_run_id, target_agent_id, revision),
+    FOREIGN KEY (target_agent_id, target_run_id, project_id)
+        REFERENCES lifecycle_agents(id, run_id, project_id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX agent_run_terminal_projection_change_source_key
+    ON agent_run_terminal_projection_change(terminal_owner_epoch_id, source_sequence)
+    WHERE source_sequence IS NOT NULL;
+CREATE UNIQUE INDEX agent_run_terminal_projection_change_output_key
+    ON agent_run_terminal_projection_change(terminal_id, output_sequence)
+    WHERE output_sequence IS NOT NULL;
+
+CREATE TABLE agent_run_terminal_control_correlation (
+    correlation_id TEXT PRIMARY KEY CHECK (btrim(correlation_id) <> ''),
+    terminal_id TEXT NOT NULL CHECK (btrim(terminal_id) <> ''),
+    terminal_owner_epoch_id TEXT NOT NULL CHECK (btrim(terminal_owner_epoch_id) <> ''),
+    change_id TEXT NOT NULL UNIQUE,
+    control_kind TEXT NOT NULL CHECK (btrim(control_kind) <> ''),
+    control_status TEXT NOT NULL CHECK (btrim(control_status) <> ''),
+    correlation JSONB NOT NULL CHECK (jsonb_typeof(correlation) = 'object'),
+    FOREIGN KEY (change_id)
+        REFERENCES agent_run_terminal_projection_change(change_id) ON DELETE CASCADE
+);
+
+CREATE TABLE agent_run_terminal_projection_outbox (
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    change_sequence BIGINT NOT NULL CHECK (change_sequence > 0),
+    change_id TEXT NOT NULL UNIQUE,
+    entry JSONB NOT NULL CHECK (jsonb_typeof(entry) = 'object'),
+    PRIMARY KEY (target_run_id, target_agent_id, change_sequence),
+    FOREIGN KEY (target_run_id, target_agent_id, change_sequence)
+        REFERENCES agent_run_terminal_projection_change(
+            target_run_id,
+            target_agent_id,
+            change_sequence
+        ) ON DELETE CASCADE,
+    FOREIGN KEY (change_id)
+        REFERENCES agent_run_terminal_projection_change(change_id) ON DELETE RESTRICT
+);
+
 CREATE TABLE agent_run_fork_saga (
     request_id UUID PRIMARY KEY,
     version BIGINT NOT NULL CHECK (version > 0),
@@ -201,6 +398,25 @@ CREATE TABLE agent_runtime_thread_binding (
     activated_at_revision BIGINT CHECK (
         activated_at_revision IS NULL OR activated_at_revision >= committed_at_revision
     )
+);
+
+CREATE TABLE agent_run_product_runtime_binding (
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    runtime_thread_id TEXT NOT NULL UNIQUE CHECK (btrim(runtime_thread_id) <> ''),
+    source_ref TEXT NOT NULL CHECK (btrim(source_ref) <> ''),
+    source_committed_revision BIGINT NOT NULL CHECK (source_committed_revision >= 0),
+    source_applied_surface_revision BIGINT NOT NULL CHECK (source_applied_surface_revision >= 0),
+    source_activated_revision BIGINT CHECK (
+        source_activated_revision IS NULL OR source_activated_revision >= 0
+    ),
+    binding JSONB NOT NULL CHECK (jsonb_typeof(binding) = 'object'),
+    PRIMARY KEY (target_run_id, target_agent_id),
+    FOREIGN KEY (target_agent_id, target_run_id, project_id)
+        REFERENCES lifecycle_agents(id, run_id, project_id) ON DELETE CASCADE,
+    FOREIGN KEY (runtime_thread_id)
+        REFERENCES agent_runtime_thread_binding(thread_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE agent_runtime_operation (

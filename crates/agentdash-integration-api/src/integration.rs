@@ -2,12 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_domain::context_source::ContextSourceKind;
-use agentdash_spi::MarketplaceSourceProvider;
-use agentdash_spi::MemoryDiscoveryProvider;
-use agentdash_spi::RoutineTriggerProvider;
-use agentdash_spi::SkillDiscoveryProvider;
-use agentdash_spi::platform::mount::MountProvider;
-use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
+use agentdash_platform_spi::MarketplaceSourceProvider;
+use agentdash_platform_spi::MemoryDiscoveryProvider;
+use agentdash_platform_spi::RoutineTriggerProvider;
+use agentdash_platform_spi::SkillDiscoveryProvider;
+use agentdash_platform_spi::platform::mount::MountProvider;
+use agentdash_platform_spi::{SourceResolver, VfsDiscoveryProvider};
 
 use crate::auth::AuthProvider;
 use crate::directory::IdentityDirectoryProvider;

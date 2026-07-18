@@ -3,7 +3,7 @@ use agentdash_agent_runtime_contract::{
     ProfileProvenance, RuntimeBindingId, RuntimeDriverGeneration, RuntimeProfile, RuntimeRevision,
     RuntimeSurfaceDescriptor, RuntimeTerminalHookEffectBinding, RuntimeThreadId,
 };
-use agentdash_spi::AuthIdentity;
+use agentdash_platform_spi::AuthIdentity;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, OnceLock};
@@ -113,9 +113,9 @@ pub trait AgentRunRuntimePresentationPlanStore: Send + Sync {
 
 #[derive(Debug, Clone, Default)]
 pub struct AgentRunTurnStartContextFacts {
-    pub runtime_snapshot: Option<agentdash_spi::hooks::AgentFrameRuntimeSnapshot>,
-    pub pending_actions: Vec<agentdash_spi::HookPendingAction>,
-    pub notices: Vec<agentdash_spi::HookTurnStartNotice>,
+    pub runtime_snapshot: Option<agentdash_platform_spi::hooks::AgentFrameRuntimeSnapshot>,
+    pub pending_actions: Vec<agentdash_platform_spi::HookPendingAction>,
+    pub notices: Vec<agentdash_platform_spi::HookTurnStartNotice>,
 }
 
 #[async_trait]

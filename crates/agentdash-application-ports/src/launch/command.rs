@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use agentdash_agent_protocol::{UserInputBlock, text_user_input_blocks};
 use agentdash_domain::common::AgentBackendRequirement;
-use agentdash_spi::{AgentConfig, AuthIdentity};
+use agentdash_platform_spi::{AgentConfig, AuthIdentity};
 use serde::{Deserialize, Serialize};
 
 use super::modifier::{CompanionLaunchSource, LaunchModifier, RoutineLaunchSource};
@@ -288,7 +288,7 @@ impl LaunchCommand {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_spi::{AgentConfig, CompanionSliceMode};
+    use agentdash_platform_spi::{AgentConfig, CompanionSliceMode};
     use uuid::Uuid;
 
     use super::{LaunchCommand, LaunchPromptInput, LaunchSource};

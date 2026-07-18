@@ -220,9 +220,9 @@ fn enqueue_user_message(
     }
 }
 
-fn identity(display_name: &str) -> agentdash_spi::AuthIdentity {
-    agentdash_spi::AuthIdentity {
-        auth_mode: agentdash_spi::AuthMode::Personal,
+fn identity(display_name: &str) -> agentdash_platform_spi::AuthIdentity {
+    agentdash_platform_spi::AuthIdentity {
+        auth_mode: agentdash_platform_spi::AuthMode::Personal,
         user_id: "user-1".to_string(),
         subject: "user-1".to_string(),
         display_name: Some(display_name.to_string()),
@@ -1019,7 +1019,7 @@ async fn explicit_steer_policy_survives_idle_to_active_admission_race() {
     let mailbox = runtime_mailbox(repository.clone(), runtime.clone());
     let mut command = enqueue_user_message(target.clone(), "idle-active-steer", "keep policy");
     command.delivery_intent = Some("steer".to_string());
-    let execution_profile_override = agentdash_spi::AgentConfig::new("PI_AGENT");
+    let execution_profile_override = agentdash_platform_spi::AgentConfig::new("PI_AGENT");
     command.executor_config = Some(execution_profile_override.clone());
     let visible_content = command.presentation.content.clone();
     let draft = mailbox

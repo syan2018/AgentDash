@@ -17,7 +17,7 @@ use agentdash_domain::workflow::{
     AgentRunAcceptedRefs, AgentRunCommandKind, AgentRunCommandReceipt, AgentRunCommandStatus,
     NewAgentRunCommandReceipt,
 };
-use agentdash_spi::{AgentConfig, AuthIdentity};
+use agentdash_platform_spi::{AgentConfig, AuthIdentity};
 use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;

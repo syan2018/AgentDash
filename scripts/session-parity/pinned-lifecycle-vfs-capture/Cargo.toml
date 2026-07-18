@@ -11,7 +11,7 @@ agentdash-agent-protocol = { path = "../../../../AgentDash-main-reference/crates
 agentdash-application-lifecycle = { path = "../../../../AgentDash-main-reference/crates/agentdash-application-lifecycle" }
 agentdash-application-vfs = { path = "../../../../AgentDash-main-reference/crates/agentdash-application-vfs" }
 agentdash-domain = { path = "../../../../AgentDash-main-reference/crates/agentdash-domain" }
-agentdash-spi = { path = "../../../../AgentDash-main-reference/crates/agentdash-spi" }
+agentdash-platform-spi = { path = "../../../../AgentDash-main-reference/crates/agentdash-platform-spi" }
 agentdash-test-support = { path = "../../../../AgentDash-main-reference/crates/agentdash-test-support" }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, MountCapability, RuntimeVfsAccessPolicy,
     RuntimeVfsOperation, ToolUpdateCallback,
 };
@@ -122,7 +122,7 @@ mod tests {
 
     use std::{collections::BTreeSet, sync::Arc};
 
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         AgentTool, Mount, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsPathPattern, Vfs,
     };
 

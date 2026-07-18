@@ -45,7 +45,7 @@ use agentdash_infrastructure::{
     PostgresStateChangeRepository, PostgresStoryRepository, PostgresUserDirectoryRepository,
     PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
-use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
+use agentdash_platform_spi::extension_package::ExtensionPackageArtifactStorage;
 
 pub(crate) struct RepositoryBootstrapOutput {
     pub repos: RepositorySet,
@@ -351,7 +351,7 @@ mod tests {
     };
     use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
     use agentdash_relay::CapabilitiesPayload;
-    use agentdash_spi::AgentConfig;
+    use agentdash_platform_spi::AgentConfig;
     use agentdash_test_support::skill::MemorySkillAssetRepository;
     use agentdash_test_support::workspace_module::MemoryProjectRepository;
     use chrono::Utc;

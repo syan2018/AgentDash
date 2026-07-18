@@ -54,10 +54,10 @@ use agentdash_integration_native_agent::{
     NativePresentationMetadata, ResolvedNativeBridge, native_runtime_profile,
     native_runtime_trust_manifest,
 };
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AgentConfig, ApiRequestOutcome, BashExecOutcome, CapabilityState, FunctionRunner, Mount,
     MountCapability, NoopExecutionHookProvider, ToolCapability, ToolCluster, Vfs,
-    WorkflowScriptEvaluator, WorkspaceModuleDimension, connector::RuntimeToolProvider,
+    WorkflowScriptEvaluator, WorkspaceModuleDimension, RuntimeToolProvider,
 };
 use agentdash_test_support::workflow::MemoryAgentRunMailboxRepository;
 use agentdash_workspace_module::workspace_module::{

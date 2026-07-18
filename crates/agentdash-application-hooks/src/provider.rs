@@ -7,8 +7,8 @@ use agentdash_application_ports::hook_workflow_projection::{
 use agentdash_domain::workflow::{
     RuntimeNodeStatus, build_effective_contract, build_effective_contract_from_contract,
 };
-use agentdash_spi::hooks::PendingExecutionLogEntry;
-use agentdash_spi::{
+use agentdash_platform_spi::hooks::PendingExecutionLogEntry;
+use agentdash_platform_spi::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
     AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, HookDiagnosticEntry, HookError,
     HookResolution, HookScriptEvaluator, HookTrigger, SessionSnapshotMetadata,
@@ -16,7 +16,7 @@ use agentdash_spi::{
 use async_trait::async_trait;
 
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_spi::ExecutionHookProvider;
+use agentdash_platform_spi::ExecutionHookProvider;
 
 use super::active_workflow_contribution::build_active_workflow_step_fragments;
 use super::presets::builtin_preset_scripts;
@@ -419,11 +419,11 @@ fn seed_snapshot_injections_for_trigger(
 mod tests {
     use std::sync::Arc;
 
-    use agentdash_spi::hooks::{
+    use agentdash_platform_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
         AgentFrameHookSnapshotQuery, HookControlTarget, HookResolution, RuntimeAdapterProvenance,
     };
-    use agentdash_spi::{ExecutionHookProvider, HookError, HookTrigger};
+    use agentdash_platform_spi::{ExecutionHookProvider, HookError, HookTrigger};
     use async_trait::async_trait;
 
     use super::super::rules::{HookEvaluationContext, HookRuleEvaluationQuery, apply_hook_rules};
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn session_start_includes_snapshot_injections() {
-        let injection = agentdash_spi::HookInjection {
+        let injection = agentdash_platform_spi::HookInjection {
             slot: "workflow".to_string(),
             content: "## Workflow Guidance\n进入 Apply 阶段".to_string(),
             source: "workflow:builtin_workflow_admin_apply:apply".to_string(),

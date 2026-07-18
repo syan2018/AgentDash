@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_spi::platform::auth::AuthIdentity;
-use agentdash_spi::platform::tool_capability::{CAP_FILE_READ, CAP_FILE_WRITE};
-use agentdash_spi::{
+use agentdash_platform_spi::platform::auth::AuthIdentity;
+use agentdash_platform_spi::platform::tool_capability::{CAP_FILE_READ, CAP_FILE_WRITE};
+use agentdash_platform_spi::{
     CapabilityState, RuntimeVfsAccessPolicy, RuntimeVfsOperation, ToolCluster, Vfs,
 };
 use serde_json::json;
@@ -558,7 +558,7 @@ mod tests {
         MountError, MountOperationContext, MountProvider, MountProviderRegistryBuilder, ReadResult,
         RuntimeFileEntry,
     };
-    use agentdash_spi::{Mount, MountCapability, ToolCapability};
+    use agentdash_platform_spi::{Mount, MountCapability, ToolCapability};
     use async_trait::async_trait;
     use std::collections::BTreeMap;
     use tokio::sync::Mutex;

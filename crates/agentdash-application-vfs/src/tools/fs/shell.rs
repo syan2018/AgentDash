@@ -2,8 +2,8 @@ use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, RuntimeVfsOperation,
     ToolUpdateCallback,
 };
@@ -79,7 +79,7 @@ pub struct ShellExecTool {
     session_id: String,
     turn_id: Option<String>,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     capability_state: CapabilityState,
 }
 impl ShellExecTool {
@@ -123,7 +123,7 @@ impl ShellExecTool {
         session_id: String,
         turn_id: Option<String>,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         self.materialization = materialization;
         self.session_id = session_id;
@@ -159,8 +159,8 @@ impl ShellExecTool {
     async fn execute_control_operation(
         &self,
         params: &ShellExecParams,
-        vfs: &agentdash_spi::Vfs,
-        access_policy: &agentdash_spi::RuntimeVfsAccessPolicy,
+        vfs: &agentdash_platform_spi::Vfs,
+        access_policy: &agentdash_platform_spi::RuntimeVfsAccessPolicy,
     ) -> Result<AgentToolResult, AgentToolError> {
         let terminal_id = required_terminal_id(params)?;
         let registration = self
@@ -501,7 +501,7 @@ impl AgentTool for ShellExecTool {
         };
         let display_cwd = format_mount_uri(&target.mount_id, &cwd_for_display(&cwd));
         let exec_mount =
-            resolve_mount(&vfs, &target.mount_id, agentdash_spi::MountCapability::Exec)
+            resolve_mount(&vfs, &target.mount_id, agentdash_platform_spi::MountCapability::Exec)
                 .map_err(AgentToolError::ExecutionFailed)?;
         ensure_runtime_vfs_access(
             &access_policy,
@@ -1006,7 +1006,7 @@ fn shell_exec_result_details(
     }))
 }
 
-fn unresolved_vfs_uri_message(command: &str, vfs: &agentdash_spi::Vfs) -> Option<String> {
+fn unresolved_vfs_uri_message(command: &str, vfs: &agentdash_platform_spi::Vfs) -> Option<String> {
     let mut unresolved = unresolved_current_mount_uris(command, vfs);
     unresolved.extend(unresolved_reserved_vfs_uris(command));
     unresolved.sort();
@@ -1021,7 +1021,7 @@ fn unresolved_vfs_uri_message(command: &str, vfs: &agentdash_spi::Vfs) -> Option
     ))
 }
 
-fn unresolved_current_mount_uris(command: &str, vfs: &agentdash_spi::Vfs) -> Vec<String> {
+fn unresolved_current_mount_uris(command: &str, vfs: &agentdash_platform_spi::Vfs) -> Vec<String> {
     let mount_ids = vfs
         .mounts
         .iter()
@@ -1052,7 +1052,7 @@ mod shell_exec_rewrite_tests {
         MountProviderRegistryBuilder, ReadResult, SearchQuery, SearchResult,
         ShellSessionOutputChunk, ShellSessionWriteResult,
     };
-    use agentdash_spi::{Mount, Vfs};
+    use agentdash_platform_spi::{Mount, Vfs};
     use std::sync::Mutex;
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1236,8 +1236,8 @@ mod shell_exec_rewrite_tests {
                 backend_id: "local-dev-1".to_string(),
                 root_ref: "D:\\workspace".to_string(),
                 capabilities: vec![
-                    agentdash_spi::MountCapability::Read,
-                    agentdash_spi::MountCapability::Exec,
+                    agentdash_platform_spi::MountCapability::Read,
+                    agentdash_platform_spi::MountCapability::Exec,
                 ],
                 default_write: true,
                 display_name: "main".to_string(),
@@ -1440,7 +1440,7 @@ mod shell_exec_rewrite_tests {
                 provider: "shell_lifecycle".to_string(),
                 backend_id: "backend-local".to_string(),
                 root_ref: "D:\\workspace".to_string(),
-                capabilities: vec![agentdash_spi::MountCapability::Exec],
+                capabilities: vec![agentdash_platform_spi::MountCapability::Exec],
                 default_write: true,
                 display_name: "main".to_string(),
                 metadata: serde_json::Value::Null,
@@ -1619,7 +1619,7 @@ mod shell_exec_rewrite_tests {
                 provider: crate::PROVIDER_RELAY_FS.to_string(),
                 backend_id: "local-dev-1".to_string(),
                 root_ref: "D:\\workspace".to_string(),
-                capabilities: vec![agentdash_spi::MountCapability::Exec],
+                capabilities: vec![agentdash_platform_spi::MountCapability::Exec],
                 default_write: true,
                 display_name: "main".to_string(),
                 metadata: serde_json::Value::Null,

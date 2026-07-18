@@ -11,7 +11,7 @@ use agentdash_application_lifecycle::lifecycle::surface::journey::{
     SessionCompactionArchiveStatus,
 };
 use agentdash_application_vfs::MountProviderRegistryBuilder;
-use agentdash_spi::PersistedSessionEvent;
+use agentdash_platform_spi::PersistedSessionEvent;
 use async_trait::async_trait;
 
 use crate::canvas::CanvasFsMountProvider;

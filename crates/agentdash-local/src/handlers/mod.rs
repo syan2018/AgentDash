@@ -10,13 +10,9 @@
 mod extension;
 mod materialization;
 mod mcp_relay;
-mod runtime_wire;
 mod terminal;
 mod tool_calls;
 mod workspace;
-pub use runtime_wire::{
-    HostRuntimeDriverEndpointResolver, RuntimeDriverEndpointResolver, RuntimeWireCommandHandler,
-};
 pub use workspace::browse_directory;
 
 use agentdash_diagnostics::{Subsystem, diag};
@@ -72,7 +68,6 @@ pub struct LocalCommandRouter {
     mcp: McpCommandHandler,
     extension: ExtensionCommandHandler,
     terminal: TerminalCommandHandler,
-    runtime_wire: Arc<RuntimeWireCommandHandler>,
 }
 
 pub struct LocalCommandRouterConfig {
@@ -85,16 +80,9 @@ pub struct LocalCommandRouterConfig {
     pub extension_artifact_access_token: String,
     pub extension_artifact_cache_root: PathBuf,
     pub event_tx: mpsc::UnboundedSender<RelayMessage>,
-    pub runtime_wire: Arc<RuntimeWireCommandHandler>,
 }
 
 impl LocalCommandRouter {
-    pub async fn advertised_runtime_offers(
-        &self,
-    ) -> Result<Vec<agentdash_relay::RuntimeOfferAdvertisement>, String> {
-        self.runtime_wire.advertised_offers().await
-    }
-
     pub fn new(config: LocalCommandRouterConfig) -> Self {
         let shell_session_manager = Arc::new(ShellSessionManager::new(
             config.tool_executor.clone(),
@@ -125,7 +113,6 @@ impl LocalCommandRouter {
                 ),
             }),
             terminal: TerminalCommandHandler::new(config.tool_executor, shell_session_manager),
-            runtime_wire: config.runtime_wire,
         }
     }
 
@@ -137,18 +124,6 @@ impl LocalCommandRouter {
     /// 异步事件（如 SessionNotification）通过 event_tx 推送。
     pub async fn handle(&self, msg: RelayMessage) -> Vec<RelayMessage> {
         match msg {
-            RelayMessage::RuntimeWireOpen { id, payload } => {
-                vec![self.runtime_wire.open(id, payload).await]
-            }
-            RelayMessage::RuntimeWireFrame { id, payload } => {
-                self.runtime_wire.frame(id, *payload).await
-            }
-            RelayMessage::RuntimeWireAck { id, payload } => self
-                .runtime_wire
-                .acknowledge(id, payload)
-                .await
-                .into_iter()
-                .collect(),
             // ── 心跳 ──
             RelayMessage::Ping { id, payload } => {
                 vec![RelayMessage::Pong {
@@ -274,6 +249,9 @@ impl LocalCommandRouter {
             }
             RelayMessage::CommandTerminalKill { id, payload } => {
                 vec![self.terminal.handle_terminal_kill(id, payload).await]
+            }
+            RelayMessage::CommandTerminalInventory { id, payload } => {
+                vec![self.terminal.handle_terminal_inventory(id, payload).await]
             }
 
             other => {

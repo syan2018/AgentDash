@@ -4,7 +4,7 @@ use agentdash_domain::workflow::{
     ExecutorSpec, FunctionActivityExecutorSpec, LifecycleRun, NodePortValue, PlanNode,
     RuntimeNodeError,
 };
-use agentdash_spi::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
+use agentdash_platform_spi::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
 use serde_json::{Value, json};
 
 use super::ready_node::{RunningNodeView, RuntimeNodeCoordinate};

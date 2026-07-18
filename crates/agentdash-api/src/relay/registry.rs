@@ -7,12 +7,8 @@ use serde::Serialize;
 use tokio::sync::{RwLock, mpsc, oneshot};
 
 use agentdash_domain::backend::RuntimeBackendAnchorError;
-use agentdash_integration_remote_runtime::{
-    RemoteRuntimeTransportError, RuntimeWirePlacementRequest,
-};
-use agentdash_relay::RuntimeRelayStreamId;
+use agentdash_platform_spi::RelayMcpCallContext;
 use agentdash_relay::{CapabilitiesPayload, RelayMessage};
-use agentdash_spi::RelayMcpCallContext;
 
 pub type BackendSender = mpsc::UnboundedSender<RelayMessage>;
 
@@ -69,8 +65,6 @@ pub struct BackendRegistry {
     backends: RwLock<HashMap<String, ConnectedBackend>>,
     /// 等待本机响应的挂起请求（msg_id → pending request）
     pending: RwLock<HashMap<String, PendingRequest>>,
-    runtime_wire_routes:
-        RwLock<HashMap<RuntimeRelayStreamId, Arc<super::runtime_wire::CloudRuntimeWirePlacement>>>,
 }
 
 struct PendingRequest {
@@ -83,7 +77,6 @@ impl BackendRegistry {
         Arc::new(Self {
             backends: RwLock::new(HashMap::new()),
             pending: RwLock::new(HashMap::new()),
-            runtime_wire_routes: RwLock::new(HashMap::new()),
         })
     }
 
@@ -112,17 +105,6 @@ impl BackendRegistry {
             .write()
             .await
             .retain(|_, pending| pending.backend_id != backend_id);
-        let routes = self
-            .runtime_wire_routes
-            .read()
-            .await
-            .values()
-            .filter(|route| route.request().host_id == backend_id)
-            .cloned()
-            .collect::<Vec<_>>();
-        for route in routes {
-            route.disconnect().await;
-        }
         diag!(Info, Subsystem::Relay,
         backend_id = %backend_id, "本机后端已断开");
     }
@@ -146,178 +128,6 @@ impl BackendRegistry {
         } else {
             false
         }
-    }
-
-    pub(crate) async fn send_runtime_wire_message(
-        &self,
-        backend_id: &str,
-        message: RelayMessage,
-    ) -> Result<(), BackendCommandError> {
-        let sender = self
-            .backends
-            .read()
-            .await
-            .get(backend_id)
-            .map(|backend| backend.sender.clone())
-            .ok_or_else(|| BackendCommandError::Offline {
-                backend_id: backend_id.to_string(),
-            })?;
-        sender
-            .send(message)
-            .map_err(|_| BackendCommandError::SendFailed {
-                backend_id: backend_id.to_string(),
-            })
-    }
-
-    pub(crate) async fn resolve_runtime_wire_placement(
-        self: &Arc<Self>,
-        request: RuntimeWirePlacementRequest,
-        max_in_flight_frames: usize,
-    ) -> Result<Arc<super::runtime_wire::CloudRuntimeWirePlacement>, RemoteRuntimeTransportError>
-    {
-        let candidate = super::runtime_wire::CloudRuntimeWirePlacement::new(
-            request.clone(),
-            max_in_flight_frames,
-            self.clone(),
-        );
-        let placement = {
-            let mut routes = self.runtime_wire_routes.write().await;
-            if let Some(existing) = routes.get(candidate.stream_id()) {
-                if existing.request() != &request {
-                    return Err(RemoteRuntimeTransportError::Protocol {
-                        reason: "Runtime Wire stream identity was reused with different provenance"
-                            .to_string(),
-                        critical: true,
-                    });
-                }
-                if !existing.is_retired() {
-                    let existing = existing.clone();
-                    drop(routes);
-                    existing.wait_until_open().await?;
-                    return Ok(existing);
-                }
-                return Err(RemoteRuntimeTransportError::Unavailable {
-                    reason: "Runtime Wire placement identity belongs to a retired connection epoch; recovery requires a replacement generation or host incarnation"
-                        .to_string(),
-                    retryable: false,
-                });
-            }
-            routes.insert(candidate.stream_id().clone(), candidate.clone());
-            candidate
-        };
-        if let Err(error) = placement.open().await {
-            self.runtime_wire_routes
-                .write()
-                .await
-                .remove(placement.stream_id());
-            return Err(error);
-        }
-        Ok(placement)
-    }
-
-    pub(crate) async fn handle_runtime_wire_message(
-        &self,
-        backend_id: &str,
-        message: &RelayMessage,
-    ) -> bool {
-        if let RelayMessage::Error { id, error } = message
-            && let Some(stream_id) = id
-                .strip_prefix("runtime-wire-open:")
-                .or_else(|| id.strip_prefix("runtime-wire-reopen:"))
-        {
-            let route = self
-                .runtime_wire_routes
-                .read()
-                .await
-                .get(&RuntimeRelayStreamId(stream_id.to_string()))
-                .cloned();
-            if let Some(route) = route
-                && route.request().host_id == backend_id
-            {
-                route.reject_open(error.message.clone()).await;
-                return true;
-            }
-        }
-        let (stream_id, action) = match message {
-            RelayMessage::RuntimeWireOpenAck { payload, .. } => (payload.stream_id.clone(), 0_u8),
-            RelayMessage::RuntimeWireFrame { payload, .. } => (payload.stream_id.clone(), 1_u8),
-            RelayMessage::RuntimeWireAck { payload, .. } => (payload.stream_id.clone(), 2_u8),
-            _ => return false,
-        };
-        let route = self
-            .runtime_wire_routes
-            .read()
-            .await
-            .get(&stream_id)
-            .cloned();
-        let Some(route) = route else {
-            return false;
-        };
-        if route.request().host_id != backend_id {
-            return true;
-        }
-        let result = match (action, message) {
-            (0, RelayMessage::RuntimeWireOpenAck { payload, .. }) => {
-                match route.accept_open(payload.clone()).await {
-                    Ok(replay) => {
-                        for frame in replay {
-                            if let Err(error) = self
-                                .send_runtime_wire_message(
-                                    backend_id,
-                                    RelayMessage::RuntimeWireFrame {
-                                        id: format!(
-                                            "runtime-wire-replay:{}:{}",
-                                            frame.stream_id.0, frame.sequence
-                                        ),
-                                        payload: Box::new(frame),
-                                    },
-                                )
-                                .await
-                            {
-                                return {
-                                    diag!(Warn, Subsystem::Relay, error = %error,
-                                        "Runtime Wire replay send failed");
-                                    true
-                                };
-                            }
-                        }
-                        Ok(())
-                    }
-                    Err(error) => Err(error),
-                }
-            }
-            (1, RelayMessage::RuntimeWireFrame { id, payload }) => {
-                match route.accept_frame((**payload).clone()).await {
-                    Ok(ack) => self
-                        .send_runtime_wire_message(
-                            backend_id,
-                            RelayMessage::RuntimeWireAck {
-                                id: id.clone(),
-                                payload: ack,
-                            },
-                        )
-                        .await
-                        .map_err(|error| RemoteRuntimeTransportError::Unavailable {
-                            reason: error.to_string(),
-                            retryable: true,
-                        }),
-                    Err(error) => Err(error),
-                }
-            }
-            (2, RelayMessage::RuntimeWireAck { payload, .. }) => {
-                route.accept_ack(payload.clone()).await
-            }
-            _ => Ok(()),
-        };
-        if let Err(error) = result {
-            diag!(Warn, Subsystem::Relay,
-                backend_id = %backend_id,
-                stream_id = %stream_id.0,
-                error = %error,
-                "Runtime Wire persistent route rejected a message"
-            );
-        }
-        true
     }
 
     pub async fn list_online(&self) -> Vec<OnlineBackendInfo> {
@@ -598,10 +408,6 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::RegisterAck { .. } => "register_ack",
         RelayMessage::Ping { .. } => "ping",
         RelayMessage::Pong { .. } => "pong",
-        RelayMessage::RuntimeWireOpen { .. } => "runtime_wire.open",
-        RelayMessage::RuntimeWireOpenAck { .. } => "runtime_wire.open_ack",
-        RelayMessage::RuntimeWireFrame { .. } => "runtime_wire.frame",
-        RelayMessage::RuntimeWireAck { .. } => "runtime_wire.ack",
         RelayMessage::CommandPrompt { .. } => "command.prompt",
         RelayMessage::CommandCancel { .. } => "command.cancel",
         RelayMessage::CommandSteer { .. } => "command.steer",
@@ -678,10 +484,12 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::CommandTerminalInput { .. } => "command.terminal.input",
         RelayMessage::CommandTerminalResize { .. } => "command.terminal.resize",
         RelayMessage::CommandTerminalKill { .. } => "command.terminal.kill",
+        RelayMessage::CommandTerminalInventory { .. } => "command.terminal.inventory",
         RelayMessage::ResponseTerminalSpawn { .. } => "response.terminal.spawn",
         RelayMessage::ResponseTerminalInput { .. } => "response.terminal.input",
         RelayMessage::ResponseTerminalResize { .. } => "response.terminal.resize",
         RelayMessage::ResponseTerminalKill { .. } => "response.terminal.kill",
+        RelayMessage::ResponseTerminalInventory { .. } => "response.terminal.inventory",
         RelayMessage::EventTerminalOutput { .. } => "event.terminal.output",
         RelayMessage::EventPtyTerminalStateChanged { .. } => "event.pty_terminal.state_changed",
         RelayMessage::Error { .. } => "error",
@@ -691,17 +499,7 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::relay::CloudRuntimeWirePlacementResolver;
-    use agentdash_agent_runtime_contract::{RuntimeDriverGeneration, RuntimeServiceInstanceId};
-    use agentdash_agent_runtime_wire::{
-        RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAck as DriverWireAck, RuntimeWireEnvelope,
-        RuntimeWireFrame as DriverWireFrame, RuntimeWireFrameId,
-    };
     use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorSource};
-    use agentdash_integration_api::{AgentRuntimePlacementId, AgentServiceDefinitionId};
-    use agentdash_integration_remote_runtime::{
-        RuntimeWirePlacementEvent, RuntimeWirePlacementRequest, RuntimeWirePlacementResolver,
-    };
     use agentdash_relay::{CommandBrowseDirectoryPayload, McpServerInfoRelay};
 
     fn connected_backend(backend_id: &str) -> ConnectedBackend {
@@ -724,200 +522,6 @@ mod tests {
             connected_at: Utc::now(),
         }
     }
-    #[tokio::test]
-    async fn runtime_wire_recovery_requires_replacement_provenance_and_never_replays_lost_work() {
-        let registry = BackendRegistry::new();
-        let (first_sender, mut first_outbound) = mpsc::unbounded_channel();
-        registry
-            .try_register(connected_backend_with_sender("local-a", first_sender))
-            .await
-            .expect("register first backend connection");
-        let request = RuntimeWirePlacementRequest {
-            host_id: "local-a".to_string(),
-            transport_id: AgentRuntimePlacementId::new("desktop-runtime-wire")
-                .expect("transport id"),
-            definition_id: AgentServiceDefinitionId::new("enterprise.agent")
-                .expect("definition id"),
-            service_instance_id: RuntimeServiceInstanceId::new("enterprise-instance")
-                .expect("instance id"),
-            generation: RuntimeDriverGeneration(3),
-            host_incarnation_id: agentdash_agent_runtime_contract::HostIncarnationId::new(
-                "host-incarnation-1",
-            )
-            .expect("host incarnation id"),
-        };
-        let reconnect_request = request.clone();
-        let resolver = CloudRuntimeWirePlacementResolver::new(registry.clone(), 8);
-        let resolve = tokio::spawn(async move { resolver.resolve(request).await });
-        let open = first_outbound.recv().await.expect("Runtime Wire open");
-        let RelayMessage::RuntimeWireOpen { id, payload: open } = open else {
-            panic!("expected Runtime Wire open")
-        };
-        let profile = agentdash_integration_native_agent::native_runtime_profile();
-        let profile_digest = agentdash_agent_runtime_host::profile_digest(&profile)
-            .expect("transport profile digest");
-        assert!(
-            registry
-                .handle_runtime_wire_message(
-                    "local-a",
-                    &RelayMessage::RuntimeWireOpenAck {
-                        id,
-                        payload: agentdash_relay::RuntimeRelayOpenAck {
-                            stream_id: open.stream_id.clone(),
-                            selected_protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
-                            accepted_after_sequence: 0,
-                            transport_profile: profile.clone(),
-                            transport_profile_digest: profile_digest.clone(),
-                            max_in_flight_frames: 8,
-                        },
-                    },
-                )
-                .await
-        );
-        let placement = resolve
-            .await
-            .expect("resolver task")
-            .expect("resolved placement");
-        let envelope = RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
-            frame_id: RuntimeWireFrameId(10),
-            critical: true,
-            frame: DriverWireFrame::Ack(DriverWireAck {
-                through_frame_id: RuntimeWireFrameId(9),
-            }),
-        };
-        placement
-            .send(envelope.clone())
-            .await
-            .expect("send Runtime Wire envelope");
-        let first_frame = first_outbound
-            .recv()
-            .await
-            .expect("first Runtime Wire frame");
-        let RelayMessage::RuntimeWireFrame {
-            payload: first_frame,
-            ..
-        } = first_frame
-        else {
-            panic!("expected Runtime Wire frame")
-        };
-
-        let disconnecting_registry = registry.clone();
-        let disconnect = tokio::spawn(async move {
-            disconnecting_registry.unregister("local-a").await;
-        });
-        assert!(matches!(
-            tokio::time::timeout(std::time::Duration::from_secs(1), placement.receive())
-                .await
-                .expect("disconnect receive must not hang")
-                .expect("disconnect event"),
-            RuntimeWirePlacementEvent::Disconnected { .. }
-        ));
-        placement.acknowledge_disconnect().await;
-        disconnect.await.expect("disconnect task");
-        let (second_sender, mut second_outbound) = mpsc::unbounded_channel();
-        registry
-            .try_register(connected_backend_with_sender("local-a", second_sender))
-            .await
-            .expect("register replacement backend connection");
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(20), second_outbound.recv(),)
-                .await
-                .is_err(),
-            "declared-lost Runtime Wire route must not reopen after backend registration"
-        );
-        let same_identity_resolver = CloudRuntimeWirePlacementResolver::new(registry.clone(), 8);
-        assert!(matches!(
-            same_identity_resolver
-                .resolve(reconnect_request.clone())
-                .await,
-            Err(RemoteRuntimeTransportError::Unavailable {
-                retryable: false,
-                ..
-            })
-        ));
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(20), second_outbound.recv())
-                .await
-                .is_err(),
-            "retired same-provenance placement must remain fenced",
-        );
-        let replacement_request = RuntimeWirePlacementRequest {
-            generation: RuntimeDriverGeneration(4),
-            host_incarnation_id: agentdash_agent_runtime_contract::HostIncarnationId::new(
-                "host-incarnation-2",
-            )
-            .expect("replacement host incarnation id"),
-            ..reconnect_request
-        };
-        let reconnect_resolver = CloudRuntimeWirePlacementResolver::new(registry.clone(), 8);
-        let reconnect =
-            tokio::spawn(async move { reconnect_resolver.resolve(replacement_request).await });
-        let fresh_open = second_outbound
-            .recv()
-            .await
-            .expect("replacement provenance opens a fresh connection epoch");
-        let RelayMessage::RuntimeWireOpen {
-            id: fresh_open_id,
-            payload: fresh_open,
-        } = fresh_open
-        else {
-            panic!("expected fresh Runtime Wire open")
-        };
-        assert_eq!(fresh_open.resume_after_sequence, 0);
-        assert_ne!(fresh_open.stream_id, open.stream_id);
-        assert!(
-            registry
-                .handle_runtime_wire_message(
-                    "local-a",
-                    &RelayMessage::RuntimeWireOpenAck {
-                        id: fresh_open_id,
-                        payload: agentdash_relay::RuntimeRelayOpenAck {
-                            stream_id: fresh_open.stream_id.clone(),
-                            selected_protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
-                            accepted_after_sequence: 0,
-                            transport_profile: profile,
-                            transport_profile_digest: profile_digest,
-                            max_in_flight_frames: 8,
-                        },
-                    },
-                )
-                .await
-        );
-        let fresh_placement = reconnect
-            .await
-            .expect("fresh resolver task")
-            .expect("fresh placement");
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(20), second_outbound.recv())
-                .await
-                .is_err(),
-            "fresh placement must not replay abandoned frames from the retired epoch",
-        );
-        assert!(matches!(
-            placement.send(envelope.clone()).await,
-            Err(RemoteRuntimeTransportError::Unavailable {
-                retryable: false,
-                ..
-            })
-        ));
-        let fresh_envelope = RuntimeWireEnvelope {
-            frame_id: RuntimeWireFrameId(11),
-            ..envelope.clone()
-        };
-        fresh_placement
-            .send(fresh_envelope.clone())
-            .await
-            .expect("fresh placement remains sendable");
-        let fresh_frame = second_outbound.recv().await.expect("fresh placement frame");
-        assert!(matches!(
-            fresh_frame,
-            RelayMessage::RuntimeWireFrame { payload, .. }
-                if payload.envelope == fresh_envelope
-        ));
-        assert_eq!(first_frame.envelope, envelope);
-    }
-
     fn capabilities_with_mcp_server(server_name: &str) -> CapabilitiesPayload {
         CapabilitiesPayload {
             executors: Vec::new(),

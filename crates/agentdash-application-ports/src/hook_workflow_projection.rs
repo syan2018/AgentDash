@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use agentdash_spi::hooks::{
+use agentdash_platform_spi::hooks::{
     HookControlTarget, PendingExecutionLogEntry, RuntimeAdapterProvenance, SubjectRunContext,
 };
 use async_trait::async_trait;

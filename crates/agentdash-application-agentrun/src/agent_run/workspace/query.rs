@@ -11,7 +11,7 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleGateRepository, LifecycleRun,
     LifecycleSubjectAssociationRepository,
 };
-use agentdash_spi::Vfs;
+use agentdash_platform_spi::Vfs;
 use uuid::Uuid;
 
 use crate::agent_run::lifecycle_read_model_facade::{

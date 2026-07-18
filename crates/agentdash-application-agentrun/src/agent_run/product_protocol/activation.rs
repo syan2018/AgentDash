@@ -115,7 +115,7 @@ pub const AGENT_RUN_TARGET_ACTIVATION_MANIFEST: &[AgentRunConsumerActivation] = 
         prerequisite: "Runtime Tool Broker invokes VFS contribution routes",
     },
     AgentRunConsumerActivation {
-        consumer: "agentdash-spi",
+        consumer: "agentdash-platform-spi",
         current_artifact: "Agent re-export facade and connector tool assembly",
         workstream: AgentRunActivationWorkstream::W8LegacyBoundary,
         final_owner: AgentRunActivationOwner::LegacyDeletion,
@@ -311,7 +311,7 @@ mod tests {
         "agentdash-application-ports",
         "agentdash-application-runtime-gateway",
         "agentdash-application-vfs",
-        "agentdash-spi",
+        "agentdash-platform-spi",
     ];
 
     #[test]
@@ -371,7 +371,7 @@ mod tests {
                 "agentdash-agent-protocol",
                 "agentdash-application-ports",
                 "agentdash-application-runtime-gateway",
-                "agentdash-spi",
+                "agentdash-platform-spi",
             ]
             .into_iter()
             .collect()

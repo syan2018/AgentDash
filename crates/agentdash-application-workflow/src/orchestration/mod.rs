@@ -1,4 +1,3 @@
-mod agent_node_launcher;
 pub mod compiler;
 pub mod executor_launcher;
 mod function_node_runner;
@@ -13,8 +12,8 @@ pub use compiler::{
     WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler, compile_workflow_graph,
 };
 pub use executor_launcher::{
-    LaunchedAgentNode, OpenedHumanGate, OrchestrationExecutorDrainResult,
-    OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput, SubmitHumanGateDecisionResult,
+    OpenedHumanGate, OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher,
+    SubmitHumanGateDecisionInput, SubmitHumanGateDecisionResult,
 };
 pub use runtime::{
     OrchestrationActivationInput, OrchestrationRuntimeApplyOutcome, OrchestrationRuntimeDiagnostic,

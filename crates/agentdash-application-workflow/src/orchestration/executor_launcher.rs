@@ -1,11 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeProvisioner;
-use agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationPort;
-use agentdash_application_ports::workflow_agent_run_delivery::WorkflowAgentRunDeliveryPort;
 use agentdash_domain::workflow::{
-    AgentProcedureRepository, ArtifactAliasPolicy, ExecutorRunRef, LifecycleGateRepository,
-    LifecycleRun, LifecycleRunRepository, PlanNode, PlanNodeKind, RuntimeNodeError,
+    ArtifactAliasPolicy, ExecutorRunRef, LifecycleGateRepository, LifecycleRun,
+    LifecycleRunRepository, PlanNode, PlanNodeKind, RuntimeNodeError,
 };
 use agentdash_platform_spi::FunctionRunner;
 use serde_json::Value;
@@ -13,7 +10,6 @@ use uuid::Uuid;
 
 use crate::{WorkflowApplicationError, WorkflowRepositorySet};
 
-use super::agent_node_launcher::{AgentNodeLaunchOutcome, AgentNodeLauncher};
 use super::function_node_runner::FunctionNodeRunner;
 use super::human_gate_launcher::{HumanGateLauncher, HumanGateOpenOutcome};
 use super::ready_node::{ReadyNodeView, RuntimeNodeCoordinate};
@@ -23,19 +19,9 @@ const MAX_DRAIN_STEPS: usize = 128;
 
 #[derive(Debug, Clone, Default)]
 pub struct OrchestrationExecutorDrainResult {
-    pub launched_agent_nodes: Vec<LaunchedAgentNode>,
     pub opened_human_gates: Vec<OpenedHumanGate>,
     pub completed_effect_nodes: Vec<String>,
     pub failed_nodes: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LaunchedAgentNode {
-    pub run_id: Uuid,
-    pub orchestration_id: Uuid,
-    pub node_path: String,
-    pub attempt: u32,
-    pub runtime_session_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,7 +53,6 @@ pub struct SubmitHumanGateDecisionResult {
 #[derive(Clone)]
 pub struct OrchestrationExecutorLauncher {
     repos: OrchestrationExecutorRepositories,
-    agent_node_launcher: AgentNodeLauncher,
     function_node_runner: FunctionNodeRunner,
     human_gate_launcher: HumanGateLauncher,
 }
@@ -75,22 +60,14 @@ pub struct OrchestrationExecutorLauncher {
 #[derive(Clone)]
 struct OrchestrationExecutorRepositories {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
-    workflow_agent_node_materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
-    agent_run_runtime_provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
-    workflow_agent_run_delivery: Arc<dyn WorkflowAgentRunDeliveryPort>,
 }
 
 impl From<WorkflowRepositorySet> for OrchestrationExecutorRepositories {
     fn from(repos: WorkflowRepositorySet) -> Self {
         Self {
             lifecycle_run_repo: repos.lifecycle_run_repo,
-            agent_procedure_repo: repos.agent_procedure_repo,
             lifecycle_gate_repo: repos.lifecycle_gate_repo,
-            workflow_agent_node_materialization: repos.workflow_agent_node_materialization,
-            agent_run_runtime_provisioner: repos.agent_run_runtime_provisioner,
-            workflow_agent_run_delivery: repos.workflow_agent_run_delivery,
         }
     }
 }
@@ -101,16 +78,9 @@ impl OrchestrationExecutorLauncher {
     }
 
     fn from_executor_repositories(repos: OrchestrationExecutorRepositories) -> Self {
-        let agent_node_launcher = AgentNodeLauncher::new(
-            repos.agent_procedure_repo.clone(),
-            repos.workflow_agent_node_materialization.clone(),
-            repos.agent_run_runtime_provisioner.clone(),
-            repos.workflow_agent_run_delivery.clone(),
-        );
         let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
         Self {
             repos,
-            agent_node_launcher,
             function_node_runner: FunctionNodeRunner::new(),
             human_gate_launcher,
         }
@@ -145,11 +115,6 @@ impl OrchestrationExecutorLauncher {
                 continue;
             }
             match kind {
-                PlanNodeKind::AgentCall => {
-                    if let Some(launched) = self.launch_agent_node(run, coordinate).await? {
-                        result.launched_agent_nodes.push(launched);
-                    }
-                }
                 PlanNodeKind::Function | PlanNodeKind::LocalEffect => {
                     let node_path = coordinate.node_path.clone();
                     match self.launch_function_node(run, coordinate).await? {
@@ -220,29 +185,6 @@ impl OrchestrationExecutorLauncher {
             gate_id: decision.gate_id,
             drain_result,
         })
-    }
-
-    async fn launch_agent_node(
-        &self,
-        run: LifecycleRun,
-        coordinate: RuntimeNodeCoordinate,
-    ) -> Result<Option<LaunchedAgentNode>, WorkflowApplicationError> {
-        match self.agent_node_launcher.launch(&run, &coordinate).await? {
-            AgentNodeLaunchOutcome::Launched { launched, event } => {
-                self.apply_event(run, coordinate.orchestration_id, *event)
-                    .await?;
-                Ok(Some(launched))
-            }
-            AgentNodeLaunchOutcome::Blocked {
-                code,
-                message,
-                retryable,
-            } => {
-                self.block_ready_node(run, coordinate, &code, &message, retryable)
-                    .await?;
-                Ok(None)
-            }
-        }
     }
 
     async fn launch_function_node(

@@ -3,10 +3,33 @@
   "owner": "Dash Agent",
   "port": {
     "trait": "DashAgentRepository",
+    "initialize": "initialize(initial) -> ()",
     "read": "load() -> DashAgentRepositoryState",
     "write": "compare_and_swap(expected, replacement)",
     "conflict": "DashServiceError::Conflict",
     "cas_authority": "history head plus repository revision"
+  },
+  "per_source_store": {
+    "trait": "DashAgentRepositoryStore",
+    "create": "create(source, initial) -> Arc<dyn DashAgentRepository>",
+    "open": "open(source) -> Option<Arc<dyn DashAgentRepository>>",
+    "service_seams": [
+      "DashAgentService::create_with_repository",
+      "DashAgentService::open_with_repository",
+      "DashAgentService::create_with_store",
+      "DashAgentService::open_with_store",
+      "DashAgentService::fork_repository_state"
+    ]
+  },
+  "complete_agent_store": {
+    "trait": "DashCompleteAgentStore",
+    "durable_truth": [
+      "source metadata",
+      "per-source Dash repository",
+      "create/resume/fork/execute effect receipts",
+      "surface apply/revoke effect receipts"
+    ],
+    "runtime_only_cache": "active-turn DashAgentService handles; never source/effect truth"
   },
   "atomic_commit_input": {
     "type": "DashAgentCommit",
@@ -46,6 +69,7 @@
     ]
   },
   "migration_owner": "W8",
+  "cargo_lock_owner": "W8",
   "migration_in_this_component": false,
   "compatibility_reader": false
 }

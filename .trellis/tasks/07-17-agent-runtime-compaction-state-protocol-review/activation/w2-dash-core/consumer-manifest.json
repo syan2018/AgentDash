@@ -2,6 +2,12 @@
   "schema_version": 1,
   "frozen_base": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
   "component": "w2-dash-core",
+  "agent_core_direct_consumers": [
+    "agentdash-agent"
+  ],
+  "agent_core_test_or_adapter_consumers": [
+    "agentdash-integration-native-agent"
+  ],
   "direct_consumers_before": 14,
   "removed_by_component": [
     "agentdash-agent",
@@ -61,6 +67,13 @@
     "W2 type move",
     "W7 caller cutover",
     "W8 legacy deletion"
+  ],
+  "excluded_component_paths": [
+    {
+      "path": "Cargo.lock",
+      "owner": "W8",
+      "action": "从最终 manifests 生成"
+    }
   ],
   "forbidden": [
     "Core facade or re-export from agentdash-agent",

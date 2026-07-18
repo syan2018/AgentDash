@@ -8,11 +8,16 @@
     "fields": [
       "instance_id",
       "service"
+    ],
+    "required_inputs": [
+      "DashExecutionDependencies",
+      "AgentHostCallbacks",
+      "DashCompleteAgentStore"
     ]
   },
   "composition_consumer": {
     "owner": "W8",
-    "action": "将 instance_id/service 注册到唯一 CompleteAgentHost，并绑定 durable Host/Dash repositories"
+    "action": "实现 DashCompleteAgentStore + DashAgentRepositoryStore PostgreSQL adapter，将 instance_id/service 注册到唯一 CompleteAgentHost"
   },
   "required_same_revision_deletions": [
     "agentdash_integration_native_agent::native_agent_contribution",
@@ -38,6 +43,14 @@
     "service.rs",
     "core_callbacks.rs",
     "core_projection.rs"
+  ],
+  "durable_effect_kinds": [
+    "create",
+    "resume",
+    "fork",
+    "execute",
+    "apply_surface",
+    "revoke_surface"
   ],
   "production_dual_registration_allowed": false
 }

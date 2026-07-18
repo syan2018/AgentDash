@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "component": "W2",
+  "frozen_base": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
+  "hotspots": [
+    {
+      "id": "dash_repository_contract",
+      "owned_here": [
+        "crates/agentdash-agent/src/dash/service.rs",
+        "crates/agentdash-agent/src/dash/store.rs"
+      ],
+      "shared_with": ["W5", "W8"],
+      "handoff": "W2 owns opaque state/CAS/create/open/fork ports; W8 implements PostgreSQL storage without bypassing them"
+    },
+    {
+      "id": "native_complete_service",
+      "owned_here": ["crates/agentdash-agent-core", "crates/agentdash-agent"],
+      "shared_with": ["W5"],
+      "handoff": "Core owns only explicit loop; W5 materializes Complete Agent callbacks through Dash"
+    },
+    {
+      "id": "cargo_dependency_graph",
+      "owned_here": ["crate Cargo.toml dependency ownership"],
+      "shared_with": ["W8"],
+      "handoff": "W2 patch excludes Cargo.lock; W8 regenerates lock from the final atomic manifests"
+    }
+  ]
+}

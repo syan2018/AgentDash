@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "component": "W8",
+  "frozen_base": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
+  "hotspots": [
+    {
+      "id": "dash_repository_contract",
+      "consumes": [
+        "DashAgentRepository",
+        "DashAgentRepositoryStore",
+        "DashCompleteAgentStore"
+      ],
+      "owns": [
+        "PostgreSQL adapters",
+        "database migration",
+        "transactional source/effect persistence"
+      ],
+      "must_not": "reconstruct a second repository path or keep source/effect truth in process memory"
+    },
+    {
+      "id": "production_registration",
+      "consumes": [
+        "native_complete_agent_registration"
+      ],
+      "owns": [
+        "CompleteAgentHost production composition",
+        "legacy Native driver deletion",
+        "single registration switch"
+      ]
+    },
+    {
+      "id": "cargo_dependency_graph",
+      "owns": [
+        "Cargo.lock regeneration from the final manifests",
+        "agentdash-agent-types workspace deletion"
+      ],
+      "must_not": "copy a component-local Cargo.lock"
+    }
+  ]
+}

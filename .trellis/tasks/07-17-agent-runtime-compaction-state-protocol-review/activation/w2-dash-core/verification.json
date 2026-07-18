@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "code_tip": "d998ce8d0d5f4fd0ea347d7a3fdaaa2f949c2026",
+  "results": [
+    {
+      "command": "cargo test -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent",
+      "result": "pass",
+      "counts": {
+        "agentdash-agent-core": 2,
+        "agentdash-agent": 73,
+        "agentdash-integration-native-agent": 79
+      }
+    },
+    {
+      "command": "cargo clippy -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent --all-targets --no-deps -- -D warnings",
+      "result": "pass"
+    },
+    {
+      "command": "cargo check -p agentdash-llm-provider -p agentdash-infrastructure -p agentdash-api",
+      "result": "pass"
+    },
+    {
+      "command": "pnpm test-support:guard",
+      "result": "owned scope pass; workspace blocked outside W2/W5",
+      "remaining": [
+        "crates/agentdash-agent-runtime/src/complete_agent_state.rs: InMemoryCompleteAgentStateRepository"
+      ]
+    },
+    {
+      "command": "GIT_INDEX_FILE=<temp> git read-tree <base>; git apply --cached --check --whitespace=error-all <patch>; git apply --cached --whitespace=error-all <patch>; git write-tree",
+      "result": "pass",
+      "tree": "575c7935b0dfef2391dbfd42c7c369217e686d07"
+    },
+    {
+      "command": "rg Cargo.lock 0001-refactor-agent-runtime-Dash-Core.patch",
+      "result": "no matches"
+    }
+  ],
+  "behavior_evidence": [
+    "two Complete Agent service instances reopen the same durable source and read ordered changes",
+    "fork child recovers independently and does not mutate the parent revision",
+    "initial context package evidence survives restart",
+    "BeforeTool and AfterTool run exactly once with typed allow/deny/rewrite decisions",
+    "stale generation and deadline callback errors cross the typed boundary",
+    "duplicate execute effects do not retrigger provider/tool/hooks",
+    "surface apply/revoke receipts replay and inspect across service restart"
+  ]
+}

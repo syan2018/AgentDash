@@ -1,6 +1,7 @@
 pub mod agent_runtime_composition;
 mod agent_runtime_driver_sink;
 pub mod agent_runtime_workers;
+mod complete_agent_composition;
 pub mod function_runner;
 pub mod hooks;
 pub mod mcp;
@@ -13,6 +14,7 @@ pub mod skill_source;
 pub mod storage;
 pub mod workflow_scripts;
 
+pub use complete_agent_composition::{CompleteAgentComposition, CompleteAgentCompositionError};
 pub use function_runner::DefaultFunctionRunner;
 pub use hooks::RhaiHookScriptEvaluator;
 pub use mcp::RmcpProbeTransport;

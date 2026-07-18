@@ -21,8 +21,9 @@ use agentdash_agent_runtime_host::{
     CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError, CompleteAgentHookHandler,
     CompleteAgentHost, CompleteAgentHostCommit, CompleteAgentHostRepository,
     CompleteAgentHostSnapshot, CompleteAgentHostStoreError, CompleteAgentPlacement,
-    CompleteAgentServiceRegistry, CompleteAgentToolHandler, apply_complete_agent_callback_commit,
-    apply_complete_agent_host_commit,
+    CompleteAgentRuntimeTarget, CompleteAgentServiceRegistry, CompleteAgentToolHandler,
+    ResolvedCompleteAgentHookCallback, ResolvedCompleteAgentToolCallback,
+    apply_complete_agent_callback_commit, apply_complete_agent_host_commit,
 };
 use agentdash_agent_service_api::*;
 use async_trait::async_trait;
@@ -145,10 +146,10 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
     let binding_id = CompleteAgentBindingId::new("binding-1").expect("binding");
     host.register_binding(CompleteAgentBinding {
         id: binding_id.clone(),
-        service_instance_id: service_id,
+        service_instance_id: service_id.clone(),
         generation: AgentBindingGeneration(1),
         source: source.clone(),
-        profile_digest: descriptor.profile_digest,
+        profile_digest: descriptor.profile_digest.clone(),
         bound_surface: bound.clone(),
         applied_surface: None,
         state: CompleteAgentBindingState::PendingSurface,
@@ -171,6 +172,17 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         delivery: AgentSurfaceRoute::AgentNativeCallback,
         default_deadline_ms: u64::MAX,
     };
+    let runtime_thread_id = RuntimeThreadId::new("runtime-thread").expect("runtime thread");
+    host.register_runtime_target(CompleteAgentRuntimeTarget {
+        runtime_thread_id: runtime_thread_id.clone(),
+        service_instance_id: service_id,
+        generation: AgentBindingGeneration(1),
+        profile_digest: descriptor.profile_digest.clone(),
+        bound_surface: bound.clone(),
+        callbacks: callback_binding.clone(),
+    })
+    .await
+    .expect("register Runtime target");
     let apply = ApplyBoundAgentSurface {
         command_id: AgentCommandId::new("apply-command").expect("command"),
         effect_id: AgentEffectIdentity::new("apply-effect").expect("effect"),
@@ -244,7 +256,6 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
     ));
 
     let state_repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
-    let runtime_thread_id = RuntimeThreadId::new("runtime-thread").expect("runtime thread");
     let mut identities =
         CompleteAgentRuntimeIdentityMap::new(source.clone(), runtime_thread_id.clone());
     identities
@@ -276,7 +287,10 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         .await
         .expect("source sync");
     assert!(sync.reloaded_snapshot);
-    assert_eq!(sync.projection.applied_surface, Some(applied.applied));
+    assert_eq!(
+        sync.projection.applied_surface,
+        Some(applied.applied.clone())
+    );
     assert_eq!(
         state_repository
             .load(&runtime_thread_id)
@@ -321,6 +335,34 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         .expect("tool callback replay");
     assert_eq!(first, replay);
     assert_eq!(tool_handler.calls.load(Ordering::SeqCst), 1);
+    let callbacks = tool_handler.callbacks.lock().await;
+    assert_eq!(callbacks.len(), 1);
+    assert_eq!(callbacks[0].context.runtime_thread_id, runtime_thread_id);
+    assert_eq!(callbacks[0].context.binding_id, binding_id);
+    assert_eq!(
+        callbacks[0].context.binding_generation,
+        AgentBindingGeneration(1)
+    );
+    assert_eq!(callbacks[0].context.source, source);
+    assert_eq!(
+        callbacks[0].context.service_instance_id,
+        AgentServiceInstanceId::new("service-1").expect("service")
+    );
+    assert_eq!(
+        callbacks[0].context.profile_digest,
+        descriptor.profile_digest
+    );
+    assert_eq!(callbacks[0].context.bound_surface_revision, bound.revision);
+    assert_eq!(callbacks[0].context.bound_surface_digest, bound.digest);
+    assert_eq!(
+        callbacks[0].context.applied_surface_revision,
+        applied.applied.revision
+    );
+    assert_eq!(
+        callbacks[0].context.applied_surface_digest,
+        applied.applied.digest
+    );
+    drop(callbacks);
 
     host.revoke_bound_surface(
         &lease,
@@ -580,17 +622,19 @@ fn desired_surface() -> AgentSurfaceSnapshot {
 #[derive(Default)]
 struct CountingToolHandler {
     calls: AtomicUsize,
+    callbacks: Mutex<Vec<ResolvedCompleteAgentToolCallback>>,
 }
 
 #[async_trait]
 impl CompleteAgentToolHandler for CountingToolHandler {
     async fn invoke(
         &self,
-        invocation: AgentToolInvocation,
+        callback: ResolvedCompleteAgentToolCallback,
     ) -> Result<AgentToolResult, AgentHostCallbackError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.callbacks.lock().await.push(callback.clone());
         Ok(AgentToolResult::Completed {
-            output: invocation.arguments,
+            output: callback.invocation.arguments,
         })
     }
 }
@@ -601,7 +645,7 @@ struct AllowHookHandler;
 impl CompleteAgentHookHandler for AllowHookHandler {
     async fn invoke(
         &self,
-        _invocation: AgentHookInvocation,
+        _callback: ResolvedCompleteAgentHookCallback,
     ) -> Result<AgentHookDecision, AgentHostCallbackError> {
         Ok(AgentHookDecision::Allow)
     }

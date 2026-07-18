@@ -4,12 +4,14 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentHookAction, AgentHookDecision,
     AgentHookInvocation, AgentHostCallbackBinding, AgentHostCallbackError,
-    AgentHostCallbackErrorCode, AgentHostCallbacks, AgentSourceCoordinate,
-    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRoute, AgentToolInvocation,
-    AgentToolResult, BoundAgentSurface,
+    AgentHostCallbackErrorCode, AgentHostCallbacks, AgentProfileDigest, AgentServiceInstanceId,
+    AgentSourceCoordinate, AgentSurfaceContributionPayload, AgentSurfaceDigest,
+    AgentSurfaceRevision, AgentSurfaceRoute, AgentToolInvocation, AgentToolResult,
+    BoundAgentSurface,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -17,14 +19,42 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{
-    CompleteAgentBindingId, CompleteAgentHostStoreError, SharedCompleteAgentHostRepository,
+    CompleteAgentBindingId, CompleteAgentBindingState, CompleteAgentHostFacts,
+    CompleteAgentHostStoreError, SharedCompleteAgentHostRepository,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCompleteAgentCallbackContext {
+    pub runtime_thread_id: RuntimeThreadId,
+    pub binding_id: CompleteAgentBindingId,
+    pub binding_generation: AgentBindingGeneration,
+    pub source: AgentSourceCoordinate,
+    pub service_instance_id: AgentServiceInstanceId,
+    pub profile_digest: AgentProfileDigest,
+    pub bound_surface_revision: AgentSurfaceRevision,
+    pub bound_surface_digest: AgentSurfaceDigest,
+    pub bound_surface_offer_profile_digest: AgentProfileDigest,
+    pub applied_surface_revision: AgentSurfaceRevision,
+    pub applied_surface_digest: AgentSurfaceDigest,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedCompleteAgentToolCallback {
+    pub context: ResolvedCompleteAgentCallbackContext,
+    pub invocation: AgentToolInvocation,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedCompleteAgentHookCallback {
+    pub context: ResolvedCompleteAgentCallbackContext,
+    pub invocation: AgentHookInvocation,
+}
 
 #[async_trait]
 pub trait CompleteAgentToolHandler: Send + Sync {
     async fn invoke(
         &self,
-        invocation: AgentToolInvocation,
+        callback: ResolvedCompleteAgentToolCallback,
     ) -> Result<AgentToolResult, AgentHostCallbackError>;
 }
 
@@ -32,7 +62,7 @@ pub trait CompleteAgentToolHandler: Send + Sync {
 pub trait CompleteAgentHookHandler: Send + Sync {
     async fn invoke(
         &self,
-        invocation: AgentHookInvocation,
+        callback: ResolvedCompleteAgentHookCallback,
     ) -> Result<AgentHookDecision, AgentHostCallbackError>;
 }
 
@@ -474,6 +504,7 @@ impl CompleteAgentCallbackBroker {
             CompleteAgentCallbackSnapshot,
             CompleteAgentCallbackRoute,
             CompleteAgentCallbackKey,
+            ResolvedCompleteAgentCallbackContext,
         ),
         AgentHostCallbackError,
     > {
@@ -515,8 +546,9 @@ impl CompleteAgentCallbackBroker {
             route_id: meta.route_id.clone(),
             idempotency_key: meta.idempotency_key.clone(),
         };
+        let context = resolve_callback_context(&host_snapshot.facts, &route)?;
         let snapshot = self.repository.load().await.map_err(store_error)?;
-        Ok((snapshot, route, key))
+        Ok((snapshot, route, key, context))
     }
 
     async fn reserve(
@@ -614,7 +646,7 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
         &self,
         call: AgentToolInvocation,
     ) -> Result<AgentToolResult, AgentHostCallbackError> {
-        let (snapshot, route, key) = self.route_and_key(&call.meta).await?;
+        let (snapshot, route, key, context) = self.route_and_key(&call.meta).await?;
         let request_digest = request_digest(&call)?;
         if let Some(record) = snapshot.facts.callbacks.get(&key) {
             return replay_tool(record, &request_digest);
@@ -635,7 +667,13 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
             },
         )
         .await?;
-        let result = self.tool_handler.invoke(call).await;
+        let result = self
+            .tool_handler
+            .invoke(ResolvedCompleteAgentToolCallback {
+                context,
+                invocation: call,
+            })
+            .await;
         self.reconcile_tool(&key, &request_digest, result.clone())
             .await?;
         result
@@ -645,7 +683,7 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
         &self,
         call: AgentHookInvocation,
     ) -> Result<AgentHookDecision, AgentHostCallbackError> {
-        let (snapshot, route, key) = self.route_and_key(&call.meta).await?;
+        let (snapshot, route, key, context) = self.route_and_key(&call.meta).await?;
         let request_digest = request_digest(&call)?;
         if let Some(record) = snapshot.facts.callbacks.get(&key) {
             return replay_hook(record, &request_digest);
@@ -668,7 +706,10 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
         .await?;
         let result = self
             .hook_handler
-            .invoke(call.clone())
+            .invoke(ResolvedCompleteAgentHookCallback {
+                context,
+                invocation: call.clone(),
+            })
             .await
             .and_then(|decision| {
                 ensure_hook_decision_allowed(&call, &decision)?;
@@ -678,6 +719,66 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
             .await?;
         result
     }
+}
+
+fn resolve_callback_context(
+    facts: &CompleteAgentHostFacts,
+    route: &CompleteAgentCallbackRoute,
+) -> Result<ResolvedCompleteAgentCallbackContext, AgentHostCallbackError> {
+    let binding = facts.bindings.get(&route.binding_id).ok_or_else(|| {
+        callback_invariant_error("callback route has no committed owning binding")
+    })?;
+    let applied_surface = binding.applied_surface.as_ref().ok_or_else(|| {
+        callback_invariant_error("callback binding has no committed applied surface")
+    })?;
+    if binding.id != route.binding_id
+        || binding.state != CompleteAgentBindingState::Available
+        || binding.generation != route.generation
+        || binding.source != route.source
+        || binding.bound_surface != route.bound_surface
+        || facts.source_coordinates.get(&binding.id) != Some(&binding.source)
+        || !binding.bound_surface.accepts_applied(applied_surface)
+    {
+        return Err(callback_invariant_error(
+            "callback route, binding, source, and applied surface facts are inconsistent",
+        ));
+    }
+
+    let mut targets = facts.runtime_targets.iter().filter(|(thread_id, target)| {
+        *thread_id == &target.runtime_thread_id
+            && target.callbacks.route_id == route.route_id
+            && target.callbacks.binding_generation == route.generation
+            && target.callbacks.delivery == route.delivery
+            && target.callbacks.default_deadline_ms == route.default_deadline_ms
+            && target.service_instance_id == binding.service_instance_id
+            && target.generation == binding.generation
+            && target.profile_digest == binding.profile_digest
+            && target.bound_surface == binding.bound_surface
+    });
+    let Some((runtime_thread_id, target)) = targets.next() else {
+        return Err(callback_invariant_error(
+            "callback facts do not resolve one Runtime target",
+        ));
+    };
+    if targets.next().is_some() {
+        return Err(callback_invariant_error(
+            "callback facts resolve multiple Runtime targets",
+        ));
+    }
+
+    Ok(ResolvedCompleteAgentCallbackContext {
+        runtime_thread_id: runtime_thread_id.clone(),
+        binding_id: binding.id.clone(),
+        binding_generation: binding.generation,
+        source: binding.source.clone(),
+        service_instance_id: target.service_instance_id.clone(),
+        profile_digest: target.profile_digest.clone(),
+        bound_surface_revision: binding.bound_surface.revision,
+        bound_surface_digest: binding.bound_surface.digest.clone(),
+        bound_surface_offer_profile_digest: binding.bound_surface.offer_profile_digest.clone(),
+        applied_surface_revision: applied_surface.revision,
+        applied_surface_digest: applied_surface.digest.clone(),
+    })
 }
 
 fn replay_tool(
@@ -896,6 +997,10 @@ fn host_store_error(error: CompleteAgentHostStoreError) -> AgentHostCallbackErro
     }
 }
 
+fn callback_invariant_error(message: impl Into<String>) -> AgentHostCallbackError {
+    callback_error(AgentHostCallbackErrorCode::Internal, message, false)
+}
+
 fn callback_error(
     code: AgentHostCallbackErrorCode,
     message: impl Into<String>,
@@ -917,16 +1022,17 @@ mod tests {
         AgentHookTiming, AgentHostCallbackMeta, AgentIdempotencyKey, AgentPayloadDigest,
         AgentProfileDigest, AgentSurfaceContributionPayload, AgentSurfaceDigest,
         AgentSurfaceRevision, AgentSurfaceSemanticFacet, AgentToolDelivery, AgentToolName,
-        AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnId,
-        BoundAgentSurfaceContribution, SemanticFidelity,
+        AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnId, AppliedAgentSurface,
+        AppliedAgentSurfaceContribution, AppliedContributionStatus, BoundAgentSurfaceContribution,
+        SemanticFidelity,
     };
     use serde_json::json;
     use tokio::sync::Mutex;
 
     use super::*;
     use crate::{
-        CompleteAgentHostCommit, CompleteAgentHostRepository, CompleteAgentHostSnapshot,
-        apply_complete_agent_host_commit,
+        CompleteAgentBinding, CompleteAgentHostCommit, CompleteAgentHostRepository,
+        CompleteAgentHostSnapshot, CompleteAgentRuntimeTarget, apply_complete_agent_host_commit,
     };
 
     #[derive(Default)]
@@ -965,6 +1071,40 @@ mod tests {
     impl FixtureCallbackRouteRepository {
         fn with_route(route: CompleteAgentCallbackRoute) -> Self {
             let mut snapshot = CompleteAgentHostSnapshot::default();
+            let service_instance_id =
+                AgentServiceInstanceId::new("service").expect("service instance");
+            let runtime_thread_id = RuntimeThreadId::new("runtime-thread").expect("Runtime thread");
+            let binding = CompleteAgentBinding {
+                id: route.binding_id.clone(),
+                service_instance_id: service_instance_id.clone(),
+                generation: route.generation,
+                source: route.source.clone(),
+                profile_digest: route.bound_surface.offer_profile_digest.clone(),
+                bound_surface: route.bound_surface.clone(),
+                applied_surface: Some(applied_surface(&route.bound_surface)),
+                state: CompleteAgentBindingState::Available,
+            };
+            snapshot.facts.bindings.insert(binding.id.clone(), binding);
+            snapshot
+                .facts
+                .source_coordinates
+                .insert(route.binding_id.clone(), route.source.clone());
+            snapshot.facts.runtime_targets.insert(
+                runtime_thread_id.clone(),
+                CompleteAgentRuntimeTarget {
+                    runtime_thread_id,
+                    service_instance_id,
+                    generation: route.generation,
+                    profile_digest: route.bound_surface.offer_profile_digest.clone(),
+                    bound_surface: route.bound_surface.clone(),
+                    callbacks: AgentHostCallbackBinding {
+                        route_id: route.route_id.clone(),
+                        binding_generation: route.generation,
+                        delivery: route.delivery,
+                        default_deadline_ms: route.default_deadline_ms,
+                    },
+                },
+            );
             snapshot
                 .facts
                 .callback_routes
@@ -993,15 +1133,17 @@ mod tests {
     #[derive(Default)]
     struct CountingToolHandler {
         calls: AtomicUsize,
+        callbacks: Mutex<Vec<ResolvedCompleteAgentToolCallback>>,
     }
 
     #[async_trait]
     impl CompleteAgentToolHandler for CountingToolHandler {
         async fn invoke(
             &self,
-            _invocation: AgentToolInvocation,
+            callback: ResolvedCompleteAgentToolCallback,
         ) -> Result<AgentToolResult, AgentHostCallbackError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            self.callbacks.lock().await.push(callback);
             Ok(AgentToolResult::Completed {
                 output: json!({"ok": true}),
             })
@@ -1014,7 +1156,7 @@ mod tests {
     impl CompleteAgentHookHandler for AllowHookHandler {
         async fn invoke(
             &self,
-            _invocation: AgentHookInvocation,
+            _callback: ResolvedCompleteAgentHookCallback,
         ) -> Result<AgentHookDecision, AgentHostCallbackError> {
             Ok(AgentHookDecision::Allow)
         }
@@ -1029,7 +1171,7 @@ mod tests {
     impl CompleteAgentToolHandler for FailSettleToolHandler {
         async fn invoke(
             &self,
-            _invocation: AgentToolInvocation,
+            _callback: ResolvedCompleteAgentToolCallback,
         ) -> Result<AgentToolResult, AgentHostCallbackError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.repository.fail_next_commit.store(1, Ordering::SeqCst);
@@ -1042,15 +1184,17 @@ mod tests {
     #[derive(Default)]
     struct InvalidHookHandler {
         calls: AtomicUsize,
+        callbacks: Mutex<Vec<ResolvedCompleteAgentHookCallback>>,
     }
 
     #[async_trait]
     impl CompleteAgentHookHandler for InvalidHookHandler {
         async fn invoke(
             &self,
-            _invocation: AgentHookInvocation,
+            callback: ResolvedCompleteAgentHookCallback,
         ) -> Result<AgentHookDecision, AgentHostCallbackError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            self.callbacks.lock().await.push(callback);
             Ok(AgentHookDecision::ReplaceInput { input: json!({}) })
         }
     }
@@ -1078,6 +1222,7 @@ mod tests {
             Arc::new(FixedClock(10)),
         );
         let call = tool_call(AgentBindingGeneration(2), 20);
+        let expected_call = call.clone();
 
         let first = broker.invoke_tool(call.clone()).await.expect("first");
         let restarted = CompleteAgentCallbackBroker::with_clock(
@@ -1091,6 +1236,28 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(tool_handler.calls.load(Ordering::SeqCst), 1);
+        let callbacks = tool_handler.callbacks.lock().await;
+        assert_eq!(callbacks.len(), 1);
+        assert_eq!(callbacks[0].invocation, expected_call);
+        assert_eq!(
+            callbacks[0].context,
+            ResolvedCompleteAgentCallbackContext {
+                runtime_thread_id: RuntimeThreadId::new("runtime-thread").expect("Runtime thread"),
+                binding_id: CompleteAgentBindingId::new("binding").expect("binding"),
+                binding_generation: AgentBindingGeneration(2),
+                source: AgentSourceCoordinate::new("source").expect("source"),
+                service_instance_id: AgentServiceInstanceId::new("service")
+                    .expect("service instance"),
+                profile_digest: AgentProfileDigest::new("profile").expect("profile"),
+                bound_surface_revision: AgentSurfaceRevision(1),
+                bound_surface_digest: AgentSurfaceDigest::new("surface").expect("surface"),
+                bound_surface_offer_profile_digest: AgentProfileDigest::new("profile")
+                    .expect("profile"),
+                applied_surface_revision: AgentSurfaceRevision(1),
+                applied_surface_digest: AgentSurfaceDigest::new("surface").expect("surface"),
+            }
+        );
+        drop(callbacks);
 
         let snapshot = repository.load().await.expect("callback snapshot");
         let encoded =
@@ -1120,6 +1287,91 @@ mod tests {
             decode_complete_agent_callback_snapshot(encoded),
             Err(CompleteAgentCallbackStoreError::Invariant { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn unresolved_or_ambiguous_runtime_target_never_reaches_handler() {
+        let missing_handler = Arc::new(CountingToolHandler::default());
+        let missing_callbacks = Arc::new(FixtureCallbackRepository::default());
+        let missing_host = Arc::new(FixtureCallbackRouteRepository::with_route(route(
+            AgentBindingGeneration(2),
+        )));
+        missing_host
+            .snapshot
+            .lock()
+            .await
+            .facts
+            .runtime_targets
+            .clear();
+        let missing_broker = CompleteAgentCallbackBroker::with_clock(
+            missing_handler.clone(),
+            Arc::new(AllowHookHandler),
+            missing_host,
+            missing_callbacks.clone(),
+            Arc::new(FixedClock(10)),
+        );
+
+        let missing = missing_broker
+            .invoke_tool(tool_call(AgentBindingGeneration(2), 20))
+            .await
+            .expect_err("missing Runtime target");
+        assert_eq!(missing.code, AgentHostCallbackErrorCode::Internal);
+        assert_eq!(missing_handler.calls.load(Ordering::SeqCst), 0);
+        assert!(
+            missing_callbacks
+                .load()
+                .await
+                .expect("callback snapshot")
+                .facts
+                .callbacks
+                .is_empty()
+        );
+
+        let ambiguous_handler = Arc::new(CountingToolHandler::default());
+        let ambiguous_callbacks = Arc::new(FixtureCallbackRepository::default());
+        let ambiguous_host = Arc::new(FixtureCallbackRouteRepository::with_route(route(
+            AgentBindingGeneration(2),
+        )));
+        {
+            let mut snapshot = ambiguous_host.snapshot.lock().await;
+            let mut duplicate = snapshot
+                .facts
+                .runtime_targets
+                .values()
+                .next()
+                .expect("Runtime target")
+                .clone();
+            let duplicate_thread =
+                RuntimeThreadId::new("runtime-thread-duplicate").expect("Runtime thread");
+            duplicate.runtime_thread_id = duplicate_thread.clone();
+            snapshot
+                .facts
+                .runtime_targets
+                .insert(duplicate_thread, duplicate);
+        }
+        let ambiguous_broker = CompleteAgentCallbackBroker::with_clock(
+            ambiguous_handler.clone(),
+            Arc::new(AllowHookHandler),
+            ambiguous_host,
+            ambiguous_callbacks.clone(),
+            Arc::new(FixedClock(10)),
+        );
+
+        let ambiguous = ambiguous_broker
+            .invoke_tool(tool_call(AgentBindingGeneration(2), 20))
+            .await
+            .expect_err("ambiguous Runtime target");
+        assert_eq!(ambiguous.code, AgentHostCallbackErrorCode::Internal);
+        assert_eq!(ambiguous_handler.calls.load(Ordering::SeqCst), 0);
+        assert!(
+            ambiguous_callbacks
+                .load()
+                .await
+                .expect("callback snapshot")
+                .facts
+                .callbacks
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -1202,11 +1454,12 @@ mod tests {
         let host_repository = Arc::new(FixtureCallbackRouteRepository::with_route(route(
             AgentBindingGeneration(2),
         )));
+        let tool_handler = Arc::new(CountingToolHandler::default());
         let broker = CompleteAgentCallbackBroker::with_clock(
-            Arc::new(CountingToolHandler::default()),
+            tool_handler.clone(),
             Arc::new(AllowHookHandler),
             host_repository,
-            repository,
+            repository.clone(),
             Arc::new(FixedClock(10)),
         );
 
@@ -1230,6 +1483,21 @@ mod tests {
             .await
             .expect_err("overlong");
         assert_eq!(overlong.code, AgentHostCallbackErrorCode::InvalidArgument);
+        assert_eq!(
+            tool_handler.calls.load(Ordering::SeqCst),
+            0,
+            "stale or malformed deadline evidence must not reach the platform handler"
+        );
+        assert!(
+            repository
+                .load()
+                .await
+                .expect("callback snapshot")
+                .facts
+                .callbacks
+                .is_empty(),
+            "rejected callback evidence must not create a durable reservation"
+        );
     }
 
     #[tokio::test]
@@ -1245,6 +1513,7 @@ mod tests {
             Arc::new(FixedClock(10)),
         );
         let call = hook_call();
+        let expected_call = call.clone();
 
         let first = broker
             .invoke_hook(call.clone())
@@ -1265,6 +1534,17 @@ mod tests {
         assert_eq!(first.code, AgentHostCallbackErrorCode::Internal);
         assert_eq!(first, replay);
         assert_eq!(hook_handler.calls.load(Ordering::SeqCst), 1);
+        let callbacks = hook_handler.callbacks.lock().await;
+        assert_eq!(callbacks.len(), 1);
+        assert_eq!(callbacks[0].invocation, expected_call);
+        assert_eq!(
+            callbacks[0].context.runtime_thread_id,
+            RuntimeThreadId::new("runtime-thread").expect("Runtime thread")
+        );
+        assert_eq!(
+            callbacks[0].context.binding_id,
+            CompleteAgentBindingId::new("binding").expect("binding")
+        );
     }
 
     #[tokio::test]
@@ -1445,6 +1725,26 @@ mod tests {
                     payload_digest: AgentPayloadDigest::new("payload").expect("payload"),
                 }],
             },
+        }
+    }
+
+    fn applied_surface(surface: &BoundAgentSurface) -> AppliedAgentSurface {
+        AppliedAgentSurface {
+            revision: surface.revision,
+            digest: surface.digest.clone(),
+            contributions: surface
+                .contributions
+                .iter()
+                .map(|contribution| AppliedAgentSurfaceContribution {
+                    key: contribution.key.clone(),
+                    route: contribution.route,
+                    fidelity: contribution.fidelity,
+                    semantics: contribution.semantics.clone(),
+                    payload_digest: contribution.payload_digest.clone(),
+                    status: AppliedContributionStatus::Applied,
+                    evidence: Some("fixture-applied".to_owned()),
+                })
+                .collect(),
         }
     }
 

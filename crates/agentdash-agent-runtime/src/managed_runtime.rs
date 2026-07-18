@@ -505,6 +505,17 @@ fn validate_operation_evidence(
     record: &ManagedRuntimeOperationRecord,
 ) -> Result<(), ManagedRuntimeStateStoreError> {
     let Some(evidence) = &record.operation.evidence else {
+        if record.operation.status == ManagedRuntimeOperationStatus::Succeeded
+            && matches!(
+                record.command.command,
+                ManagedRuntimeCommand::Create { .. }
+                    | ManagedRuntimeCommand::Resume
+                    | ManagedRuntimeCommand::Activate
+                    | ManagedRuntimeCommand::Fork { .. }
+            )
+        {
+            return invariant("successful Runtime lifecycle operation requires typed evidence");
+        }
         return Ok(());
     };
     match (&record.command.command, record.operation.status, evidence) {
@@ -1643,6 +1654,46 @@ mod tests {
         }
     }
 
+    fn source_binding_evidence(
+        source_ref: &str,
+    ) -> agentdash_agent_runtime_contract::ManagedRuntimeSourceBindingEvidence {
+        agentdash_agent_runtime_contract::ManagedRuntimeSourceBindingEvidence {
+            source_ref: RuntimeSourceRef::new(source_ref).expect("source ref"),
+            committed_at_revision: RuntimeProjectionRevision(7),
+            applied_surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(4),
+            activated_at_revision: Some(RuntimeProjectionRevision(7)),
+        }
+    }
+
+    fn lifecycle_succeeded_without_evidence(
+        command_kind: ManagedRuntimeCommand,
+    ) -> ManagedRuntimeFacts {
+        let mut facts = operation_facts();
+        let operation_id = command().operation_id;
+        let record = facts.operations.get_mut(&operation_id).expect("operation");
+        record.command.command = command_kind.clone();
+        record.receipt.status = ManagedRuntimeOperationStatus::Succeeded;
+        record.operation.status = ManagedRuntimeOperationStatus::Succeeded;
+        facts
+            .pending_commands
+            .get_mut(&operation_id)
+            .expect("pending")
+            .command
+            .command = command_kind;
+        facts.projection.as_mut().expect("projection").operations[0] = record.operation.clone();
+        let change = ManagedRuntimePlatformChange {
+            thread_id: record.receipt.thread_id.clone(),
+            sequence: RuntimeChangeSequence(1),
+            revision: RuntimeProjectionRevision(7),
+            delta: ManagedRuntimeChangeDelta::OperationUpserted {
+                operation: record.operation.clone(),
+            },
+        };
+        facts.changes[0] = change.clone();
+        facts.outbox[0].change = change;
+        facts
+    }
+
     #[tokio::test]
     async fn command_acceptance_atomically_writes_operation_pending_intent_and_outbox() {
         let repository = Arc::new(FixtureRepository::default());
@@ -1787,6 +1838,119 @@ mod tests {
         tampered.projection.as_mut().expect("projection").operations[0].status =
             ManagedRuntimeOperationStatus::Running;
         assert!(validate_managed_runtime_facts(&current, &tampered).is_err());
+    }
+
+    #[test]
+    fn commit_rejects_succeeded_lifecycle_operations_without_typed_evidence() {
+        let lifecycle_commands = [
+            ManagedRuntimeCommand::Create {
+                initial_context: None,
+            },
+            ManagedRuntimeCommand::Resume,
+            ManagedRuntimeCommand::Activate,
+            ManagedRuntimeCommand::Fork {
+                child_thread_id: RuntimeThreadId::new("child-thread").expect("thread"),
+                through_completed_turn_id: None,
+            },
+        ];
+
+        for lifecycle_command in lifecycle_commands {
+            let mut current = ManagedRuntimeStateSnapshot::default();
+            let error = apply_managed_runtime_state_commit(
+                &mut current,
+                ManagedRuntimeStateCommit {
+                    thread_id: RuntimeThreadId::new("thread").expect("thread"),
+                    expected_revision: ManagedRuntimeStateRevision(0),
+                    facts: lifecycle_succeeded_without_evidence(lifecycle_command),
+                },
+            )
+            .expect_err("successful lifecycle fact without evidence must be rejected");
+
+            assert!(matches!(
+                error,
+                ManagedRuntimeStateStoreError::Invariant { reason }
+                    if reason == "successful Runtime lifecycle operation requires typed evidence"
+            ));
+            assert_eq!(current, ManagedRuntimeStateSnapshot::default());
+        }
+    }
+
+    #[test]
+    fn facts_reject_receipt_and_projected_operation_evidence_drift() {
+        let current = operation_facts();
+        let mut candidate = current.clone();
+        candidate
+            .operations
+            .get_mut(&command().operation_id)
+            .expect("operation")
+            .receipt
+            .evidence = Some(ManagedRuntimeOperationEvidence::Resume {
+            binding: source_binding_evidence("source-ref"),
+        });
+
+        assert!(validate_managed_runtime_facts(&current, &candidate).is_err());
+    }
+
+    #[test]
+    fn facts_reject_rewriting_committed_operation_evidence() {
+        let mut current = lifecycle_succeeded_without_evidence(ManagedRuntimeCommand::Resume);
+        let operation_id = command().operation_id;
+        let first_evidence = ManagedRuntimeOperationEvidence::Resume {
+            binding: source_binding_evidence("source-ref-1"),
+        };
+        let record = current
+            .operations
+            .get_mut(&operation_id)
+            .expect("operation");
+        record.receipt.evidence = Some(first_evidence.clone());
+        record.operation.evidence = Some(first_evidence);
+        current.projection.as_mut().expect("projection").operations[0] = record.operation.clone();
+        let first_change = ManagedRuntimePlatformChange {
+            thread_id: record.receipt.thread_id.clone(),
+            sequence: RuntimeChangeSequence(1),
+            revision: RuntimeProjectionRevision(7),
+            delta: ManagedRuntimeChangeDelta::OperationUpserted {
+                operation: record.operation.clone(),
+            },
+        };
+        current.changes[0] = first_change.clone();
+        current.outbox[0].change = first_change;
+
+        let mut candidate = current.clone();
+        let next_evidence = ManagedRuntimeOperationEvidence::Resume {
+            binding: source_binding_evidence("source-ref-2"),
+        };
+        let record = candidate
+            .operations
+            .get_mut(&operation_id)
+            .expect("operation");
+        record.receipt.evidence = Some(next_evidence.clone());
+        record.operation.evidence = Some(next_evidence);
+        let projection = candidate.projection.as_mut().expect("projection");
+        projection.revision = RuntimeProjectionRevision(8);
+        projection.operations[0] = record.operation.clone();
+        for availability in projection.command_availability.values_mut() {
+            availability.evidence_mut().decided_at_revision = RuntimeProjectionRevision(8);
+        }
+        projection.latest_change_sequence = RuntimeChangeSequence(2);
+        let change = ManagedRuntimePlatformChange {
+            thread_id: projection.thread_id.clone(),
+            sequence: RuntimeChangeSequence(2),
+            revision: RuntimeProjectionRevision(8),
+            delta: ManagedRuntimeChangeDelta::OperationUpserted {
+                operation: record.operation.clone(),
+            },
+        };
+        candidate.changes.push(change.clone());
+        candidate.outbox.push(ManagedRuntimeOutboxEntry {
+            sequence: change.sequence,
+            operation_id: Some(operation_id),
+            change,
+        });
+
+        validate_managed_runtime_facts(&ManagedRuntimeFacts::default(), &current)
+            .expect("initial committed evidence");
+        assert!(validate_managed_runtime_facts(&current, &candidate).is_err());
     }
 
     #[test]

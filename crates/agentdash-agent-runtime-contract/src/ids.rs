@@ -100,6 +100,7 @@ runtime_id!(RuntimeTerminalHookEffectHandlerType);
 runtime_id!(RuntimeTerminalHookEffectHandlerId);
 runtime_id!(RuntimeHookEffectKind);
 runtime_id!(RuntimeTransientEventId);
+runtime_id!(RuntimePayloadDigest);
 
 macro_rules! revision {
     ($name:ident) => {
@@ -136,6 +137,8 @@ revision!(HookPlanRevision);
 revision!(EventSequence);
 revision!(RuntimeTransientSequence);
 revision!(OperationSequence);
+revision!(RuntimeProjectionRevision);
+revision!(RuntimeChangeSequence);
 
 #[cfg(test)]
 mod tests {

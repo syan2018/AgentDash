@@ -3,6 +3,17 @@ use std::{
     sync::Arc,
 };
 
+use agentdash_agent_runtime_contract::{
+    ManagedRuntimeChangeDelta, ManagedRuntimeChangeGap, ManagedRuntimeChangePage,
+    ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind, ManagedRuntimeContentBlock,
+    ManagedRuntimeEntityStatus, ManagedRuntimeInteraction, ManagedRuntimeInteractionKind,
+    ManagedRuntimeInteractionStatus, ManagedRuntimeItem, ManagedRuntimeItemContent,
+    ManagedRuntimeLifecycleStatus, ManagedRuntimeOperation, ManagedRuntimePlatformChange,
+    ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot,
+    ManagedRuntimeTurn, RuntimeChangeSequence, RuntimeInteractionId, RuntimeItemId,
+    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
+    SurfaceRevision,
+};
 use agentdash_agent_service_api::{
     AgentChangePage, AgentChangePayload, AgentChangesQuery, AgentEntityStatus, AgentInteractionId,
     AgentInteractionSnapshot, AgentItemId, AgentItemSnapshot, AgentLifecycleStatus, AgentReadQuery,
@@ -49,6 +60,7 @@ pub enum NormalizedAgentPlatformChangePayload {
     SnapshotReplaced {
         snapshot_revision: AgentSnapshotRevision,
         authority: AgentSnapshotAuthority,
+        fidelity: agentdash_agent_service_api::SemanticFidelity,
     },
     SourceChangeApplied {
         source_cursor: AgentSourceCursor,
@@ -67,6 +79,9 @@ pub struct NormalizedAgentPlatformChange {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NormalizedAgentChangePage {
     pub source: AgentSourceCoordinate,
+    pub requested_after_sequence: u64,
+    pub earliest_available_sequence: Option<u64>,
+    pub latest_available_sequence: Option<u64>,
     pub changes: Vec<NormalizedAgentPlatformChange>,
     pub next_sequence: u64,
 }
@@ -190,6 +205,7 @@ where
                 changes: vec![NormalizedAgentPlatformChangePayload::SnapshotReplaced {
                     snapshot_revision: normalized.snapshot_revision,
                     authority: normalized.source_info.authority,
+                    fidelity: normalized.source_info.fidelity,
                 }],
                 projection: normalized,
             })
@@ -618,6 +634,802 @@ fn apply_source_change(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompleteAgentRuntimeItemIdentity {
+    source_turn_id: AgentTurnId,
+    runtime_item_id: RuntimeItemId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompleteAgentRuntimeInteractionIdentity {
+    source_turn_id: AgentTurnId,
+    runtime_interaction_id: RuntimeInteractionId,
+}
+
+/// Stable Runtime-owned identity map for one Complete Agent source.
+///
+/// Runtime identities must be allocated independently and then bound explicitly. A source
+/// coordinate is never parsed or copied into a Runtime identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteAgentRuntimeIdentityMap {
+    source: AgentSourceCoordinate,
+    thread_id: RuntimeThreadId,
+    turns: BTreeMap<AgentTurnId, RuntimeTurnId>,
+    items: BTreeMap<AgentItemId, CompleteAgentRuntimeItemIdentity>,
+    interactions: BTreeMap<AgentInteractionId, CompleteAgentRuntimeInteractionIdentity>,
+    surface_revisions: BTreeMap<agentdash_agent_service_api::AgentSurfaceRevision, SurfaceRevision>,
+}
+
+impl CompleteAgentRuntimeIdentityMap {
+    pub fn new(source: AgentSourceCoordinate, thread_id: RuntimeThreadId) -> Self {
+        Self {
+            source,
+            thread_id,
+            turns: BTreeMap::new(),
+            items: BTreeMap::new(),
+            interactions: BTreeMap::new(),
+            surface_revisions: BTreeMap::new(),
+        }
+    }
+
+    pub fn source(&self) -> &AgentSourceCoordinate {
+        &self.source
+    }
+
+    pub fn thread_id(&self) -> &RuntimeThreadId {
+        &self.thread_id
+    }
+
+    pub fn bind_turn(
+        &mut self,
+        source_turn_id: AgentTurnId,
+        runtime_turn_id: RuntimeTurnId,
+    ) -> Result<(), CompleteAgentRuntimeProjectionError> {
+        bind_identity("turn", &source_turn_id, &runtime_turn_id, &mut self.turns)
+    }
+
+    pub fn bind_item(
+        &mut self,
+        source_item_id: AgentItemId,
+        source_turn_id: AgentTurnId,
+        runtime_item_id: RuntimeItemId,
+    ) -> Result<(), CompleteAgentRuntimeProjectionError> {
+        if !self.turns.contains_key(&source_turn_id) {
+            return Err(CompleteAgentRuntimeProjectionError::MissingIdentity {
+                kind: "turn",
+                source_identity: source_turn_id.to_string(),
+            });
+        }
+        if let Some(existing) = self.items.get(&source_item_id) {
+            if existing.source_turn_id != source_turn_id {
+                return Err(CompleteAgentRuntimeProjectionError::ParentIdentityDrift {
+                    kind: "item",
+                    source_identity: source_item_id.to_string(),
+                    expected_parent: existing.source_turn_id.to_string(),
+                    received_parent: source_turn_id.to_string(),
+                });
+            }
+            if existing.runtime_item_id != runtime_item_id {
+                return Err(CompleteAgentRuntimeProjectionError::IdentityDrift {
+                    kind: "item",
+                    source_identity: source_item_id.to_string(),
+                    expected_runtime_identity: existing.runtime_item_id.to_string(),
+                    received_runtime_identity: runtime_item_id.to_string(),
+                });
+            }
+            return Ok(());
+        }
+        if self
+            .items
+            .values()
+            .any(|identity| identity.runtime_item_id == runtime_item_id)
+        {
+            return Err(CompleteAgentRuntimeProjectionError::RuntimeIdentityReused {
+                kind: "item",
+                runtime_identity: runtime_item_id.to_string(),
+            });
+        }
+        self.items.insert(
+            source_item_id,
+            CompleteAgentRuntimeItemIdentity {
+                source_turn_id,
+                runtime_item_id,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn bind_interaction(
+        &mut self,
+        source_interaction_id: AgentInteractionId,
+        source_turn_id: AgentTurnId,
+        runtime_interaction_id: RuntimeInteractionId,
+    ) -> Result<(), CompleteAgentRuntimeProjectionError> {
+        if !self.turns.contains_key(&source_turn_id) {
+            return Err(CompleteAgentRuntimeProjectionError::MissingIdentity {
+                kind: "turn",
+                source_identity: source_turn_id.to_string(),
+            });
+        }
+        if let Some(existing) = self.interactions.get(&source_interaction_id) {
+            if existing.source_turn_id != source_turn_id {
+                return Err(CompleteAgentRuntimeProjectionError::ParentIdentityDrift {
+                    kind: "interaction",
+                    source_identity: source_interaction_id.to_string(),
+                    expected_parent: existing.source_turn_id.to_string(),
+                    received_parent: source_turn_id.to_string(),
+                });
+            }
+            if existing.runtime_interaction_id != runtime_interaction_id {
+                return Err(CompleteAgentRuntimeProjectionError::IdentityDrift {
+                    kind: "interaction",
+                    source_identity: source_interaction_id.to_string(),
+                    expected_runtime_identity: existing.runtime_interaction_id.to_string(),
+                    received_runtime_identity: runtime_interaction_id.to_string(),
+                });
+            }
+            return Ok(());
+        }
+        if self
+            .interactions
+            .values()
+            .any(|identity| identity.runtime_interaction_id == runtime_interaction_id)
+        {
+            return Err(CompleteAgentRuntimeProjectionError::RuntimeIdentityReused {
+                kind: "interaction",
+                runtime_identity: runtime_interaction_id.to_string(),
+            });
+        }
+        self.interactions.insert(
+            source_interaction_id,
+            CompleteAgentRuntimeInteractionIdentity {
+                source_turn_id,
+                runtime_interaction_id,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn bind_surface_revision(
+        &mut self,
+        source_revision: agentdash_agent_service_api::AgentSurfaceRevision,
+        runtime_revision: SurfaceRevision,
+    ) -> Result<(), CompleteAgentRuntimeProjectionError> {
+        if let Some(existing) = self.surface_revisions.get(&source_revision) {
+            if existing != &runtime_revision {
+                return Err(CompleteAgentRuntimeProjectionError::IdentityDrift {
+                    kind: "surface revision",
+                    source_identity: source_revision.0.to_string(),
+                    expected_runtime_identity: existing.0.to_string(),
+                    received_runtime_identity: runtime_revision.0.to_string(),
+                });
+            }
+            return Ok(());
+        }
+        if self
+            .surface_revisions
+            .values()
+            .any(|revision| revision == &runtime_revision)
+        {
+            return Err(CompleteAgentRuntimeProjectionError::RuntimeIdentityReused {
+                kind: "surface revision",
+                runtime_identity: runtime_revision.0.to_string(),
+            });
+        }
+        self.surface_revisions
+            .insert(source_revision, runtime_revision);
+        Ok(())
+    }
+
+    fn runtime_turn_id(
+        &self,
+        source_turn_id: &AgentTurnId,
+    ) -> Result<RuntimeTurnId, CompleteAgentRuntimeProjectionError> {
+        self.turns.get(source_turn_id).cloned().ok_or_else(|| {
+            CompleteAgentRuntimeProjectionError::MissingIdentity {
+                kind: "turn",
+                source_identity: source_turn_id.to_string(),
+            }
+        })
+    }
+
+    fn runtime_item_id(
+        &self,
+        source_item_id: &AgentItemId,
+        source_turn_id: &AgentTurnId,
+    ) -> Result<RuntimeItemId, CompleteAgentRuntimeProjectionError> {
+        let identity = self.items.get(source_item_id).ok_or_else(|| {
+            CompleteAgentRuntimeProjectionError::MissingIdentity {
+                kind: "item",
+                source_identity: source_item_id.to_string(),
+            }
+        })?;
+        if &identity.source_turn_id != source_turn_id {
+            return Err(CompleteAgentRuntimeProjectionError::ParentIdentityDrift {
+                kind: "item",
+                source_identity: source_item_id.to_string(),
+                expected_parent: identity.source_turn_id.to_string(),
+                received_parent: source_turn_id.to_string(),
+            });
+        }
+        Ok(identity.runtime_item_id.clone())
+    }
+
+    fn runtime_interaction_id(
+        &self,
+        source_interaction_id: &AgentInteractionId,
+        source_turn_id: &AgentTurnId,
+    ) -> Result<RuntimeInteractionId, CompleteAgentRuntimeProjectionError> {
+        let identity = self
+            .interactions
+            .get(source_interaction_id)
+            .ok_or_else(|| CompleteAgentRuntimeProjectionError::MissingIdentity {
+                kind: "interaction",
+                source_identity: source_interaction_id.to_string(),
+            })?;
+        if &identity.source_turn_id != source_turn_id {
+            return Err(CompleteAgentRuntimeProjectionError::ParentIdentityDrift {
+                kind: "interaction",
+                source_identity: source_interaction_id.to_string(),
+                expected_parent: identity.source_turn_id.to_string(),
+                received_parent: source_turn_id.to_string(),
+            });
+        }
+        Ok(identity.runtime_interaction_id.clone())
+    }
+
+    fn runtime_surface_revision(
+        &self,
+        source_revision: agentdash_agent_service_api::AgentSurfaceRevision,
+    ) -> Result<SurfaceRevision, CompleteAgentRuntimeProjectionError> {
+        self.surface_revisions
+            .get(&source_revision)
+            .copied()
+            .ok_or_else(|| CompleteAgentRuntimeProjectionError::MissingIdentity {
+                kind: "surface revision",
+                source_identity: source_revision.0.to_string(),
+            })
+    }
+}
+
+fn bind_identity<S, R>(
+    kind: &'static str,
+    source: &S,
+    runtime: &R,
+    identities: &mut BTreeMap<S, R>,
+) -> Result<(), CompleteAgentRuntimeProjectionError>
+where
+    S: Clone + Ord + ToString,
+    R: Clone + PartialEq + ToString,
+{
+    if let Some(existing) = identities.get(source) {
+        if existing != runtime {
+            return Err(CompleteAgentRuntimeProjectionError::IdentityDrift {
+                kind,
+                source_identity: source.to_string(),
+                expected_runtime_identity: existing.to_string(),
+                received_runtime_identity: runtime.to_string(),
+            });
+        }
+        return Ok(());
+    }
+    if identities.values().any(|identity| identity == runtime) {
+        return Err(CompleteAgentRuntimeProjectionError::RuntimeIdentityReused {
+            kind,
+            runtime_identity: runtime.to_string(),
+        });
+    }
+    identities.insert(source.clone(), runtime.clone());
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompleteAgentRuntimeProjectionInput {
+    pub thread_id: RuntimeThreadId,
+    pub projection_revision: RuntimeProjectionRevision,
+    pub latest_change_sequence: RuntimeChangeSequence,
+    pub captured_at_ms: u64,
+    pub operations: Vec<ManagedRuntimeOperation>,
+    pub command_availability:
+        BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum CompleteAgentRuntimeProjectionError {
+    #[error("Agent projection source does not match the Runtime identity map")]
+    SourceMismatch,
+    #[error("Runtime projection thread does not match the Runtime identity map")]
+    ThreadMismatch,
+    #[error(
+        "Runtime projection revision mismatch: source projection {source_revision}, requested Runtime revision {runtime_revision}"
+    )]
+    RevisionMismatch {
+        source_revision: u64,
+        runtime_revision: u64,
+    },
+    #[error("missing {kind} Runtime identity for source coordinate {source_identity}")]
+    MissingIdentity {
+        kind: &'static str,
+        source_identity: String,
+    },
+    #[error(
+        "{kind} source coordinate {source_identity} drifted from Runtime identity {expected_runtime_identity} to {received_runtime_identity}"
+    )]
+    IdentityDrift {
+        kind: &'static str,
+        source_identity: String,
+        expected_runtime_identity: String,
+        received_runtime_identity: String,
+    },
+    #[error("{kind} Runtime identity {runtime_identity} is already bound")]
+    RuntimeIdentityReused {
+        kind: &'static str,
+        runtime_identity: String,
+    },
+    #[error(
+        "{kind} source coordinate {source_identity} changed parent from {expected_parent} to {received_parent}"
+    )]
+    ParentIdentityDrift {
+        kind: &'static str,
+        source_identity: String,
+        expected_parent: String,
+        received_parent: String,
+    },
+    #[error("Runtime command availability is missing {command:?}")]
+    MissingCommandAvailability { command: ManagedRuntimeCommandKind },
+    #[error(
+        "Runtime command availability for {command:?} was decided at revision {decided_revision}, snapshot revision is {snapshot_revision}"
+    )]
+    AvailabilityRevisionMismatch {
+        command: ManagedRuntimeCommandKind,
+        decided_revision: u64,
+        snapshot_revision: u64,
+    },
+    #[error("Runtime operation references unknown turn {turn_id}")]
+    OperationTurnMissing { turn_id: RuntimeTurnId },
+    #[error("Agent payload digest could not be represented by the Runtime contract")]
+    InvalidPayloadDigest,
+    #[error("Agent source emitted a snapshot invalidation as a committed delta")]
+    SnapshotInvalidationCommitted,
+}
+
+pub fn project_managed_runtime_snapshot(
+    projection: &NormalizedAgentProjection,
+    identities: &CompleteAgentRuntimeIdentityMap,
+    input: CompleteAgentRuntimeProjectionInput,
+) -> Result<ManagedRuntimeSnapshot, CompleteAgentRuntimeProjectionError> {
+    validate_projection_boundary(projection, identities, &input)?;
+
+    let turns = projection
+        .turns
+        .values()
+        .map(|turn| project_turn(turn, projection, identities))
+        .collect::<Result<Vec<_>, _>>()?;
+    let items = projection
+        .items
+        .values()
+        .map(|item| project_item(&item.item, &item.turn_id, identities))
+        .collect::<Result<Vec<_>, _>>()?;
+    let interactions = projection
+        .interactions
+        .values()
+        .map(|interaction| project_interaction(interaction, identities))
+        .collect::<Result<Vec<_>, _>>()?;
+    let active_turn_id = projection
+        .active_turn_id
+        .as_ref()
+        .map(|turn_id| identities.runtime_turn_id(turn_id))
+        .transpose()?;
+
+    Ok(ManagedRuntimeSnapshot {
+        thread_id: input.thread_id,
+        revision: input.projection_revision,
+        latest_change_sequence: input.latest_change_sequence,
+        captured_at_ms: input.captured_at_ms,
+        lifecycle: project_lifecycle(projection.lifecycle),
+        active_turn_id,
+        turns,
+        items,
+        interactions,
+        operations: input.operations,
+        authority: project_authority(projection.source_info.authority),
+        fidelity: project_fidelity(projection.source_info.fidelity),
+        command_availability: input.command_availability,
+    })
+}
+
+pub fn project_managed_runtime_change_page(
+    page: &NormalizedAgentChangePage,
+    identities: &CompleteAgentRuntimeIdentityMap,
+    snapshot_revision: RuntimeProjectionRevision,
+) -> Result<ManagedRuntimeChangePage, CompleteAgentRuntimeProjectionError> {
+    if page.source != identities.source {
+        return Err(CompleteAgentRuntimeProjectionError::SourceMismatch);
+    }
+    let changes = page
+        .changes
+        .iter()
+        .map(|change| project_platform_change(change, identities))
+        .collect::<Result<Vec<_>, _>>()?;
+    let requested_after = RuntimeChangeSequence(page.requested_after_sequence);
+    let gap = page
+        .earliest_available_sequence
+        .filter(|earliest| page.requested_after_sequence.saturating_add(1) < *earliest)
+        .map(|earliest| ManagedRuntimeChangeGap {
+            requested_after: (page.requested_after_sequence != 0).then_some(requested_after),
+            earliest_available: RuntimeChangeSequence(earliest),
+            latest_available: RuntimeChangeSequence(
+                page.latest_available_sequence.unwrap_or(page.next_sequence),
+            ),
+            snapshot_revision,
+        });
+
+    Ok(ManagedRuntimeChangePage {
+        thread_id: identities.thread_id.clone(),
+        changes,
+        next: RuntimeChangeSequence(page.next_sequence),
+        gap,
+    })
+}
+
+fn validate_projection_boundary(
+    projection: &NormalizedAgentProjection,
+    identities: &CompleteAgentRuntimeIdentityMap,
+    input: &CompleteAgentRuntimeProjectionInput,
+) -> Result<(), CompleteAgentRuntimeProjectionError> {
+    if projection.source != identities.source {
+        return Err(CompleteAgentRuntimeProjectionError::SourceMismatch);
+    }
+    if input.thread_id != identities.thread_id {
+        return Err(CompleteAgentRuntimeProjectionError::ThreadMismatch);
+    }
+    if input.projection_revision.0 != projection.platform_revision {
+        return Err(CompleteAgentRuntimeProjectionError::RevisionMismatch {
+            source_revision: projection.platform_revision,
+            runtime_revision: input.projection_revision.0,
+        });
+    }
+    for command in ManagedRuntimeCommandKind::ALL {
+        let availability = input
+            .command_availability
+            .get(&command)
+            .ok_or(CompleteAgentRuntimeProjectionError::MissingCommandAvailability { command })?;
+        if availability.evidence().decided_at_revision != input.projection_revision {
+            return Err(
+                CompleteAgentRuntimeProjectionError::AvailabilityRevisionMismatch {
+                    command,
+                    decided_revision: availability.evidence().decided_at_revision.0,
+                    snapshot_revision: input.projection_revision.0,
+                },
+            );
+        }
+    }
+    let known_turns = identities.turns.values().collect::<BTreeSet<_>>();
+    for operation in &input.operations {
+        if let Some(turn_id) = &operation.turn_id
+            && !known_turns.contains(turn_id)
+        {
+            return Err(CompleteAgentRuntimeProjectionError::OperationTurnMissing {
+                turn_id: turn_id.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn project_platform_change(
+    change: &NormalizedAgentPlatformChange,
+    identities: &CompleteAgentRuntimeIdentityMap,
+) -> Result<ManagedRuntimePlatformChange, CompleteAgentRuntimeProjectionError> {
+    let delta = match &change.payload {
+        NormalizedAgentPlatformChangePayload::SnapshotReplaced {
+            authority,
+            fidelity,
+            ..
+        } => ManagedRuntimeChangeDelta::SnapshotReplaced {
+            authority: project_authority(*authority),
+            fidelity: project_fidelity(*fidelity),
+        },
+        NormalizedAgentPlatformChangePayload::SourceChangeApplied { payload, .. } => {
+            project_source_delta(payload, identities)?
+        }
+    };
+    Ok(ManagedRuntimePlatformChange {
+        thread_id: identities.thread_id.clone(),
+        sequence: RuntimeChangeSequence(change.sequence),
+        revision: RuntimeProjectionRevision(change.platform_revision),
+        delta,
+    })
+}
+
+fn project_source_delta(
+    payload: &AgentChangePayload,
+    identities: &CompleteAgentRuntimeIdentityMap,
+) -> Result<ManagedRuntimeChangeDelta, CompleteAgentRuntimeProjectionError> {
+    match payload {
+        AgentChangePayload::LifecycleChanged { status } => {
+            Ok(ManagedRuntimeChangeDelta::LifecycleChanged {
+                lifecycle: project_lifecycle(*status),
+            })
+        }
+        AgentChangePayload::TurnChanged { turn } => {
+            let projected_turn = project_turn_snapshot(turn, identities)?;
+            let items = turn
+                .items
+                .iter()
+                .map(|item| project_item(item, &turn.id, identities))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ManagedRuntimeChangeDelta::TurnUpserted {
+                turn: projected_turn,
+                items,
+            })
+        }
+        AgentChangePayload::ActiveTurnChanged { active_turn_id } => {
+            Ok(ManagedRuntimeChangeDelta::ActiveTurnChanged {
+                active_turn_id: active_turn_id
+                    .as_ref()
+                    .map(|turn_id| identities.runtime_turn_id(turn_id))
+                    .transpose()?,
+            })
+        }
+        AgentChangePayload::ItemChanged { turn_id, item } => {
+            Ok(ManagedRuntimeChangeDelta::ItemUpserted {
+                item: project_item(item, turn_id, identities)?,
+            })
+        }
+        AgentChangePayload::InteractionChanged { interaction } => {
+            Ok(ManagedRuntimeChangeDelta::InteractionUpserted {
+                interaction: project_interaction(interaction, identities)?,
+            })
+        }
+        AgentChangePayload::SurfaceApplied { applied } => {
+            Ok(ManagedRuntimeChangeDelta::SurfaceEvidenceChanged {
+                bound_surface_revision: None,
+                applied_surface_revision: Some(
+                    identities.runtime_surface_revision(applied.revision)?,
+                ),
+            })
+        }
+        AgentChangePayload::SnapshotInvalidated { .. } => {
+            Err(CompleteAgentRuntimeProjectionError::SnapshotInvalidationCommitted)
+        }
+    }
+}
+
+fn project_turn(
+    turn: &NormalizedAgentTurn,
+    projection: &NormalizedAgentProjection,
+    identities: &CompleteAgentRuntimeIdentityMap,
+) -> Result<ManagedRuntimeTurn, CompleteAgentRuntimeProjectionError> {
+    let runtime_turn_id = identities.runtime_turn_id(&turn.id)?;
+    let item_ids = turn
+        .item_ids
+        .iter()
+        .map(|item_id| {
+            let item = projection.items.get(item_id).ok_or_else(|| {
+                CompleteAgentRuntimeProjectionError::MissingIdentity {
+                    kind: "normalized item",
+                    source_identity: item_id.to_string(),
+                }
+            })?;
+            identities.runtime_item_id(item_id, &item.turn_id)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ManagedRuntimeTurn {
+        id: runtime_turn_id,
+        status: project_entity_status(turn.status),
+        item_ids,
+    })
+}
+
+fn project_turn_snapshot(
+    turn: &AgentTurnSnapshot,
+    identities: &CompleteAgentRuntimeIdentityMap,
+) -> Result<ManagedRuntimeTurn, CompleteAgentRuntimeProjectionError> {
+    Ok(ManagedRuntimeTurn {
+        id: identities.runtime_turn_id(&turn.id)?,
+        status: project_entity_status(turn.status),
+        item_ids: turn
+            .items
+            .iter()
+            .map(|item| identities.runtime_item_id(&item.id, &turn.id))
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+fn project_item(
+    item: &AgentItemSnapshot,
+    source_turn_id: &AgentTurnId,
+    identities: &CompleteAgentRuntimeIdentityMap,
+) -> Result<ManagedRuntimeItem, CompleteAgentRuntimeProjectionError> {
+    Ok(ManagedRuntimeItem {
+        id: identities.runtime_item_id(&item.id, source_turn_id)?,
+        turn_id: identities.runtime_turn_id(source_turn_id)?,
+        status: project_entity_status(item.status),
+        content: project_item_content(&item.content)?,
+        content_digest: RuntimePayloadDigest::new(item.content_digest.as_str())
+            .map_err(|_| CompleteAgentRuntimeProjectionError::InvalidPayloadDigest)?,
+    })
+}
+
+fn project_interaction(
+    interaction: &AgentInteractionSnapshot,
+    identities: &CompleteAgentRuntimeIdentityMap,
+) -> Result<ManagedRuntimeInteraction, CompleteAgentRuntimeProjectionError> {
+    Ok(ManagedRuntimeInteraction {
+        id: identities.runtime_interaction_id(&interaction.id, &interaction.turn_id)?,
+        turn_id: identities.runtime_turn_id(&interaction.turn_id)?,
+        item_id: interaction
+            .item_id
+            .as_ref()
+            .map(|item_id| identities.runtime_item_id(item_id, &interaction.turn_id))
+            .transpose()?,
+        kind: match interaction.kind {
+            agentdash_agent_service_api::AgentInteractionKind::Approval => {
+                ManagedRuntimeInteractionKind::Approval
+            }
+            agentdash_agent_service_api::AgentInteractionKind::UserInput => {
+                ManagedRuntimeInteractionKind::UserInput
+            }
+            agentdash_agent_service_api::AgentInteractionKind::McpElicitation => {
+                ManagedRuntimeInteractionKind::McpElicitation
+            }
+            agentdash_agent_service_api::AgentInteractionKind::DynamicTool => {
+                ManagedRuntimeInteractionKind::DynamicTool
+            }
+        },
+        prompt: interaction.prompt.clone(),
+        status: if interaction.resolved {
+            ManagedRuntimeInteractionStatus::Resolved
+        } else {
+            ManagedRuntimeInteractionStatus::Pending
+        },
+    })
+}
+
+fn project_item_content(
+    content: &agentdash_agent_service_api::AgentItemContent,
+) -> Result<ManagedRuntimeItemContent, CompleteAgentRuntimeProjectionError> {
+    Ok(match content {
+        agentdash_agent_service_api::AgentItemContent::UserInput { input } => {
+            ManagedRuntimeItemContent::UserInput {
+                content: input
+                    .content
+                    .iter()
+                    .map(project_content_block)
+                    .collect::<Result<Vec<_>, _>>()?,
+            }
+        }
+        agentdash_agent_service_api::AgentItemContent::AgentOutput { content } => {
+            ManagedRuntimeItemContent::AgentOutput {
+                content: content
+                    .iter()
+                    .map(project_content_block)
+                    .collect::<Result<Vec<_>, _>>()?,
+            }
+        }
+        agentdash_agent_service_api::AgentItemContent::ToolCall { name, arguments } => {
+            ManagedRuntimeItemContent::ToolCall {
+                name: name.to_string(),
+                arguments: arguments.clone(),
+            }
+        }
+        agentdash_agent_service_api::AgentItemContent::ToolResult { name, result } => {
+            ManagedRuntimeItemContent::ToolResult {
+                name: name.to_string(),
+                result: result.clone(),
+            }
+        }
+        agentdash_agent_service_api::AgentItemContent::ContextCompaction => {
+            ManagedRuntimeItemContent::ContextCompaction
+        }
+        agentdash_agent_service_api::AgentItemContent::Error { code, message } => {
+            ManagedRuntimeItemContent::Error {
+                code: code.clone(),
+                message: message.clone(),
+            }
+        }
+        agentdash_agent_service_api::AgentItemContent::Extension {
+            namespace,
+            schema,
+            value,
+        } => ManagedRuntimeItemContent::Extension {
+            namespace: namespace.clone(),
+            schema: schema.clone(),
+            value: value.clone(),
+        },
+    })
+}
+
+fn project_content_block(
+    content: &agentdash_agent_service_api::AgentInputContent,
+) -> Result<ManagedRuntimeContentBlock, CompleteAgentRuntimeProjectionError> {
+    Ok(match content {
+        agentdash_agent_service_api::AgentInputContent::Text { text } => {
+            ManagedRuntimeContentBlock::Text { text: text.clone() }
+        }
+        agentdash_agent_service_api::AgentInputContent::Image {
+            media_type,
+            source,
+            digest,
+        } => ManagedRuntimeContentBlock::Image {
+            media_type: media_type.clone(),
+            source: source.clone(),
+            digest: RuntimePayloadDigest::new(digest.as_str())
+                .map_err(|_| CompleteAgentRuntimeProjectionError::InvalidPayloadDigest)?,
+        },
+        agentdash_agent_service_api::AgentInputContent::Resource {
+            uri,
+            media_type,
+            digest,
+        } => ManagedRuntimeContentBlock::Resource {
+            uri: uri.clone(),
+            media_type: media_type.clone(),
+            digest: digest
+                .as_ref()
+                .map(|digest| RuntimePayloadDigest::new(digest.as_str()))
+                .transpose()
+                .map_err(|_| CompleteAgentRuntimeProjectionError::InvalidPayloadDigest)?,
+        },
+        agentdash_agent_service_api::AgentInputContent::Structured { schema, value } => {
+            ManagedRuntimeContentBlock::Structured {
+                schema: schema.clone(),
+                value: value.clone(),
+            }
+        }
+    })
+}
+
+fn project_lifecycle(status: AgentLifecycleStatus) -> ManagedRuntimeLifecycleStatus {
+    match status {
+        AgentLifecycleStatus::Creating => ManagedRuntimeLifecycleStatus::Provisioning,
+        AgentLifecycleStatus::Active => ManagedRuntimeLifecycleStatus::Active,
+        AgentLifecycleStatus::Suspended => ManagedRuntimeLifecycleStatus::Suspended,
+        AgentLifecycleStatus::Closed => ManagedRuntimeLifecycleStatus::Closed,
+        AgentLifecycleStatus::Lost => ManagedRuntimeLifecycleStatus::Lost,
+    }
+}
+
+fn project_entity_status(status: AgentEntityStatus) -> ManagedRuntimeEntityStatus {
+    match status {
+        AgentEntityStatus::Accepted => ManagedRuntimeEntityStatus::Accepted,
+        AgentEntityStatus::Running => ManagedRuntimeEntityStatus::Running,
+        AgentEntityStatus::Completed => ManagedRuntimeEntityStatus::Completed,
+        AgentEntityStatus::Failed => ManagedRuntimeEntityStatus::Failed,
+        AgentEntityStatus::Interrupted => ManagedRuntimeEntityStatus::Interrupted,
+        AgentEntityStatus::Lost => ManagedRuntimeEntityStatus::Lost,
+    }
+}
+
+fn project_authority(authority: AgentSnapshotAuthority) -> ManagedRuntimeProjectionAuthority {
+    match authority {
+        AgentSnapshotAuthority::AgentAuthoritative => {
+            ManagedRuntimeProjectionAuthority::SourceAuthoritative
+        }
+        AgentSnapshotAuthority::AgentObserved => ManagedRuntimeProjectionAuthority::SourceObserved,
+        AgentSnapshotAuthority::Derived => ManagedRuntimeProjectionAuthority::RuntimeDerived,
+    }
+}
+
+fn project_fidelity(
+    fidelity: agentdash_agent_service_api::SemanticFidelity,
+) -> ManagedRuntimeProjectionFidelity {
+    match fidelity {
+        agentdash_agent_service_api::SemanticFidelity::Unsupported => {
+            ManagedRuntimeProjectionFidelity::Unsupported
+        }
+        agentdash_agent_service_api::SemanticFidelity::Observed => {
+            ManagedRuntimeProjectionFidelity::Observed
+        }
+        agentdash_agent_service_api::SemanticFidelity::Approximation => {
+            ManagedRuntimeProjectionFidelity::Approximation
+        }
+        agentdash_agent_service_api::SemanticFidelity::Exact => {
+            ManagedRuntimeProjectionFidelity::Exact
+        }
+    }
+}
+
 #[derive(Default)]
 struct InMemoryCompleteAgentState {
     projections: BTreeMap<AgentSourceCoordinate, NormalizedAgentProjection>,
@@ -705,6 +1517,17 @@ impl CompleteAgentStateRepository for InMemoryCompleteAgentStateRepository {
             .map_or(after_sequence, |change| change.sequence);
         Ok(NormalizedAgentChangePage {
             source: source.clone(),
+            requested_after_sequence: after_sequence,
+            earliest_available_sequence: state
+                .changes
+                .get(source)
+                .and_then(|changes| changes.first())
+                .map(|change| change.sequence),
+            latest_available_sequence: state
+                .changes
+                .get(source)
+                .and_then(|changes| changes.last())
+                .map(|change| change.sequence),
             changes,
             next_sequence,
         })
@@ -715,6 +1538,7 @@ impl CompleteAgentStateRepository for InMemoryCompleteAgentStateRepository {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use agentdash_agent_runtime_contract::ManagedRuntimeAvailabilityEvidence;
     use agentdash_agent_service_api::{
         AgentCapabilityProfile, AgentCommandEnvelope, AgentCommandReceipt,
         AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
@@ -779,6 +1603,182 @@ mod tests {
             .expect("platform changes");
         assert_eq!(reconnect.changes.len(), 2);
         assert_eq!(reconnect.next_sequence, 2);
+    }
+
+    #[tokio::test]
+    async fn managed_snapshot_uses_explicit_runtime_ids_and_committed_availability() {
+        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let reconciler = CompleteAgentStateReconciler::new(repository.clone());
+        reconciler
+            .reconcile_snapshot(
+                snapshot(1, AgentSnapshotAuthority::AgentAuthoritative),
+                None,
+            )
+            .await
+            .expect("snapshot");
+        let projection = repository
+            .load_projection(&source())
+            .await
+            .expect("load")
+            .expect("projection");
+        let mut identities = identity_map();
+        let snapshot = project_managed_runtime_snapshot(
+            &projection,
+            &identities,
+            projection_input(1, RuntimeChangeSequence(1)),
+        )
+        .expect("managed snapshot");
+
+        assert_eq!(snapshot.thread_id.as_str(), "runtime-thread-7");
+        assert_eq!(snapshot.turns[0].id.as_str(), "runtime-turn-11");
+        assert_eq!(snapshot.items[0].id.as_str(), "runtime-item-13");
+        assert_eq!(
+            snapshot.command_availability[&ManagedRuntimeCommandKind::RequestCompaction]
+                .evidence()
+                .decided_at_revision,
+            RuntimeProjectionRevision(1)
+        );
+        let json = serde_json::to_string(&snapshot).expect("serialize managed snapshot");
+        for source_coordinate in ["source-1", "turn-1", "item-1"] {
+            assert!(
+                !json.contains(&format!("\"{source_coordinate}\"")),
+                "source coordinate leaked: {source_coordinate}"
+            );
+        }
+
+        identities
+            .bind_turn(
+                AgentTurnId::new("turn-1").expect("turn"),
+                RuntimeTurnId::new("runtime-turn-11").expect("runtime turn"),
+            )
+            .expect("idempotent identity bind");
+    }
+
+    #[tokio::test]
+    async fn missing_or_drifting_identity_is_rejected() {
+        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let reconciler = CompleteAgentStateReconciler::new(repository.clone());
+        reconciler
+            .reconcile_snapshot(
+                snapshot(1, AgentSnapshotAuthority::AgentAuthoritative),
+                None,
+            )
+            .await
+            .expect("snapshot");
+        let projection = repository
+            .load_projection(&source())
+            .await
+            .expect("load")
+            .expect("projection");
+        let mut identities = CompleteAgentRuntimeIdentityMap::new(
+            source(),
+            RuntimeThreadId::new("runtime-thread-7").expect("runtime thread"),
+        );
+        identities
+            .bind_turn(
+                AgentTurnId::new("turn-1").expect("turn"),
+                RuntimeTurnId::new("runtime-turn-11").expect("runtime turn"),
+            )
+            .expect("turn identity");
+
+        assert!(matches!(
+            project_managed_runtime_snapshot(
+                &projection,
+                &identities,
+                projection_input(1, RuntimeChangeSequence(1)),
+            ),
+            Err(CompleteAgentRuntimeProjectionError::MissingIdentity { kind: "item", .. })
+        ));
+        assert!(matches!(
+            identities.bind_turn(
+                AgentTurnId::new("turn-1").expect("turn"),
+                RuntimeTurnId::new("runtime-turn-drift").expect("runtime turn"),
+            ),
+            Err(CompleteAgentRuntimeProjectionError::IdentityDrift { kind: "turn", .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn availability_must_be_complete_and_committed_at_snapshot_revision() {
+        let repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
+        let reconciler = CompleteAgentStateReconciler::new(repository.clone());
+        reconciler
+            .reconcile_snapshot(
+                snapshot(1, AgentSnapshotAuthority::AgentAuthoritative),
+                None,
+            )
+            .await
+            .expect("snapshot");
+        let projection = repository
+            .load_projection(&source())
+            .await
+            .expect("load")
+            .expect("projection");
+        let mut input = projection_input(1, RuntimeChangeSequence(1));
+        input.command_availability.insert(
+            ManagedRuntimeCommandKind::SubmitInput,
+            ManagedRuntimeCommandAvailability::Available {
+                evidence: availability_evidence(2),
+            },
+        );
+
+        assert!(matches!(
+            project_managed_runtime_snapshot(&projection, &identity_map(), input),
+            Err(
+                CompleteAgentRuntimeProjectionError::AvailabilityRevisionMismatch {
+                    command: ManagedRuntimeCommandKind::SubmitInput,
+                    ..
+                }
+            )
+        ));
+    }
+
+    #[test]
+    fn managed_change_page_maps_runtime_ids_and_exposes_typed_retention_gap() {
+        let identities = identity_map();
+        let page = NormalizedAgentChangePage {
+            source: source(),
+            requested_after_sequence: 1,
+            earliest_available_sequence: Some(5),
+            latest_available_sequence: Some(9),
+            changes: vec![NormalizedAgentPlatformChange {
+                sequence: 5,
+                platform_revision: 3,
+                payload: NormalizedAgentPlatformChangePayload::SourceChangeApplied {
+                    source_cursor: cursor("source-cursor-5"),
+                    source_revision: None,
+                    payload: Box::new(AgentChangePayload::ItemChanged {
+                        turn_id: AgentTurnId::new("turn-1").expect("turn"),
+                        item: AgentItemSnapshot {
+                            id: AgentItemId::new("item-1").expect("item"),
+                            status: AgentEntityStatus::Running,
+                            content: AgentItemContent::ContextCompaction,
+                            content_digest: AgentPayloadDigest::new("sha256:running")
+                                .expect("digest"),
+                        },
+                    }),
+                },
+            }],
+            next_sequence: 5,
+        };
+
+        let projected =
+            project_managed_runtime_change_page(&page, &identities, RuntimeProjectionRevision(3))
+                .expect("managed change page");
+        assert_eq!(
+            projected.gap,
+            Some(ManagedRuntimeChangeGap {
+                requested_after: Some(RuntimeChangeSequence(1)),
+                earliest_available: RuntimeChangeSequence(5),
+                latest_available: RuntimeChangeSequence(9),
+                snapshot_revision: RuntimeProjectionRevision(3),
+            })
+        );
+        let ManagedRuntimeChangeDelta::ItemUpserted { item } = &projected.changes[0].delta else {
+            panic!("item delta");
+        };
+        assert_eq!(item.id.as_str(), "runtime-item-13");
+        assert_eq!(item.turn_id.as_str(), "runtime-turn-11");
     }
 
     #[tokio::test]
@@ -982,6 +1982,59 @@ mod tests {
         assert_eq!(outcome.projection.source_cursor, None);
         assert_eq!(service.reads.load(Ordering::SeqCst), 1);
         assert_eq!(service.changes.load(Ordering::SeqCst), 0);
+    }
+
+    fn identity_map() -> CompleteAgentRuntimeIdentityMap {
+        let mut identities = CompleteAgentRuntimeIdentityMap::new(
+            source(),
+            RuntimeThreadId::new("runtime-thread-7").expect("runtime thread"),
+        );
+        identities
+            .bind_turn(
+                AgentTurnId::new("turn-1").expect("turn"),
+                RuntimeTurnId::new("runtime-turn-11").expect("runtime turn"),
+            )
+            .expect("turn identity");
+        identities
+            .bind_item(
+                AgentItemId::new("item-1").expect("item"),
+                AgentTurnId::new("turn-1").expect("turn"),
+                RuntimeItemId::new("runtime-item-13").expect("runtime item"),
+            )
+            .expect("item identity");
+        identities
+    }
+
+    fn projection_input(
+        revision: u64,
+        latest_change_sequence: RuntimeChangeSequence,
+    ) -> CompleteAgentRuntimeProjectionInput {
+        let mut command_availability = BTreeMap::new();
+        for command in ManagedRuntimeCommandKind::ALL {
+            command_availability.insert(
+                command,
+                ManagedRuntimeCommandAvailability::Available {
+                    evidence: availability_evidence(revision),
+                },
+            );
+        }
+        CompleteAgentRuntimeProjectionInput {
+            thread_id: RuntimeThreadId::new("runtime-thread-7").expect("runtime thread"),
+            projection_revision: RuntimeProjectionRevision(revision),
+            latest_change_sequence,
+            captured_at_ms: 1000 + revision,
+            operations: Vec::new(),
+            command_availability,
+        }
+    }
+
+    fn availability_evidence(revision: u64) -> ManagedRuntimeAvailabilityEvidence {
+        ManagedRuntimeAvailabilityEvidence {
+            decided_at_revision: RuntimeProjectionRevision(revision),
+            blocking_operation_id: None,
+            bound_surface_revision: Some(SurfaceRevision(4)),
+            applied_surface_revision: Some(SurfaceRevision(4)),
+        }
     }
 
     fn snapshot(revision: u64, authority: AgentSnapshotAuthority) -> AgentSnapshot {

@@ -567,6 +567,8 @@ pub fn validate_complete_agent_host_facts(
             || thread_id != &target.runtime_thread_id
             || target.generation.0 == 0
             || target.callbacks.binding_generation != target.generation
+            || target.callbacks.delivery != AgentSurfaceRoute::AgentNativeCallback
+            || target.callbacks.default_deadline_ms == 0
         {
             return invariant("Runtime target identity or generation is invalid");
         }
@@ -1088,8 +1090,8 @@ mod tests {
         AgentCapabilityProfile, AgentCommandCapability, AgentCommandId, AgentCommandReceipt,
         AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity,
         AgentEffectInspection, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
-        AgentLifecycleCapability, AgentPayloadDigest, AgentProfileDigest, AgentReceiptState,
-        AgentRuntimeOffer, AgentServiceDefinitionId, AgentSourceChangeLevel,
+        AgentHostCallbackBinding, AgentLifecycleCapability, AgentPayloadDigest, AgentProfileDigest,
+        AgentReceiptState, AgentRuntimeOffer, AgentServiceDefinitionId, AgentSourceChangeLevel,
         AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceProfile,
         AgentSurfaceRevision, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery,
         AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
@@ -1177,6 +1179,62 @@ mod tests {
 
         assert!(matches!(
             decode_complete_agent_host_snapshot(encoded),
+            Err(CompleteAgentHostStoreError::Invariant { .. })
+        ));
+    }
+
+    #[test]
+    fn persisted_host_state_rejects_invalid_runtime_target_callback_coordinates() {
+        let mut facts = valid_facts();
+        let runtime_thread_id = RuntimeThreadId::new("runtime-thread").expect("Runtime thread");
+        let service_instance_id = service_id();
+        let profile_digest = facts
+            .service_instances
+            .get(&service_instance_id)
+            .expect("service descriptor")
+            .profile_digest
+            .clone();
+        let bound_surface = facts
+            .bindings
+            .get(&binding_id())
+            .expect("binding")
+            .bound_surface
+            .clone();
+        facts.runtime_targets.insert(
+            runtime_thread_id.clone(),
+            CompleteAgentRuntimeTarget {
+                runtime_thread_id,
+                service_instance_id,
+                generation: AgentBindingGeneration(1),
+                profile_digest,
+                bound_surface,
+                callbacks: AgentHostCallbackBinding {
+                    route_id: AgentCallbackRouteId::new("target-route").expect("callback route"),
+                    binding_generation: AgentBindingGeneration(1),
+                    delivery: AgentSurfaceRoute::AgentNativeCallback,
+                    default_deadline_ms: 10,
+                },
+            },
+        );
+        let snapshot = CompleteAgentHostSnapshot {
+            revision: CompleteAgentHostRevision(8),
+            facts,
+        };
+        let encoded = encode_complete_agent_host_snapshot(&snapshot).expect("encode Host snapshot");
+
+        let mut zero_deadline = encoded.clone();
+        zero_deadline["facts"]["runtime_targets"]["runtime-thread"]["callbacks"]["default_deadline_ms"] =
+            json!(0);
+        assert!(matches!(
+            decode_complete_agent_host_snapshot(zero_deadline),
+            Err(CompleteAgentHostStoreError::Invariant { .. })
+        ));
+
+        let mut wrong_delivery = encoded;
+        wrong_delivery["facts"]["runtime_targets"]["runtime-thread"]["callbacks"]["delivery"] =
+            json!("runtime_native");
+        assert!(matches!(
+            decode_complete_agent_host_snapshot(wrong_delivery),
             Err(CompleteAgentHostStoreError::Invariant { .. })
         ));
     }

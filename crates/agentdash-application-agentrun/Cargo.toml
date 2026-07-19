@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 agentdash-agent-runtime-contract = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
+agentdash-agent-service-api = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-application-skill = { workspace = true }
 agentdash-application-vfs = { workspace = true }
@@ -26,7 +27,6 @@ agentdash-diagnostics = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-agentdash-agent-service-api = { workspace = true }
 agentdash-test-support = { workspace = true }
 futures = { workspace = true }
 json-patch = "2.0"

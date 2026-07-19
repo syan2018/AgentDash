@@ -963,7 +963,9 @@ async fn deliver_companion_mailbox_message(
         .deliver(DeliverAgentRunProductInput {
             target,
             origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::Companion,
-            content: agentdash_agent_protocol::text_user_input_blocks(input.input_text),
+            content: vec![agentdash_agent_service_api::AgentInputContent::Text {
+                text: input.input_text,
+            }],
             source: input.source,
             client_command_id: input.client_command_id,
         })

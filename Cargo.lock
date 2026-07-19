@@ -274,6 +274,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
+ "agentdash-agent-service-api",
  "agentdash-application-agentrun",
  "agentdash-application-extension-gateway",
  "agentdash-application-hooks",

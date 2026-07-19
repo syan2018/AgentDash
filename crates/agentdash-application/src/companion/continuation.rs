@@ -567,7 +567,9 @@ fn first_input_command(
             agent_id: request.child_agent_id,
         },
         origin: MailboxMessageOrigin::Companion,
-        content: agentdash_agent_protocol::text_user_input_blocks(request.first_input_text.clone()),
+        content: vec![agentdash_agent_service_api::AgentInputContent::Text {
+            text: request.first_input_text.clone(),
+        }],
         source: mailbox_source(request),
         client_command_id: identity.idempotency_key.clone(),
     }

@@ -4,6 +4,7 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind, ManagedRuntimeContentBlock,
     ManagedRuntimeOperationReceipt,
 };
+use agentdash_agent_service_api::AgentInputContent;
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxCreateOutcome, AgentRunMailboxRepository, ConsumptionBarrier, MailboxDelivery,
     MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity,
@@ -24,7 +25,7 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct DeliverAgentRunProductInput {
     pub target: AgentRunTarget,
-    pub content: Vec<agentdash_agent_protocol::UserInputBlock>,
+    pub content: Vec<AgentInputContent>,
     pub source: MailboxSourceIdentity,
     pub origin: MailboxMessageOrigin,
     pub client_command_id: String,
@@ -215,18 +216,11 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
             return Err(AgentRunProductInputDeliveryError::InvalidClientCommandId);
         }
         let managed_content = managed_content(&command.content)?;
-        let preview = agentdash_agent_protocol::codex_user_input_to_text(&command.content)
-            .map_err(|_| AgentRunProductInputDeliveryError::EmptyInput)?;
-        let has_images =
-            command.content.iter().any(|block| {
-                matches!(
-                block,
-                agentdash_agent_protocol::codex_app_server_protocol::UserInput::Image { .. }
-                    | agentdash_agent_protocol::codex_app_server_protocol::UserInput::LocalImage {
-                        ..
-                    }
-            )
-            });
+        let preview = input_preview(&command.content)?;
+        let has_images = command
+            .content
+            .iter()
+            .any(|block| matches!(block, AgentInputContent::Image { .. }));
         let payload = serde_json::json!({
             "schema": "agentdash.product-input/v1",
             "source": {
@@ -376,18 +370,11 @@ impl AgentRunProductInputDeliveryService {
         if client_command_id.is_empty() || client_command_id.len() > 256 {
             return Err(AgentRunProductInputDeliveryError::InvalidClientCommandId);
         }
-        let preview = agentdash_agent_protocol::codex_user_input_to_text(&command.content)
-            .map_err(|_| AgentRunProductInputDeliveryError::EmptyInput)?;
-        let has_images =
-            command.content.iter().any(|block| {
-                matches!(
-                block,
-                agentdash_agent_protocol::codex_app_server_protocol::UserInput::Image { .. }
-                    | agentdash_agent_protocol::codex_app_server_protocol::UserInput::LocalImage {
-                        ..
-                    }
-            )
-            });
+        let preview = input_preview(&command.content)?;
+        let has_images = command
+            .content
+            .iter()
+            .any(|block| matches!(block, AgentInputContent::Image { .. }));
         let payload = serde_json::json!({
             "schema": "agentdash.product-input/v1",
             "source": {
@@ -457,7 +444,7 @@ fn stable_message_id(target: &AgentRunTarget, client_command_id: &str) -> Uuid {
 }
 
 fn managed_content(
-    content: &[agentdash_agent_protocol::UserInputBlock],
+    content: &[AgentInputContent],
 ) -> Result<Vec<ManagedRuntimeContentBlock>, AgentRunProductInputDeliveryError> {
     if content.is_empty() {
         return Err(AgentRunProductInputDeliveryError::EmptyInput);
@@ -465,14 +452,62 @@ fn managed_content(
     Ok(content
         .iter()
         .map(|block| match block {
-            agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text {
-                text, ..
-            } => ManagedRuntimeContentBlock::Text { text: text.clone() },
-            other => ManagedRuntimeContentBlock::Structured {
-                schema: "agentdash.codex-user-input/v1".to_string(),
-                value: serde_json::to_value(other)
-                    .expect("canonical Codex UserInput is serializable"),
+            AgentInputContent::Text { text } => {
+                ManagedRuntimeContentBlock::Text { text: text.clone() }
+            }
+            AgentInputContent::Image {
+                media_type,
+                source,
+                digest,
+            } => ManagedRuntimeContentBlock::Image {
+                media_type: media_type.clone(),
+                source: source.clone(),
+                digest: agentdash_agent_runtime_contract::RuntimePayloadDigest::new(
+                    digest.as_str().to_owned(),
+                )
+                .expect("Agent input digest is already validated"),
             },
+            AgentInputContent::Resource {
+                uri,
+                media_type,
+                digest,
+            } => ManagedRuntimeContentBlock::Resource {
+                uri: uri.clone(),
+                media_type: media_type.clone(),
+                digest: digest.as_ref().map(|digest| {
+                    agentdash_agent_runtime_contract::RuntimePayloadDigest::new(
+                        digest.as_str().to_owned(),
+                    )
+                    .expect("Agent input digest is already validated")
+                }),
+            },
+            AgentInputContent::Structured { schema, value } => {
+                ManagedRuntimeContentBlock::Structured {
+                    schema: schema.clone(),
+                    value: value.clone(),
+                }
+            }
         })
         .collect())
+}
+
+fn input_preview(
+    content: &[AgentInputContent],
+) -> Result<String, AgentRunProductInputDeliveryError> {
+    let preview = content
+        .iter()
+        .map(|block| match block {
+            AgentInputContent::Text { text } => text.as_str(),
+            AgentInputContent::Image { source, .. } => source.as_str(),
+            AgentInputContent::Resource { uri, .. } => uri.as_str(),
+            AgentInputContent::Structured { schema, .. } => schema.as_str(),
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if preview.is_empty() {
+        return Err(AgentRunProductInputDeliveryError::EmptyInput);
+    }
+    Ok(preview)
 }

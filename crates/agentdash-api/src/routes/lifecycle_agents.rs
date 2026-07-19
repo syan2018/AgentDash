@@ -8,11 +8,22 @@ use agentdash_application::agent_run_list::{
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommand, AgentRunProductCommandError, AgentRunProductCommandRequest,
     AgentRunProductDeleteError, AgentRunProductDeleteRequest, AgentRunProductDeleteService,
-    AgentRunProductProjectionError, AgentRunProductRuntimeRecoveryError,
-    AgentRunProductRuntimeRecoveryRequest, AgentRunTerminalChangeSequence,
+    AgentRunProductInputDeliveryError, AgentRunProductProjectionError,
+    AgentRunProductRuntimeRecoveryError, AgentRunProductRuntimeRecoveryRequest,
+    AgentRunProductRuntimeSnapshotObservation, AgentRunTerminalChangeSequence,
+    DeliverAgentRunProductInput, ProductMailboxCommand, ProductMailboxCommandRequest,
+    ProductMailboxError,
+};
+use agentdash_contracts::agent_run_mailbox::{
+    AgentRunCommandOnlyRequest, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
+    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
+    AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
+    MailboxStateView,
 };
 use agentdash_contracts::agent_run_product_projection as product_projection_contract;
+use agentdash_contracts::workflow::{AgentRunRefDto, LifecycleRunRefDto};
 use agentdash_domain::agent_run_target::AgentRunTarget;
+use agentdash_integration_api::AuthIdentity;
 use agentdash_workspace_module::workspace_module::presentation_protocol::{
     WorkspaceModulePresentationAcknowledgeRequest, WorkspaceModulePresentationChangeSequence,
     WorkspaceModulePresentationIntentId,
@@ -73,6 +84,38 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_run_workspace),
         )
         .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
+            axum::routing::post(submit_agent_run_composer_input),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/cancel",
+            axum::routing::post(cancel_agent_run),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox",
+            axum::routing::get(get_agent_run_mailbox),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/resume",
+            axum::routing::post(resume_agent_run_mailbox),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}",
+            axum::routing::delete(delete_agent_run_mailbox_message),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/move",
+            axum::routing::put(move_agent_run_mailbox_message),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/promote",
+            axum::routing::post(promote_agent_run_mailbox_message),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/content",
+            axum::routing::get(get_agent_run_mailbox_message_content),
+        )
+        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/snapshot",
             axum::routing::get(get_workspace_presentation_snapshot),
         )
@@ -92,6 +135,397 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/changes",
             axum::routing::get(get_agent_run_terminal_changes),
         )
+}
+
+async fn cancel_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<AgentRunCommandOnlyRequest>,
+) -> Result<Json<AgentRunCommandReceipt>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let observation = state
+        .services
+        .agent_run_product_projection
+        .runtime_snapshot_observation(&target)
+        .await
+        .map_err(agent_run_product_projection_error)?;
+    let snapshot = match observation {
+        AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => snapshot,
+        AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
+            return Err(ApiError::Conflict(
+                "AgentRun 尚未建立 committed Runtime binding".to_owned(),
+            ));
+        }
+        AgentRunProductRuntimeSnapshotObservation::Stale(_) => {
+            return Err(ApiError::Conflict(
+                "AgentRun Runtime projection 当前不可用于取消".to_owned(),
+            ));
+        }
+    };
+    let receipt = state
+        .services
+        .agent_run_product_projection_composition
+        .commands
+        .execute(AgentRunProductCommandRequest {
+            target,
+            client_command_id: body.client_command_id.clone(),
+            expected_revision: snapshot.revision,
+            command: AgentRunProductCommand::Interrupt,
+        })
+        .await
+        .map_err(agent_run_product_command_error)?;
+    Ok(Json(AgentRunCommandReceipt {
+        client_command_id: body.client_command_id,
+        status: "accepted".to_owned(),
+        duplicate: receipt.duplicate,
+        message: None,
+    }))
+}
+
+async fn submit_agent_run_composer_input(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<AgentRunComposerSubmitRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let delivery = state
+        .services
+        .agent_run_product_input_delivery
+        .deliver(DeliverAgentRunProductInput {
+            target: target.clone(),
+            content: body.input,
+            source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
+            origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User,
+            client_command_id: body.client_command_id.clone(),
+        })
+        .await
+        .map_err(product_input_delivery_error)?;
+    let mailbox_message = state
+        .services
+        .agent_run_product_mailbox
+        .snapshot(target.clone())
+        .await
+        .map_err(product_mailbox_error)?
+        .messages
+        .into_iter()
+        .find(|message| message.id == delivery.mailbox_message_id)
+        .map(super::agent_run_workspace::mailbox_message_contract);
+    let duplicate = delivery
+        .operation_receipt
+        .as_ref()
+        .is_some_and(|receipt| receipt.duplicate);
+    let outcome = if delivery.queued {
+        AgentRunMessageCommandOutcome::Queued
+    } else if mailbox_message.as_ref().is_some_and(|message| {
+        message.status == agentdash_contracts::agent_run_mailbox::MailboxMessageStatus::Steered
+    }) {
+        AgentRunMessageCommandOutcome::Steered
+    } else {
+        AgentRunMessageCommandOutcome::Launched
+    };
+    Ok(Json(AgentRunMessageCommandResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id: body.client_command_id,
+            status: if delivery.queued {
+                "queued".to_owned()
+            } else {
+                "accepted".to_owned()
+            },
+            duplicate,
+            message: None,
+        },
+        outcome,
+        mailbox_message,
+        accepted_refs: Some(agent_run_message_refs(&target)),
+        fork: None,
+    }))
+}
+
+async fn get_agent_run_mailbox(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<AgentRunMailboxView>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let snapshot = state
+        .services
+        .agent_run_product_mailbox
+        .snapshot(target)
+        .await
+        .map_err(product_mailbox_error)?;
+    let state_view = snapshot.state.map_or(
+        MailboxStateView {
+            paused: false,
+            pause_reason: None,
+            message: None,
+            can_resume: false,
+            hide_system_steer_messages: false,
+        },
+        |mailbox| MailboxStateView {
+            paused: mailbox.paused,
+            pause_reason: mailbox.pause_reason,
+            message: mailbox.pause_message,
+            can_resume: mailbox.paused,
+            hide_system_steer_messages: false,
+        },
+    );
+    Ok(Json(AgentRunMailboxView {
+        state: state_view,
+        messages: snapshot
+            .messages
+            .into_iter()
+            .filter(mailbox_message_visible)
+            .map(super::agent_run_workspace::mailbox_message_contract)
+            .collect(),
+    }))
+}
+
+async fn get_agent_run_mailbox_message_content(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
+) -> Result<Json<AgentRunMailboxMessageContentView>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let message_id = parse_uuid(&message_id, "message_id")?;
+    let input = state
+        .services
+        .agent_run_product_mailbox
+        .content(target, message_id)
+        .await
+        .map_err(product_mailbox_error)?;
+    Ok(Json(AgentRunMailboxMessageContentView {
+        id: message_id.to_string(),
+        input,
+    }))
+}
+
+async fn delete_agent_run_mailbox_message(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
+    Json(body): Json<AgentRunCommandOnlyRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    execute_product_mailbox_command(
+        state,
+        current_user,
+        run_id,
+        agent_id,
+        body.client_command_id,
+        ProductMailboxCommand::Delete {
+            message_id: parse_uuid(&message_id, "message_id")?,
+        },
+        AgentRunMessageCommandOutcome::Deleted,
+    )
+    .await
+}
+
+async fn promote_agent_run_mailbox_message(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
+    Json(body): Json<AgentRunCommandOnlyRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    execute_product_mailbox_command(
+        state,
+        current_user,
+        run_id,
+        agent_id,
+        body.client_command_id,
+        ProductMailboxCommand::Promote {
+            message_id: parse_uuid(&message_id, "message_id")?,
+        },
+        AgentRunMessageCommandOutcome::Queued,
+    )
+    .await
+}
+
+async fn move_agent_run_mailbox_message(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
+    Json(body): Json<AgentRunMailboxMoveRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let message_id = parse_uuid(&message_id, "message_id")?;
+    let after_message_id = body
+        .after_message_id
+        .as_deref()
+        .map(|value| parse_uuid(value, "after_message_id"))
+        .transpose()?;
+    state
+        .services
+        .agent_run_product_mailbox
+        .execute(ProductMailboxCommandRequest {
+            target: target.clone(),
+            client_command_id: body.client_command_id,
+            command: ProductMailboxCommand::Move {
+                message_id,
+                after_message_id,
+            },
+        })
+        .await
+        .map_err(product_mailbox_error)?;
+    let moved = state
+        .services
+        .agent_run_product_mailbox
+        .snapshot(target)
+        .await
+        .map_err(product_mailbox_error)?
+        .messages
+        .into_iter()
+        .find(|message| message.id == message_id)
+        .ok_or_else(|| ApiError::Internal("移动后的 mailbox message 不存在".to_owned()))?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "order_key": moved.order_key,
+    })))
+}
+
+async fn resume_agent_run_mailbox(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<AgentRunCommandOnlyRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    execute_product_mailbox_command(
+        state,
+        current_user,
+        run_id,
+        agent_id,
+        body.client_command_id,
+        ProductMailboxCommand::Resume,
+        AgentRunMessageCommandOutcome::Resumed,
+    )
+    .await
+}
+
+async fn execute_product_mailbox_command(
+    state: Arc<AppState>,
+    current_user: AuthIdentity,
+    run_id: String,
+    agent_id: String,
+    client_command_id: String,
+    command: ProductMailboxCommand,
+    response_outcome: AgentRunMessageCommandOutcome,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let outcome = state
+        .services
+        .agent_run_product_mailbox
+        .execute(ProductMailboxCommandRequest {
+            target,
+            client_command_id: client_command_id.clone(),
+            command,
+        })
+        .await
+        .map_err(product_mailbox_error)?;
+    Ok(Json(AgentRunMessageCommandResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id,
+            status: "completed".to_owned(),
+            duplicate: outcome.replayed,
+            message: None,
+        },
+        outcome: response_outcome,
+        mailbox_message: None,
+        accepted_refs: None,
+        fork: None,
+    }))
+}
+
+fn mailbox_message_visible(
+    message: &agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,
+) -> bool {
+    !matches!(
+        message.status,
+        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Dispatched
+            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Steered
+            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Deleted
+    )
+}
+
+fn agent_run_message_refs(target: &AgentRunTarget) -> AgentRunMessageAcceptedRefs {
+    AgentRunMessageAcceptedRefs {
+        run_ref: LifecycleRunRefDto {
+            run_id: target.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: target.run_id.to_string(),
+            agent_id: target.agent_id.to_string(),
+        },
+        frame_ref: None,
+        agent_run_turn_id: None,
+        protocol_turn_id: None,
+    }
+}
+
+fn product_input_delivery_error(error: AgentRunProductInputDeliveryError) -> ApiError {
+    match error {
+        AgentRunProductInputDeliveryError::EmptyInput
+        | AgentRunProductInputDeliveryError::InvalidClientCommandId => {
+            ApiError::BadRequest(error.to_string())
+        }
+        AgentRunProductInputDeliveryError::StaleProjection
+        | AgentRunProductInputDeliveryError::Command(_) => ApiError::Conflict(error.to_string()),
+        AgentRunProductInputDeliveryError::Mailbox(_)
+        | AgentRunProductInputDeliveryError::Projection(_) => ApiError::Internal(error.to_string()),
+    }
+}
+
+fn product_mailbox_error(error: ProductMailboxError) -> ApiError {
+    match error {
+        ProductMailboxError::TargetNotBound
+        | ProductMailboxError::BindingTargetMismatch
+        | ProductMailboxError::Command(_) => ApiError::Conflict(error.to_string()),
+        ProductMailboxError::Invalid(_) => ApiError::BadRequest(error.to_string()),
+        ProductMailboxError::Binding(_)
+        | ProductMailboxError::Read(_)
+        | ProductMailboxError::SnapshotDigestMismatch => ApiError::Internal(error.to_string()),
+    }
 }
 
 #[derive(Debug, Deserialize)]

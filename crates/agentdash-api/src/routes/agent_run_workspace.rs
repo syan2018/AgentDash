@@ -1,7 +1,7 @@
+use agentdash_application_agentrun::agent_run::runtime_capability::project_capability_state_from_frame;
 use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, AgentRunProductRuntimeSnapshotObservation, workspace as app_workspace,
 };
-use agentdash_application_agentrun::agent_run::runtime_capability::project_capability_state_from_frame;
 use agentdash_contracts::agent_run_mailbox::{
     ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
     MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
@@ -198,7 +198,7 @@ async fn lineage_ref(
     })
 }
 
-fn mailbox_message_contract(
+pub(crate) fn mailbox_message_contract(
     message: agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,
 ) -> MailboxMessageView {
     use agentdash_domain::agent_run_mailbox as domain;

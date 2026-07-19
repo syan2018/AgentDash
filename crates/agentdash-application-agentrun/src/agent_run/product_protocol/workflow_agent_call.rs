@@ -837,23 +837,21 @@ impl WorkflowAgentCallRuntimePort for ProductWorkflowAgentCallRuntimeAdapter {
 
 fn workflow_input_blocks(
     input: &[WorkflowAgentCallContentBlock],
-) -> Result<Vec<agentdash_agent_protocol::UserInputBlock>, String> {
-    let blocks = input
+) -> Result<Vec<agentdash_agent_service_api::AgentInputContent>, String> {
+    Ok(input
         .iter()
         .map(|block| match block {
-            WorkflowAgentCallContentBlock::Text { text } => Ok(text.clone()),
+            WorkflowAgentCallContentBlock::Text { text } => {
+                agentdash_agent_service_api::AgentInputContent::Text { text: text.clone() }
+            }
             WorkflowAgentCallContentBlock::Structured { schema, value } => {
-                serde_json::to_string(&serde_json::json!({
-                    "schema": schema,
-                    "value": value,
-                }))
-                .map_err(|error| error.to_string())
+                agentdash_agent_service_api::AgentInputContent::Structured {
+                    schema: schema.clone(),
+                    value: value.clone(),
+                }
             }
         })
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(agentdash_agent_protocol::text_user_input_blocks(
-        &blocks.join("\n"),
-    ))
+        .collect())
 }
 
 #[derive(Clone)]

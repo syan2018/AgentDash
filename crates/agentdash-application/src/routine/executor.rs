@@ -444,7 +444,9 @@ impl RoutineExecutor {
             .deliver(DeliverAgentRunProductInput {
                 target,
                 origin: MailboxMessageOrigin::System,
-                content: agentdash_agent_protocol::text_user_input_blocks(prompt),
+                content: vec![agentdash_agent_service_api::AgentInputContent::Text {
+                    text: prompt.to_string(),
+                }],
                 source: MailboxSourceIdentity::routine_trigger()
                     .with_source_ref(routine.id.to_string())
                     .with_correlation_ref(execution.id.to_string()),

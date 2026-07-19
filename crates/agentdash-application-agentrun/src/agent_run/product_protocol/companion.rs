@@ -149,8 +149,9 @@ impl CompiledInitialContextPackage {
         mode: CompiledFreshContextMode,
         contributions: &[CompiledInitialContextContribution],
     ) -> String {
-        let canonical = serde_json::to_vec(&(package_id, schema_version, mode, contributions))
-            .expect("compiled initial context package must serialize");
+        let canonical =
+            serde_json::to_vec(&(package_id, schema_version.to_string(), mode, contributions))
+                .expect("compiled initial context package must serialize");
         format!("sha256:{:x}", Sha256::digest(canonical))
     }
 

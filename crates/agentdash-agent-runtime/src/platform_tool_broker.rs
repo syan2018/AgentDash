@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -215,6 +216,8 @@ pub trait RuntimeToolExecutor: Send + Sync {
 
 pub struct PlatformToolBroker {
     executors: BTreeMap<AgentToolName, Arc<dyn RuntimeToolExecutor>>,
+    runtime_executors:
+        RwLock<BTreeMap<RuntimeThreadId, BTreeMap<AgentToolName, Arc<dyn RuntimeToolExecutor>>>>,
     authorization: Arc<dyn RuntimeToolAuthorizationPort>,
 }
 
@@ -235,6 +238,7 @@ impl PlatformToolBroker {
         }
         Ok(Self {
             executors: catalog,
+            runtime_executors: RwLock::new(BTreeMap::new()),
             authorization,
         })
     }
@@ -252,15 +256,76 @@ impl PlatformToolBroker {
             .collect()
     }
 
+    /// Binds the exact dynamic tool catalog compiled for one immutable Runtime target.
+    ///
+    /// Static Product/VFS tools remain process registrations. MCP and other surface-scoped tools
+    /// live here so the compiler and callback executor consume the same definitions and handles.
+    pub async fn bind_runtime_catalog(
+        &self,
+        runtime_thread_id: RuntimeThreadId,
+        executors: impl IntoIterator<Item = Arc<dyn RuntimeToolExecutor>>,
+    ) -> Result<Vec<RuntimeToolDefinition>, RuntimeToolBrokerError> {
+        let mut catalog = BTreeMap::new();
+        for executor in executors {
+            let definition = executor.definition();
+            if self.executors.contains_key(&definition.name)
+                || catalog.insert(definition.name.clone(), executor).is_some()
+            {
+                return Err(RuntimeToolBrokerError::DuplicateTool(
+                    definition.name.to_string(),
+                ));
+            }
+        }
+        let definitions = catalog
+            .values()
+            .map(|executor| executor.definition())
+            .collect::<Vec<_>>();
+        let mut runtime_executors = self.runtime_executors.write().await;
+        if let Some(existing) = runtime_executors.get(&runtime_thread_id) {
+            let existing_definitions = existing
+                .values()
+                .map(|executor| executor.definition())
+                .collect::<Vec<_>>();
+            if existing_definitions == definitions {
+                return Ok(definitions);
+            }
+            return Err(RuntimeToolBrokerError::DuplicateTool(format!(
+                "runtime catalog for {runtime_thread_id}"
+            )));
+        }
+        runtime_executors.insert(runtime_thread_id, catalog);
+        Ok(definitions)
+    }
+
+    pub async fn runtime_definitions(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+    ) -> Vec<RuntimeToolDefinition> {
+        self.runtime_executors
+            .read()
+            .await
+            .get(runtime_thread_id)
+            .into_iter()
+            .flat_map(BTreeMap::values)
+            .map(|executor| executor.definition())
+            .collect()
+    }
+
     pub async fn invoke(
         &self,
         context: RuntimeToolResolvedContext,
         tool: AgentToolName,
         arguments: Value,
     ) -> Result<AgentToolResult, RuntimeToolBrokerError> {
-        let executor = self
-            .executors
-            .get(&tool)
+        let scoped = self
+            .runtime_executors
+            .read()
+            .await
+            .get(&context.runtime_thread_id)
+            .and_then(|catalog| catalog.get(&tool))
+            .cloned();
+        let executor = scoped
+            .or_else(|| self.executors.get(&tool).cloned())
             .ok_or_else(|| RuntimeToolBrokerError::UnknownTool(tool.to_string()))?;
         let definition = executor.definition();
         let grant = self
@@ -376,6 +441,27 @@ mod tests {
         }
     }
 
+    struct DynamicTool;
+
+    #[async_trait]
+    impl RuntimeToolExecutor for DynamicTool {
+        fn definition(&self) -> RuntimeToolDefinition {
+            RuntimeToolDefinition {
+                name: AgentToolName::new("mcp_docs_search").unwrap(),
+                description: "Search docs".into(),
+                parameters_schema: serde_json::json!({"type": "object"}),
+                permission: RuntimeToolPermission::ProductWrite,
+                effect: RuntimeToolEffect::ProductMutation,
+            }
+        }
+
+        async fn execute(&self, _invocation: RuntimeToolInvocation) -> AgentToolResult {
+            AgentToolResult::Completed {
+                output: serde_json::json!({"result": "scoped"}),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn required_vfs_tool_executes_through_final_broker() {
         let broker =
@@ -452,6 +538,53 @@ mod tests {
             error,
             RuntimeToolBrokerError::AuthorizationDenied { code, .. }
                 if code == "missing_product_grant"
+        ));
+    }
+
+    #[tokio::test]
+    async fn dynamic_catalog_is_idempotent_and_isolated_by_runtime_thread() {
+        let broker =
+            PlatformToolBroker::new([Arc::new(MountsList) as Arc<_>], Arc::new(Allow)).unwrap();
+        let thread = RuntimeThreadId::new("thread-test").unwrap();
+        let first = broker
+            .bind_runtime_catalog(
+                thread.clone(),
+                [Arc::new(DynamicTool) as Arc<dyn RuntimeToolExecutor>],
+            )
+            .await
+            .unwrap();
+        let replay = broker
+            .bind_runtime_catalog(
+                thread,
+                [Arc::new(DynamicTool) as Arc<dyn RuntimeToolExecutor>],
+            )
+            .await
+            .unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(
+            broker
+                .invoke(
+                    resolved_context(),
+                    AgentToolName::new("mcp_docs_search").unwrap(),
+                    serde_json::json!({})
+                )
+                .await
+                .unwrap(),
+            AgentToolResult::Completed {
+                output: serde_json::json!({"result": "scoped"})
+            }
+        );
+        let mut other = resolved_context();
+        other.runtime_thread_id = RuntimeThreadId::new("another-thread").unwrap();
+        assert!(matches!(
+            broker
+                .invoke(
+                    other,
+                    AgentToolName::new("mcp_docs_search").unwrap(),
+                    serde_json::json!({})
+                )
+                .await,
+            Err(RuntimeToolBrokerError::UnknownTool(_))
         ));
     }
 

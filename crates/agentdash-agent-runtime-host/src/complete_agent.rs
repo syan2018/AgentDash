@@ -10,7 +10,7 @@ use agentdash_agent_runtime::{
     ManagedRuntimeAgentBinding, ManagedRuntimeCreateOutcome, ManagedRuntimeDispatchContext,
     ManagedRuntimeForkOutcome, ManagedRuntimeLifecycleError, ManagedRuntimeLifecycleInspection,
     ManagedRuntimeLifecyclePort, ManagedRuntimeResumeOutcome, ManagedRuntimeStateRepository,
-    production_managed_runtime_gateway,
+    bind_complete_agent_surface, production_managed_runtime_gateway,
 };
 use agentdash_agent_runtime_contract::{
     ManagedAgentRuntimeGateway, ManagedRuntimeGatewayError, RuntimeThreadId,
@@ -22,10 +22,11 @@ use agentdash_agent_service_api::{
     AgentHostCallbackBinding, AgentIdempotencyKey, AgentPayloadDigest, AgentProfileDigest,
     AgentReadQuery, AgentReceiptState, AgentRuntimeOffer, AgentServiceDescriptor,
     AgentServiceError, AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceProfile,
-    AgentSurfaceSemanticFacet, AppliedAgentCommandReceipt, AppliedAgentSurface,
-    AppliedAgentSurfaceReceipt, AppliedForkAgentReceipt, ApplyBoundAgentSurface, BoundAgentSurface,
-    CompleteAgentService, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
-    InitialAgentContextPackage, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentSurfaceSnapshot, AppliedAgentCommandReceipt,
+    AppliedAgentSurface, AppliedAgentSurfaceReceipt, AppliedForkAgentReceipt,
+    ApplyBoundAgentSurface, BoundAgentSurface, CompleteAgentService, CreateAgentCommand,
+    ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage, ResumeAgentCommand,
+    RevokeBoundAgentSurface, SemanticFidelity,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,23 @@ pub struct CompleteAgentRuntimeTarget {
     pub profile_digest: AgentProfileDigest,
     pub bound_surface: BoundAgentSurface,
     pub callbacks: AgentHostCallbackBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompleteAgentRuntimeTargetProvisioning {
+    pub idempotency_key: AgentIdempotencyKey,
+    pub request_digest: AgentPayloadDigest,
+    pub target: CompleteAgentRuntimeTarget,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompleteAgentRuntimeTargetProvisioningRequest {
+    pub idempotency_key: AgentIdempotencyKey,
+    pub request_digest: AgentPayloadDigest,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub service_instance_id: AgentServiceInstanceId,
+    pub desired_surface: AgentSurfaceSnapshot,
+    pub callback_deadline_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,6 +301,8 @@ pub enum CompleteAgentHostError {
     StaleLeaseOutcome,
     #[error("Complete Agent binding is not dispatchable: {reason}")]
     DispatchRejected { reason: String },
+    #[error("Complete Agent Runtime target provisioning conflicts with durable facts")]
+    ProvisioningConflict,
     #[error("Complete Agent host invariant failed: {reason}")]
     Invariant { reason: String },
     #[error("Complete Agent payload cannot be encoded: {reason}")]
@@ -469,6 +489,101 @@ impl CompleteAgentHost {
             .insert(target.runtime_thread_id.clone(), target);
         self.commit(snapshot.revision, facts).await?;
         Ok(())
+    }
+
+    /// Atomically compiles and registers one immutable Runtime target.
+    ///
+    /// Selection is supplied by the composition root, while the Host exclusively owns offer
+    /// intersection, binding generation, callback route identity, and durable idempotency.
+    pub async fn provision_runtime_target(
+        &self,
+        request: CompleteAgentRuntimeTargetProvisioningRequest,
+    ) -> Result<CompleteAgentRuntimeTargetProvisioning, CompleteAgentHostError> {
+        if request.callback_deadline_ms == 0 {
+            return Err(CompleteAgentHostError::Invariant {
+                reason: "Runtime target callback deadline must be positive".to_owned(),
+            });
+        }
+        loop {
+            let snapshot = self.repository.load().await?;
+            if let Some(existing) = snapshot
+                .facts
+                .runtime_target_provisionings
+                .get(&request.idempotency_key)
+            {
+                if existing.request_digest == request.request_digest
+                    && existing.target.runtime_thread_id == request.runtime_thread_id
+                    && existing.target.service_instance_id == request.service_instance_id
+                {
+                    return Ok(existing.clone());
+                }
+                return Err(CompleteAgentHostError::ProvisioningConflict);
+            }
+            let offer = snapshot
+                .facts
+                .offers
+                .get(&request.service_instance_id)
+                .ok_or_else(|| CompleteAgentHostError::UnknownService {
+                    instance_id: request.service_instance_id.clone(),
+                })?;
+            let bound_surface = bind_complete_agent_surface(&request.desired_surface, offer)
+                .map_err(|error| CompleteAgentHostError::DispatchRejected {
+                    reason: error.to_string(),
+                })?;
+            let generation = AgentBindingGeneration(1);
+            let callback_route = callback_route_id(
+                &request.runtime_thread_id,
+                &request.service_instance_id,
+                generation,
+                &bound_surface,
+            )?;
+            let target = CompleteAgentRuntimeTarget {
+                runtime_thread_id: request.runtime_thread_id.clone(),
+                service_instance_id: request.service_instance_id.clone(),
+                generation,
+                profile_digest: offer.profile_digest.clone(),
+                bound_surface,
+                callbacks: AgentHostCallbackBinding {
+                    route_id: callback_route,
+                    binding_generation: generation,
+                    delivery: AgentSurfaceRoute::AgentNativeCallback,
+                    default_deadline_ms: request.callback_deadline_ms,
+                },
+            };
+            if let Some(existing) = snapshot
+                .facts
+                .runtime_targets
+                .get(&request.runtime_thread_id)
+                && existing != &target
+            {
+                return Err(CompleteAgentHostError::ProvisioningConflict);
+            }
+            let provisioning = CompleteAgentRuntimeTargetProvisioning {
+                idempotency_key: request.idempotency_key.clone(),
+                request_digest: request.request_digest.clone(),
+                target: target.clone(),
+            };
+            let mut facts = snapshot.facts;
+            facts
+                .runtime_targets
+                .entry(request.runtime_thread_id.clone())
+                .or_insert(target);
+            facts
+                .runtime_target_provisionings
+                .insert(request.idempotency_key.clone(), provisioning.clone());
+            match self
+                .repository
+                .commit(CompleteAgentHostCommit {
+                    expected_revision: snapshot.revision,
+                    facts,
+                })
+                .await
+            {
+                Ok(_) => return Ok(provisioning),
+                Err(CompleteAgentHostStoreError::Conflict { .. }) => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
 
     pub async fn runtime_target(
@@ -2328,6 +2443,27 @@ fn runtime_binding_id(
     CompleteAgentBindingId::new(format!("runtime-binding:{runtime_thread_id}"))
 }
 
+fn callback_route_id(
+    runtime_thread_id: &RuntimeThreadId,
+    service_instance_id: &AgentServiceInstanceId,
+    generation: AgentBindingGeneration,
+    bound_surface: &BoundAgentSurface,
+) -> Result<AgentCallbackRouteId, CompleteAgentHostError> {
+    let mut digest = Sha256::new();
+    digest.update(runtime_thread_id.as_str().as_bytes());
+    digest.update([0]);
+    digest.update(service_instance_id.as_str().as_bytes());
+    digest.update([0]);
+    digest.update(generation.0.to_be_bytes());
+    digest.update([0]);
+    digest.update(bound_surface.digest.as_str().as_bytes());
+    AgentCallbackRouteId::new(format!("runtime-callback:{:x}", digest.finalize())).map_err(
+        |error| CompleteAgentHostError::Invariant {
+            reason: error.to_string(),
+        },
+    )
+}
+
 fn lifecycle_meta(
     context: &ManagedRuntimeDispatchContext,
     generation: AgentBindingGeneration,
@@ -2584,6 +2720,7 @@ fn map_lifecycle_host_error(error: CompleteAgentHostError) -> ManagedRuntimeLife
             ManagedRuntimeLifecycleError::Invalid { reason }
         }
         CompleteAgentHostError::EffectIdentityConflict
+        | CompleteAgentHostError::ProvisioningConflict
         | CompleteAgentHostError::EffectObservationConflict { .. }
         | CompleteAgentHostError::EffectEvidenceConflict { .. }
         | CompleteAgentHostError::EffectNotApplied { .. } => {
@@ -3251,6 +3388,7 @@ mod tests {
                 },
                 applied_surface: self.applied_surface.lock().await.clone(),
                 initial_context: None,
+                conversation_history: Vec::new(),
             })
         }
 
@@ -3446,6 +3584,72 @@ mod tests {
         assert_eq!(
             ensure_same_effect(&record, &candidate),
             Err(CompleteAgentHostError::EffectIdentityConflict)
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_target_provisioning_owns_surface_generation_route_and_durable_idempotency() {
+        let repository = Arc::new(FixtureHostRepository::default());
+        let host = CompleteAgentHost::new(
+            repository.clone(),
+            Arc::new(FixtureServiceRegistry::default()),
+        );
+        let service = lifecycle_service();
+        let instance_id = AgentServiceInstanceId::new("lifecycle-service").expect("service");
+        host.register_verified_service(
+            fixture_verified_registration(
+                instance_id.clone(),
+                fixture_placement(),
+                descriptor().profile_digest,
+            ),
+            service,
+        )
+        .await
+        .expect("register lifecycle service");
+        let request = CompleteAgentRuntimeTargetProvisioningRequest {
+            idempotency_key: AgentIdempotencyKey::new("provision-runtime-a").expect("idempotency"),
+            request_digest: AgentPayloadDigest::new("sha256:provision-a").expect("digest"),
+            runtime_thread_id: RuntimeThreadId::new("runtime-provisioned").expect("thread"),
+            service_instance_id: instance_id,
+            desired_surface: AgentSurfaceSnapshot {
+                revision: AgentSurfaceRevision(7),
+                digest: agentdash_agent_service_api::AgentSurfaceDigest::new("surface-7")
+                    .expect("surface digest"),
+                requirements: Vec::new(),
+            },
+            callback_deadline_ms: 30_000,
+        };
+
+        let first = host
+            .provision_runtime_target(request.clone())
+            .await
+            .expect("provision target");
+        let replay = host
+            .provision_runtime_target(request.clone())
+            .await
+            .expect("replay provisioning");
+
+        assert_eq!(replay, first);
+        assert_eq!(first.target.generation, AgentBindingGeneration(1));
+        assert_eq!(
+            first.target.callbacks.binding_generation,
+            first.target.generation
+        );
+        assert_eq!(first.target.callbacks.default_deadline_ms, 30_000);
+        assert_eq!(
+            first.target.bound_surface.digest,
+            request.desired_surface.digest
+        );
+        let snapshot = repository.load().await.expect("Host facts");
+        assert_eq!(snapshot.facts.runtime_targets.len(), 1);
+        assert_eq!(snapshot.facts.runtime_target_provisionings.len(), 1);
+
+        let mut conflict = request;
+        conflict.request_digest =
+            AgentPayloadDigest::new("sha256:another-request").expect("digest");
+        assert_eq!(
+            host.provision_runtime_target(conflict).await,
+            Err(CompleteAgentHostError::ProvisioningConflict)
         );
     }
 

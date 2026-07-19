@@ -18,6 +18,7 @@ use crate::{
     CompleteAgentEffectRecord, CompleteAgentEffectState, CompleteAgentLifecycleAppliedReceipt,
     CompleteAgentLifecycleEffectRecord, CompleteAgentLifecycleOperationKind,
     CompleteAgentLifecycleOutcome, CompleteAgentPlacement, CompleteAgentRuntimeTarget,
+    CompleteAgentRuntimeTargetProvisioning,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 
@@ -121,6 +122,10 @@ pub struct CompleteAgentHostFacts {
     pub leases: BTreeMap<CompleteAgentBindingId, CompleteAgentBindingLease>,
     pub lease_epochs: BTreeMap<CompleteAgentBindingId, u64>,
     pub runtime_targets: BTreeMap<RuntimeThreadId, CompleteAgentRuntimeTarget>,
+    pub runtime_target_provisionings: BTreeMap<
+        agentdash_agent_service_api::AgentIdempotencyKey,
+        CompleteAgentRuntimeTargetProvisioning,
+    >,
     pub lifecycle_effects: BTreeMap<AgentEffectIdentity, CompleteAgentLifecycleEffectRecord>,
 }
 
@@ -752,6 +757,24 @@ pub fn validate_complete_agent_host_facts(
     for (thread_id, target) in &current.runtime_targets {
         if candidate.runtime_targets.get(thread_id) != Some(target) {
             return invariant("Runtime target history cannot be removed or rewritten");
+        }
+    }
+    for (idempotency_key, provisioning) in &candidate.runtime_target_provisionings {
+        if idempotency_key != &provisioning.idempotency_key
+            || provisioning.request_digest.as_str().trim().is_empty()
+            || candidate
+                .runtime_targets
+                .get(&provisioning.target.runtime_thread_id)
+                != Some(&provisioning.target)
+        {
+            return invariant(
+                "Runtime target provisioning must identify one immutable registered target",
+            );
+        }
+    }
+    for (idempotency_key, provisioning) in &current.runtime_target_provisionings {
+        if candidate.runtime_target_provisionings.get(idempotency_key) != Some(provisioning) {
+            return invariant("Runtime target provisioning history cannot be removed or rewritten");
         }
     }
     for (effect_id, effect) in &candidate.lifecycle_effects {
@@ -2363,6 +2386,7 @@ mod tests {
             leases: BTreeMap::from([(binding_id.clone(), lease)]),
             lease_epochs: BTreeMap::from([(binding_id, 1)]),
             runtime_targets: BTreeMap::new(),
+            runtime_target_provisionings: BTreeMap::new(),
             lifecycle_effects: BTreeMap::new(),
         }
     }

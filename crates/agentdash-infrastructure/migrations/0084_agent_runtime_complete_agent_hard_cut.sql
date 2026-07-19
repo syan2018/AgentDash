@@ -940,6 +940,7 @@ VALUES (
         "leases": {},
         "lease_epochs": {},
         "runtime_targets": {},
+        "runtime_target_provisionings": {},
         "lifecycle_effects": {}
     }'::JSONB
 );

@@ -66,9 +66,9 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
   复用既有 orchestration reducer。
 - [ ] Companion Product Tool contribution 接入最终 typed Broker catalog；VFS、Task、
   Workspace Module Present 与 dynamic MCP 已进入 production catalog。
-- [ ] 将 AgentFrame 已声明但 production Broker 缺失的
-  `workspace_module_list/describe/operate/invoke` 以 typed Product command seam
-  等价恢复；`workspace_module_present` 已进入 catalog。
+- [ ] AgentFrame 声明的 Workspace Module tools 中，list/describe/invoke/present 已通过
+  typed Product command seam 进入 production Broker；operate 等待 request-scoped
+  canonical RuntimeSurfaceUpdate adapter。
 
 ### Product behavior tests
 
@@ -120,7 +120,9 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [ ] Dash collaboration tool spawn/read/wait/result。
 - [x] Workflow AgentCall，并覆盖重启 inspect 后补齐 Product convergence。
 - [x] Routine trigger → AgentRun → terminal，并覆盖 prepared 状态进程重启恢复。
-- [ ] Workspace Module list/describe/operate/invoke/present 与 surface/presentation feed。
+- [ ] Workspace Module list/describe/invoke/present 已进入 production Broker；等待 operate
+  的 immutable Frame revision、Rebind/Activate、AppliedResourceSurface 与 presentation
+  feed 纵向 tracer。
 - [ ] Canvas read/write/promotion/diagnostics。
 - [ ] VFS surface read/list/search。
 - [x] Lifecycle VFS canonical `events.json` 与 derived indexes。

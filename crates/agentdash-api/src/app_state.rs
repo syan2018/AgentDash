@@ -26,6 +26,7 @@ use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfi
 use agentdash_application::product_runtime_surface::{
     ProductAgentRunAppliedResourceSurfaceCompiler, ProductAgentRunFactsResolver,
 };
+use agentdash_application::product_runtime_surface_update::ProductAgentRunRuntimeSurfaceUpdateService;
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::{RoutineExecutor, RoutineRuntimeTurnTerminalObserver};
 use agentdash_application::runtime_tools::RuntimeThreadToolServices;
@@ -63,7 +64,9 @@ use agentdash_application_lifecycle::{
     LifecycleWorkflowAgentNodeMaterializationAdapter,
     LifecycleWorkflowAgentNodeMaterializationDeps,
 };
-use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+use agentdash_application_ports::agent_frame_materialization::{
+    AgentRunFrameConstructionPort, AgentRunRuntimeSurfaceUpdatePort,
+};
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolService,
 };
@@ -351,6 +354,13 @@ impl AppState {
                 ProductRuntimeToolKind::WorkspaceModuleInvoke,
                 workspace_module_runtime_tool_schema(ProductRuntimeToolKind::WorkspaceModuleInvoke),
             ));
+        let workspace_module_operate_runtime_tool =
+            Arc::new(DeferredProductRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModuleOperate,
+                workspace_module_runtime_tool_schema(
+                    ProductRuntimeToolKind::WorkspaceModuleOperate,
+                ),
+            ));
         let applied_vfs_tools = Arc::new(
             AppliedVfsRuntimeToolService::new(vfs_service.clone(), shell_terminal_registry.clone())
                 .with_materialization(Some(vfs_materialization_service))
@@ -375,6 +385,7 @@ impl AppState {
             companion_respond_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_list_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_describe_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+            workspace_module_operate_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_invoke_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
         ]));
         let runtime_tool_authorizer = Arc::new(ProductRuntimeToolAuthorizer::new(
@@ -482,6 +493,13 @@ impl AppState {
         let product_resource_materializer = Arc::new(
             product_persistence.applied_resource_surface_materializer(product_surface_compiler),
         );
+        let product_runtime_surface_updates: Arc<dyn AgentRunRuntimeSurfaceUpdatePort> =
+            Arc::new(ProductAgentRunRuntimeSurfaceUpdateService::new(
+                repos.clone(),
+                runtime_product_bindings.clone(),
+                product_resource_materializer.clone(),
+                product_persistence.applied_resource_surfaces.clone(),
+            ));
 
         let product = Arc::new(
             AgentRunProductProjectionComposition::build(
@@ -633,6 +651,7 @@ impl AppState {
                 backend_registry.clone(),
             ));
         let workspace_module_runtime_tool_deps = WorkspaceModuleRuntimeToolDeps {
+            repos: repos.clone(),
             runtime_bindings: runtime_product_bindings.clone(),
             applied_surfaces: product_persistence.applied_resource_surfaces.clone(),
             frames: repos.agent_frame_repo.clone(),
@@ -642,6 +661,7 @@ impl AppState {
             extension_gateway: extension_gateway.clone(),
             channel_invoker: extension_runtime_channel_invoker.clone(),
             backend_service_invoker: extension_runtime_backend_service_invoker,
+            runtime_surface_updates: product_runtime_surface_updates,
         };
         workspace_module_list_runtime_tool
             .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
@@ -658,6 +678,12 @@ impl AppState {
         workspace_module_invoke_runtime_tool
             .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
                 ProductRuntimeToolKind::WorkspaceModuleInvoke,
+                workspace_module_runtime_tool_deps.clone(),
+            )))
+            .map_err(anyhow::Error::msg)?;
+        workspace_module_operate_runtime_tool
+            .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModuleOperate,
                 workspace_module_runtime_tool_deps,
             )))
             .map_err(anyhow::Error::msg)?;

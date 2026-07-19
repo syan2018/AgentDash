@@ -12,6 +12,10 @@ use agentdash_application_extension_gateway::{
     ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext,
     RuntimeInvocationRequest, RuntimeTarget, RuntimeTrace, attach_extension_invocation_workspace,
 };
+use agentdash_application_ports::agent_frame_materialization::{
+    AgentRunRuntimeSurfaceUpdatePort, CanvasVisibilityReason, RuntimeSurfaceChange,
+    RuntimeSurfaceUpdateRequest,
+};
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
     ProductRuntimeToolService,
@@ -20,7 +24,11 @@ use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationVisibility,
 };
-use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
+use agentdash_domain::canvas::{
+    CanvasAccessProjection, CanvasDataBinding, CanvasRepository, CanvasRuntimeStateRepository,
+    CanvasScope,
+};
+use agentdash_domain::project::ProjectAuthorizationContext;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_workspace_module::workspace_module::{
@@ -31,6 +39,13 @@ use agentdash_workspace_module::workspace_module::{
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+use crate::canvas::{
+    CanvasMutationInput, CopyCanvasInput, CreatePersonalCanvasInput, canvas_module_id,
+    canvas_presentation_uri, canvas_vfs_mount_id, copy_canvas_to_personal, create_personal_canvas,
+    load_canvas_by_project_mount_id, normalize_canvas_mount_id,
+};
+use crate::repository_set::RepositorySet;
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceModuleDescribeArguments {
@@ -43,6 +58,40 @@ struct WorkspaceModuleInvokeArguments {
     operation_key: String,
     #[serde(default)]
     input: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceModuleOperateArguments {
+    operation: String,
+    #[serde(default)]
+    input: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateCanvasArguments {
+    canvas_mount_id: Option<String>,
+    title: Option<String>,
+    description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AttachCanvasArguments {
+    canvas_mount_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CopyCanvasArguments {
+    source_mount_id: String,
+    canvas_mount_id: Option<String>,
+    title: Option<String>,
+    description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BindCanvasDataArguments {
+    alias: String,
+    source_uri: String,
+    content_type: Option<String>,
 }
 
 pub fn workspace_module_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Value {
@@ -102,6 +151,7 @@ pub fn workspace_module_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Val
 
 #[derive(Clone)]
 pub struct WorkspaceModuleRuntimeToolDeps {
+    pub repos: RepositorySet,
     pub runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub applied_surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
     pub frames: Arc<dyn AgentFrameRepository>,
@@ -111,6 +161,7 @@ pub struct WorkspaceModuleRuntimeToolDeps {
     pub extension_gateway: Arc<ExtensionGateway>,
     pub channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
     pub backend_service_invoker: Arc<ExtensionRuntimeBackendServiceInvoker>,
+    pub runtime_surface_updates: Arc<dyn AgentRunRuntimeSurfaceUpdatePort>,
 }
 
 pub struct ApplicationWorkspaceModuleRuntimeToolService {
@@ -125,9 +176,10 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                 kind,
                 ProductRuntimeToolKind::WorkspaceModuleList
                     | ProductRuntimeToolKind::WorkspaceModuleDescribe
+                    | ProductRuntimeToolKind::WorkspaceModuleOperate
                     | ProductRuntimeToolKind::WorkspaceModuleInvoke
             ),
-            "Workspace Module Product service only supports list, describe and invoke until the canonical surface-update command is attached"
+            "Workspace Module Product service only supports list, describe, operate and invoke"
         );
         Self { kind, deps }
     }
@@ -402,6 +454,252 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
         .await
     }
 
+    async fn execute_operate(
+        &self,
+        request: ProductRuntimeToolRequest,
+    ) -> ProductRuntimeToolOutcome {
+        let arguments: WorkspaceModuleOperateArguments =
+            match serde_json::from_value(request.arguments.clone()) {
+                Ok(arguments) => arguments,
+                Err(error) => {
+                    return rejected(
+                        "workspace_module_invalid_arguments",
+                        format!("invalid workspace_module_operate arguments: {error}"),
+                    );
+                }
+            };
+        let operation = arguments.operation.trim();
+        let agent = match self
+            .deps
+            .repos
+            .lifecycle_agent_repo
+            .get(request.context.target.agent_id)
+            .await
+        {
+            Ok(Some(agent))
+                if agent.run_id == request.context.target.run_id
+                    && agent.project_id == request.context.target.project_id =>
+            {
+                agent
+            }
+            Ok(Some(_)) => {
+                return rejected(
+                    "workspace_module_agent_target_mismatch",
+                    "LifecycleAgent does not match the authorized Product target",
+                );
+            }
+            Ok(None) => {
+                return rejected(
+                    "workspace_module_agent_missing",
+                    "authorized LifecycleAgent does not exist",
+                );
+            }
+            Err(error) => {
+                return failed("workspace_module_agent_query_failed", error.to_string());
+            }
+        };
+        let current_user =
+            ProjectAuthorizationContext::new(agent.created_by_user_id, Vec::new(), false);
+        let (canvas, action, access) = match operation {
+            "canvas.create" => {
+                let input: CreateCanvasArguments = match serde_json::from_value(arguments.input) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        return rejected(
+                            "workspace_module_invalid_arguments",
+                            format!("invalid canvas.create input: {error}"),
+                        );
+                    }
+                };
+                let Some(title) = input
+                    .title
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+                else {
+                    return rejected(
+                        "workspace_module_invalid_arguments",
+                        "title is required for canvas.create",
+                    );
+                };
+                match create_personal_canvas(
+                    &self.deps.repos,
+                    &current_user,
+                    CreatePersonalCanvasInput {
+                        project_id: request.context.target.project_id,
+                        mount_id: input.canvas_mount_id,
+                        title: title.to_string(),
+                        description: input.description,
+                        mutation: CanvasMutationInput::default(),
+                    },
+                )
+                .await
+                {
+                    Ok(canvas) => (canvas.canvas, "created", canvas.access),
+                    Err(error) => {
+                        return failed("workspace_module_canvas_create_failed", error.to_string());
+                    }
+                }
+            }
+            "canvas.attach" => {
+                let input: AttachCanvasArguments = match serde_json::from_value(arguments.input) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        return rejected(
+                            "workspace_module_invalid_arguments",
+                            format!("invalid canvas.attach input: {error}"),
+                        );
+                    }
+                };
+                let mount_id = match normalize_canvas_mount_id(&input.canvas_mount_id) {
+                    Ok(mount_id) => mount_id,
+                    Err(error) => {
+                        return rejected("workspace_module_invalid_arguments", error.to_string());
+                    }
+                };
+                let canvas = match load_canvas_by_project_mount_id(
+                    &self.deps.repos,
+                    request.context.target.project_id,
+                    &mount_id,
+                )
+                .await
+                {
+                    Ok(canvas) => canvas,
+                    Err(error) => {
+                        return rejected("workspace_module_canvas_not_found", error.to_string());
+                    }
+                };
+                if canvas.scope == CanvasScope::Personal
+                    && canvas.owner_user_id.as_deref() != Some(current_user.user_id.as_str())
+                {
+                    return rejected(
+                        "workspace_module_canvas_not_visible",
+                        "personal Canvas is not owned by the AgentRun product identity",
+                    );
+                }
+                let editable = canvas.scope == CanvasScope::Personal;
+                (
+                    canvas,
+                    "attached",
+                    CanvasAccessProjection {
+                        can_view: true,
+                        can_edit_source: editable,
+                        can_publish: editable,
+                        can_manage_shared: false,
+                        can_copy: true,
+                        runtime_write_allowed: editable,
+                    },
+                )
+            }
+            "canvas.copy" => {
+                let input: CopyCanvasArguments = match serde_json::from_value(arguments.input) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        return rejected(
+                            "workspace_module_invalid_arguments",
+                            format!("invalid canvas.copy input: {error}"),
+                        );
+                    }
+                };
+                let source_mount_id = match normalize_canvas_mount_id(&input.source_mount_id) {
+                    Ok(mount_id) => mount_id,
+                    Err(error) => {
+                        return rejected("workspace_module_invalid_arguments", error.to_string());
+                    }
+                };
+                let source = match load_canvas_by_project_mount_id(
+                    &self.deps.repos,
+                    request.context.target.project_id,
+                    &source_mount_id,
+                )
+                .await
+                {
+                    Ok(canvas) => canvas,
+                    Err(error) => {
+                        return rejected("workspace_module_canvas_not_found", error.to_string());
+                    }
+                };
+                match copy_canvas_to_personal(
+                    &self.deps.repos,
+                    &current_user,
+                    source.id,
+                    CopyCanvasInput {
+                        mount_id: input.canvas_mount_id,
+                        title: input.title,
+                        description: input.description,
+                    },
+                )
+                .await
+                {
+                    Ok(canvas) => (canvas.canvas, "copied", canvas.access),
+                    Err(error) => {
+                        return failed("workspace_module_canvas_copy_failed", error.to_string());
+                    }
+                }
+            }
+            _ => {
+                return rejected(
+                    "unsupported_workspace_module_operation",
+                    format!("workspace_module_operate does not support `{operation}`"),
+                );
+            }
+        };
+
+        let reason = if action == "attached" {
+            CanvasVisibilityReason::Presented
+        } else {
+            CanvasVisibilityReason::Created
+        };
+        let update = match self
+            .deps
+            .runtime_surface_updates
+            .execute_runtime_surface_update(RuntimeSurfaceUpdateRequest {
+                target: agentdash_domain::agent_run_target::AgentRunTarget {
+                    run_id: request.context.target.run_id,
+                    agent_id: request.context.target.agent_id,
+                },
+                runtime_thread_id: request.context.runtime_thread_id,
+                change: RuntimeSurfaceChange::CanvasVisibilityRequested {
+                    canvas_mount_id: canvas.mount_id.clone(),
+                    reason,
+                },
+            })
+            .await
+        {
+            Ok(update) => update,
+            Err(error) => {
+                return failed(
+                    "workspace_module_canvas_surface_update_failed",
+                    error.to_string(),
+                );
+            }
+        };
+        let descriptor =
+            agentdash_workspace_module::workspace_module::build_canvas_workspace_module(
+                &canvas, &access,
+            );
+        completed(json!({
+            "operation": operation,
+            "action": action,
+            "module_id": canvas_module_id(&canvas.mount_id),
+            "descriptor": descriptor,
+            "canvas": {
+                "canvas_id": canvas.id,
+                "canvas_mount_id": canvas.mount_id,
+                "vfs_mount_id": canvas_vfs_mount_id(&canvas.mount_id),
+                "presentation_uri": canvas_presentation_uri(&canvas.mount_id),
+                "title": canvas.title,
+                "entry_file": canvas.entry_file,
+            },
+            "runtime_surface": {
+                "frame_id": update.frame_id,
+                "wrote_frame_revision": update.wrote_frame_revision,
+                "adopted_active_runtime": update.adopted_active_runtime,
+                "diagnostics": update.diagnostics,
+            },
+        }))
+    }
+
     async fn dispatch_operation(
         &self,
         request: &ProductRuntimeToolRequest,
@@ -548,7 +846,7 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
         request: &ProductRuntimeToolRequest,
         module: &WorkspaceModuleDescriptor,
         action: WorkspaceModuleCanvasHostAction,
-        _input: Value,
+        input: Value,
         provenance: Value,
     ) -> ProductRuntimeToolOutcome {
         if module.summary.kind != WorkspaceModuleKind::Canvas {
@@ -601,10 +899,60 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                     ),
                 }
             }
-            WorkspaceModuleCanvasHostAction::BindData => rejected(
-                "workspace_module_canvas_surface_update_unavailable",
-                "Canvas binding requires the canonical AgentFrame runtime-surface update command",
-            ),
+            WorkspaceModuleCanvasHostAction::BindData => {
+                let arguments: BindCanvasDataArguments = match serde_json::from_value(input) {
+                    Ok(arguments) => arguments,
+                    Err(error) => {
+                        return rejected(
+                            "workspace_module_invalid_arguments",
+                            format!("invalid canvas.bind_data input: {error}"),
+                        );
+                    }
+                };
+                if arguments.alias.trim().is_empty() || arguments.source_uri.trim().is_empty() {
+                    return rejected(
+                        "workspace_module_invalid_arguments",
+                        "canvas.bind_data requires non-empty alias and source_uri",
+                    );
+                }
+                let binding = CanvasDataBinding::with_content_type(
+                    arguments.alias.trim().to_string(),
+                    arguments.source_uri.trim().to_string(),
+                    arguments.content_type,
+                );
+                match self
+                    .deps
+                    .runtime_surface_updates
+                    .execute_runtime_surface_update(RuntimeSurfaceUpdateRequest {
+                        target: agentdash_domain::agent_run_target::AgentRunTarget {
+                            run_id: request.context.target.run_id,
+                            agent_id: request.context.target.agent_id,
+                        },
+                        runtime_thread_id: request.context.runtime_thread_id.clone(),
+                        change: RuntimeSurfaceChange::CanvasBindingChanged {
+                            canvas_mount_id: module.summary.source.clone(),
+                            binding: binding.clone(),
+                        },
+                    })
+                    .await
+                {
+                    Ok(update) => completed(json!({
+                        "canvas_mount_id": module.summary.source,
+                        "binding": binding,
+                        "runtime_surface": {
+                            "frame_id": update.frame_id,
+                            "wrote_frame_revision": update.wrote_frame_revision,
+                            "adopted_active_runtime": update.adopted_active_runtime,
+                            "diagnostics": update.diagnostics,
+                        },
+                        "provenance": provenance,
+                    })),
+                    Err(error) => failed(
+                        "workspace_module_canvas_surface_update_failed",
+                        error.to_string(),
+                    ),
+                }
+            }
         }
     }
 }
@@ -623,6 +971,7 @@ impl ProductRuntimeToolService for ApplicationWorkspaceModuleRuntimeToolService 
         match self.kind {
             ProductRuntimeToolKind::WorkspaceModuleList => self.execute_list(request).await,
             ProductRuntimeToolKind::WorkspaceModuleDescribe => self.execute_describe(request).await,
+            ProductRuntimeToolKind::WorkspaceModuleOperate => self.execute_operate(request).await,
             ProductRuntimeToolKind::WorkspaceModuleInvoke => self.execute_invoke(request).await,
             _ => failed(
                 "workspace_module_tool_kind_invalid",

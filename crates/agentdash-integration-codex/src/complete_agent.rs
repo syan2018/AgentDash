@@ -1215,8 +1215,13 @@ impl CompleteAgentService for CodexCompleteAgentService {
             .map(|pending| pending.interaction.clone())
             .collect();
         let conversation_history =
-            crate::canonical_projection::snapshot_records(query.source.as_str(), &result)
-                .map_err(internal_error)?;
+            crate::canonical_projection::snapshot_records(query.source.as_str(), &result).map_err(
+                |error| {
+                    protocol_violation(format!(
+                        "thread/read cannot enter canonical conversation history: {error}"
+                    ))
+                },
+            )?;
         Ok(AgentSnapshot {
             source: query.source,
             revision: AgentSnapshotRevision(source.revision),

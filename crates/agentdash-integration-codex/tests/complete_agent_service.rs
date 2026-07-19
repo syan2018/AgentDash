@@ -667,6 +667,12 @@ async fn snapshot_is_observed_and_live_gap_requires_thread_read_reconciliation()
     );
     assert_eq!(snapshot.source_info.source_revision, None);
     assert_eq!(snapshot.turns.len(), 1);
+    assert_eq!(snapshot.conversation_history.len(), 2);
+    assert!(snapshot.conversation_history.iter().all(|record| matches!(
+        record.presentation.envelope.event,
+        agentdash_agent_protocol::BackboneEvent::TurnStarted(_)
+            | agentdash_agent_protocol::BackboneEvent::TurnCompleted(_)
+    )));
 
     transport
         .observations
@@ -841,17 +847,29 @@ async fn thread_read_and_name_notifications_map_source_authoritative_set_and_cle
         .expect("name changes");
     assert!(matches!(
         &changes.changes[0].payload,
-        agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
-            thread_name: Some(value),
-            ..
-        } if value == "更新标题"
+        agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+            state,
+            presentation,
+        } if matches!(
+            state.as_ref(),
+            agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+                thread_name: Some(value),
+                ..
+            } if value == "更新标题"
+        ) && presentation.len() == 1
     ));
     assert!(matches!(
         &changes.changes[1].payload,
-        agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
-            thread_name: None,
-            ..
-        }
+        agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+            state,
+            presentation,
+        } if matches!(
+            state.as_ref(),
+            agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+                thread_name: None,
+                ..
+            }
+        ) && presentation.len() == 1
     ));
 }
 

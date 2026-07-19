@@ -206,6 +206,15 @@ pub(crate) fn snapshot_records(
             .get("id")
             .and_then(Value::as_str)
             .context("thread/read turn misses id")?;
+        let turn_status = turn.get("status").and_then(Value::as_str);
+        if !matches!(
+            turn_status,
+            Some("completed" | "failed" | "interrupted" | "inProgress")
+        ) {
+            // Runtime can retain an omitted or future status as observed nonterminal state, but
+            // there is no exact App Server notification from which to construct presentation.
+            continue;
+        }
         let started = serde_json::from_value::<owned::TurnStartedNotification>(
             serde_json::json!({"threadId": source_thread_id, "turn": turn}),
         )
@@ -229,18 +238,21 @@ pub(crate) fn snapshot_records(
                 .get("startedAt")
                 .and_then(Value::as_i64)
                 .or_else(|| turn.get("startedAt").and_then(Value::as_i64));
-            let terminal = item
-                .get("status")
-                .and_then(Value::as_str)
-                .is_some_and(|status| {
+            let item_status = item.get("status").and_then(Value::as_str);
+            let turn_terminal = matches!(turn_status, Some("completed" | "failed" | "interrupted"));
+            let terminal = match item_status {
+                Some(status) => {
                     matches!(
                         status,
                         "completed" | "failed" | "declined" | "cancelled" | "interrupted"
                     )
-                });
+                }
+                None => turn_terminal,
+            };
             if terminal {
-                let completed_at_ms =
-                    completed_at.context("terminal thread/read item misses completedAt")?;
+                let Some(completed_at_ms) = completed_at else {
+                    continue;
+                };
                 let value =
                     serde_json::from_value::<owned::ItemCompletedNotification>(serde_json::json!({
                         "threadId": source_thread_id,
@@ -258,8 +270,9 @@ pub(crate) fn snapshot_records(
                     BackboneEvent::ItemCompleted(ItemCompletedNotification::from_codex(value)),
                 ));
             } else {
-                let started_at_ms =
-                    started_at.context("active thread/read item misses startedAt")?;
+                let Some(started_at_ms) = started_at else {
+                    continue;
+                };
                 let value =
                     serde_json::from_value::<owned::ItemStartedNotification>(serde_json::json!({
                         "threadId": source_thread_id,

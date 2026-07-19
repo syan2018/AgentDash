@@ -1123,13 +1123,12 @@ mod tests {
 
     use agentdash_agent_runtime_contract::{
         ManagedRuntimeAppliedContextProvenance, ManagedRuntimeChangeDelta, ManagedRuntimeChangeGap,
-        ManagedRuntimeChangePage, ManagedRuntimeGatewayError, ManagedRuntimeLifecycleStatus,
-        ManagedRuntimeInitialContextContributionEvidence, ManagedRuntimeOperation,
-        ManagedRuntimeOperationEvidence, ManagedRuntimeOperationReceipt,
-        ManagedRuntimePlatformChange,
-        ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
-        ManagedRuntimeSourceBindingEvidence, RuntimeChangeSequence, RuntimeSourceRef,
-        SurfaceRevision,
+        ManagedRuntimeChangePage, ManagedRuntimeGatewayError,
+        ManagedRuntimeInitialContextContributionEvidence, ManagedRuntimeLifecycleStatus,
+        ManagedRuntimeOperation, ManagedRuntimeOperationEvidence, ManagedRuntimeOperationReceipt,
+        ManagedRuntimePlatformChange, ManagedRuntimeProjectionAuthority,
+        ManagedRuntimeProjectionFidelity, ManagedRuntimeSourceBindingEvidence,
+        RuntimeChangeSequence, RuntimeSourceRef, SurfaceRevision,
     };
     use agentdash_domain::workflow::{AgentFrame, AgentSource, LifecycleAgent, LifecycleRun};
     use agentdash_test_support::workflow::{
@@ -1229,6 +1228,7 @@ mod tests {
             turns: Vec::new(),
             items: Vec::new(),
             interactions: Vec::new(),
+            conversation_history: Vec::new(),
             thread_name: None,
             thread_name_source: None,
             operations: vec![operation],

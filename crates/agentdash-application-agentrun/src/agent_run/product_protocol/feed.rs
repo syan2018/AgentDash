@@ -22,7 +22,9 @@ pub enum ManagedRuntimeFeedContractError {
     },
     #[error("Runtime item `{item_id}` has an invalid canonical presentation")]
     InvalidItemPresentation { item_id: String },
-    #[error("Runtime interaction `{interaction_id}` has an invalid request/status/resolution tuple")]
+    #[error(
+        "Runtime interaction `{interaction_id}` has an invalid request/status/resolution tuple"
+    )]
     InvalidInteraction { interaction_id: String },
     #[error("Runtime thread name and source evidence must be present or absent together")]
     ThreadNameEvidenceMismatch,
@@ -360,6 +362,7 @@ mod tests {
             turns: Vec::new(),
             items: Vec::new(),
             interactions: Vec::new(),
+            conversation_history: Vec::new(),
             thread_name: None,
             thread_name_source: None,
             operations: Vec::new(),

@@ -514,6 +514,7 @@ impl AppState {
                 agent_run_product_protocol.clone(),
                 product_input_delivery.clone(),
                 frame_construction.clone(),
+                hook_provider.clone(),
             ));
         let routine_executor = Arc::new(RoutineExecutor::new(
             repos.clone(),

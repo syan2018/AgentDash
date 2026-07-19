@@ -5,7 +5,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_platform_spi::AgentConfig;
+use agentdash_platform_spi::{AgentConfig, HookResolution};
 
 use super::CompanionDispatchTargetPlan;
 use crate::agent_run::PreparedAgentRunProductInputDelivery;
@@ -47,13 +47,16 @@ pub struct CompanionContinuationRequest {
     pub selected_agent_key: String,
     pub companion_executor_config: AgentConfig,
     pub parent_runtime_thread_id: String,
+    pub parent_turn_id: String,
     pub protocol_plan: CompanionDispatchTargetPlan,
     pub companion_label: String,
+    pub slice_mode: String,
     pub adoption_mode: String,
     pub wait: bool,
     pub task_id: Option<Uuid>,
     pub first_input_text: String,
     pub first_input_source: CompanionContinuationInputSource,
+    pub after_dispatch_hook_effect: CompanionContinuationEffectIdentity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +69,7 @@ pub enum CompanionContinuationPhase {
     GateConverged,
     ChannelConverged,
     TaskConverged,
+    AfterDispatchHookConverged,
     Succeeded,
 }
 
@@ -117,6 +121,15 @@ pub struct CompanionTaskEvidence {
     pub assigned_agent_id: Option<Uuid>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompanionAfterDispatchHookEvidence {
+    pub effect: CompanionContinuationEffectIdentity,
+    pub parent_frame_id: Uuid,
+    pub child_frame_id: Uuid,
+    pub child_runtime_thread_id: RuntimeThreadId,
+    pub resolution: HookResolution,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CompanionContinuationEvidence {
     pub runtime: Option<CompanionRuntimeReadyEvidence>,
@@ -125,6 +138,7 @@ pub struct CompanionContinuationEvidence {
     pub gate: Option<CompanionGateEvidence>,
     pub channel: Option<CompanionChannelEvidence>,
     pub task: Option<CompanionTaskEvidence>,
+    pub after_dispatch_hook: Option<CompanionAfterDispatchHookEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,6 +164,7 @@ pub enum CompanionContinuationStep {
     ConvergeGate,
     ConvergeChannel,
     ConvergeTask,
+    ConvergeAfterDispatchHook,
     MarkSucceeded,
     Terminal,
 }
@@ -176,8 +191,15 @@ impl CompanionContinuationSaga {
             || request.first_input_source.namespace.trim().is_empty()
             || request.first_input_source.kind.trim().is_empty()
             || request.first_input_source.actor.trim().is_empty()
+            || request.parent_turn_id.trim().is_empty()
+            || request.slice_mode.trim().is_empty()
         {
             return Err("Companion continuation first input evidence is incomplete".to_owned());
+        }
+        if request.after_dispatch_hook_effect
+            != companion_after_dispatch_hook_effect_identity(request.request_id)
+        {
+            return Err("Companion continuation After hook identity drifted".to_owned());
         }
         let protocol_matches_plan = matches!(
             (
@@ -259,7 +281,12 @@ impl CompanionContinuationSaga {
             }
             CompanionContinuationPhase::GateConverged => CompanionContinuationStep::ConvergeChannel,
             CompanionContinuationPhase::ChannelConverged => CompanionContinuationStep::ConvergeTask,
-            CompanionContinuationPhase::TaskConverged => CompanionContinuationStep::MarkSucceeded,
+            CompanionContinuationPhase::TaskConverged => {
+                CompanionContinuationStep::ConvergeAfterDispatchHook
+            }
+            CompanionContinuationPhase::AfterDispatchHookConverged => {
+                CompanionContinuationStep::MarkSucceeded
+            }
             CompanionContinuationPhase::Succeeded => CompanionContinuationStep::Terminal,
         }
     }
@@ -354,8 +381,30 @@ impl CompanionContinuationSaga {
         Ok(())
     }
 
+    fn record_after_dispatch_hook(
+        &mut self,
+        evidence: CompanionAfterDispatchHookEvidence,
+    ) -> Result<(), String> {
+        let runtime = self
+            .evidence
+            .runtime
+            .as_ref()
+            .ok_or_else(|| "Companion Runtime-ready evidence is missing".to_owned())?;
+        if self.phase != CompanionContinuationPhase::TaskConverged
+            || evidence.effect != self.request.after_dispatch_hook_effect
+            || evidence.parent_frame_id != self.request.parent_frame_id
+            || evidence.child_frame_id != runtime.child_frame_id
+            || evidence.child_runtime_thread_id != runtime.child_runtime_thread_id
+        {
+            return Err("Companion After hook evidence drifted".to_owned());
+        }
+        self.evidence.after_dispatch_hook = Some(evidence);
+        self.phase = CompanionContinuationPhase::AfterDispatchHookConverged;
+        Ok(())
+    }
+
     fn mark_succeeded(&mut self) -> Result<(), String> {
-        if self.phase != CompanionContinuationPhase::TaskConverged {
+        if self.phase != CompanionContinuationPhase::AfterDispatchHookConverged {
             return Err("Companion continuation success is out of order".to_owned());
         }
         self.phase = CompanionContinuationPhase::Succeeded;
@@ -434,6 +483,11 @@ pub trait CompanionContinuationEffectPort: Send + Sync {
         saga: &CompanionContinuationSaga,
         identity: &CompanionContinuationEffectIdentity,
     ) -> Result<CompanionTaskEvidence, String>;
+    async fn converge_after_dispatch_hook(
+        &self,
+        saga: &CompanionContinuationSaga,
+        identity: &CompanionContinuationEffectIdentity,
+    ) -> Result<CompanionEffectProgress<CompanionAfterDispatchHookEvidence>, String>;
 }
 
 pub struct CompanionContinuationWorker<'a> {
@@ -516,11 +570,35 @@ impl<'a> CompanionContinuationWorker<'a> {
                     .await
                     .and_then(|evidence| saga.record_task(evidence))
             }
+            CompanionContinuationStep::ConvergeAfterDispatchHook => {
+                let identity = saga.request().after_dispatch_hook_effect.clone();
+                match self
+                    .effects
+                    .converge_after_dispatch_hook(&saga, &identity)
+                    .await
+                {
+                    Ok(CompanionEffectProgress::Pending) => return Ok(saga),
+                    Ok(CompanionEffectProgress::Applied(evidence)) => {
+                        saga.record_after_dispatch_hook(evidence)
+                    }
+                    Err(reason) => Err(reason),
+                }
+            }
             CompanionContinuationStep::MarkSucceeded => saga.mark_succeeded(),
             CompanionContinuationStep::Terminal => return Ok(saga),
         };
         effect_result.map_err(CompanionContinuationRepositoryError::Unavailable)?;
         self.repository.save(expected_version, saga).await
+    }
+}
+
+pub fn companion_after_dispatch_hook_effect_identity(
+    request_id: Uuid,
+) -> CompanionContinuationEffectIdentity {
+    let phase = phase_slug(CompanionContinuationPhase::AfterDispatchHookConverged);
+    CompanionContinuationEffectIdentity {
+        effect_id: stable_uuid(request_id, phase),
+        idempotency_key: format!("companion-continuation:{request_id}:{phase}"),
     }
 }
 
@@ -545,6 +623,7 @@ fn phase_slug(phase: CompanionContinuationPhase) -> &'static str {
         CompanionContinuationPhase::GateConverged => "gate-converged",
         CompanionContinuationPhase::ChannelConverged => "channel-converged",
         CompanionContinuationPhase::TaskConverged => "task-converged",
+        CompanionContinuationPhase::AfterDispatchHookConverged => "after-dispatch-hook-converged",
         CompanionContinuationPhase::Succeeded => "succeeded",
     }
 }
@@ -644,9 +723,14 @@ mod tests {
     struct RecordingEffects {
         invocations: Mutex<BTreeMap<&'static str, Vec<Uuid>>>,
         logical_effects: Mutex<BTreeSet<Uuid>>,
+        after_hook_pending_once: AtomicBool,
     }
 
     impl RecordingEffects {
+        fn pend_after_hook_once(&self) {
+            self.after_hook_pending_once.store(true, Ordering::SeqCst);
+        }
+
         fn record(&self, phase: &'static str, identity: &CompanionContinuationEffectIdentity) {
             self.invocations
                 .lock()
@@ -800,6 +884,27 @@ mod tests {
                     .map(|_| saga.request().child_agent_id),
             })
         }
+
+        async fn converge_after_dispatch_hook(
+            &self,
+            saga: &CompanionContinuationSaga,
+            identity: &CompanionContinuationEffectIdentity,
+        ) -> Result<CompanionEffectProgress<CompanionAfterDispatchHookEvidence>, String> {
+            self.record("after_dispatch_hook", identity);
+            if self.after_hook_pending_once.swap(false, Ordering::SeqCst) {
+                return Ok(CompanionEffectProgress::Pending);
+            }
+            let runtime = saga.evidence().runtime.as_ref().expect("runtime evidence");
+            Ok(CompanionEffectProgress::Applied(
+                CompanionAfterDispatchHookEvidence {
+                    effect: identity.clone(),
+                    parent_frame_id: saga.request().parent_frame_id,
+                    child_frame_id: runtime.child_frame_id,
+                    child_runtime_thread_id: runtime.child_runtime_thread_id.clone(),
+                    resolution: HookResolution::default(),
+                },
+            ))
+        }
     }
 
     fn request(protocol: CompanionContinuationRuntimeProtocol) -> CompanionContinuationRequest {
@@ -867,8 +972,14 @@ mod tests {
             selected_agent_key: "reviewer".to_owned(),
             companion_executor_config: AgentConfig::default(),
             parent_runtime_thread_id: parent_runtime_thread_id.to_string(),
+            parent_turn_id: "parent-turn-1".to_owned(),
             protocol_plan,
             companion_label: "reviewer".to_owned(),
+            slice_mode: match protocol {
+                CompanionContinuationRuntimeProtocol::FullFork => "full",
+                CompanionContinuationRuntimeProtocol::FreshCreate => "compact",
+            }
+            .to_owned(),
             adoption_mode: "suggestion".to_owned(),
             wait: true,
             task_id: Some(Uuid::new_v4()),
@@ -883,6 +994,7 @@ mod tests {
                 display_label_key: "mailbox.source.companion.dispatch".to_owned(),
                 metadata: None,
             },
+            after_dispatch_hook_effect: companion_after_dispatch_hook_effect_identity(request_id),
         }
     }
 
@@ -892,7 +1004,7 @@ mod tests {
         request_id: Uuid,
     ) -> CompanionContinuationSaga {
         let worker = CompanionContinuationWorker::new(repository, effects);
-        for _ in 0..9 {
+        for _ in 0..12 {
             let saga = worker.advance(request_id).await.expect("advance");
             if saga.phase() == CompanionContinuationPhase::Succeeded {
                 return saga;
@@ -936,7 +1048,7 @@ mod tests {
         assert_eq!(invocations[0], invocations[1]);
         assert_eq!(
             effects.logical_effects.lock().expect("logical lock").len(),
-            5
+            6
         );
         assert!(
             !terminal
@@ -1023,6 +1135,7 @@ mod tests {
             CompanionContinuationPhase::GateConverged,
             CompanionContinuationPhase::ChannelConverged,
             CompanionContinuationPhase::TaskConverged,
+            CompanionContinuationPhase::AfterDispatchHookConverged,
             CompanionContinuationPhase::Succeeded,
         ] {
             let recovered = CompanionContinuationWorker::new(&repository, &effects)
@@ -1048,6 +1161,93 @@ mod tests {
             CompanionContinuationSaga::requested(request)
                 .expect_err("protocol drift must be rejected")
                 .contains("preparation plan drifted")
+        );
+    }
+
+    #[tokio::test]
+    async fn after_dispatch_hook_pending_blocks_success_until_restart_recovers_it() {
+        let repository = MemoryRepository::default();
+        let effects = RecordingEffects::default();
+        effects.pend_after_hook_once();
+        let request = request(CompanionContinuationRuntimeProtocol::FullFork);
+        repository
+            .create(CompanionContinuationSaga::requested(request.clone()).expect("request"))
+            .await
+            .expect("create");
+
+        for _ in 0..6 {
+            CompanionContinuationWorker::new(&repository, &effects)
+                .advance(request.request_id)
+                .await
+                .expect("advance to task");
+        }
+        let pending = CompanionContinuationWorker::new(&repository, &effects)
+            .advance(request.request_id)
+            .await
+            .expect("pending after hook");
+        assert_eq!(pending.phase(), CompanionContinuationPhase::TaskConverged);
+        assert!(pending.evidence().after_dispatch_hook.is_none());
+
+        let recovered = CompanionContinuationWorker::new(&repository, &effects)
+            .advance(request.request_id)
+            .await
+            .expect("restart recovers after hook");
+        assert_eq!(
+            recovered.phase(),
+            CompanionContinuationPhase::AfterDispatchHookConverged
+        );
+        let succeeded = CompanionContinuationWorker::new(&repository, &effects)
+            .advance(request.request_id)
+            .await
+            .expect("mark succeeded");
+        assert_eq!(succeeded.phase(), CompanionContinuationPhase::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn after_dispatch_hook_lost_save_response_reuses_one_effect_identity_and_real_child() {
+        let repository = MemoryRepository::default();
+        let effects = RecordingEffects::default();
+        let request = request(CompanionContinuationRuntimeProtocol::FreshCreate);
+        repository
+            .create(CompanionContinuationSaga::requested(request.clone()).expect("request"))
+            .await
+            .expect("create");
+
+        for _ in 0..6 {
+            CompanionContinuationWorker::new(&repository, &effects)
+                .advance(request.request_id)
+                .await
+                .expect("advance to task");
+        }
+        repository.fail_next_save();
+        CompanionContinuationWorker::new(&repository, &effects)
+            .advance(request.request_id)
+            .await
+            .expect_err("post-hook save response lost");
+
+        let recovered = CompanionContinuationWorker::new(&repository, &effects)
+            .advance(request.request_id)
+            .await
+            .expect("replay hook");
+        let invocations = effects.phase_invocations("after_dispatch_hook");
+        assert_eq!(invocations.len(), 2);
+        assert_eq!(invocations[0], invocations[1]);
+        assert_eq!(invocations[0], request.after_dispatch_hook_effect.effect_id);
+        let runtime = recovered.evidence().runtime.as_ref().expect("runtime");
+        let hook = recovered
+            .evidence()
+            .after_dispatch_hook
+            .as_ref()
+            .expect("hook evidence");
+        assert_eq!(hook.child_frame_id, runtime.child_frame_id);
+        assert_eq!(
+            hook.child_runtime_thread_id,
+            runtime.child_runtime_thread_id
+        );
+        assert_ne!(hook.child_frame_id, request.parent_frame_id);
+        assert_eq!(
+            effects.logical_effects.lock().expect("logical lock").len(),
+            6
         );
     }
 }

@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use agentdash_application_agentrun::agent_run::{
     AgentRunForkRequestId, AgentRunForkSagaPhase, AgentRunProductInputDeliveryPort,
-    AgentRunProductInputPreparation, AgentRunProductProtocolPorts, CompanionChannelEvidence,
+    AgentRunProductInputPreparation, AgentRunProductProtocolPorts,
+    CompanionAfterDispatchHookEvidence, CompanionChannelEvidence,
     CompanionContinuationEffectIdentity, CompanionContinuationEffectPort,
     CompanionContinuationRuntimeProtocol, CompanionContinuationSaga, CompanionEffectProgress,
     CompanionFirstInputEvidence, CompanionFreshPhase, CompanionFreshRequestId,
@@ -18,6 +19,10 @@ use agentdash_domain::channel::{
     MaterializedDeliveryRef,
 };
 use agentdash_domain::workflow::LifecycleTaskPlanItemPatch;
+use agentdash_platform_spi::{
+    AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, ExecutionHookProvider,
+    HookControlTarget, HookTrigger, RuntimeAdapterProvenance,
+};
 use async_trait::async_trait;
 use chrono::Utc;
 use uuid::Uuid;
@@ -37,6 +42,7 @@ pub struct ApplicationCompanionContinuationEffects {
     protocols: Arc<AgentRunProductProtocolPorts>,
     product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
     frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    hook_provider: Arc<dyn ExecutionHookProvider>,
 }
 
 impl ApplicationCompanionContinuationEffects {
@@ -45,12 +51,14 @@ impl ApplicationCompanionContinuationEffects {
         protocols: Arc<AgentRunProductProtocolPorts>,
         product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
         frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+        hook_provider: Arc<dyn ExecutionHookProvider>,
     ) -> Self {
         Self {
             repos,
             protocols,
             product_input_delivery,
             frame_construction,
+            hook_provider,
         }
     }
 }
@@ -399,6 +407,96 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
             task_id: request.task_id,
             assigned_agent_id: request.task_id.map(|_| request.child_agent_id),
         })
+    }
+
+    async fn converge_after_dispatch_hook(
+        &self,
+        saga: &CompanionContinuationSaga,
+        identity: &CompanionContinuationEffectIdentity,
+    ) -> Result<CompanionEffectProgress<CompanionAfterDispatchHookEvidence>, String> {
+        let request = saga.request();
+        if identity != &request.after_dispatch_hook_effect {
+            return Err("Companion After hook effect identity drifted".to_owned());
+        }
+        let runtime = saga
+            .evidence()
+            .runtime
+            .as_ref()
+            .ok_or_else(|| "Companion Runtime-ready evidence is missing".to_owned())?;
+        let first_input = saga
+            .evidence()
+            .first_input
+            .as_ref()
+            .ok_or_else(|| "Companion first input evidence is missing".to_owned())?;
+        let gate = saga
+            .evidence()
+            .gate
+            .as_ref()
+            .ok_or_else(|| "Companion gate evidence is missing".to_owned())?;
+        let provenance = RuntimeAdapterProvenance::runtime_thread(
+            request.parent_runtime_thread_id.clone(),
+            Some(request.parent_turn_id.clone()),
+            format!(
+                "companion_continuation_after_dispatch:{}",
+                identity.effect_id
+            ),
+        );
+        let target = HookControlTarget {
+            run_id: request.parent_run_id,
+            agent_id: request.parent_agent_id,
+            frame_id: request.parent_frame_id,
+        };
+        let resolution = self
+            .hook_provider
+            .evaluate_frame_hook(AgentFrameHookEvaluationQuery {
+                target: target.clone(),
+                provenance: provenance.clone(),
+                trigger: HookTrigger::AfterSubagentDispatch,
+                tool_name: None,
+                tool_call_id: None,
+                subagent_type: Some(request.companion_label.clone()),
+                snapshot: None,
+                payload: Some(serde_json::json!({
+                    "effect_id": identity.effect_id,
+                    "idempotency_key": identity.idempotency_key,
+                    "dispatch_id": request.dispatch_id,
+                    "agent_ref": request.child_agent_id,
+                    "frame_ref": runtime.child_frame_id,
+                    "gate_ref": gate.gate_id,
+                    "runtime_thread_id": runtime.child_runtime_thread_id,
+                    "runtime_operation_id": first_input.runtime_operation_id,
+                    "mailbox_message_id": first_input.mailbox_message_id,
+                    "mailbox_outcome": "dispatched",
+                    "slice_mode": request.slice_mode,
+                    "adoption_mode": request.adoption_mode,
+                    "task_id": request.task_id,
+                })),
+                token_stats: None,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        if resolution.refresh_snapshot {
+            self.hook_provider
+                .refresh_frame_snapshot(AgentFrameHookRefreshQuery {
+                    target,
+                    provenance,
+                    reason: Some(format!(
+                        "trigger:AfterSubagentDispatch:{}",
+                        request.companion_label
+                    )),
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(CompanionEffectProgress::Applied(
+            CompanionAfterDispatchHookEvidence {
+                effect: identity.clone(),
+                parent_frame_id: request.parent_frame_id,
+                child_frame_id: runtime.child_frame_id,
+                child_runtime_thread_id: runtime.child_runtime_thread_id.clone(),
+                resolution,
+            },
+        ))
     }
 }
 

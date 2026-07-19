@@ -74,7 +74,7 @@ use agentdash_application_agentrun::agent_run::{
     CompanionContinuationInputSource, CompanionContinuationPhase,
     CompanionContinuationRepositoryError, CompanionContinuationRequest, CompanionContinuationSaga,
     CompanionContinuationWorker, CompiledContextAuthority, DeliverAgentRunProductInput,
-    SubmitInput, compile_companion_dispatch_target,
+    SubmitInput, companion_after_dispatch_hook_effect_identity, compile_companion_dispatch_target,
 };
 use agentdash_application_workflow::WorkflowScriptPreflightOutput;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
@@ -1480,8 +1480,10 @@ impl CompanionRequestTool {
                     stable_companion_uuid(&dispatch_plan.dispatch_id, "fresh-request"),
                 ),
             };
+        let continuation_request_id =
+            stable_companion_uuid(&dispatch_plan.dispatch_id, "continuation");
         let continuation_request = CompanionContinuationRequest {
-            request_id: stable_companion_uuid(&dispatch_plan.dispatch_id, "continuation"),
+            request_id: continuation_request_id,
             dispatch_id: dispatch_plan.dispatch_id.clone(),
             runtime_protocol,
             runtime_protocol_request_id,
@@ -1497,8 +1499,10 @@ impl CompanionRequestTool {
             selected_agent_key: selected_companion.agent_key.clone(),
             companion_executor_config,
             parent_runtime_thread_id: current_session_id.clone(),
+            parent_turn_id: self.tool_context.turn_id().to_owned(),
             protocol_plan,
             companion_label: companion_label.clone(),
+            slice_mode: companion_slice_mode_key(slice_mode).to_owned(),
             adoption_mode: adoption_mode_key(adoption_mode).to_owned(),
             wait,
             task_id: requested_task_id,
@@ -1513,6 +1517,9 @@ impl CompanionRequestTool {
                 display_label_key: source.display_label_key.clone(),
                 metadata: source.metadata.clone(),
             },
+            after_dispatch_hook_effect: companion_after_dispatch_hook_effect_identity(
+                continuation_request_id,
+            ),
         };
         let requested = CompanionContinuationSaga::requested(continuation_request.clone())
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -1548,7 +1555,7 @@ impl CompanionRequestTool {
                 .companion_continuation_effects
                 .as_ref(),
         );
-        for _ in 0..7 {
+        for _ in 0..8 {
             if continuation.phase() == CompanionContinuationPhase::Succeeded
                 || continuation.failure().is_some()
             {
@@ -1587,59 +1594,19 @@ impl CompanionRequestTool {
             .gate
             .as_ref()
             .and_then(|evidence| evidence.gate_id);
-        let frame_ref = continuation
-            .evidence()
-            .runtime
-            .as_ref()
-            .map(|evidence| evidence.child_frame_id)
-            .unwrap_or(parent_frame_id);
-        let runtime_operation_id = continuation
-            .evidence()
-            .first_input
-            .as_ref()
-            .and_then(|evidence| evidence.runtime_operation_id.clone());
-        let mailbox_message_id = continuation
-            .evidence()
-            .first_input
-            .as_ref()
-            .map(|evidence| evidence.mailbox_message_id.to_string());
-        let mailbox_outcome = if mailbox_message_id.is_some() {
-            "dispatched"
-        } else {
-            "pending"
-        };
-
-        // ─── Hook: after_subagent_dispatch ──────────────────────────────
-        let after_resolution = evaluate_subagent_hook(
-            hook_runtime.as_ref(),
-            HookTrigger::AfterSubagentDispatch,
-            Some(self.tool_context.turn_id().to_string()),
-            &companion_label,
-            Some(serde_json::json!({
-                "dispatch_id": dispatch_plan.dispatch_id,
-                "agent_ref": child_agent_id.to_string(),
-                "frame_ref": frame_ref.to_string(),
-                "gate_ref": gate_id.map(|id| id.to_string()),
-                "runtime_thread_id": child_runtime_thread_id.to_string(),
-                "runtime_operation_id": runtime_operation_id,
-                "mailbox_message_id": mailbox_message_id.clone(),
-                "mailbox_outcome": mailbox_outcome,
-                "slice_mode": slice_mode,
-                "adoption_mode": adoption_mode,
-                "task_id": requested_task_id.map(|id| id.to_string()),
-            })),
-        )
-        .await?;
-        record_subagent_trace(
-            hook_runtime.as_ref(),
-            Some(&runtime_thread_services),
-            Some(self.tool_context.turn_id()),
-            HookTrigger::AfterSubagentDispatch,
-            "dispatched",
-            &companion_label,
-            &after_resolution,
-        )
-        .await;
+        if continuation.phase() != CompanionContinuationPhase::Succeeded {
+            return Ok(companion_subagent_agent_tool_result(
+                CompanionSubagentVisibleResult {
+                    companion_label: &companion_label,
+                    child_agent_id,
+                    gate_id,
+                    status: "running",
+                    summary: "Companion 派发已持久化，正在恢复后置业务效果",
+                    timed_out: None,
+                    result_preview: None,
+                },
+            ));
+        }
 
         // ─── Wait 路径: 轮询 durable LifecycleGate ─────────────────────
         if wait {
@@ -2653,6 +2620,15 @@ fn parse_slice_mode(value: &str) -> CompanionSliceMode {
         "workflow_only" => CompanionSliceMode::WorkflowOnly,
         "constraints_only" => CompanionSliceMode::ConstraintsOnly,
         _ => CompanionSliceMode::Compact,
+    }
+}
+
+fn companion_slice_mode_key(mode: CompanionSliceMode) -> &'static str {
+    match mode {
+        CompanionSliceMode::Full => "full",
+        CompanionSliceMode::Compact => "compact",
+        CompanionSliceMode::WorkflowOnly => "workflow_only",
+        CompanionSliceMode::ConstraintsOnly => "constraints_only",
     }
 }
 

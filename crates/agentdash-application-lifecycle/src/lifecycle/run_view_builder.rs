@@ -264,7 +264,7 @@ impl LifecycleRunViewQueryService {
                     .await?,
             );
         }
-        subject_associations.sort_by_key(|association| association.created_at);
+        subject_associations.sort_by_key(|association| (association.created_at, association.id));
         subject_associations.dedup_by_key(|association| association.id);
 
         let mut agent_views = Vec::with_capacity(agents.len());
@@ -335,7 +335,7 @@ impl LifecycleRunViewQueryPort for LifecycleRunViewQueryService {
             .subject_associations
             .list_by_subject(&subject)
             .await?;
-        associations.sort_by_key(|association| Reverse(association.created_at));
+        associations.sort_by_key(|association| Reverse((association.created_at, association.id)));
         let run_ids = unique_run_ids(&associations);
         let mut runs = self.deps.lifecycle_runs.list_by_ids(&run_ids).await?;
         runs.sort_by_key(|run| Reverse((run.last_activity_at, run.id)));
@@ -405,13 +405,15 @@ fn stale_fence_evidence(
         observed_target: observed_binding.map(|binding| binding.target.clone()),
         expected_runtime_thread_id: expected_binding
             .map(|binding| binding.runtime_thread_id.clone()),
-        observed_runtime_thread_id: observed_snapshot
-            .map(|snapshot| snapshot.thread_id.clone())
-            .or_else(|| observed_binding.map(|binding| binding.runtime_thread_id.clone())),
+        observed_runtime_thread_id: match observed_snapshot {
+            Some(snapshot) => Some(snapshot.thread_id.clone()),
+            None => observed_binding.map(|binding| binding.runtime_thread_id.clone()),
+        },
         expected_source_binding: expected_binding.map(|binding| binding.source_binding.clone()),
-        observed_source_binding: observed_snapshot
-            .and_then(|snapshot| snapshot.source_binding.clone())
-            .or_else(|| observed_binding.map(|binding| binding.source_binding.clone())),
+        observed_source_binding: match observed_snapshot {
+            Some(snapshot) => snapshot.source_binding.clone(),
+            None => observed_binding.map(|binding| binding.source_binding.clone()),
+        },
         observed_snapshot: observed_snapshot.cloned(),
     }
 }
@@ -553,8 +555,10 @@ fn subject_attempt_sort_key(
 ) -> (
     Reverse<bool>,
     Reverse<DateTime<Utc>>,
+    Reverse<u32>,
     AgentRunTarget,
     String,
+    Uuid,
 ) {
     (
         Reverse(matches!(
@@ -565,8 +569,10 @@ fn subject_attempt_sort_key(
                 | RuntimeNodeStatus::Blocked
         )),
         Reverse(item.attempt.observed_at),
+        Reverse(item.attempt.attempt),
         item.target.clone(),
         item.attempt.node_path.clone(),
+        item.attempt.orchestration_id,
     )
 }
 
@@ -661,7 +667,13 @@ fn node_targets_agent_run(node: &RuntimeNodeState, target: &AgentRunTarget) -> b
 
 fn attempt_sort_key(
     attempt: &LifecycleExecutionAttemptView,
-) -> (Reverse<bool>, Reverse<DateTime<Utc>>, Reverse<u32>, String) {
+) -> (
+    Reverse<bool>,
+    Reverse<DateTime<Utc>>,
+    Reverse<u32>,
+    String,
+    Uuid,
+) {
     (
         Reverse(matches!(
             attempt.status,
@@ -673,6 +685,7 @@ fn attempt_sort_key(
         Reverse(attempt.observed_at),
         Reverse(attempt.attempt),
         attempt.node_path.clone(),
+        attempt.orchestration_id,
     )
 }
 
@@ -1097,6 +1110,137 @@ mod tests {
             }
         )));
         assert_eq!(view.agents.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn stale_source_binding_preserves_an_observed_missing_value() {
+        let fixture = Fixture::new();
+        let run = LifecycleRun::new_control(Uuid::new_v4());
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
+        let target = target(&run, &agent);
+        let expected_source = source("expected-source");
+        fixture.runs.create(&run).await.unwrap();
+        fixture.agents.create(&agent).await.unwrap();
+        fixture
+            .insert_binding_and_snapshot(
+                target.clone(),
+                "thread-missing-source",
+                expected_source.clone(),
+            )
+            .await;
+        fixture
+            .projections
+            .snapshots
+            .lock()
+            .await
+            .get_mut(&target)
+            .unwrap()
+            .source_binding = None;
+
+        let view = fixture.service().lifecycle_run_view(run.id).await.unwrap();
+
+        let RuntimeExecutionTraceView::Stale { reason, evidence } = &view.agents[0].runtime else {
+            panic!("expected typed stale Runtime trace");
+        };
+        assert_eq!(
+            *reason,
+            RuntimeTraceStaleReason::RuntimeSourceBindingMismatch
+        );
+        assert_eq!(
+            evidence
+                .expected_runtime_thread_id
+                .as_ref()
+                .unwrap()
+                .as_str(),
+            "thread-missing-source"
+        );
+        assert_eq!(
+            evidence
+                .observed_runtime_thread_id
+                .as_ref()
+                .unwrap()
+                .as_str(),
+            "thread-missing-source"
+        );
+        assert_eq!(
+            evidence.expected_source_binding.as_ref(),
+            Some(&expected_source)
+        );
+        assert_eq!(evidence.observed_source_binding, None);
+        assert_eq!(
+            evidence
+                .observed_snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.source_binding.as_ref()),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn binding_change_between_reads_is_typed_stale_with_both_fences() {
+        let fixture = Fixture::new();
+        let run = LifecycleRun::new_control(Uuid::new_v4());
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
+        let target = target(&run, &agent);
+        let expected_source = source("expected-source");
+        let observed_source = source("observed-source");
+        fixture.runs.create(&run).await.unwrap();
+        fixture.agents.create(&agent).await.unwrap();
+        fixture
+            .insert_binding_and_snapshot(target.clone(), "thread-before", expected_source.clone())
+            .await;
+        fixture.projections.bindings.lock().await.insert(
+            target.clone(),
+            AgentRunProductRuntimeBinding {
+                target: target.clone(),
+                runtime_thread_id: RuntimeThreadId::new("thread-after").unwrap(),
+                source_binding: observed_source.clone(),
+            },
+        );
+        fixture.projections.snapshots.lock().await.insert(
+            target.clone(),
+            snapshot("thread-after", observed_source.clone()),
+        );
+
+        let view = fixture.service().lifecycle_run_view(run.id).await.unwrap();
+
+        let RuntimeExecutionTraceView::Stale { reason, evidence } = &view.agents[0].runtime else {
+            panic!("expected typed stale Runtime trace");
+        };
+        assert_eq!(*reason, RuntimeTraceStaleReason::ProductBindingChanged);
+        assert_eq!(evidence.expected_target, target);
+        assert_eq!(evidence.observed_target.as_ref(), Some(&target));
+        assert_eq!(
+            evidence
+                .expected_runtime_thread_id
+                .as_ref()
+                .unwrap()
+                .as_str(),
+            "thread-before"
+        );
+        assert_eq!(
+            evidence
+                .observed_runtime_thread_id
+                .as_ref()
+                .unwrap()
+                .as_str(),
+            "thread-after"
+        );
+        assert_eq!(
+            evidence.expected_source_binding.as_ref(),
+            Some(&expected_source)
+        );
+        assert_eq!(
+            evidence.observed_source_binding.as_ref(),
+            Some(&observed_source)
+        );
+        assert_eq!(
+            evidence
+                .observed_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.thread_id.as_str()),
+            Some("thread-after")
+        );
     }
 
     #[tokio::test]

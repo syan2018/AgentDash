@@ -640,6 +640,147 @@ CREATE TABLE agent_run_product_runtime_binding (
         REFERENCES agent_runtime_thread_binding(thread_id) ON DELETE RESTRICT
 );
 
+CREATE TABLE agent_run_applied_resource_surface_snapshot (
+    run_id UUID NOT NULL,
+    agent_id UUID NOT NULL,
+    snapshot_revision BIGINT NOT NULL CHECK (snapshot_revision > 0),
+    project_id UUID NOT NULL,
+    workspace_id UUID,
+    vfs_mounts JSONB NOT NULL CHECK (jsonb_typeof(vfs_mounts) = 'array'),
+    default_mount_id TEXT,
+    vfs_grants JSONB NOT NULL CHECK (jsonb_typeof(vfs_grants) = 'array'),
+    agent_surface_revision BIGINT NOT NULL CHECK (agent_surface_revision >= 0),
+    agent_surface_digest TEXT NOT NULL CHECK (btrim(agent_surface_digest) <> ''),
+    vfs_digest TEXT NOT NULL CHECK (btrim(vfs_digest) <> ''),
+    task_grants JSONB NOT NULL CHECK (jsonb_typeof(task_grants) = 'array'),
+    task_surface_revision BIGINT NOT NULL CHECK (task_surface_revision >= 0),
+    task_surface_digest TEXT NOT NULL CHECK (btrim(task_surface_digest) <> ''),
+    task_source_kind TEXT NOT NULL CHECK (btrim(task_source_kind) <> ''),
+    task_source_id TEXT NOT NULL CHECK (btrim(task_source_id) <> ''),
+    task_source_revision BIGINT NOT NULL CHECK (task_source_revision >= 0),
+    task_projection_revision BIGINT NOT NULL CHECK (task_projection_revision >= 0),
+    task_captured_at_ms BIGINT NOT NULL CHECK (task_captured_at_ms >= 0),
+    product_binding_digest TEXT NOT NULL CHECK (btrim(product_binding_digest) <> ''),
+    source_kind TEXT NOT NULL CHECK (btrim(source_kind) <> ''),
+    source_id TEXT NOT NULL CHECK (btrim(source_id) <> ''),
+    source_revision BIGINT NOT NULL CHECK (source_revision >= 0),
+    projection_revision BIGINT NOT NULL CHECK (projection_revision >= 0),
+    captured_at_ms BIGINT NOT NULL CHECK (captured_at_ms >= 0),
+    PRIMARY KEY (run_id, agent_id, snapshot_revision)
+);
+
+CREATE TABLE agent_run_applied_resource_surface_current (
+    run_id UUID NOT NULL,
+    agent_id UUID NOT NULL,
+    snapshot_revision BIGINT NOT NULL,
+    PRIMARY KEY (run_id, agent_id),
+    FOREIGN KEY (run_id, agent_id, snapshot_revision)
+        REFERENCES agent_run_applied_resource_surface_snapshot(
+            run_id,
+            agent_id,
+            snapshot_revision
+        ) ON DELETE RESTRICT
+);
+
+CREATE TABLE agent_run_product_runtime_command_claim (
+    target_run_id UUID NOT NULL,
+    target_agent_id UUID NOT NULL,
+    client_command_id TEXT NOT NULL CHECK (
+        btrim(client_command_id) <> '' AND length(client_command_id) <= 256
+    ),
+    request_digest TEXT NOT NULL CHECK (btrim(request_digest) <> ''),
+    envelope JSONB NOT NULL CHECK (jsonb_typeof(envelope) = 'object'),
+    created_at_ms NUMERIC(20, 0) NOT NULL CHECK (
+        created_at_ms BETWEEN 0 AND 18446744073709551615
+    ),
+    PRIMARY KEY (target_run_id, target_agent_id, client_command_id)
+);
+
+CREATE TABLE agent_run_product_mailbox_head (
+    target_run_id UUID NOT NULL,
+    target_agent_id UUID NOT NULL,
+    revision NUMERIC(20, 0) NOT NULL CHECK (
+        revision BETWEEN 1 AND 18446744073709551615
+    ),
+    latest_change_sequence NUMERIC(20, 0) NOT NULL CHECK (
+        latest_change_sequence BETWEEN 1 AND 18446744073709551615
+    ),
+    snapshot_digest TEXT NOT NULL CHECK (btrim(snapshot_digest) <> ''),
+    committed_at_ms NUMERIC(20, 0) NOT NULL CHECK (
+        committed_at_ms BETWEEN 0 AND 18446744073709551615
+    ),
+    PRIMARY KEY (target_run_id, target_agent_id)
+);
+
+CREATE TABLE agent_run_product_mailbox_change (
+    target_run_id UUID NOT NULL,
+    target_agent_id UUID NOT NULL,
+    sequence NUMERIC(20, 0) NOT NULL CHECK (
+        sequence BETWEEN 1 AND 18446744073709551615
+    ),
+    change_id UUID NOT NULL UNIQUE,
+    revision NUMERIC(20, 0) NOT NULL CHECK (
+        revision BETWEEN 1 AND 18446744073709551615
+    ),
+    snapshot_digest TEXT NOT NULL CHECK (btrim(snapshot_digest) <> ''),
+    committed_at_ms NUMERIC(20, 0) NOT NULL CHECK (
+        committed_at_ms BETWEEN 0 AND 18446744073709551615
+    ),
+    origin_kind TEXT NOT NULL CHECK (origin_kind IN ('command', 'canonical_reconcile')),
+    client_command_id TEXT,
+    command_kind TEXT CHECK (command_kind IN ('promote', 'delete', 'move', 'resume')),
+    CHECK (
+        (
+            origin_kind = 'command'
+            AND client_command_id IS NOT NULL
+            AND btrim(client_command_id) <> ''
+            AND command_kind IS NOT NULL
+        )
+        OR (
+            origin_kind = 'canonical_reconcile'
+            AND client_command_id IS NULL
+            AND command_kind IS NULL
+        )
+    ),
+    PRIMARY KEY (target_run_id, target_agent_id, sequence),
+    FOREIGN KEY (target_run_id, target_agent_id)
+        REFERENCES agent_run_product_mailbox_head(target_run_id, target_agent_id)
+        DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE agent_run_product_mailbox_command_receipt (
+    target_run_id UUID NOT NULL,
+    target_agent_id UUID NOT NULL,
+    client_command_id TEXT NOT NULL CHECK (
+        btrim(client_command_id) <> '' AND length(client_command_id) <= 256
+    ),
+    request_digest TEXT NOT NULL CHECK (btrim(request_digest) <> ''),
+    command JSONB NOT NULL CHECK (jsonb_typeof(command) IN ('object', 'string')),
+    terminal BOOLEAN NOT NULL DEFAULT FALSE,
+    revision NUMERIC(20, 0),
+    latest_change_sequence NUMERIC(20, 0),
+    snapshot_digest TEXT,
+    committed_at_ms NUMERIC(20, 0),
+    CHECK (
+        (
+            terminal
+            AND revision BETWEEN 1 AND 18446744073709551615
+            AND latest_change_sequence BETWEEN 1 AND 18446744073709551615
+            AND snapshot_digest IS NOT NULL
+            AND btrim(snapshot_digest) <> ''
+            AND committed_at_ms BETWEEN 0 AND 18446744073709551615
+        )
+        OR (
+            NOT terminal
+            AND revision IS NULL
+            AND latest_change_sequence IS NULL
+            AND snapshot_digest IS NULL
+            AND committed_at_ms IS NULL
+        )
+    ),
+    PRIMARY KEY (target_run_id, target_agent_id, client_command_id)
+);
+
 CREATE TABLE agent_runtime_operation (
     thread_id TEXT NOT NULL REFERENCES agent_runtime_state_revision(thread_id) ON DELETE CASCADE,
     operation_id TEXT NOT NULL CHECK (btrim(operation_id) <> ''),

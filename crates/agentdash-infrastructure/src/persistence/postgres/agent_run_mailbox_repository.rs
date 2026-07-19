@@ -88,7 +88,7 @@ impl PostgresAgentRunMailboxRepository {
 
 pub(super) const MAILBOX_COLS: &str = "id,run_id,agent_id,origin,source_namespace,source_kind,source_ref,source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,delivery_request_digest,accepted_runtime_operation_id,reconcile_required,claim_token,claimed_at,claim_expires_at,payload_json,launch_planning_input,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
 const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.origin,m.source_namespace,m.source_kind,m.source_ref,m.source_correlation_ref,m.source_actor,m.source_route,m.source_display_label_key,m.source_metadata,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.delivery_request_digest,m.accepted_runtime_operation_id,m.reconcile_required,m.claim_token,m.claimed_at,m.claim_expires_at,m.payload_json,m.launch_planning_input,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
-const STATE_COLS: &str = "run_id,agent_id,paused,pause_reason,pause_message,updated_at";
+pub(super) const STATE_COLS: &str = "run_id,agent_id,paused,pause_reason,pause_message,updated_at";
 
 #[async_trait::async_trait]
 impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
@@ -728,7 +728,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
     }
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(sqlx::FromRow, serde::Deserialize)]
 pub(super) struct AgentRunMailboxMessageRow {
     id: String,
     run_id: String,
@@ -820,8 +820,8 @@ impl TryFrom<AgentRunMailboxMessageRow> for AgentRunMailboxMessage {
     }
 }
 
-#[derive(sqlx::FromRow)]
-struct AgentRunMailboxStateRow {
+#[derive(sqlx::FromRow, serde::Deserialize)]
+pub(super) struct AgentRunMailboxStateRow {
     run_id: String,
     agent_id: String,
     paused: bool,

@@ -1,3 +1,4 @@
+mod agent_run_product_persistence_composition;
 mod agent_run_product_projection_composition;
 mod complete_agent_composition;
 pub mod function_runner;
@@ -13,6 +14,7 @@ pub mod skill_source;
 pub mod storage;
 pub mod workflow_scripts;
 
+pub use agent_run_product_persistence_composition::AgentRunProductPersistenceComposition;
 pub use agent_run_product_projection_composition::AgentRunProductProjectionComposition;
 pub use complete_agent_composition::{
     CompleteAgentComposition, CompleteAgentCompositionError, PinnedCompleteAgentVerificationCatalog,
@@ -22,6 +24,7 @@ pub use hooks::RhaiHookScriptEvaluator;
 pub use mcp::RmcpProbeTransport;
 pub use persistence::postgres::PostgresAgentFrameRepository;
 pub use persistence::postgres::PostgresAgentLineageRepository;
+pub use persistence::postgres::PostgresAgentRunAppliedResourceSurfaceRepository;
 pub use persistence::postgres::PostgresAgentRunCommandReceiptRepository;
 pub use persistence::postgres::PostgresAgentRunForkGraphStore;
 pub use persistence::postgres::PostgresAgentRunLineageRepository;
@@ -45,6 +48,8 @@ pub use persistence::postgres::PostgresLlmProviderCredentialRepository;
 pub use persistence::postgres::PostgresLlmProviderRepository;
 pub use persistence::postgres::PostgresManagedRuntimeStateRepository;
 pub use persistence::postgres::PostgresMcpPresetRepository;
+pub use persistence::postgres::PostgresProductMailboxRepository;
+pub use persistence::postgres::PostgresProductRuntimeCommandClaimRepository;
 pub use persistence::postgres::PostgresProjectAgentRepository;
 pub use persistence::postgres::PostgresProjectBackendAccessRepository;
 pub use persistence::postgres::PostgresProjectExtensionInstallationRepository;

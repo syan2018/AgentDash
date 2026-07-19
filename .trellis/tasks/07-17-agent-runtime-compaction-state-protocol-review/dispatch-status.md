@@ -1055,3 +1055,34 @@
 - 下一 checkpoint 只在 Product module/router/composition 进入真实构建图，且
   Project Agent create → provisioning → Managed Runtime → Complete Agent 的 focused tracer
   成立后形成。
+
+## 2026-07-20 Runtime-only final convergence
+
+- 最终范围已在 `848df4d5` 收窄：本任务只重构 Agent Runtime 内核、Complete Agent
+  接入及其 final seam。Application/Product 只恢复既有业务并适配 seam；其 module、
+  route、worker、权限、Companion/Frame/Workspace 等业务不进入 Hard Cut。
+- `2e653ab1`、`5bbfcbd2` 已闭合 RuntimeThread Product read model、Lifecycle canonical
+  history/VFS 与单 outbox 多观察者；Lifecycle library tests 16/16 通过。
+- `3849f2f2` 已接入 Product Hook 与动态工具回调；`6991f79a` 已闭合显式 Rebind、
+  trusted replacement selection、Host generation recovery 与 stale effect fencing。
+- `ad05facf` 已恢复 Product Application/API production composition：Canvas、Companion
+  Gate、Extension、Workspace Module、Routine、Terminal、AgentRun workspace、Hook、
+  Surface、launch/input 与 scheduler 均进入真实构建图；API library check 通过。
+- `0230fe27` 与 `a592c63b` 已闭合 Remote replacement → Lost RuntimeThread →
+  Product recovery observer 链，并冻结首次恢复的线程集合以保证 admission 重放不会在
+  Host generation 前移后丢失 Product CAS/Activate。API admission 5/5、Host tracer
+  1/1 通过。
+- `a4297f37` 已闭合 Product Rebind durable recovery：PostgreSQL recoverable scan、
+  AppState background worker 与四个崩溃点的 phase-aware replay 已进入 production；
+  Rebind replay tests 4/4 通过。
+- `246ba75b` 已同步 `conversation_history + Rebind` canonical generated fixture/schema；
+  exact generator test 与 migration guard 通过。
+- 当前唯一在制 Product seam 是 Companion production caller：
+  - Full 使用最近 completed turn 的 exact cutoff，进入唯一 durable fork saga；
+  - fresh 使用预分配 child，按 typed InitialContextPackage → Activate → 独立 first input
+    推进 durable saga；
+  - 成功后沿用既有 channel/gate/adoption/result/mailbox 业务，不重复实现 Product
+    delivery。
+- 当前阶段仍是 C2/C3，不进入 C5。Companion caller、Routine/Workflow、Workspace/
+  Canvas/Terminal、Wait、Tool/Hook 与 canonical UI 的 production tracers 闭合后，
+  才冻结旧 Runtime replacement manifest 并执行最终 Runtime-only deletion。

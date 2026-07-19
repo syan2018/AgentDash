@@ -6,8 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use agentdash_agent_protocol::BackboneEvent;
-use agentdash_agent_protocol::PlatformEvent;
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
     ExecutorRunRef, LifecycleRun, LifecycleRunStatus, RuntimeNodeState, RuntimeNodeStatus,
@@ -152,16 +151,18 @@ impl LifecycleJourneyProjection {
                 let first = journal.events.first();
                 let last = journal.events.last();
                 let status = last
-                    .and_then(|event| match &event.notification.event {
+                    .and_then(|event| event.decode_notification::<BackboneEnvelope>().ok())
+                    .and_then(|notification| match notification.event {
                         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
                             key,
                             value,
                         }) if key == "turn_terminal" => value
                             .get("terminal_type")
-                            .and_then(serde_json::Value::as_str),
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToOwned::to_owned),
                         _ => None,
                     })
-                    .unwrap_or("running");
+                    .unwrap_or_else(|| "running".to_owned());
                 let meta_json = serde_json::json!({
                     "session_id": projection_session_id,
                     "delivery_runtime_session_id": journal.delivery_runtime_session_id,
@@ -245,9 +246,14 @@ impl LifecycleJourneyProjection {
                 let events = self.journal_events(source).await?;
                 let output = events
                     .iter()
-                    .filter_map(|event| match &event.notification.event {
-                        BackboneEvent::CommandOutputDelta(delta) => Some(delta.delta.as_str()),
-                        _ => None,
+                    .filter_map(|event| {
+                        event
+                            .decode_notification::<BackboneEnvelope>()
+                            .ok()
+                            .and_then(|notification| match notification.event {
+                                BackboneEvent::CommandOutputDelta(delta) => Some(delta.delta),
+                                _ => None,
+                            })
                     })
                     .collect::<Vec<_>>()
                     .join("");
@@ -365,7 +371,10 @@ impl LifecycleJourneyProjection {
         let projection_session_id = source.projection_session_id();
         let mut entries: BTreeMap<String, SessionTerminalMetadataBuilder> = BTreeMap::new();
         for event in &events {
-            match &event.notification.event {
+            let Ok(notification) = event.decode_notification::<BackboneEnvelope>() else {
+                continue;
+            };
+            match &notification.event {
                 BackboneEvent::Platform(PlatformEvent::TerminalOutput { terminal_id, data }) => {
                     let next_index = entries.len() + 1;
                     entries

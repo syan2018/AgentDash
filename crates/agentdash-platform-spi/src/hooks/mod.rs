@@ -1,5 +1,4 @@
 pub mod script;
-pub mod trace;
 
 use std::sync::Arc;
 
@@ -456,7 +455,42 @@ pub struct HookRuntimeEvaluationQuery {
 }
 
 /// Hook trace 触发点：只用于 Agent 核心生命周期的可见追踪。
-pub use agentdash_agent_protocol::HookTraceTrigger;
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HookTraceTrigger {
+    SessionStart,
+    UserPromptSubmit,
+    BeforeTool,
+    AfterTool,
+    AfterTurn,
+    BeforeStop,
+    SessionTerminal,
+    BeforeSubagentDispatch,
+    AfterSubagentDispatch,
+    BeforeCompact,
+    AfterCompact,
+    BeforeProviderRequest,
+}
+
+impl HookTraceTrigger {
+    #[must_use]
+    pub const fn as_key(self) -> &'static str {
+        match self {
+            Self::SessionStart => "session_start",
+            Self::UserPromptSubmit => "user_prompt_submit",
+            Self::BeforeTool => "before_tool",
+            Self::AfterTool => "after_tool",
+            Self::AfterTurn => "after_turn",
+            Self::BeforeStop => "before_stop",
+            Self::SessionTerminal => "session_terminal",
+            Self::BeforeSubagentDispatch => "before_subagent_dispatch",
+            Self::AfterSubagentDispatch => "after_subagent_dispatch",
+            Self::BeforeCompact => "before_compact",
+            Self::AfterCompact => "after_compact",
+            Self::BeforeProviderRequest => "before_provider_request",
+        }
+    }
+}
 
 /// Hook 规则评估入口。
 ///

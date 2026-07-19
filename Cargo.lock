@@ -812,7 +812,6 @@ name = "agentdash-platform-spi"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent",
- "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-diagnostics",
  "agentdash-domain",

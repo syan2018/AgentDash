@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
-use agentdash_agent_protocol::{AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent};
+use agentdash_agent_protocol::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEnvelope, BackboneEvent,
+};
 use agentdash_platform_spi::PersistedSessionEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -260,7 +262,10 @@ pub fn session_item_projections(events: &[PersistedSessionEvent]) -> Vec<Session
     let mut builders: BTreeMap<String, SessionItemBuilder> = BTreeMap::new();
 
     for event in events {
-        match &event.notification.event {
+        let Ok(notification) = event.decode_notification::<BackboneEnvelope>() else {
+            continue;
+        };
+        match &notification.event {
             BackboneEvent::UserInputSubmitted(input) => {
                 let item_id = input.item_id.clone();
                 let builder = builders
@@ -1037,7 +1042,7 @@ mod tests {
             entry_index: Some(0),
             tool_call_id: None,
             ephemeral: false,
-            notification: envelope,
+            notification: serde_json::to_value(envelope).expect("fixture envelope"),
         }
     }
 
@@ -1115,7 +1120,7 @@ mod tests {
                 entry_index: Some(0),
                 tool_call_id: None,
                 ephemeral: false,
-                notification: envelope,
+                notification: serde_json::to_value(envelope).expect("fixture envelope"),
             }
         };
         let msg_item: AgentDashThreadItem = codex::ThreadItem::AgentMessage {

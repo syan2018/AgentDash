@@ -1,6 +1,5 @@
 use std::collections::BTreeSet;
 
-use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_domain::channel::ChannelDirective;
 use agentdash_domain::workflow::MountDirective;
 use serde::{Deserialize, Serialize};
@@ -443,7 +442,15 @@ pub struct PersistedSessionEvent {
     /// 不推进 projection head）。不序列化、不上 wire、不写 DB；反序列化默认 false。
     #[serde(default, skip)]
     pub ephemeral: bool,
-    pub notification: BackboneEnvelope,
+    pub notification: serde_json::Value,
+}
+
+impl PersistedSessionEvent {
+    pub fn decode_notification<T: serde::de::DeserializeOwned>(
+        &self,
+    ) -> Result<T, serde_json::Error> {
+        serde_json::from_value(self.notification.clone())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -673,7 +680,7 @@ pub struct SessionLineageRecord {
 
 #[derive(Debug, Clone)]
 pub struct NewCompactionProjectionCommit {
-    pub completed_event: BackboneEnvelope,
+    pub completed_event: serde_json::Value,
     pub compaction: SessionCompactionRecord,
     pub segments: Vec<SessionProjectionSegmentRecord>,
     pub head: SessionProjectionHeadRecord,

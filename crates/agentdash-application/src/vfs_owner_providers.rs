@@ -212,7 +212,8 @@ fn project_journal_event(
         tool_call_id: None,
         ephemeral: presentation.durability
             == agentdash_agent_runtime_contract::PresentationDurability::Ephemeral,
-        notification,
+        notification: serde_json::to_value(notification)
+            .map_err(|error| LifecycleJourneyError::OperationFailed(error.to_string()))?,
     })
 }
 

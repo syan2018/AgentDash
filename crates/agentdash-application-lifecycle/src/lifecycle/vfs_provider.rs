@@ -1921,7 +1921,7 @@ mod tests {
             entry_index: Some(0),
             tool_call_id: None,
             ephemeral: false,
-            notification: envelope,
+            notification: serde_json::to_value(envelope).expect("fixture envelope"),
         }
     }
 

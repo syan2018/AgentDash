@@ -4,9 +4,8 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_protocol::{ContextDeliveryPlan, ContextFrame};
-use agentdash_agent_runtime_contract::{RuntimeItemId, RuntimeThreadId, RuntimeTurnId};
 use agentdash_agent::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
+use agentdash_agent_runtime_contract::{RuntimeItemId, RuntimeThreadId, RuntimeTurnId};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
 };
@@ -214,11 +213,6 @@ pub struct ExecutionTurnFrame {
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
     /// 会把重建出的消息历史放在这里，供 Managed Runtime 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
-    /// 本轮可见的 ContextFrame 列表（含 identity / mission / capability / pending_action...）。
-    pub context_frames: Vec<ContextFrame>,
-    /// 本轮 ContextFrame 的正式投递计划。Managed Runtime 和前端应优先消费该计划表达的
-    /// phase/order/cache/channel/agent consumption，而不是从 frame 到达顺序推断。
-    pub context_delivery_plan: Option<ContextDeliveryPlan>,
     /// Application 层预构建的工具列表（runtime + direct MCP + relay MCP）。
     ///
     /// Managed Runtime 只持有并调用这里的 `DynAgentTool`，不重新持有
@@ -312,7 +306,6 @@ impl std::fmt::Debug for ExecutionContext {
                     .as_ref()
                     .map(|state| state.messages.len()),
             )
-            .field("context_frames", &self.turn.context_frames.len())
             .finish_non_exhaustive()
     }
 }
@@ -805,84 +798,9 @@ pub fn partition_runtime_mcp_servers(
     (relay, direct)
 }
 
-#[derive(Debug, Clone)]
-pub enum PromptPayload {
-    Text(String),
-    /// canonical 用户输入：贯穿 API -> 应用 -> 连接器 -> AgentMessage 的结构化输入单元。
-    /// 以结构化输入表达图片等多模态内容，让它们直达模型而不拍平。
-    Input(Vec<agentdash_agent_protocol::UserInputBlock>),
-}
-
-impl PromptPayload {
-    /// 投递路径：把 canonical 输入映射为模型层 `ContentPart`（图片直达 `ContentPart::Image`）。
-    /// 连接器统一消费此方法，不再各自拍平。
-    pub fn to_content_parts(&self) -> Vec<agentdash_agent::ContentPart> {
-        match self {
-            Self::Text(text) => {
-                let text = text.trim();
-                if text.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![agentdash_agent::ContentPart::text(text)]
-                }
-            }
-            Self::Input(input) => {
-                agentdash_agent_protocol::user_input_blocks_to_content_parts(input)
-            }
-        }
-    }
-
-    /// 文本摘要：仅供标题提示 / trace 元信息，**不是**投递路径。
-    pub fn to_fallback_text(&self) -> String {
-        match self {
-            Self::Text(text) => text.clone(),
-            Self::Input(input) => {
-                agentdash_agent_protocol::codex_user_input_to_text(input).unwrap_or_default()
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_protocol::codex_app_server_protocol as codex;
-
     use super::*;
-
-    #[test]
-    fn prompt_payload_input_to_content_parts_keeps_image_structured() {
-        // 投递路径：canonical 输入经唯一映射，图片真出 ContentPart::Image，不再拍平成占位文本。
-        let input = vec![
-            codex::UserInput::Text {
-                text: "请分析这张图".to_string(),
-                text_elements: Vec::new(),
-            },
-            codex::UserInput::Image {
-                detail: None,
-                url: "data:image/png;base64,AAAA".to_string(),
-            },
-        ];
-        let parts = PromptPayload::Input(input).to_content_parts();
-        assert_eq!(parts.len(), 2);
-        assert_eq!(
-            parts[0],
-                agentdash_agent::ContentPart::text("请分析这张图")
-        );
-        assert!(matches!(
-            parts[1],
-            agentdash_agent::ContentPart::Image { .. }
-        ));
-        assert_eq!(
-            parts[1],
-            agentdash_agent::ContentPart::image("image/png", "AAAA")
-        );
-    }
-
-    #[test]
-    fn prompt_payload_text_to_content_parts() {
-        let parts = PromptPayload::Text("  hi  ".to_string()).to_content_parts();
-        assert_eq!(parts, vec![agentdash_agent::ContentPart::text("hi")]);
-    }
 
     #[test]
     fn capability_tool_filter_excludes_and_whitelists_by_capability_key() {

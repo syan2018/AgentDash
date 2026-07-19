@@ -49,11 +49,11 @@ pub use platform::runtime_surface::{
     CapabilityState, ChannelDimension, CompanionDimension, DiscoveredGuideline, DiscoveryContext,
     ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame,
     ExecutionTurnMode, McpEnvVar, McpHttpHeader, McpTransportConfig, PlatformRuntimeError,
-    PlatformToolExecutionContext, PlatformToolInvocationCoordinates, PromptPayload,
-    RestoredSessionState, RuntimeMcpServer, RuntimeMcpSourceReadiness, RuntimeToolProvider,
-    RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
-    RuntimeVfsPathPattern, SkillClusterMeta, SkillDimension, ToolCapabilityFilter, ToolCluster,
-    ToolDimension, VfsDimension, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
+    PlatformToolExecutionContext, PlatformToolInvocationCoordinates, RestoredSessionState,
+    RuntimeMcpServer, RuntimeMcpSourceReadiness, RuntimeToolProvider, RuntimeVfsAccessPolicy,
+    RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern,
+    SkillClusterMeta, SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension,
+    VfsDimension, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
     partition_runtime_mcp_servers, workspace_path_from_context,
 };
 
@@ -83,10 +83,6 @@ pub use extension_package::{
 // ─── hooks ──────────────────────────────────────────────────
 
 pub use hooks::script::HookScriptEvaluator;
-pub use hooks::trace::{
-    HookTraceStorageDisposition, build_hook_trace_envelope, hook_trace_entry_storage_disposition,
-    hook_trace_payload_storage_disposition,
-};
 pub use hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
     AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, AgentFrameRuntimeSnapshot,

@@ -182,6 +182,7 @@ pub enum RuntimeWireCompleteAgentAdmissionError {
 #[derive(Clone)]
 struct ActiveRemotePlacement {
     local_instance_id: AgentServiceInstanceId,
+    service_profile_digest: AgentProfileDigest,
     profiles: Vec<ProductExecutionProfileRef>,
     placement: Arc<dyn RuntimeWirePlacement>,
 }
@@ -486,12 +487,28 @@ impl RuntimeWireCompleteAgentAdmission {
             key,
             ActiveRemotePlacement {
                 local_instance_id: local_instance_id.clone(),
+                service_profile_digest: advertisement.descriptor.profile_digest.clone(),
                 profiles: trusted.product_profiles,
                 placement,
             },
         );
         drop(state);
+        self.selections
+            .activate_recovery_profile(
+                advertisement.descriptor.profile_digest,
+                local_instance_id.clone(),
+            )
+            .await;
         if let Some(previous) = previous {
+            self.complete_agent
+                .host
+                .mark_service_bindings_lost(&previous.local_instance_id)
+                .await
+                .map_err(
+                    |error| RuntimeWireCompleteAgentAdmissionError::Registration {
+                        reason: error.to_string(),
+                    },
+                )?;
             previous
                 .placement
                 .close("remote Complete Agent placement was superseded")
@@ -524,6 +541,21 @@ impl RuntimeWireCompleteAgentAdmission {
                 )?;
             state.active.remove(&key);
             drop(state);
+            self.complete_agent
+                .host
+                .mark_service_bindings_lost(&active.local_instance_id)
+                .await
+                .map_err(
+                    |error| RuntimeWireCompleteAgentAdmissionError::Registration {
+                        reason: error.to_string(),
+                    },
+                )?;
+            self.selections
+                .deactivate_recovery_profile(
+                    &active.service_profile_digest,
+                    &active.local_instance_id,
+                )
+                .await;
             active
                 .placement
                 .close("remote Complete Agent endpoint was withdrawn")

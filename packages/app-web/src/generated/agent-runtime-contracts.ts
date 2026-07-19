@@ -28,13 +28,13 @@ export type ManagedRuntimeChangePage = { thread_id: RuntimeThreadId, changes: Ar
 
 export type ManagedRuntimeChangesRequest = { thread_id: RuntimeThreadId, after: RuntimeChangeSequence | null, limit: number, };
 
-export type ManagedRuntimeCommand = { "kind": "create", initial_context: ManagedRuntimeInitialContextPackage | null, } | { "kind": "resume" } | { "kind": "activate" } | { "kind": "submit_input", content: Array<ManagedRuntimeContentBlock>, } | { "kind": "steer", expected_turn_id: RuntimeTurnId, content: Array<ManagedRuntimeContentBlock>, } | { "kind": "interrupt", expected_turn_id: RuntimeTurnId, } | { "kind": "request_compaction" } | { "kind": "resolve_interaction", interaction_id: RuntimeInteractionId, response: ManagedRuntimeInteractionResponse, } | { "kind": "close" } | { "kind": "fork", child_thread_id: RuntimeThreadId, through_completed_turn_id: RuntimeTurnId | null, };
+export type ManagedRuntimeCommand = { "kind": "create", initial_context: ManagedRuntimeInitialContextPackage | null, } | { "kind": "resume" } | { "kind": "rebind" } | { "kind": "activate" } | { "kind": "submit_input", content: Array<ManagedRuntimeContentBlock>, } | { "kind": "steer", expected_turn_id: RuntimeTurnId, content: Array<ManagedRuntimeContentBlock>, } | { "kind": "interrupt", expected_turn_id: RuntimeTurnId, } | { "kind": "request_compaction" } | { "kind": "resolve_interaction", interaction_id: RuntimeInteractionId, response: ManagedRuntimeInteractionResponse, } | { "kind": "close" } | { "kind": "fork", child_thread_id: RuntimeThreadId, through_completed_turn_id: RuntimeTurnId | null, };
 
 export type ManagedRuntimeCommandAvailability = { "status": "available", evidence: ManagedRuntimeAvailabilityEvidence, } | { "status": "unavailable", reason: ManagedRuntimeUnavailabilityReason, evidence: ManagedRuntimeAvailabilityEvidence, };
 
 export type ManagedRuntimeCommandEnvelope = { operation_id: RuntimeOperationId, idempotency_key: RuntimeIdempotencyKey, thread_id: RuntimeThreadId, expected_revision: RuntimeProjectionRevision | null, command: ManagedRuntimeCommand, };
 
-export type ManagedRuntimeCommandKind = "create" | "resume" | "activate" | "submit_input" | "steer" | "interrupt" | "request_compaction" | "resolve_interaction" | "close" | "fork";
+export type ManagedRuntimeCommandKind = "create" | "resume" | "rebind" | "activate" | "submit_input" | "steer" | "interrupt" | "request_compaction" | "resolve_interaction" | "close" | "fork";
 
 export type ManagedRuntimeCommandOutput = { stream: ManagedRuntimeCommandOutputStream, text: string, };
 
@@ -104,7 +104,7 @@ export type ManagedRuntimeLifecycleStatus = "provisioning" | "active" | "suspend
 
 export type ManagedRuntimeOperation = { id: RuntimeOperationId, turn_id: RuntimeTurnId | null, status: ManagedRuntimeOperationStatus, evidence: ManagedRuntimeOperationEvidence | null, };
 
-export type ManagedRuntimeOperationEvidence = { "kind": "create", binding: ManagedRuntimeSourceBindingEvidence, initial_context: ManagedRuntimeAppliedInitialContextEvidence | null, } | { "kind": "resume", binding: ManagedRuntimeSourceBindingEvidence, } | { "kind": "fork", parent_binding: ManagedRuntimeSourceBindingEvidence, progress: ManagedRuntimeForkProgressEvidence, } | { "kind": "activate", binding: ManagedRuntimeSourceBindingEvidence, };
+export type ManagedRuntimeOperationEvidence = { "kind": "create", binding: ManagedRuntimeSourceBindingEvidence, initial_context: ManagedRuntimeAppliedInitialContextEvidence | null, } | { "kind": "resume", binding: ManagedRuntimeSourceBindingEvidence, } | { "kind": "rebind", previous_binding: ManagedRuntimeSourceBindingEvidence, binding: ManagedRuntimeSourceBindingEvidence, } | { "kind": "fork", parent_binding: ManagedRuntimeSourceBindingEvidence, progress: ManagedRuntimeForkProgressEvidence, } | { "kind": "activate", binding: ManagedRuntimeSourceBindingEvidence, };
 
 export type ManagedRuntimeOperationReceipt = { operation_id: RuntimeOperationId, thread_id: RuntimeThreadId, accepted_revision: RuntimeProjectionRevision, status: ManagedRuntimeOperationStatus, evidence: ManagedRuntimeOperationEvidence | null, duplicate: boolean, };
 

@@ -28,9 +28,9 @@ use crate::{
     ManagedRuntimeAgentBinding, ManagedRuntimeBindingFact, ManagedRuntimeCoordinator,
     ManagedRuntimeCreateOutcome, ManagedRuntimeForkOutcome, ManagedRuntimeLifecycleError,
     ManagedRuntimeLifecycleInspection, ManagedRuntimeLifecyclePort,
-    ManagedRuntimePendingCommandState, ManagedRuntimeResumeOutcome, ManagedRuntimeSettlement,
-    ManagedRuntimeStateRepository, ManagedRuntimeStateStoreError, context_contribution_kind,
-    map_initial_context_package,
+    ManagedRuntimePendingCommandState, ManagedRuntimeRebindOutcome, ManagedRuntimeResumeOutcome,
+    ManagedRuntimeSettlement, ManagedRuntimeStateRepository, ManagedRuntimeStateStoreError,
+    context_contribution_kind, map_initial_context_package,
 };
 
 #[async_trait]
@@ -165,6 +165,13 @@ impl ProductionManagedAgentRuntimeGateway {
                     Err(error) => self.settle_lifecycle_error(command, error, now_ms).await,
                 }
             }
+            ManagedRuntimeCommand::Rebind => {
+                let binding = required_binding(&state.facts.binding)?;
+                match self.lifecycle.rebind(context, binding).await {
+                    Ok(outcome) => self.settle_rebind(command, outcome, now_ms).await,
+                    Err(error) => self.settle_lifecycle_error(command, error, now_ms).await,
+                }
+            }
             ManagedRuntimeCommand::Activate => {
                 let binding = required_binding(&state.facts.binding)?;
                 match self
@@ -262,6 +269,9 @@ impl ProductionManagedAgentRuntimeGateway {
             Ok(ManagedRuntimeLifecycleInspection::ResumeApplied(outcome)) => {
                 self.settle_resume(command, outcome, now_ms).await
             }
+            Ok(ManagedRuntimeLifecycleInspection::RebindApplied(outcome)) => {
+                self.settle_rebind(command, outcome, now_ms).await
+            }
             Ok(ManagedRuntimeLifecycleInspection::ForkApplied(outcome)) => {
                 self.settle_fork(command, outcome, now_ms).await
             }
@@ -341,6 +351,50 @@ impl ProductionManagedAgentRuntimeGateway {
             ..current
         };
         let evidence = ManagedRuntimeOperationEvidence::Resume {
+            binding: binding.evidence(),
+        };
+        self.finish(
+            command,
+            ManagedRuntimeOperationStatus::Succeeded,
+            Some(evidence),
+            Some(binding),
+            Some(ManagedRuntimeLifecycleStatus::Provisioning),
+            now_ms,
+        )
+        .await
+    }
+
+    async fn settle_rebind(
+        &self,
+        command: ManagedRuntimeCommandEnvelope,
+        outcome: ManagedRuntimeRebindOutcome,
+        now_ms: u64,
+    ) -> Result<ManagedRuntimeOperationReceipt, ManagedRuntimeGatewayError> {
+        if !receipt_succeeded(&outcome.receipt.state) {
+            return self
+                .settle_agent_receipt(command, outcome.receipt.state, now_ms)
+                .await;
+        }
+        let current = self
+            .repository
+            .load(&command.thread_id)
+            .await
+            .map_err(map_store_error)?
+            .facts
+            .binding
+            .ok_or(ManagedRuntimeGatewayError::NotFound)?;
+        if current.binding != outcome.previous_binding
+            || outcome.binding.source != current.binding.source
+            || outcome.binding.generation.0 != current.binding.generation.0.saturating_add(1)
+        {
+            return Err(ManagedRuntimeGatewayError::Conflict {
+                actual: current.committed_at_revision,
+            });
+        }
+        let revision = self.next_revision(&command.thread_id).await?;
+        let binding = binding_fact(&command.thread_id, outcome.binding, revision, None)?;
+        let evidence = ManagedRuntimeOperationEvidence::Rebind {
+            previous_binding: current.evidence(),
             binding: binding.evidence(),
         };
         self.finish(
@@ -748,7 +802,10 @@ impl ManagedAgentRuntimeGateway for ProductionManagedAgentRuntimeGateway {
         &self,
         command: ManagedRuntimeCommandEnvelope,
     ) -> Result<ManagedRuntimeOperationReceipt, ManagedRuntimeGatewayError> {
-        if matches!(command.command, ManagedRuntimeCommand::Resume) {
+        if matches!(
+            command.command,
+            ManagedRuntimeCommand::Resume | ManagedRuntimeCommand::Rebind
+        ) {
             let state = self
                 .repository
                 .load(&command.thread_id)
@@ -759,7 +816,8 @@ impl ManagedAgentRuntimeGateway for ProductionManagedAgentRuntimeGateway {
             }
             if state.facts.binding.is_none() {
                 return Err(ManagedRuntimeGatewayError::Unavailable {
-                    reason: "Resume requires a committed Runtime source binding".to_owned(),
+                    reason: "Resume or Rebind requires a committed Runtime source binding"
+                        .to_owned(),
                 });
             }
         }
@@ -1124,6 +1182,7 @@ fn map_agent_command(
         ManagedRuntimeCommand::Close => AgentCommand::Close,
         ManagedRuntimeCommand::Create { .. }
         | ManagedRuntimeCommand::Resume
+        | ManagedRuntimeCommand::Rebind
         | ManagedRuntimeCommand::Activate
         | ManagedRuntimeCommand::Fork { .. } => {
             return Err(ManagedRuntimeGatewayError::Invalid {
@@ -1402,6 +1461,23 @@ mod tests {
         ) -> Result<ManagedRuntimeResumeOutcome, ManagedRuntimeLifecycleError> {
             Ok(ManagedRuntimeResumeOutcome {
                 receipt: receipt(&context, &binding.source),
+                binding,
+            })
+        }
+
+        async fn rebind(
+            &self,
+            context: ManagedRuntimeDispatchContext,
+            previous_binding: ManagedRuntimeAgentBinding,
+        ) -> Result<ManagedRuntimeRebindOutcome, ManagedRuntimeLifecycleError> {
+            let binding = ManagedRuntimeAgentBinding {
+                source: previous_binding.source.clone(),
+                generation: AgentBindingGeneration(previous_binding.generation.0 + 1),
+                applied_surface: previous_binding.applied_surface.clone(),
+            };
+            Ok(ManagedRuntimeRebindOutcome {
+                receipt: receipt(&context, &binding.source),
+                previous_binding,
                 binding,
             })
         }
@@ -1714,6 +1790,81 @@ mod tests {
                 .expect("read child")
                 .lifecycle,
             ManagedRuntimeLifecycleStatus::Active
+        );
+    }
+
+    #[tokio::test]
+    async fn rebind_is_one_idempotent_runtime_operation_with_source_preserving_evidence() {
+        let repository = Arc::new(FixtureRepository::default());
+        let lifecycle = Arc::new(FixtureLifecycle::new(repository.clone()));
+        let gateway = gateway(repository, lifecycle);
+        let thread_id = RuntimeThreadId::new("rebind-thread").expect("thread");
+        gateway
+            .execute(command(
+                thread_id.clone(),
+                "rebind-create",
+                None,
+                ManagedRuntimeCommand::Create {
+                    initial_context: None,
+                },
+            ))
+            .await
+            .expect("create");
+        let created = gateway
+            .read(ManagedRuntimeReadRequest {
+                thread_id: thread_id.clone(),
+            })
+            .await
+            .expect("created");
+        gateway
+            .execute(command(
+                thread_id.clone(),
+                "rebind-activate",
+                Some(created.revision),
+                ManagedRuntimeCommand::Activate,
+            ))
+            .await
+            .expect("activate");
+        let active = gateway
+            .read(ManagedRuntimeReadRequest {
+                thread_id: thread_id.clone(),
+            })
+            .await
+            .expect("active");
+        let command = command(
+            thread_id.clone(),
+            "rebind",
+            Some(active.revision),
+            ManagedRuntimeCommand::Rebind,
+        );
+
+        let rebound = gateway.execute(command.clone()).await.expect("rebind");
+        let replay = gateway.execute(command).await.expect("replay rebind");
+
+        assert_eq!(rebound.status, ManagedRuntimeOperationStatus::Succeeded);
+        assert!(replay.duplicate);
+        assert!(matches!(
+            &rebound.evidence,
+            Some(ManagedRuntimeOperationEvidence::Rebind {
+                previous_binding,
+                binding,
+            }) if previous_binding.source_ref == binding.source_ref
+                && binding.committed_at_revision > previous_binding.committed_at_revision
+        ));
+        let snapshot = gateway
+            .read(ManagedRuntimeReadRequest { thread_id })
+            .await
+            .expect("rebound snapshot");
+        assert_eq!(
+            snapshot.lifecycle,
+            ManagedRuntimeLifecycleStatus::Provisioning
+        );
+        assert_eq!(
+            snapshot.source_binding,
+            rebound.evidence.and_then(|evidence| match evidence {
+                ManagedRuntimeOperationEvidence::Rebind { binding, .. } => Some(binding),
+                _ => None,
+            })
         );
     }
 

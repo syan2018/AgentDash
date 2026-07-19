@@ -180,6 +180,16 @@ impl CompleteAgentServiceSelector for ProductionCompleteAgentServiceSelector {
             _ => self.exact.select(profile).await,
         }
     }
+
+    async fn select_recovery(
+        &self,
+        service_profile_digest: &agentdash_agent_service_api::AgentProfileDigest,
+        previous_instance_id: &AgentServiceInstanceId,
+    ) -> Result<AgentServiceInstanceId, AgentRunProductRuntimeProvisioningError> {
+        self.exact
+            .select_recovery(service_profile_digest, previous_instance_id)
+            .await
+    }
 }
 
 fn credential_scope(

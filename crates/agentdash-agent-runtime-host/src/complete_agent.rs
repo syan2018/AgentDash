@@ -9,8 +9,8 @@ use crate::{
 use agentdash_agent_runtime::{
     ManagedRuntimeAgentBinding, ManagedRuntimeCreateOutcome, ManagedRuntimeDispatchContext,
     ManagedRuntimeForkOutcome, ManagedRuntimeLifecycleError, ManagedRuntimeLifecycleInspection,
-    ManagedRuntimeLifecyclePort, ManagedRuntimeResumeOutcome, ManagedRuntimeStateRepository,
-    bind_complete_agent_surface, production_managed_runtime_gateway,
+    ManagedRuntimeLifecyclePort, ManagedRuntimeRebindOutcome, ManagedRuntimeResumeOutcome,
+    ManagedRuntimeStateRepository, bind_complete_agent_surface, production_managed_runtime_gateway,
 };
 use agentdash_agent_runtime_contract::{
     ManagedAgentRuntimeGateway, ManagedRuntimeGatewayError, RuntimeThreadId,
@@ -32,6 +32,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -92,6 +93,36 @@ pub struct CompleteAgentRuntimeTargetProvisioningRequest {
     pub callback_deadline_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompleteAgentRuntimeTargetRecovery {
+    pub idempotency_key: AgentIdempotencyKey,
+    pub request_digest: AgentPayloadDigest,
+    pub previous_target: CompleteAgentRuntimeTarget,
+    pub recovered_target: CompleteAgentRuntimeTarget,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompleteAgentRuntimeTargetRecoveryRequest {
+    pub idempotency_key: AgentIdempotencyKey,
+    pub request_digest: AgentPayloadDigest,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub expected_generation: AgentBindingGeneration,
+    pub service_instance_id: AgentServiceInstanceId,
+    pub desired_surface: AgentSurfaceSnapshot,
+    pub callback_deadline_ms: u64,
+}
+
+#[async_trait]
+pub trait CompleteAgentRuntimeRecoveryPlanner: Send + Sync {
+    async fn plan_recovery(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+        previous_target: &CompleteAgentRuntimeTarget,
+        previous_binding: &ManagedRuntimeAgentBinding,
+        effect_id: &AgentEffectIdentity,
+    ) -> Result<CompleteAgentRuntimeTargetRecoveryRequest, CompleteAgentHostError>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompleteAgentVerifiedServiceRegistration {
     pub instance_id: AgentServiceInstanceId,
@@ -105,6 +136,7 @@ pub struct CompleteAgentVerifiedServiceRegistration {
 pub enum CompleteAgentLifecycleOperationKind {
     Create,
     Resume,
+    Rebind,
     Fork,
     Execute,
 }
@@ -318,6 +350,7 @@ pub enum CompleteAgentHostError {
 pub struct CompleteAgentHost {
     repository: SharedCompleteAgentHostRepository,
     services: SharedCompleteAgentServiceRegistry,
+    recovery_planner: RwLock<Option<Arc<dyn CompleteAgentRuntimeRecoveryPlanner>>>,
 }
 
 impl CompleteAgentHost {
@@ -328,7 +361,15 @@ impl CompleteAgentHost {
         Self {
             repository,
             services,
+            recovery_planner: RwLock::new(None),
         }
+    }
+
+    pub async fn install_runtime_recovery_planner(
+        &self,
+        planner: Arc<dyn CompleteAgentRuntimeRecoveryPlanner>,
+    ) {
+        *self.recovery_planner.write().await = Some(planner);
     }
 
     pub async fn register_verified_service(
@@ -435,13 +476,17 @@ impl CompleteAgentHost {
                 reason: "binding id is already reserved with different coordinates".to_owned(),
             });
         }
-        if facts
-            .source_coordinates
-            .values()
-            .any(|source| source == &binding.source)
-        {
+        if facts.source_coordinates.iter().any(|(binding_id, source)| {
+            source == &binding.source
+                && facts.bindings.get(binding_id).is_some_and(|existing| {
+                    !matches!(
+                        existing.state,
+                        CompleteAgentBindingState::Lost | CompleteAgentBindingState::Closed
+                    )
+                })
+        }) {
             return Err(CompleteAgentHostError::Invariant {
-                reason: "source coordinate is already assigned to another binding".to_owned(),
+                reason: "source coordinate already has a nonterminal binding".to_owned(),
             });
         }
         facts
@@ -586,6 +631,149 @@ impl CompleteAgentHost {
         }
     }
 
+    /// Explicitly advances a lost Runtime binding to a newly selected trusted service placement.
+    ///
+    /// Runtime targets are sticky. Recovery is the only operation that may replace one, and the
+    /// generation fence advances exactly once while the previous target and binding remain durable
+    /// lineage. Replaying the same request returns the same recovered target.
+    pub async fn recover_runtime_target(
+        &self,
+        request: CompleteAgentRuntimeTargetRecoveryRequest,
+    ) -> Result<CompleteAgentRuntimeTargetRecovery, CompleteAgentHostError> {
+        if request.callback_deadline_ms == 0 || request.expected_generation.0 == 0 {
+            return Err(CompleteAgentHostError::Invariant {
+                reason:
+                    "Runtime target recovery requires positive generation and callback deadline"
+                        .to_owned(),
+            });
+        }
+        loop {
+            let snapshot = self.repository.load().await?;
+            if let Some(existing) = snapshot
+                .facts
+                .runtime_target_recoveries
+                .get(&request.idempotency_key)
+            {
+                if existing.request_digest == request.request_digest
+                    && existing.previous_target.runtime_thread_id == request.runtime_thread_id
+                    && existing.previous_target.generation == request.expected_generation
+                    && existing.recovered_target.service_instance_id == request.service_instance_id
+                {
+                    return Ok(existing.clone());
+                }
+                return Err(CompleteAgentHostError::ProvisioningConflict);
+            }
+            let previous_target = snapshot
+                .facts
+                .runtime_targets
+                .get(&request.runtime_thread_id)
+                .cloned()
+                .ok_or_else(|| CompleteAgentHostError::DispatchRejected {
+                    reason: format!(
+                        "Runtime target {} is not registered",
+                        request.runtime_thread_id
+                    ),
+                })?;
+            if previous_target.generation != request.expected_generation {
+                return Err(CompleteAgentHostError::StaleGeneration {
+                    expected: request.expected_generation,
+                    actual: previous_target.generation,
+                });
+            }
+            let previous_binding_id =
+                runtime_binding_id(&request.runtime_thread_id, request.expected_generation)?;
+            let previous_binding = snapshot
+                .facts
+                .bindings
+                .get(&previous_binding_id)
+                .ok_or_else(|| CompleteAgentHostError::UnknownBinding {
+                    binding_id: previous_binding_id.as_str().to_owned(),
+                })?;
+            if previous_binding.state != CompleteAgentBindingState::Lost
+                || previous_binding.service_instance_id != previous_target.service_instance_id
+                || previous_binding.generation != previous_target.generation
+            {
+                return Err(CompleteAgentHostError::DispatchRejected {
+                    reason:
+                        "Runtime target recovery requires the exact previous binding to be lost"
+                            .to_owned(),
+                });
+            }
+            if snapshot.facts.lifecycle_effects.values().any(|effect| {
+                effect.runtime_thread_id == request.runtime_thread_id
+                    && effect.generation == request.expected_generation
+                    && effect.outcome.is_none()
+            }) {
+                return Err(CompleteAgentHostError::DispatchRejected {
+                    reason:
+                        "Runtime target recovery requires previous lifecycle effects to be settled"
+                            .to_owned(),
+                });
+            }
+            let offer = snapshot
+                .facts
+                .offers
+                .get(&request.service_instance_id)
+                .ok_or_else(|| CompleteAgentHostError::UnknownService {
+                    instance_id: request.service_instance_id.clone(),
+                })?;
+            let bound_surface = bind_complete_agent_surface(&request.desired_surface, offer)
+                .map_err(|error| CompleteAgentHostError::DispatchRejected {
+                    reason: error.to_string(),
+                })?;
+            let generation =
+                AgentBindingGeneration(request.expected_generation.0.checked_add(1).ok_or_else(
+                    || CompleteAgentHostError::Invariant {
+                        reason: "Runtime target binding generation is exhausted".to_owned(),
+                    },
+                )?);
+            let callback_route = callback_route_id(
+                &request.runtime_thread_id,
+                &request.service_instance_id,
+                generation,
+                &bound_surface,
+            )?;
+            let recovered_target = CompleteAgentRuntimeTarget {
+                runtime_thread_id: request.runtime_thread_id.clone(),
+                service_instance_id: request.service_instance_id.clone(),
+                generation,
+                profile_digest: offer.profile_digest.clone(),
+                bound_surface,
+                callbacks: AgentHostCallbackBinding {
+                    route_id: callback_route,
+                    binding_generation: generation,
+                    delivery: AgentSurfaceRoute::AgentNativeCallback,
+                    default_deadline_ms: request.callback_deadline_ms,
+                },
+            };
+            let recovery = CompleteAgentRuntimeTargetRecovery {
+                idempotency_key: request.idempotency_key.clone(),
+                request_digest: request.request_digest.clone(),
+                previous_target,
+                recovered_target: recovered_target.clone(),
+            };
+            let mut facts = snapshot.facts;
+            facts
+                .runtime_targets
+                .insert(request.runtime_thread_id.clone(), recovered_target);
+            facts
+                .runtime_target_recoveries
+                .insert(request.idempotency_key.clone(), recovery.clone());
+            match self
+                .repository
+                .commit(CompleteAgentHostCommit {
+                    expected_revision: snapshot.revision,
+                    facts,
+                })
+                .await
+            {
+                Ok(_) => return Ok(recovery),
+                Err(CompleteAgentHostStoreError::Conflict { .. }) => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
     pub async fn runtime_target(
         &self,
         runtime_thread_id: &RuntimeThreadId,
@@ -700,7 +888,14 @@ impl CompleteAgentHost {
         runtime_thread_id: &RuntimeThreadId,
         expected: &ManagedRuntimeAgentBinding,
     ) -> Result<(CompleteAgentBindingId, CompleteAgentBinding), CompleteAgentHostError> {
-        let binding_id = runtime_binding_id(runtime_thread_id)?;
+        let target = self.runtime_target(runtime_thread_id).await?;
+        if target.generation != expected.generation {
+            return Err(CompleteAgentHostError::StaleGeneration {
+                expected: expected.generation,
+                actual: target.generation,
+            });
+        }
+        let binding_id = runtime_binding_id(runtime_thread_id, expected.generation)?;
         let binding = self.binding(&binding_id).await?.ok_or_else(|| {
             CompleteAgentHostError::UnknownBinding {
                 binding_id: binding_id.as_str().to_owned(),
@@ -710,6 +905,15 @@ impl CompleteAgentHost {
             return Err(CompleteAgentHostError::StaleGeneration {
                 expected: expected.generation,
                 actual: binding.generation,
+            });
+        }
+        if binding.service_instance_id != target.service_instance_id
+            || binding.profile_digest != target.profile_digest
+            || binding.bound_surface != target.bound_surface
+            || !binding.dispatch_admitted()
+        {
+            return Err(CompleteAgentHostError::DispatchRejected {
+                reason: "Runtime binding is not admitted by the current target".to_owned(),
             });
         }
         if binding.applied_surface.as_ref() != Some(&expected.applied_surface) {
@@ -890,6 +1094,99 @@ impl CompleteAgentHost {
         }
         self.commit(snapshot.revision, state).await?;
         Ok(())
+    }
+
+    /// Atomically fences every nonterminal binding owned by one withdrawn service instance.
+    ///
+    /// Remote transport withdrawal calls this before closing placement transport. Callback routes,
+    /// leases and unsettled effects are fenced in the same Host commit.
+    pub async fn mark_service_bindings_lost(
+        &self,
+        service_instance_id: &AgentServiceInstanceId,
+    ) -> Result<Vec<RuntimeThreadId>, CompleteAgentHostError> {
+        loop {
+            let snapshot = self.repository.load().await?;
+            let binding_ids = snapshot
+                .facts
+                .bindings
+                .iter()
+                .filter(|(_, binding)| {
+                    &binding.service_instance_id == service_instance_id
+                        && !matches!(
+                            binding.state,
+                            CompleteAgentBindingState::Lost | CompleteAgentBindingState::Closed
+                        )
+                })
+                .map(|(binding_id, _)| binding_id.clone())
+                .collect::<Vec<_>>();
+            let affected_threads = snapshot
+                .facts
+                .runtime_targets
+                .iter()
+                .filter(|(_, target)| &target.service_instance_id == service_instance_id)
+                .filter(|(_, target)| {
+                    let binding_id =
+                        runtime_binding_id(&target.runtime_thread_id, target.generation).ok();
+                    binding_id.as_ref().is_some_and(|binding_id| {
+                        binding_ids.iter().any(|candidate| candidate == binding_id)
+                            || snapshot
+                                .facts
+                                .bindings
+                                .get(binding_id)
+                                .is_some_and(|binding| {
+                                    binding.state == CompleteAgentBindingState::Lost
+                                })
+                    })
+                })
+                .map(|(thread_id, _)| thread_id.clone())
+                .collect::<Vec<_>>();
+            if binding_ids.is_empty() {
+                return Ok(affected_threads);
+            }
+            let mut facts = snapshot.facts;
+            for binding_id in &binding_ids {
+                let generation = facts.bindings[binding_id].generation;
+                facts
+                    .bindings
+                    .get_mut(binding_id)
+                    .expect("selected binding exists")
+                    .state = CompleteAgentBindingState::Lost;
+                let route_ids = facts
+                    .callback_routes
+                    .values()
+                    .filter(|route| {
+                        &route.binding_id == binding_id
+                            && route.generation == generation
+                            && !facts.revoked_callback_routes.contains(&route.route_id)
+                    })
+                    .map(|route| route.route_id.clone())
+                    .collect::<Vec<_>>();
+                facts.revoked_callback_routes.extend(route_ids);
+                facts.leases.remove(binding_id);
+                for effect in facts.effects.values_mut().filter(|effect| {
+                    &effect.binding_id == binding_id && effect.generation == generation
+                }) {
+                    if !matches!(
+                        effect.state,
+                        CompleteAgentEffectState::Applied | CompleteAgentEffectState::Rejected
+                    ) {
+                        observe_effect_state(effect, CompleteAgentEffectState::Lost)?;
+                    }
+                }
+            }
+            match self
+                .repository
+                .commit(CompleteAgentHostCommit {
+                    expected_revision: snapshot.revision,
+                    facts,
+                })
+                .await
+            {
+                Ok(_) => return Ok(affected_threads),
+                Err(CompleteAgentHostStoreError::Conflict { .. }) => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
 
     pub async fn dispatch_execute(
@@ -1633,7 +1930,7 @@ impl CompleteAgentHost {
         target: &CompleteAgentRuntimeTarget,
         source: AgentSourceCoordinate,
     ) -> Result<ManagedRuntimeAgentBinding, CompleteAgentHostError> {
-        let binding_id = runtime_binding_id(&target.runtime_thread_id)?;
+        let binding_id = runtime_binding_id(&target.runtime_thread_id, target.generation)?;
         if let Some(binding) = self.binding(&binding_id).await?
             && binding.dispatch_admitted()
         {
@@ -1880,6 +2177,138 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
         self.finish_applied_resume(context, binding, receipt).await
     }
 
+    async fn rebind(
+        &self,
+        context: ManagedRuntimeDispatchContext,
+        previous_binding: ManagedRuntimeAgentBinding,
+    ) -> Result<ManagedRuntimeRebindOutcome, ManagedRuntimeLifecycleError> {
+        let mut target = self
+            .runtime_target(&context.runtime_thread_id)
+            .await
+            .map_err(map_lifecycle_host_error)?;
+        let expected_generation =
+            previous_binding
+                .generation
+                .0
+                .checked_add(1)
+                .ok_or_else(|| ManagedRuntimeLifecycleError::Invalid {
+                    reason: "Runtime binding generation is exhausted".to_owned(),
+                })?;
+        if target.generation == previous_binding.generation {
+            let planner = self.recovery_planner.read().await.clone().ok_or_else(|| {
+                ManagedRuntimeLifecycleError::Unavailable {
+                    reason: "Runtime Rebind has no installed recovery planner".to_owned(),
+                }
+            })?;
+            let request = planner
+                .plan_recovery(
+                    &context.runtime_thread_id,
+                    &target,
+                    &previous_binding,
+                    &context.effect_id,
+                )
+                .await
+                .map_err(map_lifecycle_host_error)?;
+            if request.runtime_thread_id != context.runtime_thread_id
+                || request.expected_generation != previous_binding.generation
+            {
+                return Err(ManagedRuntimeLifecycleError::Invalid {
+                    reason: "Runtime recovery planner returned mismatched coordinates".to_owned(),
+                });
+            }
+            target = self
+                .recover_runtime_target(request)
+                .await
+                .map_err(map_lifecycle_host_error)?
+                .recovered_target;
+        }
+        if target.generation != AgentBindingGeneration(expected_generation) {
+            return Err(ManagedRuntimeLifecycleError::StaleGeneration);
+        }
+        let previous_binding_id =
+            runtime_binding_id(&context.runtime_thread_id, previous_binding.generation)
+                .map_err(map_lifecycle_host_error)?;
+        let durable_previous = self
+            .binding(&previous_binding_id)
+            .await
+            .map_err(map_lifecycle_host_error)?
+            .ok_or(ManagedRuntimeLifecycleError::NotFound)?;
+        if durable_previous.state != CompleteAgentBindingState::Lost
+            || durable_previous.source != previous_binding.source
+            || durable_previous.generation != previous_binding.generation
+            || durable_previous.applied_surface.as_ref() != Some(&previous_binding.applied_surface)
+        {
+            return Err(ManagedRuntimeLifecycleError::Invalid {
+                reason: "Rebind requires the exact previous Host binding to be lost".to_owned(),
+            });
+        }
+        let record = CompleteAgentLifecycleEffectRecord {
+            effect_id: context.effect_id.clone(),
+            runtime_thread_id: context.runtime_thread_id.clone(),
+            child_thread_id: None,
+            kind: CompleteAgentLifecycleOperationKind::Rebind,
+            service_instance_id: target.service_instance_id.clone(),
+            generation: target.generation,
+            initial_context: None,
+            fork_cutoff: None,
+            applied_receipt: None,
+            outcome: None,
+        };
+        match self
+            .begin_lifecycle_effect(record)
+            .await
+            .map_err(map_lifecycle_host_error)?
+        {
+            CompleteAgentLifecycleBegin::Settled(outcome) => {
+                return stored_rebind_outcome(previous_binding, target.generation, *outcome);
+            }
+            CompleteAgentLifecycleBegin::InspectionRequired => {
+                return Err(ManagedRuntimeLifecycleError::InspectionRequired {
+                    reason: "Rebind lifecycle effect requires inspection".to_owned(),
+                });
+            }
+            CompleteAgentLifecycleBegin::Dispatch => {}
+        }
+        let binding = self
+            .provision_runtime_binding(&context, &target, previous_binding.source.clone())
+            .await
+            .map_err(map_applied_lifecycle_host_error)?;
+        let service = self
+            .service(&target.service_instance_id)
+            .await
+            .map_err(map_lifecycle_host_error)?;
+        let receipt = service
+            .resume(ResumeAgentCommand {
+                meta: lifecycle_meta(&context, target.generation)?,
+                source: previous_binding.source.clone(),
+            })
+            .await
+            .map_err(|error| ManagedRuntimeLifecycleError::InspectionRequired {
+                reason: error.to_string(),
+            })?;
+        if !receipt_applied_success(&receipt.state) {
+            return Err(ManagedRuntimeLifecycleError::InspectionRequired {
+                reason: "Complete Agent Rebind resume is not terminal".to_owned(),
+            });
+        }
+        self.observe_lifecycle_applied_receipt(
+            &context.effect_id,
+            CompleteAgentLifecycleAppliedReceipt::Agent(applied_agent_receipt_from_command(
+                &receipt,
+            )?),
+        )
+        .await
+        .map_err(map_applied_receipt_observation_error)?;
+        let resumed = self
+            .finish_applied_resume(context, binding.clone(), receipt)
+            .await?;
+        Ok(ManagedRuntimeRebindOutcome {
+            receipt: resumed.receipt,
+            previous_binding,
+            binding,
+        })
+    }
+
     async fn fork(
         &self,
         context: ManagedRuntimeDispatchContext,
@@ -2022,6 +2451,18 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
                         outcome,
                     )
                     .map(ManagedRuntimeLifecycleInspection::ResumeApplied),
+                    CompleteAgentLifecycleOperationKind::Rebind => {
+                        let target = self
+                            .runtime_target(&record.runtime_thread_id)
+                            .await
+                            .map_err(map_lifecycle_host_error)?;
+                        stored_rebind_outcome(
+                            binding.ok_or(ManagedRuntimeLifecycleError::NotFound)?,
+                            target.generation,
+                            outcome,
+                        )
+                        .map(ManagedRuntimeLifecycleInspection::RebindApplied)
+                    }
                     CompleteAgentLifecycleOperationKind::Fork => {
                         { stored_fork_outcome(record.generation, outcome) }
                             .map(ManagedRuntimeLifecycleInspection::ForkApplied)
@@ -2336,6 +2777,45 @@ impl CompleteAgentHost {
                 .map(ManagedRuntimeLifecycleInspection::ResumeApplied)
             }
             (
+                CompleteAgentLifecycleOperationKind::Rebind,
+                AgentAppliedEffectOutcome::Resume { receipt },
+            ) => {
+                self.observe_lifecycle_applied_receipt(
+                    &context.effect_id,
+                    CompleteAgentLifecycleAppliedReceipt::Agent(receipt.clone()),
+                )
+                .await
+                .map_err(map_applied_receipt_observation_error)?;
+                let previous_binding = binding.ok_or(ManagedRuntimeLifecycleError::NotFound)?;
+                let target = self
+                    .runtime_target(&record.runtime_thread_id)
+                    .await
+                    .map_err(map_lifecycle_host_error)?;
+                let recovered_binding_id =
+                    runtime_binding_id(&record.runtime_thread_id, record.generation)
+                        .map_err(map_lifecycle_host_error)?;
+                let recovered_binding = self
+                    .binding(&recovered_binding_id)
+                    .await
+                    .map_err(map_lifecycle_host_error)?
+                    .and_then(managed_binding_from_host)
+                    .ok_or(ManagedRuntimeLifecycleError::NotFound)?;
+                let receipt = agent_receipt_from_inspection(receipt);
+                let resumed = self
+                    .finish_applied_resume(context, recovered_binding.clone(), receipt)
+                    .await?;
+                if target.generation != recovered_binding.generation {
+                    return Err(ManagedRuntimeLifecycleError::StaleGeneration);
+                }
+                Ok(ManagedRuntimeLifecycleInspection::RebindApplied(
+                    ManagedRuntimeRebindOutcome {
+                        receipt: resumed.receipt,
+                        previous_binding,
+                        binding: recovered_binding,
+                    },
+                ))
+            }
+            (
                 CompleteAgentLifecycleOperationKind::Fork,
                 AgentAppliedEffectOutcome::Fork { receipt },
             ) => {
@@ -2439,8 +2919,12 @@ impl CompleteAgentHost {
 
 fn runtime_binding_id(
     runtime_thread_id: &RuntimeThreadId,
+    generation: AgentBindingGeneration,
 ) -> Result<CompleteAgentBindingId, CompleteAgentHostError> {
-    CompleteAgentBindingId::new(format!("runtime-binding:{runtime_thread_id}"))
+    CompleteAgentBindingId::new(format!(
+        "runtime-binding:{runtime_thread_id}:{}",
+        generation.0
+    ))
 }
 
 fn callback_route_id(
@@ -2544,6 +3028,44 @@ fn stored_resume_outcome(
     outcome: CompleteAgentLifecycleOutcome,
 ) -> Result<ManagedRuntimeResumeOutcome, ManagedRuntimeLifecycleError> {
     stored_agent_receipt(outcome).map(|receipt| ManagedRuntimeResumeOutcome { receipt, binding })
+}
+
+fn stored_rebind_outcome(
+    previous_binding: ManagedRuntimeAgentBinding,
+    generation: AgentBindingGeneration,
+    outcome: CompleteAgentLifecycleOutcome,
+) -> Result<ManagedRuntimeRebindOutcome, ManagedRuntimeLifecycleError> {
+    let CompleteAgentLifecycleOutcome::Agent {
+        receipt,
+        applied_surface: Some(applied_surface),
+    } = outcome
+    else {
+        return Err(ManagedRuntimeLifecycleError::Invalid {
+            reason: "Rebind lifecycle outcome has no recovered applied binding".to_owned(),
+        });
+    };
+    if receipt.source != previous_binding.source {
+        return Err(ManagedRuntimeLifecycleError::Invalid {
+            reason: "Rebind lifecycle outcome changed the Agent source coordinate".to_owned(),
+        });
+    }
+    Ok(ManagedRuntimeRebindOutcome {
+        binding: ManagedRuntimeAgentBinding {
+            source: receipt.source.clone(),
+            generation,
+            applied_surface,
+        },
+        previous_binding,
+        receipt,
+    })
+}
+
+fn managed_binding_from_host(binding: CompleteAgentBinding) -> Option<ManagedRuntimeAgentBinding> {
+    Some(ManagedRuntimeAgentBinding {
+        source: binding.source,
+        generation: binding.generation,
+        applied_surface: binding.applied_surface?,
+    })
 }
 
 fn stored_fork_outcome(
@@ -3577,6 +4099,23 @@ mod tests {
         }
     }
 
+    struct FixtureRecoveryPlanner {
+        request: CompleteAgentRuntimeTargetRecoveryRequest,
+    }
+
+    #[async_trait]
+    impl CompleteAgentRuntimeRecoveryPlanner for FixtureRecoveryPlanner {
+        async fn plan_recovery(
+            &self,
+            _runtime_thread_id: &RuntimeThreadId,
+            _previous_target: &CompleteAgentRuntimeTarget,
+            _previous_binding: &ManagedRuntimeAgentBinding,
+            _effect_id: &AgentEffectIdentity,
+        ) -> Result<CompleteAgentRuntimeTargetRecoveryRequest, CompleteAgentHostError> {
+            Ok(self.request.clone())
+        }
+    }
+
     #[test]
     fn different_payload_cannot_reuse_effect_identity() {
         let record = effect_record("sha256:a");
@@ -3654,6 +4193,195 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn explicit_recovery_rebinds_one_lost_source_and_fences_the_old_generation() {
+        let repository = Arc::new(FixtureHostRepository::default());
+        let (host, service, runtime_thread_id) = lifecycle_host(repository.clone()).await;
+        let created = host
+            .create(
+                lifecycle_context(runtime_thread_id.clone(), "rebind-create"),
+                None,
+            )
+            .await
+            .expect("create source");
+        let old_binding_id =
+            runtime_binding_id(&runtime_thread_id, AgentBindingGeneration(1)).expect("binding");
+        let lost_threads = host
+            .mark_service_bindings_lost(
+                &AgentServiceInstanceId::new("lifecycle-service").expect("service"),
+            )
+            .await
+            .expect("mark previous service bindings lost");
+        assert_eq!(lost_threads, vec![runtime_thread_id.clone()]);
+        let replacement_instance_id =
+            AgentServiceInstanceId::new("lifecycle-service-replacement").expect("service");
+        host.register_verified_service(
+            fixture_verified_registration(
+                replacement_instance_id.clone(),
+                fixture_placement(),
+                descriptor().profile_digest,
+            ),
+            service.clone(),
+        )
+        .await
+        .expect("register replacement service");
+        let request = CompleteAgentRuntimeTargetRecoveryRequest {
+            idempotency_key: AgentIdempotencyKey::new("recover-runtime-a").expect("idempotency"),
+            request_digest: AgentPayloadDigest::new("sha256:recover-runtime-a").expect("digest"),
+            runtime_thread_id: runtime_thread_id.clone(),
+            expected_generation: AgentBindingGeneration(1),
+            service_instance_id: replacement_instance_id,
+            desired_surface: AgentSurfaceSnapshot {
+                revision: AgentSurfaceRevision(2),
+                digest: agentdash_agent_service_api::AgentSurfaceDigest::new(
+                    "surface-recovered",
+                )
+                .expect("surface"),
+                requirements: Vec::new(),
+            },
+            callback_deadline_ms: 2_000,
+        };
+        host.install_runtime_recovery_planner(Arc::new(FixtureRecoveryPlanner { request }))
+            .await;
+        let rebind_context = lifecycle_context(runtime_thread_id.clone(), "rebind-resume");
+        let rebound = host
+            .rebind(rebind_context.clone(), created.binding.clone())
+            .await
+            .expect("rebind source");
+        let replay = host
+            .rebind(rebind_context, created.binding.clone())
+            .await
+            .expect("replay rebind");
+        assert_eq!(replay, rebound);
+        assert_eq!(rebound.previous_binding, created.binding);
+        assert_eq!(rebound.binding.source, rebound.previous_binding.source);
+        assert_eq!(rebound.binding.generation, AgentBindingGeneration(2));
+        assert_eq!(service.resume_calls.load(Ordering::SeqCst), 1);
+
+        let facts = repository.load().await.expect("Host facts").facts;
+        assert_eq!(facts.runtime_target_recoveries.len(), 1);
+        assert_eq!(
+            facts.bindings[&old_binding_id].state,
+            CompleteAgentBindingState::Lost
+        );
+        assert!(facts.callback_routes.values().all(|route| {
+            route.binding_id != old_binding_id
+                || facts.revoked_callback_routes.contains(&route.route_id)
+        }));
+        assert_eq!(
+            facts.bindings[&runtime_binding_id(&runtime_thread_id, AgentBindingGeneration(2))
+                .expect("recovered binding")]
+                .state,
+            CompleteAgentBindingState::Available
+        );
+        assert!(matches!(
+            host.read(
+                runtime_thread_id,
+                rebound.previous_binding,
+                AgentReadQuery {
+                    source: rebound.binding.source,
+                    at_revision: None,
+                },
+            )
+            .await,
+            Err(ManagedRuntimeLifecycleError::StaleGeneration)
+        ));
+    }
+
+    #[tokio::test]
+    async fn rebind_settlement_crash_recovers_by_same_effect_without_second_resume() {
+        let durable = Arc::new(FixtureHostRepository::default());
+        let failing = Arc::new(FailLifecycleCommitOnceRepository {
+            inner: durable.clone(),
+            failpoint: LifecycleFailpoint::LifecycleSettlement,
+            armed: AtomicBool::new(false),
+        });
+        let (host, service, runtime_thread_id) = lifecycle_host(failing.clone()).await;
+        let created = host
+            .create(
+                lifecycle_context(runtime_thread_id.clone(), "rebind-crash-create"),
+                None,
+            )
+            .await
+            .expect("create source");
+        host.mark_binding_lost(
+            &runtime_binding_id(&runtime_thread_id, AgentBindingGeneration(1)).expect("binding"),
+            AgentBindingGeneration(1),
+        )
+        .await
+        .expect("mark lost");
+        let replacement_instance_id =
+            AgentServiceInstanceId::new("rebind-crash-replacement").expect("service");
+        host.register_verified_service(
+            fixture_verified_registration(
+                replacement_instance_id.clone(),
+                fixture_placement(),
+                descriptor().profile_digest,
+            ),
+            service.clone(),
+        )
+        .await
+        .expect("register replacement");
+        host.install_runtime_recovery_planner(Arc::new(FixtureRecoveryPlanner {
+            request: CompleteAgentRuntimeTargetRecoveryRequest {
+                idempotency_key: AgentIdempotencyKey::new("rebind-crash-target")
+                    .expect("idempotency"),
+                request_digest: AgentPayloadDigest::new("sha256:rebind-crash-target")
+                    .expect("digest"),
+                runtime_thread_id: runtime_thread_id.clone(),
+                expected_generation: AgentBindingGeneration(1),
+                service_instance_id: replacement_instance_id.clone(),
+                desired_surface: AgentSurfaceSnapshot {
+                    revision: AgentSurfaceRevision(2),
+                    digest: agentdash_agent_service_api::AgentSurfaceDigest::new(
+                        "rebind-crash-surface",
+                    )
+                    .expect("surface"),
+                    requirements: Vec::new(),
+                },
+                callback_deadline_ms: 2_000,
+            },
+        }))
+        .await;
+        let context = lifecycle_context(runtime_thread_id, "rebind-crash-resume");
+        failing.arm();
+
+        assert!(matches!(
+            host.rebind(context.clone(), created.binding.clone()).await,
+            Err(ManagedRuntimeLifecycleError::InspectionRequired { .. })
+        ));
+        assert_eq!(service.resume_calls.load(Ordering::SeqCst), 1);
+        let restarted = restarted_lifecycle_host(failing, service.clone()).await;
+        restarted
+            .register_verified_service(
+                fixture_verified_registration(
+                    replacement_instance_id,
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
+                service.clone(),
+            )
+            .await
+            .expect("reattach replacement");
+
+        let inspected = restarted
+            .inspect(context, Some(created.binding))
+            .await
+            .expect("inspect Rebind");
+
+        assert!(matches!(
+            inspected,
+            ManagedRuntimeLifecycleInspection::RebindApplied(ManagedRuntimeRebindOutcome {
+                binding: ManagedRuntimeAgentBinding {
+                    generation: AgentBindingGeneration(2),
+                    ..
+                },
+                ..
+            })
+        ));
+        assert_eq!(service.resume_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn runtime_lifecycle_adapter_persists_intent_before_create_and_fork_provisioning() {
         let repository = Arc::new(FixtureHostRepository::default());
         let service = Arc::new(LifecycleService {
@@ -3724,7 +4452,10 @@ mod tests {
             after_create
                 .facts
                 .bindings
-                .get(&runtime_binding_id(&parent_thread).expect("binding id"))
+                .get(
+                    &runtime_binding_id(&parent_thread, AgentBindingGeneration(1))
+                        .expect("binding id"),
+                )
                 .is_some_and(CompleteAgentBinding::dispatch_admitted)
         );
 
@@ -3758,7 +4489,10 @@ mod tests {
             after_fork
                 .facts
                 .bindings
-                .get(&runtime_binding_id(&child_thread).expect("binding id"))
+                .get(
+                    &runtime_binding_id(&child_thread, AgentBindingGeneration(1))
+                        .expect("binding id"),
+                )
                 .is_some_and(CompleteAgentBinding::dispatch_admitted)
         );
         let encoded =
@@ -3800,11 +4534,9 @@ mod tests {
                 .get(&context.effect_id)
                 .is_some_and(|record| record.outcome.is_none())
         );
-        assert!(
-            !facts
-                .bindings
-                .contains_key(&runtime_binding_id(&parent_thread).expect("binding"))
-        );
+        assert!(!facts.bindings.contains_key(
+            &runtime_binding_id(&parent_thread, AgentBindingGeneration(1)).expect("binding"),
+        ));
         let restarted = restarted_lifecycle_host(failing, service.clone()).await;
         assert!(matches!(
             ManagedRuntimeLifecyclePort::inspect(&restarted, context, None).await,
@@ -3855,7 +4587,10 @@ mod tests {
         assert!(
             facts
                 .bindings
-                .get(&runtime_binding_id(&parent_thread).expect("binding"))
+                .get(
+                    &runtime_binding_id(&parent_thread, AgentBindingGeneration(1))
+                        .expect("binding"),
+                )
                 .is_some_and(|binding| binding.state == CompleteAgentBindingState::PendingSurface)
         );
         let restarted = restarted_lifecycle_host(failing, service.clone()).await;
@@ -3876,7 +4611,10 @@ mod tests {
         assert!(
             recovered
                 .bindings
-                .get(&runtime_binding_id(&parent_thread).expect("binding"))
+                .get(
+                    &runtime_binding_id(&parent_thread, AgentBindingGeneration(1))
+                        .expect("binding"),
+                )
                 .is_some_and(CompleteAgentBinding::dispatch_admitted)
         );
     }
@@ -3902,7 +4640,10 @@ mod tests {
         assert!(
             facts
                 .bindings
-                .get(&runtime_binding_id(&parent_thread).expect("binding"))
+                .get(
+                    &runtime_binding_id(&parent_thread, AgentBindingGeneration(1))
+                        .expect("binding"),
+                )
                 .is_some_and(CompleteAgentBinding::dispatch_admitted)
         );
         assert!(
@@ -4150,7 +4891,9 @@ mod tests {
         assert!(
             facts
                 .bindings
-                .get(&runtime_binding_id(&child_thread).expect("binding"))
+                .get(
+                    &runtime_binding_id(&child_thread, AgentBindingGeneration(1)).expect("binding"),
+                )
                 .is_some_and(CompleteAgentBinding::dispatch_admitted)
         );
     }
@@ -4261,7 +5004,9 @@ mod tests {
         assert!(
             facts
                 .bindings
-                .get(&runtime_binding_id(&child_thread).expect("binding"))
+                .get(
+                    &runtime_binding_id(&child_thread, AgentBindingGeneration(1)).expect("binding"),
+                )
                 .is_some_and(CompleteAgentBinding::dispatch_admitted)
         );
         assert!(

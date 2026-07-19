@@ -5,12 +5,14 @@ use std::{
 
 use agentdash_agent_runtime::{PlatformToolBroker, RuntimeToolDefinition};
 use agentdash_agent_runtime_host::{
-    CompleteAgentHost, CompleteAgentHostError, CompleteAgentRuntimeTargetProvisioningRequest,
+    CompleteAgentHost, CompleteAgentHostError, CompleteAgentRuntimeRecoveryPlanner,
+    CompleteAgentRuntimeTarget, CompleteAgentRuntimeTargetProvisioningRequest,
+    CompleteAgentRuntimeTargetRecoveryRequest,
 };
 use agentdash_agent_service_api::{
     AgentHookAction, AgentHookBlockingSemantics, AgentHookDefinitionId, AgentHookEffectKind,
     AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming,
-    AgentIdempotencyKey, AgentPayloadDigest, AgentServiceInstanceId,
+    AgentIdempotencyKey, AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId,
     AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRequirement,
     AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentSurfaceSnapshot,
     AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, SemanticFidelity,
@@ -45,6 +47,7 @@ const DEFAULT_CALLBACK_DEADLINE_MS: u64 = 30_000;
 #[derive(Default)]
 pub struct CompleteAgentServiceSelectionCatalog {
     profiles: RwLock<BTreeMap<(String, String), AgentServiceInstanceId>>,
+    recovery_profiles: RwLock<BTreeMap<AgentProfileDigest, AgentServiceInstanceId>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,9 +62,39 @@ pub trait CompleteAgentServiceSelector: Send + Sync {
         &self,
         profile: &ProductExecutionProfileRef,
     ) -> Result<VerifiedCompleteAgentSelection, AgentRunProductRuntimeProvisioningError>;
+
+    async fn select_recovery(
+        &self,
+        service_profile_digest: &AgentProfileDigest,
+        previous_instance_id: &AgentServiceInstanceId,
+    ) -> Result<AgentServiceInstanceId, AgentRunProductRuntimeProvisioningError>;
 }
 
 impl CompleteAgentServiceSelectionCatalog {
+    pub async fn activate_recovery_profile(
+        &self,
+        profile_digest: AgentProfileDigest,
+        instance_id: AgentServiceInstanceId,
+    ) -> Option<AgentServiceInstanceId> {
+        self.recovery_profiles
+            .write()
+            .await
+            .insert(profile_digest, instance_id)
+    }
+
+    pub async fn deactivate_recovery_profile(
+        &self,
+        profile_digest: &AgentProfileDigest,
+        expected_instance_id: &AgentServiceInstanceId,
+    ) -> bool {
+        let mut profiles = self.recovery_profiles.write().await;
+        if profiles.get(profile_digest) != Some(expected_instance_id) {
+            return false;
+        }
+        profiles.remove(profile_digest);
+        true
+    }
+
     pub async fn register(
         &self,
         profile: &ProductExecutionProfileRef,
@@ -207,6 +240,25 @@ impl CompleteAgentServiceSelector for CompleteAgentServiceSelectionCatalog {
             verified_product_profile_digest: profile.profile_digest.clone(),
         })
     }
+
+    async fn select_recovery(
+        &self,
+        service_profile_digest: &AgentProfileDigest,
+        previous_instance_id: &AgentServiceInstanceId,
+    ) -> Result<AgentServiceInstanceId, AgentRunProductRuntimeProvisioningError> {
+        self.recovery_profiles
+            .read()
+            .await
+            .get(service_profile_digest)
+            .filter(|instance_id| *instance_id != previous_instance_id)
+            .cloned()
+            .ok_or_else(|| AgentRunProductRuntimeProvisioningError::Incompatible {
+                reason: format!(
+                    "no replacement Complete Agent is active for service profile `{}`",
+                    service_profile_digest.as_str()
+                ),
+            })
+    }
 }
 
 pub struct CompleteAgentProductRuntimeProvisioner {
@@ -281,6 +333,89 @@ impl AgentRunProductRuntimeProvisioningPort for CompleteAgentProductRuntimeProvi
             frame: request.frame,
             profile_digest: request.execution_profile.profile_digest,
             surface_facts_digest: request.surface_facts.surface_digest,
+        })
+    }
+}
+
+#[async_trait]
+impl CompleteAgentRuntimeRecoveryPlanner for CompleteAgentProductRuntimeProvisioner {
+    async fn plan_recovery(
+        &self,
+        runtime_thread_id: &agentdash_agent_runtime_contract::RuntimeThreadId,
+        previous_target: &CompleteAgentRuntimeTarget,
+        previous_binding: &agentdash_agent_runtime::ManagedRuntimeAgentBinding,
+        effect_id: &agentdash_agent_service_api::AgentEffectIdentity,
+    ) -> Result<CompleteAgentRuntimeTargetRecoveryRequest, CompleteAgentHostError> {
+        if previous_target.runtime_thread_id != *runtime_thread_id
+            || previous_target.generation != previous_binding.generation
+        {
+            return Err(CompleteAgentHostError::Invariant {
+                reason: "Runtime recovery planner received mismatched binding coordinates"
+                    .to_owned(),
+            });
+        }
+        let service_instance_id = self
+            .selections
+            .select_recovery(
+                &previous_target.profile_digest,
+                &previous_target.service_instance_id,
+            )
+            .await
+            .map_err(|error| CompleteAgentHostError::DispatchRejected {
+                reason: error.to_string(),
+            })?;
+        let desired_surface = AgentSurfaceSnapshot {
+            revision: previous_target.bound_surface.revision,
+            digest: previous_target.bound_surface.digest.clone(),
+            requirements: previous_target
+                .bound_surface
+                .contributions
+                .iter()
+                .map(|contribution| AgentSurfaceRequirement {
+                    key: contribution.key.clone(),
+                    required: contribution.required,
+                    minimum_fidelity: contribution.fidelity,
+                    allowed_routes: BTreeSet::from([contribution.route]),
+                    semantics: contribution.semantics.clone(),
+                    payload: contribution.payload.clone(),
+                    payload_digest: contribution.payload_digest.clone(),
+                })
+                .collect(),
+        };
+        let request_digest = AgentPayloadDigest::new(format!(
+            "sha256:{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&serde_json::json!({
+                    "schema": "agentdash.complete-agent-runtime-recovery/v1",
+                    "runtime_thread_id": runtime_thread_id,
+                    "effect_id": effect_id,
+                    "expected_generation": previous_binding.generation,
+                    "previous_service_instance_id": previous_target.service_instance_id,
+                    "service_instance_id": service_instance_id,
+                    "desired_surface": desired_surface,
+                }))
+                .map_err(|error| CompleteAgentHostError::Encoding {
+                    reason: error.to_string(),
+                })?
+            )
+        ))
+        .map_err(|error| CompleteAgentHostError::Encoding {
+            reason: error.to_string(),
+        })?;
+        Ok(CompleteAgentRuntimeTargetRecoveryRequest {
+            idempotency_key: AgentIdempotencyKey::new(format!(
+                "runtime-recovery:{}",
+                effect_id.as_str()
+            ))
+            .map_err(|error| CompleteAgentHostError::Encoding {
+                reason: error.to_string(),
+            })?,
+            request_digest,
+            runtime_thread_id: runtime_thread_id.clone(),
+            expected_generation: previous_binding.generation,
+            service_instance_id,
+            desired_surface,
+            callback_deadline_ms: previous_target.callbacks.default_deadline_ms,
         })
     }
 }
@@ -824,6 +959,35 @@ mod tests {
                 .service_instance_id,
             next_instance
         );
+    }
+
+    #[tokio::test]
+    async fn recovery_selection_uses_only_the_current_trusted_service_profile_placement() {
+        let catalog = CompleteAgentServiceSelectionCatalog::default();
+        let profile_digest = AgentProfileDigest::new("sha256:service-profile").unwrap();
+        let previous = AgentServiceInstanceId::new("previous-service").unwrap();
+        let replacement = AgentServiceInstanceId::new("replacement-service").unwrap();
+        catalog
+            .activate_recovery_profile(profile_digest.clone(), previous.clone())
+            .await;
+        assert!(catalog
+            .select_recovery(&profile_digest, &previous)
+            .await
+            .is_err());
+
+        catalog
+            .activate_recovery_profile(profile_digest.clone(), replacement.clone())
+            .await;
+        assert_eq!(
+            catalog
+                .select_recovery(&profile_digest, &previous)
+                .await
+                .unwrap(),
+            replacement
+        );
+        assert!(!catalog
+            .deactivate_recovery_profile(&profile_digest, &previous)
+            .await);
     }
 
     #[test]

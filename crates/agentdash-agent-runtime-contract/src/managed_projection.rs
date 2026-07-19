@@ -261,6 +261,10 @@ pub enum ManagedRuntimeOperationEvidence {
     Resume {
         binding: ManagedRuntimeSourceBindingEvidence,
     },
+    Rebind {
+        previous_binding: ManagedRuntimeSourceBindingEvidence,
+        binding: ManagedRuntimeSourceBindingEvidence,
+    },
     Fork {
         parent_binding: ManagedRuntimeSourceBindingEvidence,
         progress: ManagedRuntimeForkProgressEvidence,
@@ -286,6 +290,7 @@ pub struct ManagedRuntimeOperation {
 pub enum ManagedRuntimeCommandKind {
     Create,
     Resume,
+    Rebind,
     Activate,
     SubmitInput,
     Steer,
@@ -297,9 +302,10 @@ pub enum ManagedRuntimeCommandKind {
 }
 
 impl ManagedRuntimeCommandKind {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Create,
         Self::Resume,
+        Self::Rebind,
         Self::Activate,
         Self::SubmitInput,
         Self::Steer,

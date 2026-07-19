@@ -624,6 +624,7 @@ fn validate_operation_evidence(
                 record.command.command,
                 ManagedRuntimeCommand::Create { .. }
                     | ManagedRuntimeCommand::Resume
+                    | ManagedRuntimeCommand::Rebind
                     | ManagedRuntimeCommand::Activate
                     | ManagedRuntimeCommand::Fork { .. }
             )
@@ -721,6 +722,24 @@ fn validate_operation_evidence(
             ManagedRuntimeOperationStatus::Succeeded,
             ManagedRuntimeOperationEvidence::Resume { binding },
         ) => validate_binding_evidence(binding, false)?,
+        (
+            ManagedRuntimeCommand::Rebind,
+            ManagedRuntimeOperationStatus::Succeeded,
+            ManagedRuntimeOperationEvidence::Rebind {
+                previous_binding,
+                binding,
+            },
+        ) => {
+            validate_binding_evidence(previous_binding, false)?;
+            validate_binding_evidence(binding, false)?;
+            if previous_binding.source_ref != binding.source_ref
+                || binding.committed_at_revision <= previous_binding.committed_at_revision
+            {
+                return invariant(
+                    "Rebind evidence must preserve source and advance the binding revision",
+                );
+            }
+        }
         (
             ManagedRuntimeCommand::Activate,
             ManagedRuntimeOperationStatus::Succeeded,
@@ -1555,7 +1574,8 @@ fn active_availability(
                 ManagedRuntimeCommandKind::SubmitInput
                 | ManagedRuntimeCommandKind::RequestCompaction
                 | ManagedRuntimeCommandKind::Close
-                | ManagedRuntimeCommandKind::Fork => true,
+                | ManagedRuntimeCommandKind::Fork
+                | ManagedRuntimeCommandKind::Rebind => true,
                 ManagedRuntimeCommandKind::Steer | ManagedRuntimeCommandKind::Interrupt => {
                     has_active_turn
                 }
@@ -1899,11 +1919,11 @@ mod tests {
             .expect("load state");
         assert_eq!(snapshot.facts.operations.len(), 1);
         assert_eq!(snapshot.facts.pending_commands.len(), 1);
-        assert_eq!(snapshot.facts.changes.len(), 11);
-        assert_eq!(snapshot.facts.outbox.len(), 11);
+        assert_eq!(snapshot.facts.changes.len(), 12);
+        assert_eq!(snapshot.facts.outbox.len(), 12);
         let projection = snapshot.facts.projection.expect("projection");
         assert_eq!(projection.revision, RuntimeProjectionRevision(8));
-        assert_eq!(projection.latest_change_sequence, RuntimeChangeSequence(11));
+        assert_eq!(projection.latest_change_sequence, RuntimeChangeSequence(12));
         assert_eq!(projection.operations.len(), 1);
     }
 

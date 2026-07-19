@@ -18,7 +18,7 @@ use crate::{
     CompleteAgentEffectRecord, CompleteAgentEffectState, CompleteAgentLifecycleAppliedReceipt,
     CompleteAgentLifecycleEffectRecord, CompleteAgentLifecycleOperationKind,
     CompleteAgentLifecycleOutcome, CompleteAgentPlacement, CompleteAgentRuntimeTarget,
-    CompleteAgentRuntimeTargetProvisioning,
+    CompleteAgentRuntimeTargetProvisioning, CompleteAgentRuntimeTargetRecovery,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 
@@ -125,6 +125,10 @@ pub struct CompleteAgentHostFacts {
     pub runtime_target_provisionings: BTreeMap<
         agentdash_agent_service_api::AgentIdempotencyKey,
         CompleteAgentRuntimeTargetProvisioning,
+    >,
+    pub runtime_target_recoveries: BTreeMap<
+        agentdash_agent_service_api::AgentIdempotencyKey,
+        CompleteAgentRuntimeTargetRecovery,
     >,
     pub lifecycle_effects: BTreeMap<AgentEffectIdentity, CompleteAgentLifecycleEffectRecord>,
 }
@@ -451,12 +455,24 @@ pub fn validate_complete_agent_host_facts(
         {
             return invariant("source coordinate has no owning binding");
         }
-        if candidate
+        if !matches!(
+            candidate.bindings[binding_id].state,
+            CompleteAgentBindingState::Lost | CompleteAgentBindingState::Closed
+        ) && candidate
             .source_coordinates
             .iter()
-            .any(|(other_id, other_source)| other_id != binding_id && other_source == source)
+            .any(|(other_id, other_source)| {
+                other_id != binding_id
+                    && other_source == source
+                    && candidate.bindings.get(other_id).is_some_and(|other| {
+                        !matches!(
+                            other.state,
+                            CompleteAgentBindingState::Lost | CompleteAgentBindingState::Closed
+                        )
+                    })
+            })
         {
-            return invariant("source coordinate is assigned to multiple bindings");
+            return invariant("source coordinate has multiple nonterminal bindings");
         }
     }
     for (binding_id, source) in &current.source_coordinates {
@@ -730,42 +746,31 @@ pub fn validate_complete_agent_host_facts(
         return invariant("lease epoch has no owning binding");
     }
     for (thread_id, target) in &candidate.runtime_targets {
-        if thread_id.as_str().trim().is_empty()
-            || target.service_instance_id.as_str().trim().is_empty()
-            || target.profile_digest.as_str().trim().is_empty()
-            || target.callbacks.route_id.as_str().trim().is_empty()
-            || thread_id != &target.runtime_thread_id
-            || target.generation.0 == 0
-            || target.callbacks.binding_generation != target.generation
-            || target.callbacks.delivery != AgentSurfaceRoute::AgentNativeCallback
-            || target.callbacks.default_deadline_ms == 0
-        {
-            return invariant("Runtime target identity or generation is invalid");
-        }
-        let descriptor = candidate
-            .service_instances
-            .get(&target.service_instance_id)
-            .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
-                reason: "Runtime target has no registered service instance".to_owned(),
-            })?;
-        if target.profile_digest != descriptor.profile_digest
-            || target.bound_surface.offer_profile_digest != target.profile_digest
-        {
-            return invariant("Runtime target does not match its service profile");
-        }
+        validate_runtime_target(candidate, thread_id, target)?;
     }
     for (thread_id, target) in &current.runtime_targets {
-        if candidate.runtime_targets.get(thread_id) != Some(target) {
-            return invariant("Runtime target history cannot be removed or rewritten");
+        let Some(next) = candidate.runtime_targets.get(thread_id) else {
+            return invariant("Runtime target history cannot be removed");
+        };
+        if next != target {
+            let transitions = candidate
+                .runtime_target_recoveries
+                .values()
+                .filter(|recovery| {
+                    &recovery.previous_target == target && &recovery.recovered_target == next
+                })
+                .count();
+            if transitions != 1 {
+                return invariant(
+                    "Runtime target may advance only through one explicit recovery record",
+                );
+            }
         }
     }
     for (idempotency_key, provisioning) in &candidate.runtime_target_provisionings {
         if idempotency_key != &provisioning.idempotency_key
             || provisioning.request_digest.as_str().trim().is_empty()
-            || candidate
-                .runtime_targets
-                .get(&provisioning.target.runtime_thread_id)
-                != Some(&provisioning.target)
+            || !runtime_target_in_lineage(candidate, &provisioning.target)
         {
             return invariant(
                 "Runtime target provisioning must identify one immutable registered target",
@@ -775,6 +780,56 @@ pub fn validate_complete_agent_host_facts(
     for (idempotency_key, provisioning) in &current.runtime_target_provisionings {
         if candidate.runtime_target_provisionings.get(idempotency_key) != Some(provisioning) {
             return invariant("Runtime target provisioning history cannot be removed or rewritten");
+        }
+    }
+    for (idempotency_key, recovery) in &candidate.runtime_target_recoveries {
+        if idempotency_key != &recovery.idempotency_key
+            || recovery.request_digest.as_str().trim().is_empty()
+            || recovery.previous_target.runtime_thread_id
+                != recovery.recovered_target.runtime_thread_id
+            || recovery.recovered_target.generation.0
+                != recovery.previous_target.generation.0.saturating_add(1)
+        {
+            return invariant("Runtime target recovery coordinates are invalid");
+        }
+        validate_runtime_target(
+            candidate,
+            &recovery.previous_target.runtime_thread_id,
+            &recovery.previous_target,
+        )?;
+        validate_runtime_target(
+            candidate,
+            &recovery.recovered_target.runtime_thread_id,
+            &recovery.recovered_target,
+        )?;
+        let previous_binding_id = CompleteAgentBindingId::new(format!(
+            "runtime-binding:{}:{}",
+            recovery.previous_target.runtime_thread_id, recovery.previous_target.generation.0
+        ))
+        .map_err(|error| CompleteAgentHostStoreError::Invariant {
+            reason: error.to_string(),
+        })?;
+        let previous_binding = candidate
+            .bindings
+            .get(&previous_binding_id)
+            .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
+                reason: "Runtime target recovery has no previous binding".to_owned(),
+            })?;
+        if previous_binding.state != CompleteAgentBindingState::Lost
+            || previous_binding.generation != recovery.previous_target.generation
+            || previous_binding.service_instance_id != recovery.previous_target.service_instance_id
+        {
+            return invariant("Runtime target recovery previous binding is not exactly lost");
+        }
+        if !runtime_target_in_lineage(candidate, &recovery.previous_target)
+            || !runtime_target_in_lineage(candidate, &recovery.recovered_target)
+        {
+            return invariant("Runtime target recovery is detached from target lineage");
+        }
+    }
+    for (idempotency_key, recovery) in &current.runtime_target_recoveries {
+        if candidate.runtime_target_recoveries.get(idempotency_key) != Some(recovery) {
+            return invariant("Runtime target recovery history cannot be removed or rewritten");
         }
     }
     for (effect_id, effect) in &candidate.lifecycle_effects {
@@ -789,11 +844,10 @@ pub fn validate_complete_agent_host_facts(
         {
             return invariant("lifecycle effect coordinates are invalid");
         }
-        let target = candidate
-            .runtime_targets
-            .get(&effect.runtime_thread_id)
-            .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
-                reason: "lifecycle effect has no Runtime target".to_owned(),
+        let target =
+            runtime_target_at_generation(candidate, &effect.runtime_thread_id, effect.generation)
+                .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
+                reason: "lifecycle effect has no matching Runtime target generation".to_owned(),
             })?;
         if effect.service_instance_id != target.service_instance_id
             || effect.generation != target.generation
@@ -825,6 +879,74 @@ pub fn validate_complete_agent_host_facts(
     Ok(())
 }
 
+fn validate_runtime_target(
+    facts: &CompleteAgentHostFacts,
+    thread_id: &RuntimeThreadId,
+    target: &CompleteAgentRuntimeTarget,
+) -> Result<(), CompleteAgentHostStoreError> {
+    if thread_id.as_str().trim().is_empty()
+        || target.service_instance_id.as_str().trim().is_empty()
+        || target.profile_digest.as_str().trim().is_empty()
+        || target.callbacks.route_id.as_str().trim().is_empty()
+        || thread_id != &target.runtime_thread_id
+        || target.generation.0 == 0
+        || target.callbacks.binding_generation != target.generation
+        || target.callbacks.delivery != AgentSurfaceRoute::AgentNativeCallback
+        || target.callbacks.default_deadline_ms == 0
+    {
+        return invariant("Runtime target identity or generation is invalid");
+    }
+    let descriptor = facts
+        .service_instances
+        .get(&target.service_instance_id)
+        .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
+            reason: "Runtime target has no registered service instance".to_owned(),
+        })?;
+    if target.profile_digest != descriptor.profile_digest
+        || target.bound_surface.offer_profile_digest != target.profile_digest
+    {
+        return invariant("Runtime target does not match its service profile");
+    }
+    Ok(())
+}
+
+fn runtime_target_in_lineage(
+    facts: &CompleteAgentHostFacts,
+    target: &CompleteAgentRuntimeTarget,
+) -> bool {
+    facts
+        .runtime_targets
+        .get(&target.runtime_thread_id)
+        .is_some_and(|current| current == target)
+        || facts.runtime_target_recoveries.values().any(|recovery| {
+            &recovery.previous_target == target || &recovery.recovered_target == target
+        })
+}
+
+fn runtime_target_at_generation<'a>(
+    facts: &'a CompleteAgentHostFacts,
+    thread_id: &RuntimeThreadId,
+    generation: agentdash_agent_service_api::AgentBindingGeneration,
+) -> Option<&'a CompleteAgentRuntimeTarget> {
+    facts
+        .runtime_targets
+        .get(thread_id)
+        .filter(|target| target.generation == generation)
+        .or_else(|| {
+            facts
+                .runtime_target_recoveries
+                .values()
+                .find_map(|recovery| {
+                    [&recovery.previous_target, &recovery.recovered_target]
+                        .into_iter()
+                        .find(|target| {
+                            &target.runtime_thread_id == thread_id
+                                && target.generation == generation
+                        })
+                })
+        })
+}
+
 fn validate_lifecycle_effect(
     effect: &CompleteAgentLifecycleEffectRecord,
 ) -> Result<(), CompleteAgentHostStoreError> {
@@ -842,6 +964,7 @@ fn validate_lifecycle_effect(
             (
                 CompleteAgentLifecycleOperationKind::Create
                 | CompleteAgentLifecycleOperationKind::Resume
+                | CompleteAgentLifecycleOperationKind::Rebind
                 | CompleteAgentLifecycleOperationKind::Execute,
                 CompleteAgentLifecycleAppliedReceipt::Agent(receipt),
             ) if receipt.effect_id == effect.effect_id => {}
@@ -864,6 +987,7 @@ fn validate_lifecycle_effect(
         (
             CompleteAgentLifecycleOperationKind::Create
             | CompleteAgentLifecycleOperationKind::Resume
+            | CompleteAgentLifecycleOperationKind::Rebind
             | CompleteAgentLifecycleOperationKind::Execute,
             CompleteAgentLifecycleOutcome::Agent { receipt, .. },
         ) if receipt.effect_id == effect.effect_id => true,
@@ -2387,6 +2511,7 @@ mod tests {
             lease_epochs: BTreeMap::from([(binding_id, 1)]),
             runtime_targets: BTreeMap::new(),
             runtime_target_provisionings: BTreeMap::new(),
+            runtime_target_recoveries: BTreeMap::new(),
             lifecycle_effects: BTreeMap::new(),
         }
     }

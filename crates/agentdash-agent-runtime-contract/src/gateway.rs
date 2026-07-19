@@ -140,6 +140,7 @@ pub enum ManagedRuntimeCommand {
         initial_context: Option<ManagedRuntimeInitialContextPackage>,
     },
     Resume,
+    Rebind,
     Activate,
     SubmitInput {
         content: Vec<ManagedRuntimeContentBlock>,
@@ -168,6 +169,7 @@ impl ManagedRuntimeCommand {
         match self {
             Self::Create { .. } => crate::ManagedRuntimeCommandKind::Create,
             Self::Resume => crate::ManagedRuntimeCommandKind::Resume,
+            Self::Rebind => crate::ManagedRuntimeCommandKind::Rebind,
             Self::Activate => crate::ManagedRuntimeCommandKind::Activate,
             Self::SubmitInput { .. } => crate::ManagedRuntimeCommandKind::SubmitInput,
             Self::Steer { .. } => crate::ManagedRuntimeCommandKind::Steer,

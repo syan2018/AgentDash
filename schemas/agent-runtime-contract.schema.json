@@ -118,6 +118,18 @@
           "properties": {
             "kind": {
               "type": "string",
+              "const": "rebind"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
               "const": "activate"
             }
           },
@@ -667,6 +679,26 @@
         {
           "type": "object",
           "properties": {
+            "previous_binding": {
+              "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
+            },
+            "binding": {
+              "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
+            },
+            "kind": {
+              "type": "string",
+              "const": "rebind"
+            }
+          },
+          "required": [
+            "kind",
+            "previous_binding",
+            "binding"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "parent_binding": {
               "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
             },
@@ -1173,6 +1205,9 @@
               "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
             },
             "interrupt": {
+              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+            },
+            "rebind": {
               "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
             },
             "request_compaction": {
@@ -9612,111 +9647,6 @@
             "kind",
             "data"
           ]
-        },
-        {
-          "description": "AgentRun control-plane projection invalidation hint.",
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "control_plane_projection_changed"
-            },
-            "data": {
-              "$ref": "#/$defs/ControlPlaneProjectionChanged"
-            }
-          },
-          "required": [
-            "kind",
-            "data"
-          ]
-        },
-        {
-          "description": "Best-effort request for the observing workspace UI to open one module presentation.\n\nThis is an imperative presentation intent, not a resource-surface projection change.",
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "workspace_module_presentation_requested"
-            },
-            "data": {
-              "$ref": "#/$defs/WorkspaceModulePresentationRequested"
-            }
-          },
-          "required": [
-            "kind",
-            "data"
-          ]
-        },
-        {
-          "description": "交互式终端输出流数据（路由到前端 xterm.js，不作为 chat entry 展示）。",
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "terminal_output"
-            },
-            "data": {
-              "type": "object",
-              "properties": {
-                "terminal_id": {
-                  "type": "string"
-                },
-                "data": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "terminal_id",
-                "data"
-              ]
-            }
-          },
-          "required": [
-            "kind",
-            "data"
-          ]
-        },
-        {
-          "description": "PTY/交互式终端生命周期变更（创建/退出/丢失/用户终止）。",
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "pty_terminal_state_changed"
-            },
-            "data": {
-              "type": "object",
-              "properties": {
-                "terminal_id": {
-                  "type": "string"
-                },
-                "state": {
-                  "type": "string"
-                },
-                "exit_code": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ],
-                  "format": "int32"
-                },
-                "message": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "terminal_id",
-                "state"
-              ]
-            }
-          },
-          "required": [
-            "kind",
-            "data"
-          ]
         }
       ]
     },
@@ -11405,112 +11335,6 @@
         "runtime_failure"
       ]
     },
-    "ControlPlaneProjectionChanged": {
-      "type": "object",
-      "properties": {
-        "projection": {
-          "$ref": "#/$defs/ControlPlaneProjection"
-        },
-        "reason": {
-          "$ref": "#/$defs/ControlPlaneProjectionChangeReason"
-        },
-        "run_id": {
-          "type": "string"
-        },
-        "agent_id": {
-          "type": "string"
-        },
-        "frame_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "gate_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "mailbox_message_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "delivery_runtime_session_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "projection",
-        "reason",
-        "run_id",
-        "agent_id"
-      ]
-    },
-    "ControlPlaneProjection": {
-      "type": "string",
-      "enum": [
-        "workspace",
-        "agent_run_list",
-        "mailbox",
-        "waiting",
-        "delivery",
-        "hook_runtime",
-        "resource_surface",
-        "title"
-      ]
-    },
-    "ControlPlaneProjectionChangeReason": {
-      "type": "string",
-      "enum": [
-        "agent_run_lineage_changed",
-        "agent_run_shell_changed",
-        "agent_run_activity_changed",
-        "mailbox_state_changed",
-        "wait_resolved",
-        "delivery_terminal",
-        "companion_result",
-        "hook_effect_applied",
-        "hook_auto_resume_queued",
-        "capability_state_changed",
-        "context_frame_changed",
-        "title_changed"
-      ]
-    },
-    "WorkspaceModulePresentationRequested": {
-      "type": "object",
-      "properties": {
-        "module_id": {
-          "type": "string"
-        },
-        "view_key": {
-          "type": "string"
-        },
-        "renderer_kind": {
-          "type": "string"
-        },
-        "presentation_uri": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "payload": true,
-        "diagnostics": true
-      },
-      "required": [
-        "module_id",
-        "view_key",
-        "renderer_kind",
-        "presentation_uri",
-        "title"
-      ]
-    },
     "SourceInfo": {
       "description": "事件来源标识。",
       "type": "object",
@@ -12299,6 +12123,7 @@
       "enum": [
         "create",
         "resume",
+        "rebind",
         "activate",
         "submit_input",
         "steer",

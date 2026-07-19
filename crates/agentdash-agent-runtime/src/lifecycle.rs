@@ -51,6 +51,13 @@ pub struct ManagedRuntimeResumeOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ManagedRuntimeRebindOutcome {
+    pub receipt: AgentCommandReceipt,
+    pub previous_binding: ManagedRuntimeAgentBinding,
+    pub binding: ManagedRuntimeAgentBinding,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ManagedRuntimeForkOutcome {
     pub receipt: ForkAgentReceipt,
     pub child_binding: ManagedRuntimeAgentBinding,
@@ -63,6 +70,7 @@ pub enum ManagedRuntimeLifecycleInspection {
     Accepted,
     CreateApplied(ManagedRuntimeCreateOutcome),
     ResumeApplied(ManagedRuntimeResumeOutcome),
+    RebindApplied(ManagedRuntimeRebindOutcome),
     ForkApplied(ManagedRuntimeForkOutcome),
     CommandApplied(AgentCommandReceipt),
     Unknown,
@@ -109,6 +117,12 @@ pub trait ManagedRuntimeLifecyclePort: Send + Sync {
         context: ManagedRuntimeDispatchContext,
         binding: ManagedRuntimeAgentBinding,
     ) -> Result<ManagedRuntimeResumeOutcome, ManagedRuntimeLifecycleError>;
+
+    async fn rebind(
+        &self,
+        context: ManagedRuntimeDispatchContext,
+        previous_binding: ManagedRuntimeAgentBinding,
+    ) -> Result<ManagedRuntimeRebindOutcome, ManagedRuntimeLifecycleError>;
 
     async fn fork(
         &self,

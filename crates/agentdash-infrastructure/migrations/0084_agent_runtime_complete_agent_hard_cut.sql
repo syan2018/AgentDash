@@ -559,13 +559,15 @@ CREATE TABLE companion_fresh_saga (
 
 CREATE TABLE agent_runtime_state_revision (
     thread_id TEXT PRIMARY KEY CHECK (btrim(thread_id) <> ''),
-    revision BIGINT NOT NULL CHECK (revision > 0),
+    revision NUMERIC(20, 0) NOT NULL
+        CHECK (revision BETWEEN 1 AND 18446744073709551615),
     facts JSONB NOT NULL CHECK (jsonb_typeof(facts) = 'object')
 );
 
 CREATE TABLE agent_runtime_source_projection (
     thread_id TEXT PRIMARY KEY REFERENCES agent_runtime_state_revision(thread_id) ON DELETE CASCADE,
-    projection_revision BIGINT NOT NULL CHECK (projection_revision >= 0),
+    projection_revision NUMERIC(20, 0) NOT NULL
+        CHECK (projection_revision BETWEEN 0 AND 18446744073709551615),
     authority TEXT NOT NULL CHECK (btrim(authority) <> ''),
     fidelity TEXT NOT NULL CHECK (btrim(fidelity) <> ''),
     source_revision TEXT,
@@ -585,8 +587,10 @@ CREATE TABLE agent_runtime_source_identity (
 
 CREATE TABLE agent_runtime_source_change (
     thread_id TEXT NOT NULL REFERENCES agent_runtime_state_revision(thread_id) ON DELETE CASCADE,
-    source_sequence BIGINT NOT NULL CHECK (source_sequence > 0),
-    projection_revision BIGINT NOT NULL CHECK (projection_revision >= 0),
+    source_sequence NUMERIC(20, 0) NOT NULL
+        CHECK (source_sequence BETWEEN 1 AND 18446744073709551615),
+    projection_revision NUMERIC(20, 0) NOT NULL
+        CHECK (projection_revision BETWEEN 0 AND 18446744073709551615),
     observation_digest TEXT NOT NULL CHECK (btrim(observation_digest) <> ''),
     source_revision TEXT,
     source_cursor TEXT,
@@ -597,8 +601,10 @@ CREATE TABLE agent_runtime_source_change (
 
 CREATE TABLE agent_runtime_projection (
     thread_id TEXT PRIMARY KEY REFERENCES agent_runtime_state_revision(thread_id) ON DELETE CASCADE,
-    projection_revision BIGINT NOT NULL CHECK (projection_revision >= 0),
-    change_head BIGINT NOT NULL CHECK (change_head >= 0),
+    projection_revision NUMERIC(20, 0) NOT NULL
+        CHECK (projection_revision BETWEEN 0 AND 18446744073709551615),
+    change_head NUMERIC(20, 0) NOT NULL
+        CHECK (change_head BETWEEN 0 AND 18446744073709551615),
     projection JSONB NOT NULL
 );
 
@@ -606,9 +612,12 @@ CREATE TABLE agent_runtime_thread_binding (
     thread_id TEXT PRIMARY KEY REFERENCES agent_runtime_state_revision(thread_id) ON DELETE CASCADE,
     source_ref JSONB NOT NULL,
     binding JSONB NOT NULL,
-    committed_at_revision BIGINT NOT NULL CHECK (committed_at_revision >= 0),
-    activated_at_revision BIGINT CHECK (
-        activated_at_revision IS NULL OR activated_at_revision >= committed_at_revision
+    committed_at_revision NUMERIC(20, 0) NOT NULL
+        CHECK (committed_at_revision BETWEEN 0 AND 18446744073709551615),
+    activated_at_revision NUMERIC(20, 0) CHECK (
+        activated_at_revision IS NULL OR (
+            activated_at_revision BETWEEN committed_at_revision AND 18446744073709551615
+        )
     )
 );
 
@@ -660,7 +669,8 @@ CREATE TABLE agent_runtime_pending_command (
     ),
     command JSONB NOT NULL,
     claim_owner TEXT,
-    claim_epoch BIGINT NOT NULL CHECK (claim_epoch >= 0),
+    claim_epoch NUMERIC(20, 0) NOT NULL
+        CHECK (claim_epoch BETWEEN 0 AND 18446744073709551615),
     PRIMARY KEY (thread_id, operation_id),
     UNIQUE (effect_id),
     FOREIGN KEY (thread_id, operation_id)
@@ -669,7 +679,8 @@ CREATE TABLE agent_runtime_pending_command (
 
 CREATE TABLE agent_runtime_change (
     thread_id TEXT NOT NULL REFERENCES agent_runtime_state_revision(thread_id) ON DELETE CASCADE,
-    sequence BIGINT NOT NULL CHECK (sequence > 0),
+    sequence NUMERIC(20, 0) NOT NULL
+        CHECK (sequence BETWEEN 1 AND 18446744073709551615),
     operation_id TEXT,
     change JSONB NOT NULL,
     PRIMARY KEY (thread_id, sequence),
@@ -679,7 +690,8 @@ CREATE TABLE agent_runtime_change (
 
 CREATE TABLE agent_runtime_outbox (
     thread_id TEXT NOT NULL,
-    sequence BIGINT NOT NULL,
+    sequence NUMERIC(20, 0) NOT NULL
+        CHECK (sequence BETWEEN 1 AND 18446744073709551615),
     operation_id TEXT,
     change JSONB NOT NULL,
     PRIMARY KEY (thread_id, sequence),
@@ -689,13 +701,15 @@ CREATE TABLE agent_runtime_outbox (
 
 CREATE TABLE agent_runtime_product_change_delivery (
     thread_id TEXT NOT NULL,
-    sequence BIGINT NOT NULL CHECK (sequence > 0),
+    sequence NUMERIC(20, 0) NOT NULL
+        CHECK (sequence BETWEEN 1 AND 18446744073709551615),
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'claimed', 'delivered')),
     claim_owner TEXT,
     claim_token UUID,
     claim_expires_at TIMESTAMPTZ,
-    attempt_count BIGINT NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    attempt_count NUMERIC(20, 0) NOT NULL DEFAULT 0
+        CHECK (attempt_count BETWEEN 0 AND 18446744073709551615),
     last_error TEXT,
     delivered_at TIMESTAMPTZ,
     PRIMARY KEY (thread_id, sequence),
@@ -729,7 +743,8 @@ CREATE TABLE agent_runtime_product_change_delivery (
 
 CREATE TABLE agent_runtime_surface_snapshot (
     thread_id TEXT NOT NULL REFERENCES agent_runtime_state_revision(thread_id) ON DELETE CASCADE,
-    surface_revision BIGINT NOT NULL CHECK (surface_revision >= 0),
+    surface_revision NUMERIC(20, 0) NOT NULL
+        CHECK (surface_revision BETWEEN 0 AND 18446744073709551615),
     surface_digest TEXT NOT NULL CHECK (btrim(surface_digest) <> ''),
     surface JSONB NOT NULL,
     PRIMARY KEY (thread_id, surface_revision)
@@ -737,7 +752,8 @@ CREATE TABLE agent_runtime_surface_snapshot (
 
 CREATE TABLE agent_runtime_host_revision (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
-    revision BIGINT NOT NULL CHECK (revision >= 0),
+    revision NUMERIC(20, 0) NOT NULL
+        CHECK (revision BETWEEN 0 AND 18446744073709551615),
     facts JSONB NOT NULL CHECK (jsonb_typeof(facts) = 'object')
 );
 INSERT INTO agent_runtime_host_revision(singleton, revision, facts)
@@ -824,9 +840,11 @@ CREATE TABLE agent_runtime_placement (
 
 CREATE TABLE agent_runtime_remote_binding (
     local_service_instance_id TEXT PRIMARY KEY,
-    local_binding_generation BIGINT NOT NULL CHECK (local_binding_generation > 0),
+    local_binding_generation NUMERIC(20, 0) NOT NULL
+        CHECK (local_binding_generation BETWEEN 1 AND 18446744073709551615),
     remote_service_instance_id TEXT NOT NULL CHECK (btrim(remote_service_instance_id) <> ''),
-    remote_binding_generation BIGINT NOT NULL CHECK (remote_binding_generation > 0),
+    remote_binding_generation NUMERIC(20, 0) NOT NULL
+        CHECK (remote_binding_generation BETWEEN 1 AND 18446744073709551615),
     host_incarnation_id TEXT NOT NULL CHECK (btrim(host_incarnation_id) <> ''),
     transport_id TEXT NOT NULL CHECK (btrim(transport_id) <> ''),
     mapping JSONB NOT NULL CHECK (jsonb_typeof(mapping) = 'object'),
@@ -844,7 +862,8 @@ CREATE TABLE agent_runtime_lifecycle_target (
     runtime_thread_id TEXT PRIMARY KEY CHECK (btrim(runtime_thread_id) <> ''),
     service_instance_id TEXT NOT NULL
         REFERENCES agent_service_instance(service_instance_id) ON DELETE RESTRICT,
-    generation BIGINT NOT NULL CHECK (generation > 0),
+    generation NUMERIC(20, 0) NOT NULL
+        CHECK (generation BETWEEN 1 AND 18446744073709551615),
     profile_digest TEXT NOT NULL CHECK (btrim(profile_digest) <> ''),
     bound_surface_digest TEXT NOT NULL CHECK (btrim(bound_surface_digest) <> ''),
     target JSONB NOT NULL,
@@ -861,7 +880,8 @@ CREATE TABLE agent_runtime_lifecycle_effect (
     ),
     service_instance_id TEXT NOT NULL
         REFERENCES agent_service_instance(service_instance_id) ON DELETE RESTRICT,
-    generation BIGINT NOT NULL CHECK (generation > 0),
+    generation NUMERIC(20, 0) NOT NULL
+        CHECK (generation BETWEEN 1 AND 18446744073709551615),
     initial_context_digest TEXT,
     fork_cutoff JSONB,
     outcome JSONB,
@@ -891,7 +911,8 @@ CREATE TABLE agent_runtime_binding (
     binding_id TEXT PRIMARY KEY CHECK (btrim(binding_id) <> ''),
     service_instance_id TEXT NOT NULL
         REFERENCES agent_service_instance(service_instance_id) ON DELETE RESTRICT,
-    generation BIGINT NOT NULL CHECK (generation > 0),
+    generation NUMERIC(20, 0) NOT NULL
+        CHECK (generation BETWEEN 1 AND 18446744073709551615),
     source_coordinate TEXT NOT NULL CHECK (btrim(source_coordinate) <> ''),
     profile_digest TEXT NOT NULL CHECK (btrim(profile_digest) <> ''),
     bound_surface_digest TEXT NOT NULL CHECK (btrim(bound_surface_digest) <> ''),
@@ -908,7 +929,8 @@ CREATE TABLE agent_runtime_binding (
 CREATE TABLE agent_runtime_source_coordinate (
     binding_id TEXT PRIMARY KEY,
     service_instance_id TEXT NOT NULL,
-    generation BIGINT NOT NULL,
+    generation NUMERIC(20, 0) NOT NULL
+        CHECK (generation BETWEEN 1 AND 18446744073709551615),
     source_coordinate TEXT NOT NULL,
     UNIQUE (service_instance_id, generation, source_coordinate),
     FOREIGN KEY (binding_id, service_instance_id, generation, source_coordinate)
@@ -924,10 +946,12 @@ CREATE TABLE agent_runtime_source_coordinate (
 CREATE TABLE agent_runtime_callback_route (
     route_id TEXT PRIMARY KEY CHECK (btrim(route_id) <> ''),
     binding_id TEXT NOT NULL REFERENCES agent_runtime_binding(binding_id) ON DELETE RESTRICT,
-    generation BIGINT NOT NULL CHECK (generation > 0),
+    generation NUMERIC(20, 0) NOT NULL
+        CHECK (generation BETWEEN 1 AND 18446744073709551615),
     source_coordinate TEXT NOT NULL CHECK (btrim(source_coordinate) <> ''),
     delivery TEXT NOT NULL CHECK (delivery = 'agent_native_callback'),
-    default_deadline_ms BIGINT NOT NULL CHECK (default_deadline_ms > 0),
+    default_deadline_ms NUMERIC(20, 0) NOT NULL
+        CHECK (default_deadline_ms BETWEEN 1 AND 18446744073709551615),
     bound_surface_digest TEXT NOT NULL CHECK (btrim(bound_surface_digest) <> ''),
     route JSONB NOT NULL,
     UNIQUE (route_id, generation, source_coordinate, bound_surface_digest),
@@ -951,11 +975,14 @@ CREATE TABLE agent_runtime_effect (
     binding_id TEXT NOT NULL REFERENCES agent_runtime_binding(binding_id) ON DELETE RESTRICT,
     service_instance_id TEXT NOT NULL
         REFERENCES agent_service_instance(service_instance_id) ON DELETE RESTRICT,
-    generation BIGINT NOT NULL CHECK (generation > 0),
+    generation NUMERIC(20, 0) NOT NULL
+        CHECK (generation BETWEEN 1 AND 18446744073709551615),
     source_coordinate TEXT NOT NULL CHECK (btrim(source_coordinate) <> ''),
     payload_digest TEXT NOT NULL CHECK (btrim(payload_digest) <> ''),
-    delivery_epoch BIGINT NOT NULL CHECK (delivery_epoch >= 0),
-    dispatch_attempt BIGINT NOT NULL CHECK (dispatch_attempt >= 0),
+    delivery_epoch NUMERIC(20, 0) NOT NULL
+        CHECK (delivery_epoch BETWEEN 0 AND 18446744073709551615),
+    dispatch_attempt NUMERIC(20, 0) NOT NULL
+        CHECK (dispatch_attempt BETWEEN 0 AND 18446744073709551615),
     state TEXT NOT NULL CHECK (
         state IN ('dispatching', 'accepted', 'applied', 'rejected', 'not_applied', 'unknown', 'lost')
     ),
@@ -971,8 +998,10 @@ CREATE TABLE agent_runtime_effect (
 
 CREATE TABLE agent_runtime_effect_attempt_history (
     effect_id TEXT NOT NULL REFERENCES agent_runtime_effect(effect_id) ON DELETE CASCADE,
-    dispatch_attempt BIGINT NOT NULL CHECK (dispatch_attempt > 0),
-    delivery_epoch BIGINT NOT NULL CHECK (delivery_epoch >= 0),
+    dispatch_attempt NUMERIC(20, 0) NOT NULL
+        CHECK (dispatch_attempt BETWEEN 1 AND 18446744073709551615),
+    delivery_epoch NUMERIC(20, 0) NOT NULL
+        CHECK (delivery_epoch BETWEEN 0 AND 18446744073709551615),
     state TEXT NOT NULL CHECK (
         state IN ('dispatching', 'accepted', 'applied', 'rejected', 'not_applied', 'unknown', 'lost')
     ),
@@ -982,17 +1011,21 @@ CREATE TABLE agent_runtime_effect_attempt_history (
 
 CREATE TABLE agent_runtime_lease_epoch (
     binding_id TEXT NOT NULL REFERENCES agent_runtime_binding(binding_id) ON DELETE CASCADE,
-    epoch BIGINT NOT NULL CHECK (epoch >= 0),
+    epoch NUMERIC(20, 0) NOT NULL
+        CHECK (epoch BETWEEN 0 AND 18446744073709551615),
     PRIMARY KEY (binding_id, epoch)
 );
 
 CREATE TABLE agent_runtime_lease (
     binding_id TEXT PRIMARY KEY,
-    generation BIGINT NOT NULL CHECK (generation > 0),
+    generation NUMERIC(20, 0) NOT NULL
+        CHECK (generation BETWEEN 1 AND 18446744073709551615),
     owner TEXT NOT NULL CHECK (btrim(owner) <> ''),
     token TEXT NOT NULL CHECK (btrim(token) <> ''),
-    epoch BIGINT NOT NULL CHECK (epoch > 0),
-    expires_at TIMESTAMPTZ NOT NULL,
+    epoch NUMERIC(20, 0) NOT NULL
+        CHECK (epoch BETWEEN 1 AND 18446744073709551615),
+    expires_at_ms NUMERIC(20, 0) NOT NULL
+        CHECK (expires_at_ms BETWEEN 1 AND 18446744073709551615),
     FOREIGN KEY (binding_id, generation)
         REFERENCES agent_runtime_binding(binding_id, generation) ON DELETE CASCADE,
     FOREIGN KEY (binding_id, epoch)
@@ -1001,21 +1034,24 @@ CREATE TABLE agent_runtime_lease (
 
 CREATE TABLE agent_runtime_callback_revision (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
-    revision BIGINT NOT NULL CHECK (revision >= 0),
+    revision NUMERIC(20, 0) NOT NULL
+        CHECK (revision BETWEEN 0 AND 18446744073709551615),
     facts JSONB NOT NULL CHECK (jsonb_typeof(facts) = 'object')
 );
 INSERT INTO agent_runtime_callback_revision(singleton, revision, facts)
-VALUES (TRUE, 0, '{"callbacks": {}}'::JSONB);
+VALUES (TRUE, 0, '{"callbacks": []}'::JSONB);
 
 CREATE TABLE agent_runtime_callback_reservation (
     route_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
     callback_kind TEXT NOT NULL CHECK (callback_kind IN ('tool', 'hook')),
     request_digest TEXT NOT NULL CHECK (btrim(request_digest) <> ''),
-    generation BIGINT NOT NULL CHECK (generation > 0),
+    generation NUMERIC(20, 0) NOT NULL
+        CHECK (generation BETWEEN 1 AND 18446744073709551615),
     source_coordinate TEXT NOT NULL CHECK (btrim(source_coordinate) <> ''),
     bound_surface_digest TEXT NOT NULL CHECK (btrim(bound_surface_digest) <> ''),
-    deadline_at TIMESTAMPTZ NOT NULL,
+    deadline_at_ms NUMERIC(20, 0) NOT NULL
+        CHECK (deadline_at_ms BETWEEN 1 AND 18446744073709551615),
     state TEXT NOT NULL CHECK (
         state IN ('pending', 'inspection_required', 'unknown', 'settled')
     ),

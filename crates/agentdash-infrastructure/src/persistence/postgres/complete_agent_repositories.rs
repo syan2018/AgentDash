@@ -56,7 +56,8 @@ impl ManagedRuntimeStateRepository for PostgresManagedRuntimeStateRepository {
         thread_id: &RuntimeThreadId,
     ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
         let row = sqlx::query(
-            "SELECT revision, facts FROM agent_runtime_state_revision WHERE thread_id = $1",
+            "SELECT revision::TEXT AS revision, facts
+             FROM agent_runtime_state_revision WHERE thread_id = $1",
         )
         .bind(thread_id.as_str())
         .fetch_optional(&self.pool)
@@ -67,7 +68,7 @@ impl ManagedRuntimeStateRepository for PostgresManagedRuntimeStateRepository {
         };
         let snapshot = runtime_snapshot(
             thread_id,
-            row.try_get::<i64, _>("revision")
+            row.try_get::<String, _>("revision")
                 .map_err(runtime_persistence)?,
             row.try_get("facts").map_err(runtime_persistence)?,
         )?;
@@ -82,7 +83,7 @@ impl ManagedRuntimeStateRepository for PostgresManagedRuntimeStateRepository {
         let mut tx = self.pool.begin().await.map_err(runtime_persistence)?;
         let thread_id = commit.thread_id.clone();
         let row = sqlx::query(
-            "SELECT revision, facts FROM agent_runtime_state_revision
+            "SELECT revision::TEXT AS revision, facts FROM agent_runtime_state_revision
              WHERE thread_id = $1 FOR UPDATE",
         )
         .bind(commit.thread_id.as_str())
@@ -92,7 +93,7 @@ impl ManagedRuntimeStateRepository for PostgresManagedRuntimeStateRepository {
         let mut current = match row {
             Some(row) => runtime_snapshot(
                 &commit.thread_id,
-                row.try_get::<i64, _>("revision")
+                row.try_get::<String, _>("revision")
                     .map_err(runtime_persistence)?,
                 row.try_get("facts").map_err(runtime_persistence)?,
             )?,
@@ -118,13 +119,14 @@ impl ManagedRuntimeStateRepository for PostgresManagedRuntimeStateRepository {
 impl CompleteAgentHostRepository for PostgresCompleteAgentHostRepository {
     async fn load(&self) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
         let row = sqlx::query(
-            "SELECT revision, facts FROM agent_runtime_host_revision WHERE singleton = TRUE",
+            "SELECT revision::TEXT AS revision, facts
+             FROM agent_runtime_host_revision WHERE singleton = TRUE",
         )
         .fetch_one(&self.pool)
         .await
         .map_err(host_persistence)?;
         let snapshot = host_snapshot(
-            row.try_get::<i64, _>("revision")
+            row.try_get::<String, _>("revision")
                 .map_err(host_persistence)?,
             row.try_get("facts").map_err(host_persistence)?,
         )?;
@@ -138,14 +140,14 @@ impl CompleteAgentHostRepository for PostgresCompleteAgentHostRepository {
     ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
         let mut tx = self.pool.begin().await.map_err(host_persistence)?;
         let row = sqlx::query(
-            "SELECT revision, facts FROM agent_runtime_host_revision
+            "SELECT revision::TEXT AS revision, facts FROM agent_runtime_host_revision
              WHERE singleton = TRUE FOR UPDATE",
         )
         .fetch_one(&mut *tx)
         .await
         .map_err(host_persistence)?;
         let mut current = host_snapshot(
-            row.try_get::<i64, _>("revision")
+            row.try_get::<String, _>("revision")
                 .map_err(host_persistence)?,
             row.try_get("facts").map_err(host_persistence)?,
         )?;
@@ -169,13 +171,14 @@ impl CompleteAgentHostRepository for PostgresCompleteAgentHostRepository {
 impl CompleteAgentCallbackRepository for PostgresCompleteAgentCallbackRepository {
     async fn load(&self) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
         let row = sqlx::query(
-            "SELECT revision, facts FROM agent_runtime_callback_revision WHERE singleton = TRUE",
+            "SELECT revision::TEXT AS revision, facts
+             FROM agent_runtime_callback_revision WHERE singleton = TRUE",
         )
         .fetch_one(&self.pool)
         .await
         .map_err(callback_persistence)?;
         let snapshot = callback_snapshot(
-            row.try_get::<i64, _>("revision")
+            row.try_get::<String, _>("revision")
                 .map_err(callback_persistence)?,
             row.try_get("facts").map_err(callback_persistence)?,
         )?;
@@ -189,14 +192,14 @@ impl CompleteAgentCallbackRepository for PostgresCompleteAgentCallbackRepository
     ) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
         let mut tx = self.pool.begin().await.map_err(callback_persistence)?;
         let row = sqlx::query(
-            "SELECT revision, facts FROM agent_runtime_callback_revision
+            "SELECT revision::TEXT AS revision, facts FROM agent_runtime_callback_revision
              WHERE singleton = TRUE FOR UPDATE",
         )
         .fetch_one(&mut *tx)
         .await
         .map_err(callback_persistence)?;
         let mut current = callback_snapshot(
-            row.try_get::<i64, _>("revision")
+            row.try_get::<String, _>("revision")
                 .map_err(callback_persistence)?,
             row.try_get("facts").map_err(callback_persistence)?,
         )?;
@@ -218,11 +221,11 @@ impl CompleteAgentCallbackRepository for PostgresCompleteAgentCallbackRepository
 
 fn runtime_snapshot(
     thread_id: &RuntimeThreadId,
-    revision: i64,
+    revision: String,
     facts: Value,
 ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
-    let revision = u64::try_from(revision)
-        .map_err(|_| runtime_invariant("Runtime revision cannot be represented as u64"))?;
+    let revision = parse_pg_u64(&revision)
+        .map_err(|_| runtime_invariant("Runtime revision is outside the canonical u64 domain"))?;
     decode_managed_runtime_state_snapshot(
         thread_id,
         json!({ "revision": revision, "facts": facts }),
@@ -230,20 +233,20 @@ fn runtime_snapshot(
 }
 
 fn host_snapshot(
-    revision: i64,
+    revision: String,
     facts: Value,
 ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
-    let revision = u64::try_from(revision)
-        .map_err(|_| host_invariant("Host revision cannot be represented as u64"))?;
+    let revision = parse_pg_u64(&revision)
+        .map_err(|_| host_invariant("Host revision is outside the canonical u64 domain"))?;
     decode_complete_agent_host_snapshot(json!({ "revision": revision, "facts": facts }))
 }
 
 fn callback_snapshot(
-    revision: i64,
+    revision: String,
     facts: Value,
 ) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
-    let revision = u64::try_from(revision)
-        .map_err(|_| callback_invariant("callback revision cannot be represented as u64"))?;
+    let revision = parse_pg_u64(&revision)
+        .map_err(|_| callback_invariant("callback revision is outside the canonical u64 domain"))?;
     decode_complete_agent_callback_snapshot(json!({ "revision": revision, "facts": facts }))
 }
 
@@ -254,11 +257,10 @@ async fn replace_runtime_projection(
     facts: &Value,
 ) -> Result<(), ManagedRuntimeStateStoreError> {
     let thread_id = runtime_thread_id.as_str();
-    let revision = i64::try_from(snapshot.revision.0)
-        .map_err(|_| runtime_invariant("Runtime revision exceeds PostgreSQL BIGINT"))?;
+    let revision = snapshot.revision.0.to_string();
     sqlx::query(
         "INSERT INTO agent_runtime_state_revision(thread_id, revision, facts)
-         VALUES ($1, $2, $3)
+         VALUES ($1, $2::NUMERIC(20,0), $3)
          ON CONFLICT (thread_id) DO UPDATE
          SET revision = EXCLUDED.revision, facts = EXCLUDED.facts",
     )
@@ -286,7 +288,8 @@ async fn replace_runtime_projection(
 
     sqlx::query(
         "INSERT INTO agent_runtime_projection(thread_id, projection_revision, change_head, projection)
-         SELECT $1, (p->>'revision')::BIGINT, (p->>'latest_change_sequence')::BIGINT, p
+         SELECT $1, (p->>'revision')::NUMERIC(20,0),
+                (p->>'latest_change_sequence')::NUMERIC(20,0), p
          FROM (SELECT $2::JSONB->'projection' AS p) facts
          WHERE p IS NOT NULL AND p <> 'null'::JSONB",
     )
@@ -301,8 +304,8 @@ async fn replace_runtime_projection(
              thread_id, source_ref, binding, committed_at_revision, activated_at_revision
          )
          SELECT $1, b->'source_ref', b->'binding',
-                (b->>'committed_at_revision')::BIGINT,
-                NULLIF(b->>'activated_at_revision', '')::BIGINT
+                (b->>'committed_at_revision')::NUMERIC(20,0),
+                NULLIF(b->>'activated_at_revision', '')::NUMERIC(20,0)
          FROM (SELECT $2::JSONB->'binding' AS b) facts
          WHERE b IS NOT NULL AND b <> 'null'::JSONB",
     )
@@ -317,7 +320,7 @@ async fn replace_runtime_projection(
              thread_id, projection_revision, authority, fidelity, source_revision,
              source_cursor, projection_digest, projection
          )
-         SELECT $1, (p->>'platform_revision')::BIGINT,
+         SELECT $1, (p->>'platform_revision')::NUMERIC(20,0),
                 COALESCE(p#>>'{source_info,authority}', 'source_observed'),
                 COALESCE(p#>>'{source_info,fidelity}', 'observed'),
                 p#>>'{source_info,revision}', p->>'source_cursor',
@@ -367,8 +370,8 @@ async fn replace_runtime_projection(
              thread_id, source_sequence, projection_revision, observation_digest,
              source_revision, source_cursor, changed_sections, change
          )
-         SELECT $1, (value->>'sequence')::BIGINT,
-                (value->>'platform_revision')::BIGINT, md5(value::TEXT),
+         SELECT $1, (value->>'sequence')::NUMERIC(20,0),
+                (value->>'platform_revision')::NUMERIC(20,0), md5(value::TEXT),
                 value#>>'{payload,source_revision}',
                 value#>>'{payload,source_cursor}',
                 value->'changed_sections', value
@@ -413,7 +416,7 @@ async fn replace_runtime_projection(
          )
          SELECT $1, entry.key, entry.value->>'effect_id', entry.value->>'state',
                 entry.value->'command', entry.value->>'claim_owner',
-                (entry.value->>'claim_epoch')::BIGINT
+                (entry.value->>'claim_epoch')::NUMERIC(20,0)
          FROM jsonb_each($2::JSONB->'pending_commands') entry",
     )
     .bind(thread_id)
@@ -424,7 +427,7 @@ async fn replace_runtime_projection(
 
     sqlx::query(
         "INSERT INTO agent_runtime_change(thread_id, sequence, operation_id, change)
-         SELECT $1, (value->>'sequence')::BIGINT, NULL, value
+         SELECT $1, (value->>'sequence')::NUMERIC(20,0), NULL, value
          FROM jsonb_array_elements($2::JSONB->'changes')
          ON CONFLICT (thread_id, sequence) DO NOTHING",
     )
@@ -435,7 +438,8 @@ async fn replace_runtime_projection(
     .map_err(runtime_persistence)?;
     sqlx::query(
         "INSERT INTO agent_runtime_outbox(thread_id, sequence, operation_id, change)
-         SELECT $1, (value->>'sequence')::BIGINT, value->>'operation_id', value->'change'
+         SELECT $1, (value->>'sequence')::NUMERIC(20,0),
+                value->>'operation_id', value->'change'
          FROM jsonb_array_elements($2::JSONB->'outbox')
          ON CONFLICT (thread_id, sequence) DO NOTHING",
     )
@@ -448,7 +452,8 @@ async fn replace_runtime_projection(
         "INSERT INTO agent_runtime_surface_snapshot(
              thread_id, surface_revision, surface_digest, surface
          )
-         SELECT $1, (surface->>'revision')::BIGINT, surface->>'digest', surface
+         SELECT $1, (surface->>'revision')::NUMERIC(20,0),
+                surface->>'digest', surface
          FROM (
              SELECT $2::JSONB#>'{binding,binding,applied_surface}' AS surface
          ) candidate
@@ -503,21 +508,21 @@ async fn ensure_runtime_ledger_prefix(
            EXISTS (
              SELECT 1 FROM agent_runtime_source_change stored
              LEFT JOIN jsonb_array_elements($2::JSONB->'source_changes') candidate
-               ON (candidate->>'sequence')::BIGINT = stored.source_sequence
+               ON (candidate->>'sequence')::NUMERIC(20,0) = stored.source_sequence
              WHERE stored.thread_id = $1
                AND (candidate IS NULL OR stored.change <> candidate)
            )
            OR EXISTS (
              SELECT 1 FROM agent_runtime_change stored
              LEFT JOIN jsonb_array_elements($2::JSONB->'changes') candidate
-               ON (candidate->>'sequence')::BIGINT = stored.sequence
+               ON (candidate->>'sequence')::NUMERIC(20,0) = stored.sequence
              WHERE stored.thread_id = $1
                AND (candidate IS NULL OR stored.change <> candidate)
            )
            OR EXISTS (
              SELECT 1 FROM agent_runtime_outbox stored
              LEFT JOIN jsonb_array_elements($2::JSONB->'outbox') candidate
-               ON (candidate->>'sequence')::BIGINT = stored.sequence
+               ON (candidate->>'sequence')::NUMERIC(20,0) = stored.sequence
              WHERE stored.thread_id = $1
                AND (candidate IS NULL OR stored.change <> candidate->'change')
            )",
@@ -540,10 +545,9 @@ async fn replace_host_projection(
     snapshot: &CompleteAgentHostSnapshot,
     facts: &Value,
 ) -> Result<(), CompleteAgentHostStoreError> {
-    let revision = i64::try_from(snapshot.revision.0)
-        .map_err(|_| host_invariant("Host revision exceeds PostgreSQL BIGINT"))?;
+    let revision = snapshot.revision.0.to_string();
     sqlx::query(
-        "UPDATE agent_runtime_host_revision SET revision = $1, facts = $2
+        "UPDATE agent_runtime_host_revision SET revision = $1::NUMERIC(20,0), facts = $2
          WHERE singleton = TRUE",
     )
     .bind(revision)
@@ -621,9 +625,9 @@ async fn replace_host_projection(
              remote_service_instance_id, remote_binding_generation,
              host_incarnation_id, transport_id, mapping
          )
-         SELECT entry.key, (entry.value->>'local_binding_generation')::BIGINT,
+         SELECT entry.key, (entry.value->>'local_binding_generation')::NUMERIC(20,0),
                 entry.value->>'remote_service_instance_id',
-                (entry.value->>'remote_binding_generation')::BIGINT,
+                (entry.value->>'remote_binding_generation')::NUMERIC(20,0),
                 entry.value->>'host_incarnation_id', entry.value->>'transport_id',
                 entry.value
          FROM jsonb_each($1::JSONB->'remote_bindings') entry
@@ -638,7 +642,8 @@ async fn replace_host_projection(
              bound_surface_digest, target
          )
          SELECT entry.key, entry.value->>'service_instance_id',
-                (entry.value->>'generation')::BIGINT, entry.value->>'profile_digest',
+                (entry.value->>'generation')::NUMERIC(20,0),
+                entry.value->>'profile_digest',
                 entry.value#>>'{bound_surface,digest}', entry.value
          FROM jsonb_each($1::JSONB->'runtime_targets') entry
          ON CONFLICT (runtime_thread_id) DO UPDATE SET
@@ -657,7 +662,7 @@ async fn replace_host_projection(
              profile_digest, bound_surface_digest, state, binding
          )
          SELECT entry.key, entry.value->>'service_instance_id',
-                (entry.value->>'generation')::BIGINT, entry.value->>'source',
+                (entry.value->>'generation')::NUMERIC(20,0), entry.value->>'source',
                 entry.value->>'profile_digest', entry.value#>>'{bound_surface,digest}',
                 entry.value->>'state', entry.value
          FROM jsonb_each($1::JSONB->'bindings') entry
@@ -695,8 +700,9 @@ async fn replace_host_projection(
              default_deadline_ms, bound_surface_digest, route
          )
          SELECT entry.key, entry.value->>'binding_id',
-                (entry.value->>'generation')::BIGINT, entry.value->>'source',
-                entry.value->>'delivery', (entry.value->>'default_deadline_ms')::BIGINT,
+                (entry.value->>'generation')::NUMERIC(20,0), entry.value->>'source',
+                entry.value->>'delivery',
+                (entry.value->>'default_deadline_ms')::NUMERIC(20,0),
                 entry.value#>>'{bound_surface,digest}', entry.value
          FROM jsonb_each($1::JSONB->'callback_routes') entry
          ON CONFLICT (route_id) DO UPDATE SET
@@ -730,7 +736,7 @@ async fn replace_host_projection(
          SELECT entry.key, entry.value->>'runtime_thread_id',
                 entry.value->>'child_thread_id', entry.value->>'kind',
                 entry.value->>'service_instance_id',
-                (entry.value->>'generation')::BIGINT,
+                (entry.value->>'generation')::NUMERIC(20,0),
                 entry.value#>>'{initial_context,digest}',
                 entry.value->'fork_cutoff', entry.value->'outcome', entry.value
          FROM jsonb_each($1::JSONB->'lifecycle_effects') entry
@@ -748,10 +754,10 @@ async fn replace_host_projection(
          )
          SELECT entry.key, entry.value->>'command_id', entry.value->>'binding_id',
                 entry.value->>'service_instance_id',
-                (entry.value->>'generation')::BIGINT, entry.value->>'source',
+                (entry.value->>'generation')::NUMERIC(20,0), entry.value->>'source',
                 entry.value->>'payload_digest',
-                (entry.value->>'delivery_epoch')::BIGINT,
-                (entry.value->>'dispatch_attempt')::BIGINT,
+                (entry.value->>'delivery_epoch')::NUMERIC(20,0),
+                (entry.value->>'dispatch_attempt')::NUMERIC(20,0),
                 entry.value->>'state', entry.value
          FROM jsonb_each($1::JSONB->'effects') entry
          ON CONFLICT (effect_id) DO UPDATE SET
@@ -767,8 +773,8 @@ async fn replace_host_projection(
         "INSERT INTO agent_runtime_effect_attempt_history(
              effect_id, dispatch_attempt, delivery_epoch, state, evidence
          )
-         SELECT effect.key, (attempt.value->>'dispatch_attempt')::BIGINT,
-                (attempt.value->>'delivery_epoch')::BIGINT,
+         SELECT effect.key, (attempt.value->>'dispatch_attempt')::NUMERIC(20,0),
+                (attempt.value->>'delivery_epoch')::NUMERIC(20,0),
                 attempt.value->>'state', attempt.value
          FROM jsonb_each($1::JSONB->'effects') effect,
               LATERAL jsonb_array_elements(effect.value->'attempt_history') attempt
@@ -780,7 +786,10 @@ async fn replace_host_projection(
         tx,
         facts,
         "INSERT INTO agent_runtime_lease_epoch(binding_id, epoch)
-         SELECT entry.key, generate_series(0, (entry.value #>> '{}')::BIGINT)
+         SELECT entry.key, generate_series(
+                    0::NUMERIC,
+                    (entry.value #>> '{}')::NUMERIC(20,0)
+                )
          FROM jsonb_each($1::JSONB->'lease_epochs') entry
          ON CONFLICT (binding_id, epoch) DO NOTHING",
     )
@@ -789,17 +798,17 @@ async fn replace_host_projection(
         tx,
         facts,
         "INSERT INTO agent_runtime_lease(
-             binding_id, generation, owner, token, epoch, expires_at
+             binding_id, generation, owner, token, epoch, expires_at_ms
          )
-         SELECT entry.key, (entry.value->>'generation')::BIGINT,
+         SELECT entry.key, (entry.value->>'generation')::NUMERIC(20,0),
                 entry.value->>'owner', entry.value->>'token',
-                (entry.value->>'epoch')::BIGINT,
-                to_timestamp((entry.value->>'expires_at_ms')::DOUBLE PRECISION / 1000.0)
+                (entry.value->>'epoch')::NUMERIC(20,0),
+                (entry.value->>'expires_at_ms')::NUMERIC(20,0)
          FROM jsonb_each($1::JSONB->'leases') entry
          ON CONFLICT (binding_id) DO UPDATE SET
              generation = EXCLUDED.generation, owner = EXCLUDED.owner,
              token = EXCLUDED.token, epoch = EXCLUDED.epoch,
-             expires_at = EXCLUDED.expires_at",
+             expires_at_ms = EXCLUDED.expires_at_ms",
     )
     .await?;
     Ok(())
@@ -828,7 +837,7 @@ async fn ensure_host_attempt_prefix(
              LEFT JOIN jsonb_each($1::JSONB->'effects') effect
                ON effect.key = stored.effect_id
              LEFT JOIN LATERAL jsonb_array_elements(effect.value->'attempt_history') attempt
-               ON (attempt->>'dispatch_attempt')::BIGINT = stored.dispatch_attempt
+               ON (attempt->>'dispatch_attempt')::NUMERIC(20,0) = stored.dispatch_attempt
              WHERE attempt IS NULL OR stored.evidence <> attempt
          )",
     )
@@ -849,10 +858,9 @@ async fn replace_callback_projection(
     snapshot: &CompleteAgentCallbackSnapshot,
     facts: &Value,
 ) -> Result<(), CompleteAgentCallbackStoreError> {
-    let revision = i64::try_from(snapshot.revision.0)
-        .map_err(|_| callback_invariant("callback revision exceeds PostgreSQL BIGINT"))?;
+    let revision = snapshot.revision.0.to_string();
     sqlx::query(
-        "UPDATE agent_runtime_callback_revision SET revision = $1, facts = $2
+        "UPDATE agent_runtime_callback_revision SET revision = $1::NUMERIC(20,0), facts = $2
          WHERE singleton = TRUE",
     )
     .bind(revision)
@@ -863,13 +871,13 @@ async fn replace_callback_projection(
     sqlx::query(
         "INSERT INTO agent_runtime_callback_reservation(
              route_id, idempotency_key, callback_kind, request_digest, generation,
-             source_coordinate, bound_surface_digest, deadline_at, state, reservation
+             source_coordinate, bound_surface_digest, deadline_at_ms, state, reservation
          )
          SELECT value#>>'{key,route_id}', value#>>'{key,idempotency_key}',
                 value->>'kind', value->>'request_digest',
-                (value->>'generation')::BIGINT, value->>'source',
+                (value->>'generation')::NUMERIC(20,0), value->>'source',
                 value->>'bound_surface_digest',
-                to_timestamp((value->>'deadline_at_ms')::DOUBLE PRECISION / 1000.0),
+                (value->>'deadline_at_ms')::NUMERIC(20,0),
                 value#>>'{state,state}', value
          FROM jsonb_array_elements($1::JSONB->'callbacks')
          ON CONFLICT (route_id, idempotency_key) DO UPDATE SET
@@ -906,7 +914,7 @@ async fn ensure_callback_prefix(
               AND candidate#>>'{key,idempotency_key}' = stored.idempotency_key
              WHERE candidate IS NULL
                 OR stored.request_digest <> candidate->>'request_digest'
-                OR stored.generation <> (candidate->>'generation')::BIGINT
+                OR stored.generation <> (candidate->>'generation')::NUMERIC(20,0)
                 OR stored.source_coordinate <> candidate->>'source'
                 OR stored.bound_surface_digest <> candidate->>'bound_surface_digest'
            )
@@ -948,7 +956,7 @@ async fn verify_runtime_projection(
              FROM jsonb_array_elements($2::JSONB->'changes') candidate
              LEFT JOIN agent_runtime_change stored
                ON stored.thread_id = $1
-              AND stored.sequence = (candidate->>'sequence')::BIGINT
+              AND stored.sequence = (candidate->>'sequence')::NUMERIC(20,0)
              WHERE stored.change IS DISTINCT FROM candidate
            )
            OR EXISTS (
@@ -956,7 +964,7 @@ async fn verify_runtime_projection(
              FROM jsonb_array_elements($2::JSONB->'outbox') candidate
              LEFT JOIN agent_runtime_outbox stored
                ON stored.thread_id = $1
-              AND stored.sequence = (candidate->>'sequence')::BIGINT
+              AND stored.sequence = (candidate->>'sequence')::NUMERIC(20,0)
              WHERE stored.change IS DISTINCT FROM candidate->'change'
            )
            OR EXISTS (
@@ -1061,6 +1069,10 @@ async fn verify_callback_projection(
         ));
     }
     Ok(())
+}
+
+fn parse_pg_u64(value: &str) -> Result<u64, std::num::ParseIntError> {
+    value.parse()
 }
 
 fn runtime_persistence(error: sqlx::Error) -> ManagedRuntimeStateStoreError {
@@ -1326,5 +1338,95 @@ mod tests {
             runtime.load(&thread_id).await,
             Err(ManagedRuntimeStateStoreError::Invariant { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn final_postgres_coordinates_cover_exactly_the_canonical_u64_domain() {
+        let (pool, _runtime) = isolated_thread_name_pool().await;
+        let thread_id = RuntimeThreadId::new(format!("runtime-u64-{}", uuid::Uuid::new_v4()))
+            .expect("valid Runtime thread identity");
+        let runtime = PostgresManagedRuntimeStateRepository::new(pool.clone());
+        runtime
+            .commit(ManagedRuntimeStateCommit {
+                thread_id: thread_id.clone(),
+                expected_revision: ManagedRuntimeStateRevision(0),
+                facts: ManagedRuntimeFacts::default(),
+            })
+            .await
+            .expect("seed Runtime revision");
+        sqlx::query(
+            "UPDATE agent_runtime_state_revision
+             SET revision=$2::NUMERIC(20,0) WHERE thread_id=$1",
+        )
+        .bind(thread_id.as_str())
+        .bind((u64::MAX - 1).to_string())
+        .execute(&pool)
+        .await
+        .expect("place Runtime at the last committable revision");
+
+        let committed = runtime
+            .commit(ManagedRuntimeStateCommit {
+                thread_id: thread_id.clone(),
+                expected_revision: ManagedRuntimeStateRevision(u64::MAX - 1),
+                facts: thread_name_facts(thread_id.clone(), u64::MAX, Some("u64 max")),
+            })
+            .await
+            .expect("commit canonical u64 max");
+        assert_eq!(committed.revision, ManagedRuntimeStateRevision(u64::MAX));
+        assert_eq!(
+            runtime
+                .load(&thread_id)
+                .await
+                .expect("reload canonical u64 max")
+                .revision,
+            ManagedRuntimeStateRevision(u64::MAX)
+        );
+
+        sqlx::query(
+            "UPDATE agent_runtime_host_revision
+             SET revision=$1::NUMERIC(20,0) WHERE singleton=TRUE",
+        )
+        .bind(u64::MAX.to_string())
+        .execute(&pool)
+        .await
+        .expect("store Host u64 max");
+        assert_eq!(
+            PostgresCompleteAgentHostRepository::new(pool.clone())
+                .load()
+                .await
+                .expect("load Host u64 max")
+                .revision
+                .0,
+            u64::MAX
+        );
+
+        sqlx::query(
+            "UPDATE agent_runtime_callback_revision
+             SET revision=$1::NUMERIC(20,0) WHERE singleton=TRUE",
+        )
+        .bind(u64::MAX.to_string())
+        .execute(&pool)
+        .await
+        .expect("store callback u64 max");
+        assert_eq!(
+            PostgresCompleteAgentCallbackRepository::new(pool.clone())
+                .load()
+                .await
+                .expect("load callback u64 max")
+                .revision
+                .0,
+            u64::MAX
+        );
+
+        assert!(
+            sqlx::query(
+                "UPDATE agent_runtime_host_revision
+                 SET revision=18446744073709551616 WHERE singleton=TRUE",
+            )
+            .execute(&pool)
+            .await
+            .is_err(),
+            "PostgreSQL must reject values outside the canonical u64 domain"
+        );
     }
 }

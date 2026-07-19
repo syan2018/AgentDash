@@ -100,7 +100,7 @@ impl PostgresManagedRuntimeProductChangeDelivery {
                    AND delivery.sequence=claimable.sequence
                  RETURNING delivery.thread_id,delivery.sequence
              )
-             SELECT claimed.thread_id,claimed.sequence,outbox.change
+             SELECT claimed.thread_id,claimed.sequence::TEXT AS sequence,outbox.change
              FROM claimed
              JOIN agent_runtime_outbox outbox
                ON outbox.thread_id=claimed.thread_id
@@ -121,10 +121,14 @@ impl PostgresManagedRuntimeProductChangeDelivery {
                 let thread_id =
                     RuntimeThreadId::new(row.try_get::<String, _>("thread_id").map_err(db_error)?)
                         .map_err(|error| error.to_string())?;
-                let sequence = row.try_get::<i64, _>("sequence").map_err(db_error)?;
                 let sequence = RuntimeChangeSequence(
-                    u64::try_from(sequence)
-                        .map_err(|_| "Runtime Product change sequence is negative".to_owned())?,
+                    row.try_get::<String, _>("sequence")
+                        .map_err(db_error)?
+                        .parse::<u64>()
+                        .map_err(|_| {
+                            "Runtime Product change sequence is outside the canonical u64 domain"
+                                .to_owned()
+                        })?,
                 );
                 let change = serde_json::from_value::<ManagedRuntimePlatformChange>(
                     row.try_get::<Value, _>("change").map_err(db_error)?,
@@ -156,14 +160,14 @@ impl PostgresManagedRuntimeProductChangeDelivery {
                  claim_expires_at=NULL,
                  last_error=NULL,
                  delivered_at=NOW()
-             WHERE thread_id=$1 AND sequence=$2
+             WHERE thread_id=$1 AND sequence=$2::NUMERIC(20,0)
                AND status='claimed'
                AND claim_owner=$3
                AND claim_token=$4
                AND claim_expires_at > NOW()",
         )
         .bind(claim.thread_id.as_str())
-        .bind(sequence_i64(claim.sequence)?)
+        .bind(sequence_decimal(claim.sequence))
         .bind(&claim.owner)
         .bind(claim.token)
         .execute(&self.pool)
@@ -183,13 +187,13 @@ impl PostgresManagedRuntimeProductChangeDelivery {
                  claim_token=NULL,
                  claim_expires_at=NULL,
                  last_error=$5
-             WHERE thread_id=$1 AND sequence=$2
+             WHERE thread_id=$1 AND sequence=$2::NUMERIC(20,0)
                AND status='claimed'
                AND claim_owner=$3
                AND claim_token=$4",
         )
         .bind(claim.thread_id.as_str())
-        .bind(sequence_i64(claim.sequence)?)
+        .bind(sequence_decimal(claim.sequence))
         .bind(&claim.owner)
         .bind(claim.token)
         .bind(error)
@@ -274,9 +278,8 @@ impl ManagedRuntimeProductChangeConsumer {
     }
 }
 
-fn sequence_i64(sequence: RuntimeChangeSequence) -> Result<i64, String> {
-    i64::try_from(sequence.0)
-        .map_err(|_| "Runtime Product change sequence exceeds BIGINT".to_owned())
+fn sequence_decimal(sequence: RuntimeChangeSequence) -> String {
+    sequence.0.to_string()
 }
 
 fn db_error(error: sqlx::Error) -> String {

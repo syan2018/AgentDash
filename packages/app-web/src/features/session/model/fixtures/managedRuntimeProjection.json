@@ -2,16 +2,18 @@
   "snapshots": {
     "completed": {
       "thread_id": "runtime-thread-child",
-      "revision": 6,
-      "latest_change_sequence": 9,
-      "captured_at_ms": 1006,
+      "revision": "6",
+      "latest_change_sequence": "9",
+      "captured_at_ms": "1006",
       "lifecycle": "active",
       "active_turn_id": null,
       "turns": [
         {
           "id": "turn-compaction",
           "status": "completed",
-          "item_ids": ["item-compaction"]
+          "item_ids": [
+            "item-compaction"
+          ]
         }
       ],
       "items": [
@@ -19,25 +21,72 @@
           "id": "item-compaction",
           "turn_id": "turn-compaction",
           "status": "completed",
-          "content": { "kind": "context_compaction" },
-          "content_digest": "sha256:compaction-6"
+          "presentation": {
+            "body": {
+              "kind": "context_compaction",
+              "summary": null,
+              "source_digest": "sha256:compaction-6"
+            },
+            "started_at_ms": "1006",
+            "updated_at_ms": "1007",
+            "terminal": {
+              "outcome": "completed",
+              "completed_at_ms": null,
+              "duration_ms": null,
+              "process_exit": null,
+              "error": null
+            },
+            "body_digest": "sha256:aec73ab93900e20a918c52c73b7e5dcb145ff1cc593066103ca2fbad0a9ad783",
+            "presentation_digest": "sha256:390db27ef19b7371a3a3e5698723fdb26bdf00a9ee3505b145011602f370b39c"
+          }
         }
       ],
       "interactions": [],
+      "thread_name": null,
+      "thread_name_source": null,
       "operations": [
         {
           "id": "operation-compaction",
           "turn_id": "turn-compaction",
-          "status": "succeeded"
+          "status": "succeeded",
+          "evidence": null
         }
       ],
+      "source_binding": null,
       "authority": "source_authoritative",
       "fidelity": "exact",
       "command_availability": {
+        "create": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": "6",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "resume": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": "6",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "activate": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": "6",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
         "submit_input": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 6,
+            "decided_at_revision": "6",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -46,7 +95,7 @@
         "steer": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 6,
+            "decided_at_revision": "6",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -55,7 +104,7 @@
         "interrupt": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 6,
+            "decided_at_revision": "6",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -64,7 +113,7 @@
         "request_compaction": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 6,
+            "decided_at_revision": "6",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -73,7 +122,7 @@
         "resolve_interaction": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 6,
+            "decided_at_revision": "6",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -82,7 +131,7 @@
         "close": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 6,
+            "decided_at_revision": "6",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -91,7 +140,7 @@
         "fork": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 6,
+            "decided_at_revision": "6",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -101,16 +150,18 @@
     },
     "failed": {
       "thread_id": "runtime-thread-child",
-      "revision": 7,
-      "latest_change_sequence": 10,
-      "captured_at_ms": 1007,
+      "revision": "7",
+      "latest_change_sequence": "10",
+      "captured_at_ms": "1007",
       "lifecycle": "active",
       "active_turn_id": null,
       "turns": [
         {
           "id": "turn-compaction",
           "status": "failed",
-          "item_ids": ["item-compaction"]
+          "item_ids": [
+            "item-compaction"
+          ]
         }
       ],
       "items": [
@@ -118,25 +169,72 @@
           "id": "item-compaction",
           "turn_id": "turn-compaction",
           "status": "failed",
-          "content": { "kind": "context_compaction" },
-          "content_digest": "sha256:compaction-7"
+          "presentation": {
+            "body": {
+              "kind": "context_compaction",
+              "summary": null,
+              "source_digest": "sha256:compaction-7"
+            },
+            "started_at_ms": "1007",
+            "updated_at_ms": "1008",
+            "terminal": {
+              "outcome": "failed",
+              "completed_at_ms": null,
+              "duration_ms": null,
+              "process_exit": null,
+              "error": null
+            },
+            "body_digest": "sha256:cc65bccb2a7983e8414ea5d91a8e35371ac35b5d7c04d96a5379aa4b130164a6",
+            "presentation_digest": "sha256:03ed3cf39b5945eb330266302895165eb2d6eb021f9ad698364b27d8428cce3e"
+          }
         }
       ],
       "interactions": [],
+      "thread_name": null,
+      "thread_name_source": null,
       "operations": [
         {
           "id": "operation-compaction",
           "turn_id": "turn-compaction",
-          "status": "failed"
+          "status": "failed",
+          "evidence": null
         }
       ],
+      "source_binding": null,
       "authority": "source_authoritative",
       "fidelity": "exact",
       "command_availability": {
+        "create": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": "7",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "resume": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": "7",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "activate": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": "7",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
         "submit_input": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 7,
+            "decided_at_revision": "7",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -145,7 +243,7 @@
         "steer": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 7,
+            "decided_at_revision": "7",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -154,7 +252,7 @@
         "interrupt": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 7,
+            "decided_at_revision": "7",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -163,7 +261,7 @@
         "request_compaction": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 7,
+            "decided_at_revision": "7",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -172,7 +270,7 @@
         "resolve_interaction": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 7,
+            "decided_at_revision": "7",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -181,7 +279,7 @@
         "close": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 7,
+            "decided_at_revision": "7",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -190,7 +288,7 @@
         "fork": {
           "status": "available",
           "evidence": {
-            "decided_at_revision": 7,
+            "decided_at_revision": "7",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -200,16 +298,18 @@
     },
     "lost": {
       "thread_id": "runtime-thread-child",
-      "revision": 8,
-      "latest_change_sequence": 11,
-      "captured_at_ms": 1008,
+      "revision": "8",
+      "latest_change_sequence": "11",
+      "captured_at_ms": "1008",
       "lifecycle": "active",
       "active_turn_id": null,
       "turns": [
         {
           "id": "turn-compaction",
           "status": "lost",
-          "item_ids": ["item-compaction"]
+          "item_ids": [
+            "item-compaction"
+          ]
         }
       ],
       "items": [
@@ -217,26 +317,76 @@
           "id": "item-compaction",
           "turn_id": "turn-compaction",
           "status": "lost",
-          "content": { "kind": "context_compaction" },
-          "content_digest": "sha256:compaction-8"
+          "presentation": {
+            "body": {
+              "kind": "context_compaction",
+              "summary": null,
+              "source_digest": "sha256:compaction-8"
+            },
+            "started_at_ms": "1008",
+            "updated_at_ms": "1009",
+            "terminal": {
+              "outcome": "lost",
+              "completed_at_ms": null,
+              "duration_ms": null,
+              "process_exit": null,
+              "error": null
+            },
+            "body_digest": "sha256:1a5c606fbb60b2134f54e69b2381b388d5ee4d30e5b0c275262d189535a06357",
+            "presentation_digest": "sha256:73aaea39d87491d0ac20f11af23bd894b7ad29bb686b5aaa80558ce01c725efb"
+          }
         }
       ],
       "interactions": [],
+      "thread_name": null,
+      "thread_name_source": null,
       "operations": [
         {
           "id": "operation-compaction",
           "turn_id": "turn-compaction",
-          "status": "lost"
+          "status": "lost",
+          "evidence": null
         }
       ],
+      "source_binding": null,
       "authority": "source_authoritative",
       "fidelity": "exact",
       "command_availability": {
+        "create": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": "8",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "resume": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": "8",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "activate": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": "8",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
         "submit_input": {
           "status": "unavailable",
           "reason": "source_unavailable",
           "evidence": {
-            "decided_at_revision": 8,
+            "decided_at_revision": "8",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -246,7 +396,7 @@
           "status": "unavailable",
           "reason": "source_unavailable",
           "evidence": {
-            "decided_at_revision": 8,
+            "decided_at_revision": "8",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -256,7 +406,7 @@
           "status": "unavailable",
           "reason": "source_unavailable",
           "evidence": {
-            "decided_at_revision": 8,
+            "decided_at_revision": "8",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -266,7 +416,7 @@
           "status": "unavailable",
           "reason": "source_unavailable",
           "evidence": {
-            "decided_at_revision": 8,
+            "decided_at_revision": "8",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -276,7 +426,7 @@
           "status": "unavailable",
           "reason": "source_unavailable",
           "evidence": {
-            "decided_at_revision": 8,
+            "decided_at_revision": "8",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -286,7 +436,7 @@
           "status": "unavailable",
           "reason": "source_unavailable",
           "evidence": {
-            "decided_at_revision": 8,
+            "decided_at_revision": "8",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -296,7 +446,7 @@
           "status": "unavailable",
           "reason": "source_unavailable",
           "evidence": {
-            "decided_at_revision": 8,
+            "decided_at_revision": "8",
             "blocking_operation_id": null,
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -306,16 +456,18 @@
     },
     "started": {
       "thread_id": "runtime-thread-child",
-      "revision": 5,
-      "latest_change_sequence": 8,
-      "captured_at_ms": 1005,
+      "revision": "5",
+      "latest_change_sequence": "8",
+      "captured_at_ms": "1005",
       "lifecycle": "active",
       "active_turn_id": "turn-compaction",
       "turns": [
         {
           "id": "turn-compaction",
           "status": "running",
-          "item_ids": ["item-compaction"]
+          "item_ids": [
+            "item-compaction"
+          ]
         }
       ],
       "items": [
@@ -323,26 +475,70 @@
           "id": "item-compaction",
           "turn_id": "turn-compaction",
           "status": "running",
-          "content": { "kind": "context_compaction" },
-          "content_digest": "sha256:compaction-5"
+          "presentation": {
+            "body": {
+              "kind": "context_compaction",
+              "summary": null,
+              "source_digest": "sha256:compaction-5"
+            },
+            "started_at_ms": "1005",
+            "updated_at_ms": "1006",
+            "terminal": null,
+            "body_digest": "sha256:e49cf7624f54630258806a99c30e7a8ffb8b9c6471d402211513b476a347dcf9",
+            "presentation_digest": "sha256:631719b35ea2f74349955269d8a92c7194f4f4aa56fff7b3983088eb68ac91b3"
+          }
         }
       ],
       "interactions": [],
+      "thread_name": null,
+      "thread_name_source": null,
       "operations": [
         {
           "id": "operation-compaction",
           "turn_id": "turn-compaction",
-          "status": "running"
+          "status": "running",
+          "evidence": null
         }
       ],
+      "source_binding": null,
       "authority": "source_authoritative",
       "fidelity": "exact",
       "command_availability": {
+        "create": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": "5",
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "resume": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": "5",
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
+        "activate": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": "5",
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
         "submit_input": {
           "status": "unavailable",
           "reason": "operation_in_flight",
           "evidence": {
-            "decided_at_revision": 5,
+            "decided_at_revision": "5",
             "blocking_operation_id": "operation-compaction",
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -352,7 +548,7 @@
           "status": "unavailable",
           "reason": "operation_in_flight",
           "evidence": {
-            "decided_at_revision": 5,
+            "decided_at_revision": "5",
             "blocking_operation_id": "operation-compaction",
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -362,7 +558,7 @@
           "status": "unavailable",
           "reason": "operation_in_flight",
           "evidence": {
-            "decided_at_revision": 5,
+            "decided_at_revision": "5",
             "blocking_operation_id": "operation-compaction",
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -372,7 +568,7 @@
           "status": "unavailable",
           "reason": "operation_in_flight",
           "evidence": {
-            "decided_at_revision": 5,
+            "decided_at_revision": "5",
             "blocking_operation_id": "operation-compaction",
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -382,7 +578,7 @@
           "status": "unavailable",
           "reason": "operation_in_flight",
           "evidence": {
-            "decided_at_revision": 5,
+            "decided_at_revision": "5",
             "blocking_operation_id": "operation-compaction",
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -392,7 +588,7 @@
           "status": "unavailable",
           "reason": "operation_in_flight",
           "evidence": {
-            "decided_at_revision": 5,
+            "decided_at_revision": "5",
             "blocking_operation_id": "operation-compaction",
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -402,7 +598,7 @@
           "status": "unavailable",
           "reason": "operation_in_flight",
           "evidence": {
-            "decided_at_revision": 5,
+            "decided_at_revision": "5",
             "blocking_operation_id": "operation-compaction",
             "bound_surface_revision": null,
             "applied_surface_revision": null
@@ -416,32 +612,58 @@
     "changes": [
       {
         "thread_id": "runtime-thread-child",
-        "sequence": 9,
-        "revision": 6,
+        "sequence": "9",
+        "revision": "6",
         "delta": {
-          "kind": "item_upserted",
-          "item": {
-            "id": "item-compaction",
-            "turn_id": "turn-compaction",
-            "status": "completed",
-            "content": { "kind": "context_compaction" },
-            "content_digest": "sha256:compaction-6"
+          "kind": "source_projection_changed",
+          "source_change_sequence": "9",
+          "source_projection_revision": "6",
+          "observation_digest": "sha256:observation-6",
+          "section": "items",
+          "section_digest": "sha256:items-6",
+          "delta": {
+            "kind": "items_changed",
+            "items": [
+              {
+                "id": "item-compaction",
+                "turn_id": "turn-compaction",
+                "status": "completed",
+                "presentation": {
+                  "body": {
+                    "kind": "context_compaction",
+                    "summary": null,
+                    "source_digest": "sha256:compaction-6"
+                  },
+                  "started_at_ms": "1006",
+                  "updated_at_ms": "1007",
+                  "terminal": {
+                    "outcome": "completed",
+                    "completed_at_ms": null,
+                    "duration_ms": null,
+                    "process_exit": null,
+                    "error": null
+                  },
+                  "body_digest": "sha256:aec73ab93900e20a918c52c73b7e5dcb145ff1cc593066103ca2fbad0a9ad783",
+                  "presentation_digest": "sha256:390db27ef19b7371a3a3e5698723fdb26bdf00a9ee3505b145011602f370b39c"
+                }
+              }
+            ]
           }
         }
       }
     ],
-    "next": 9,
+    "next": "9",
     "gap": null
   },
   "gap_page": {
     "thread_id": "runtime-thread-child",
     "changes": [],
-    "next": 12,
+    "next": "12",
     "gap": {
-      "requested_after": 4,
-      "earliest_available": 9,
-      "latest_available": 12,
-      "snapshot_revision": 8
+      "requested_after": "4",
+      "earliest_available": "9",
+      "latest_available": "12",
+      "snapshot_revision": "8"
     }
   }
 }

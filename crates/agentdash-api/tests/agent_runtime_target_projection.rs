@@ -9,15 +9,16 @@ use std::{collections::BTreeMap, fs, path::PathBuf};
 use agentdash_agent_runtime_contract::managed_projection::{
     ManagedRuntimeAvailabilityEvidence, ManagedRuntimeChangeDelta, ManagedRuntimeChangeGap,
     ManagedRuntimeChangePage, ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind,
-    ManagedRuntimeEntityStatus, ManagedRuntimeItem, ManagedRuntimeItemContent,
-    ManagedRuntimeLifecycleStatus, ManagedRuntimeOperation, ManagedRuntimeOperationStatus,
-    ManagedRuntimePlatformChange, ManagedRuntimeProjectionAuthority,
-    ManagedRuntimeProjectionFidelity, ManagedRuntimeProjectionSchema, ManagedRuntimeSnapshot,
-    ManagedRuntimeTurn, ManagedRuntimeUnavailabilityReason,
+    ManagedRuntimeEntityStatus, ManagedRuntimeItem, ManagedRuntimeLifecycleStatus,
+    ManagedRuntimeOperation, ManagedRuntimeOperationStatus, ManagedRuntimePlatformChange,
+    ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
+    ManagedRuntimeProjectionSchema, ManagedRuntimeProjectionSection, ManagedRuntimeSnapshot,
+    ManagedRuntimeSourceProjectionDelta, ManagedRuntimeTurn, ManagedRuntimeUnavailabilityReason,
 };
 use agentdash_agent_runtime_contract::{
-    RuntimeChangeSequence, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
-    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
+    ManagedRuntimeItemBody, ManagedRuntimeItemPresentation, ManagedRuntimeItemTerminalEvidence,
+    ManagedRuntimeTerminalStatus, RuntimeChangeSequence, RuntimeItemId, RuntimeOperationId,
+    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
 };
 use agentdash_application_agentrun::agent_run::product_protocol::{
     consume_managed_runtime_change_page, consume_managed_runtime_snapshot,
@@ -94,6 +95,22 @@ fn snapshot(
     let turn_id = id("turn-compaction", RuntimeTurnId::new);
     let item_id = id("item-compaction", RuntimeItemId::new);
     let revision = RuntimeProjectionRevision(revision);
+    let terminal = match item_status {
+        ManagedRuntimeEntityStatus::Completed => Some(ManagedRuntimeTerminalStatus::Completed),
+        ManagedRuntimeEntityStatus::Failed => Some(ManagedRuntimeTerminalStatus::Failed),
+        ManagedRuntimeEntityStatus::Interrupted => {
+            Some(ManagedRuntimeTerminalStatus::Interrupted)
+        }
+        ManagedRuntimeEntityStatus::Lost => Some(ManagedRuntimeTerminalStatus::Lost),
+        ManagedRuntimeEntityStatus::Accepted | ManagedRuntimeEntityStatus::Running => None,
+    }
+    .map(|outcome| ManagedRuntimeItemTerminalEvidence {
+        outcome,
+        completed_at_ms: None,
+        duration_ms: None,
+        process_exit: None,
+        error: None,
+    });
     ManagedRuntimeSnapshot {
         thread_id,
         revision,
@@ -111,11 +128,19 @@ fn snapshot(
             id: item_id,
             turn_id: turn_id.clone(),
             status: item_status,
-            content: ManagedRuntimeItemContent::ContextCompaction,
-            content_digest: id(
-                &format!("sha256:compaction-{}", revision.0),
-                RuntimePayloadDigest::new,
-            ),
+            presentation: ManagedRuntimeItemPresentation::new(
+                ManagedRuntimeItemBody::ContextCompaction {
+                    summary: None,
+                    source_digest: Some(id(
+                        &format!("sha256:compaction-{}", revision.0),
+                        RuntimePayloadDigest::new,
+                    )),
+                },
+                Some(1_000 + revision.0),
+                Some(1_001 + revision.0),
+                terminal,
+            )
+            .expect("canonical compaction presentation"),
         }],
         interactions: Vec::new(),
         thread_name: None,
@@ -124,7 +149,9 @@ fn snapshot(
             id: id("operation-compaction", RuntimeOperationId::new),
             turn_id: Some(turn_id),
             status: operation_status,
+            evidence: None,
         }],
+        source_binding: None,
         authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
         fidelity: ManagedRuntimeProjectionFidelity::Exact,
         command_availability: availability(revision, unavailable_reason),
@@ -171,23 +198,27 @@ fn canonical_frontend_fixture() -> CanonicalFrontendFixture {
         ),
     ]);
     let thread_id = id("runtime-thread-child", RuntimeThreadId::new);
+    let completed = snapshot(
+        ManagedRuntimeEntityStatus::Completed,
+        ManagedRuntimeOperationStatus::Succeeded,
+        6,
+        None,
+    );
     let change_page = ManagedRuntimeChangePage {
         thread_id: thread_id.clone(),
         changes: vec![ManagedRuntimePlatformChange {
             thread_id: thread_id.clone(),
             sequence: RuntimeChangeSequence(9),
             revision: RuntimeProjectionRevision(6),
-            delta: ManagedRuntimeChangeDelta::ItemUpserted {
-                item: snapshot(
-                    ManagedRuntimeEntityStatus::Completed,
-                    ManagedRuntimeOperationStatus::Succeeded,
-                    6,
-                    None,
-                )
-                .items
-                .into_iter()
-                .next()
-                .expect("fixture item"),
+            delta: ManagedRuntimeChangeDelta::SourceProjectionChanged {
+                source_change_sequence: 9,
+                source_projection_revision: RuntimeProjectionRevision(6),
+                observation_digest: id("sha256:observation-6", RuntimePayloadDigest::new),
+                section: ManagedRuntimeProjectionSection::Items,
+                section_digest: id("sha256:items-6", RuntimePayloadDigest::new),
+                delta: ManagedRuntimeSourceProjectionDelta::ItemsChanged {
+                    items: completed.items,
+                },
             },
         }],
         next: RuntimeChangeSequence(9),
@@ -280,14 +311,19 @@ fn frontend_fixture_is_the_exact_canonical_rust_serialization() {
 fn task_local_generated_artifacts_match_canonical_schema_and_frontend_fixture() {
     let root = repository_root();
     let schema = canonical_projection_schema();
-    let fixture = fs::read(root.join(FRONTEND_FIXTURE)).expect("read canonical frontend fixture");
+    let fixture = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&canonical_frontend_fixture())
+            .expect("serialize canonical frontend fixture")
+    );
+    check_or_update_activation_artifact(root.join(FRONTEND_FIXTURE), &fixture);
     let manifest = W7GeneratedActivationManifest {
         generator: "schemars::schema_for!(ManagedRuntimeProjectionSchema)",
         canonical_root: "agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeProjectionSchema",
         schema_path: "managed-runtime-projection.schema.json",
         schema_sha256: sha256(schema.as_bytes()),
         frontend_fixture_path: FRONTEND_FIXTURE,
-        frontend_fixture_sha256: sha256(&fixture),
+        frontend_fixture_sha256: sha256(fixture.as_bytes()),
         reproduction_command: "$env:AGENTDASH_UPDATE_W7_ACTIVATION_ARTIFACTS='1'; cargo test -p agentdash-api --test agent_runtime_target_projection task_local_generated_artifacts_match_canonical_schema_and_frontend_fixture -- --exact",
     };
     let manifest = format!(

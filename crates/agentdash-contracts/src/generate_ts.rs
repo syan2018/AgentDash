@@ -234,7 +234,7 @@ use agentdash_contracts::workflow::{
     LifecycleRuntimeTraceStaleReason, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
     OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
     PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
-    ProjectAgentRunListView, RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionRefDto,
+    ProjectAgentRunListView, RegisterHookPresetResponse, RuntimeNodeView, RuntimeThreadRefDto,
     SubjectExecutionAttemptView, SubjectExecutionView, SubjectRefDto,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
@@ -861,7 +861,7 @@ fn main() {
             export_all::<LifecycleRunRefDto>(dir);
             export_all::<AgentRunRefDto>(dir);
             export_all::<AgentFrameRefDto>(dir);
-            export_all::<RuntimeSessionRefDto>(dir);
+            export_all::<RuntimeThreadRefDto>(dir);
             export_all::<AgentRunRuntimeCommandRequest>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
             export_all::<RuntimeNodeView>(dir);

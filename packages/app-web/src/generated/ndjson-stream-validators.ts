@@ -83,9 +83,8 @@ function isControlPlaneProjectionChanged(value: unknown): boolean {
   if (!isNonEmptyString(value.agent_id)) return false;
   if (!(isOptionalString(value.frame_id) || value.frame_id === null)) return false;
   if (!(isOptionalString(value.gate_id) || value.gate_id === null)) return false;
-  if (!(isOptionalString(value.mailbox_message_id) || value.mailbox_message_id === null)) return false;
-  return isOptionalString(value.delivery_runtime_session_id) ||
-    value.delivery_runtime_session_id === null;
+  return isOptionalString(value.mailbox_message_id) ||
+    value.mailbox_message_id === null;
 }
 
 export type GeneratedProjectEventStreamConnectedEnvelope = Extract<ProjectEventStreamEnvelope, { type: "Connected" }>;

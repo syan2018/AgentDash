@@ -26,9 +26,9 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route("/terminals/{id}", axum::routing::delete(terminal_kill))
 }
 
-pub(crate) async fn spawn_terminal_for_runtime_session(
+pub(crate) async fn spawn_terminal_for_runtime_thread(
     state: &Arc<AppState>,
-    session_id: &str,
+    runtime_thread_id: &str,
     run_id: &str,
     agent_id: &str,
     target: AgentRunTerminalLaunchTarget,
@@ -49,7 +49,7 @@ pub(crate) async fn spawn_terminal_for_runtime_session(
     let terminal_id = RelayMessage::new_id("term");
     let payload = TerminalSpawnPayload {
         terminal_id: terminal_id.clone(),
-        session_id: session_id.to_string(),
+        session_id: runtime_thread_id.to_string(),
         mount_root_ref: target.mount_root_ref,
         cwd: body.cwd,
         shell: body.shell,
@@ -90,7 +90,7 @@ pub(crate) async fn spawn_terminal_for_runtime_session(
             }
             Ok(Json(serde_json::json!({
                 "terminal_id": resp.terminal_id,
-                "runtime_session_id": session_id,
+                "runtime_thread_id": runtime_thread_id,
                 "process_id": resp.process_id,
             }))
             .into_response())

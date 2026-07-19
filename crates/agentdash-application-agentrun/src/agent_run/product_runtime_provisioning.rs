@@ -20,6 +20,32 @@ pub struct ProductExecutionProfileRef {
     pub credential_scope: Option<ProductCredentialScopeRef>,
 }
 
+impl ProductExecutionProfileRef {
+    pub fn calculated_digest(&self) -> String {
+        canonical_digest(&serde_json::json!({
+            "schema": "agentdash.product-execution-profile/v1",
+            "profile_key": self.profile_key,
+            "profile_revision": self.profile_revision,
+            "configuration": self.configuration,
+        }))
+    }
+
+    pub fn refresh_digest(&mut self) {
+        self.profile_digest = self.calculated_digest();
+    }
+
+    pub fn validate(&self) -> bool {
+        self.profile_revision > 0
+            && !self.profile_key.trim().is_empty()
+            && self.profile_digest == self.calculated_digest()
+            && self.credential_scope.as_ref().is_none_or(|scope| {
+                !scope.owner_kind.trim().is_empty()
+                    && !scope.owner_id.trim().is_empty()
+                    && !scope.credential_ref.trim().is_empty()
+            })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductCredentialScopeRef {
     pub owner_kind: String,
@@ -53,6 +79,46 @@ pub struct ProductAgentSurfaceFacts {
     pub hook_plan: Option<serde_json::Value>,
 }
 
+impl ProductAgentSurfaceFacts {
+    pub fn from_frame(frame: &agentdash_domain::workflow::AgentFrame) -> Self {
+        let surface = frame.surface_document();
+        let mut facts = Self {
+            surface_revision: u64::try_from(frame.revision).unwrap_or_default(),
+            surface_digest: String::new(),
+            capability: surface.capability_state,
+            context: surface.context_slice,
+            context_source: surface.context_source_snapshot,
+            vfs: surface.vfs_surface,
+            mcp: surface.mcp_surface,
+            hook_plan: surface.hook_plan,
+        };
+        facts.surface_digest = facts.calculated_digest();
+        facts
+    }
+
+    pub fn calculated_digest(&self) -> String {
+        canonical_digest(&serde_json::json!({
+            "schema": "agentdash.product-agent-surface-facts/v1",
+            "surface_revision": self.surface_revision,
+            "capability": self.capability,
+            "context": self.context,
+            "context_source": self.context_source,
+            "vfs": self.vfs,
+            "mcp": self.mcp,
+            "hook_plan": self.hook_plan,
+        }))
+    }
+
+    pub fn validate(&self) -> bool {
+        self.surface_revision > 0 && self.surface_digest == self.calculated_digest()
+    }
+}
+
+fn canonical_digest(value: &serde_json::Value) -> String {
+    agentdash_agent_runtime_contract::canonical_json_sha256(value)
+        .expect("Product provisioning facts are serializable")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRunProductRuntimeProvisioningRequest {
     pub target: AgentRunTarget,
@@ -68,6 +134,23 @@ impl AgentRunProductRuntimeProvisioningRequest {
         if self.frame.agent_id != self.target.agent_id {
             return Err(AgentRunProductRuntimeProvisioningError::InvalidRequest {
                 reason: "AgentFrame agent_id does not match AgentRun target".to_owned(),
+            });
+        }
+        if self.frame.revision == 0 {
+            return Err(AgentRunProductRuntimeProvisioningError::InvalidRequest {
+                reason: "AgentFrame revision must be positive".to_owned(),
+            });
+        }
+        if !self.execution_profile.validate() {
+            return Err(AgentRunProductRuntimeProvisioningError::InvalidRequest {
+                reason: "execution profile digest does not cover its immutable facts".to_owned(),
+            });
+        }
+        if !self.surface_facts.validate()
+            || self.surface_facts.surface_revision != self.frame.revision
+        {
+            return Err(AgentRunProductRuntimeProvisioningError::InvalidRequest {
+                reason: "surface digest does not cover the pinned AgentFrame facts".to_owned(),
             });
         }
         for (field, value) in [
@@ -134,7 +217,75 @@ mod tests {
     use super::*;
 
     #[test]
+    fn execution_profile_digest_is_independent_of_json_object_key_order() {
+        let mut left = ProductExecutionProfileRef {
+            profile_key: "dash".to_owned(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::from_str(r#"{"nested":{"b":2,"a":1},"z":3}"#)
+                .expect("left json"),
+            credential_scope: None,
+        };
+        let mut right = ProductExecutionProfileRef {
+            configuration: serde_json::from_str(r#"{"z":3,"nested":{"a":1,"b":2}}"#)
+                .expect("right json"),
+            ..left.clone()
+        };
+
+        left.refresh_digest();
+        right.refresh_digest();
+
+        assert_eq!(left.profile_digest, right.profile_digest);
+        assert!(left.validate());
+        assert!(right.validate());
+    }
+
+    #[test]
+    fn surface_digest_is_independent_of_json_object_key_order_and_detects_tampering() {
+        let mut left = ProductAgentSurfaceFacts {
+            surface_revision: 3,
+            surface_digest: String::new(),
+            capability: Some(
+                serde_json::from_str(r#"{"tools":{"b":false,"a":true}}"#).expect("left json"),
+            ),
+            context: None,
+            context_source: None,
+            vfs: Some(
+                serde_json::from_str(r#"{"mount":{"root":"workspace","metadata":{"z":2,"a":1}}}"#)
+                    .expect("left vfs"),
+            ),
+            mcp: None,
+            hook_plan: None,
+        };
+        let mut right = ProductAgentSurfaceFacts {
+            capability: Some(
+                serde_json::from_str(r#"{"tools":{"a":true,"b":false}}"#).expect("right json"),
+            ),
+            vfs: Some(
+                serde_json::from_str(r#"{"mount":{"metadata":{"a":1,"z":2},"root":"workspace"}}"#)
+                    .expect("right vfs"),
+            ),
+            ..left.clone()
+        };
+        left.surface_digest = left.calculated_digest();
+        right.surface_digest = right.calculated_digest();
+
+        assert_eq!(left.surface_digest, right.surface_digest);
+        assert!(left.validate());
+        right.capability = Some(serde_json::json!({"tools":{"a":false,"b":false}}));
+        assert!(!right.validate());
+    }
+
+    #[test]
     fn request_rejects_cross_agent_frame() {
+        let mut execution_profile = ProductExecutionProfileRef {
+            profile_key: "dash".to_owned(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({"executor": "DASH_AGENT"}),
+            credential_scope: None,
+        };
+        execution_profile.refresh_digest();
         let request = AgentRunProductRuntimeProvisioningRequest {
             target: AgentRunTarget {
                 run_id: Uuid::new_v4(),
@@ -147,13 +298,7 @@ mod tests {
                 agent_id: Uuid::new_v4(),
                 revision: 1,
             },
-            execution_profile: ProductExecutionProfileRef {
-                profile_key: "dash".to_owned(),
-                profile_revision: 1,
-                profile_digest: "sha256:profile".to_owned(),
-                configuration: serde_json::json!({"executor": "DASH_AGENT"}),
-                credential_scope: None,
-            },
+            execution_profile,
             surface_facts: ProductAgentSurfaceFacts {
                 surface_revision: 1,
                 surface_digest: "sha256:surface".to_owned(),

@@ -1203,6 +1203,12 @@ mod tests {
         let binding = AgentRunProductRuntimeBinding {
             target: target.clone(),
             runtime_thread_id: RuntimeThreadId::new("mailbox-thread").expect("thread"),
+            launch_frame: crate::agent_run::ProductAgentFrameRef {
+                frame_id: Uuid::new_v4(),
+                agent_id: target.agent_id,
+                revision: 1,
+            },
+            execution_profile_digest: "sha256:mailbox-profile".to_owned(),
             source_binding: ManagedRuntimeSourceBindingEvidence {
                 source_ref: RuntimeSourceRef::new("source:mailbox").expect("source"),
                 committed_at_revision: RuntimeProjectionRevision(1),

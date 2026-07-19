@@ -268,16 +268,16 @@ function AgentSummary({
                 {frame.frame_ref.frame_id}
               </span>
             </div>
-            {frame.runtime_session_refs.length > 0 && (
+            {frame.runtime_thread_refs.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                {frame.runtime_session_refs.map((ref) => (
+                {frame.runtime_thread_refs.map((ref) => (
                   <button
-                    key={ref.runtime_session_id}
+                    key={ref.runtime_thread_id}
                     type="button"
                     onClick={() => {}}
                     className="rounded-[6px] border border-border bg-secondary/40 px-2 py-1 font-mono text-xs text-muted-foreground hover:text-foreground"
                   >
-                    trace {ref.runtime_session_id.slice(0, 8)}
+                    thread {ref.runtime_thread_id.slice(0, 8)}
                   </button>
                 ))}
               </div>

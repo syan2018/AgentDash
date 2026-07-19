@@ -35,7 +35,7 @@ export type {
   ProjectActiveAgentsView,
   ProjectAgentRunListView,
   RuntimeNodeView,
-  RuntimeSessionRefDto,
+  RuntimeThreadRefDto,
   SubjectExecutionAttemptView,
   SubjectExecutionView,
 } from "../generated/workflow-contracts";

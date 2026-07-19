@@ -397,11 +397,11 @@ mod tests {
 
     #[test]
     fn validated_hook_plan_rejects_requirements_that_do_not_match_digest() {
-        use agentdash_agent_runtime_contract::{
+        use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
+        use agentdash_application_ports::agent_frame_hook_plan::{
             HookAction, HookDefinitionId, HookExecutionSite, HookFailurePolicy, HookPlanRevision,
             HookPoint, HookRequirement, SemanticStrength,
         };
-        use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
         use std::collections::BTreeSet;
 
         let mut plan = AgentFrameHookPlan::compile(HookPlanRevision(1), Vec::new()).unwrap();

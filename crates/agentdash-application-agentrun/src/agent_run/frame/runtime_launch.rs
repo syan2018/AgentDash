@@ -290,7 +290,7 @@ mod tests {
         assert_eq!(surface.agent_id, agent_id);
         assert_eq!(surface.frame_id, frame.id);
         assert_eq!(surface.frame_revision, 3);
-        assert_eq!(surface.runtime_session_id, Some(session_id.to_string()));
+        assert_eq!(surface.runtime_thread_id, Some(session_id.to_string()));
         assert_eq!(
             surface.capability_surface,
             serde_json::json!({"file_read": true})
@@ -310,7 +310,7 @@ mod tests {
 
         assert_eq!(surface.agent_id, agent_id);
         assert_eq!(surface.frame_revision, 1);
-        assert!(surface.runtime_session_id.is_none());
+        assert!(surface.runtime_thread_id.is_none());
         assert!(surface.capability_surface.is_null());
         assert!(surface.context_slice.is_null());
         assert!(surface.vfs_surface.is_null());
@@ -318,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn frame_runtime_surface_uses_explicit_runtime_session_policy() {
+    fn frame_runtime_surface_uses_explicit_runtime_thread_policy() {
         let agent_id = Uuid::new_v4();
         let s1 = Uuid::new_v4();
         let s2 = Uuid::new_v4();
@@ -326,8 +326,8 @@ mod tests {
 
         let primary = FrameRuntimeSurface::from_frame(&frame, Some(s1.to_string()));
         let latest = FrameRuntimeSurface::from_frame(&frame, Some(s2.to_string()));
-        assert_eq!(primary.runtime_session_id, Some(s1.to_string()));
-        assert_eq!(latest.runtime_session_id, Some(s2.to_string()));
+        assert_eq!(primary.runtime_thread_id, Some(s1.to_string()));
+        assert_eq!(latest.runtime_thread_id, Some(s2.to_string()));
     }
 
     fn test_vfs(root: &str) -> Vfs {
@@ -570,9 +570,9 @@ mod tests {
     }
 
     #[test]
-    fn into_runtime_session_envelope_preserves_grouping() {
+    fn into_product_launch_envelope_preserves_grouping() {
         let envelope = grouped_envelope();
-        let port = envelope.into_runtime_session_launch_envelope();
+        let port = envelope.into_product_launch_envelope();
 
         // command intent 只保留请求事实
         assert_eq!(port.command.environment_variables["A"], "B");
@@ -599,7 +599,7 @@ mod tests {
 
         // frame refs
         assert_eq!(
-            port.frame.surface.runtime_session_id.as_deref(),
+            port.frame.surface.runtime_thread_id.as_deref(),
             Some("sess")
         );
         assert!(port.frame.pending_frame.is_none());

@@ -33,7 +33,7 @@ export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, 
 
 export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, mailbox: ConversationMailboxSnapshotView, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, diagnostics: Array<ConversationDiagnosticView>, };
 
-export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
+export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_thread_refs: Array<RuntimeThreadRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
 
 export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config: CapabilityConfig, output_ports: Array<OutputPortDefinition>, input_ports: Array<InputPortDefinition>, };
 
@@ -55,7 +55,7 @@ export type AgentRunOwnershipView = { run_created_by_user_id: string, agent_crea
 
 export type AgentRunResourceSurfaceCoordinateView = { surface_frame_ref: AgentFrameRefDto, source_anchor?: AgentRunResourceSurfaceSourceAnchorView, };
 
-export type AgentRunResourceSurfaceSourceAnchorView = { runtime_session_ref: RuntimeSessionRefDto, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, delivery_status: string, observed_at: string, };
+export type AgentRunResourceSurfaceSourceAnchorView = { runtime_thread_ref: RuntimeThreadRefDto, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, delivery_status: string, observed_at: string, };
 
 export type AgentRunRuntimeCommandRequest = { client_command_id: string, };
 
@@ -107,7 +107,7 @@ export type ConversationDiagnosticView = { code: string, severity: ValidationSev
 
 export type ConversationExecutionStatus = "draft" | "model_required" | "ready" | "starting_claimed" | "running_active" | "cancelling" | "terminal" | "frame_missing";
 
-export type ConversationExecutionView = { status: ConversationExecutionStatus, runtime_session_ref?: RuntimeSessionRefDto, active_turn_id?: string, reason?: string, };
+export type ConversationExecutionView = { status: ConversationExecutionStatus, runtime_thread_ref?: RuntimeThreadRefDto, active_turn_id?: string, reason?: string, };
 
 export type ConversationKeyboardMapView = { enter?: string, ctrl_enter?: string, };
 
@@ -211,7 +211,7 @@ export type RuntimeNodeView = { node_id: string, node_path: string, kind: string
 
 export type RuntimeSessionPolicy = "create_new" | "deliver_to_current_trace";
 
-export type RuntimeSessionRefDto = { runtime_session_id: string, };
+export type RuntimeThreadRefDto = { runtime_thread_id: string, };
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
 

@@ -1,8 +1,8 @@
 use agentdash_application_agentrun::agent_run::{
-    self as app_agent_run, project_capability_state_from_frame, workspace as app_workspace,
+    self as app_agent_run, AgentRunProductRuntimeSnapshotObservation,
+    project_capability_state_from_frame, workspace as app_workspace,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
 use agentdash_contracts::agent_run_mailbox::{MailboxMessageView, MailboxStateView};
 use agentdash_contracts::workflow::{
     AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
@@ -15,9 +15,12 @@ use agentdash_contracts::workflow::{
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
     ConversationModelConfigView, ConversationWaitingItemView, LifecycleRunRefDto,
-    LifecycleSubjectAssociationDto, RuntimeSessionRefDto, SubjectRefDto, ValidationSeverity,
+    LifecycleSubjectAssociationDto, RuntimeThreadRefDto, SubjectRefDto, ValidationSeverity,
 };
-use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
+use agentdash_domain::{
+    agent_run_target::AgentRunTarget,
+    workflow::{LifecycleAgent, LifecycleRun},
+};
 use agentdash_workspace_module::workspace_module::{
     WorkspaceModuleVisibilityInput, project_agent_run_workspace_module_visibility,
 };
@@ -170,22 +173,24 @@ async fn lineage_ref(
             .map(|edge| 1 + descendants(edge.child_agent_id, edges))
             .sum()
     }
-    let runtime = state
+    let runtime_observation = state
         .services
-        .agent_run_runtime
-        .inspect(AgentRunRuntimeTarget {
+        .agent_run_product_projection
+        .runtime_snapshot_observation(&AgentRunTarget {
             run_id: agent.run_id,
             agent_id: agent.id,
         })
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let runtime_thread_name = match runtime_observation {
+        AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => snapshot.thread_name,
+        AgentRunProductRuntimeSnapshotObservation::Absent { .. }
+        | AgentRunProductRuntimeSnapshotObservation::Stale(_) => None,
+    };
     let display_title = app_agent_run::resolve_agent_run_display_title(
         agent.workspace_title.as_deref(),
         agent.workspace_title_source.as_deref(),
-        runtime
-            .snapshot
-            .as_ref()
-            .and_then(|snapshot| snapshot.thread_name.as_deref()),
+        runtime_thread_name.as_deref(),
     )
     .value;
     Ok(AgentRunLineageRef {
@@ -353,9 +358,9 @@ fn execution_to_contract(
                 ConversationExecutionStatus::FrameMissing
             }
         },
-        runtime_session_ref: execution
-            .runtime_session_id
-            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
+        runtime_thread_ref: execution
+            .runtime_thread_id
+            .map(|runtime_thread_id| RuntimeThreadRefDto { runtime_thread_id }),
         active_turn_id: execution.active_turn_id,
         reason: execution.reason,
     }
@@ -559,8 +564,8 @@ fn resource_surface_coordinate_to_contract(
         },
         source_anchor: coordinate.source_anchor.map(|anchor| {
             AgentRunResourceSurfaceSourceAnchorView {
-                runtime_session_ref: RuntimeSessionRefDto {
-                    runtime_session_id: anchor.runtime_session_id,
+                runtime_thread_ref: RuntimeThreadRefDto {
+                    runtime_thread_id: anchor.runtime_thread_id,
                 },
                 launch_frame_id: anchor.launch_frame_id,
                 orchestration_id: anchor.orchestration_id,
@@ -586,11 +591,11 @@ fn frame_runtime_to_contract(
         context_slice: frame.context_slice,
         vfs_surface: frame.vfs_surface,
         mcp_surface: frame.mcp_surface,
-        runtime_session_refs: frame
-            .runtime_session_refs
+        runtime_thread_refs: frame
+            .runtime_thread_refs
             .into_iter()
-            .map(|runtime_ref| RuntimeSessionRefDto {
-                runtime_session_id: runtime_ref.runtime_session_id,
+            .map(|runtime_ref| RuntimeThreadRefDto {
+                runtime_thread_id: runtime_ref.runtime_thread_id,
             })
             .collect(),
         execution_profile: frame.execution_profile,

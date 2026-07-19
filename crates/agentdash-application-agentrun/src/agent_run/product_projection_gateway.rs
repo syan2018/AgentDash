@@ -12,8 +12,10 @@ use agentdash_workspace_module::workspace_module::presentation_protocol::{
     WorkspaceModulePresentationSnapshot,
 };
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use super::ProductAgentFrameRef;
 use super::product_protocol::{
     AgentRunRuntimeProjectionPort, consume_managed_runtime_change_page,
     consume_managed_runtime_snapshot,
@@ -27,7 +29,30 @@ use super::terminal_projection_protocol::{
 pub struct AgentRunProductRuntimeBinding {
     pub target: AgentRunTarget,
     pub runtime_thread_id: RuntimeThreadId,
+    pub launch_frame: ProductAgentFrameRef,
+    pub execution_profile_digest: String,
     pub source_binding: ManagedRuntimeSourceBindingEvidence,
+}
+
+impl AgentRunProductRuntimeBinding {
+    pub fn calculated_digest(&self) -> Result<String, String> {
+        let value = serde_json::json!({
+            "target": {
+                "run_id": self.target.run_id,
+                "agent_id": self.target.agent_id,
+            },
+            "runtime_thread_id": self.runtime_thread_id,
+            "launch_frame": self.launch_frame,
+            "execution_profile_digest": self.execution_profile_digest,
+            "source_binding": {
+                "source_ref": self.source_binding.source_ref,
+                "committed_at_revision": self.source_binding.committed_at_revision,
+                "applied_surface_revision": self.source_binding.applied_surface_revision,
+            },
+        });
+        let bytes = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+        Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +88,30 @@ pub trait AgentRunProductRuntimeBindingRepository: Send + Sync {
         &self,
         target: &AgentRunTarget,
     ) -> Result<Option<AgentRunProductRuntimeBinding>, String>;
+
+    async fn load_product_binding_by_runtime_thread(
+        &self,
+        _runtime_thread_id: &RuntimeThreadId,
+    ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
+        Err("Product Runtime binding repository does not support RuntimeThread lookup".to_string())
+    }
+}
+
+#[async_trait]
+pub trait AgentRunProductRuntimeBindingStore:
+    AgentRunProductRuntimeBindingRepository + Send + Sync
+{
+    async fn commit_product_binding(
+        &self,
+        binding: &AgentRunProductRuntimeBinding,
+    ) -> Result<(), String>;
+
+    async fn activate_product_binding(
+        &self,
+        binding: &AgentRunProductRuntimeBinding,
+        expected_binding_digest: &str,
+        expected_snapshot_revision: u64,
+    ) -> Result<(), String>;
 }
 
 pub struct AgentRunProductProjectionGateway {

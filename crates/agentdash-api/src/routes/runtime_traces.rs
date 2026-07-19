@@ -11,10 +11,10 @@ use crate::dto::{ContextAuditEventDto, ContextAuditQuery};
 pub async fn ensure_runtime_trace_permission(
     state: &AppState,
     user: &agentdash_integration_api::AuthIdentity,
-    session_id: &str,
+    runtime_thread_id: &str,
     permission: ProjectPermission,
 ) -> Result<(), ApiError> {
-    let thread_id = RuntimeThreadId::new(session_id.to_string())
+    let thread_id = RuntimeThreadId::new(runtime_thread_id.to_string())
         .map_err(|error| ApiError::BadRequest(format!("无效的 Runtime Thread ID: {error}")))?;
     let binding = match state
         .repos
@@ -26,7 +26,7 @@ pub async fn ensure_runtime_trace_permission(
         Some(binding) => binding,
         None => {
             return Err(ApiError::BadRequest(format!(
-                "runtime trace 缺少 AgentRun Runtime binding: {session_id}"
+                "runtime trace 缺少 AgentRun Runtime binding: {runtime_thread_id}"
             )));
         }
     };

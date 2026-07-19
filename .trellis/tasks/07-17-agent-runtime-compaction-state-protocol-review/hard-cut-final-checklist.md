@@ -73,10 +73,10 @@
   `AgentCoreCallback` / `DriverNative` 的site映射进Agent surface，空计划或无条件Allow
   不能作为required hook evidence。
 - [ ] Workspace/Canvas/VFS grants 只读 AppliedResourceSurface。
-- [ ] Lifecycle VFS mount 进入 AgentRun AppliedResourceSurface materialization。
+- [x] Lifecycle VFS mount 进入 AgentRun AppliedResourceSurface materialization。
 - [ ] Terminal control与展示只读写 Product terminal projection/control owner。
 - [ ] AgentRun workspace/runtime trace 读取 canonical Product/Runtime projection。
-- [ ] 所有 conversation presentation 只使用 canonical App Server records。
+- [x] 所有 conversation presentation 只使用 canonical App Server records。
 - [ ] Product 代码只依赖 Runtime Contract、Product repositories、AppliedResourceSurface
   与 canonical conversation protocol。
 
@@ -94,13 +94,13 @@
 - [ ] Workspace Module read/write/presentation。
 - [ ] Canvas read/write/promotion/diagnostics。
 - [ ] VFS surface read/list/search。
-- [ ] Lifecycle VFS canonical `events.json` 与 derived indexes。
+- [x] Lifecycle VFS canonical `events.json` 与 derived indexes。
 - [ ] Terminal create/input/resize/close/projection。
 - [ ] Wait activity 与 gate/terminal convergence。
 - [ ] Tool/Hook callback、permission、deadline、effect correlation。
 - [ ] MCP dynamic tool discovery → surface apply → Host callback → Broker execution。
 - [ ] Compaction Dash exact / Codex native projection。
-- [ ] reconnect cursor tail与gap snapshot reload。
+- [x] reconnect cursor tail与gap snapshot reload。
 - [ ] restart/unknown outcome/recovery 使用同一 command/effect/child identity。
 
 ## C5 — Final Hard Cut
@@ -154,4 +154,66 @@ Product command
   -> Agent-owned history
   -> canonical conversation
   -> Product API/UI/VFS consumer
+```
+
+## 已闭合 replacement evidence
+
+### Lifecycle canonical history / AgentRun journal read
+
+```text
+Legacy:
+  AgentRunJournal context/history reader 与独立 journal identity
+Target replacement:
+  AgentRunProductProjectionQueryPort.runtime_snapshot/runtime_changes
+  + LifecycleHistoryQueryPort
+Production callers:
+  /agent-runs/{run}/{agent}/runtime snapshot/change routes
+  + useManagedRuntimeFeed
+  + LifecycleMountProvider
+Composition:
+  AppState.agent_run_product_projection
+  + production Lifecycle mount provider registry
+Repository/schema:
+  committed AgentRunProductRuntimeBinding
+  + Managed Runtime canonical projection
+Projection/consumer:
+  canonical Session reducer/renderer
+  + lifecycle runtimeTraceSummaries
+  + lifecycle://.../session/events.json
+Behavior tracer:
+  Runtime reconnect/gap reload
+  + exact canonical events.json record
+  + frontend baseline side-effect fence
+Negative evidence:
+  API/Lifecycle/frontend read path no longer references AgentRunJournal
+```
+
+### Product/transport variants in conversation protocol
+
+```text
+Legacy:
+  ControlPlaneProjectionChanged
+  + WorkspaceModulePresentationRequested
+  + TerminalOutput/PtyTerminalStateChanged conversation variants
+Target replacement:
+  ProjectEventStreamEnvelope
+  + WorkspaceModulePresentation Product feed
+  + AgentRunTerminal Product feed
+Production callers:
+  useAgentRunWorkspaceControlPlane
+  + agent-run list project event subscriber
+  + workspace presentation pending consumer
+  + terminal projection consumer
+Composition:
+  project_control_plane_events
+  + AgentRunProductProjectionQueryPort
+Repository/schema:
+  Product projection repositories and outboxes
+Projection/consumer:
+  AgentRun workspace/list/presentation/terminal UI
+Behavior tracer:
+  project invalidation validator + workspace/list plans
+  + workspace presentation and terminal feed tests
+Negative evidence:
+  canonical PlatformEvent/codegen/frontend Session reducer no longer owns these variants
 ```

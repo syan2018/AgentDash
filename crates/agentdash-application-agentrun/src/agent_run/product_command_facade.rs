@@ -526,6 +526,12 @@ mod tests {
         let binding = AgentRunProductRuntimeBinding {
             target: target.clone(),
             runtime_thread_id: thread_id,
+            launch_frame: crate::agent_run::ProductAgentFrameRef {
+                frame_id: Uuid::new_v4(),
+                agent_id: target.agent_id,
+                revision: 4,
+            },
+            execution_profile_digest: "sha256:product-command-profile".to_owned(),
             source_binding,
         };
         (target, binding, snapshot)

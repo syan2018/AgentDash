@@ -2,6 +2,7 @@ mod applied_resource_surface;
 pub mod frame;
 mod product_command_facade;
 mod product_mailbox_facade;
+mod product_launch;
 mod product_projection_gateway;
 pub mod product_protocol;
 mod product_runtime_provisioning;
@@ -22,6 +23,7 @@ pub use project_agent_context::{
 };
 pub use product_command_facade::*;
 pub use product_mailbox_facade::*;
+pub use product_launch::*;
 pub use product_projection_gateway::*;
 pub use product_protocol::*;
 pub use product_runtime_provisioning::*;

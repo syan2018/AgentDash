@@ -853,8 +853,8 @@ pub struct AgentFrameRefDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct RuntimeSessionRefDto {
-    pub runtime_session_id: String,
+pub struct RuntimeThreadRefDto {
+    pub runtime_thread_id: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -1212,7 +1212,7 @@ pub struct AgentFrameRuntimeView {
     #[serde(default)]
     pub mcp_surface: Value,
     #[serde(default)]
-    pub runtime_session_refs: Vec<RuntimeSessionRefDto>,
+    pub runtime_thread_refs: Vec<RuntimeThreadRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub execution_profile: Option<Value>,
@@ -1256,7 +1256,7 @@ pub struct AgentRunWorkspaceControlPlaneView {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunResourceSurfaceSourceAnchorView {
-    pub runtime_session_ref: RuntimeSessionRefDto,
+    pub runtime_thread_ref: RuntimeThreadRefDto,
     pub launch_frame_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -1393,7 +1393,7 @@ pub struct ConversationExecutionView {
     pub status: ConversationExecutionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub runtime_session_ref: Option<RuntimeSessionRefDto>,
+    pub runtime_thread_ref: Option<RuntimeThreadRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub active_turn_id: Option<String>,

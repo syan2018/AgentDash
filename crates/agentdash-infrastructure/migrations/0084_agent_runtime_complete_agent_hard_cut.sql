@@ -626,6 +626,9 @@ CREATE TABLE agent_run_product_runtime_binding (
     target_agent_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     runtime_thread_id TEXT NOT NULL UNIQUE CHECK (btrim(runtime_thread_id) <> ''),
+    launch_frame_id TEXT NOT NULL,
+    launch_frame_revision BIGINT NOT NULL CHECK (launch_frame_revision > 0),
+    execution_profile_digest TEXT NOT NULL CHECK (btrim(execution_profile_digest) <> ''),
     source_ref TEXT NOT NULL CHECK (btrim(source_ref) <> ''),
     source_committed_revision BIGINT NOT NULL CHECK (source_committed_revision >= 0),
     source_applied_surface_revision BIGINT NOT NULL CHECK (source_applied_surface_revision >= 0),
@@ -648,6 +651,8 @@ CREATE TABLE agent_run_product_runtime_binding (
         REFERENCES lifecycle_agents(id, run_id, project_id) ON DELETE CASCADE,
     FOREIGN KEY (runtime_thread_id)
         REFERENCES agent_runtime_thread_binding(thread_id) ON DELETE RESTRICT,
+    FOREIGN KEY (launch_frame_id)
+        REFERENCES agent_frames(id) ON DELETE RESTRICT,
     CHECK (
         (
             source_activated_revision IS NULL

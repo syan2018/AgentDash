@@ -415,6 +415,14 @@ pub struct AgentRunAppliedResourceSurfaceMaterializer {
     repository: Arc<dyn AgentRunAppliedResourceSurfaceRepository>,
 }
 
+#[async_trait]
+pub trait AgentRunAppliedResourceSurfaceMaterializationPort: Send + Sync {
+    async fn materialize(
+        &self,
+        request: AgentRunAppliedResourceSurfaceMaterializeRequest,
+    ) -> Result<AgentRunAppliedResourceSurfaceCommitOutcome, AgentRunAppliedResourceSurfaceWriteError>;
+}
+
 impl AgentRunAppliedResourceSurfaceMaterializer {
     pub fn new(
         compiler: Arc<dyn AgentRunAppliedResourceSurfaceCompilerPort>,
@@ -467,6 +475,19 @@ impl AgentRunAppliedResourceSurfaceMaterializer {
         };
         prepared.validate()?;
         self.repository.commit(prepared).await
+    }
+}
+
+#[async_trait]
+impl AgentRunAppliedResourceSurfaceMaterializationPort
+    for AgentRunAppliedResourceSurfaceMaterializer
+{
+    async fn materialize(
+        &self,
+        request: AgentRunAppliedResourceSurfaceMaterializeRequest,
+    ) -> Result<AgentRunAppliedResourceSurfaceCommitOutcome, AgentRunAppliedResourceSurfaceWriteError>
+    {
+        AgentRunAppliedResourceSurfaceMaterializer::materialize(self, request).await
     }
 }
 

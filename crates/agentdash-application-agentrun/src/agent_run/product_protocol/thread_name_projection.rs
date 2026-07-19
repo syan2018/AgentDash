@@ -337,6 +337,12 @@ mod tests {
                 binding: Some(AgentRunProductRuntimeBinding {
                     target: target.clone(),
                     runtime_thread_id: thread_id.clone(),
+                    launch_frame: crate::agent_run::ProductAgentFrameRef {
+                        frame_id: Uuid::new_v4(),
+                        agent_id: target.agent_id,
+                        revision: 1,
+                    },
+                    execution_profile_digest: "sha256:thread-name-profile".to_owned(),
                     source_binding: runtime_binding,
                 }),
             }),

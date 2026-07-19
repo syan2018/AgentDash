@@ -156,6 +156,7 @@ fn authorize_snapshot(
         "task_read" => task_grant(surface, AppliedTaskOperation::Read, &request.arguments)?,
         "task_write" => task_grant(surface, AppliedTaskOperation::Write, &request.arguments)?,
         "workspace_module_present" => RuntimeToolResourceGrant::Product,
+        name if name.starts_with("mcp_") => RuntimeToolResourceGrant::Product,
         _ => {
             return Err(denied(
                 "unsupported_runtime_tool_policy",
@@ -1180,6 +1181,12 @@ mod tests {
         };
         CommittedRuntimeToolProductBinding {
             binding: AgentRunProductRuntimeBinding {
+                launch_frame: agentdash_application_agentrun::agent_run::ProductAgentFrameRef {
+                    frame_id: Uuid::new_v4(),
+                    agent_id: target.agent_id,
+                    revision: 1,
+                },
+                execution_profile_digest: "sha256:runtime-tool-profile".to_owned(),
                 target,
                 runtime_thread_id: RuntimeThreadId::new("thread-test").unwrap(),
                 source_binding: ManagedRuntimeSourceBindingEvidence {

@@ -1,9 +1,8 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use agentdash_agent_types::DynAgentTool;
 use agentdash_platform_spi::{
-    AgentToolError, CapabilityState, Mount, MountCapability, RuntimeVfsAccessPolicy,
-    RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, Vfs,
+    CapabilityState, Mount, MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule,
+    RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, Vfs,
 };
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -12,9 +11,10 @@ use uuid::Uuid;
 use crate::{
     VfsMaterializationService, VfsService,
     inline_persistence::InlineContentOverlay,
+    runtime_tool_execution::{VfsToolExecutionError, VfsToolUpdateSink},
     tools::{
-        FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
-        ShellExecTool, ShellTerminalOwner, ShellTerminalRegistry,
+        FsApplyPatchExecutor, FsGlobExecutor, FsGrepExecutor, FsReadExecutor, MountsListExecutor,
+        SharedRuntimeVfs, ShellExecExecutor, ShellTerminalOwner, ShellTerminalRegistry,
     },
 };
 
@@ -147,6 +147,16 @@ impl AppliedVfsRuntimeToolService {
     }
 
     pub async fn execute(&self, request: AppliedVfsToolRequest) -> AppliedVfsToolOutcome {
+        self.execute_with_controls(request, CancellationToken::new(), None)
+            .await
+    }
+
+    pub async fn execute_with_controls(
+        &self,
+        request: AppliedVfsToolRequest,
+        cancel: CancellationToken,
+        updates: Option<VfsToolUpdateSink>,
+    ) -> AppliedVfsToolOutcome {
         let (vfs, policy) = match build_invocation_vfs(request.surface) {
             Ok(value) => value,
             Err(message) => {
@@ -157,37 +167,55 @@ impl AppliedVfsRuntimeToolService {
             }
         };
         let shared = SharedRuntimeVfs::new_with_policy(vfs, policy);
-        let tool: DynAgentTool = match request.kind {
+        let result = match request.kind {
             AppliedVfsToolKind::MountsList => {
-                Arc::new(MountsListTool::new(self.service.clone(), shared))
+                MountsListExecutor::new(self.service.clone(), shared)
+                    .execute(request.arguments, cancel)
+                    .await
             }
-            AppliedVfsToolKind::Read => Arc::new(FsReadTool::new(
-                self.service.clone(),
-                shared,
-                self.overlay.clone(),
-                self.identity.clone(),
-            )),
-            AppliedVfsToolKind::Glob => Arc::new(FsGlobTool::new(
-                self.service.clone(),
-                shared,
-                self.overlay.clone(),
-                self.identity.clone(),
-            )),
-            AppliedVfsToolKind::Grep => Arc::new(FsGrepTool::new(
-                self.service.clone(),
-                shared,
-                self.overlay.clone(),
-                self.identity.clone(),
-            )),
-            AppliedVfsToolKind::ApplyPatch => Arc::new(FsApplyPatchTool::new(
-                self.service.clone(),
-                shared,
-                self.overlay.clone(),
-                self.identity.clone(),
-            )),
+            AppliedVfsToolKind::Read => {
+                FsReadExecutor::new(
+                    self.service.clone(),
+                    shared,
+                    self.overlay.clone(),
+                    self.identity.clone(),
+                )
+                .execute(request.arguments, cancel)
+                .await
+            }
+            AppliedVfsToolKind::Glob => {
+                FsGlobExecutor::new(
+                    self.service.clone(),
+                    shared,
+                    self.overlay.clone(),
+                    self.identity.clone(),
+                )
+                .execute(request.arguments, cancel)
+                .await
+            }
+            AppliedVfsToolKind::Grep => {
+                FsGrepExecutor::new(
+                    self.service.clone(),
+                    shared,
+                    self.overlay.clone(),
+                    self.identity.clone(),
+                )
+                .execute(request.arguments, cancel)
+                .await
+            }
+            AppliedVfsToolKind::ApplyPatch => {
+                FsApplyPatchExecutor::new(
+                    self.service.clone(),
+                    shared,
+                    self.overlay.clone(),
+                    self.identity.clone(),
+                )
+                .execute(request.arguments, cancel)
+                .await
+            }
             AppliedVfsToolKind::ShellExec => {
                 let runtime_thread_id = match agentdash_agent_runtime_contract::RuntimeThreadId::new(
-                    request.owner.runtime_thread_id,
+                    request.owner.runtime_thread_id.clone(),
                 ) {
                     Ok(value) => value,
                     Err(error) => {
@@ -197,7 +225,7 @@ impl AppliedVfsRuntimeToolService {
                         };
                     }
                 };
-                let mut tool = ShellExecTool::new(self.service.clone(), shared)
+                let mut executor = ShellExecExecutor::new(self.service.clone(), shared)
                     .with_terminal_owner(ShellTerminalOwner {
                         run_id: request.owner.run_id,
                         agent_id: request.owner.agent_id,
@@ -213,26 +241,30 @@ impl AppliedVfsRuntimeToolService {
                     )
                     .with_capability_state(self.capability_state.clone());
                 if let Some(registry) = &self.shell_output_registry {
-                    tool = tool.with_shell_output_registry(registry.clone());
+                    executor = executor.with_shell_output_registry(registry.clone());
                 }
-                Arc::new(tool)
+                executor
+                    .execute(
+                        &request.owner.invocation_id,
+                        request.arguments,
+                        cancel,
+                        updates,
+                    )
+                    .await
             }
         };
-        match tool
-            .execute(
-                &request.owner.invocation_id,
-                request.arguments,
-                CancellationToken::new(),
-                None,
-            )
-            .await
-        {
+        match result {
             Ok(result) if result.is_error => AppliedVfsToolOutcome::Failed {
                 code: "vfs_tool_failed".to_owned(),
                 message: result
                     .content
                     .iter()
-                    .filter_map(|part| part.extract_text())
+                    .filter_map(|part| match part {
+                        crate::runtime_tool_execution::VfsToolContent::Text { text } => {
+                            Some(text.as_str())
+                        }
+                        crate::runtime_tool_execution::VfsToolContent::Image { .. } => None,
+                    })
                     .collect::<Vec<_>>()
                     .join("\n"),
             },
@@ -241,13 +273,19 @@ impl AppliedVfsRuntimeToolService {
                     serde_json::json!({"error": format!("failed to encode VFS tool result: {error}")})
                 }),
             },
-            Err(AgentToolError::InvalidArguments(message)) => AppliedVfsToolOutcome::Rejected {
-                code: "invalid_vfs_tool_arguments".to_owned(),
-                message,
+            Err(VfsToolExecutionError::InvalidArguments(message)) => {
+                AppliedVfsToolOutcome::Rejected {
+                    code: "invalid_vfs_tool_arguments".to_owned(),
+                    message,
+                }
+            }
+            Err(VfsToolExecutionError::Cancelled) => AppliedVfsToolOutcome::Rejected {
+                code: "vfs_tool_cancelled".to_owned(),
+                message: "VFS tool execution was cancelled".to_owned(),
             },
-            Err(error) => AppliedVfsToolOutcome::Failed {
+            Err(VfsToolExecutionError::ExecutionFailed(message)) => AppliedVfsToolOutcome::Failed {
                 code: "vfs_tool_failed".to_owned(),
-                message: error.to_string(),
+                message,
             },
         }
     }
@@ -373,6 +411,24 @@ fn map_policy_operations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        MountProviderRegistry,
+        tools::{ShellTerminalOutputSnapshot, ShellTerminalRegistration, ShellTerminalRegistry},
+    };
+
+    struct NoopTerminalRegistry;
+
+    impl ShellTerminalRegistry for NoopTerminalRegistry {
+        fn register_shell_terminal(&self, _: ShellTerminalRegistration) {}
+
+        fn resolve_shell_terminal(&self, _: &str) -> Option<ShellTerminalRegistration> {
+            None
+        }
+
+        fn record_shell_terminal_output_snapshot(&self, _: ShellTerminalOutputSnapshot<'_>) {}
+
+        fn remove_shell_terminal(&self, _: &str) {}
+    }
 
     #[test]
     fn exact_scope_never_expands_to_descendants_or_prefix_siblings() {
@@ -405,6 +461,56 @@ mod tests {
             AppliedVfsToolPathScope::Prefix("C:\\repo".to_owned()),
         ] {
             assert!(build_invocation_vfs(surface("main", scope)).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_runtime_surface_preserves_typed_invalid_argument_errors() {
+        let result = service().execute(request(AppliedVfsToolKind::Read)).await;
+
+        assert!(matches!(
+            result,
+            AppliedVfsToolOutcome::Rejected { code, .. }
+                if code == "invalid_vfs_tool_arguments"
+        ));
+    }
+
+    #[tokio::test]
+    async fn direct_runtime_surface_honors_cancellation_without_provider_dispatch() {
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let result = service()
+            .execute_with_controls(request(AppliedVfsToolKind::MountsList), cancel, None)
+            .await;
+
+        assert_eq!(
+            result,
+            AppliedVfsToolOutcome::Rejected {
+                code: "vfs_tool_cancelled".to_owned(),
+                message: "VFS tool execution was cancelled".to_owned(),
+            }
+        );
+    }
+
+    fn service() -> AppliedVfsRuntimeToolService {
+        AppliedVfsRuntimeToolService::new(
+            Arc::new(VfsService::new(Arc::new(MountProviderRegistry::new()))),
+            Arc::new(NoopTerminalRegistry),
+        )
+    }
+
+    fn request(kind: AppliedVfsToolKind) -> AppliedVfsToolRequest {
+        AppliedVfsToolRequest {
+            kind,
+            arguments: Value::Object(Default::default()),
+            surface: surface("main", AppliedVfsToolPathScope::All),
+            owner: AppliedVfsToolOwner {
+                run_id: Uuid::nil(),
+                agent_id: Uuid::nil(),
+                runtime_thread_id: "runtime-thread-test".to_owned(),
+                invocation_id: "invocation-test".to_owned(),
+            },
         }
     }
 

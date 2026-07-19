@@ -148,9 +148,37 @@ W8 composition constructs one non-empty broker catalog only through
 
 The VFS service receives no construction-time AgentRun VFS. Every invocation maps the Host-resolved
 callback context and authorized `RuntimeVfsExecutionGrant` into a fresh VFS plus exact access
-policy, then delegates to the existing VFS provider, overlay, materialization and typed terminal
-registry behavior. This preserves real shell streaming/PTY/continuation ownership while preventing
-cross-AgentRun mount retention. W8 injects the concrete atomic binding query, applied-surface
-query, Product Task service, VFS service/materialization/terminal dependencies, then installs
-`RuntimePlatformToolHandler` as the Complete Agent tool callback handler. The broker rejects an
-empty or duplicate catalog at composition time.
+policy, then statically dispatches one of the six Application-VFS-owned executors. Those executors
+own their typed result/error/update contract and preserve the existing provider, overlay,
+materialization, shell streaming/PTY and terminal-continuation behavior. The target
+Runtime → Infrastructure → Application-VFS path therefore contains no `DynAgentTool`,
+`AgentTool`, `ToolProtocolProjector`, `ToolUpdateCallback` or `agentdash-agent-types` value, while
+each invocation remains isolated from every other AgentRun's mounts.
+
+The current-lane `AgentTool` surface is now a one-way adapter over the six direct executors. W8
+removes its sole external consumer,
+`crates/agentdash-application/src/runtime_tools/vfs_provider.rs`, and then deletes this complete
+adapter set:
+
+- `crates/agentdash-application-vfs/src/tools/factory.rs`
+  (`VfsToolFactory` / `VfsToolFactoryInput` and its `DynAgentTool` catalog).
+- `MountsListTool`, `FsReadTool`, `FsGlobTool`, `FsGrepTool`, `FsApplyPatchTool` and
+  `ShellExecTool`, including their `AgentTool` impls, from the corresponding files under
+  `crates/agentdash-application-vfs/src/tools/`.
+- `legacy_result`, `legacy_error` and `legacy_update_sink` plus the legacy wrapper re-exports in
+  `tools/mod.rs` and `tools/fs.rs`.
+- Wrapper-only schema/projector fixtures and wrapper-shaped tests after equivalent direct-executor
+  coverage is retained.
+
+That deletion removes the Application-VFS `agentdash-agent-types` dependency and all remaining
+Platform SPI `AgentTool` imports from the crate. The direct executor structs, parameter
+deserialization, `VfsToolExecutionResult`, `VfsToolExecutionError`, `VfsToolUpdateSink`,
+`AppliedVfsRuntimeToolService`, `VfsService`, overlays, materialization and terminal registries
+remain as the canonical VFS execution path.
+
+W8 injects the concrete atomic binding query, applied-surface query, Product Task service, VFS
+service/materialization/terminal dependencies, then installs `RuntimePlatformToolHandler` as the
+Complete Agent tool callback handler. The broker rejects an empty or duplicate catalog at
+composition time. Its acceptance gate includes a source scan over the three target-path modules
+(`runtime_tools.rs`, Infrastructure `runtime_tool_executors.rs` and the VFS execution contract)
+and a final Cargo dependency scan after the adapter deletion.

@@ -7,23 +7,77 @@ use agentdash_platform_spi::{
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
+use crate::runtime_tool_execution::{VfsToolExecutionError, VfsToolExecutionResult};
 use crate::{VfsService, capability_name};
 
-use super::common::{SharedRuntimeVfs, ok_text};
+use super::common::SharedRuntimeVfs;
+use super::{legacy_error, legacy_result};
 
 // ---------------------------------------------------------------------------
 // mounts_list
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-pub struct MountsListTool {
+pub struct MountsListExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
 }
 
-impl MountsListTool {
+impl MountsListExecutor {
     pub fn new(service: Arc<VfsService>, vfs: SharedRuntimeVfs) -> Self {
         Self { service, vfs }
+    }
+
+    pub async fn execute(
+        &self,
+        _: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
+        if cancel.is_cancelled() {
+            return Err(VfsToolExecutionError::Cancelled);
+        }
+        let state = self.vfs.snapshot_state().await;
+        let mounts = self.service.list_mounts(&state.vfs);
+        let body = mounts
+            .iter()
+            .map(|mount| {
+                let capabilities = mount
+                    .capabilities
+                    .iter()
+                    .copied()
+                    .filter_map(|capability| {
+                        capability_label_by_policy(&state.access_policy, &mount.id, capability)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "- {}:// — {} (capabilities=[{}])",
+                    mount.id, mount.display_name, capabilities
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(VfsToolExecutionResult::text(if body.is_empty() {
+            "No mounts available in the current session.".to_string()
+        } else {
+            format!(
+                "Path format: mount_id://relative/path (prefix may be omitted when only one mount exists)\n\n{}",
+                body
+            )
+        }))
+    }
+}
+
+#[derive(Clone)]
+pub struct MountsListTool {
+    executor: MountsListExecutor,
+}
+
+impl MountsListTool {
+    pub fn new(service: Arc<VfsService>, vfs: SharedRuntimeVfs) -> Self {
+        Self {
+            executor: MountsListExecutor::new(service, vfs),
+        }
     }
 }
 
@@ -53,39 +107,15 @@ impl AgentTool for MountsListTool {
     async fn execute(
         &self,
         _: &str,
-        _: serde_json::Value,
-        _: CancellationToken,
+        args: serde_json::Value,
+        cancel: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let state = self.vfs.snapshot_state().await;
-        let mounts = self.service.list_mounts(&state.vfs);
-        let body = mounts
-            .iter()
-            .map(|mount| {
-                let capabilities = mount
-                    .capabilities
-                    .iter()
-                    .copied()
-                    .filter_map(|capability| {
-                        capability_label_by_policy(&state.access_policy, &mount.id, capability)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(
-                    "- {}:// — {} (capabilities=[{}])",
-                    mount.id, mount.display_name, capabilities
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        Ok(ok_text(if body.is_empty() {
-            "No mounts available in the current session.".to_string()
-        } else {
-            format!(
-                "Path format: mount_id://relative/path (prefix may be omitted when only one mount exists)\n\n{}",
-                body
-            )
-        }))
+        self.executor
+            .execute(args, cancel)
+            .await
+            .map(legacy_result)
+            .map_err(legacy_error)
     }
 }
 

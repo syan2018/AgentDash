@@ -9,8 +9,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ListOptions;
 use crate::inline_persistence::InlineContentOverlay;
+use crate::runtime_tool_execution::{VfsToolExecutionError, VfsToolExecutionResult};
 use crate::service::{VfsService, is_vcs_path};
-use crate::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
+use crate::tools::common::{SharedRuntimeVfs, resolve_uri_path};
+use crate::tools::{legacy_error, legacy_result};
 
 // ---------------------------------------------------------------------------
 // fs_glob — aligned with Claude Code GlobTool
@@ -20,13 +22,13 @@ use crate::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
 const DEFAULT_MAX_RESULTS: usize = 100;
 
 #[derive(Clone)]
-pub struct FsGlobTool {
+pub struct FsGlobExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
 }
-impl FsGlobTool {
+impl FsGlobExecutor {
     pub fn new(
         service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
@@ -38,6 +40,99 @@ impl FsGlobTool {
             vfs,
             overlay,
             identity,
+        }
+    }
+
+    pub async fn execute(
+        &self,
+        args: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
+        let params: FsGlobParams = serde_json::from_value(args).map_err(|error| {
+            VfsToolExecutionError::InvalidArguments(format!("invalid arguments: {error}"))
+        })?;
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
+        let target = resolve_uri_path(&vfs, params.path.as_deref().unwrap_or("."))
+            .map_err(VfsToolExecutionError::ExecutionFailed)?;
+
+        let recursive = params.pattern.contains("**");
+        let result = tokio::select! {
+            _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+            result = self.service.list_with_policy(
+                &vfs,
+                Some(&access_policy),
+                &target.mount_id,
+                ListOptions {
+                    path: if target.path.is_empty() {
+                        ".".to_string()
+                    } else {
+                        target.path
+                    },
+                    pattern: Some(params.pattern.clone()),
+                    recursive,
+                },
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
+                self.identity.as_ref(),
+            ) => result.map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string()))?,
+        };
+
+        let mut entries: Vec<_> = result
+            .entries
+            .into_iter()
+            .filter(|entry| !is_vcs_path(&entry.path))
+            .collect();
+        entries.sort_by(|a, b| {
+            let a_m = a.modified_at.unwrap_or(0);
+            let b_m = b.modified_at.unwrap_or(0);
+            b_m.cmp(&a_m).then_with(|| a.path.cmp(&b.path))
+        });
+
+        let cap = DEFAULT_MAX_RESULTS;
+        let total = entries.len();
+        let truncated = total > cap;
+        entries.truncate(cap);
+        let mut output = if entries.is_empty() {
+            "(no matches)".to_string()
+        } else {
+            entries
+                .iter()
+                .map(|entry| {
+                    let path = entry.path.replace('\\', "/");
+                    if entry.is_dir {
+                        format!("{path}/")
+                    } else {
+                        path
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if truncated {
+            output.push_str(&format!(
+                "\n({} more entries; refine the pattern to see more)",
+                total - cap
+            ));
+        }
+        Ok(VfsToolExecutionResult::text(output))
+    }
+}
+
+#[derive(Clone)]
+pub struct FsGlobTool {
+    executor: FsGlobExecutor,
+}
+
+impl FsGlobTool {
+    pub fn new(
+        service: Arc<VfsService>,
+        vfs: SharedRuntimeVfs,
+        overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    ) -> Self {
+        Self {
+            executor: FsGlobExecutor::new(service, vfs, overlay, identity),
         }
     }
 }
@@ -84,78 +179,14 @@ impl AgentTool for FsGlobTool {
         &self,
         _: &str,
         args: serde_json::Value,
-        _: CancellationToken,
+        cancel: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: FsGlobParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let state = self.vfs.snapshot_state().await;
-        let vfs = state.vfs;
-        let access_policy = state.access_policy;
-        let target = resolve_uri_path(&vfs, params.path.as_deref().unwrap_or("."))
-            .map_err(AgentToolError::ExecutionFailed)?;
-
-        // pattern 含 `**` ⇒ 递归扫描；否则只列当前目录。
-        let recursive = params.pattern.contains("**");
-        let result = self
-            .service
-            .list_with_policy(
-                &vfs,
-                Some(&access_policy),
-                &target.mount_id,
-                ListOptions {
-                    path: if target.path.is_empty() {
-                        ".".to_string()
-                    } else {
-                        target.path
-                    },
-                    pattern: Some(params.pattern.clone()),
-                    recursive,
-                },
-                self.overlay.as_ref().map(|arc| arc.as_ref()),
-                self.identity.as_ref(),
-            )
+        self.executor
+            .execute(args, cancel)
             .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-
-        // VCS 过滤
-        let mut entries: Vec<_> = result
-            .entries
-            .into_iter()
-            .filter(|e| !is_vcs_path(&e.path))
-            .collect();
-
-        // mtime desc + path asc as stable tie-breaker.
-        entries.sort_by(|a, b| {
-            let a_m = a.modified_at.unwrap_or(0);
-            let b_m = b.modified_at.unwrap_or(0);
-            b_m.cmp(&a_m).then_with(|| a.path.cmp(&b.path))
-        });
-
-        let cap = DEFAULT_MAX_RESULTS;
-        let total = entries.len();
-        let truncated = total > cap;
-        entries.truncate(cap);
-
-        let mut output = if entries.is_empty() {
-            "(no matches)".to_string()
-        } else {
-            entries
-                .iter()
-                .map(|e| {
-                    let path = e.path.replace('\\', "/");
-                    if e.is_dir { format!("{path}/") } else { path }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        if truncated {
-            output.push_str(&format!(
-                "\n({} more entries; refine the pattern to see more)",
-                total - cap
-            ));
-        }
-        Ok(ok_text(output))
+            .map(legacy_result)
+            .map_err(legacy_error)
     }
 }
 

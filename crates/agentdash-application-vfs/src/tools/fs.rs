@@ -5,13 +5,13 @@ mod platform_shell;
 mod read;
 mod shell;
 
-pub use apply_patch::FsApplyPatchTool;
-pub use glob::FsGlobTool;
-pub use grep::FsGrepTool;
-pub use read::FsReadTool;
+pub use apply_patch::{FsApplyPatchExecutor, FsApplyPatchTool};
+pub use glob::{FsGlobExecutor, FsGlobTool};
+pub use grep::{FsGrepExecutor, FsGrepTool};
+pub use read::{FsReadExecutor, FsReadTool};
 pub use shell::{
-    ShellExecTool, ShellTerminalOutputSnapshot, ShellTerminalOwner, ShellTerminalRegistration,
-    ShellTerminalRegistry,
+    ShellExecExecutor, ShellExecTool, ShellTerminalOutputSnapshot, ShellTerminalOwner,
+    ShellTerminalRegistration, ShellTerminalRegistry,
 };
 
 pub use super::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};

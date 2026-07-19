@@ -6,8 +6,7 @@ use agentdash_platform_spi::Vfs;
 use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_platform_spi::platform::mount::MountError;
 use agentdash_platform_spi::{
-    AgentTool, AgentToolError, AgentToolResult, ContentPart, RuntimeVfsOperation,
-    ToolUpdateCallback,
+    AgentTool, AgentToolError, AgentToolResult, RuntimeVfsOperation, ToolUpdateCallback,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -18,8 +17,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ResourceRef;
 use crate::inline_persistence::InlineContentOverlay;
+use crate::runtime_tool_execution::{
+    VfsToolContent, VfsToolExecutionError, VfsToolExecutionResult,
+};
 use crate::service::{VfsService, ensure_runtime_vfs_access};
-use crate::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
+use crate::tools::common::{SharedRuntimeVfs, resolve_uri_path};
+use crate::tools::{legacy_error, legacy_result};
 use crate::types::{runtime_entry_is_binary, runtime_entry_mime_type};
 
 // ---------------------------------------------------------------------------
@@ -67,14 +70,14 @@ impl DedupCache {
 }
 
 #[derive(Clone)]
-pub struct FsReadTool {
+pub struct FsReadExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     dedup: DedupCache,
 }
-impl FsReadTool {
+impl FsReadExecutor {
     pub fn new(
         service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
@@ -87,6 +90,148 @@ impl FsReadTool {
             overlay,
             identity,
             dedup: DedupCache::new(),
+        }
+    }
+
+    pub async fn execute(
+        &self,
+        args: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
+        let params: FsReadParams = serde_json::from_value(args).map_err(|error| {
+            VfsToolExecutionError::InvalidArguments(format!("invalid arguments: {error}"))
+        })?;
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
+        let target =
+            resolve_uri_path(&vfs, &params.path).map_err(VfsToolExecutionError::ExecutionFailed)?;
+        ensure_runtime_vfs_access(
+            &access_policy,
+            &target.mount_id,
+            &target.path,
+            RuntimeVfsOperation::Read,
+        )
+        .map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string()))?;
+
+        if let Ok(entry) = tokio::select! {
+            _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+            result = self.service.stat_with_policy(
+                &vfs,
+                Some(&access_policy),
+                &target,
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
+                self.identity.as_ref(),
+            ) => result,
+        } && runtime_entry_is_binary(&entry)
+        {
+            return self
+                .read_binary_entry(&vfs, &access_policy, &target, entry, cancel)
+                .await;
+        }
+
+        let spi_offset = params.offset.map(|n| n.saturating_sub(1)).unwrap_or(0);
+        let result = tokio::select! {
+            _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+            result = self.service.read_text_range_with_policy(
+                &vfs,
+                Some(&access_policy),
+                &target,
+                spi_offset,
+                params.limit,
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
+                self.identity.as_ref(),
+            ) => result,
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(MountError::NotFound(missing)) => {
+                let suggestions = tokio::select! {
+                    _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+                    result = self.service.suggest_paths_with_policy(
+                        &vfs,
+                        Some(&access_policy),
+                        &target,
+                        3,
+                        self.identity.as_ref(),
+                    ) => result.unwrap_or_default(),
+                };
+                let hint = if suggestions.is_empty() {
+                    String::new()
+                } else {
+                    format!(" Did you mean: {}?", suggestions.join(", "))
+                };
+                return Err(VfsToolExecutionError::ExecutionFailed(format!(
+                    "File not found: {missing}.{hint}"
+                )));
+            }
+            Err(error) => {
+                return Err(VfsToolExecutionError::ExecutionFailed(error.to_string()));
+            }
+        };
+
+        if params.limit.is_none() {
+            if result.content.len() > MAX_BYTES {
+                return Ok(too_large_bytes_result(&result.path, result.content.len()));
+            }
+            let line_count = result.content.lines().count();
+            if line_count > MAX_LINES {
+                return Ok(too_many_lines_result(&result.path, line_count));
+            }
+        }
+
+        let dedup_key: DedupKey = (
+            target.mount_id.clone(),
+            target.path.clone(),
+            params.offset,
+            params.limit,
+        );
+        if let Some(token) = result.version_token.as_deref()
+            && let Some(cached) = self.dedup.lookup(&dedup_key)
+            && cached == token
+        {
+            return Ok(unchanged_stub_result(
+                &result.path,
+                params.offset,
+                params.limit,
+            ));
+        }
+        if let Some(token) = result.version_token.as_deref() {
+            self.dedup.put(dedup_key, token.to_string());
+        }
+
+        let lines: Vec<&str> = result.content.lines().collect();
+        let formatted = if lines.is_empty() {
+            "   1 | ".to_string()
+        } else {
+            lines
+                .iter()
+                .enumerate()
+                .map(|(index, line)| format!("{:>4} | {}", spi_offset + index + 1, line))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        Ok(VfsToolExecutionResult::text(format!(
+            "file: {}\n{}",
+            result.path, formatted
+        )))
+    }
+}
+
+#[derive(Clone)]
+pub struct FsReadTool {
+    executor: FsReadExecutor,
+}
+
+impl FsReadTool {
+    pub fn new(
+        service: Arc<VfsService>,
+        vfs: SharedRuntimeVfs,
+        overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    ) -> Self {
+        Self {
+            executor: FsReadExecutor::new(service, vfs, overlay, identity),
         }
     }
 }
@@ -133,135 +278,20 @@ impl AgentTool for FsReadTool {
         &self,
         _: &str,
         args: serde_json::Value,
-        _: CancellationToken,
+        cancel: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: FsReadParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let state = self.vfs.snapshot_state().await;
-        let vfs = state.vfs;
-        let access_policy = state.access_policy;
-        let target =
-            resolve_uri_path(&vfs, &params.path).map_err(AgentToolError::ExecutionFailed)?;
-        ensure_runtime_vfs_access(
-            &access_policy,
-            &target.mount_id,
-            &target.path,
-            RuntimeVfsOperation::Read,
-        )
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-
-        // Binary 文件保留专用路径（image block / unsupported binary 报错）。
-        if let Ok(entry) = self
-            .service
-            .stat_with_policy(
-                &vfs,
-                Some(&access_policy),
-                &target,
-                self.overlay.as_ref().map(|arc| arc.as_ref()),
-                self.identity.as_ref(),
-            )
+        self.executor
+            .execute(args, cancel)
             .await
-            && runtime_entry_is_binary(&entry)
-        {
-            return self
-                .read_binary_entry(&vfs, &access_policy, &target, entry)
-                .await;
-        }
-
-        // 1-based 入参 → 0-based 传给 SPI；offset = None / 0 都视为从开头读。
-        let spi_offset = params.offset.map(|n| n.saturating_sub(1)).unwrap_or(0);
-        let result = match self
-            .service
-            .read_text_range_with_policy(
-                &vfs,
-                Some(&access_policy),
-                &target,
-                spi_offset,
-                params.limit,
-                self.overlay.as_ref().map(|arc| arc.as_ref()),
-                self.identity.as_ref(),
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(MountError::NotFound(missing)) => {
-                let suggestions = self
-                    .service
-                    .suggest_paths_with_policy(
-                        &vfs,
-                        Some(&access_policy),
-                        &target,
-                        3,
-                        self.identity.as_ref(),
-                    )
-                    .await
-                    .unwrap_or_default();
-                let hint = if suggestions.is_empty() {
-                    String::new()
-                } else {
-                    format!(" Did you mean: {}?", suggestions.join(", "))
-                };
-                return Err(AgentToolError::ExecutionFailed(format!(
-                    "File not found: {missing}.{hint}"
-                )));
-            }
-            Err(other) => {
-                return Err(AgentToolError::ExecutionFailed(other.to_string()));
-            }
-        };
-
-        // 上限检查：仅在用户没传 limit 时才生效。
-        if params.limit.is_none() {
-            if result.content.len() > MAX_BYTES {
-                return Ok(too_large_bytes_result(&result.path, result.content.len()));
-            }
-            let line_count = result.content.lines().count();
-            if line_count > MAX_LINES {
-                return Ok(too_many_lines_result(&result.path, line_count));
-            }
-        }
-
-        // Dedup 短桩判定：cache 命中 + token 一致 ⇒ 短桩；其余更新 cache 后走完整路径。
-        let dedup_key: DedupKey = (
-            target.mount_id.clone(),
-            target.path.clone(),
-            params.offset,
-            params.limit,
-        );
-        if let Some(token) = result.version_token.as_deref()
-            && let Some(cached) = self.dedup.lookup(&dedup_key)
-            && cached == token
-        {
-            return Ok(unchanged_stub_result(
-                &result.path,
-                params.offset,
-                params.limit,
-            ));
-        }
-        if let Some(token) = result.version_token.as_deref() {
-            self.dedup.put(dedup_key, token.to_string());
-        }
-
-        // cat -n 输出：行号 = SPI offset + 相对索引 + 1（即 1-based 绝对行号）。
-        let lines: Vec<&str> = result.content.lines().collect();
-        let formatted = if lines.is_empty() {
-            "   1 | ".to_string()
-        } else {
-            lines
-                .iter()
-                .enumerate()
-                .map(|(i, line)| format!("{:>4} | {}", spi_offset + i + 1, line))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        Ok(ok_text(format!("file: {}\n{}", result.path, formatted)))
+            .map(legacy_result)
+            .map_err(legacy_error)
     }
 }
 
-fn too_large_bytes_result(path: &str, size: usize) -> AgentToolResult {
-    AgentToolResult {
-        content: vec![ContentPart::text(format!(
+fn too_large_bytes_result(path: &str, size: usize) -> VfsToolExecutionResult {
+    VfsToolExecutionResult {
+        content: vec![VfsToolContent::text(format!(
             "File too large: {} bytes (max {} bytes without limit). Use offset/limit to read in chunks.",
             size, MAX_BYTES
         ))],
@@ -275,9 +305,9 @@ fn too_large_bytes_result(path: &str, size: usize) -> AgentToolResult {
     }
 }
 
-fn too_many_lines_result(path: &str, line_count: usize) -> AgentToolResult {
-    AgentToolResult {
-        content: vec![ContentPart::text(format!(
+fn too_many_lines_result(path: &str, line_count: usize) -> VfsToolExecutionResult {
+    VfsToolExecutionResult {
+        content: vec![VfsToolContent::text(format!(
             "File too long: {} lines (max {} lines without limit). Use offset/limit to read in chunks.",
             line_count, MAX_LINES
         ))],
@@ -295,15 +325,15 @@ fn unchanged_stub_result(
     path: &str,
     offset: Option<usize>,
     limit: Option<usize>,
-) -> AgentToolResult {
+) -> VfsToolExecutionResult {
     let range_label = match (offset, limit) {
         (Some(o), Some(l)) => format!("L{}-L{}", o, o + l - 1),
         (Some(o), None) => format!("L{}-EOF", o),
         (None, Some(l)) => format!("L1-L{}", l),
         (None, None) => "full file".to_string(),
     };
-    AgentToolResult {
-        content: vec![ContentPart::text(format!(
+    VfsToolExecutionResult {
+        content: vec![VfsToolContent::text(format!(
             "file: {}\n[unchanged since previous read of {}]",
             path, range_label
         ))],
@@ -317,31 +347,32 @@ fn unchanged_stub_result(
     }
 }
 
-impl FsReadTool {
+impl FsReadExecutor {
     async fn read_binary_entry(
         &self,
         vfs: &Vfs,
         access_policy: &agentdash_platform_spi::RuntimeVfsAccessPolicy,
         target: &ResourceRef,
         entry: agentdash_platform_spi::platform::mount::RuntimeFileEntry,
-    ) -> Result<AgentToolResult, AgentToolError> {
+        cancel: CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
         if entry.is_dir {
-            return Err(AgentToolError::ExecutionFailed(format!(
+            return Err(VfsToolExecutionError::ExecutionFailed(format!(
                 "目标是目录，不是文件: {}://{}",
                 target.mount_id, target.path
             )));
         }
         let mime_type = runtime_entry_mime_type(&entry)
             .ok_or_else(|| {
-                AgentToolError::ExecutionFailed(format!(
+                VfsToolExecutionError::ExecutionFailed(format!(
                     "二进制文件缺少 MIME metadata: {}://{}",
                     target.mount_id, target.path
                 ))
             })?
             .to_string();
         if !mime_type.starts_with("image/") {
-            return Ok(AgentToolResult {
-                content: vec![ContentPart::text(format!(
+            return Ok(VfsToolExecutionResult {
+                content: vec![VfsToolContent::text(format!(
                     "file: {}\nunsupported binary content: mime_type={}",
                     entry.path, mime_type
                 ))],
@@ -354,27 +385,26 @@ impl FsReadTool {
             });
         }
 
-        let result = self
-            .service
-            .read_binary_with_policy(
+        let result = tokio::select! {
+            _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+            result = self.service.read_binary_with_policy(
                 vfs,
                 Some(access_policy),
                 target,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
                 self.identity.as_ref(),
-            )
-            .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+            ) => result.map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string()))?,
+        };
         let encoded = base64::engine::general_purpose::STANDARD.encode(&result.data);
-        Ok(AgentToolResult {
+        Ok(VfsToolExecutionResult {
             content: vec![
-                ContentPart::text(format!(
+                VfsToolContent::text(format!(
                     "file: {}\nmime_type: {}\nsize_bytes: {}",
                     result.path,
                     result.mime_type,
                     result.data.len()
                 )),
-                ContentPart::Image {
+                VfsToolContent::Image {
                     mime_type: result.mime_type,
                     data: encoded,
                 },
@@ -400,7 +430,7 @@ mod fs_read_tests {
         MountEditCapabilities, MountError, MountOperationContext, MountProvider, RuntimeFileEntry,
         SearchQuery, SearchResult,
     };
-    use agentdash_platform_spi::{Mount, MountCapability};
+    use agentdash_platform_spi::{ContentPart, Mount, MountCapability};
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Mutex as StdMutex;

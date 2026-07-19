@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -10,8 +10,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::inline_persistence::InlineContentOverlay;
 use crate::mutation_queue::MutationQueue;
+use crate::runtime_tool_execution::{
+    VfsToolContent, VfsToolExecutionError, VfsToolExecutionResult,
+};
 use crate::service::VfsService;
 use crate::tools::common::SharedRuntimeVfs;
+use crate::tools::{legacy_error, legacy_result};
 use crate::{normalize_patch_entry_targets, parse_patch_text};
 
 // ---------------------------------------------------------------------------
@@ -69,14 +73,14 @@ Important:\n\
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-pub struct FsApplyPatchTool {
+pub struct FsApplyPatchExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     mutation_queue: MutationQueue,
 }
-impl FsApplyPatchTool {
+impl FsApplyPatchExecutor {
     pub fn new(
         service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
@@ -89,6 +93,81 @@ impl FsApplyPatchTool {
             overlay,
             identity,
             mutation_queue: MutationQueue::default(),
+        }
+    }
+
+    pub async fn execute(
+        &self,
+        args: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
+        let params: FsApplyPatchParams = serde_json::from_value(args).map_err(|error| {
+            VfsToolExecutionError::InvalidArguments(format!("invalid arguments: {error}"))
+        })?;
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
+        let mutation_keys = fs_apply_patch_mutation_keys(&params.patch)
+            .map_err(VfsToolExecutionError::ExecutionFailed)?;
+        let result = tokio::select! {
+            _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+            result = self.mutation_queue.with_locks(
+                mutation_keys,
+                self.service.apply_patch_multi_with_policy(
+                    &vfs,
+                    Some(&access_policy),
+                    &params.patch,
+                    self.overlay.as_ref().map(|arc| arc.as_ref()),
+                    self.identity.as_ref(),
+                ),
+            ) => result.map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string()))?,
+        };
+
+        let mut lines = Vec::new();
+        if !result.added.is_empty() {
+            lines.push(format!("added: {}", result.added.join(", ")));
+        }
+        if !result.modified.is_empty() {
+            lines.push(format!("modified: {}", result.modified.join(", ")));
+        }
+        if !result.deleted.is_empty() {
+            lines.push(format!("deleted: {}", result.deleted.join(", ")));
+        }
+        for error in &result.errors {
+            lines.push(format!(
+                "error: {}://{} — {}",
+                error.mount_id, error.path, error.message
+            ));
+        }
+        if lines.is_empty() {
+            lines.push("patch produced no changes.".to_string());
+        }
+        let is_error = result.added.is_empty()
+            && result.modified.is_empty()
+            && result.deleted.is_empty()
+            && !result.errors.is_empty();
+        Ok(VfsToolExecutionResult {
+            content: vec![VfsToolContent::text(lines.join("\n"))],
+            is_error,
+            details: Some(apply_patch_protocol_details(&result, &params.patch)),
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct FsApplyPatchTool {
+    executor: FsApplyPatchExecutor,
+}
+
+impl FsApplyPatchTool {
+    pub fn new(
+        service: Arc<VfsService>,
+        vfs: SharedRuntimeVfs,
+        overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    ) -> Self {
+        Self {
+            executor: FsApplyPatchExecutor::new(service, vfs, overlay, identity),
         }
     }
 }
@@ -122,59 +201,14 @@ impl AgentTool for FsApplyPatchTool {
         &self,
         _: &str,
         args: serde_json::Value,
-        _: CancellationToken,
+        cancel: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: FsApplyPatchParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let state = self.vfs.snapshot_state().await;
-        let vfs = state.vfs;
-        let access_policy = state.access_policy;
-        let mutation_keys = fs_apply_patch_mutation_keys(&params.patch)
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-        let result = self
-            .mutation_queue
-            .with_locks(
-                mutation_keys,
-                self.service.apply_patch_multi_with_policy(
-                    &vfs,
-                    Some(&access_policy),
-                    &params.patch,
-                    self.overlay.as_ref().map(|arc| arc.as_ref()),
-                    self.identity.as_ref(),
-                ),
-            )
+        self.executor
+            .execute(args, cancel)
             .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-
-        let mut lines = Vec::new();
-        if !result.added.is_empty() {
-            lines.push(format!("added: {}", result.added.join(", ")));
-        }
-        if !result.modified.is_empty() {
-            lines.push(format!("modified: {}", result.modified.join(", ")));
-        }
-        if !result.deleted.is_empty() {
-            lines.push(format!("deleted: {}", result.deleted.join(", ")));
-        }
-        for err in &result.errors {
-            lines.push(format!(
-                "error: {}://{} — {}",
-                err.mount_id, err.path, err.message
-            ));
-        }
-        if lines.is_empty() {
-            lines.push("patch produced no changes.".to_string());
-        }
-        let is_error = result.added.is_empty()
-            && result.modified.is_empty()
-            && result.deleted.is_empty()
-            && !result.errors.is_empty();
-        Ok(AgentToolResult {
-            content: vec![ContentPart::text(lines.join("\n"))],
-            is_error,
-            details: Some(apply_patch_protocol_details(&result, &params.patch)),
-        })
+            .map(legacy_result)
+            .map_err(legacy_error)
     }
 }
 

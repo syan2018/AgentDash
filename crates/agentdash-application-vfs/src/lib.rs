@@ -18,6 +18,7 @@ pub(crate) mod provider_inline;
 pub(crate) mod provider_routine;
 pub(crate) mod provider_skill_asset;
 pub mod rewrite;
+pub mod runtime_tool_execution;
 pub mod runtime_tools;
 pub mod search;
 pub mod service;

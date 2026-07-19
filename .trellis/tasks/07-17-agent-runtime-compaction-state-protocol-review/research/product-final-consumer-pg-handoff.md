@@ -90,14 +90,17 @@ inspection.
 `ProductMailboxCommandRepository::execute` is one durable unit of work. In a single PostgreSQL
 transaction it must:
 
-1. target-fence every referenced message and move anchor before mutation;
-2. claim `(target, client_command_id, request_digest)`, returning the terminal stored result for
-   an exact duplicate and rejecting a different digest;
-3. apply Promote/Delete/Move/Resume to the canonical mailbox rows;
-4. read the resulting mailbox messages and state from that same transaction snapshot;
-5. compute the canonical digest and atomically advance projection revision/change sequence;
-6. persist the terminal command result containing the accepted revision/change cursor;
-7. commit mutation, projection change, and terminal receipt together.
+1. claim `(target, client_command_id, request_digest)`, returning the terminal stored result for
+   an exact duplicate and rejecting a different digest before revalidating the command;
+2. target-fence every referenced message and move anchor before mutation;
+3. reject a new Move whose message and anchor are the same or belong to different priority lanes as
+   typed `InvalidMove { target, message_id, anchor_message_id, reason }`, where reason is the finite
+   `SelfAnchor | CrossPriorityLane` vocabulary;
+4. apply Promote/Delete/Move/Resume to the canonical mailbox rows;
+5. read the resulting mailbox messages and state from that same transaction snapshot;
+6. compute the canonical digest and atomically advance projection revision/change sequence;
+7. persist the terminal command result containing the accepted revision/change cursor;
+8. commit mutation, projection change, and terminal receipt together.
 
 A non-terminal receipt must never trigger blind side-effect replay. Transaction rollback is the
 crash recovery mechanism before commit; after commit the durable
@@ -108,9 +111,11 @@ stores only `ProductMailboxCommand`; its typed origin kind is derived once throu
 `ProductMailboxCommand::kind()` inside the transaction, so the adapter cannot persist a
 contradictory command/kind pair.
 Delete and Move must validate message and anchor target ownership before issuing any update, so a
-cross-target ID can never mutate state and be rejected afterward. Command-port failures are typed
-as `RequestDigestConflict`, `TargetMismatch`, `MessageNotFound`, `NonTerminalReceipt`, or `Storage`;
-the adapter must not collapse them into `Result<_, String>`.
+cross-target ID can never mutate state and be rejected afterward. Move also validates its
+same-priority-lane invariant before any order-key update; a domain-invalid move is not a storage
+failure. Command-port failures are typed as `RequestDigestConflict`, `TargetMismatch`,
+`MessageNotFound`, `InvalidMove`, `NonTerminalReceipt`, or `Storage`; the adapter must not collapse
+them into `Result<_, String>` or add a generic string-backed invalid-command fallback.
 
 W8's real PostgreSQL behavior fixture must execute Promote/Delete/Move/Resume and assert that
 canonical mutation, head, ordered change, and terminal receipt commit as one unit. It must also
@@ -119,7 +124,9 @@ conflict with zero mutation, cross-target message/anchor rejection with zero mut
 canonical mutation reconciliation, normal and partial sequence paging, revision-regression
 rejection, pseudo/incomplete/head-inconsistent retention-gap evidence, and concurrent
 claim/reconcile behavior. Exact replay must assert byte-equivalent durable receipt equality while
-the outer outcome changes from `replayed=false` to `replayed=true`.
+the outer outcome changes from `replayed=false` to `replayed=true`. Move coverage must prove a
+same-lane move succeeds, cross-lane and self-anchor moves leave mutation/head/change/receipt
+unchanged, and exact replay plus request-digest conflict keep their existing precedence.
 
 ## Composition
 

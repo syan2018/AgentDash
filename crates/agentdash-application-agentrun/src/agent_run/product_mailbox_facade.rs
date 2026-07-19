@@ -215,6 +215,12 @@ pub struct ProductMailboxDurableCommand {
     pub command: ProductMailboxCommand,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductMailboxInvalidMoveReason {
+    SelfAnchor,
+    CrossPriorityLane,
+}
+
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum ProductMailboxCommandRepositoryError {
     #[error(
@@ -235,6 +241,15 @@ pub enum ProductMailboxCommandRepositoryError {
     MessageNotFound {
         target: AgentRunTarget,
         message_id: Uuid,
+    },
+    #[error(
+        "Product mailbox move for message `{message_id}` relative to anchor `{anchor_message_id}` is invalid for {target:?}: {reason:?}"
+    )]
+    InvalidMove {
+        target: AgentRunTarget,
+        message_id: Uuid,
+        anchor_message_id: Uuid,
+        reason: ProductMailboxInvalidMoveReason,
     },
     #[error("Product mailbox receipt is non-terminal for client command `{client_command_id}`")]
     NonTerminalReceipt { client_command_id: String },
@@ -949,6 +964,38 @@ mod tests {
                 });
             }
         }
+        if let ProductMailboxCommand::Move {
+            message_id,
+            after_message_id: Some(anchor_message_id),
+        } = command.command
+        {
+            if message_id == anchor_message_id {
+                return Err(ProductMailboxCommandRepositoryError::InvalidMove {
+                    target: command.target.clone(),
+                    message_id,
+                    anchor_message_id,
+                    reason: ProductMailboxInvalidMoveReason::SelfAnchor,
+                });
+            }
+            let message = state
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+                .expect("target validated");
+            let anchor = state
+                .messages
+                .iter()
+                .find(|message| message.id == anchor_message_id)
+                .expect("anchor validated");
+            if message.priority != anchor.priority {
+                return Err(ProductMailboxCommandRepositoryError::InvalidMove {
+                    target: command.target.clone(),
+                    message_id,
+                    anchor_message_id,
+                    reason: ProductMailboxInvalidMoveReason::CrossPriorityLane,
+                });
+            }
+        }
         Ok(())
     }
 
@@ -1440,6 +1487,136 @@ mod tests {
         assert_eq!(after.cursor, before.cursor);
         assert_eq!(after.messages, before.messages);
         assert_eq!(after.receipts.len(), before.receipts.len());
+    }
+
+    #[tokio::test]
+    async fn same_lane_move_replays_exact_receipt_and_preserves_digest_conflict() {
+        let (target, store, facade) = fixture();
+        let command = request(
+            &target,
+            "same-lane-move",
+            ProductMailboxCommand::Move {
+                message_id: Uuid::from_u128(1),
+                after_message_id: Some(Uuid::from_u128(2)),
+            },
+        );
+        let accepted = facade
+            .execute(command.clone())
+            .await
+            .expect("same-lane move");
+        let moved = facade.snapshot(target.clone()).await.expect("moved");
+        assert_eq!(
+            moved
+                .messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![Uuid::from_u128(2), Uuid::from_u128(1), Uuid::from_u128(3)]
+        );
+
+        let replay = facade.execute(command).await.expect("exact replay");
+        assert!(!accepted.replayed);
+        assert!(replay.replayed);
+        assert_eq!(accepted.receipt, replay.receipt);
+        let before_conflict = store.raw_state().await;
+        let conflict = facade
+            .execute(request(
+                &target,
+                "same-lane-move",
+                ProductMailboxCommand::Move {
+                    message_id: Uuid::from_u128(1),
+                    after_message_id: Some(Uuid::from_u128(3)),
+                },
+            ))
+            .await
+            .expect_err("different anchor conflicts");
+        assert!(matches!(
+            conflict,
+            ProductMailboxError::Command(
+                ProductMailboxCommandRepositoryError::RequestDigestConflict { .. }
+            )
+        ));
+        let after_conflict = store.raw_state().await;
+        assert_eq!(after_conflict.messages, before_conflict.messages);
+        assert_eq!(after_conflict.cursor, before_conflict.cursor);
+        assert_eq!(after_conflict.head, before_conflict.head);
+        assert_eq!(after_conflict.changes, before_conflict.changes);
+        assert_eq!(
+            after_conflict.receipts.len(),
+            before_conflict.receipts.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn cross_lane_move_is_typed_and_leaves_all_durable_facts_unchanged() {
+        let (target, store, facade) = fixture();
+        {
+            let mut state = store.state.lock().await;
+            state.messages[1].priority = 100;
+        }
+        let before = store.raw_state().await;
+        let error = facade
+            .execute(request(
+                &target,
+                "cross-lane-move",
+                ProductMailboxCommand::Move {
+                    message_id: Uuid::from_u128(1),
+                    after_message_id: Some(Uuid::from_u128(2)),
+                },
+            ))
+            .await
+            .expect_err("cross-priority lane");
+        assert!(matches!(
+            error,
+            ProductMailboxError::Command(
+                ProductMailboxCommandRepositoryError::InvalidMove {
+                    target: ref error_target,
+                    message_id,
+                    anchor_message_id,
+                    reason: ProductMailboxInvalidMoveReason::CrossPriorityLane,
+                }
+            ) if error_target == &target
+                && message_id == Uuid::from_u128(1)
+                && anchor_message_id == Uuid::from_u128(2)
+        ));
+        let after = store.raw_state().await;
+        assert_eq!(after.messages, before.messages);
+        assert_eq!(after.mailbox_state, before.mailbox_state);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.head, before.head);
+        assert_eq!(after.changes, before.changes);
+        assert_eq!(after.receipts.len(), before.receipts.len());
+        assert_eq!(after.clock_ms, before.clock_ms);
+    }
+
+    #[tokio::test]
+    async fn self_anchor_move_is_typed_before_mutation() {
+        let (target, store, facade) = fixture();
+        let before = store.raw_state().await;
+        let error = facade
+            .execute(request(
+                &target,
+                "self-anchor-move",
+                ProductMailboxCommand::Move {
+                    message_id: Uuid::from_u128(1),
+                    after_message_id: Some(Uuid::from_u128(1)),
+                },
+            ))
+            .await
+            .expect_err("self anchor");
+        assert!(matches!(
+            error,
+            ProductMailboxError::Command(ProductMailboxCommandRepositoryError::InvalidMove {
+                reason: ProductMailboxInvalidMoveReason::SelfAnchor,
+                ..
+            })
+        ));
+        let after = store.raw_state().await;
+        assert_eq!(after.messages, before.messages);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.head, before.head);
+        assert_eq!(after.changes, before.changes);
+        assert!(after.receipts.is_empty());
     }
 
     #[tokio::test]

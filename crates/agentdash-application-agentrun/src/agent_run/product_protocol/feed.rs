@@ -238,6 +238,7 @@ pub fn consume_managed_runtime_snapshot(
                     command: match command {
                         agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Create => "create",
                         agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Resume => "resume",
+                        agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Rebind => "rebind",
                         agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Activate => "activate",
                         agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::SubmitInput => "submit_input",
                         agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeCommandKind::Steer => "steer",

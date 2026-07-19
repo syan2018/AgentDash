@@ -722,7 +722,7 @@ mod tests {
     };
     use agentdash_application_agentrun::agent_run::{
         AgentRunProductProjectionError, AgentRunTerminalChangePage, AgentRunTerminalChangeSequence,
-        AgentRunTerminalSnapshot,
+        AgentRunTerminalSnapshot, ProductAgentFrameRef,
     };
     use agentdash_domain::workflow::{
         AgentSource, OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef,
@@ -917,6 +917,12 @@ mod tests {
             let binding = AgentRunProductRuntimeBinding {
                 target: target.clone(),
                 runtime_thread_id: RuntimeThreadId::new(thread).unwrap(),
+                launch_frame: ProductAgentFrameRef {
+                    frame_id: Uuid::new_v4(),
+                    agent_id: target.agent_id,
+                    revision: 1,
+                },
+                execution_profile_digest: "sha256:lifecycle-run-view-fixture".to_string(),
                 source_binding: source.clone(),
             };
             self.bindings
@@ -1197,6 +1203,12 @@ mod tests {
             AgentRunProductRuntimeBinding {
                 target: target.clone(),
                 runtime_thread_id: RuntimeThreadId::new("thread-after").unwrap(),
+                launch_frame: ProductAgentFrameRef {
+                    frame_id: Uuid::new_v4(),
+                    agent_id: target.agent_id,
+                    revision: 1,
+                },
+                execution_profile_digest: "sha256:lifecycle-run-view-fixture".to_string(),
                 source_binding: observed_source.clone(),
             },
         );

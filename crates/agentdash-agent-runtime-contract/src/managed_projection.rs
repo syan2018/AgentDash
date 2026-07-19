@@ -389,6 +389,7 @@ pub struct ManagedRuntimeSnapshot {
     pub fidelity: ManagedRuntimeProjectionFidelity,
     pub command_availability:
         BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability>,
+    #[ts(type = "Array<CanonicalConversationRecord>")]
     pub conversation_history: Vec<CanonicalConversationRecord>,
 }
 
@@ -456,6 +457,7 @@ pub enum ManagedRuntimeChangeDelta {
         #[ts(type = "RuntimeU64")]
         source_change_sequence: u64,
         source_projection_revision: RuntimeProjectionRevision,
+        #[ts(type = "Array<CanonicalConversationRecord>")]
         records: Vec<CanonicalConversationRecord>,
     },
     ThreadNameChanged {
@@ -606,6 +608,7 @@ mod tests {
                     .expect("valid compaction presentation"),
                 }],
                 interactions: Vec::new(),
+                conversation_history: Vec::new(),
                 thread_name: None,
                 thread_name_source: None,
                 operations: Vec::new(),

@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{ManagedRuntimeGatewayError, RuntimeChangeSequence};
+use agentdash_application::agent_run_list::{
+    AgentRunListChildModel, AgentRunListRuntimeSummaryModel, ProjectAgentRunListInput,
+    ProjectAgentRunListQuery, ProjectAgentRunListQueryDeps,
+};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommand, AgentRunProductCommandError, AgentRunProductCommandRequest,
     AgentRunProductDeleteError, AgentRunProductDeleteRequest, AgentRunProductDeleteService,
@@ -61,6 +65,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::delete(delete_project_agent_run),
         )
         .route(
+            "/projects/{project_id}/agent-runs",
+            axum::routing::get(get_project_agent_runs),
+        )
+        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/workspace",
             axum::routing::get(get_agent_run_workspace),
         )
@@ -84,6 +92,127 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/changes",
             axum::routing::get(get_agent_run_terminal_changes),
         )
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentRunListQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+async fn get_project_agent_runs(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(project_id): Path<String>,
+    Query(query): Query<AgentRunListQuery>,
+) -> Result<Json<agentdash_contracts::workflow::ProjectAgentRunListView>, ApiError> {
+    let project_id = parse_uuid(&project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let page = ProjectAgentRunListQuery::new(ProjectAgentRunListQueryDeps {
+        run_repo: state.repos.lifecycle_run_repo.clone(),
+        agent_repo: state.repos.lifecycle_agent_repo.clone(),
+        lineage_repo: state.repos.agent_lineage_repo.clone(),
+        subject_repo: state.repos.lifecycle_subject_association_repo.clone(),
+        project_agent_repo: state.repos.project_agent_repo.clone(),
+        product_projection: state.services.agent_run_product_projection.clone(),
+    })
+    .list(ProjectAgentRunListInput {
+        project_id,
+        limit: query.limit,
+        cursor: query.cursor.as_deref(),
+    })
+    .await
+    .map_err(|error| ApiError::Internal(error.to_string()))?;
+    Ok(Json(
+        agentdash_contracts::workflow::ProjectAgentRunListView {
+            project_id: page.project_id.to_string(),
+            agent_runs: page
+                .entries
+                .into_iter()
+                .map(
+                    |entry| agentdash_contracts::workflow::AgentRunListEntryView {
+                        run_ref: agentdash_contracts::workflow::LifecycleRunRefDto {
+                            run_id: entry.run_id.to_string(),
+                        },
+                        agent_ref: agentdash_contracts::workflow::AgentRunRefDto {
+                            run_id: entry.run_id.to_string(),
+                            agent_id: entry.agent_id.to_string(),
+                        },
+                        title: entry.title,
+                        lifecycle_status: entry.lifecycle_status,
+                        last_activity_at: entry.last_activity_at,
+                        project_agent_label: entry.project_agent_label,
+                        source: entry.source,
+                        runtime: entry.runtime.map(runtime_summary_view),
+                        subagent_count: entry.subagent_count,
+                        children: entry
+                            .children
+                            .into_iter()
+                            .map(agent_run_child_view)
+                            .collect(),
+                        subject_ref: entry.subject.as_ref().map(|subject| {
+                            agentdash_contracts::workflow::SubjectRefDto {
+                                kind: subject.kind.clone(),
+                                id: subject.id.to_string(),
+                            }
+                        }),
+                        subject_label: entry.subject.and_then(|subject| subject.label),
+                    },
+                )
+                .collect(),
+            next_cursor: page.next_cursor,
+        },
+    ))
+}
+
+fn agent_run_child_view(
+    child: AgentRunListChildModel,
+) -> agentdash_contracts::workflow::AgentRunListChildView {
+    agentdash_contracts::workflow::AgentRunListChildView {
+        run_ref: agentdash_contracts::workflow::LifecycleRunRefDto {
+            run_id: child.run_id.to_string(),
+        },
+        agent_ref: agentdash_contracts::workflow::AgentRunRefDto {
+            run_id: child.run_id.to_string(),
+            agent_id: child.agent_id.to_string(),
+        },
+        title: child.title,
+        lifecycle_status: child.lifecycle_status,
+        last_activity_at: child.last_activity_at,
+        project_agent_label: child.project_agent_label,
+        source: child.source,
+        runtime: child.runtime.map(runtime_summary_view),
+        children: child
+            .children
+            .into_iter()
+            .map(agent_run_child_view)
+            .collect(),
+    }
+}
+
+fn runtime_summary_view(
+    runtime: AgentRunListRuntimeSummaryModel,
+) -> agentdash_contracts::workflow::AgentRunListRuntimeSummaryView {
+    use agentdash_agent_runtime_contract::ManagedRuntimeLifecycleStatus as Source;
+    use agentdash_contracts::workflow::AgentRunListRuntimeThreadStatus as Target;
+    let thread_status = match runtime.thread_status {
+        Source::Active => Target::Active,
+        Source::Suspended => Target::Suspended,
+        Source::Provisioning => Target::Desynchronized,
+        Source::Closed => Target::Closed,
+        Source::Lost => Target::Lost,
+    };
+    agentdash_contracts::workflow::AgentRunListRuntimeSummaryView {
+        thread_status,
+        active_turn_id: runtime.active_turn_id,
+        thread_name: runtime.thread_name,
+    }
 }
 
 async fn delete_project_agent_run(

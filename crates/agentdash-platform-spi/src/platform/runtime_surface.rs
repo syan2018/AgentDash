@@ -78,6 +78,7 @@ pub enum RuntimeVfsOperation {
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeVfsPathPattern {
     All,
+    Exact(String),
     Prefix(String),
 }
 
@@ -85,6 +86,7 @@ impl RuntimeVfsPathPattern {
     pub fn matches_normalized_path(&self, normalized_path: &str) -> bool {
         match self {
             Self::All => true,
+            Self::Exact(path) => normalized_path == path,
             Self::Prefix(prefix) if prefix.is_empty() => true,
             Self::Prefix(prefix) => {
                 normalized_path == prefix

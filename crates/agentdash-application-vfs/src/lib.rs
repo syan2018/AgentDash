@@ -91,7 +91,11 @@ pub use provider::{
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_routine::RoutineMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
-pub use runtime_tools::MountsListRuntimeTool;
+pub use runtime_tools::{
+    AppliedVfsRuntimeToolService, AppliedVfsToolKind, AppliedVfsToolMount, AppliedVfsToolOperation,
+    AppliedVfsToolOutcome, AppliedVfsToolOwner, AppliedVfsToolPathScope, AppliedVfsToolRequest,
+    AppliedVfsToolSurface,
+};
 pub use search::TextSearchParams;
 pub use service::{BasicTextSearchRequest, VfsService};
 pub use surface::{

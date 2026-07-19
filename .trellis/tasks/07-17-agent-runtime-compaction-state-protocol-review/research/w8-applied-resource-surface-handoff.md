@@ -90,14 +90,18 @@ beginning at the next segment boundary, so `src` matches `src/lib.rs` but not `s
 `Read` never implies `List`, `Search`, `Write` or `Exec`; an absent grant never means the whole
 mount. The workspace API may expose the same Product snapshot but must not independently
 reconstruct VFS facts.
-The typed authorization decision/audit evidence records the outer `snapshot_revision` together
-with the Agent, VFS and Task revisions/digests, so one decision cannot accidentally combine
-resource families from different Product snapshots.
+The typed authorization decision/audit evidence records the outer `snapshot_revision`, Agent
+surface revision/digest, VFS revision/digest/provenance, Task revision/digest/provenance, pinned
+Product binding digest and Host binding generation. One decision therefore cannot combine
+resource families from different Product snapshots or callback generations.
 
-Task executors map `AppliedTaskScope` and `AppliedTaskOperation` to their Runtime execution grant.
-An absent scope or operation is a typed deny; Project scope never implies Write, and a Task scope
-does not authorize sibling Tasks. VFS and Task grants are committed in the same immutable Product
-snapshot/CAS so neither authorization family can observe a mixed revision.
+Task executors map `AppliedTaskScope::Project | Task` and `AppliedTaskOperation` to their Runtime
+execution grant. The authorizer resolves the concrete scope from read/write arguments, including
+batch operations. The Product Task service applies the same scope again: a Task grant pins reads
+to that Task and rejects create, snapshot, reorder or any operation naming a sibling; a Project
+grant retains project-plan semantics. An absent scope or operation is a typed deny; Project scope
+never implies Write. VFS and Task grants are committed in the same immutable Product snapshot/CAS
+so neither authorization family can observe a mixed revision.
 
 ## Runtime activation fence
 
@@ -123,12 +127,30 @@ old activation pinned to revision N while current has advanced to N+1.
 
 ## Production composition input
 
-The Platform component exports the dependency-light `PlatformToolBroker`,
-`RuntimePlatformToolHandler`, `ProductRuntimeToolAuthorizer`, `MountsListRuntimeTool`,
-`RuntimeTaskReadTool` and `RuntimeTaskWriteTool`. It does not activate them in API/Local production
-composition before the W8 repository exists.
+The Platform component exports the dependency-light `PlatformToolBroker` and
+`RuntimePlatformToolHandler`. Application exposes a Product Task service contract; application-vfs
+exposes a per-invocation VFS service input that accepts only a typed applied surface and canonical
+owner coordinates. Neither Application crate normal-depends on Runtime or Agent Service API.
+Infrastructure owns `ProductRuntimeToolAuthorizer`, the Runtime executor adapters and the
+mechanical `final_runtime_tool_catalog` constructor.
 
-W8 composition constructs one non-empty broker catalog containing exactly the currently committed
-platform executors `mounts_list`, `task_read` and `task_write`, injects the concrete atomic binding
-query and applied-surface query, then installs `RuntimePlatformToolHandler` as the Complete Agent
-tool callback handler. The broker rejects an empty or duplicate catalog at composition time.
+W8 composition constructs one non-empty broker catalog only through
+`final_runtime_tool_catalog(vfs_service, task_service)`. Its exact inventory is:
+
+1. `mounts_list`
+2. `fs_read`
+3. `fs_glob`
+4. `fs_grep`
+5. `fs_apply_patch`
+6. `shell_exec`
+7. `task_read`
+8. `task_write`
+
+The VFS service receives no construction-time AgentRun VFS. Every invocation maps the Host-resolved
+callback context and authorized `RuntimeVfsExecutionGrant` into a fresh VFS plus exact access
+policy, then delegates to the existing VFS provider, overlay, materialization and typed terminal
+registry behavior. This preserves real shell streaming/PTY/continuation ownership while preventing
+cross-AgentRun mount retention. W8 injects the concrete atomic binding query, applied-surface
+query, Product Task service, VFS service/materialization/terminal dependencies, then installs
+`RuntimePlatformToolHandler` as the Complete Agent tool callback handler. The broker rejects an
+empty or duplicate catalog at composition time.

@@ -1,165 +1,426 @@
-use agentdash_agent_runtime::{
-    RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation,
-    RuntimeToolPermission, RuntimeToolResourceGrant, RuntimeVfsGrantedOperation,
+use std::{collections::BTreeSet, sync::Arc};
+
+use agentdash_agent_types::DynAgentTool;
+use agentdash_platform_spi::{
+    AgentToolError, CapabilityState, Mount, MountCapability, RuntimeVfsAccessPolicy,
+    RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, Vfs,
 };
-use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
-use async_trait::async_trait;
+use serde_json::Value;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
-/// Final Runtime Tool Broker executor over the immutable applied Product VFS projection.
-pub struct MountsListRuntimeTool;
+use crate::{
+    VfsMaterializationService, VfsService,
+    inline_persistence::InlineContentOverlay,
+    tools::{
+        FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
+        ShellExecTool, ShellTerminalOwner, ShellTerminalRegistry,
+    },
+};
 
-#[async_trait]
-impl RuntimeToolExecutor for MountsListRuntimeTool {
-    fn definition(&self) -> RuntimeToolDefinition {
-        RuntimeToolDefinition {
-            name: AgentToolName::new("mounts_list").expect("static runtime tool name"),
-            description: "List VFS mounts granted by the applied AgentRun resource surface."
-                .to_owned(),
-            parameters_schema: serde_json::json!({
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": false
-            }),
-            permission: RuntimeToolPermission::VfsRead,
-            effect: RuntimeToolEffect::ReadOnly,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppliedVfsToolKind {
+    MountsList,
+    Read,
+    Glob,
+    Grep,
+    ApplyPatch,
+    ShellExec,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AppliedVfsToolOperation {
+    Read,
+    List,
+    Search,
+    Write,
+    Execute,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppliedVfsToolPathScope {
+    All,
+    Exact(String),
+    Prefix(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppliedVfsToolMount {
+    pub id: String,
+    pub provider: String,
+    pub backend_id: String,
+    pub root_ref: String,
+    pub display_name: String,
+    pub metadata: Value,
+    pub operations: BTreeSet<AppliedVfsToolOperation>,
+    pub path_scopes: Vec<AppliedVfsToolPathScope>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppliedVfsToolSurface {
+    pub default_mount_id: Option<String>,
+    pub mounts: Vec<AppliedVfsToolMount>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedVfsToolOwner {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub runtime_thread_id: String,
+    pub invocation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppliedVfsToolRequest {
+    pub kind: AppliedVfsToolKind,
+    pub arguments: Value,
+    pub surface: AppliedVfsToolSurface,
+    pub owner: AppliedVfsToolOwner,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppliedVfsToolOutcome {
+    Completed { output: Value },
+    Rejected { code: String, message: String },
+    Failed { code: String, message: String },
+}
+
+#[derive(Clone)]
+pub struct AppliedVfsRuntimeToolService {
+    service: Arc<VfsService>,
+    terminal_registry: Arc<dyn ShellTerminalRegistry>,
+    materialization: Option<Arc<VfsMaterializationService>>,
+    shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
+    overlay: Option<Arc<InlineContentOverlay>>,
+    identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    capability_state: CapabilityState,
+}
+
+impl AppliedVfsRuntimeToolService {
+    pub fn new(
+        service: Arc<VfsService>,
+        terminal_registry: Arc<dyn ShellTerminalRegistry>,
+    ) -> Self {
+        Self {
+            service,
+            terminal_registry,
+            materialization: None,
+            shell_output_registry: None,
+            overlay: None,
+            identity: None,
+            capability_state: CapabilityState::default(),
         }
     }
 
-    async fn execute(&self, invocation: RuntimeToolInvocation) -> AgentToolResult {
-        let RuntimeToolResourceGrant::Vfs(vfs) = invocation.grant.resources else {
-            return AgentToolResult::Rejected {
-                code: "runtime_vfs_grant_required".to_owned(),
-                message: "mounts_list requires a typed VFS execution grant".to_owned(),
-            };
+    pub fn with_materialization(
+        mut self,
+        materialization: Option<Arc<VfsMaterializationService>>,
+    ) -> Self {
+        self.materialization = materialization;
+        self
+    }
+
+    pub fn with_shell_output_registry(
+        mut self,
+        registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
+    ) -> Self {
+        self.shell_output_registry = registry;
+        self
+    }
+
+    pub fn with_overlay(mut self, overlay: Option<Arc<InlineContentOverlay>>) -> Self {
+        self.overlay = overlay;
+        self
+    }
+
+    pub fn with_identity(
+        mut self,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    ) -> Self {
+        self.identity = identity;
+        self
+    }
+
+    pub fn with_capability_state(mut self, capability_state: CapabilityState) -> Self {
+        self.capability_state = capability_state;
+        self
+    }
+
+    pub async fn execute(&self, request: AppliedVfsToolRequest) -> AppliedVfsToolOutcome {
+        let (vfs, policy) = match build_invocation_vfs(request.surface) {
+            Ok(value) => value,
+            Err(message) => {
+                return AppliedVfsToolOutcome::Rejected {
+                    code: "invalid_applied_vfs_surface".to_owned(),
+                    message,
+                };
+            }
         };
-        let mounts = vfs
-            .mounts
-            .into_iter()
-            .filter(|mount| mount.operations.contains(&RuntimeVfsGrantedOperation::List))
-            .map(|mount| {
-                serde_json::json!({
-                    "id": mount.id,
-                    "display_name": mount.display_name,
-                    "operations": mount.operations,
-                })
-            })
-            .collect::<Vec<_>>();
-        AgentToolResult::Completed {
-            output: serde_json::json!({ "mounts": mounts }),
+        let shared = SharedRuntimeVfs::new_with_policy(vfs, policy);
+        let tool: DynAgentTool = match request.kind {
+            AppliedVfsToolKind::MountsList => {
+                Arc::new(MountsListTool::new(self.service.clone(), shared))
+            }
+            AppliedVfsToolKind::Read => Arc::new(FsReadTool::new(
+                self.service.clone(),
+                shared,
+                self.overlay.clone(),
+                self.identity.clone(),
+            )),
+            AppliedVfsToolKind::Glob => Arc::new(FsGlobTool::new(
+                self.service.clone(),
+                shared,
+                self.overlay.clone(),
+                self.identity.clone(),
+            )),
+            AppliedVfsToolKind::Grep => Arc::new(FsGrepTool::new(
+                self.service.clone(),
+                shared,
+                self.overlay.clone(),
+                self.identity.clone(),
+            )),
+            AppliedVfsToolKind::ApplyPatch => Arc::new(FsApplyPatchTool::new(
+                self.service.clone(),
+                shared,
+                self.overlay.clone(),
+                self.identity.clone(),
+            )),
+            AppliedVfsToolKind::ShellExec => {
+                let runtime_thread_id = match agentdash_agent_runtime_contract::RuntimeThreadId::new(
+                    request.owner.runtime_thread_id,
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return AppliedVfsToolOutcome::Rejected {
+                            code: "invalid_runtime_tool_owner".to_owned(),
+                            message: error.to_string(),
+                        };
+                    }
+                };
+                let mut tool = ShellExecTool::new(self.service.clone(), shared)
+                    .with_terminal_owner(ShellTerminalOwner {
+                        run_id: request.owner.run_id,
+                        agent_id: request.owner.agent_id,
+                        runtime_thread_id,
+                    })
+                    .with_terminal_registry(self.terminal_registry.clone())
+                    .with_materialization_context(
+                        self.materialization.clone(),
+                        request.owner.run_id.to_string(),
+                        Some(request.owner.invocation_id.clone()),
+                        self.overlay.clone(),
+                        self.identity.clone(),
+                    )
+                    .with_capability_state(self.capability_state.clone());
+                if let Some(registry) = &self.shell_output_registry {
+                    tool = tool.with_shell_output_registry(registry.clone());
+                }
+                Arc::new(tool)
+            }
+        };
+        match tool
+            .execute(
+                &request.owner.invocation_id,
+                request.arguments,
+                CancellationToken::new(),
+                None,
+            )
+            .await
+        {
+            Ok(result) if result.is_error => AppliedVfsToolOutcome::Failed {
+                code: "vfs_tool_failed".to_owned(),
+                message: result
+                    .content
+                    .iter()
+                    .filter_map(|part| part.extract_text())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            },
+            Ok(result) => AppliedVfsToolOutcome::Completed {
+                output: serde_json::to_value(result).unwrap_or_else(|error| {
+                    serde_json::json!({"error": format!("failed to encode VFS tool result: {error}")})
+                }),
+            },
+            Err(AgentToolError::InvalidArguments(message)) => AppliedVfsToolOutcome::Rejected {
+                code: "invalid_vfs_tool_arguments".to_owned(),
+                message,
+            },
+            Err(error) => AppliedVfsToolOutcome::Failed {
+                code: "vfs_tool_failed".to_owned(),
+                message: error.to_string(),
+            },
         }
+    }
+}
+
+fn build_invocation_vfs(
+    surface: AppliedVfsToolSurface,
+) -> Result<(Vfs, RuntimeVfsAccessPolicy), String> {
+    if surface.mounts.is_empty() {
+        return Err("applied VFS surface must contain at least one authorized mount".to_owned());
+    }
+    let mut mount_ids = BTreeSet::new();
+    let mut mounts = Vec::with_capacity(surface.mounts.len());
+    let mut rules = Vec::new();
+    for mount in surface.mounts {
+        if mount.id.trim().is_empty()
+            || mount.provider.trim().is_empty()
+            || mount.root_ref.trim().is_empty()
+            || !mount_ids.insert(mount.id.clone())
+            || mount.operations.is_empty()
+            || mount.path_scopes.is_empty()
+        {
+            return Err("applied VFS mount evidence is incomplete or duplicated".to_owned());
+        }
+        let capabilities = mount
+            .operations
+            .iter()
+            .copied()
+            .map(map_capability)
+            .collect::<Vec<_>>();
+        let operations = mount
+            .operations
+            .iter()
+            .copied()
+            .flat_map(map_policy_operations)
+            .collect::<BTreeSet<_>>();
+        for scope in mount.path_scopes {
+            let pattern = match scope {
+                AppliedVfsToolPathScope::All => RuntimeVfsPathPattern::All,
+                AppliedVfsToolPathScope::Exact(path) => {
+                    ensure_canonical_scope(&path)?;
+                    RuntimeVfsPathPattern::Exact(path)
+                }
+                AppliedVfsToolPathScope::Prefix(path) => {
+                    ensure_canonical_scope(&path)?;
+                    RuntimeVfsPathPattern::Prefix(path)
+                }
+            };
+            rules.push(RuntimeVfsAccessRule {
+                mount_id: mount.id.clone(),
+                path_pattern: pattern,
+                operations: operations.clone(),
+                source: RuntimeVfsAccessSource::ProjectPreset,
+            });
+        }
+        mounts.push(Mount {
+            id: mount.id,
+            provider: mount.provider,
+            backend_id: mount.backend_id,
+            root_ref: mount.root_ref,
+            capabilities,
+            default_write: false,
+            display_name: mount.display_name,
+            metadata: mount.metadata,
+        });
+    }
+    if surface
+        .default_mount_id
+        .as_ref()
+        .is_some_and(|id| !mount_ids.contains(id))
+    {
+        return Err("default mount is absent from the authorized invocation surface".to_owned());
+    }
+    Ok((
+        Vfs {
+            mounts,
+            default_mount_id: surface.default_mount_id,
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        },
+        RuntimeVfsAccessPolicy { rules },
+    ))
+}
+
+fn ensure_canonical_scope(path: &str) -> Result<(), String> {
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.contains(['\\', '\0'])
+        || path
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return Err(format!("VFS path scope `{path}` is not canonical"));
+    }
+    Ok(())
+}
+
+fn map_capability(operation: AppliedVfsToolOperation) -> MountCapability {
+    match operation {
+        AppliedVfsToolOperation::Read => MountCapability::Read,
+        AppliedVfsToolOperation::List => MountCapability::List,
+        AppliedVfsToolOperation::Search => MountCapability::Search,
+        AppliedVfsToolOperation::Write => MountCapability::Write,
+        AppliedVfsToolOperation::Execute => MountCapability::Exec,
+    }
+}
+
+fn map_policy_operations(
+    operation: AppliedVfsToolOperation,
+) -> impl IntoIterator<Item = RuntimeVfsOperation> {
+    match operation {
+        AppliedVfsToolOperation::Read => vec![RuntimeVfsOperation::Read],
+        AppliedVfsToolOperation::List => vec![RuntimeVfsOperation::List],
+        AppliedVfsToolOperation::Search => vec![RuntimeVfsOperation::Search],
+        AppliedVfsToolOperation::Write => {
+            vec![RuntimeVfsOperation::Write, RuntimeVfsOperation::ApplyPatch]
+        }
+        AppliedVfsToolOperation::Execute => vec![RuntimeVfsOperation::Exec],
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_agent_runtime::{
-        RuntimeToolAppliedSurfaceEvidence, RuntimeToolAuthorizationGrant, RuntimeToolProductTarget,
-        RuntimeToolResolvedContext, RuntimeVfsExecutionGrant, RuntimeVfsMountGrant,
-        RuntimeVfsPathGrant,
-    };
-    use agentdash_agent_runtime_contract::RuntimeThreadId;
-    use agentdash_agent_service_api::{
-        AgentBindingGeneration, AgentProfileDigest, AgentServiceInstanceId, AgentSourceCoordinate,
-        AgentSurfaceDigest, AgentSurfaceRevision,
-    };
 
-    #[tokio::test]
-    async fn mounts_list_only_returns_explicitly_allowed_mounts() {
-        let executor = MountsListRuntimeTool;
-        let result = executor.execute(invocation()).await;
-        let AgentToolResult::Completed { output } = result else {
-            panic!("mounts_list must complete");
-        };
-        assert_eq!(output["mounts"].as_array().unwrap().len(), 1);
-        assert_eq!(output["mounts"][0]["id"], "main");
-        assert!(
-            !output.to_string().contains("secret"),
-            "mount without an explicit List grant must remain invisible"
-        );
+    #[test]
+    fn exact_scope_never_expands_to_descendants_or_prefix_siblings() {
+        let (_, policy) = build_invocation_vfs(surface(
+            "main",
+            AppliedVfsToolPathScope::Exact("docs/readme.md".to_owned()),
+        ))
+        .unwrap();
+        assert!(policy.admits("main", "docs/readme.md", RuntimeVfsOperation::Read));
+        assert!(!policy.admits("main", "docs/readme.md/child", RuntimeVfsOperation::Read));
+        assert!(!policy.admits("main", "docs2/readme.md", RuntimeVfsOperation::Read));
     }
 
-    #[tokio::test]
-    async fn stateless_executor_does_not_share_mounts_between_agent_runs() {
-        let executor = MountsListRuntimeTool;
-        let first = invocation();
-        let mut second = invocation();
-        second.grant.target.run_id = "run-other".to_owned();
-        second.grant.resources = RuntimeToolResourceGrant::Vfs(RuntimeVfsExecutionGrant {
-            default_mount_id: Some("other".to_owned()),
-            mounts: vec![mount("other", vec![RuntimeVfsGrantedOperation::List])],
-        });
-
-        let AgentToolResult::Completed { output: first } = executor.execute(first).await else {
-            panic!("first mounts_list must complete");
-        };
-        let AgentToolResult::Completed { output: second } = executor.execute(second).await else {
-            panic!("second mounts_list must complete");
-        };
-        assert_eq!(first["mounts"][0]["id"], "main");
-        assert_eq!(second["mounts"][0]["id"], "other");
-        assert!(!second.to_string().contains("main"));
+    #[test]
+    fn invocation_surfaces_do_not_share_mounts_between_agent_runs() {
+        let (first, _) =
+            build_invocation_vfs(surface("first", AppliedVfsToolPathScope::All)).unwrap();
+        let (second, _) =
+            build_invocation_vfs(surface("second", AppliedVfsToolPathScope::All)).unwrap();
+        assert_eq!(first.mounts[0].id, "first");
+        assert_eq!(second.mounts[0].id, "second");
+        assert!(!second.mounts.iter().any(|mount| mount.id == "first"));
     }
 
-    fn mount(id: &str, operations: Vec<RuntimeVfsGrantedOperation>) -> RuntimeVfsMountGrant {
-        RuntimeVfsMountGrant {
-            id: id.to_owned(),
-            provider: "memory".to_owned(),
-            backend_id: String::new(),
-            root_ref: format!("memory://{id}"),
-            display_name: id.to_owned(),
-            metadata: serde_json::Value::Null,
-            operations,
-            path_scopes: vec![RuntimeVfsPathGrant::All],
+    #[test]
+    fn non_canonical_scopes_are_rejected_before_provider_dispatch() {
+        for scope in [
+            AppliedVfsToolPathScope::Exact("../secret".to_owned()),
+            AppliedVfsToolPathScope::Prefix("docs//private".to_owned()),
+            AppliedVfsToolPathScope::Prefix("C:\\repo".to_owned()),
+        ] {
+            assert!(build_invocation_vfs(surface("main", scope)).is_err());
         }
     }
 
-    fn invocation() -> RuntimeToolInvocation {
-        RuntimeToolInvocation {
-            context: RuntimeToolResolvedContext {
-                runtime_thread_id: RuntimeThreadId::new("thread-test").unwrap(),
-                binding_generation: AgentBindingGeneration(1),
-                source: AgentSourceCoordinate::new("source-test").unwrap(),
-                service_instance_id: AgentServiceInstanceId::new("service-test").unwrap(),
-                profile_digest: AgentProfileDigest::new("profile-test").unwrap(),
-                bound_surface_revision: AgentSurfaceRevision(1),
-                bound_surface_digest: AgentSurfaceDigest::new("bound-test").unwrap(),
-                applied_surface_revision: AgentSurfaceRevision(1),
-                applied_surface_digest: AgentSurfaceDigest::new("applied-test").unwrap(),
-            },
-            tool: AgentToolName::new("mounts_list").unwrap(),
-            arguments: serde_json::json!({}),
-            grant: RuntimeToolAuthorizationGrant {
-                permission: RuntimeToolPermission::VfsRead,
-                effect: RuntimeToolEffect::ReadOnly,
-                target: RuntimeToolProductTarget {
-                    project_id: "project-test".to_owned(),
-                    run_id: "run-test".to_owned(),
-                    agent_id: "agent-test".to_owned(),
-                },
-                applied_surface: RuntimeToolAppliedSurfaceEvidence {
-                    snapshot_revision: 1,
-                    revision: 1,
-                    digest: "surface-test".to_owned(),
-                    projection_revision: 1,
-                    provenance_source: "test".to_owned(),
-                    provenance_revision: 1,
-                },
-                resources: RuntimeToolResourceGrant::Vfs(RuntimeVfsExecutionGrant {
-                    default_mount_id: Some("main".to_owned()),
-                    mounts: vec![
-                        mount(
-                            "main",
-                            vec![
-                                RuntimeVfsGrantedOperation::Read,
-                                RuntimeVfsGrantedOperation::List,
-                            ],
-                        ),
-                        mount("secret", vec![RuntimeVfsGrantedOperation::Read]),
-                    ],
-                }),
-            },
+    fn surface(id: &str, scope: AppliedVfsToolPathScope) -> AppliedVfsToolSurface {
+        AppliedVfsToolSurface {
+            default_mount_id: Some(id.to_owned()),
+            mounts: vec![AppliedVfsToolMount {
+                id: id.to_owned(),
+                provider: "memory".to_owned(),
+                backend_id: "backend".to_owned(),
+                root_ref: format!("memory://{id}"),
+                display_name: id.to_owned(),
+                metadata: Value::Null,
+                operations: BTreeSet::from([AppliedVfsToolOperation::Read]),
+                path_scopes: vec![scope],
+            }],
         }
     }
 }

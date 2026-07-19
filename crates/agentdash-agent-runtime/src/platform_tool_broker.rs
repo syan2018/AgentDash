@@ -49,6 +49,8 @@ pub struct RuntimeToolResolvedContext {
     pub bound_surface_digest: AgentSurfaceDigest,
     pub applied_surface_revision: AgentSurfaceRevision,
     pub applied_surface_digest: AgentSurfaceDigest,
+    pub callback_idempotency_key: String,
+    pub deadline_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,11 +79,25 @@ pub struct RuntimeToolProductTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeToolAppliedSurfaceEvidence {
     pub snapshot_revision: u64,
-    pub revision: u64,
-    pub digest: String,
+    pub agent_surface_revision: u64,
+    pub agent_surface_digest: String,
+    pub vfs_revision: u64,
+    pub vfs_digest: String,
+    pub vfs_provenance: RuntimeToolProvenanceEvidence,
+    pub task_revision: u64,
+    pub task_digest: String,
+    pub task_provenance: RuntimeToolProvenanceEvidence,
+    pub product_binding_digest: String,
+    pub host_binding_generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeToolProvenanceEvidence {
+    pub source_kind: String,
+    pub source_id: String,
+    pub source_revision: u64,
     pub projection_revision: u64,
-    pub provenance_source: String,
-    pub provenance_revision: u64,
+    pub captured_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,9 +109,16 @@ pub enum RuntimeToolResourceGrant {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeTaskExecutionGrant {
+    pub scope: RuntimeTaskExecutionScope,
     pub plan_revision: u64,
     pub plan_digest: String,
     pub operations: Vec<RuntimeTaskGrantedOperation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeTaskExecutionScope {
+    Project { project_id: String },
+    Task { project_id: String, task_id: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,11 +314,16 @@ mod tests {
                 },
                 applied_surface: RuntimeToolAppliedSurfaceEvidence {
                     snapshot_revision: 1,
-                    revision: 1,
-                    digest: "surface-test".into(),
-                    projection_revision: 1,
-                    provenance_source: "test".into(),
-                    provenance_revision: 1,
+                    agent_surface_revision: 1,
+                    agent_surface_digest: "surface-test".into(),
+                    vfs_revision: 1,
+                    vfs_digest: "vfs-test".into(),
+                    vfs_provenance: provenance(),
+                    task_revision: 1,
+                    task_digest: "task-test".into(),
+                    task_provenance: provenance(),
+                    product_binding_digest: "binding-test".into(),
+                    host_binding_generation: 1,
                 },
                 resources: RuntimeToolResourceGrant::Vfs(RuntimeVfsExecutionGrant {
                     default_mount_id: None,
@@ -434,6 +462,18 @@ mod tests {
             bound_surface_digest: AgentSurfaceDigest::new("bound-test").unwrap(),
             applied_surface_revision: AgentSurfaceRevision(1),
             applied_surface_digest: AgentSurfaceDigest::new("applied-test").unwrap(),
+            callback_idempotency_key: "callback-test".to_owned(),
+            deadline_at_ms: u64::MAX,
+        }
+    }
+
+    fn provenance() -> RuntimeToolProvenanceEvidence {
+        RuntimeToolProvenanceEvidence {
+            source_kind: "test".to_owned(),
+            source_id: "surface".to_owned(),
+            source_revision: 1,
+            projection_revision: 1,
+            captured_at_ms: 1,
         }
     }
 }

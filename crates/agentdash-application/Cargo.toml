@@ -5,9 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-agentdash-agent-runtime = { workspace = true }
 agentdash-agent-runtime-contract.workspace = true
-agentdash-agent-service-api = { workspace = true }
 agentdash-agent-types = { workspace = true }
 agentdash-application-agentrun = { workspace = true }
 agentdash-application-lifecycle = { workspace = true }

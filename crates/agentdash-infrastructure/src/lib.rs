@@ -9,6 +9,7 @@ pub mod migration;
 pub mod persistence;
 pub mod postgres_runtime;
 mod runtime_tool_authorization;
+mod runtime_tool_executors;
 pub mod script_runtime;
 pub mod secret;
 pub mod skill_source;
@@ -75,6 +76,11 @@ pub use persistence::postgres::PostgresWorkspaceRepository;
 pub use runtime_tool_authorization::{
     CommittedRuntimeToolProductBinding, ProductRuntimeToolAuthorizer,
     RuntimeToolProductBindingQueryPort,
+};
+pub use runtime_tool_executors::{
+    FsApplyPatchRuntimeTool, FsGlobRuntimeTool, FsGrepRuntimeTool, FsReadRuntimeTool,
+    MountsListRuntimeTool, RuntimeTaskReadTool, RuntimeTaskWriteTool, ShellExecRuntimeTool,
+    final_runtime_tool_catalog,
 };
 pub use script_runtime::{RhaiScriptLimits, RhaiScriptRuntime};
 pub use secret::LlmProviderSecretCipher;

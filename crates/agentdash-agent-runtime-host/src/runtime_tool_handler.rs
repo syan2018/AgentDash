@@ -38,6 +38,13 @@ impl CompleteAgentToolHandler for RuntimePlatformToolHandler {
                     bound_surface_digest: context.bound_surface_digest,
                     applied_surface_revision: context.applied_surface_revision,
                     applied_surface_digest: context.applied_surface_digest,
+                    callback_idempotency_key: callback
+                        .invocation
+                        .meta
+                        .idempotency_key
+                        .as_str()
+                        .to_owned(),
+                    deadline_at_ms: callback.invocation.meta.deadline_at_ms,
                 },
                 callback.invocation.tool,
                 callback.invocation.arguments,

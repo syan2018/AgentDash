@@ -1,5 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc};
 
+use agentdash_agent_runtime_contract::{
+    ManagedAgentRuntimeGateway, ManagedRuntimeReadRequest, RuntimeThreadId,
+};
 use agentdash_agent_runtime_host::{
     CompleteAgentVerificationMethod, CompleteAgentVerificationRecord,
 };
@@ -10,7 +13,10 @@ use agentdash_agent_runtime_wire::{
 use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId,
 };
-use agentdash_application_agentrun::agent_run::ProductExecutionProfileRef;
+use agentdash_application_agentrun::agent_run::{
+    AgentRunProductRuntimeBindingRepository, AgentRunProductRuntimeRecoveryPort,
+    AgentRunProductRuntimeRecoveryRequest, ProductExecutionProfileRef,
+};
 use agentdash_infrastructure::{
     CompleteAgentComposition, CompleteAgentServiceSelectionCatalog,
     PinnedCompleteAgentVerificationCatalog,
@@ -21,14 +27,15 @@ use agentdash_integration_api::{
 use agentdash_integration_remote_runtime::{
     RuntimeWirePlacement, remote_complete_agent_contribution,
 };
-use serde::Deserialize;
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use super::runtime_wire::{CloudRuntimeWireError, CloudRuntimeWirePlacementRegistry};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct PinnedRuntimeWireDeployment {
     pub backend_id: String,
@@ -177,6 +184,90 @@ pub enum RuntimeWireCompleteAgentAdmissionError {
     Contribution { reason: String },
     #[error("Remote Complete Agent registration failed: {reason}")]
     Registration { reason: String },
+    #[error("Remote Complete Agent recovery failed: {reason}")]
+    Recovery { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeWireCompleteAgentRecoveryRequest {
+    pub runtime_thread_id: RuntimeThreadId,
+    pub recovery_id: String,
+}
+
+#[async_trait]
+pub trait RuntimeWireCompleteAgentRecoveryObserver: Send + Sync {
+    async fn recover(&self, request: RuntimeWireCompleteAgentRecoveryRequest)
+    -> Result<(), String>;
+}
+
+pub struct ProductRuntimeWireCompleteAgentRecoveryObserver {
+    runtime: Arc<dyn ManagedAgentRuntimeGateway>,
+    bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+    recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort>,
+}
+
+impl ProductRuntimeWireCompleteAgentRecoveryObserver {
+    pub fn new(
+        runtime: Arc<dyn ManagedAgentRuntimeGateway>,
+        bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+        recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort>,
+    ) -> Self {
+        Self {
+            runtime,
+            bindings,
+            recovery,
+        }
+    }
+}
+
+#[async_trait]
+impl RuntimeWireCompleteAgentRecoveryObserver for ProductRuntimeWireCompleteAgentRecoveryObserver {
+    async fn recover(
+        &self,
+        request: RuntimeWireCompleteAgentRecoveryRequest,
+    ) -> Result<(), String> {
+        let binding = self
+            .bindings
+            .load_product_binding_by_runtime_thread(&request.runtime_thread_id)
+            .await?
+            .ok_or_else(|| {
+                format!(
+                    "Product binding is missing for RuntimeThread {}",
+                    request.runtime_thread_id
+                )
+            })?;
+        let snapshot = self
+            .runtime
+            .read(ManagedRuntimeReadRequest {
+                thread_id: request.runtime_thread_id.clone(),
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        if binding.runtime_thread_id != request.runtime_thread_id
+            || snapshot.thread_id != request.runtime_thread_id
+        {
+            return Err(format!(
+                "Product recovery coordinates drifted for RuntimeThread {}",
+                request.runtime_thread_id
+            ));
+        }
+        let outcome = self
+            .recovery
+            .recover(AgentRunProductRuntimeRecoveryRequest {
+                target: binding.target,
+                client_command_id: request.recovery_id,
+                expected_revision: snapshot.revision,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        if outcome.binding.runtime_thread_id != request.runtime_thread_id {
+            return Err(format!(
+                "Product recovery rebound an unexpected RuntimeThread for {}",
+                request.runtime_thread_id
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -194,11 +285,25 @@ struct DesiredRemotePlacement {
     digest: AgentPayloadDigest,
 }
 
+#[derive(Clone)]
+struct PendingRemoteRecovery {
+    desired: DesiredRemotePlacement,
+    previous: Option<ActiveRemotePlacement>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemotePlacementPreparation {
+    Ignore,
+    Admit,
+    RetryRecovery,
+}
+
 #[derive(Default)]
 struct RuntimeWireCompleteAgentAdmissionState {
     desired: BTreeMap<(String, String), DesiredRemotePlacement>,
     admitting: BTreeMap<(String, String), DesiredRemotePlacement>,
     active: BTreeMap<(String, String), ActiveRemotePlacement>,
+    pending_recovery: BTreeMap<(String, String), PendingRemoteRecovery>,
 }
 
 impl RuntimeWireCompleteAgentAdmissionState {
@@ -207,7 +312,7 @@ impl RuntimeWireCompleteAgentAdmissionState {
         key: &(String, String),
         desired: &DesiredRemotePlacement,
         local_instance_id: &AgentServiceInstanceId,
-    ) -> Result<bool, RuntimeWireCompleteAgentAdmissionError> {
+    ) -> Result<RemotePlacementPreparation, RuntimeWireCompleteAgentAdmissionError> {
         if let Some(current) = self.desired.get(key)
             && (desired.revision < current.revision
                 || (desired.revision == current.revision && desired.digest != current.digest)
@@ -221,12 +326,24 @@ impl RuntimeWireCompleteAgentAdmissionState {
             .active
             .get(key)
             .is_some_and(|active| active.local_instance_id == *local_instance_id)
-            || self.admitting.get(key) == Some(desired)
         {
-            return Ok(false);
+            return Ok(
+                if self
+                    .pending_recovery
+                    .get(key)
+                    .is_some_and(|pending| pending.desired == *desired)
+                {
+                    RemotePlacementPreparation::RetryRecovery
+                } else {
+                    RemotePlacementPreparation::Ignore
+                },
+            );
+        }
+        if self.admitting.get(key) == Some(desired) {
+            return Ok(RemotePlacementPreparation::Ignore);
         }
         self.admitting.insert(key.clone(), desired.clone());
-        Ok(true)
+        Ok(RemotePlacementPreparation::Admit)
     }
 
     fn finish_admission(&mut self, key: &(String, String), desired: &DesiredRemotePlacement) {
@@ -249,6 +366,7 @@ impl RuntimeWireCompleteAgentAdmissionState {
         }
         self.desired.remove(key);
         self.admitting.remove(key);
+        self.pending_recovery.remove(key);
         Ok(self.active.get(key).cloned())
     }
 }
@@ -260,6 +378,7 @@ pub struct RuntimeWireCompleteAgentAdmissionTicket {
     advertisement: RuntimeWireServiceOfferAdvertisement,
     trusted: PinnedRuntimeWireDeployment,
     local_instance_id: AgentServiceInstanceId,
+    recovery_only: bool,
 }
 
 pub struct RuntimeWireCompleteAgentAdmission {
@@ -269,6 +388,7 @@ pub struct RuntimeWireCompleteAgentAdmission {
     selections: Arc<CompleteAgentServiceSelectionCatalog>,
     trust: Arc<PinnedRuntimeWireDeploymentCatalog>,
     state: Mutex<RuntimeWireCompleteAgentAdmissionState>,
+    recovery_observer: RwLock<Option<Arc<dyn RuntimeWireCompleteAgentRecoveryObserver>>>,
 }
 
 impl RuntimeWireCompleteAgentAdmission {
@@ -286,7 +406,15 @@ impl RuntimeWireCompleteAgentAdmission {
             selections,
             trust,
             state: Mutex::new(RuntimeWireCompleteAgentAdmissionState::default()),
+            recovery_observer: RwLock::new(None),
         })
+    }
+
+    pub async fn install_recovery_observer(
+        &self,
+        observer: Arc<dyn RuntimeWireCompleteAgentRecoveryObserver>,
+    ) {
+        *self.recovery_observer.write().await = Some(observer);
     }
 
     /// Records the desired placement epoch in relay receive order before asynchronous open begins.
@@ -309,12 +437,12 @@ impl RuntimeWireCompleteAgentAdmission {
             revision: advertisement.revision.0,
             digest: advertisement.digest.clone(),
         };
-        if !self
+        let preparation = self
             .state
             .lock()
             .await
-            .prepare(&key, &desired, &local_instance_id)?
-        {
+            .prepare(&key, &desired, &local_instance_id)?;
+        if preparation == RemotePlacementPreparation::Ignore {
             return Ok(None);
         }
         Ok(Some(RuntimeWireCompleteAgentAdmissionTicket {
@@ -324,6 +452,7 @@ impl RuntimeWireCompleteAgentAdmission {
             advertisement,
             trusted,
             local_instance_id,
+            recovery_only: preparation == RemotePlacementPreparation::RetryRecovery,
         }))
     }
 
@@ -347,6 +476,11 @@ impl RuntimeWireCompleteAgentAdmission {
         ticket: RuntimeWireCompleteAgentAdmissionTicket,
     ) -> Result<AgentServiceInstanceId, RuntimeWireCompleteAgentAdmissionError> {
         self.ensure_desired(&ticket).await?;
+        if ticket.recovery_only {
+            self.recover_pending_placement(&ticket.key, &ticket.desired)
+                .await?;
+            return Ok(ticket.local_instance_id);
+        }
         let RuntimeWireCompleteAgentAdmissionTicket {
             key,
             desired,
@@ -354,6 +488,7 @@ impl RuntimeWireCompleteAgentAdmission {
             advertisement,
             trusted,
             local_instance_id,
+            recovery_only: _,
         } = ticket;
         let provenance = RuntimeWirePlacementProvenance {
             transport: transport.clone(),
@@ -483,13 +618,18 @@ impl RuntimeWireCompleteAgentAdmission {
                 reason: error.to_string(),
             });
         }
-        state.active.insert(
-            key,
-            ActiveRemotePlacement {
-                local_instance_id: local_instance_id.clone(),
-                service_profile_digest: advertisement.descriptor.profile_digest.clone(),
-                profiles: trusted.product_profiles,
-                placement,
+        let active = ActiveRemotePlacement {
+            local_instance_id: local_instance_id.clone(),
+            service_profile_digest: advertisement.descriptor.profile_digest.clone(),
+            profiles: trusted.product_profiles,
+            placement,
+        };
+        state.active.insert(key.clone(), active);
+        state.pending_recovery.insert(
+            key.clone(),
+            PendingRemoteRecovery {
+                desired: desired.clone(),
+                previous,
             },
         );
         drop(state);
@@ -499,22 +639,87 @@ impl RuntimeWireCompleteAgentAdmission {
                 local_instance_id.clone(),
             )
             .await;
-        if let Some(previous) = previous {
+        self.recover_pending_placement(&key, &desired).await?;
+        Ok(local_instance_id)
+    }
+
+    async fn recover_pending_placement(
+        &self,
+        key: &(String, String),
+        desired: &DesiredRemotePlacement,
+    ) -> Result<(), RuntimeWireCompleteAgentAdmissionError> {
+        let (active, pending) = {
+            let state = self.state.lock().await;
+            if state.desired.get(key) != Some(desired) {
+                return Err(RuntimeWireCompleteAgentAdmissionError::StaleAdmission);
+            }
+            let active = state
+                .active
+                .get(key)
+                .cloned()
+                .ok_or(RuntimeWireCompleteAgentAdmissionError::StaleAdmission)?;
+            let pending = state
+                .pending_recovery
+                .get(key)
+                .filter(|pending| pending.desired == *desired)
+                .cloned()
+                .ok_or(RuntimeWireCompleteAgentAdmissionError::StaleAdmission)?;
+            (active, pending)
+        };
+        if let Some(previous) = pending.previous {
             self.complete_agent
                 .host
                 .mark_service_bindings_lost(&previous.local_instance_id)
                 .await
-                .map_err(
-                    |error| RuntimeWireCompleteAgentAdmissionError::Registration {
-                        reason: error.to_string(),
-                    },
-                )?;
+                .map_err(|error| RuntimeWireCompleteAgentAdmissionError::Recovery {
+                    reason: error.to_string(),
+                })?;
             previous
                 .placement
                 .close("remote Complete Agent placement was superseded")
                 .await;
         }
-        Ok(local_instance_id)
+        let runtime_threads = self
+            .complete_agent
+            .host
+            .lost_runtime_threads_for_profile(&active.service_profile_digest)
+            .await
+            .map_err(|error| RuntimeWireCompleteAgentAdmissionError::Recovery {
+                reason: error.to_string(),
+            })?;
+        if !runtime_threads.is_empty() {
+            let observer = self.recovery_observer.read().await.clone().ok_or_else(|| {
+                RuntimeWireCompleteAgentAdmissionError::Recovery {
+                    reason: "Product Runtime recovery observer is not installed".to_owned(),
+                }
+            })?;
+            for runtime_thread_id in runtime_threads {
+                observer
+                    .recover(RuntimeWireCompleteAgentRecoveryRequest {
+                        recovery_id: remote_recovery_id(
+                            key,
+                            desired,
+                            &active.local_instance_id,
+                            &runtime_thread_id,
+                        ),
+                        runtime_thread_id,
+                    })
+                    .await
+                    .map_err(|reason| RuntimeWireCompleteAgentAdmissionError::Recovery {
+                        reason,
+                    })?;
+            }
+        }
+        let mut state = self.state.lock().await;
+        if state.desired.get(key) == Some(desired)
+            && state
+                .pending_recovery
+                .get(key)
+                .is_some_and(|pending| pending.desired == *desired)
+        {
+            state.pending_recovery.remove(key);
+        }
+        Ok(())
     }
 
     pub async fn withdraw(
@@ -674,6 +879,30 @@ fn local_instance_id(
     AgentServiceInstanceId::new(format!("remote.{}", &digest[..32])).map_err(trust_error)
 }
 
+fn remote_recovery_id(
+    key: &(String, String),
+    desired: &DesiredRemotePlacement,
+    service_instance_id: &AgentServiceInstanceId,
+    runtime_thread_id: &RuntimeThreadId,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"agentdash.remote-complete-agent-recovery/v1\0");
+    hasher.update(key.0.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(key.1.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(desired.transport_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(desired.revision.to_be_bytes());
+    hasher.update(b"\0");
+    hasher.update(desired.digest.as_str().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(service_instance_id.as_str().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(runtime_thread_id.as_str().as_bytes());
+    format!("remote-complete-agent-recovery:{:x}", hasher.finalize())
+}
+
 fn trust_error(error: impl std::fmt::Display) -> RuntimeWireCompleteAgentAdmissionError {
     RuntimeWireCompleteAgentAdmissionError::TrustConfiguration {
         reason: error.to_string(),
@@ -685,6 +914,27 @@ mod tests {
     use agentdash_agent_runtime_wire::RuntimeWireAdvertisementRevision;
 
     use super::*;
+
+    struct FixturePlacement;
+
+    #[async_trait]
+    impl RuntimeWirePlacement for FixturePlacement {
+        async fn send(
+            &self,
+            _frame: agentdash_agent_runtime_wire::RuntimeWireEnvelope,
+        ) -> Result<(), agentdash_integration_remote_runtime::RemoteRuntimeTransportError> {
+            unreachable!("state-only fixture never sends frames")
+        }
+
+        async fn receive(
+            &self,
+        ) -> Result<
+            agentdash_integration_remote_runtime::RuntimeWirePlacementEvent,
+            agentdash_integration_remote_runtime::RemoteRuntimeTransportError,
+        > {
+            unreachable!("state-only fixture never receives frames")
+        }
+    }
 
     fn fixture() -> (
         PinnedRuntimeWireDeploymentCatalog,
@@ -778,9 +1028,18 @@ mod tests {
         };
         let mut state = RuntimeWireCompleteAgentAdmissionState::default();
 
-        assert!(state.prepare(&key, &epoch_n, &instance).unwrap());
-        assert!(!state.prepare(&key, &epoch_n, &instance).unwrap());
-        assert!(state.prepare(&key, &epoch_n1, &instance).unwrap());
+        assert_eq!(
+            state.prepare(&key, &epoch_n, &instance).unwrap(),
+            RemotePlacementPreparation::Admit
+        );
+        assert_eq!(
+            state.prepare(&key, &epoch_n, &instance).unwrap(),
+            RemotePlacementPreparation::Ignore
+        );
+        assert_eq!(
+            state.prepare(&key, &epoch_n1, &instance).unwrap(),
+            RemotePlacementPreparation::Admit
+        );
         assert_eq!(state.desired.get(&key), Some(&epoch_n1));
         assert_eq!(state.admitting.get(&key), Some(&epoch_n1));
         assert!(matches!(
@@ -802,10 +1061,76 @@ mod tests {
             digest: AgentPayloadDigest::new("sha256:epoch").unwrap(),
         };
         let mut state = RuntimeWireCompleteAgentAdmissionState::default();
-        assert!(state.prepare(&key, &desired, &instance).unwrap());
+        assert_eq!(
+            state.prepare(&key, &desired, &instance).unwrap(),
+            RemotePlacementPreparation::Admit
+        );
 
         assert!(state.withdraw(&key, 7).unwrap().is_none());
         assert!(!state.desired.contains_key(&key));
         assert!(!state.admitting.contains_key(&key));
+    }
+
+    #[test]
+    fn admitted_placement_replays_only_pending_product_recovery() {
+        let key = ("backend-a".to_owned(), "codex".to_owned());
+        let instance = AgentServiceInstanceId::new("remote.fixture").unwrap();
+        let desired = DesiredRemotePlacement {
+            transport_id: "transport-a".to_owned(),
+            revision: 7,
+            digest: AgentPayloadDigest::new("sha256:epoch").unwrap(),
+        };
+        let profile_digest = AgentProfileDigest::new("sha256:profile").unwrap();
+        let active = ActiveRemotePlacement {
+            local_instance_id: instance.clone(),
+            service_profile_digest: profile_digest,
+            profiles: Vec::new(),
+            placement: Arc::new(FixturePlacement),
+        };
+        let mut state = RuntimeWireCompleteAgentAdmissionState::default();
+        state.desired.insert(key.clone(), desired.clone());
+        state.active.insert(key.clone(), active);
+        state.pending_recovery.insert(
+            key.clone(),
+            PendingRemoteRecovery {
+                desired: desired.clone(),
+                previous: None,
+            },
+        );
+
+        assert_eq!(
+            state.prepare(&key, &desired, &instance).unwrap(),
+            RemotePlacementPreparation::RetryRecovery
+        );
+        assert!(!state.admitting.contains_key(&key));
+    }
+
+    #[test]
+    fn recovery_identity_is_stable_per_placement_epoch_and_runtime_thread() {
+        let key = ("backend-a".to_owned(), "codex".to_owned());
+        let desired = DesiredRemotePlacement {
+            transport_id: "transport-a".to_owned(),
+            revision: 7,
+            digest: AgentPayloadDigest::new("sha256:epoch").unwrap(),
+        };
+        let instance = AgentServiceInstanceId::new("remote.fixture").unwrap();
+        let thread = RuntimeThreadId::new("runtime-thread-a").unwrap();
+
+        assert_eq!(
+            remote_recovery_id(&key, &desired, &instance, &thread),
+            remote_recovery_id(&key, &desired, &instance, &thread)
+        );
+        assert_ne!(
+            remote_recovery_id(&key, &desired, &instance, &thread),
+            remote_recovery_id(
+                &key,
+                &DesiredRemotePlacement {
+                    revision: 8,
+                    ..desired
+                },
+                &instance,
+                &thread
+            )
+        );
     }
 }

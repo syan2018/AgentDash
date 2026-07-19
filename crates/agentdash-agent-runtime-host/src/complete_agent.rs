@@ -1189,6 +1189,25 @@ impl CompleteAgentHost {
         }
     }
 
+    pub async fn lost_runtime_threads_for_profile(
+        &self,
+        profile_digest: &AgentProfileDigest,
+    ) -> Result<Vec<RuntimeThreadId>, CompleteAgentHostError> {
+        let facts = self.repository.load().await?.facts;
+        Ok(facts
+            .runtime_targets
+            .iter()
+            .filter(|(_, target)| &target.profile_digest == profile_digest)
+            .filter(|(thread_id, target)| {
+                runtime_binding_id(thread_id, target.generation)
+                    .ok()
+                    .and_then(|binding_id| facts.bindings.get(&binding_id))
+                    .is_some_and(|binding| binding.state == CompleteAgentBindingState::Lost)
+            })
+            .map(|(thread_id, _)| thread_id.clone())
+            .collect())
+    }
+
     pub async fn dispatch_execute(
         &self,
         lease: &CompleteAgentBindingLease,
@@ -4212,6 +4231,12 @@ mod tests {
             .await
             .expect("mark previous service bindings lost");
         assert_eq!(lost_threads, vec![runtime_thread_id.clone()]);
+        assert_eq!(
+            host.lost_runtime_threads_for_profile(&descriptor().profile_digest)
+                .await
+                .expect("query lost RuntimeThreads"),
+            vec![runtime_thread_id.clone()]
+        );
         let replacement_instance_id =
             AgentServiceInstanceId::new("lifecycle-service-replacement").expect("service");
         host.register_verified_service(
@@ -4232,10 +4257,8 @@ mod tests {
             service_instance_id: replacement_instance_id,
             desired_surface: AgentSurfaceSnapshot {
                 revision: AgentSurfaceRevision(2),
-                digest: agentdash_agent_service_api::AgentSurfaceDigest::new(
-                    "surface-recovered",
-                )
-                .expect("surface"),
+                digest: agentdash_agent_service_api::AgentSurfaceDigest::new("surface-recovered")
+                    .expect("surface"),
                 requirements: Vec::new(),
             },
             callback_deadline_ms: 2_000,

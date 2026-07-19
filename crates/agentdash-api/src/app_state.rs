@@ -80,7 +80,8 @@ use crate::integrations::{builtin_integrations, collect_integration_registration
 use crate::project_projection_notification::ProjectProjectionNotificationPublisher;
 use crate::relay::{
     PinnedRuntimeWireDeploymentCatalog, RelayAgentRunTerminalProjectionProducer,
-    RelayAgentRunTerminalSourceReconcile, RuntimeWireCompleteAgentAdmission,
+    ProductRuntimeWireCompleteAgentRecoveryObserver, RelayAgentRunTerminalSourceReconcile,
+    RuntimeWireCompleteAgentAdmission,
     registry::BackendRegistry, runtime_wire::CloudRuntimeWirePlacementRegistry,
 };
 
@@ -443,6 +444,15 @@ impl AppState {
                 product_resource_materializer,
                 product_persistence.applied_resource_surfaces.clone(),
             ));
+        runtime_wire_complete_agents
+            .install_recovery_observer(Arc::new(
+                ProductRuntimeWireCompleteAgentRecoveryObserver::new(
+                    complete_agent.runtime.clone(),
+                    runtime_product_bindings.clone(),
+                    product_recovery.clone(),
+                ),
+            ))
+            .await;
         let lifecycle_surface_projection =
             Arc::new(AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
                 repos.skill_asset_repo.clone(),

@@ -548,6 +548,7 @@ impl CompleteAgentService for FixtureService {
             },
             applied_surface: self.applied_surface.lock().await.clone(),
             initial_context: None,
+            conversation_history: Vec::new(),
         })
     }
 

@@ -1,22 +1,20 @@
 [package]
-name = "agentdash-application-ports"
+name = "agentdash-application-hooks"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+agentdash-application-ports = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }
-agentdash-agent-protocol = { workspace = true }
+agentdash-diagnostics = { workspace = true }
 agentdash-domain = { workspace = true }
-agentdash-relay = { workspace = true }
 agentdash-platform-spi = { workspace = true }
 async-trait = "0.1"
-chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-schemars = { workspace = true }
-ts-rs = { workspace = true }
-sha2 = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
 uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

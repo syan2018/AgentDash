@@ -17,6 +17,7 @@ members = [
     "crates/agentdash-application-agentrun",
     "crates/agentdash-application-lifecycle",
     "crates/agentdash-application-workflow",
+    "crates/agentdash-application-hooks",
     "crates/agentdash-application-shared-library",
     "crates/agentdash-diagnostics",
     "crates/agentdash-test-support",
@@ -115,6 +116,7 @@ agentdash-application-skill = { path = "crates/agentdash-application-skill" }
 agentdash-application-agentrun = { path = "crates/agentdash-application-agentrun" }
 agentdash-application-lifecycle = { path = "crates/agentdash-application-lifecycle" }
 agentdash-application-workflow = { path = "crates/agentdash-application-workflow" }
+agentdash-application-hooks = { path = "crates/agentdash-application-hooks" }
 agentdash-application-shared-library = { path = "crates/agentdash-application-shared-library" }
 agentdash-diagnostics = { path = "crates/agentdash-diagnostics" }
 agentdash-test-support = { path = "crates/agentdash-test-support" }

@@ -270,6 +270,7 @@ name = "agentdash-application"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent",
+ "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
  "agentdash-application-agentrun",
@@ -326,6 +327,8 @@ dependencies = [
  "agentdash-agent-runtime-contract",
  "agentdash-agent-service-api",
  "agentdash-application-ports",
+ "agentdash-application-skill",
+ "agentdash-application-vfs",
  "agentdash-application-workflow",
  "agentdash-contracts",
  "agentdash-diagnostics",
@@ -365,6 +368,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-application-hooks"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-runtime-contract",
+ "agentdash-application-ports",
+ "agentdash-diagnostics",
+ "agentdash-domain",
+ "agentdash-platform-spi",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "agentdash-application-lifecycle"
 version = "0.1.0"
 dependencies = [
@@ -387,6 +407,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -398,6 +419,7 @@ dependencies = [
 name = "agentdash-application-ports"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-domain",
  "agentdash-platform-spi",

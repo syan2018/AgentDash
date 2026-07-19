@@ -1,0 +1,94 @@
+use agentdash_domain::{
+    agent::ProjectAgent,
+    common::{AgentConfig, AgentPresetConfig},
+    project::Project,
+    workspace::{Workspace, WorkspaceRepository},
+};
+
+pub const PROJECT_AGENT_BINDING_LABEL_PREFIX: &str = "project_agent:";
+
+#[derive(Debug, Clone)]
+pub struct ResolvedProjectAgentContext {
+    pub key: String,
+    pub display_name: String,
+    pub description: String,
+    pub executor_config: agentdash_platform_spi::AgentConfig,
+    pub preset_config: AgentPresetConfig,
+    pub preset_name: Option<String>,
+    pub source: String,
+    pub project_agent: ProjectAgent,
+}
+
+pub async fn resolve_project_workspace(
+    workspace_repo: &dyn WorkspaceRepository,
+    project: &Project,
+) -> Result<Option<Workspace>, String> {
+    if let Some(workspace_id) = project.config.default_workspace_id {
+        return workspace_repo
+            .get_by_id(workspace_id)
+            .await
+            .map_err(|error| error.to_string());
+    }
+    Ok(None)
+}
+
+pub async fn build_project_agent_context(
+    agent: &ProjectAgent,
+) -> Result<ResolvedProjectAgentContext, String> {
+    let preset = agent.preset_config().map_err(|error| error.to_string())?;
+    let executor_config: AgentConfig = preset.to_agent_config(&agent.agent_type);
+    let display_name = preset
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&agent.name)
+        .to_string();
+    let description = preset
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
+
+    Ok(ResolvedProjectAgentContext {
+        key: agent.id.to_string(),
+        display_name,
+        description,
+        executor_config,
+        preset_config: preset,
+        preset_name: Some(agent.name.clone()),
+        source: format!("project_agents[{}]", agent.id),
+        project_agent: agent.clone(),
+    })
+}
+
+pub fn merge_executor_config_fields(
+    mut base: agentdash_platform_spi::AgentConfig,
+    override_config: &agentdash_platform_spi::AgentConfig,
+) -> agentdash_platform_spi::AgentConfig {
+    base.executor = override_config.executor.clone();
+    if override_config.provider_id.is_some() {
+        base.provider_id = normalize_option_string(override_config.provider_id.clone());
+    }
+    if override_config.model_id.is_some() {
+        base.model_id = normalize_option_string(override_config.model_id.clone());
+    }
+    if override_config.agent_id.is_some() {
+        base.agent_id = normalize_option_string(override_config.agent_id.clone());
+    }
+    if override_config.thinking_level.is_some() {
+        base.thinking_level = override_config.thinking_level;
+    }
+    if override_config.system_prompt.is_some() {
+        base.system_prompt = normalize_option_string(override_config.system_prompt.clone());
+    }
+    base
+}
+
+fn normalize_option_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}

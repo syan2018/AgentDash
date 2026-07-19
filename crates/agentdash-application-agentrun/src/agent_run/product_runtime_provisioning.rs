@@ -14,6 +14,17 @@ pub struct ProductExecutionProfileRef {
     pub profile_revision: u64,
     pub profile_digest: String,
     pub configuration: serde_json::Value,
+    /// Stable Product authorization reference used by the Complete Agent
+    /// adapter to resolve credentials at execution time. Secrets never enter
+    /// AgentFrame or Managed Runtime persistence.
+    pub credential_scope: Option<ProductCredentialScopeRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductCredentialScopeRef {
+    pub owner_kind: String,
+    pub owner_id: String,
+    pub credential_ref: String,
 }
 
 /// Product-owned AgentFrame revision 引用。
@@ -66,10 +77,7 @@ impl AgentRunProductRuntimeProvisioningRequest {
                 "profile_digest",
                 self.execution_profile.profile_digest.as_str(),
             ),
-            (
-                "surface_digest",
-                self.surface_facts.surface_digest.as_str(),
-            ),
+            ("surface_digest", self.surface_facts.surface_digest.as_str()),
         ] {
             if value.trim().is_empty() {
                 return Err(AgentRunProductRuntimeProvisioningError::InvalidRequest {
@@ -144,6 +152,7 @@ mod tests {
                 profile_revision: 1,
                 profile_digest: "sha256:profile".to_owned(),
                 configuration: serde_json::json!({"executor": "DASH_AGENT"}),
+                credential_scope: None,
             },
             surface_facts: ProductAgentSurfaceFacts {
                 surface_revision: 1,

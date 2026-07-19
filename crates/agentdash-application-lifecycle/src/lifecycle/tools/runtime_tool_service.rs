@@ -11,6 +11,11 @@ use crate::lifecycle::{
 
 use super::advance_node::{CompleteLifecycleNodeParams, StepOutcome};
 
+pub fn complete_lifecycle_node_parameters_schema() -> serde_json::Value {
+    serde_json::to_value(schemars::schema_for!(CompleteLifecycleNodeParams))
+        .unwrap_or_else(|_| serde_json::json!({ "type": "object" }))
+}
+
 #[async_trait]
 impl ProductRuntimeToolService for LifecycleOrchestrator {
     fn kind(&self) -> ProductRuntimeToolKind {
@@ -18,8 +23,7 @@ impl ProductRuntimeToolService for LifecycleOrchestrator {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(CompleteLifecycleNodeParams))
-            .unwrap_or_else(|_| serde_json::json!({ "type": "object" }))
+        complete_lifecycle_node_parameters_schema()
     }
 
     async fn execute(&self, request: ProductRuntimeToolRequest) -> ProductRuntimeToolOutcome {

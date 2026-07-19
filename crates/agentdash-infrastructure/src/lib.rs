@@ -99,9 +99,10 @@ pub use runtime_tool_authorization::{
     RuntimeToolProductBindingQueryPort,
 };
 pub use runtime_tool_executors::{
-    FsApplyPatchRuntimeTool, FsGlobRuntimeTool, FsGrepRuntimeTool, FsReadRuntimeTool,
-    MountsListRuntimeTool, RuntimeTaskReadTool, RuntimeTaskWriteTool, ShellExecRuntimeTool,
-    WorkspaceModulePresentRuntimeTool, final_runtime_tool_catalog,
+    DeferredProductRuntimeToolService, FsApplyPatchRuntimeTool, FsGlobRuntimeTool,
+    FsGrepRuntimeTool, FsReadRuntimeTool, MountsListRuntimeTool, ProductCommandRuntimeTool,
+    RuntimeTaskReadTool, RuntimeTaskWriteTool, ShellExecRuntimeTool,
+    WorkspaceModulePresentRuntimeTool, final_runtime_tool_catalog, product_runtime_tool_catalog,
 };
 pub use script_runtime::{RhaiScriptLimits, RhaiScriptRuntime};
 pub use secret::LlmProviderSecretCipher;

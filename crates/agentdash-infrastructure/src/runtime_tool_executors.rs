@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeSet,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -60,6 +60,63 @@ pub fn product_runtime_tool_catalog(
             Arc::new(ProductCommandRuntimeTool::new(service)) as Arc<dyn RuntimeToolExecutor>
         })
         .collect()
+}
+
+pub struct DeferredProductRuntimeToolService {
+    kind: ProductRuntimeToolKind,
+    parameters_schema: serde_json::Value,
+    service: OnceLock<Arc<dyn ProductRuntimeToolService>>,
+}
+
+impl DeferredProductRuntimeToolService {
+    pub fn new(kind: ProductRuntimeToolKind, parameters_schema: serde_json::Value) -> Self {
+        Self {
+            kind,
+            parameters_schema,
+            service: OnceLock::new(),
+        }
+    }
+
+    pub fn install(&self, service: Arc<dyn ProductRuntimeToolService>) -> Result<(), String> {
+        if service.kind() != self.kind {
+            return Err(format!(
+                "Product runtime tool binding kind mismatch: expected {:?}, received {:?}",
+                self.kind,
+                service.kind()
+            ));
+        }
+        self.service
+            .set(service)
+            .map_err(|_| format!("Product runtime tool {:?} is already installed", self.kind))
+    }
+
+    pub fn is_installed(&self) -> bool {
+        self.service.get().is_some()
+    }
+}
+
+#[async_trait]
+impl ProductRuntimeToolService for DeferredProductRuntimeToolService {
+    fn kind(&self) -> ProductRuntimeToolKind {
+        self.kind
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.parameters_schema.clone()
+    }
+
+    async fn execute(&self, request: ProductRuntimeToolRequest) -> ProductRuntimeToolOutcome {
+        let Some(service) = self.service.get().cloned() else {
+            return ProductRuntimeToolOutcome::Failed {
+                code: "product_runtime_tool_not_installed".to_owned(),
+                message: format!(
+                    "Product runtime tool {:?} has not completed application composition",
+                    self.kind
+                ),
+            };
+        };
+        service.execute(request).await
+    }
 }
 
 pub struct ProductCommandRuntimeTool {

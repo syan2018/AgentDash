@@ -28,6 +28,7 @@ use agentdash_application::routine::{RoutineExecutor, RoutineRuntimeTurnTerminal
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::task::tools::ApplicationRuntimeTaskToolService;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
+use agentdash_application::wait_activity::WaitActivityService;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommandFacade, AgentRunProductInputDeliveryPort,
     AgentRunProductInputDeliveryService, AgentRunProductLaunchService,
@@ -50,6 +51,9 @@ use agentdash_application_lifecycle::{
     LifecycleOrchestrator, LifecycleOrchestratorDeps, LifecycleRuntimeTurnTerminalObserver,
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+use agentdash_application_ports::product_runtime_tool::{
+    ProductRuntimeToolKind, ProductRuntimeToolService,
+};
 use agentdash_application_vfs::{
     AppliedVfsRuntimeToolService, MountProviderRegistry, VfsMutationDispatcher, VfsService,
 };
@@ -62,16 +66,16 @@ use agentdash_infrastructure::{
 };
 use agentdash_infrastructure::{
     CompleteAgentComposition, CompleteAgentProductRuntimeProvisioner,
-    CompleteAgentServiceSelectionCatalog, PinnedCompleteAgentVerificationCatalog,
-    PostgresAgentRunForkSagaRepository, PostgresAgentRunMailboxRepository,
-    PostgresAgentRunProductRuntimeBindingRepository,
+    CompleteAgentServiceSelectionCatalog, DeferredProductRuntimeToolService,
+    PinnedCompleteAgentVerificationCatalog, PostgresAgentRunForkSagaRepository,
+    PostgresAgentRunMailboxRepository, PostgresAgentRunProductRuntimeBindingRepository,
     PostgresAgentRunProductRuntimeRecoverySagaRepository, PostgresAgentRunTerminalProjectionStore,
     PostgresCompanionContinuationSagaRepository, PostgresCompanionFreshSagaRepository,
     PostgresWorkflowAgentCallRepository, PostgresWorkflowExecutorEffectRepository,
     PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
     ProcessShellTerminalRegistry, ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
     ProductionCompleteAgentServiceSelector, WorkspaceModulePresentRuntimeTool,
-    final_runtime_tool_catalog,
+    final_runtime_tool_catalog, product_runtime_tool_catalog,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, AuthMode, MarketplaceSourceProvider, MemoryDiscoveryProvider,
@@ -298,6 +302,18 @@ impl AppState {
             workspace_module_presentations.clone(),
         ));
         let shell_terminal_registry = Arc::new(ProcessShellTerminalRegistry::default());
+        let wait_activity_service = Arc::new(WaitActivityService::from_repositories(
+            repos.lifecycle_agent_repo.clone(),
+            repos.agent_frame_repo.clone(),
+            runtime_product_bindings.clone(),
+            repos.lifecycle_gate_repo.clone(),
+            Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone())),
+            shell_terminal_registry.activity_registry(),
+        ));
+        let lifecycle_runtime_tool = Arc::new(DeferredProductRuntimeToolService::new(
+            ProductRuntimeToolKind::CompleteLifecycleNode,
+            agentdash_application_lifecycle::tools::complete_lifecycle_node_parameters_schema(),
+        ));
         let applied_vfs_tools = Arc::new(
             AppliedVfsRuntimeToolService::new(vfs_service.clone(), shell_terminal_registry.clone())
                 .with_materialization(Some(vfs_materialization_service))
@@ -309,11 +325,16 @@ impl AppState {
                 runtime_product_bindings.clone(),
                 workspace_module_presentation_commands,
             ));
-        let runtime_tool_catalog: Vec<Arc<dyn RuntimeToolExecutor>> = final_runtime_tool_catalog(
-            applied_vfs_tools,
-            runtime_task_tools,
-            workspace_module_present_tool,
-        );
+        let mut runtime_tool_catalog: Vec<Arc<dyn RuntimeToolExecutor>> =
+            final_runtime_tool_catalog(
+                applied_vfs_tools,
+                runtime_task_tools,
+                workspace_module_present_tool,
+            );
+        runtime_tool_catalog.extend(product_runtime_tool_catalog(vec![
+            wait_activity_service.clone() as Arc<dyn ProductRuntimeToolService>,
+            lifecycle_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+        ]));
         let runtime_tool_authorizer = Arc::new(ProductRuntimeToolAuthorizer::new(
             runtime_product_bindings.clone(),
             product_persistence.applied_resource_surfaces.clone(),
@@ -591,6 +612,9 @@ impl AppState {
                 inline_file_repo: repos.inline_file_repo.clone(),
                 orchestration_launcher: orchestration_executor_launcher.clone(),
             }));
+        lifecycle_runtime_tool
+            .install(lifecycle_orchestrator.clone())
+            .map_err(anyhow::Error::msg)?;
         product
             .register_runtime_change_observer(Arc::new(LifecycleRuntimeTurnTerminalObserver::new(
                 product.gateway.clone(),

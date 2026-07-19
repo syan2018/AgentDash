@@ -621,6 +621,7 @@ fn static_tool_enabled(capability_state: &CapabilityState, name: &str) -> bool {
         "workspace_module_present" => ToolCluster::WorkspaceModule,
         "companion_request" | "companion_respond" => ToolCluster::Collaboration,
         "complete_lifecycle_node" => ToolCluster::Workflow,
+        "wait" => ToolCluster::Collaboration,
         _ => return false,
     };
     capability_state.has(cluster)

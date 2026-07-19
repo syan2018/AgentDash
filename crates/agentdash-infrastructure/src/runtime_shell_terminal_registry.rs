@@ -3,6 +3,7 @@ use std::{
     sync::{PoisonError, RwLock},
 };
 
+use agentdash_application_agentrun::agent_run::{AgentRunTerminalRegistry, TerminalOutputSnapshot};
 use agentdash_application_vfs::{
     ShellSessionOutputChunk,
     tools::{ShellTerminalOutputSnapshot, ShellTerminalRegistration, ShellTerminalRegistry},
@@ -21,13 +22,27 @@ pub struct ProcessShellTerminalOutput {
     pub chunks: Option<Vec<ShellSessionOutputChunk>>,
 }
 
-#[derive(Default)]
 pub struct ProcessShellTerminalRegistry {
     registrations: RwLock<BTreeMap<String, ShellTerminalRegistration>>,
     outputs: RwLock<BTreeMap<String, ProcessShellTerminalOutput>>,
+    activity: std::sync::Arc<AgentRunTerminalRegistry>,
+}
+
+impl Default for ProcessShellTerminalRegistry {
+    fn default() -> Self {
+        Self {
+            registrations: RwLock::new(BTreeMap::new()),
+            outputs: RwLock::new(BTreeMap::new()),
+            activity: AgentRunTerminalRegistry::new(),
+        }
+    }
 }
 
 impl ProcessShellTerminalRegistry {
+    pub fn activity_registry(&self) -> std::sync::Arc<AgentRunTerminalRegistry> {
+        self.activity.clone()
+    }
+
     pub fn output_snapshot(&self, terminal_id: &str) -> Option<ProcessShellTerminalOutput> {
         self.outputs
             .read()
@@ -50,6 +65,17 @@ impl ProcessShellTerminalRegistry {
 
 impl ShellTerminalRegistry for ProcessShellTerminalRegistry {
     fn register_shell_terminal(&self, registration: ShellTerminalRegistration) {
+        self.activity.register_runtime_terminal_with_metadata(
+            registration.owner.run_id,
+            registration.owner.agent_id,
+            &registration.owner.runtime_thread_id,
+            &registration.terminal_id,
+            &registration.backend_id,
+            None,
+            Some(&registration.mount_id),
+            Some(&registration.cwd),
+            Some(&registration.capability),
+        );
         self.registrations
             .write()
             .unwrap_or_else(PoisonError::into_inner)
@@ -73,6 +99,18 @@ impl ShellTerminalRegistry for ProcessShellTerminalRegistry {
         {
             return;
         }
+        self.activity
+            .update_state(snapshot.terminal_id, snapshot.state, snapshot.exit_code);
+        self.activity
+            .record_output_snapshot(TerminalOutputSnapshot {
+                terminal_id: snapshot.terminal_id,
+                stdout: snapshot.stdout,
+                stderr: snapshot.stderr,
+                pty: snapshot.pty,
+                next_seq: snapshot.next_seq,
+                truncated: snapshot.truncated,
+                omitted_bytes: snapshot.omitted_bytes,
+            });
         self.outputs
             .write()
             .unwrap_or_else(PoisonError::into_inner)
@@ -93,6 +131,7 @@ impl ShellTerminalRegistry for ProcessShellTerminalRegistry {
     }
 
     fn remove_shell_terminal(&self, terminal_id: &str) {
+        self.activity.remove_terminal(terminal_id);
         self.registrations
             .write()
             .unwrap_or_else(PoisonError::into_inner)

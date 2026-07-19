@@ -5,8 +5,8 @@
 
 CREATE TABLE agent_run_product_runtime_recovery_saga (
     recovery_id TEXT PRIMARY KEY CHECK (btrim(recovery_id) <> ''),
-    target_run_id UUID NOT NULL,
-    target_agent_id UUID NOT NULL,
+    target_run_id TEXT NOT NULL CHECK (btrim(target_run_id) <> ''),
+    target_agent_id TEXT NOT NULL CHECK (btrim(target_agent_id) <> ''),
     client_command_id TEXT NOT NULL CHECK (
         btrim(client_command_id) <> '' AND length(client_command_id) <= 256
     ),

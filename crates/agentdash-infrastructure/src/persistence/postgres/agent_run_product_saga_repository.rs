@@ -371,8 +371,8 @@ impl AgentRunProductRuntimeRecoverySagaRepository
              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         )
         .bind(saga.recovery_id().as_str())
-        .bind(saga.target().run_id)
-        .bind(saga.target().agent_id)
+        .bind(saga.target().run_id.to_string())
+        .bind(saga.target().agent_id.to_string())
         .bind(saga.client_command_id())
         .bind(saga.runtime_thread_id().as_str())
         .bind(string_field(&value, "phase").map_err(runtime_recovery_unavailable)?)

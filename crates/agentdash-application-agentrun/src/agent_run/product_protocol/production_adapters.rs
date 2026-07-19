@@ -2362,7 +2362,7 @@ mod tests {
         *summary = "different typed content".to_owned();
         let canonical = serde_json::to_vec(&(
             content.package_id,
-            content.schema_version,
+            content.schema_version.to_string(),
             content.mode,
             &content.contributions,
         ))

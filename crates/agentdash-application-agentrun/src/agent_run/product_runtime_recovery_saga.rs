@@ -235,13 +235,20 @@ impl AgentRunProductRuntimeRecoverySaga {
     ) -> Result<Self, String> {
         self.require_phase(AgentRunProductRuntimeRecoveryPhase::ResourceMaterialized)?;
         self.validate_receipt(&receipt, &self.activate_identity)?;
+        let activated_at_revision = activated_binding
+            .source_binding
+            .activated_at_revision
+            .ok_or_else(|| {
+                "Activation evidence does not match the durable recovery intent".to_string()
+            })?;
+        let mut pre_activation_binding = activated_binding.clone();
+        pre_activation_binding
+            .source_binding
+            .activated_at_revision = None;
         if activated_binding.target != self.target
             || activated_binding.runtime_thread_id != self.runtime_thread_id
-            || activated_binding
-                .source_binding
-                .activated_at_revision
-                .is_none()
-            || activated_binding.calculated_digest()?
+            || activated_at_revision != receipt.accepted_revision
+            || pre_activation_binding.calculated_digest()?
                 != self
                     .prepared_binding_digest
                     .as_deref()
@@ -453,16 +460,20 @@ mod tests {
         )
         .unwrap();
         let rebind_receipt = receipt(saga.rebind_identity(), 12);
+        let prepared_binding = binding(target.clone(), None);
         let saga = saga
-            .record_rebind_applied(rebind_receipt, binding(target.clone(), None))
+            .record_rebind_applied(rebind_receipt, prepared_binding.clone())
             .unwrap()
             .record_product_binding_prepared()
             .unwrap()
             .record_resource_materialized(4)
             .unwrap();
         let activate_receipt = receipt(saga.activate_identity(), 13);
+        let mut activated_binding = prepared_binding;
+        activated_binding.source_binding.activated_at_revision =
+            Some(RuntimeProjectionRevision(13));
         let saga = saga
-            .record_runtime_activated(activate_receipt, binding(target, Some(13)))
+            .record_runtime_activated(activate_receipt, activated_binding)
             .unwrap()
             .record_succeeded()
             .unwrap();

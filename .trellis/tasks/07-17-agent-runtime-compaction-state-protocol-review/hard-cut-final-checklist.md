@@ -188,15 +188,19 @@ Negative evidence:
 - [ ] `session_persistence` 中仍被 Product 使用的 capability transition、
   `RuntimeCommandRecord`、`SessionStoreError` 先迁到 AgentRun/Application owner；
   在消费者归零前不删除 module。
-- [ ] `RuntimeToolProvider` / AgentTool wrappers 当前仍有 Product caller；等待 final
-  Product callback/catalog tracer 后，只删除 SPI provider/re-export 壳，不删除
-  Companion、Workflow、Wait、VFS 或其它 Product 工具业务。
+- [ ] 旧 `RuntimeToolProvider` 与 Application-side composer/adapter 当前仍有 Product
+  caller；等待 final Product callback/catalog tracer 后，只删除 SPI
+  provider/re-export 与已被 typed Broker executor 替代的接入壳。Agent Core 的
+  `AgentTool` contract、各 Product tool command/业务实现，以及 Companion、Workflow、
+  Wait、VFS 等能力本体均保留。
 
 #### 明确保留
 
 - [x] `agentdash-agent-protocol` 保留为 canonical App Server extension +
   conversation carrier；它不是 universal journal。
 - [x] `agentdash-application-hooks` crate 保留 Product hook ownership。
+- [x] `agentdash-agent::AgentTool` 保留为 Agent Core 可调用工具的极简合同；它不因旧
+  Application `RuntimeToolProvider` 接入壳被替代而进入 deletion manifest。
 - [x] `BackboneEnvelope` 不按名称判定为旧 journal，按真实 producer/consumer 审计。
 - [x] Companion、Frame、Routine、Workflow、Workspace、Canvas、Terminal、Wait、
   Lifecycle 不进入 Runtime deletion manifest。

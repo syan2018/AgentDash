@@ -565,20 +565,45 @@ S5 的稳定结果只有一种：所有 production callers 指向 final Runtime/
 
 ## 12. Multi-agent 派发流程
 
+当前执行以 `final-convergence-closeout.md` 的 C0–C6 为唯一前向流程。多 Agent 只用于并行
+闭合完整纵向结果，不把设计决策集中到 main，也不把实现拆成逐项 handoff/check 流水线。
+
+执行模型：
+
+```text
+Main + up to 3 peer implementation owners
+  -> 共享最终目标、架构不变量与当前分支
+  -> 每个 owner 自主完成 research / design / implementation / focused verification
+  -> owner 间直接协调共享热点
+  -> 在 C1–C6 真实纵向 checkpoint 做一次整体验收
+```
+
+当前三个并行结果：
+
+| Peer owner | 完整结果 |
+| --- | --- |
+| Product Runtime Closure | Product modules/routes/composition/tests 恢复并接 final seams |
+| Complete Agent Production Closure | Native/Codex/Remote、Runtime/Host 与核心 capability production path |
+| Read Model Convergence | canonical conversation、Lifecycle VFS、frontend/Product read models 与 crate convergence |
+
+Main 同时作为一线实现者处理共享 composition、migration、Cargo/generated roots、跨结果
+接缝与最终 tracer，不充当逐步骤审批者。每个 owner 可以依据代码事实扩大文件范围、修订
+局部设计并完成必要测试；只有产品语义确实不明确或同一热点正在并发写入时才需要协调。
+
 ### 12.1 角色
 
 | Role | Responsibility | Write authority |
 | --- | --- | --- |
-| Main integrator | 冻结父合同、直接处理集成与跨层实现、分配有利于效率的 ownership、维护真实进度、形成 checkpoint、向用户升级决策 | 当前任务分支全部文件；与运行中 subagent 避免同时编辑同一热点 |
-| Implement subagent | 完成一个粗粒度纵向 bundle，可在 bundle 内调整内部拆分和文件范围 | brief 中的 ownership zone 与经 main 授权的共享热点 |
-| Check subagent | 独立检查整个 bundle 的完整 data flow、依赖方向与稳定边界；经 main 确认后自修边界清晰的问题并复跑 affected gates | brief 授权的 check/fix scope；跨 bundle 或核心语义变更需重新分配 ownership |
-| Hard Cut implementer | 在当前任务分支完成 production composition、migration、consumer rewiring 与 deletion | W8-owned migration、workspace/composition、deletion files |
-| W9 conformance owner | 增加 fault/conformance tests 与最终 specs | W9-owned tests/specs |
+| Main peer | 直接实现共享热点与跨层接缝，维护真实进度并形成 checkpoint | 当前任务分支全部文件；与其它 peer 即时协调同一热点 |
+| Product Runtime peer | 自主闭合 Product application 到 Runtime/Product owners 的完整路径 | 为完成该纵向结果所需的全部文件 |
+| Complete Agent peer | 自主闭合 Runtime/Host/Native/Codex/Remote production path | 为完成该纵向结果所需的全部文件 |
+| Read Model peer | 自主闭合 canonical/Product read models、VFS、frontend 与相关物理收敛 | 为完成该纵向结果所需的全部文件 |
+| Final conformance peer | 在 C6 从最终目标做一次全局 fault/conformance/spec 验收 | tests/specs 与经协调的直接修复 |
 | User | 产品语义、风险边界与最终开始/收敛批准 | 不处理仓库可回答的实现事实 |
 
-主会话同时承担 integration owner 与实现责任：能够直接修复跨包路径、补齐遗漏 consumer
-和运行验证。Subagent 只在粗粒度纵向任务能够并行提高效率时使用，并获得 bundle 内充分
-的评估与执行自由；不为了对应 workstream 编号制造形式化拆分。
+四个 implementation peers 共享同一目标和决策权。各自从代码与契约直接得出实现方案，
+完成后自行运行 focused verification；跨结果接缝由最先遇到问题且具备上下文的 peer
+直接修复或与相关 peer 协作完成。
 
 ### 12.2 内嵌 subagent 组织
 
@@ -598,18 +623,15 @@ task name：
 
 ```text
 main
-platform_runtime_impl / platform_runtime_check
-dash_native_impl / dash_native_check
-external_agents_impl / external_agents_check
-product_protocol_impl / product_protocol_check
-hard_cut_impl / cutover_architecture_check / cutover_behavior_check
-final_conformance_impl / final_conformance_check
+product_runtime_closure
+complete_agent_production_closure
+read_model_convergence
+final_conformance
 ```
 
-Implement 使用内嵌 `trellis-implement` agent type，check 使用独立的
-`trellis-check` agent type。Main 直接读取 subagent final/mailbox result，并把 checkpoint
-状态和 handoff 摘要写入 task-local `dispatch-status.md`；该文件是实施期协调记录，不是
-新的业务事实源。
+每个 peer 直接承担实现与 focused verification。Main 与 peers 把 checkpoint 状态和实际
+证据写入 task-local `dispatch-status.md`；该文件是实施期协调记录，不是新的业务事实源。
+C6 再启动一次面向完整目标的 final conformance，而不是为每个局部 diff 创建 checker。
 
 当前并发预算按 **1 个 main + 最多 3 个 subagent** 安排。Subagent 结束或进入不再需要
 上下文的阶段后释放 slot；同一时间不为等待依赖的包占用 active slot。
@@ -617,9 +639,9 @@ Implement 使用内嵌 `trellis-implement` agent type，check 使用独立的
 所有内嵌 subagent 共享文件系统。Main 的每份 brief 写明粗粒度 ownership zone，并要求：
 
 - 不回退或覆盖其它会话/agent 已有修改；
-- bundle 内可自行重排模块、补齐调用方、测试和必要 supporting files；
-- 发现 bundle 外依赖时向 main 申请临时 ownership transfer，避免两个 agent 同时编辑；
-- 除非 main 明确授权，不再向下派生子 agent。
+- 围绕完整结果自行研究、设计、重排模块、补齐调用方、测试和 supporting files；
+- 发现跨结果依赖时直接与相关 peer 协调，具备上下文的一方继续完成；
+- 同一共享热点发生并发编辑时即时告知并决定先后顺序。
 
 只对以下共享热点设置严格串行 ownership：
 
@@ -632,259 +654,91 @@ Implement 使用内嵌 `trellis-implement` agent type，check 使用独立的
 
 其它文件以完整纵向结果为目标，不预先把边界切到函数或单文件粒度。
 
-### 12.3 Context injection
+### 12.3 Context 与决策权
 
-Implement subagent 至少接收：
+每个 peer 至少接收并自行完整阅读：
 
-- 父 `prd.md`、`design.md`、`implement.md`；
-- 本文确认后形成的 stable-boundary 规范；
-- bundle 覆盖的全部 `workstreams/<id>/prd.md`；
-- 根 manifest 与 bundle 内各工作包 `implement.jsonl` 的并集；
-- ownership zone、共享热点当前 owner、base revision 与前置 checkpoint；
-- 当前已经通过的 baseline/tracer-bullet 命令。
+- `prd.md`、`design.md`、`transition-architecture.md`、`implement.md`；
+- `final-convergence-closeout.md`；
+- 相关 archived task 与 specs；
+- 当前 HEAD、工作树和 production tracer evidence。
 
-Check subagent 至少接收：
-
-- 同一父 artifacts 与 stable-boundary 规范；
-- 根 manifest 与 bundle 内各工作包 `check.jsonl` 的并集；
-- implement subagent 的 handoff；
-- bundle diff scope 与实际触碰的共享热点；
-- 已运行命令和未运行命令；
-- 当前 checkpoint 必须保持的 production tracer bullet。
-
-Implement 与 check 使用不同 subagent/session，以保持判断独立。Checker 发现问题后先
-报告 owner、影响路径、复现证据与所需 gate；main 确认范围后，checker 可以直接修复
-局部、确定且不改变跨 bundle 合同/状态权威的问题，并复跑 affected gates。需要补齐大块
-实现、改变公共合同或跨越 ownership zone 的 finding 仍路由到 owning bundle。
+brief 只固定最终结果、架构不变量和共享分支事实，不预先决定文件清单、内部实现顺序或
+技术细节。Peer 对纵向结果拥有完整决策权，并负责把发现直接落实为实现和验证。
 
 ### 12.4 派发图
 
 ```mermaid
 flowchart TD
-    MAIN["Main dispatcher"]
+    GOAL["Final convergence goal"]
+    MAIN["Main peer<br/>shared seams · integration"]
+    PRODUCT["Product Runtime Closure"]
+    AGENT["Complete Agent Production Closure"]
+    READ["Read Model Convergence"]
+    C1["C1 Product Integrity"]
+    C2["C2 Final Seam Wiring"]
+    C3["C3/C4 Production Tracers"]
+    C5["C5 Final Hard Cut"]
+    C6["C6 Final Conformance"]
 
-    PLATFORM["Platform Runtime implement<br/>W1 + W3 + W4"]
-    PLATFORM_CHECK["Platform Runtime check"]
-    DASH["Dash / Native implement<br/>W2 + W5"]
-    DASH_CHECK["Dash / Native check"]
-    EXTERNAL["External Agents implement<br/>W6"]
-    EXTERNAL_CHECK["External Agents check"]
-    PRODUCT["Product / Protocol implement<br/>W7"]
-    PRODUCT_CHECK["Product / Protocol check"]
-
-    READY["S1–S4 target + activation ready"]
-    ACT["Bundle owner activation sets"]
-    W8I["Hard Cut integrator<br/>W8"]
-    W8A["Cutover architecture check"]
-    W8B["Cutover behavior check"]
-    S5["S5 Atomic Hard Cut"]
-
-    W9I["Final Conformance implement<br/>W9"]
-    W9C["Final independent check"]
-    S6["S6 Final Conformance"]
-
-    MAIN --> PLATFORM --> PLATFORM_CHECK
-    MAIN --> DASH
-    DASH --> DASH_CHECK
-    PLATFORM_CHECK --> DASH_CHECK
-    PLATFORM_CHECK --> EXTERNAL --> EXTERNAL_CHECK
-    DASH_CHECK --> PRODUCT
-    EXTERNAL_CHECK --> PRODUCT
-    PRODUCT --> PRODUCT_CHECK --> READY
-    PLATFORM_CHECK --> READY
-    DASH_CHECK --> READY
-    EXTERNAL_CHECK --> READY
-
-    READY --> ACT --> W8I
-    W8I --> W8A
-    W8I --> W8B
-    W8A --> S5
-    W8B --> S5
-    S5 --> W9I --> W9C --> S6
-
-    MAIN -. "contract milestone" .-> DASH
-    MAIN -. "followup / interrupt / ownership transfer" .-> PLATFORM
-    MAIN -. "dependency unlock" .-> PRODUCT
-    MAIN -. "integration coordination" .-> W8I
+    GOAL --> MAIN
+    GOAL --> PRODUCT
+    GOAL --> AGENT
+    GOAL --> READ
+    MAIN <--> PRODUCT
+    MAIN <--> AGENT
+    MAIN <--> READ
+    PRODUCT --> C1
+    AGENT --> C2
+    READ --> C2
+    C1 --> C2 --> C3 --> C5 --> C6
 ```
 
-### 12.5 Wave schedule
+### 12.5 Forward execution
 
-#### Wave 0 — Start 与 baseline
+所有 peers 同时从 C0 的共同事实出发：
 
-Main 在用户批准实施后：
+1. Product peer 形成 C1 Product Integrity；
+2. Complete Agent peer 与 Read Model peer 并行形成各自 C2 production seams；
+3. Main 同步处理共享 composition、migration、Cargo/generated roots 与跨结果接缝；
+4. C1/C2 路径可运行后共同执行 C3/C4 production tracers；
+5. Product、Agent、read models 均完整后执行 C5 final hard cut；
+6. C6 使用一个完整目标驱动的 Final Conformance 收口。
 
-1. 运行 `task.py start`；
-2. 冻结父 artifacts 与 manifests；
-3. 初始化 task-local `dispatch-status.md`；
-4. 通过 `list_agents` 确认 slot，并记录可复用 subagent；
-5. 记录 base revision、工作区已有修改和 ownership inventory；
-6. 运行 S0 baseline tracer bullets；
-7. baseline 未通过时先定位既有失败，不派发依赖这些路径的重构。
+同一 peer 持续负责自己发现的问题直到纵向结果成立。只有共享热点互斥写入需要短暂串行，
+不存在按 workstream 编号轮流交接的执行顺序。
 
-#### Wave 1 — Foundation bundles
+### 12.6 Checkpoint evidence
 
-- Slot A：`platform_runtime_impl`，覆盖 W1 + W3 + W4；
-- Slot B：`dash_native_impl`，覆盖 W2 + W5；
-- Slot C：按实际进展用于独立 checker，不固定给第三个 implement bundle。
-
-`platform_runtime_impl` 可以自行决定 contracts、Runtime/Host、Surface/Tool/Hook 的内部
-实现顺序，但需在 Complete Agent contract 达到可消费 milestone 时主动通知 main。Main
-把 milestone 和变更摘要发给 `dash_native_impl`，后者无需等待整个 Platform bundle 完成
-才继续 Native service 接入。
-
-Slot C 可在该 milestone 启动 `platform_runtime_check`，先独立核验 additive contract
-slice 并形成 S1；Platform bundle 全部完成后再用 `followup_task` 让同一 checker 终核
-W1/W3/W4 的完整纵向路径。这样保留 contract gate，但不增加新的细粒度 agent 边界。
-
-`dash_native_impl` 同时拥有 Dash Agent/Core 与 Native adapter，能够在一个纵向 bundle
-内处理 crate API、真实 fork、compaction 和 adapter consumer，避免 W2/W5 之间的人为
-handoff。
-
-任一 bundle 完成后释放其 implement slot，再派独立 `platform_runtime_check` 或
-`dash_native_check`。Checker 按整个 bundle 验证，不要求每个内部 work package 单独产生
-一份交接。
-
-Dash/Native 可以在 Platform contract milestone 后提前开发，但其最终
-`dash_native_check` 与 `activation_ready` 必须基于 `platform_runtime_check` 已固定的
-Platform revision。若 Platform 终核后仍有 contract/Host/Surface 变更，Main 先向
-Dash/Native 发 `followup_task` 完成 affected update，再执行最终 check。
-
-#### Wave 2 — External Agents 与 bundle checks
-
-- Platform Runtime contract/check 通过后，空闲 slot 启动 `external_agents_impl`（W6）；
-- Dash/Native 可继续实现或进入独立 check；
-- External Agents 同时处理 Codex 与 Remote，因为二者共享 Complete Agent conformance、
-  source authority/fidelity 和 wire 边界；
-- `external_agents_check` 通过后，Platform、Dash/Native、External 三个 bundle 都达到
-  target-ready。
-
-W1–W6 的 workstream checklist 仍逐项验收，但不会为了对应编号强制切换 subagent。
-
-#### Wave 3 — Product / Protocol bundle
-
-- 启动 `product_protocol_impl`，覆盖 W7 的 AgentRun、Fork saga、Companion、API、
-  App Server 和 UI；
-- 该 agent 可沿完整产品 data flow 自行调整模块粒度，不把 backend/frontend 再拆成多个
-  互相等待的小 agent；
-- 完成后由独立 `product_protocol_check` 检查 direct/fork/Companion/reconnect E2E；
-- 另一个空闲 slot 可做只读 cutover-readiness audit，核对 consumer inventory、schema
-  diff、canonical generated contract diff 和所有 bundle activation checklist；
-- checks 通过后形成 S4，并冻结 S5 base revision。
-
-#### Wave 4 — Activation-ready freeze
-
-- Main 收齐 Platform Runtime、Dash/Native、External Agents 与 Product/Protocol 的
-  handoff，确认每份 activation set 都基于同一冻结 revision；
-- Product/Protocol handoff 必须包含既有 Product capability parity inventory；Companion、
-  Routine、Workflow、Workspace、Canvas、Terminal、VFS、Wait、Lifecycle 与 canonical
-  presentation 任一缺少 production tracer，均表示 S4 未完成；
-- 对 contract/schema/generated output、composition、Cargo/lockfile 与 legacy deletion
-  建立共享热点 inventory；对每个 deletion candidate 固定 replacement、caller、
-  composition、persistence、projection、behavior 与 negative evidence；
-- affected bundle checker 签认 activation set；局部确定问题可经 main 确认后自修，跨
-  bundle 或领域实现缺口路由回原 owner；
-- 本 wave 只冻结和验证 cutover 输入，不改变 production composition 或默认 caller。
-
-#### Wave 5 — S5 single-branch integration
-
-S5 只使用当前任务目录和分支。主会话与实现 subagent 共享工作树，以粗粒度 ownership
-避免热点冲突；任何已经完成且功能路径成立的大阶段立即形成可见 checkpoint。
-
-1. Main 核对当前 HEAD、工作树、S1–S4 实际证据和 Product capability inventory；
-2. 执行 C0：清理未提交实验改动，冻结 Product behavior oracle 和 capability inventory；
-3. 执行 C1：从 oracle 恢复 Product 源码、routes、composition 与 tests，
-   形成逐依赖 compile ledger；
-4. 执行 C2：仅在旧 seam 位置改接 Runtime Contract、Tool Broker、Product
-   repositories、AppliedResourceSurface 与 canonical projection；
-5. 执行 C3/C4：对 direct、Fork、Companion、Routine、Workflow、Workspace/Canvas/VFS、
-   Terminal/Wait、Lifecycle 与 reconnect 运行真实 Product tracer；
-6. Product parity 通过后冻结正式 replacement/deletion manifest，进入 C5；
-7. canonical contracts/generated roots、Cargo/lock、migration 与 composition 热点按
-   时间串行编辑；只删除 replacement evidence 完整的 legacy implementation；
-8. 每个恢复/激活大阶段通过对应 tracer 后提交 checkpoint；正式 S5 完成时当前分支本身
-   是唯一可验收结果。
-
-#### Wave 6 — Final Conformance
-
-- `final_conformance_impl` 覆盖 W9，增加 fault/conformance tests 并同步最终 specs；
-- `final_conformance_check` 从父 AC、negative gates、PostgreSQL、Rust、frontend 与真实
-  tracer bullets 做独立终核；
-- Final Conformance checker 可经 main 确认后自修局部、确定的问题；跨 bundle、公共合同
-  或状态权威缺口由 main 路由回 owner；
-- owner 修复后重新经过 owning check 与 W9 affected gates；
-- 全部通过后形成 S6，main 执行 finish-work、提交与最终汇报。
-
-### 12.6 Handoff contract
-
-每个 implement subagent 的 final handoff 必须包含：
+每个 peer 在形成 checkpoint 时只报告能够继续前向集成的事实：
 
 ```text
-Bundle:
-Covered workstreams:
-Base revision:
-Ownership zone:
-Shared hotspots touched:
-Files/modules changed:
-Boundary changed:
-Target-ready evidence:
-Activation-ready change set:
-Production route changed: yes/no
-Migration/schema impact:
-Behavior/conformance tests:
-Current tracer bullet:
-Commands run / not run:
-Remaining dependency:
-Known findings:
-```
-
-Checker 输出：
-
-```text
-Result: pass / fixed-and-pass / needs-owner-fix
-Finding owner:
-Broken invariant or path:
-Evidence:
-Required fix:
-Self-fix scope:
-Affected checkpoint:
+Outcome:
+Production path:
+State authorities:
+Shared hotspots changed:
+Behavior tracers:
 Commands verified:
+Remaining external boundary:
+Commit:
 ```
 
-没有 owner-reviewed activation component 和完整 consumer/deletion manifest 的 bundle
-不能进入 Wave 4；没有在同一冻结 revision 上组成并经 independent check 的 combined
-`Activation-ready change set`，不能被 Hard Cut integration 接收。
+checkpoint 的判断基准是完整用户路径能否运行，而不是内部 workstream 数量或 handoff
+文档数量。Peer 在实现过程中发现缺口时直接处理；需要另一个结果的真实依赖时，双方共享
+上下文并共同闭合接缝。
 
-### 12.7 Finding 与返工路由
+### 12.7 Final verification
 
-```mermaid
-flowchart LR
-    CHECK["Checker finding"]
-    MAIN["Main classifies owner"]
-    SELF["Checker performs confirmed bounded fix"]
-    OWNER["Owning implement subagent fixes"]
-    RECHECK["Affected gates rechecked"]
-    INTEGRATE["Hard Cut agent reintegrates if S5-affected"]
-    GATE["Checkpoint gate"]
+Focused verification 由各 peer 随实现完成。C1–C5 的整体验收由 main 与当前有上下文的
+peers共同运行；C6 再启动一次完整 Final Conformance，覆盖：
 
-    CHECK --> MAIN
-    MAIN -->|bounded check/fix scope| SELF --> RECHECK
-    MAIN -->|owner or cross-bundle change| OWNER --> RECHECK
-    RECHECK -->|pass| INTEGRATE --> GATE
-    RECHECK -->|still failing| OWNER
-```
+- architecture/dependency direction；
+- state authority 与 persistence；
+- direct/Fork/Companion/Workflow/Routine/Compaction/Tool/Hook；
+- canonical conversation 与 Product read models；
+- PostgreSQL fault/restart；
+- frontend、VFS、Terminal、Wait；
+- crate/schema/protocol negative gates。
 
-路由规则：
-
-- contract/Runtime/Host/Surface/Tool/Hook（W1/W3/W4）→ Platform Runtime bundle；
-- Dash Agent/Core/Native adapter（W2/W5）→ Dash/Native bundle；
-- Codex/Remote（W6）→ External Agents bundle；
-- AgentRun/Companion/API/UI（W7）→ Product/Protocol bundle；
-- migration/workspace/composition/deletion（W8）→ Hard Cut bundle；
-- fault harness/spec consistency（W9）→ Final Conformance bundle。
-
-局部、确定且不改变公共合同/状态权威的 finding，经 main 确认 scope 后由 checker 自修。
-跨 bundle finding 由 main 拆成少量明确 fix brief，按依赖顺序派发；Hard Cut agent 不以
-集成身份越过其它 bundle 的核心 ownership。若两个 bundle 共同变更能显著降低往返，
-main 可以显式把共享热点临时转交给 checker 或其中一个 implement agent，完成并复核后
-再释放 ownership。
+发现问题时由最了解该路径的当前 peer 直接修复并复跑 affected tracer。流程始终沿
+C0–C6 前进，不为局部 finding 新建层层审批或细粒度派发结构。

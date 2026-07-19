@@ -9,13 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  computeAgentRunRuntimeProjectionRefreshKey,
-  isAgentRunWorkspaceActionRunning,
-  resolveExecutorFromHint,
-  toExecutorConfigSource,
-  useAgentRunRuntimeFeed,
-} from "../../agent-run-runtime";
+import { useSessionFeed } from "../model";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,
@@ -33,6 +27,15 @@ import {
   SessionChatStatusBar,
   SessionChatStream,
 } from "./SessionChatViewParts";
+import {
+  collectAllPlatformEvents,
+  collectTurnLifecycleEvents,
+  computeProjectionRefreshKey,
+  isAgentRunWorkspaceActionRunning,
+  rawEventsBelongToRuntimeStreamTarget,
+  resolveExecutorFromHint,
+  toExecutorConfigSource,
+} from "./SessionChatViewModel";
 import type { SessionChatCommandModel, SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
 import { SessionStatusBar } from "../../agent-run-workspace/ui";
@@ -59,6 +62,9 @@ export function SessionChatView({
   model,
   intents,
   onMessageSent,
+  onTurnEnd,
+  onSystemEvent,
+  onTaskPlanChanged,
   onRuntimeChanges,
   headerSlot,
   inputPrefix,
@@ -82,6 +88,7 @@ export function SessionChatView({
     statusBarRunId,
     statusBarAgentId,
     injectedInputValue,
+    companionSubagents,
   } = model;
   const {
     submitComposer,
@@ -269,50 +276,135 @@ export function SessionChatView({
   const hasRuntimeStreamTarget = agentRunTarget != null;
 
   const {
-    snapshot,
     displayItems,
     turnSegments,
     rawEntries,
-    interactions,
-    changes,
+    rawEvents,
+    historyReplayBoundarySeq,
+    runtimeChanges,
     isConnected,
     isLoading,
     error: wsError,
     reconnect,
     streamingEntryId,
     tokenUsage,
-  } = useAgentRunRuntimeFeed({
+  } = useSessionFeed({
     agentRunTarget,
+    activeTurnId: commandState.activeTurnId ?? null,
     enabled: hasRuntimeStreamTarget,
   });
 
   const projectionRefreshKey = useMemo(
-    () => computeAgentRunRuntimeProjectionRefreshKey(changes),
-    [changes],
+    () => computeProjectionRefreshKey(rawEvents),
+    [rawEvents],
   );
-  const dispatchedRuntimeTargetRef = useRef<string | null>(null);
+  const rawEventsBelongToCurrentSession = useMemo(
+    () => rawEventsBelongToRuntimeStreamTarget({ rawEvents, agentRunTarget }),
+    [agentRunTarget, rawEvents],
+  );
+  const canApplyLiveEventSideEffects =
+    hasRuntimeStreamTarget &&
+    rawEventsBelongToCurrentSession &&
+    rawEvents.length > 0 &&
+    historyReplayBoundarySeq != null;
+
   const dispatchedRuntimeSequenceRef = useRef(0n);
   useEffect(() => {
-    if (dispatchedRuntimeTargetRef.current !== agentRunTargetKey) {
-      dispatchedRuntimeTargetRef.current = agentRunTargetKey;
-      dispatchedRuntimeSequenceRef.current = 0n;
-    }
+    dispatchedRuntimeSequenceRef.current = 0n;
+  }, [agentRunTargetKey]);
+  useEffect(() => {
     if (!onRuntimeChanges) return;
-    const pending = changes.filter(
+    const pending = runtimeChanges.filter(
       (change) => change.sequence > dispatchedRuntimeSequenceRef.current,
     );
     if (pending.length === 0) return;
     dispatchedRuntimeSequenceRef.current =
-      pending[pending.length - 1]?.sequence
-      ?? dispatchedRuntimeSequenceRef.current;
+      pending[pending.length - 1]?.sequence ?? dispatchedRuntimeSequenceRef.current;
     onRuntimeChanges(pending);
-  }, [agentRunTargetKey, changes, onRuntimeChanges]);
+  }, [onRuntimeChanges, runtimeChanges]);
 
   // ─── Action running 检测 ──────────────────────────────
 
   const isActionRunning = isAgentRunWorkspaceActionRunning({
     executionStatus: commandState.executionStatus,
   });
+
+  const onTurnEndRef = useRef(onTurnEnd);
+  useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
+  const onSystemEventRef = useRef(onSystemEvent);
+  const lastSystemEventSeqRef = useRef<number | null>(null);
+  useEffect(() => { onSystemEventRef.current = onSystemEvent; }, [onSystemEvent]);
+  const onTaskPlanChangedRef = useRef(onTaskPlanChanged);
+  const lastTaskToolEventSeqRef = useRef<number | null>(null);
+  const lastTurnLifecycleEventSeqRef = useRef<number | null>(null);
+  useEffect(() => { onTaskPlanChangedRef.current = onTaskPlanChanged; }, [onTaskPlanChanged]);
+  useEffect(() => {
+    lastSystemEventSeqRef.current = null;
+    lastTaskToolEventSeqRef.current = null;
+    lastTurnLifecycleEventSeqRef.current = null;
+  }, [agentRunTargetKey]);
+
+  useEffect(() => {
+    if (!hasRuntimeStreamTarget || !rawEventsBelongToCurrentSession || rawEvents.length === 0) return;
+    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? 0;
+    lastTurnLifecycleEventSeqRef.current = afterSeq;
+    const result = collectTurnLifecycleEvents(rawEvents, afterSeq);
+    lastTurnLifecycleEventSeqRef.current = result.lastSeenSeq;
+    let terminalSeen = false;
+    for (const item of result.items) {
+      if (item.eventType === "turn_started") {
+        continue;
+      } else {
+        terminalSeen = true;
+      }
+    }
+    if (terminalSeen) {
+      onTurnEndRef.current?.();
+    }
+  }, [
+    agentRunTarget,
+    hasRuntimeStreamTarget,
+    historyReplayBoundarySeq,
+    rawEvents,
+    rawEventsBelongToCurrentSession,
+  ]);
+
+  useEffect(() => {
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
+    const afterSeq = lastSystemEventSeqRef.current ?? historyReplayBoundarySeq;
+    lastSystemEventSeqRef.current = afterSeq;
+    const result = collectAllPlatformEvents(rawEvents, afterSeq);
+    lastSystemEventSeqRef.current = result.lastSeenSeq;
+    if (result.items.length === 0) return;
+    for (const item of result.items) {
+      onSystemEventRef.current?.(item.eventType, item.event);
+    }
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
+
+  useEffect(() => {
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
+    const afterSeq = lastTaskToolEventSeqRef.current ?? historyReplayBoundarySeq;
+    lastTaskToolEventSeqRef.current = afterSeq;
+    let lastSeenSeq = afterSeq;
+    let changed = false;
+    for (const event of rawEvents) {
+      if (!event || event.event_seq <= afterSeq) continue;
+      lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+      const bbEvent = event.notification.event;
+      if (bbEvent.type !== "item_completed") continue;
+      const item = bbEvent.payload.item;
+      if (
+        item.type === "dynamicToolCall"
+        && item.tool === "task_write"
+        && item.status === "completed"
+        && item.success !== false
+      ) {
+        changed = true;
+      }
+    }
+    lastTaskToolEventSeqRef.current = lastSeenSeq;
+    if (changed) onTaskPlanChangedRef.current?.();
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────
 
@@ -553,9 +645,8 @@ export function SessionChatView({
         containerRef={containerRef}
         displayItems={displayItems}
         turnSegments={turnSegments}
-        interactions={interactions}
-        runtimeRevision={snapshot?.revision}
         agentRunTarget={agentRunTarget}
+        companionSubagents={companionSubagents}
         hasRuntimeStreamTarget={hasRuntimeStreamTarget}
         isLoading={isLoading}
         streamingEntryId={streamingEntryId}

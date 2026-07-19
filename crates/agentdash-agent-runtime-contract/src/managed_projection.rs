@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use agentdash_agent_protocol::CanonicalConversationRecord;
+
 use crate::{
     ManagedRuntimeInteractionRequest, ManagedRuntimeInteractionResolution,
     ManagedRuntimeInteractionStatus, ManagedRuntimeItemPresentation, ManagedRuntimeItemTransition,
@@ -381,6 +383,7 @@ pub struct ManagedRuntimeSnapshot {
     pub fidelity: ManagedRuntimeProjectionFidelity,
     pub command_availability:
         BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability>,
+    pub conversation_history: Vec<CanonicalConversationRecord>,
 }
 
 #[derive(
@@ -396,6 +399,7 @@ pub enum ManagedRuntimeProjectionSection {
     Items,
     Interactions,
     Surface,
+    ConversationPresentation,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -440,6 +444,14 @@ pub enum ManagedRuntimeSourceProjectionDelta {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
 pub enum ManagedRuntimeChangeDelta {
+    ConversationPresentationAppended {
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::RuntimeU64")]
+        #[ts(type = "RuntimeU64")]
+        source_change_sequence: u64,
+        source_projection_revision: RuntimeProjectionRevision,
+        records: Vec<CanonicalConversationRecord>,
+    },
     ThreadNameChanged {
         #[serde(with = "crate::wire_u64")]
         #[schemars(with = "crate::wire_u64::RuntimeU64")]

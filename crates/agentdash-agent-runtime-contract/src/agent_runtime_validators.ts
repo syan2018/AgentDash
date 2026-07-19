@@ -1022,6 +1022,18 @@ function encodeSourceProjectionDelta(value: unknown, path: string): unknown {
 function decodeChangeDelta(value: unknown, path: string): DecodeRuntimeU64<ManagedRuntimeChangeDeltaWire> {
   const delta = record(value, path);
   switch (delta.kind) {
+    case "conversation_presentation_appended":
+      return {
+        ...delta,
+        source_change_sequence: runtimeU64(
+          delta.source_change_sequence,
+          `${path}.source_change_sequence`,
+        ),
+        source_projection_revision: runtimeU64(
+          delta.source_projection_revision,
+          `${path}.source_projection_revision`,
+        ),
+      } as DecodeRuntimeU64<ManagedRuntimeChangeDeltaWire>;
     case "thread_name_changed": {
       const source = record(delta.source, `${path}.source`);
       return {
@@ -1111,6 +1123,12 @@ function encodeChangeDelta(
   path: string,
 ): ManagedRuntimeChangeDeltaWire {
   switch (delta.kind) {
+    case "conversation_presentation_appended":
+      return {
+        ...delta,
+        source_change_sequence: encodeRuntimeU64(delta.source_change_sequence),
+        source_projection_revision: encodeRuntimeU64(delta.source_projection_revision),
+      } as ManagedRuntimeChangeDeltaWire;
     case "thread_name_changed":
       return {
         ...delta,

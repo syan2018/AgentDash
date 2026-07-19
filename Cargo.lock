@@ -132,6 +132,7 @@ dependencies = [
 name = "agentdash-agent-runtime-contract"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "async-trait",
  "schemars 1.2.1",
  "serde",
@@ -186,6 +187,7 @@ dependencies = [
 name = "agentdash-agent-service-api"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "async-trait",
  "schemars 1.2.1",
  "serde",
@@ -622,6 +624,7 @@ dependencies = [
 name = "agentdash-integration-codex"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "agentdash-agent-service-api",
  "agentdash-integration-api",
  "agentdash-process",
@@ -644,6 +647,7 @@ name = "agentdash-integration-native-agent"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent",
+ "agentdash-agent-protocol",
  "agentdash-agent-service-api",
  "agentdash-integration-api",
  "async-trait",

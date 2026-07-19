@@ -1,5 +1,11 @@
 import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
-import type { AgentRunRuntimeTurnSegment } from "../../agent-run-runtime";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type {
+  AgentRunRuntimeItem,
+  AgentRunRuntimeTurnSegment,
+} from "../../agent-run-runtime";
+import type { SessionDisplayEntry } from "./types";
+import type { TurnSegment } from "./useSessionFeed";
 
 export interface RoundActionModel {
   copyLastAgentReply: {
@@ -13,43 +19,55 @@ export interface RoundActionModel {
   };
 }
 
-export function lastAgentReplyText(segment: AgentRunRuntimeTurnSegment): string {
+type AgentMessageEvent = Extract<BackboneEvent, { type: "agent_message_delta" }>;
+type AgentMessageDisplayEntry = SessionDisplayEntry & { event: AgentMessageEvent };
+type RoundActionSegment = TurnSegment | AgentRunRuntimeTurnSegment;
+
+function isAgentMessageEntry(value: unknown): value is AgentMessageDisplayEntry {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && "event" in value
+      && (value as SessionDisplayEntry).event.type === "agent_message_delta",
+  );
+}
+
+function isRuntimeItem(value: unknown): value is AgentRunRuntimeItem {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && "presentation" in value
+      && (value as AgentRunRuntimeItem).presentation != null,
+  );
+}
+
+export function lastAgentReplyText(segment: RoundActionSegment): string {
   const output = segment.finalOutput;
-  if (output?.presentation.body.kind !== "agent_message") return "";
+  if (isAgentMessageEntry(output)) {
+    return (output.accumulatedText ?? output.event.payload.delta ?? "").trim();
+  }
+  if (!isRuntimeItem(output) || output.presentation.body.kind !== "agent_message") {
+    return "";
+  }
   return output.presentation.body.content
-    .map((block) => {
-      switch (block.kind) {
-        case "text":
-          return block.text;
-        case "image":
-          return block.source;
-        case "local_resource":
-          return block.path;
-        case "resource_link":
-          return block.uri;
-        case "skill_reference":
-          return block.name;
-        case "mention":
-          return block.label;
-        case "structured":
-          return JSON.stringify(block.value);
-      }
-    })
-    .join("\n")
+    .filter((content) => content.kind === "text")
+    .map((content) => content.text)
+    .join("")
     .trim();
 }
 
 export function forkPointRefFromFinalAgentReply(
-  segment: AgentRunRuntimeTurnSegment,
+  segment: RoundActionSegment,
 ): SessionMessageRefDto | undefined {
-  // Canonical Runtime item identity does not contain the mailbox entry index
-  // required by the legacy fork DTO. Fork remains unavailable until its
-  // command contract accepts Runtime item identity directly.
-  void segment;
-  return undefined;
+  const output = segment.finalOutput;
+  if (!isAgentMessageEntry(output)) return undefined;
+  const turnId = output.turnId ?? segment.turnId;
+  const entryIndex = output.entryIndex;
+  if (!turnId || entryIndex == null) return undefined;
+  return { turn_id: turnId, entry_index: entryIndex };
 }
 
-export function buildRoundActionModel(segment: AgentRunRuntimeTurnSegment): RoundActionModel {
+export function buildRoundActionModel(segment: RoundActionSegment): RoundActionModel {
   const text = lastAgentReplyText(segment);
   const forkPointRef = forkPointRefFromFinalAgentReply(segment);
 

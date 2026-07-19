@@ -13,6 +13,7 @@ name = "generate_agent_service_api"
 path = "src/generate.rs"
 
 [dependencies]
+agentdash-agent-protocol = { workspace = true }
 async-trait = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }

@@ -1214,6 +1214,9 @@ impl CompleteAgentService for CodexCompleteAgentService {
             .values()
             .map(|pending| pending.interaction.clone())
             .collect();
+        let conversation_history =
+            crate::canonical_projection::snapshot_records(query.source.as_str(), &result)
+                .map_err(internal_error)?;
         Ok(AgentSnapshot {
             source: query.source,
             revision: AgentSnapshotRevision(source.revision),
@@ -1239,6 +1242,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
             },
             applied_surface: source.applied_surface.clone(),
             initial_context: source.initial_context.clone(),
+            conversation_history,
         })
     }
 
@@ -1608,7 +1612,19 @@ impl CodexCompleteAgentService {
                 Ok(AgentChangePayload::InteractionChanged { interaction })
             }
             CodexTypedObservation::Notification(notification) => {
-                map_notification(source, *notification)
+                let presentation = crate::canonical_projection::notification_record(
+                    source.as_str(),
+                    sequence,
+                    &notification,
+                )
+                .map_err(internal_error)?
+                .into_iter()
+                .collect();
+                let state = map_notification(source, *notification)?;
+                Ok(AgentChangePayload::SourceObservation {
+                    state: Box::new(state),
+                    presentation,
+                })
             }
         }
     }

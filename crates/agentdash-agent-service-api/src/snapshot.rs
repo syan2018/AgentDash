@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use agentdash_agent_protocol::CanonicalConversationRecord;
+
 use crate::{
     AgentInteractionId, AgentInteractionRequest, AgentInteractionResolution,
     AgentInteractionStatus, AgentItemId, AgentItemPresentation, AgentItemTransition,
@@ -208,6 +210,7 @@ pub struct AgentSnapshot {
     pub source_info: AgentSnapshotSource,
     pub applied_surface: Option<crate::AppliedAgentSurface>,
     pub initial_context: Option<crate::AppliedInitialContextEvidence>,
+    pub conversation_history: Vec<CanonicalConversationRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -229,6 +232,12 @@ pub struct AgentChangesQuery {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
 pub enum AgentChangePayload {
+    /// One source observation may update normalized service state and append zero or more
+    /// immutable presentation records. Runtime must preserve both parts atomically.
+    SourceObservation {
+        state: Box<AgentChangePayload>,
+        presentation: Vec<CanonicalConversationRecord>,
+    },
     ThreadNameChanged {
         thread_name: Option<String>,
         source_info: AgentSnapshotSource,

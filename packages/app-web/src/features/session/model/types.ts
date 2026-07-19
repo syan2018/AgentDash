@@ -64,6 +64,7 @@ import type {
   NormalizedContextUsage,
   ContextUsageSource,
 } from "../../../generated/backbone-protocol";
+import type { BackboneEnvelope } from "../../../generated/backbone-protocol";
 import type { ContextFrame } from "./contextFrame";
 import { resolveKind } from "./threadItemKind";
 
@@ -365,6 +366,26 @@ export function partitionUserInputs(input: readonly UserInput[]): PartitionedUse
 }
 
 // ==================== 前端扩展类型 ====================
+
+export interface SessionEventEnvelope {
+  session_id: string;
+  event_seq: number;
+  occurred_at_ms: number;
+  committed_at_ms: number | null;
+  session_update_type: string;
+  turn_id: string | null;
+  entry_index: number | null;
+  tool_call_id: string | null;
+  notification: BackboneEnvelope;
+  /** 进度态事件标记：仅 live 显示，不写入可重放 rawEvents backlog。 */
+  ephemeral?: boolean;
+  /** Stable source-owned presentation identity. */
+  presentation_id: string;
+  /** Runtime ordering remains bigint and is never downcast to the UI ordinal. */
+  runtime_change_sequence: bigint | null;
+  /** Snapshot hydration records are not eligible for live side effects. */
+  baseline: boolean;
+}
 
 /** UI 时间线顺序来源：durable 与 ephemeral progress 使用不同坐标。 */
 export type TimelineOrder =

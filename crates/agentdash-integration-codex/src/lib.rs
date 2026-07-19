@@ -3,6 +3,7 @@
 //! Codex JSON-RPC DTOs terminate inside this crate. Public APIs expose only AgentDash-owned
 //! Complete Agent contracts.
 
+mod canonical_projection;
 mod complete_agent;
 mod process_transport;
 mod registration;

@@ -68,6 +68,7 @@ function runtimeSnapshot(
     captured_at_ms: 1000n + revision,
     lifecycle: "active",
     active_turn_id: status === "running" ? "turn-compaction" : null,
+    conversation_history: [],
     turns: [
       {
         id: "turn-compaction",

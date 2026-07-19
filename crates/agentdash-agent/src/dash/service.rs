@@ -123,6 +123,7 @@ impl DashAgentRepositoryState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DashAgentRead {
     pub state: AgentHistoryState,
+    pub history: AgentHistory,
     pub history_digest: String,
     pub surface: Option<DashSurface>,
 }
@@ -310,6 +311,7 @@ impl DashAgentService {
         let state = self.repository.load().await?;
         Ok(DashAgentRead {
             state: state.store.history().state()?,
+            history: state.store.history().clone(),
             history_digest: state.store.history().digest(),
             surface: state.surface,
         })

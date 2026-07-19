@@ -23,7 +23,8 @@ use agentdash_agent_service_api::{
     AgentServiceError, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
     AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
     AgentSourceRevision, AgentThreadNameSnapshot, AgentTurnId, AgentTurnSnapshot,
-    AppliedAgentSurface, AppliedInitialContextEvidence, CompleteAgentService,
+    AppliedAgentSurface, AppliedInitialContextEvidence, CanonicalConversationRecord,
+    CompleteAgentService,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -63,6 +64,7 @@ pub struct NormalizedAgentProjection {
     pub source_cursor: Option<AgentSourceCursor>,
     pub applied_surface: Option<AppliedAgentSurface>,
     pub initial_context: Option<AppliedInitialContextEvidence>,
+    pub conversation_history: Vec<CanonicalConversationRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -544,7 +546,7 @@ fn prepare_change_observation(
     if page.gap
         || page.changes.iter().any(|change| {
             matches!(
-                &change.payload,
+                source_state_payload(&change.payload),
                 AgentChangePayload::SnapshotInvalidated { .. }
             )
         })
@@ -613,6 +615,7 @@ fn normalize_snapshot(
     source_cursor: Option<AgentSourceCursor>,
     platform_revision: u64,
 ) -> Result<NormalizedAgentProjection, CompleteAgentStateError> {
+    validate_conversation_history(&snapshot.conversation_history)?;
     let (thread_name, thread_name_source) = normalize_thread_name(snapshot.thread_name)?;
     let mut turns = BTreeMap::new();
     let mut items = BTreeMap::new();
@@ -664,7 +667,22 @@ fn normalize_snapshot(
         source_cursor,
         applied_surface: snapshot.applied_surface,
         initial_context: snapshot.initial_context,
+        conversation_history: snapshot.conversation_history,
     })
+}
+
+fn validate_conversation_history(
+    history: &[CanonicalConversationRecord],
+) -> Result<(), CompleteAgentStateError> {
+    let mut ids = BTreeSet::new();
+    if history.iter().any(|record| {
+        record.presentation_id.trim().is_empty() || !ids.insert(&record.presentation_id)
+    }) {
+        return Err(CompleteAgentStateError::InvalidSnapshot {
+            reason: "conversation history contains a blank or duplicate presentation id".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn normalize_thread_name(
@@ -781,6 +799,7 @@ fn same_snapshot_revision_facts(
         && left.thread_name_source == right.thread_name_source
         && left.applied_surface == right.applied_surface
         && left.initial_context == right.initial_context
+        && left.conversation_history == right.conversation_history
 }
 
 fn authority_rank(authority: AgentSnapshotAuthority) -> u8 {
@@ -808,6 +827,7 @@ fn same_projection_facts(
         && left.source_cursor == right.source_cursor
         && left.applied_surface == right.applied_surface
         && left.initial_context == right.initial_context
+        && left.conversation_history == right.conversation_history
 }
 
 fn validate_page_cursors(
@@ -835,6 +855,31 @@ fn apply_source_change(
     payload: &AgentChangePayload,
 ) -> Result<(), CompleteAgentStateError> {
     match payload {
+        AgentChangePayload::SourceObservation {
+            state,
+            presentation,
+        } => {
+            if matches!(state.as_ref(), AgentChangePayload::SourceObservation { .. }) {
+                return Err(CompleteAgentStateError::InvalidChange {
+                    reason: "nested source observation is invalid".to_owned(),
+                });
+            }
+            apply_source_change(projection, state)?;
+            let mut known = projection
+                .conversation_history
+                .iter()
+                .map(|record| record.presentation_id.as_str())
+                .collect::<BTreeSet<_>>();
+            if presentation.iter().any(|record| {
+                record.presentation_id.trim().is_empty()
+                    || !known.insert(record.presentation_id.as_str())
+            }) {
+                return Err(CompleteAgentStateError::InvalidChange {
+                    reason: "conversation presentation id is blank or already committed".to_owned(),
+                });
+            }
+            projection.conversation_history.extend(presentation.clone());
+        }
         AgentChangePayload::ThreadNameChanged {
             thread_name,
             source_info,
@@ -960,6 +1005,13 @@ fn apply_source_change(
     Ok(())
 }
 
+fn source_state_payload(payload: &AgentChangePayload) -> &AgentChangePayload {
+    match payload {
+        AgentChangePayload::SourceObservation { state, .. } => state,
+        payload => payload,
+    }
+}
+
 fn changed_sections(
     before: &NormalizedAgentProjection,
     after: &NormalizedAgentProjection,
@@ -967,6 +1019,15 @@ fn changed_sections(
 ) -> BTreeSet<ManagedRuntimeProjectionSection> {
     let mut sections = BTreeSet::new();
     match payload {
+        AgentChangePayload::SourceObservation {
+            state,
+            presentation,
+        } => {
+            sections.extend(changed_sections(before, after, state));
+            if !presentation.is_empty() {
+                sections.insert(ManagedRuntimeProjectionSection::ConversationPresentation);
+            }
+        }
         AgentChangePayload::ThreadNameChanged { .. }
             if before.thread_name_source.is_none() || before.thread_name != after.thread_name =>
         {
@@ -1822,6 +1883,7 @@ pub fn project_managed_runtime_snapshot(
         authority: project_authority(projection.source_info.authority),
         fidelity: project_fidelity(projection.source_info.fidelity),
         command_availability: input.command_availability,
+        conversation_history: projection.conversation_history.clone(),
     })
 }
 
@@ -1927,6 +1989,19 @@ fn project_source_projection_deltas(
         .changed_sections
         .iter()
         .map(|section| {
+            if *section == ManagedRuntimeProjectionSection::ConversationPresentation {
+                let records = source_observation_presentation(&change.payload)
+                    .ok_or(CompleteAgentRuntimeProjectionError::InvalidSourceProjectionSection)?;
+                return Ok(
+                    ManagedRuntimeChangeDelta::ConversationPresentationAppended {
+                        source_change_sequence: change.sequence,
+                        source_projection_revision: RuntimeProjectionRevision(
+                            change.platform_revision,
+                        ),
+                        records: records.to_vec(),
+                    },
+                );
+            }
             if *section == ManagedRuntimeProjectionSection::ThreadName {
                 let source_info = projection
                     .thread_name_source
@@ -2042,7 +2117,7 @@ fn project_source_projection_section(
                     turn_id,
                     item_id,
                     transition,
-                } = source_payload.as_ref()
+                } = source_state_payload(source_payload)
             {
                 return Ok(ManagedRuntimeSourceProjectionDelta::ItemTransitioned {
                     item_id: identities.runtime_item_id(item_id, turn_id)?,
@@ -2061,7 +2136,22 @@ fn project_source_projection_section(
                 applied_surface_revision: applied_surface_revision()?,
             })
         }
+        ManagedRuntimeProjectionSection::ConversationPresentation => {
+            Err(CompleteAgentRuntimeProjectionError::InvalidSourceProjectionSection)
+        }
     }
+}
+
+fn source_observation_presentation(
+    payload: &NormalizedAgentPlatformChangePayload,
+) -> Option<&[CanonicalConversationRecord]> {
+    let NormalizedAgentPlatformChangePayload::SourceChangeApplied { payload, .. } = payload else {
+        return None;
+    };
+    let AgentChangePayload::SourceObservation { presentation, .. } = payload.as_ref() else {
+        return None;
+    };
+    Some(presentation)
 }
 
 fn source_payload_can_change_section(
@@ -2079,34 +2169,39 @@ fn source_payload_can_change_section(
         NormalizedAgentPlatformChangePayload::SourceChangeApplied {
             payload: source_payload,
             ..
-        } => matches!(
-            (source_payload.as_ref(), section),
-            (
-                AgentChangePayload::ThreadNameChanged { .. },
-                ManagedRuntimeProjectionSection::ThreadName
-            ) | (
-                AgentChangePayload::LifecycleChanged { .. },
-                ManagedRuntimeProjectionSection::Lifecycle
-            ) | (
-                AgentChangePayload::TurnChanged { .. },
-                ManagedRuntimeProjectionSection::Turns | ManagedRuntimeProjectionSection::Items
-            ) | (
-                AgentChangePayload::ActiveTurnChanged { .. },
-                ManagedRuntimeProjectionSection::ActiveTurn
-            ) | (
-                AgentChangePayload::ItemChanged { .. },
-                ManagedRuntimeProjectionSection::Turns | ManagedRuntimeProjectionSection::Items
-            ) | (
-                AgentChangePayload::ItemTransitioned { .. },
-                ManagedRuntimeProjectionSection::Turns | ManagedRuntimeProjectionSection::Items
-            ) | (
-                AgentChangePayload::InteractionChanged { .. },
-                ManagedRuntimeProjectionSection::Interactions
-            ) | (
-                AgentChangePayload::SurfaceApplied { .. },
-                ManagedRuntimeProjectionSection::Surface
-            )
-        ),
+        } => {
+            let source_payload = source_state_payload(source_payload);
+            matches!(
+                (source_payload, section),
+                (
+                    AgentChangePayload::ThreadNameChanged { .. },
+                    ManagedRuntimeProjectionSection::ThreadName
+                ) | (
+                    AgentChangePayload::LifecycleChanged { .. },
+                    ManagedRuntimeProjectionSection::Lifecycle
+                ) | (
+                    AgentChangePayload::TurnChanged { .. },
+                    ManagedRuntimeProjectionSection::Turns | ManagedRuntimeProjectionSection::Items
+                ) | (
+                    AgentChangePayload::ActiveTurnChanged { .. },
+                    ManagedRuntimeProjectionSection::ActiveTurn
+                ) | (
+                    AgentChangePayload::ItemChanged { .. },
+                    ManagedRuntimeProjectionSection::Turns | ManagedRuntimeProjectionSection::Items
+                ) | (
+                    AgentChangePayload::ItemTransitioned { .. },
+                    ManagedRuntimeProjectionSection::Turns | ManagedRuntimeProjectionSection::Items
+                ) | (
+                    AgentChangePayload::InteractionChanged { .. },
+                    ManagedRuntimeProjectionSection::Interactions
+                ) | (
+                    AgentChangePayload::SurfaceApplied { .. },
+                    ManagedRuntimeProjectionSection::Surface
+                )
+            ) || (section == ManagedRuntimeProjectionSection::ConversationPresentation
+                && source_observation_presentation(payload)
+                    .is_some_and(|records| !records.is_empty()))
+        }
     }
 }
 
@@ -4669,6 +4764,7 @@ mod tests {
             },
             applied_surface: None,
             initial_context: None,
+            conversation_history: Vec::new(),
         }
     }
 

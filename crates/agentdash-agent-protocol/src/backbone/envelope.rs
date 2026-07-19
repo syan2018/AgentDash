@@ -64,4 +64,11 @@ impl BackboneEnvelope {
         self.trace.entry_index = Some(index);
         self
     }
+
+    #[must_use]
+    pub fn with_observed_at_ms(mut self, observed_at_ms: i64) -> Self {
+        self.observed_at = DateTime::from_timestamp_millis(observed_at_ms)
+            .expect("canonical presentation timestamp must fit chrono DateTime");
+        self
+    }
 }

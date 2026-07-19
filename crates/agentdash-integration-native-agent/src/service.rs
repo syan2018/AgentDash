@@ -692,6 +692,8 @@ impl CompleteAgentService for DashAgentCompleteService {
     async fn read(&self, query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError> {
         let (service, source) = self.open_source(&query.source).await?;
         let read = service.read().await.map_err(map_dash_error)?;
+        let conversation_history =
+            crate::canonical_projection::history_records(&read.history).map_err(internal)?;
         let history_state = read.state;
         let revision = AgentSnapshotRevision(history_state.entry_count);
         if query
@@ -745,6 +747,7 @@ impl CompleteAgentService for DashAgentCompleteService {
             },
             applied_surface: source.applied_surface,
             initial_context: source.initial_context,
+            conversation_history,
         })
     }
 
@@ -765,6 +768,18 @@ impl CompleteAgentService for DashAgentCompleteService {
             .map_err(map_dash_error)?
             .into_iter()
             .map(|change| {
+                let state_payload = dash_change_payload(&change)?;
+                let presentation = match &change.payload {
+                    DashAgentChangePayload::HistoryEntry { entry } => {
+                        crate::canonical_projection::entry_records(
+                            query.source.as_str(),
+                            entry,
+                            &change.state,
+                        )
+                        .map_err(internal)?
+                    }
+                    DashAgentChangePayload::ActiveTurnChanged { .. } => Vec::new(),
+                };
                 Ok(AgentChange {
                     cursor: AgentSourceCursor::new(change.cursor.encode()).map_err(internal)?,
                     source_revision: Some(
@@ -772,7 +787,10 @@ impl CompleteAgentService for DashAgentCompleteService {
                             .map_err(internal)?,
                     ),
                     occurred_at_ms: 0,
-                    payload: dash_change_payload(&change)?,
+                    payload: AgentChangePayload::SourceObservation {
+                        state: Box::new(state_payload),
+                        presentation,
+                    },
                 })
             })
             .collect::<Result<Vec<_>, AgentServiceError>>()?;

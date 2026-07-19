@@ -4,6 +4,7 @@
 //! Dash Agent depends one-way on the pure Core; neither layer imports Runtime, Integration,
 //! repository, legacy driver, journal, or vendor protocol vocabulary.
 
+mod canonical_projection;
 mod core_callbacks;
 mod service;
 

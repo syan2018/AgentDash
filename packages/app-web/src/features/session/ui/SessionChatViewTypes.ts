@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-
 import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
+
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type {
   BackendSelectionRequestDto,
@@ -18,6 +19,7 @@ import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { ImageAttachment } from "./composer/useImageAttachments";
 import type { OpenSessionWorkspacePanel } from "./SessionWorkspacePanelActionContext";
+import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 
 export interface PromptTemplate {
   id: string;
@@ -73,6 +75,7 @@ export interface SessionChatMailboxModel {
 
 export interface SessionChatModel {
   agentRunTarget?: AgentRunRuntimeTarget | null;
+  companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   workspaceId?: string | null;
   executorHint?: string | null;
   agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null;
@@ -119,7 +122,16 @@ export interface SessionChatViewProps {
   /** 消息发送成功后回调（父组件可刷新列表等） */
   onMessageSent?: () => void;
 
-  /** 当前 target snapshot baseline 之后提交的 canonical Runtime changes。 */
+  /** Agent turn 结束时回调（turn_completed / turn_failed） */
+  onTurnEnd?: () => void;
+
+  /** 收到系统事件时回调，用于父层按事件驱动刷新额外状态面板 */
+  onSystemEvent?: (eventType: string, event: BackboneEvent) => void;
+
+  /** task_write 工具完成时回调；用于刷新外部 Task plan 展示。 */
+  onTaskPlanChanged?: () => void;
+
+  /** Baseline 之后提交的 Runtime typed changes，供页面级 Product 投影刷新。 */
   onRuntimeChanges?: (changes: readonly ManagedRuntimePlatformChange[]) => void;
 
   // ─── 布局插槽 ────────────────────────────────────────

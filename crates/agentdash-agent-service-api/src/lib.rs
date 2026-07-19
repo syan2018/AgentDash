@@ -26,6 +26,7 @@ pub use service::*;
 pub use snapshot::*;
 pub use surface::*;
 pub use wire_u64::*;
+pub use agentdash_agent_protocol::CanonicalConversationRecord;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -141,7 +142,16 @@ mod tests {
         ] {
             assert!(typescript.contains(outcome), "missing outcome {outcome}");
         }
-        assert!(!typescript.contains("bigint"));
+        for service_scalar in [
+            "deadline_at_ms: bigint",
+            "occurred_at_ms: bigint",
+            "change_sequence: bigint",
+        ] {
+            assert!(
+                !typescript.contains(service_scalar),
+                "service wire scalar leaked as bigint: {service_scalar}"
+            );
+        }
         assert!(typescript.contains(
             "export type AgentServiceU64 = string & { readonly __agent_service_u64: \"canonical_unsigned_decimal\" };"
         ));

@@ -1616,6 +1616,7 @@ fn initial_projection(thread_id: RuntimeThreadId, captured_at_ms: u64) -> Manage
         authority: ManagedRuntimeProjectionAuthority::RuntimeDerived,
         fidelity: ManagedRuntimeProjectionFidelity::Observed,
         command_availability,
+        conversation_history: Vec::new(),
     }
 }
 
@@ -1709,6 +1710,7 @@ mod tests {
             authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
             fidelity: ManagedRuntimeProjectionFidelity::Exact,
             command_availability,
+            conversation_history: Vec::new(),
         }
     }
 

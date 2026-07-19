@@ -172,6 +172,15 @@ export function applyManagedRuntimeChangePage(
     if (change.sequence <= snapshot.latest_change_sequence) continue;
     const delta = change.delta;
     switch (delta.kind) {
+      case "conversation_presentation_appended":
+        next = {
+          ...next,
+          conversation_history: [
+            ...next.conversation_history,
+            ...delta.records,
+          ],
+        };
+        break;
       case "source_observation_applied":
       case "surface_evidence_changed":
         break;

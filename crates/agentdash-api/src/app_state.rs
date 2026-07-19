@@ -25,6 +25,10 @@ use agentdash_application::product_runtime_surface::{
 };
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::{RoutineExecutor, RoutineRuntimeTurnTerminalObserver};
+use agentdash_application::runtime_tools::workspace_module_product::{
+    ApplicationWorkspaceModuleRuntimeToolService, WorkspaceModuleRuntimeToolDeps,
+    workspace_module_runtime_tool_schema,
+};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::task::tools::ApplicationRuntimeTaskToolService;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
@@ -42,7 +46,9 @@ use agentdash_application_agentrun::agent_run::{
     ProductMailboxFacade, ProductManagedRuntimeCommandAdapter,
     build_durable_workflow_agent_call_dispatch,
 };
-use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeChannelInvoker};
+use agentdash_application_extension_gateway::{
+    ExtensionGateway, ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeChannelInvoker,
+};
 use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
 use agentdash_application_lifecycle::run_view_builder::{
     LifecycleRunViewQueryDeps, LifecycleRunViewQueryPort, LifecycleRunViewQueryService,
@@ -317,6 +323,22 @@ impl AppState {
             ProductRuntimeToolKind::CompleteLifecycleNode,
             agentdash_application_lifecycle::tools::complete_lifecycle_node_parameters_schema(),
         ));
+        let workspace_module_list_runtime_tool = Arc::new(DeferredProductRuntimeToolService::new(
+            ProductRuntimeToolKind::WorkspaceModuleList,
+            workspace_module_runtime_tool_schema(ProductRuntimeToolKind::WorkspaceModuleList),
+        ));
+        let workspace_module_describe_runtime_tool =
+            Arc::new(DeferredProductRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModuleDescribe,
+                workspace_module_runtime_tool_schema(
+                    ProductRuntimeToolKind::WorkspaceModuleDescribe,
+                ),
+            ));
+        let workspace_module_invoke_runtime_tool =
+            Arc::new(DeferredProductRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModuleInvoke,
+                workspace_module_runtime_tool_schema(ProductRuntimeToolKind::WorkspaceModuleInvoke),
+            ));
         let applied_vfs_tools = Arc::new(
             AppliedVfsRuntimeToolService::new(vfs_service.clone(), shell_terminal_registry.clone())
                 .with_materialization(Some(vfs_materialization_service))
@@ -337,6 +359,9 @@ impl AppState {
         runtime_tool_catalog.extend(product_runtime_tool_catalog(vec![
             wait_activity_service.clone() as Arc<dyn ProductRuntimeToolService>,
             lifecycle_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+            workspace_module_list_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+            workspace_module_describe_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+            workspace_module_invoke_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
         ]));
         let runtime_tool_authorizer = Arc::new(ProductRuntimeToolAuthorizer::new(
             runtime_product_bindings.clone(),
@@ -588,6 +613,40 @@ impl AppState {
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         ));
+        let extension_runtime_backend_service_invoker =
+            Arc::new(ExtensionRuntimeBackendServiceInvoker::new(
+                repos.project_extension_installation_repo.clone(),
+                backend_registry.clone(),
+            ));
+        let workspace_module_runtime_tool_deps = WorkspaceModuleRuntimeToolDeps {
+            runtime_bindings: runtime_product_bindings.clone(),
+            applied_surfaces: product_persistence.applied_resource_surfaces.clone(),
+            frames: repos.agent_frame_repo.clone(),
+            installations: repos.project_extension_installation_repo.clone(),
+            canvases: repos.canvas_repo.clone(),
+            canvas_runtime_state: repos.canvas_runtime_state_repo.clone(),
+            extension_gateway: extension_gateway.clone(),
+            channel_invoker: extension_runtime_channel_invoker.clone(),
+            backend_service_invoker: extension_runtime_backend_service_invoker,
+        };
+        workspace_module_list_runtime_tool
+            .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModuleList,
+                workspace_module_runtime_tool_deps.clone(),
+            )))
+            .map_err(anyhow::Error::msg)?;
+        workspace_module_describe_runtime_tool
+            .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModuleDescribe,
+                workspace_module_runtime_tool_deps.clone(),
+            )))
+            .map_err(anyhow::Error::msg)?;
+        workspace_module_invoke_runtime_tool
+            .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModuleInvoke,
+                workspace_module_runtime_tool_deps,
+            )))
+            .map_err(anyhow::Error::msg)?;
         let workflow_effects =
             Arc::new(PostgresWorkflowExecutorEffectRepository::new(pool.clone()));
         let function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner> = Arc::new(

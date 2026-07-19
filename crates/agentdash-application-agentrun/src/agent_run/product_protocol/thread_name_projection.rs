@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeChangeDelta, ManagedRuntimePlatformChange, RuntimeChangeSequence,
-    RuntimeProjectionRevision,
+    ManagedRuntimeChangeDelta, ManagedRuntimePlatformChange, ManagedRuntimeProjectionAuthority,
+    ManagedRuntimeProjectionFidelity, RuntimeChangeSequence, RuntimeProjectionRevision,
 };
 use agentdash_application_ports::project_projection_notification::{
     ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
@@ -45,6 +45,10 @@ pub enum AgentRunThreadNameProjectionError {
     ThreadNameSourceMissing,
     #[error("thread-name change source evidence is stale for the current Runtime snapshot")]
     ThreadNameSourceMismatch,
+    #[error("thread-name change is not source-authoritative with exact fidelity")]
+    ThreadNameSourceNotAuthoritative,
+    #[error("thread-name change carries invalid committed source coordinates")]
+    ThreadNameChangeCoordinateMismatch,
     #[error("LifecycleRun query failed: {0}")]
     Run(String),
     #[error("AgentRun thread-name projection is missing LifecycleRun {0}")]
@@ -84,10 +88,24 @@ impl AgentRunThreadNameProjectionObserver {
         target: &AgentRunTarget,
         change: &ManagedRuntimePlatformChange,
     ) -> Result<AgentRunThreadNameProjectionOutcome, AgentRunThreadNameProjectionError> {
-        let change_source = match &change.delta {
-            ManagedRuntimeChangeDelta::ThreadNameChanged { source, .. } => source,
-            _ => return Ok(AgentRunThreadNameProjectionOutcome::Ignored),
-        };
+        let (source_change_sequence, source_projection_revision, change_source) =
+            match &change.delta {
+                ManagedRuntimeChangeDelta::ThreadNameChanged {
+                    source_change_sequence,
+                    source_projection_revision,
+                    source,
+                    ..
+                } => (*source_change_sequence, *source_projection_revision, source),
+                _ => return Ok(AgentRunThreadNameProjectionOutcome::Ignored),
+            };
+        if source_change_sequence == 0 || source_projection_revision != change.revision {
+            return Err(AgentRunThreadNameProjectionError::ThreadNameChangeCoordinateMismatch);
+        }
+        if change_source.authority != ManagedRuntimeProjectionAuthority::SourceAuthoritative
+            || change_source.fidelity != ManagedRuntimeProjectionFidelity::Exact
+        {
+            return Err(AgentRunThreadNameProjectionError::ThreadNameSourceNotAuthoritative);
+        }
 
         let binding = self
             .bindings
@@ -124,6 +142,11 @@ impl AgentRunThreadNameProjectionObserver {
             .thread_name_source
             .as_ref()
             .ok_or(AgentRunThreadNameProjectionError::ThreadNameSourceMissing)?;
+        if snapshot_source.authority != ManagedRuntimeProjectionAuthority::SourceAuthoritative
+            || snapshot_source.fidelity != ManagedRuntimeProjectionFidelity::Exact
+        {
+            return Err(AgentRunThreadNameProjectionError::ThreadNameSourceNotAuthoritative);
+        }
         if snapshot_source.source_identity_digest != change_source.source_identity_digest {
             return Err(AgentRunThreadNameProjectionError::ThreadNameSourceMismatch);
         }
@@ -386,6 +409,30 @@ mod tests {
         assert!(matches!(
             observer.observe(&target, &stale_source).await,
             Err(AgentRunThreadNameProjectionError::ThreadNameSourceMismatch)
+        ));
+        let mut wrong_coordinate = name_change(thread_id.clone(), 7, Some("标题"));
+        let ManagedRuntimeChangeDelta::ThreadNameChanged {
+            source_projection_revision,
+            ..
+        } = &mut wrong_coordinate.delta
+        else {
+            unreachable!()
+        };
+        *source_projection_revision = RuntimeProjectionRevision(3);
+        assert!(matches!(
+            observer.observe(&target, &wrong_coordinate).await,
+            Err(AgentRunThreadNameProjectionError::ThreadNameChangeCoordinateMismatch)
+        ));
+        let mut observed_source = name_change(thread_id.clone(), 7, Some("标题"));
+        let ManagedRuntimeChangeDelta::ThreadNameChanged { source, .. } =
+            &mut observed_source.delta
+        else {
+            unreachable!()
+        };
+        source.authority = ManagedRuntimeProjectionAuthority::SourceObserved;
+        assert!(matches!(
+            observer.observe(&target, &observed_source).await,
+            Err(AgentRunThreadNameProjectionError::ThreadNameSourceNotAuthoritative)
         ));
 
         let (target, thread_id, rebound_observer, _) = fixture(rebound, current).await;

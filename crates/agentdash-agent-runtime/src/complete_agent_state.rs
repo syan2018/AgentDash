@@ -666,6 +666,13 @@ fn normalize_thread_name(
     let Some(thread_name) = thread_name else {
         return Ok((None, None));
     };
+    if thread_name.source_info.authority != AgentSnapshotAuthority::AgentAuthoritative
+        || thread_name.source_info.fidelity != agentdash_agent_service_api::SemanticFidelity::Exact
+    {
+        return Err(CompleteAgentStateError::InvalidSnapshot {
+            reason: "thread name must be source-authoritative with exact fidelity".to_owned(),
+        });
+    }
     if thread_name
         .thread_name
         .as_ref()
@@ -821,6 +828,14 @@ fn apply_source_change(
             thread_name,
             source_info,
         } => {
+            if source_info.authority != AgentSnapshotAuthority::AgentAuthoritative
+                || source_info.fidelity != agentdash_agent_service_api::SemanticFidelity::Exact
+            {
+                return Err(CompleteAgentStateError::InvalidChange {
+                    reason: "thread name must be source-authoritative with exact fidelity"
+                        .to_owned(),
+                });
+            }
             if thread_name
                 .as_ref()
                 .is_some_and(|value| value.trim().is_empty())
@@ -2628,6 +2643,94 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[tokio::test]
+    async fn non_authoritative_initial_thread_name_is_rejected_before_any_runtime_mutation() {
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
+        let reconciler = fixture_reconciler(repository.clone());
+        let mut observed = snapshot_with_thread_name(1, Some(Some("观察标题")));
+        observed
+            .thread_name
+            .as_mut()
+            .expect("name section")
+            .source_info
+            .authority = AgentSnapshotAuthority::AgentObserved;
+
+        assert!(matches!(
+            reconciler.reconcile_snapshot(observed, None).await,
+            Err(CompleteAgentStateError::InvalidSnapshot { .. })
+        ));
+        assert_eq!(
+            fixture_state(&repository).await,
+            ManagedRuntimeStateSnapshot::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn lower_authority_or_fidelity_cannot_overwrite_an_authoritative_thread_name() {
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
+        let reconciler = fixture_reconciler(repository.clone());
+        reconciler
+            .reconcile_snapshot(snapshot_with_thread_name(1, Some(Some("权威标题"))), None)
+            .await
+            .expect("authoritative initial name");
+        let committed = fixture_state(&repository).await;
+
+        for (cursor_value, authority, fidelity, thread_name) in [
+            (
+                "name-observed",
+                AgentSnapshotAuthority::AgentObserved,
+                SemanticFidelity::Exact,
+                Some("观察覆盖"),
+            ),
+            (
+                "name-approximate",
+                AgentSnapshotAuthority::AgentAuthoritative,
+                SemanticFidelity::Approximation,
+                None,
+            ),
+        ] {
+            let result = reconciler
+                .reconcile_change_page(
+                    &AgentChangesQuery {
+                        source: source(),
+                        after: None,
+                        limit: 1,
+                    },
+                    AgentChangePage {
+                        source: source(),
+                        changes: vec![agentdash_agent_service_api::AgentChange {
+                            cursor: cursor(cursor_value),
+                            source_revision: Some(
+                                AgentSourceRevision::new(format!("source-{cursor_value}"))
+                                    .expect("revision"),
+                            ),
+                            occurred_at_ms: 5,
+                            payload: AgentChangePayload::ThreadNameChanged {
+                                thread_name: thread_name.map(str::to_owned),
+                                source_info: AgentSnapshotSource {
+                                    authority,
+                                    source_revision: Some(
+                                        AgentSourceRevision::new(format!("name-{cursor_value}"))
+                                            .expect("revision"),
+                                    ),
+                                    fidelity,
+                                    observed_at_ms: 5,
+                                },
+                            },
+                        }],
+                        next: Some(cursor(cursor_value)),
+                        gap: false,
+                    },
+                )
+                .await;
+            assert!(matches!(
+                result,
+                Err(CompleteAgentStateError::InvalidChange { .. })
+            ));
+            assert_eq!(fixture_state(&repository).await, committed);
+        }
     }
 
     #[tokio::test]

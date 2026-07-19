@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use agentdash_agent_runtime_contract::{
     ManagedRuntimePlatformChange, RuntimeChangeSequence, RuntimeThreadId,
 };
 use agentdash_application_agentrun::agent_run::{
-    AgentRunThreadNameProjectionObserver, AgentRunThreadNameProjectionOutcome,
+    AgentRunProductRuntimeChange, AgentRunProductRuntimeChangeObserver,
 };
 use serde_json::Value;
 use sqlx::{PgPool, Row};
@@ -210,20 +210,41 @@ impl PostgresManagedRuntimeProductChangeDelivery {
 pub(crate) struct ManagedRuntimeProductChangeConsumer {
     delivery: PostgresManagedRuntimeProductChangeDelivery,
     bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
-    observer: Arc<AgentRunThreadNameProjectionObserver>,
+    observers: RwLock<Vec<Arc<dyn AgentRunProductRuntimeChangeObserver>>>,
 }
 
 impl ManagedRuntimeProductChangeConsumer {
     pub(crate) fn new(
         delivery: PostgresManagedRuntimeProductChangeDelivery,
         bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
-        observer: Arc<AgentRunThreadNameProjectionObserver>,
+        observer: Arc<dyn AgentRunProductRuntimeChangeObserver>,
     ) -> Self {
         Self {
             delivery,
             bindings,
-            observer,
+            observers: RwLock::new(vec![observer]),
         }
+    }
+
+    pub(crate) fn register_observer(
+        &self,
+        observer: Arc<dyn AgentRunProductRuntimeChangeObserver>,
+    ) -> Result<(), String> {
+        let mut observers = self
+            .observers
+            .write()
+            .map_err(|_| "Runtime Product change observer registry lock poisoned".to_owned())?;
+        if observers
+            .iter()
+            .any(|registered| registered.consumer_name() == observer.consumer_name())
+        {
+            return Err(format!(
+                "Runtime Product change observer `{}` is already registered",
+                observer.consumer_name()
+            ));
+        }
+        observers.push(observer);
+        Ok(())
     }
 
     pub(crate) async fn drain(&self, limit: usize) -> Result<usize, String> {
@@ -266,15 +287,27 @@ impl ManagedRuntimeProductChangeConsumer {
                     claim.thread_id
                 )
             })?;
-        match self
-            .observer
-            .observe(&binding.target, &claim.change)
-            .await
-            .map_err(|error| error.to_string())?
-        {
-            AgentRunThreadNameProjectionOutcome::Ignored
-            | AgentRunThreadNameProjectionOutcome::Published => Ok(()),
+        let input = AgentRunProductRuntimeChange {
+            binding,
+            change: claim.change.clone(),
+        };
+        let observers = self
+            .observers
+            .read()
+            .map_err(|_| "Runtime Product change observer registry lock poisoned".to_owned())?
+            .clone();
+        for observer in observers {
+            observer
+                .observe_product_runtime_change(&input)
+                .await
+                .map_err(|error| {
+                    format!(
+                        "Runtime Product change observer `{}` failed: {error}",
+                        observer.consumer_name()
+                    )
+                })?;
         }
+        Ok(())
     }
 }
 

@@ -4,7 +4,7 @@ use agentdash_domain::workflow::{
     AgentProcedure, AgentProcedureContract, AgentProcedureRepository, AgentReusePolicy,
     BashExecExecutorSpec, ExecutorSpec, FunctionActivityExecutorSpec, LifecycleAgentRepository,
     LifecycleNodeType, LifecycleRun, LifecycleRunRepository, OrchestrationInstance,
-    OrchestrationSourceRef, PlanNode, RuntimeNodeState, RuntimeSessionPolicy,
+    OrchestrationSourceRef, PlanNode, RuntimeNodeState, RuntimeThreadPolicy,
 };
 use agentdash_platform_spi::hooks::HookControlTarget;
 
@@ -79,14 +79,14 @@ pub fn activity_definition_from_plan_node(plan_node: &PlanNode) -> ActivityDefin
         Some(ExecutorSpec::AgentProcedure {
             procedure,
             agent_reuse_policy,
-            runtime_session_policy,
+            runtime_thread_policy,
         }) => ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
             procedure_key: procedure
                 .procedure_key()
                 .unwrap_or("__inline_agent_procedure")
                 .to_string(),
             agent_reuse_policy: *agent_reuse_policy,
-            runtime_session_policy: *runtime_session_policy,
+            runtime_thread_policy: *runtime_thread_policy,
         }),
         Some(ExecutorSpec::Function { spec }) => ActivityExecutorSpec::Function(spec.clone()),
         Some(ExecutorSpec::Human { spec }) => ActivityExecutorSpec::Human(spec.clone()),
@@ -181,10 +181,10 @@ fn derive_node_facts(plan_node: &PlanNode) -> (Option<String>, LifecycleNodeType
         Some(ExecutorSpec::AgentProcedure {
             procedure,
             agent_reuse_policy,
-            runtime_session_policy,
+            runtime_thread_policy,
         }) => {
             let node_type = if *agent_reuse_policy == AgentReusePolicy::ContinueCurrentAgent
-                && *runtime_session_policy == RuntimeSessionPolicy::DeliverToCurrentTrace
+                && *runtime_thread_policy == RuntimeThreadPolicy::DeliverToCurrentThread
             {
                 LifecycleNodeType::PhaseNode
             } else {
@@ -198,7 +198,7 @@ fn derive_node_facts(plan_node: &PlanNode) -> (Option<String>, LifecycleNodeType
 
 /// 从 message stream trace 解析 Activity workflow projection。
 ///
-/// 生产链路只允许 RuntimeSession 作为 trace lookup 起点：
+/// 生产链路只允许 RuntimeThread 作为 Product binding lookup 起点：
 /// Runtime thread -> AgentRun runtime binding -> LifecycleRun.orchestrations。
 pub async fn resolve_active_workflow_projection_from_message_stream_trace(
     session_id: &str,
@@ -360,12 +360,12 @@ mod tests {
     use super::{activity_definition_from_plan_node, derive_node_facts};
     use agentdash_domain::workflow::{
         AgentProcedureExecutionSpec, AgentReusePolicy, ExecutorSpec, LifecycleNodeType, PlanNode,
-        PlanNodeKind, RuntimeSessionPolicy,
+        PlanNodeKind, RuntimeThreadPolicy,
     };
 
     fn plan_node_with_agent_executor(
         agent_reuse_policy: AgentReusePolicy,
-        runtime_session_policy: RuntimeSessionPolicy,
+        runtime_thread_policy: RuntimeThreadPolicy,
     ) -> PlanNode {
         PlanNode {
             node_id: "implement".to_string(),
@@ -376,7 +376,7 @@ mod tests {
             executor: Some(ExecutorSpec::AgentProcedure {
                 procedure: AgentProcedureExecutionSpec::by_key("wf_impl"),
                 agent_reuse_policy,
-                runtime_session_policy,
+                runtime_thread_policy,
             }),
             input_ports: Vec::new(),
             output_ports: Vec::new(),
@@ -392,7 +392,7 @@ mod tests {
     fn derives_node_type_from_agent_reuse_policy() {
         let (procedure_key, node_type) = derive_node_facts(&plan_node_with_agent_executor(
             AgentReusePolicy::CreateActivityAgent,
-            RuntimeSessionPolicy::CreateNew,
+            RuntimeThreadPolicy::CreateNew,
         ));
 
         assert_eq!(procedure_key.as_deref(), Some("wf_impl"));
@@ -400,7 +400,7 @@ mod tests {
 
         let (procedure_key, node_type) = derive_node_facts(&plan_node_with_agent_executor(
             AgentReusePolicy::ContinueCurrentAgent,
-            RuntimeSessionPolicy::DeliverToCurrentTrace,
+            RuntimeThreadPolicy::DeliverToCurrentThread,
         ));
 
         assert_eq!(procedure_key.as_deref(), Some("wf_impl"));
@@ -411,7 +411,7 @@ mod tests {
     fn projects_activity_from_plan_node_without_graph_lookup() {
         let plan_node = plan_node_with_agent_executor(
             AgentReusePolicy::CreateActivityAgent,
-            RuntimeSessionPolicy::CreateNew,
+            RuntimeThreadPolicy::CreateNew,
         );
 
         let activity = activity_definition_from_plan_node(&plan_node);

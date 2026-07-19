@@ -14,6 +14,7 @@
 //! 错误处理哲学：repo 报错 / 未找到 / 未配置统一返回 `None`，
 //! 只记录 `tracing::warn!`，不中断 session 创建。
 
+use agentdash_application_ports::lifecycle_surface_projection::ActiveWorkflowProjection;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use uuid::Uuid;
 
@@ -287,7 +288,7 @@ pub fn tool_directives_from_active_workflow(
 }
 
 pub fn tool_directives_from_active_workflow_projection(
-    workflow: &crate::lifecycle::ActiveWorkflowProjection,
+    workflow: &ActiveWorkflowProjection,
 ) -> Vec<ToolCapabilityDirective> {
     workflow
         .active_contract()

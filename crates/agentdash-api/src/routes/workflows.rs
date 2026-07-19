@@ -321,7 +321,7 @@ pub async fn preflight_workflow_script(
     let mut provenance =
         WorkflowScriptProvenance::new(WorkflowScriptProvenanceSource::UserAuthored);
     provenance.created_by = Some(current_user.user_id.clone());
-    provenance.runtime_session_id = req.runtime_session_id.clone();
+    provenance.runtime_thread_id = req.runtime_thread_id.clone();
 
     let output = WorkflowScriptPreflightService::preflight(WorkflowScriptPreflightInput {
         evaluator: &evaluator,

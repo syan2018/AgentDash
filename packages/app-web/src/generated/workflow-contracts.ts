@@ -25,7 +25,7 @@ export type ActivityTransition = { from: string, to: string, kind: ActivityTrans
 
 export type ActivityTransitionKind = "flow" | "artifact";
 
-export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_session_policy: RuntimeSessionPolicy, };
+export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_thread_policy: RuntimeThreadPolicy, };
 
 export type AgentConversationIdentity = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, };
 
@@ -197,7 +197,7 @@ export type OutputPortDefinition = { key: string, description: string, gate_stra
 
 export type PlatformMcpScopeDto = "relay" | "story" | "workflow";
 
-export type PreflightWorkflowScriptRequest = { project_id: string, source_text: string, args?: JsonValue, ctx?: JsonValue, runtime_session_id?: string, };
+export type PreflightWorkflowScriptRequest = { project_id: string, source_text: string, args?: JsonValue, ctx?: JsonValue, runtime_thread_id?: string, };
 
 export type PreflightWorkflowScriptResponse = { valid: boolean, source_digest: string, source_ref: JsonValue, raw_builder_document?: JsonValue, plan_snapshot?: JsonValue, plan_preview?: WorkflowScriptPlanPreviewDto, capability_summary: WorkflowScriptCapabilitySummaryDto, diagnostics: Array<WorkflowScriptPreflightDiagnosticDto>, };
 
@@ -209,7 +209,7 @@ export type RegisterHookPresetResponse = { registered: boolean, key: string, };
 
 export type RuntimeNodeView = { node_id: string, node_path: string, kind: string, status: string, attempt: number, executor_run_ref?: ExecutorRunRef, started_at?: string, completed_at?: string, children: Array<RuntimeNodeView>, };
 
-export type RuntimeSessionPolicy = "create_new" | "deliver_to_current_trace";
+export type RuntimeThreadPolicy = "create_new" | "deliver_to_current_thread";
 
 export type RuntimeThreadRefDto = { runtime_thread_id: string, };
 

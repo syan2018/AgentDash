@@ -5,8 +5,7 @@ use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
     AgentProcedureContract, AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec,
     FunctionActivityExecutorSpec, LifecycleNodeType, LifecycleRun, MountDirective,
-    OrchestrationInstance, OrchestrationSourceRef, PlanNode, RuntimeNodeState,
-    RuntimeSessionPolicy,
+    OrchestrationInstance, OrchestrationSourceRef, PlanNode, RuntimeNodeState, RuntimeThreadPolicy,
 };
 use agentdash_platform_spi::{CapabilityState, RuntimeMcpServer, Vfs};
 use async_trait::async_trait;
@@ -64,14 +63,14 @@ pub fn activity_definition_from_plan_node(plan_node: &PlanNode) -> ActivityDefin
         Some(ExecutorSpec::AgentProcedure {
             procedure,
             agent_reuse_policy,
-            runtime_session_policy,
+            runtime_thread_policy,
         }) => ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
             procedure_key: procedure
                 .procedure_key()
                 .unwrap_or("__inline_agent_procedure")
                 .to_string(),
             agent_reuse_policy: *agent_reuse_policy,
-            runtime_session_policy: *runtime_session_policy,
+            runtime_thread_policy: *runtime_thread_policy,
         }),
         Some(ExecutorSpec::Function { spec }) => ActivityExecutorSpec::Function(spec.clone()),
         Some(ExecutorSpec::Human { spec }) => ActivityExecutorSpec::Human(spec.clone()),
@@ -158,10 +157,10 @@ pub fn derive_agent_node_facts(plan_node: &PlanNode) -> (Option<String>, Lifecyc
         Some(ExecutorSpec::AgentProcedure {
             procedure,
             agent_reuse_policy,
-            runtime_session_policy,
+            runtime_thread_policy,
         }) => {
             let node_type = if *agent_reuse_policy == AgentReusePolicy::ContinueCurrentAgent
-                && *runtime_session_policy == RuntimeSessionPolicy::DeliverToCurrentTrace
+                && *runtime_thread_policy == RuntimeThreadPolicy::DeliverToCurrentThread
             {
                 LifecycleNodeType::PhaseNode
             } else {

@@ -1,0 +1,421 @@
+use agentdash_agent_runtime_contract::{
+    ManagedRuntimeSnapshot, RuntimeOperationId, RuntimeThreadId, RuntimeTurnId,
+};
+use agentdash_application_agentrun::agent_run::{
+    AgentRunProductRuntimeBinding, AgentRunProductRuntimeBindingRepository,
+};
+use agentdash_domain::workflow::{
+    AgentFrame, AgentFrameRepository, ExecutorRunRef, LifecycleAgent, LifecycleAgentRepository,
+    LifecycleRun, LifecycleRunRepository, RuntimeNodeState,
+};
+use uuid::Uuid;
+
+/// Lifecycle node 子 RuntimeThread 的 binding label 前缀。
+pub const LIFECYCLE_NODE_LABEL_PREFIX: &str = "lifecycle_node:";
+pub const LIFECYCLE_ACTIVITY_LABEL_PREFIX: &str = "lifecycle_activity:";
+
+/// RuntimeThread 与 lifecycle runtime node 的关联解析结果。
+#[derive(Debug, Clone)]
+pub struct LifecycleActivityRuntimeThreadAssociation {
+    pub run: LifecycleRun,
+    pub orchestration_id: Uuid,
+    pub node_path: String,
+    pub attempt: u32,
+}
+
+/// RuntimeThread terminal / advance 事件解析出的稳定 lifecycle execution 证据。
+///
+/// Product binding 表达 RuntimeThread 启动时的 launch frame evidence。
+/// resolver 必须允许当前 frame revision 演进后仍能回到 runtime node。
+#[derive(Debug, Clone)]
+pub struct ActivityRuntimeAssociation {
+    pub run: LifecycleRun,
+    pub orchestration_id: Uuid,
+    pub node_path: String,
+    pub attempt: u32,
+}
+
+pub type RuntimeThreadCurrentFrame = (AgentRunProductRuntimeBinding, LifecycleAgent, AgentFrame);
+
+/// 从 delivery trace ref 回溯当前 AgentFrame surface。
+///
+/// RuntimeThread 只作为 delivery evidence；业务 owner 来自 Product binding 反查出的
+/// LifecycleAgent 与当前 AgentFrame。
+pub async fn resolve_current_frame_from_delivery_trace_ref(
+    runtime_thread_id: &str,
+    binding_repo: &dyn AgentRunProductRuntimeBindingRepository,
+    agent_repo: &dyn LifecycleAgentRepository,
+    frame_repo: &dyn AgentFrameRepository,
+) -> Result<Option<RuntimeThreadCurrentFrame>, agentdash_domain::DomainError> {
+    let thread_id = RuntimeThreadId::new(runtime_thread_id).map_err(|error| {
+        agentdash_domain::DomainError::Database {
+            operation: "resolve_agent_run_runtime_binding",
+            message: error.to_string(),
+        }
+    })?;
+    let Some(binding) = binding_repo
+        .load_product_binding_by_runtime_thread(&thread_id)
+        .await
+        .map_err(|error| agentdash_domain::DomainError::Database {
+            operation: "resolve_agent_run_runtime_binding",
+            message: error.to_string(),
+        })?
+    else {
+        return Ok(None);
+    };
+    let Some(agent) = agent_repo.get(binding.target.agent_id).await? else {
+        return Ok(None);
+    };
+    if agent.run_id != binding.target.run_id {
+        return Ok(None);
+    }
+    let Some(frame) = frame_repo.get(binding.launch_frame.frame_id).await? else {
+        return Ok(None);
+    };
+    if frame.agent_id != agent.id
+        || u64::try_from(frame.revision).ok() != Some(binding.launch_frame.revision)
+    {
+        return Ok(None);
+    }
+    Ok(Some((binding, agent, frame)))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ActivityRuntimeAssociationError {
+    #[error("查询 {operation} 失败: {message}")]
+    Repository {
+        operation: &'static str,
+        message: String,
+    },
+    #[error(
+        "runtime thread {runtime_thread_id} 对应 AgentFrame {frame_id} 缺少 LifecycleAgent: agent_id={agent_id}"
+    )]
+    MissingLifecycleAgent {
+        runtime_thread_id: String,
+        frame_id: Uuid,
+        agent_id: Uuid,
+    },
+    #[error(
+        "runtime thread {runtime_thread_id} 对应 AgentFrame {frame_id} 与 Product binding agent 不匹配: agent_id={agent_id}"
+    )]
+    AnchorFrameMismatch {
+        runtime_thread_id: String,
+        frame_id: Uuid,
+        agent_id: Uuid,
+    },
+    #[error("runtime thread {runtime_thread_id} 指向的 lifecycle run 不存在: {run_id}")]
+    MissingLifecycleRunForAnchor {
+        runtime_thread_id: String,
+        run_id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleActivityLabelParts {
+    pub run_id: Uuid,
+    pub activity_key: String,
+    pub attempt: u32,
+}
+
+/// 构造 lifecycle node 子 RuntimeThread 的 binding label。
+pub fn build_lifecycle_node_label(node_key: &str) -> String {
+    format!("{LIFECYCLE_NODE_LABEL_PREFIX}{node_key}")
+}
+
+pub fn build_lifecycle_activity_label(run_id: Uuid, activity_key: &str, attempt: u32) -> String {
+    format!("{LIFECYCLE_ACTIVITY_LABEL_PREFIX}{run_id}:{activity_key}#{attempt}")
+}
+
+pub fn lifecycle_activity_parts_from_label(label: &str) -> Option<LifecycleActivityLabelParts> {
+    let payload = label.strip_prefix(LIFECYCLE_ACTIVITY_LABEL_PREFIX)?.trim();
+    let (run_id, activity_attempt) = payload.split_once(':')?;
+    let (activity_key, attempt) = activity_attempt.rsplit_once('#')?;
+    if activity_key.is_empty() {
+        return None;
+    }
+    Some(LifecycleActivityLabelParts {
+        run_id: Uuid::parse_str(run_id).ok()?,
+        activity_key: activity_key.to_string(),
+        attempt: attempt.parse().ok()?,
+    })
+}
+
+pub struct ActivityRuntimeAssociationResolver<'a> {
+    frame_repo: &'a dyn AgentFrameRepository,
+    run_repo: &'a dyn LifecycleRunRepository,
+    binding_repo: Option<&'a dyn AgentRunProductRuntimeBindingRepository>,
+}
+
+impl<'a> ActivityRuntimeAssociationResolver<'a> {
+    pub fn new(
+        frame_repo: &'a dyn AgentFrameRepository,
+        run_repo: &'a dyn LifecycleRunRepository,
+    ) -> Self {
+        Self {
+            frame_repo,
+            run_repo,
+            binding_repo: None,
+        }
+    }
+
+    pub fn with_binding_repo(
+        mut self,
+        binding_repo: &'a dyn AgentRunProductRuntimeBindingRepository,
+    ) -> Self {
+        self.binding_repo = Some(binding_repo);
+        self
+    }
+
+    pub async fn resolve_by_message_stream_trace(
+        &self,
+        runtime_thread_id: &str,
+    ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
+        let Some(binding_repo) = self.binding_repo else {
+            return Ok(None);
+        };
+        let thread_id = RuntimeThreadId::new(runtime_thread_id).map_err(|error| {
+            ActivityRuntimeAssociationError::Repository {
+                operation: "runtime thread id",
+                message: error.to_string(),
+            }
+        })?;
+        let Some(binding) = binding_repo
+            .load_product_binding_by_runtime_thread(&thread_id)
+            .await
+            .map_err(|e| ActivityRuntimeAssociationError::Repository {
+                operation: "agent run runtime binding",
+                message: e.to_string(),
+            })?
+        else {
+            return Ok(None);
+        };
+        self.resolve_by_binding(runtime_thread_id, binding).await
+    }
+
+    async fn resolve_by_binding(
+        &self,
+        runtime_thread_id: &str,
+        binding: AgentRunProductRuntimeBinding,
+    ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
+        let run = self.load_binding_run(runtime_thread_id, &binding).await?;
+        let Some((orchestration_id, node_path, attempt)) =
+            find_runtime_node_binding(&run, &binding.target, runtime_thread_id)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ActivityRuntimeAssociation {
+            run,
+            orchestration_id,
+            node_path,
+            attempt,
+        }))
+    }
+
+    pub async fn resolve_by_runtime_turn(
+        &self,
+        binding: &AgentRunProductRuntimeBinding,
+        snapshot: &ManagedRuntimeSnapshot,
+        turn_id: &RuntimeTurnId,
+    ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
+        if snapshot.thread_id != binding.runtime_thread_id
+            || snapshot.source_binding.as_ref() != Some(&binding.source_binding)
+        {
+            return Ok(None);
+        }
+        let run = self
+            .load_binding_run(binding.runtime_thread_id.as_str(), binding)
+            .await?;
+        let Some((orchestration_id, node_path, attempt)) = find_runtime_node_binding_for_turn(
+            &run,
+            &binding.target,
+            binding.runtime_thread_id.as_str(),
+            snapshot,
+            turn_id,
+        ) else {
+            return Ok(None);
+        };
+        Ok(Some(ActivityRuntimeAssociation {
+            run,
+            orchestration_id,
+            node_path,
+            attempt,
+        }))
+    }
+
+    async fn load_binding_run(
+        &self,
+        runtime_thread_id: &str,
+        binding: &AgentRunProductRuntimeBinding,
+    ) -> Result<LifecycleRun, ActivityRuntimeAssociationError> {
+        let Some(frame) = self
+            .frame_repo
+            .get(binding.launch_frame.frame_id)
+            .await
+            .map_err(|e| ActivityRuntimeAssociationError::Repository {
+                operation: "current AgentFrame",
+                message: e.to_string(),
+            })?
+        else {
+            return Err(ActivityRuntimeAssociationError::Repository {
+                operation: "launch AgentFrame",
+                message: format!(
+                    "Product binding frame {} does not exist",
+                    binding.launch_frame.frame_id
+                ),
+            });
+        };
+        if frame.agent_id != binding.target.agent_id
+            || u64::try_from(frame.revision).ok() != Some(binding.launch_frame.revision)
+        {
+            return Err(ActivityRuntimeAssociationError::AnchorFrameMismatch {
+                runtime_thread_id: runtime_thread_id.to_string(),
+                frame_id: frame.id,
+                agent_id: binding.target.agent_id,
+            });
+        }
+        self.run_repo
+            .get_by_id(binding.target.run_id)
+            .await
+            .map_err(|e| ActivityRuntimeAssociationError::Repository {
+                operation: "lifecycle run",
+                message: e.to_string(),
+            })?
+            .ok_or(
+                ActivityRuntimeAssociationError::MissingLifecycleRunForAnchor {
+                    runtime_thread_id: runtime_thread_id.to_string(),
+                    run_id: binding.target.run_id,
+                },
+            )
+    }
+}
+
+/// 从 message stream trace 解析 lifecycle runtime node 执行证据。
+pub async fn resolve_activity_runtime_association_from_runtime_thread(
+    runtime_thread_id: &str,
+    frame_repo: &dyn AgentFrameRepository,
+    _agent_repo: &dyn LifecycleAgentRepository,
+    run_repo: &dyn LifecycleRunRepository,
+    binding_repo: Option<&dyn AgentRunProductRuntimeBindingRepository>,
+) -> Result<Option<LifecycleActivityRuntimeThreadAssociation>, ActivityRuntimeAssociationError> {
+    let mut resolver = ActivityRuntimeAssociationResolver::new(frame_repo, run_repo);
+    if let Some(binding_repo) = binding_repo {
+        resolver = resolver.with_binding_repo(binding_repo);
+    }
+    Ok(resolver
+        .resolve_by_message_stream_trace(runtime_thread_id)
+        .await?
+        .map(|association| {
+            let ActivityRuntimeAssociation {
+                run,
+                orchestration_id,
+                node_path,
+                attempt,
+                ..
+            } = association;
+            LifecycleActivityRuntimeThreadAssociation {
+                run,
+                orchestration_id,
+                node_path,
+                attempt,
+            }
+        }))
+}
+
+fn find_runtime_node_binding(
+    run: &LifecycleRun,
+    target: &agentdash_domain::agent_run_target::AgentRunTarget,
+    runtime_thread_id: &str,
+) -> Option<(Uuid, String, u32)> {
+    run.orchestrations.iter().find_map(|orchestration| {
+        find_node_by_runtime_thread(&orchestration.node_tree, target, runtime_thread_id).map(
+            |node| {
+                (
+                    orchestration.orchestration_id,
+                    node.node_path.clone(),
+                    node.attempt.max(1),
+                )
+            },
+        )
+    })
+}
+
+fn find_node_by_runtime_thread<'a>(
+    nodes: &'a [RuntimeNodeState],
+    target: &agentdash_domain::agent_run_target::AgentRunTarget,
+    runtime_thread_id: &str,
+) -> Option<&'a RuntimeNodeState> {
+    nodes.iter().find_map(|node| {
+        let owns_target = matches!(
+            node.executor_run_ref.as_ref(),
+            Some(ExecutorRunRef::AgentRun { run_id, agent_id })
+                if *run_id == target.run_id && *agent_id == target.agent_id
+        );
+        let owns_thread = node.agent_call.as_ref().is_some_and(|state| {
+            state.target == *target && state.runtime_thread_id.as_deref() == Some(runtime_thread_id)
+        });
+        if owns_target && owns_thread {
+            return Some(node);
+        }
+        find_node_by_runtime_thread(&node.children, target, runtime_thread_id)
+    })
+}
+
+fn find_runtime_node_binding_for_turn(
+    run: &LifecycleRun,
+    target: &agentdash_domain::agent_run_target::AgentRunTarget,
+    runtime_thread_id: &str,
+    snapshot: &ManagedRuntimeSnapshot,
+    turn_id: &RuntimeTurnId,
+) -> Option<(Uuid, String, u32)> {
+    run.orchestrations.iter().find_map(|orchestration| {
+        find_node_by_runtime_turn(
+            &orchestration.node_tree,
+            target,
+            runtime_thread_id,
+            snapshot,
+            turn_id,
+        )
+        .map(|node| {
+            (
+                orchestration.orchestration_id,
+                node.node_path.clone(),
+                node.attempt.max(1),
+            )
+        })
+    })
+}
+
+fn find_node_by_runtime_turn<'a>(
+    nodes: &'a [RuntimeNodeState],
+    target: &agentdash_domain::agent_run_target::AgentRunTarget,
+    runtime_thread_id: &str,
+    snapshot: &ManagedRuntimeSnapshot,
+    turn_id: &RuntimeTurnId,
+) -> Option<&'a RuntimeNodeState> {
+    nodes.iter().find_map(|node| {
+        let owns_target = matches!(
+            node.executor_run_ref.as_ref(),
+            Some(ExecutorRunRef::AgentRun { run_id, agent_id })
+                if *run_id == target.run_id && *agent_id == target.agent_id
+        );
+        let owns_turn = node.agent_call.as_ref().is_some_and(|state| {
+            if state.target != *target
+                || state.runtime_thread_id.as_deref() != Some(runtime_thread_id)
+            {
+                return false;
+            }
+            let Ok(operation_id) =
+                RuntimeOperationId::new(format!("{}:submit-input", state.request_id))
+            else {
+                return false;
+            };
+            snapshot.operations.iter().any(|operation| {
+                operation.id == operation_id && operation.turn_id.as_ref() == Some(turn_id)
+            })
+        });
+        if owns_target && owns_turn {
+            return Some(node);
+        }
+        find_node_by_runtime_turn(&node.children, target, runtime_thread_id, snapshot, turn_id)
+    })
+}

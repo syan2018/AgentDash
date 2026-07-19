@@ -1,6 +1,7 @@
 mod agent_run_product_persistence_composition;
 mod agent_run_product_projection_composition;
 mod complete_agent_composition;
+mod complete_agent_product_hook_handler;
 mod complete_agent_product_provisioning;
 pub mod function_runner;
 pub mod hooks;
@@ -25,6 +26,7 @@ pub use complete_agent_composition::{
     CompleteAgentComposition, CompleteAgentCompositionError, CompleteAgentVerificationTemplate,
     PinnedCompleteAgentVerificationCatalog,
 };
+pub use complete_agent_product_hook_handler::ProductCompleteAgentHookHandler;
 pub use complete_agent_product_provisioning::{
     CompleteAgentProductRuntimeProvisioner, CompleteAgentServiceSelectionCatalog,
     CompleteAgentServiceSelector, VerifiedCompleteAgentSelection,

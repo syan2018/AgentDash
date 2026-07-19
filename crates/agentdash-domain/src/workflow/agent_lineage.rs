@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 /// Agent spawn/delegation/companion relation (控制树)。
 ///
-/// UI 控制树使用 AgentLineage；RuntimeSessionLineage 只保留 trace/debug 语义。
+/// UI 控制树使用 AgentLineage；RuntimeThread lineage 只保留 trace/debug 语义。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentLineage {
     pub id: Uuid,

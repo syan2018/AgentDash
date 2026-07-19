@@ -3,8 +3,8 @@ use std::sync::Arc;
 use agentdash_agent_runtime_contract::ManagedAgentRuntimeGateway;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommandFacade, AgentRunProductProjectionGateway,
-    AgentRunProductProjectionQueryPort, AgentRunThreadNameProjectionObserver,
-    ProductAgentRunRuntimeProjectionAdapter,
+    AgentRunProductProjectionQueryPort, AgentRunProductRuntimeChangeObserver,
+    AgentRunThreadNameProjectionObserver, ProductAgentRunRuntimeProjectionAdapter,
 };
 use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
 use agentdash_domain::workflow::LifecycleRunRepository;
@@ -90,5 +90,12 @@ impl AgentRunProductProjectionComposition {
 
     pub async fn drain_runtime_change_outbox(&self, limit: usize) -> Result<usize, String> {
         self.runtime_change_consumer.drain(limit).await
+    }
+
+    pub fn register_runtime_change_observer(
+        &self,
+        observer: Arc<dyn AgentRunProductRuntimeChangeObserver>,
+    ) -> Result<(), String> {
+        self.runtime_change_consumer.register_observer(observer)
     }
 }

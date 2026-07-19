@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeGatewayError, RuntimeChangeSequence,
-};
+use agentdash_agent_runtime_contract::{ManagedRuntimeGatewayError, RuntimeChangeSequence};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommand, AgentRunProductCommandError, AgentRunProductCommandRequest,
     AgentRunProductProjectionError, AgentRunTerminalChangeSequence,
@@ -377,9 +375,9 @@ fn agent_run_product_command_error(error: AgentRunProductCommandError) -> ApiErr
         | AgentRunProductCommandError::StaleAvailabilityEvidence { .. }
         | AgentRunProductCommandError::ActiveTurnMissing
         | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Conflict { .. })
-        | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Unavailable { .. }) => {
-            ApiError::Conflict(error.to_string())
-        }
+        | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Unavailable {
+            ..
+        }) => ApiError::Conflict(error.to_string()),
         AgentRunProductCommandError::InvalidClientCommandId
         | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Invalid { .. }) => {
             ApiError::BadRequest(error.to_string())
@@ -387,9 +385,9 @@ fn agent_run_product_command_error(error: AgentRunProductCommandError) -> ApiErr
         AgentRunProductCommandError::Binding(_)
         | AgentRunProductCommandError::ClaimPersistence { .. }
         | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::NotFound)
-        | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Persistence { .. }) => {
-            ApiError::Internal(error.to_string())
-        }
+        | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Persistence {
+            ..
+        }) => ApiError::Internal(error.to_string()),
     }
 }
 

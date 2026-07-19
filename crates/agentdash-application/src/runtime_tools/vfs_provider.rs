@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_platform_spi::RuntimeToolProvider;
-use agentdash_platform_spi::{PlatformRuntimeError, DynAgentTool, ExecutionContext};
+use agentdash_platform_spi::{DynAgentTool, ExecutionContext, PlatformRuntimeError};
 use async_trait::async_trait;
 
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
@@ -10,7 +10,7 @@ use crate::vfs::tools::factory::{VfsToolFactory, VfsToolFactoryInput};
 use crate::vfs::tools::fs::{ShellTerminalOwner, ShellTerminalRegistry};
 use crate::vfs::{VfsMaterializationService, VfsMaterializationTransport};
 
-use super::provider::{runtime_session_id_from_context, shared_runtime_vfs_from_context};
+use super::provider::{runtime_thread_id_from_context, shared_runtime_vfs_from_context};
 
 #[derive(Clone)]
 pub struct VfsRuntimeToolProvider {
@@ -72,7 +72,7 @@ impl RuntimeToolProvider for VfsRuntimeToolProvider {
             .inline_persister
             .as_ref()
             .map(|p| Arc::new(InlineContentOverlay::new(p.clone())));
-        let session_id = runtime_session_id_from_context(context)?;
+        let session_id = runtime_thread_id_from_context(context)?;
         let platform_owner = context
             .turn
             .platform_tool_execution

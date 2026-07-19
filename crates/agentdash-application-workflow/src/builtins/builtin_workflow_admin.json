@@ -49,7 +49,7 @@
           "kind": "agent",
           "procedure_key": "builtin_workflow_admin_plan",
           "agent_reuse_policy": "create_activity_agent",
-          "runtime_session_policy": "create_new"
+          "runtime_thread_policy": "create_new"
         }
       },
       {
@@ -59,7 +59,7 @@
           "kind": "agent",
           "procedure_key": "builtin_workflow_admin_apply",
           "agent_reuse_policy": "create_activity_agent",
-          "runtime_session_policy": "create_new"
+          "runtime_thread_policy": "create_new"
         }
       }
     ],

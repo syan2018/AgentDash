@@ -324,6 +324,7 @@ dependencies = [
 name = "agentdash-application-agentrun"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-service-api",
  "agentdash-application-ports",
@@ -337,6 +338,7 @@ dependencies = [
  "agentdash-test-support",
  "agentdash-workspace-module",
  "async-trait",
+ "chrono",
  "futures",
  "json-patch 2.0.0",
  "serde",
@@ -592,6 +594,7 @@ dependencies = [
  "agentdash-agent-runtime-host",
  "agentdash-agent-service-api",
  "agentdash-application-agentrun",
+ "agentdash-application-hooks",
  "agentdash-application-ports",
  "agentdash-application-vfs",
  "agentdash-application-workflow",
@@ -601,6 +604,7 @@ dependencies = [
  "agentdash-integration-api",
  "agentdash-integration-codex",
  "agentdash-integration-native-agent",
+ "agentdash-llm-provider",
  "agentdash-platform-spi",
  "agentdash-process",
  "agentdash-workspace-module",

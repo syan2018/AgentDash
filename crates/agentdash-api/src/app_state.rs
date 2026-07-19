@@ -28,6 +28,9 @@ use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntime
 use agentdash_application_lifecycle::run_view_builder::{
     LifecycleRunViewQueryDeps, LifecycleRunViewQueryPort, LifecycleRunViewQueryService,
 };
+use agentdash_application_lifecycle::{
+    LifecycleOrchestrator, LifecycleOrchestratorDeps, LifecycleRuntimeTurnTerminalObserver,
+};
 use agentdash_application_vfs::{
     AppliedVfsRuntimeToolService, MountProviderRegistry, VfsMutationDispatcher, VfsService,
 };
@@ -134,6 +137,7 @@ pub struct ServiceSet {
     pub runtime_tool_broker: Arc<PlatformToolBroker>,
     pub shell_terminal_registry: Arc<ProcessShellTerminalRegistry>,
     pub lifecycle_run_views: Arc<dyn LifecycleRunViewQueryPort>,
+    pub lifecycle_orchestrator: Arc<LifecycleOrchestrator>,
     pub workspace_module_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
     pub terminal_projections: Arc<PostgresAgentRunTerminalProjectionStore>,
     pub terminal_source_reconcile: Arc<dyn AgentRunTerminalSourceReconcilePort>,
@@ -375,6 +379,21 @@ impl AppState {
             function_runner,
         )
         .with_agent_call_dispatch(workflow_agent_call_dispatch);
+        let lifecycle_orchestrator =
+            Arc::new(LifecycleOrchestrator::new(LifecycleOrchestratorDeps {
+                run_repo: repos.lifecycle_run_repo.clone(),
+                agent_repo: repos.lifecycle_agent_repo.clone(),
+                frame_repo: repos.agent_frame_repo.clone(),
+                binding_repo: product.runtime_bindings.clone(),
+                inline_file_repo: repos.inline_file_repo.clone(),
+                orchestration_launcher: orchestration_executor_launcher.clone(),
+            }));
+        product
+            .register_runtime_change_observer(Arc::new(LifecycleRuntimeTurnTerminalObserver::new(
+                product.gateway.clone(),
+                lifecycle_orchestrator.clone(),
+            )))
+            .map_err(anyhow::Error::msg)?;
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
         let llm_provider_secret: Arc<dyn LlmSecretCodec> = Arc::new(
             agentdash_infrastructure::LlmProviderSecretCipher::from_env_or_create_default()?,
@@ -407,6 +426,7 @@ impl AppState {
                 runtime_tool_broker,
                 shell_terminal_registry,
                 lifecycle_run_views,
+                lifecycle_orchestrator,
                 workspace_module_presentations: product.workspace_presentations.clone(),
                 terminal_projections: product.terminals.clone(),
                 terminal_source_reconcile,

@@ -146,7 +146,7 @@ pub async fn invoke_agent_run_extension_runtime_action(
     )
     .await?;
     let project_id = runtime_surface.project_id;
-    let session_id = runtime_surface.runtime_session_id.clone();
+    let session_id = runtime_surface.runtime_thread_id.clone();
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
     ensure_project_backend_access(&state, project_id, &backend_id).await?;
@@ -196,7 +196,7 @@ pub async fn invoke_agent_run_extension_runtime_channel(
     )
     .await?;
     let project_id = runtime_surface.project_id;
-    let session_id = runtime_surface.runtime_session_id.clone();
+    let session_id = runtime_surface.runtime_thread_id.clone();
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
     if req.channel_key.trim().is_empty() {
@@ -260,7 +260,7 @@ pub async fn invoke_agent_run_extension_backend_service(
     )
     .await?;
     let project_id = runtime_surface.project_id;
-    let session_id = runtime_surface.runtime_session_id.clone();
+    let session_id = runtime_surface.runtime_thread_id.clone();
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
     ensure_project_backend_access(&state, project_id, &backend_id).await?;

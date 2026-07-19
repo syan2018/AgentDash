@@ -205,14 +205,14 @@ fn activity_definition_from_plan_node(
         Some(ExecutorSpec::AgentProcedure {
             procedure,
             agent_reuse_policy,
-            runtime_session_policy,
+            runtime_thread_policy,
         }) => ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
             procedure_key: procedure
                 .procedure_key()
                 .unwrap_or("__inline_agent_procedure")
                 .to_string(),
             agent_reuse_policy: *agent_reuse_policy,
-            runtime_session_policy: *runtime_session_policy,
+            runtime_thread_policy: *runtime_thread_policy,
         }),
         Some(ExecutorSpec::Function { spec }) => ActivityExecutorSpec::Function(spec.clone()),
         Some(ExecutorSpec::Human { spec }) => ActivityExecutorSpec::Human(spec.clone()),

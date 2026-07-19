@@ -135,6 +135,47 @@ Negative evidence:
 - [ ] 无消费者的 SPI Agent delegate/re-export。
 - [ ] 旧 schema tables/fields/indexes。
 
+## RuntimeThread semantic cut
+
+平台 Runtime 只用 `RuntimeThread` 表达 Complete Agent 的运行实例坐标。这个语义从
+Domain 到 UI 一次切换，使 Product binding、Lifecycle association、Hook provenance、
+Companion relation 和工具执行上下文引用同一个稳定坐标，而不把平台运行状态描述成
+history-derived `AgentSession`。
+
+### 同一 checkpoint 内切换
+
+- [ ] Domain / workflow：`RuntimeThreadPolicy`、
+  `ExecutorRunRef::RuntimeThread` 与相关 orchestration value objects。
+- [ ] Contracts / generated TypeScript：workflow、mailbox、permission 与 frame
+  materialization 中的 `runtime_thread_id` / `RuntimeThreadRef`。
+- [ ] Application / Lifecycle / Hooks：Frame construction、Lifecycle dispatch 与
+  association、Hook provenance、Companion gate/tool context/preflight、Canvas 与 Runtime
+  tool context。
+- [ ] API / frontend：workflow、canvas、extension runtime、mailbox DTO 与 Workflow
+  inspector/store 全部消费同一 RuntimeThread contract。
+- [ ] Product read models：AgentRun workspace、conversation execution、command
+  availability 只读取 fenced Product binding + canonical Managed Runtime snapshot；其
+  runtime coordinate 为 `runtime_thread_id`。
+- [ ] 生成、编译和行为验证完成后，非 migration/fixture 的平台
+  `RuntimeSession*` negative search 为零。
+
+### 保留的 Session ownership
+
+- [ ] `agentdash-agent-protocol` 与 07-12 App Server presentation 的 `session_id`
+  保持 canonical conversation identity，不参与平台 RuntimeThread 命名切换。
+- [ ] `packages/app-web/src/features/session` 继续作为 canonical conversation
+  reducer/renderer；输入仅来自 Managed Runtime 的 `conversation_history` 和 change
+  coordinate。
+- [ ] Complete Agent / Dash Agent 内部 `AgentSession` 仅在状态可由 ordered history
+  完整重建时使用该名称，并由 Complete Agent 自己拥有。
+- [ ] 历史 migration 中的旧表/字段名以及验证旧表已退出的测试保留为 schema 演进
+  证据。
+
+### 退出项
+
+- [ ] 移除只转发已退出 runtime-session boundary 的 application re-export。
+- [ ] 清理已完成 cutover 后仍描述旧 owner 的 activation inventory 与业务注释。
+
 ## 最终门禁
 
 - [ ] final migration、repositories 和 production composition 使用同一 schema。

@@ -230,7 +230,7 @@ mod tests {
                     agent_id: Uuid::new_v4(),
                     frame_id: Uuid::new_v4(),
                 },
-                provenance: RuntimeAdapterProvenance::runtime_session(
+                provenance: RuntimeAdapterProvenance::runtime_thread(
                     "hook-plan-test",
                     None,
                     "hook-plan-test",

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agentdash_platform_spi::RuntimeToolProvider;
 use agentdash_platform_spi::platform::tool_capability::CAP_WORKFLOW;
-use agentdash_platform_spi::{PlatformRuntimeError, DynAgentTool, ExecutionContext, ToolCluster};
+use agentdash_platform_spi::{DynAgentTool, ExecutionContext, PlatformRuntimeError, ToolCluster};
 use async_trait::async_trait;
 
 use crate::lifecycle::LifecycleOrchestratorDeps;
@@ -14,19 +14,16 @@ use crate::lifecycle::tools::advance_node::{
 pub struct WorkflowRuntimeToolProvider {
     orchestrator_deps: LifecycleOrchestratorDeps,
     session_services_handle: SharedSessionToolServicesHandle,
-    function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner>,
 }
 
 impl WorkflowRuntimeToolProvider {
     pub fn new(
         orchestrator_deps: LifecycleOrchestratorDeps,
         session_services_handle: SharedSessionToolServicesHandle,
-        function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner>,
     ) -> Self {
         Self {
             orchestrator_deps,
             session_services_handle,
-            function_runner,
         }
     }
 }
@@ -51,7 +48,6 @@ impl RuntimeToolProvider for WorkflowRuntimeToolProvider {
         Ok(vec![Arc::new(CompleteLifecycleNodeTool::new(
             self.orchestrator_deps.clone(),
             self.session_services_handle.clone(),
-            Some(self.function_runner.clone()),
             context,
         ))])
     }

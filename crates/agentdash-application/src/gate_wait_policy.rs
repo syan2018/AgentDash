@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
+use agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository;
 use agentdash_application_workflow::gate::{
     GateDeliveryIntent, GateMailboxWakeIntent, GateProducerTerminalConvergenceResult,
     GateProducerTerminalConvergenceService, GateProducerTerminalEvent,
+    GateWakeTargetRuntimeThreadQuery,
 };
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::workflow::LifecycleGateRepository;
@@ -26,7 +27,7 @@ pub trait GateProducerTerminalConvergencePort: Send + Sync {
 #[derive(Clone)]
 pub struct GateProducerTerminalConvergenceDeps {
     pub gate_repo: Arc<dyn LifecycleGateRepository>,
-    pub runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    pub runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub mailbox_wake_delivery: Arc<dyn GateMailboxWakeDelivery>,
 }
 
@@ -42,7 +43,7 @@ impl GateProducerTerminalConvergenceServiceAdapter {
 
     pub fn with_mailbox_wake_delivery(
         gate_repo: Arc<dyn LifecycleGateRepository>,
-        runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+        runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
         mailbox_wake_delivery: Arc<dyn GateMailboxWakeDelivery>,
     ) -> Self {
         Self::new(GateProducerTerminalConvergenceDeps {
@@ -55,7 +56,7 @@ impl GateProducerTerminalConvergenceServiceAdapter {
     #[cfg(test)]
     pub fn noop(
         gate_repo: Arc<dyn LifecycleGateRepository>,
-        runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+        runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     ) -> Self {
         Self::with_mailbox_wake_delivery(
             gate_repo,
@@ -70,7 +71,9 @@ impl GateProducerTerminalConvergenceServiceAdapter {
     ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
         let result = GateProducerTerminalConvergenceService::new(
             self.deps.gate_repo.clone(),
-            self.deps.runtime_binding_repo.clone(),
+            Arc::new(ProductGateWakeTargetRuntimeThreadQuery {
+                bindings: self.deps.runtime_binding_repo.clone(),
+            }),
         )
         .observe_producer_terminal(event.clone())
         .await
@@ -117,6 +120,27 @@ impl GateProducerTerminalConvergencePort for GateProducerTerminalConvergenceServ
         event: GateProducerTerminalEvent,
     ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
         self.observe(event).await
+    }
+}
+
+struct ProductGateWakeTargetRuntimeThreadQuery {
+    bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+}
+
+#[async_trait]
+impl GateWakeTargetRuntimeThreadQuery for ProductGateWakeTargetRuntimeThreadQuery {
+    async fn resolve_runtime_thread(
+        &self,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        self.bindings
+            .load_product_binding(&agentdash_domain::agent_run_target::AgentRunTarget {
+                run_id,
+                agent_id,
+            })
+            .await
+            .map(|binding| binding.map(|binding| binding.runtime_thread_id.to_string()))
     }
 }
 

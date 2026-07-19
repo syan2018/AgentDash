@@ -59,16 +59,14 @@ mod tests {
 
     #[test]
     fn record_round_trip_preserves_protected_event_body() {
-        let event = BackboneEvent::UserInputSubmitted(
-            crate::UserInputSubmittedNotification::new(
-                "thread-1",
-                "turn-1",
-                "item-1",
-                crate::UserInputSubmissionKind::Prompt,
-                crate::UserInputSource::core_composer(),
-                crate::text_user_input_blocks("hello"),
-            ),
-        );
+        let event = BackboneEvent::UserInputSubmitted(crate::UserInputSubmittedNotification::new(
+            "thread-1",
+            "turn-1",
+            "item-1",
+            crate::UserInputSubmissionKind::Prompt,
+            crate::UserInputSource::core_composer(),
+            crate::text_user_input_blocks("hello"),
+        ));
         let record = CanonicalConversationRecord::new(
             "native:thread-1:1",
             CanonicalConversationPresentation::new(

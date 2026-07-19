@@ -45,7 +45,7 @@ describe("unified lifecycle editor", () => {
       kind: "agent",
       procedure_key: "my_wf_start",
       agent_reuse_policy: "create_activity_agent",
-      runtime_session_policy: "create_new",
+      runtime_thread_policy: "create_new",
     });
     expect(editor.procedureDraftsByActivityKey["start"]).toBeDefined();
     expect(editor.procedureDraftsByActivityKey["start"].key).toBe("my_wf_start");

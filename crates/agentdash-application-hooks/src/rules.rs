@@ -50,7 +50,7 @@ impl HookRuleEvaluationQuery {
     pub(crate) fn from_session_query(query: HookEvaluationQuery) -> Self {
         Self {
             target: None,
-            provenance: RuntimeAdapterProvenance::runtime_session(
+            provenance: RuntimeAdapterProvenance::runtime_thread(
                 query.session_id,
                 query.turn_id,
                 "session_hook_evaluation_adapter",
@@ -64,8 +64,8 @@ impl HookRuleEvaluationQuery {
         }
     }
 
-    pub(crate) fn runtime_session_id(&self) -> Option<&str> {
-        self.provenance.runtime_session_id.as_deref()
+    pub(crate) fn runtime_thread_id(&self) -> Option<&str> {
+        self.provenance.runtime_thread_id.as_deref()
     }
 
     pub(crate) fn turn_id(&self) -> Option<&str> {
@@ -155,7 +155,30 @@ pub(crate) fn apply_hook_rules(
     }
 }
 
-fn apply_contract_hook_rules(
+pub(crate) fn apply_product_hook_rule(
+    ctx: HookEvaluationContext<'_>,
+    definition_id: &str,
+    resolution: &mut HookResolution,
+    script_engine: &HookScriptEngine,
+) -> Result<(), String> {
+    let key = definition_id
+        .strip_prefix("workflow-hook:")
+        .ok_or_else(|| format!("unsupported Product hook definition `{definition_id}`"))?;
+    let rule = product_hook_rules(ctx.snapshot)
+        .into_iter()
+        .find(|rule| rule.key == key)
+        .ok_or_else(|| format!("Product hook definition `{definition_id}` is not in the frame"))?;
+    if domain_trigger_to_spi(rule.trigger) != ctx.query.trigger {
+        return Err(format!(
+            "Product hook definition `{definition_id}` does not match callback trigger `{}`",
+            ctx.query.trigger.as_key()
+        ));
+    }
+    apply_contract_hook_rules(&ctx, std::slice::from_ref(&rule), resolution, script_engine);
+    Ok(())
+}
+
+pub(crate) fn apply_contract_hook_rules(
     ctx: &HookEvaluationContext<'_>,
     rules: &[WorkflowHookRuleSpec],
     resolution: &mut HookResolution,
@@ -293,6 +316,76 @@ mod tests {
             HookTrigger::BeforeProviderRequest
         ));
         assert!(!has_applicable_hook_work(&snapshot, HookTrigger::AfterTool));
+    }
+
+    #[test]
+    fn complete_agent_definition_evaluates_only_its_exact_product_rule() {
+        let snapshot = AgentFrameHookSnapshot {
+            metadata: Some(agentdash_platform_spi::SessionSnapshotMetadata {
+                active_workflow: Some(ActiveWorkflowMeta {
+                    effective_contract: Some(EffectiveSessionContract {
+                        hook_rules: vec![
+                            WorkflowHookRuleSpec {
+                                key: "first".to_owned(),
+                                trigger:
+                                    agentdash_domain::workflow::WorkflowHookTrigger::BeforeTool,
+                                description: String::new(),
+                                preset: None,
+                                params: None,
+                                script: Some("block(\"forbidden\")".to_owned()),
+                                enabled: true,
+                            },
+                            WorkflowHookRuleSpec {
+                                key: "second".to_owned(),
+                                trigger:
+                                    agentdash_domain::workflow::WorkflowHookTrigger::BeforeTool,
+                                description: String::new(),
+                                preset: None,
+                                params: None,
+                                script: Some("#{ block: \"blocked\" }".to_owned()),
+                                enabled: true,
+                            },
+                        ],
+                        ..EffectiveSessionContract::default()
+                    }),
+                    ..ActiveWorkflowMeta::default()
+                }),
+                ..agentdash_platform_spi::SessionSnapshotMetadata::default()
+            }),
+            ..AgentFrameHookSnapshot::default()
+        };
+        let query = HookRuleEvaluationQuery {
+            target: None,
+            provenance: agentdash_platform_spi::RuntimeAdapterProvenance::runtime_thread(
+                "thread-a",
+                None,
+                "complete-agent-test",
+            ),
+            trigger: HookTrigger::BeforeTool,
+            tool_name: Some("shell_exec".to_owned()),
+            tool_call_id: Some("call-a".to_owned()),
+            subagent_type: None,
+            payload: None,
+            token_stats: None,
+        };
+        let mut resolution = HookResolution::default();
+
+        apply_product_hook_rule(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            "workflow-hook:second",
+            &mut resolution,
+            &test_script_engine(),
+        )
+        .unwrap();
+
+        assert_eq!(resolution.block_reason.as_deref(), Some("blocked"));
+        assert_eq!(
+            resolution.matched_rule_keys,
+            vec!["hook_rule:second:script"]
+        );
     }
 
     #[test]

@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::agent_run_runtime::{
-    AgentRunRuntimeBindingRepository, AgentRunRuntimeTarget,
-};
 use agentdash_domain::workflow::{
     GateWaitPolicyEnvelope, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
 };
+use async_trait::async_trait;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -74,17 +72,26 @@ pub enum GateProducerTerminalConvergenceOutcomeKind {
 #[derive(Clone)]
 pub struct GateProducerTerminalConvergenceService {
     gate_repo: Arc<dyn LifecycleGateRepository>,
-    runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    wake_target_runtime_threads: Arc<dyn GateWakeTargetRuntimeThreadQuery>,
+}
+
+#[async_trait]
+pub trait GateWakeTargetRuntimeThreadQuery: Send + Sync {
+    async fn resolve_runtime_thread(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<Option<String>, String>;
 }
 
 impl GateProducerTerminalConvergenceService {
     pub fn new(
         gate_repo: Arc<dyn LifecycleGateRepository>,
-        runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+        wake_target_runtime_threads: Arc<dyn GateWakeTargetRuntimeThreadQuery>,
     ) -> Self {
         Self {
             gate_repo,
-            runtime_binding_repo,
+            wake_target_runtime_threads,
         }
     }
 
@@ -201,14 +208,11 @@ impl GateProducerTerminalConvergenceService {
     ) -> Result<GateMailboxWakeIntent, WorkflowApplicationError> {
         let WaitProducerRef::AgentRunDelivery { agent_id, .. } = &event.producer;
         let wake_target = &envelope.wait_policy.wake_target;
-        let target_binding = self
-            .runtime_binding_repo
-            .load(&AgentRunRuntimeTarget {
-                run_id: wake_target.target_run_id,
-                agent_id: wake_target.target_agent_id,
-            })
+        let target_runtime_thread_id = self
+            .wake_target_runtime_threads
+            .resolve_runtime_thread(wake_target.target_run_id, wake_target.target_agent_id)
             .await
-            .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?
+            .map_err(WorkflowApplicationError::Internal)?
             .ok_or_else(|| {
                 WorkflowApplicationError::Conflict(format!(
                     "gate producer terminal convergence gate {} missing target delivery binding",
@@ -221,7 +225,7 @@ impl GateProducerTerminalConvergenceService {
             request_id: payload_request_id(gate, envelope, &payload),
             target_run_id: wake_target.target_run_id,
             target_agent_id: wake_target.target_agent_id,
-            target_runtime_thread_id: target_binding.thread_id.to_string(),
+            target_runtime_thread_id,
             producer_agent_id: *agent_id,
             producer_runtime_thread_id: event.trace_ref.clone(),
             resolved_turn_id: payload

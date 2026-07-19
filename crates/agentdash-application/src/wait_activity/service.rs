@@ -3,8 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agentdash_agent::AgentToolError;
-use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
+use agentdash_application_agentrun::agent_run::{
+    AgentRunProductRuntimeBindingRepository, AgentRunTerminalRegistry,
+};
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleGateRepository,
@@ -28,7 +29,7 @@ use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 pub struct WaitActivityRepositories {
     pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    pub agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    pub agent_run_runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     pub mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
 }
@@ -43,7 +44,7 @@ pub struct WaitActivityDeps {
 pub struct WaitActivityService {
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    agent_run_runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     terminal_registry: Arc<AgentRunTerminalRegistry>,
@@ -58,7 +59,7 @@ impl WaitActivityService {
     pub fn from_repositories(
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         agent_frame_repo: Arc<dyn AgentFrameRepository>,
-        agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+        agent_run_runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
         lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
         mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
         terminal_registry: Arc<AgentRunTerminalRegistry>,

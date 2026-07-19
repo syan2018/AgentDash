@@ -17,7 +17,7 @@ pub use activity_def::{
     ActivityJoinPolicy, ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec,
     AgentReusePolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
     BashExecExecutorSpec, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
-    HumanApprovalExecutorSpec, RuntimeSessionPolicy, TransitionCondition,
+    HumanApprovalExecutorSpec, RuntimeThreadPolicy, TransitionCondition,
 };
 pub use capability::{
     CapabilityConfig, ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction,
@@ -369,7 +369,7 @@ mod tests {
         assert_eq!(value["kind"], "agent");
         assert_eq!(value["procedure_key"], "workflow.plan");
         assert_eq!(value["agent_reuse_policy"], "create_activity_agent");
-        assert_eq!(value["runtime_session_policy"], "create_new");
+        assert_eq!(value["runtime_thread_policy"], "create_new");
     }
 
     #[test]

@@ -603,7 +603,7 @@ pub async fn get_agent_run_canvas_runtime_snapshot(
     let runtime_surface = resolve_current_runtime_surface_for_project_for_api(
         &state,
         &current_user,
-        &context.runtime_session_id,
+        &context.runtime_thread_id,
         context.canvas.project_id,
         RuntimeSurfaceQueryPurpose::new("agent_run_canvas_runtime_snapshot"),
         "AgentRun Canvas runtime snapshot",
@@ -620,7 +620,7 @@ pub async fn get_agent_run_canvas_runtime_snapshot(
     snapshot.runtime_bridge = build_canvas_runtime_bridge_surface(
         state.as_ref(),
         &context.canvas,
-        &context.runtime_session_id,
+        &context.runtime_thread_id,
     )
     .await?;
     Ok(Json(canvas_agent_run_runtime_snapshot_to_contract(
@@ -646,7 +646,7 @@ pub async fn invoke_agent_run_canvas_runtime_action(
     resolve_current_runtime_surface_for_project_for_api(
         &state,
         &current_user,
-        &context.runtime_session_id,
+        &context.runtime_thread_id,
         context.canvas.project_id,
         RuntimeSurfaceQueryPurpose::new("agent_run_canvas_runtime_invoke"),
         "AgentRun Canvas runtime invoke",
@@ -657,11 +657,11 @@ pub async fn invoke_agent_run_canvas_runtime_action(
     let request = RuntimeInvocationRequest::new(
         action_key,
         RuntimeActor::UserCanvas {
-            session_id: context.runtime_session_id.clone(),
+            session_id: context.runtime_thread_id.clone(),
             canvas_id: Some(context.canvas.id),
         },
         RuntimeContext::Session {
-            session_id: context.runtime_session_id,
+            session_id: context.runtime_thread_id,
             project_id: Some(context.canvas.project_id),
             workspace_id: None,
         },
@@ -683,18 +683,25 @@ async fn resolve_agent_run_canvas_route_context(
     let run_id = parse_uuid(run_id, "run_id")?;
     let agent_id = parse_uuid(agent_id, "agent_id")?;
     let context =
-        resolve_agent_run_canvas_context(&state.repos, run_id, agent_id, canvas_mount_id).await?;
+        resolve_agent_run_canvas_context(
+            &state.repos,
+            state.services.agent_run_product_runtime_bindings.as_ref(),
+            run_id,
+            agent_id,
+            canvas_mount_id,
+        )
+        .await?;
     load_project_with_permission(state, current_user, context.run.project_id, permission).await?;
     Ok(context)
 }
 
 fn agent_run_canvas_resource_surface_ref(context: &CanvasAgentRunContext) -> String {
-    agent_run_canvas_resource_surface_ref_for_session(&context.runtime_session_id)
+    agent_run_canvas_resource_surface_ref_for_session(&context.runtime_thread_id)
 }
 
-fn agent_run_canvas_resource_surface_ref_for_session(runtime_session_id: &str) -> String {
+fn agent_run_canvas_resource_surface_ref_for_session(runtime_thread_id: &str) -> String {
     ResolvedVfsSurfaceSource::SessionRuntime {
-        session_id: runtime_session_id.to_string(),
+        session_id: runtime_thread_id.to_string(),
     }
     .surface_ref()
 }
@@ -1106,7 +1113,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn agent_run_canvas_resource_surface_ref_uses_delivery_runtime_session() {
+    fn agent_run_canvas_resource_surface_ref_uses_runtime_thread() {
         assert_eq!(
             agent_run_canvas_resource_surface_ref_for_session("runtime-session-1"),
             "session-runtime:runtime-session-1"

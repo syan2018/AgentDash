@@ -394,7 +394,7 @@ mod tests {
         };
         let query = HookRuleEvaluationQuery {
             target: Some(target),
-            provenance: RuntimeAdapterProvenance::runtime_session(
+            provenance: RuntimeAdapterProvenance::runtime_thread(
                 "sess-frame",
                 Some("turn-frame".to_string()),
                 "frame_evaluation_test",

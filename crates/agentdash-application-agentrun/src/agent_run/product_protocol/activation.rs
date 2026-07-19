@@ -89,10 +89,10 @@ pub const AGENT_RUN_TARGET_ACTIVATION_MANIFEST: &[AgentRunConsumerActivation] = 
     },
     AgentRunConsumerActivation {
         consumer: "agentdash-application-ports",
-        current_artifact: "MCP DynAgentTool discovery and RuntimeSession live port",
+        current_artifact: "MCP DynAgentTool discovery and platform runtime call port",
         workstream: AgentRunActivationWorkstream::W7ProductCallerAndW8Cleanup,
         final_owner: AgentRunActivationOwner::RuntimeToolBroker,
-        action: "return platform descriptors and call routes, then delete RuntimeSession live ports",
+        action: "return platform descriptors and runtime-owned call routes",
         activation_artifact: "typed MCP descriptor and Tool Broker call route",
         prerequisite: "all MCP execution callers use Runtime commands",
     },

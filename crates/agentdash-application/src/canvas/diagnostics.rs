@@ -1,6 +1,8 @@
-use agentdash_application_agentrun::agent_run::AgentFrameSurfaceExt;
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
+use agentdash_application_agentrun::agent_run::{
+    AgentFrameSurfaceExt, AgentRunProductRuntimeBindingRepository,
+};
 use agentdash_application_vfs::PROVIDER_CANVAS_FS;
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::canvas::{
     Canvas, CanvasInteractionEvent, CanvasInteractionSnapshot, CanvasRuntimeDiagnostic,
     CanvasRuntimeDocumentState, CanvasRuntimeObservation, CanvasRuntimeObservationStatus,
@@ -20,7 +22,7 @@ pub struct CanvasAgentRunContext {
     pub agent: LifecycleAgent,
     pub canvas: Canvas,
     pub delivery_trace_ref: Option<String>,
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub current_agent_frame: AgentFrame,
     pub agent_run_canvas_ref: String,
 }
@@ -48,6 +50,7 @@ pub struct CanvasInteractionSnapshotInput {
 
 pub async fn resolve_agent_run_canvas_context(
     repos: &RepositorySet,
+    runtime_bindings: &dyn AgentRunProductRuntimeBindingRepository,
     run_id: Uuid,
     agent_id: Uuid,
     canvas_mount_id: &str,
@@ -93,9 +96,9 @@ pub async fn resolve_agent_run_canvas_context(
         )));
     }
 
-    let delivery = repos
-        .agent_run_runtime_binding_repo
-        .load(&AgentRunRuntimeTarget { run_id, agent_id })
+    let target = AgentRunTarget { run_id, agent_id };
+    let binding = runtime_bindings
+        .load_product_binding(&target)
         .await
         .map_err(|error| ApplicationError::Internal(error.to_string()))?
         .ok_or_else(|| {
@@ -105,19 +108,29 @@ pub async fn resolve_agent_run_canvas_context(
         })?;
     let current_agent_frame = repos
         .agent_frame_repo
-        .get_latest(agent_id)
+        .get(binding.launch_frame.frame_id)
         .await?
         .ok_or_else(|| {
-            ApplicationError::NotFound(format!("LifecycleAgent {agent_id} 没有 current AgentFrame"))
+            ApplicationError::NotFound(format!(
+                "AgentRun Product binding 指向的 AgentFrame {} 不存在",
+                binding.launch_frame.frame_id
+            ))
         })?;
+    if current_agent_frame.agent_id != agent_id
+        || u64::try_from(current_agent_frame.revision).ok() != Some(binding.launch_frame.revision)
+    {
+        return Err(ApplicationError::Conflict(
+            "Canvas Product binding 与 immutable launch frame 不一致".to_string(),
+        ));
+    }
     ensure_canvas_visible_in_frame(&current_agent_frame, canvas_mount_id)?;
 
     Ok(CanvasAgentRunContext {
         run,
         agent,
         canvas,
-        delivery_trace_ref: Some(format!("runtime_thread:{}", delivery.thread_id)),
-        runtime_session_id: delivery.thread_id.to_string(),
+        delivery_trace_ref: Some(format!("runtime_thread:{}", binding.runtime_thread_id)),
+        runtime_thread_id: binding.runtime_thread_id.to_string(),
         current_agent_frame,
         agent_run_canvas_ref: format!("{run_id}:{agent_id}:{}", canvas_mount_id),
     })

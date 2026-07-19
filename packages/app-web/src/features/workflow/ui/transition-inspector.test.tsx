@@ -19,7 +19,7 @@ function activity(key: string, overrides: Partial<ActivityDefinition> = {}): Act
       kind: "agent",
       procedure_key: `demo.${key}`,
       agent_reuse_policy: "create_activity_agent",
-      runtime_session_policy: "create_new",
+      runtime_thread_policy: "create_new",
     },
     output_ports: [],
     input_ports: [],

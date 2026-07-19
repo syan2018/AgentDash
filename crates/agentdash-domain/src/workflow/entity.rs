@@ -587,7 +587,7 @@ mod tests {
         AgentProcedureExecutionSpec, AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec,
         FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
         OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, PlanNode,
-        PlanNodeKind, RuntimeSessionPolicy, WorkflowContextBinding, WorkflowInjectionSpec,
+        PlanNodeKind, RuntimeThreadPolicy, WorkflowContextBinding, WorkflowInjectionSpec,
     };
 
     fn contract() -> AgentProcedureContract {
@@ -659,7 +659,7 @@ mod tests {
         ExecutorSpec::AgentProcedure {
             procedure: AgentProcedureExecutionSpec::by_key("workflow.plan"),
             agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-            runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+            runtime_thread_policy: RuntimeThreadPolicy::CreateNew,
         }
     }
 

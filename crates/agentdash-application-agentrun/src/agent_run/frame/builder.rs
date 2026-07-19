@@ -238,10 +238,6 @@ impl AgentFrameBuilder {
         self
     }
 
-    pub fn with_runtime_session(self, _session_id: impl Into<String>) -> Self {
-        self
-    }
-
     pub fn with_created_by(mut self, kind: impl Into<String>, id: Option<String>) -> Self {
         self.created_by_kind = kind.into();
         self.created_by_id = id;
@@ -446,28 +442,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_with_runtime_session_does_not_persist_frame_refs() {
-        let repo = FixtureFrameRepo::default();
-        let agent_id = Uuid::new_v4();
-        let session_id = Uuid::new_v4();
-
-        let frame = AgentFrameBuilder::new(agent_id)
-            .with_runtime_session(session_id.to_string())
-            .build(&repo)
-            .await
-            .expect("build");
-
-        assert_eq!(frame.agent_id, agent_id);
-        assert_eq!(frame.revision, 1);
-    }
-
-    #[tokio::test]
     async fn build_revision_carries_forward_runtime_surface() {
         let repo = FixtureFrameRepo::default();
         let agent_id = Uuid::new_v4();
 
         let frame1 = AgentFrameBuilder::new(agent_id)
-            .with_runtime_session("session-1")
             .with_execution_profile_raw(serde_json::json!({"executor": "local"}))
             .build(&repo)
             .await
@@ -533,7 +512,6 @@ mod tests {
             Some(FrameContextBundleSummary::from_bundle(&context_bundle));
 
         let frame = AgentFrameBuilder::new(agent_id)
-            .with_runtime_session("runtime-1")
             .with_surface_draft(&draft)
             .build(&repo)
             .await

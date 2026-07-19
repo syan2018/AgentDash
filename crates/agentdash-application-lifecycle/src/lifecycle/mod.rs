@@ -5,11 +5,15 @@ mod dispatch_facade;
 pub mod dispatch_service;
 pub mod execution_log;
 pub mod history_projection;
+mod orchestrator;
 pub(crate) mod run;
 pub mod run_command_service;
 pub mod run_view_builder;
+mod runtime_thread_association;
+mod runtime_turn_terminal_observer;
 mod session_tool_result_cache;
 pub mod surface;
+pub mod tools;
 pub mod vfs_catalog;
 pub mod vfs_mount;
 pub mod vfs_provider;
@@ -30,11 +34,23 @@ pub use history_projection::{
     DeferredLifecycleHistoryQuery, LifecycleHistoryProjection, LifecycleHistoryQueryError,
     LifecycleHistoryQueryPort, ProductRuntimeLifecycleHistoryQuery,
 };
+pub use orchestrator::{
+    AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
+    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator, LifecycleOrchestratorDeps,
+    OrchestrationResult,
+};
 pub use run::select_active_run;
 pub use run_command_service::{
     ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandDeps,
     LifecycleRunCommandService,
 };
+pub use runtime_thread_association::{
+    LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, RuntimeThreadCurrentFrame,
+    build_lifecycle_activity_label, build_lifecycle_node_label,
+    lifecycle_activity_parts_from_label, resolve_activity_runtime_association_from_runtime_thread,
+    resolve_current_frame_from_delivery_trace_ref,
+};
+pub use runtime_turn_terminal_observer::LifecycleRuntimeTurnTerminalObserver;
 pub use session_tool_result_cache::{
     SessionToolResultCache, SessionToolResultCacheRead, SessionToolResultCacheStatus,
     SessionToolResultCacheStatusKind, lifecycle_path_for_tool_result,

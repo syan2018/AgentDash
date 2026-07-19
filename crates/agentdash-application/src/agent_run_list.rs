@@ -4,11 +4,14 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_runtime_contract::RuntimeThreadStatus;
-use agentdash_application_agentrun::agent_run::{AgentRunRuntime, resolve_agent_run_display_title};
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
+use agentdash_agent_runtime_contract::ManagedRuntimeLifecycleStatus;
+use agentdash_application_agentrun::agent_run::{
+    AgentRunProductProjectionQueryPort, AgentRunProductRuntimeSnapshotObservation,
+    resolve_agent_run_display_title,
+};
 use agentdash_domain::{
     agent::ProjectAgentRepository,
+    agent_run_target::AgentRunTarget,
     workflow::{
         AgentLineage, AgentLineageRepository, LifecycleAgent, LifecycleAgentRepository,
         LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
@@ -30,7 +33,7 @@ pub struct ProjectAgentRunListQuery {
     lineage_repo: Arc<dyn AgentLineageRepository>,
     subject_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     project_agent_repo: Arc<dyn ProjectAgentRepository>,
-    runtime: Arc<dyn AgentRunRuntime>,
+    product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
 }
 
 #[derive(Clone)]
@@ -40,7 +43,7 @@ pub struct ProjectAgentRunListQueryDeps {
     pub lineage_repo: Arc<dyn AgentLineageRepository>,
     pub subject_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
-    pub runtime: Arc<dyn AgentRunRuntime>,
+    pub product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,7 +90,7 @@ pub struct AgentRunListChildModel {
 
 #[derive(Debug, Clone)]
 pub struct AgentRunListRuntimeSummaryModel {
-    pub thread_status: RuntimeThreadStatus,
+    pub thread_status: ManagedRuntimeLifecycleStatus,
     pub active_turn_id: Option<String>,
     pub thread_name: Option<String>,
 }
@@ -107,7 +110,7 @@ impl ProjectAgentRunListQuery {
             lineage_repo: deps.lineage_repo,
             subject_repo: deps.subject_repo,
             project_agent_repo: deps.project_agent_repo,
-            runtime: deps.runtime,
+            product_projection: deps.product_projection,
         }
     }
 
@@ -212,35 +215,42 @@ impl ProjectAgentRunListQuery {
         let project_agent_label = agent
             .project_agent_id
             .and_then(|id| project_agents.get(&id).cloned());
-        let runtime_view = self
-            .runtime
-            .inspect(AgentRunRuntimeTarget {
+        let runtime_observation = self
+            .product_projection
+            .runtime_snapshot_observation(&AgentRunTarget {
                 run_id: run.id,
                 agent_id: agent.id,
             })
             .await
             .map_err(|error| {
                 ApplicationError::Internal(format!(
-                    "AgentRun list runtime inspect failed: run_id={}, agent_id={}: {error}",
+                    "AgentRun list Product projection failed: run_id={}, agent_id={}: {error}",
                     run.id, agent.id
                 ))
             })?;
+        let runtime_snapshot = match runtime_observation {
+            AgentRunProductRuntimeSnapshotObservation::Absent { .. } => None,
+            AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => Some(snapshot),
+            AgentRunProductRuntimeSnapshotObservation::Stale(evidence) => {
+                return Err(ApplicationError::Conflict(format!(
+                    "AgentRun list Product Runtime 投影已过期: {:?}",
+                    evidence.reason
+                )));
+            }
+        };
         let title = resolve_agent_run_display_title(
             agent.workspace_title.as_deref(),
             agent.workspace_title_source.as_deref(),
-            runtime_view
-                .snapshot
+            runtime_snapshot
                 .as_ref()
                 .and_then(|snapshot| snapshot.thread_name.as_deref()),
         )
         .value;
-        let runtime = runtime_view
-            .snapshot
-            .map(|snapshot| AgentRunListRuntimeSummaryModel {
-                thread_status: snapshot.status,
-                active_turn_id: snapshot.active_turn_id.map(|id| id.to_string()),
-                thread_name: snapshot.thread_name,
-            });
+        let runtime = runtime_snapshot.map(|snapshot| AgentRunListRuntimeSummaryModel {
+            thread_status: snapshot.lifecycle,
+            active_turn_id: snapshot.active_turn_id.map(|id| id.to_string()),
+            thread_name: snapshot.thread_name,
+        });
         let subject = self
             .subject_repo
             .list_by_anchor(run.id, Some(agent.id))

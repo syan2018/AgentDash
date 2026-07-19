@@ -8,9 +8,14 @@ use agentdash_application_ports::project_projection_notification::{
     ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
 };
 use agentdash_domain::{agent_run_target::AgentRunTarget, workflow::LifecycleRunRepository};
+use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::agent_run::{AgentRunProductRuntimeBindingRepository, AgentRunRuntimeProjectionPort};
+use crate::agent_run::{
+    AgentRunProductRuntimeBindingRepository, AgentRunProductRuntimeChange,
+    AgentRunProductRuntimeChangeObserver, AgentRunProductRuntimeChangeOutcome,
+    AgentRunRuntimeProjectionPort,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRunThreadNameProjectionOutcome {
@@ -169,6 +174,31 @@ impl AgentRunThreadNameProjectionObserver {
             .await
             .map_err(AgentRunThreadNameProjectionError::Notification)?;
         Ok(AgentRunThreadNameProjectionOutcome::Published)
+    }
+}
+
+#[async_trait]
+impl AgentRunProductRuntimeChangeObserver for AgentRunThreadNameProjectionObserver {
+    fn consumer_name(&self) -> &'static str {
+        "agent_run_thread_name_projection"
+    }
+
+    async fn observe_product_runtime_change(
+        &self,
+        input: &AgentRunProductRuntimeChange,
+    ) -> Result<AgentRunProductRuntimeChangeOutcome, String> {
+        match self
+            .observe(&input.binding.target, &input.change)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            AgentRunThreadNameProjectionOutcome::Ignored => {
+                Ok(AgentRunProductRuntimeChangeOutcome::Ignored)
+            }
+            AgentRunThreadNameProjectionOutcome::Published => {
+                Ok(AgentRunProductRuntimeChangeOutcome::Applied)
+            }
+        }
     }
 }
 

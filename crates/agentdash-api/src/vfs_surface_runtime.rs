@@ -31,7 +31,10 @@ impl VfsSurfaceRuntimeProjection for ApiVfsSurfaceRuntimeProjection {
         self.backend_registry.is_online(backend_id).await
     }
 
-    fn edit_capabilities(&self, mount: &agentdash_platform_spi::Mount) -> ResolvedMountEditCapabilities {
+    fn edit_capabilities(
+        &self,
+        mount: &agentdash_platform_spi::Mount,
+    ) -> ResolvedMountEditCapabilities {
         self.mount_provider_registry
             .get(&mount.provider)
             .map(|provider| provider.edit_capabilities(mount))

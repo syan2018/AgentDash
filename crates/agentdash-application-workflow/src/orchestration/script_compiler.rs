@@ -6,7 +6,7 @@ use agentdash_domain::workflow::{
     ArtifactAliasPolicy, BashExecExecutorSpec, ContextStrategy, ExecutorSpec,
     FunctionActivityExecutorSpec, GateStrategy, HumanActivityExecutorSpec,
     HumanApprovalExecutorSpec, InputPortDefinition, OrchestrationLimits, OrchestrationPlanSnapshot,
-    OrchestrationSourceRef, OutputPortDefinition, PlanNode, PlanNodeKind, RuntimeSessionPolicy,
+    OrchestrationSourceRef, OutputPortDefinition, PlanNode, PlanNodeKind, RuntimeThreadPolicy,
     StandaloneFulfillment, StateExchangeRule, TransitionCondition, ValidationSeverity,
     WorkflowInjectionSpec, WorkflowScriptCapabilitySummary,
 };
@@ -552,7 +552,7 @@ impl<'a> Compiler<'a> {
             Some(ExecutorSpec::AgentProcedure {
                 procedure: AgentProcedureExecutionSpec::by_key(procedure_key.to_string()),
                 agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-                runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+                runtime_thread_policy: RuntimeThreadPolicy::CreateNew,
             })
         } else if !inline_prompt.is_empty() {
             Some(ExecutorSpec::AgentProcedure {
@@ -564,7 +564,7 @@ impl<'a> Compiler<'a> {
                     contract_digest: Some(inline_agent_contract_digest(agent)),
                 },
                 agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-                runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+                runtime_thread_policy: RuntimeThreadPolicy::CreateNew,
             })
         } else {
             self.diagnostics.push(ScriptCompileDiagnostic::error(

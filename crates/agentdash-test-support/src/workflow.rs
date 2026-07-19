@@ -282,7 +282,7 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
     > {
         let agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
             agent_id,
-            runtime_session_id,
+            runtime_thread_id,
             created_by_id,
             ..
         } = command
@@ -317,7 +317,7 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
         );
         outcome.frame_id = Some(frame.id);
         outcome.agent_id = Some(frame.agent_id);
-        outcome.runtime_session_id = runtime_session_id;
+        outcome.runtime_thread_id = runtime_thread_id;
         outcome.wrote_frame_revision = true;
         Ok(outcome)
     }

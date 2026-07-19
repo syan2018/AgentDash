@@ -386,7 +386,7 @@ pub enum ActivityExecutorSpec {
 pub struct AgentActivityExecutorSpec {
     pub procedure_key: String,
     pub agent_reuse_policy: AgentReusePolicy,
-    pub runtime_session_policy: RuntimeSessionPolicy,
+    pub runtime_thread_policy: RuntimeThreadPolicy,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -399,10 +399,10 @@ pub enum AgentReusePolicy {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum RuntimeSessionPolicy {
+pub enum RuntimeThreadPolicy {
     #[default]
     CreateNew,
-    DeliverToCurrentTrace,
+    DeliverToCurrentThread,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -716,7 +716,7 @@ pub struct PreflightWorkflowScriptRequest {
     pub ctx: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

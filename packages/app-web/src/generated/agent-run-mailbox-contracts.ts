@@ -29,7 +29,7 @@ delivery_intent?: string, backend_selection?: BackendSelectionRequestDto, };
 
 export type AgentRunContextCompactionCommandOutcome = "scheduled_next_turn" | "launched_compaction_turn" | "completed" | "no_eligible_messages" | "blocked" | "failed";
 
-export type AgentRunContextCompactionCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunContextCompactionCommandOutcome, runtime_session_id?: string, request_id?: string, turn_id?: string, message?: string, };
+export type AgentRunContextCompactionCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunContextCompactionCommandOutcome, runtime_thread_id?: string, request_id?: string, turn_id?: string, message?: string, };
 
 export type AgentRunForkLineageView = { id: string, parent: AgentRunMessageAcceptedRefs, child: AgentRunMessageAcceptedRefs, relation_kind: string, fork_point_event_seq?: bigint, fork_point_ref?: SessionMessageRefDto, forked_by_user_id: string, created_at: string, };
 

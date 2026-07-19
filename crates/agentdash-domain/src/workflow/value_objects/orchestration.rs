@@ -11,7 +11,7 @@ use super::run_state::ExecutorRunRef;
 use super::{
     ActivityCompletionPolicy, ActivityIterationPolicy, ActivityJoinPolicy, AgentProcedureContract,
     AgentReusePolicy, ArtifactAliasPolicy, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
-    InputPortDefinition, OutputPortDefinition, RuntimeSessionPolicy, TransitionCondition,
+    InputPortDefinition, OutputPortDefinition, RuntimeThreadPolicy, TransitionCondition,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -204,7 +204,7 @@ pub enum ExecutorSpec {
         #[serde(default)]
         agent_reuse_policy: AgentReusePolicy,
         #[serde(default)]
-        runtime_session_policy: RuntimeSessionPolicy,
+        runtime_thread_policy: RuntimeThreadPolicy,
     },
     Function {
         spec: FunctionActivityExecutorSpec,
@@ -623,7 +623,7 @@ mod tests {
                     Some(ExecutorSpec::AgentProcedure {
                         procedure: AgentProcedureExecutionSpec::by_key("workflow.plan"),
                         agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-                        runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+                        runtime_thread_policy: RuntimeThreadPolicy::CreateNew,
                     }),
                 ),
                 node(
@@ -760,7 +760,7 @@ mod tests {
         ];
 
         let json = serde_json::to_string(&nodes).expect("serialize runtime nodes");
-        assert!(json.contains(r#""kind":"runtime_session""#));
+        assert!(json.contains(r#""kind":"runtime_thread""#));
         assert!(json.contains(r#""kind":"function_run""#));
         assert!(json.contains(r#""kind":"human_decision""#));
         let restored: Vec<RuntimeNodeState> =

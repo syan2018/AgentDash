@@ -1037,7 +1037,7 @@ mod tests {
             HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleGate,
             LifecycleGateRepository, OrchestrationLimits, OrchestrationPlanSnapshot,
             OrchestrationSourceRef, OutputPortDefinition, PlanNode, RuntimeNodeStatus,
-            RuntimeSessionPolicy, TransitionCondition, WorkflowAgentCallRuntimeState,
+            RuntimeThreadPolicy, TransitionCondition, WorkflowAgentCallRuntimeState,
         },
     };
     use agentdash_platform_spi::{
@@ -1369,7 +1369,7 @@ mod tests {
 
     fn run_with_agent_policy(
         reuse: AgentReusePolicy,
-        session: RuntimeSessionPolicy,
+        session: RuntimeThreadPolicy,
     ) -> LifecycleRun {
         let source_ref = OrchestrationSourceRef::Inline {
             source_digest: "sha256:agent-call-test".to_owned(),
@@ -1393,7 +1393,7 @@ mod tests {
                         contract_digest: None,
                     },
                     agent_reuse_policy: reuse,
-                    runtime_session_policy: session,
+                    runtime_thread_policy: session,
                 }),
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
@@ -1550,7 +1550,7 @@ mod tests {
     fn run_with_continue_successor() -> LifecycleRun {
         let mut run = run_with_agent_policy(
             AgentReusePolicy::CreateActivityAgent,
-            RuntimeSessionPolicy::CreateNew,
+            RuntimeThreadPolicy::CreateNew,
         );
         let orchestration = &mut run.orchestrations[0];
         let mut plan_node = orchestration.plan_snapshot.nodes[0].clone();
@@ -1565,7 +1565,7 @@ mod tests {
                 contract_digest: None,
             },
             agent_reuse_policy: AgentReusePolicy::ContinueCurrentAgent,
-            runtime_session_policy: RuntimeSessionPolicy::DeliverToCurrentTrace,
+            runtime_thread_policy: RuntimeThreadPolicy::DeliverToCurrentThread,
         });
         orchestration.plan_snapshot.nodes.push(plan_node);
         orchestration
@@ -1668,7 +1668,7 @@ mod tests {
     async fn drain_persists_prepared_dispatched_and_agent_run_identity() {
         let run = run_with_agent_policy(
             AgentReusePolicy::CreateActivityAgent,
-            RuntimeSessionPolicy::CreateNew,
+            RuntimeThreadPolicy::CreateNew,
         );
         let run_id = run.id;
         let repo = Arc::new(RunRepo {
@@ -1711,7 +1711,7 @@ mod tests {
     async fn unsupported_policy_is_rejected_before_dispatch_side_effect() {
         let run = run_with_agent_policy(
             AgentReusePolicy::CreateActivityAgent,
-            RuntimeSessionPolicy::DeliverToCurrentTrace,
+            RuntimeThreadPolicy::DeliverToCurrentThread,
         );
         let run_id = run.id;
         let repo = Arc::new(RunRepo {
@@ -1732,7 +1732,7 @@ mod tests {
     async fn continue_current_missing_authority_blocks_before_product_effect() {
         let run = run_with_agent_policy(
             AgentReusePolicy::ContinueCurrentAgent,
-            RuntimeSessionPolicy::DeliverToCurrentTrace,
+            RuntimeThreadPolicy::DeliverToCurrentThread,
         );
         let run_id = run.id;
         let repo = Arc::new(RunRepo {
@@ -1771,7 +1771,7 @@ mod tests {
     async fn pending_retry_replays_byte_identical_durable_request() {
         let run = run_with_agent_policy(
             AgentReusePolicy::CreateActivityAgent,
-            RuntimeSessionPolicy::CreateNew,
+            RuntimeThreadPolicy::CreateNew,
         );
         let run_id = run.id;
         let repo = Arc::new(RunRepo {
@@ -1848,7 +1848,7 @@ mod tests {
     async fn concurrent_drains_commit_one_atomic_agent_start() {
         let run = run_with_agent_policy(
             AgentReusePolicy::CreateActivityAgent,
-            RuntimeSessionPolicy::CreateNew,
+            RuntimeThreadPolicy::CreateNew,
         );
         let run_id = run.id;
         let repo = Arc::new(RunRepo {
@@ -1876,7 +1876,7 @@ mod tests {
     async fn lifecycle_run_cas_rejects_stale_writer() {
         let run = run_with_agent_policy(
             AgentReusePolicy::CreateActivityAgent,
-            RuntimeSessionPolicy::CreateNew,
+            RuntimeThreadPolicy::CreateNew,
         );
         let repo = RunRepo {
             run: Mutex::new(Some(run.clone())),
@@ -1905,7 +1905,7 @@ mod tests {
     async fn accepted_product_effect_replays_with_stable_claim_after_cas_failure() {
         let run = run_with_agent_policy(
             AgentReusePolicy::CreateActivityAgent,
-            RuntimeSessionPolicy::CreateNew,
+            RuntimeThreadPolicy::CreateNew,
         );
         let run_id = run.id;
         let repo = Arc::new(RunRepo {

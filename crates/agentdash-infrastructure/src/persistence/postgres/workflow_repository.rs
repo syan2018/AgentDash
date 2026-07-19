@@ -946,7 +946,7 @@ mod workflow_claim_tests {
         AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec, FunctionActivityExecutorSpec,
         HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleTaskPlanItemDraft,
         OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNode,
-        PlanNodeKind, RuntimeSessionPolicy, TaskPlanStatus, TaskPriority, WorkflowGraphDraft,
+        PlanNodeKind, RuntimeThreadPolicy, TaskPlanStatus, TaskPriority, WorkflowGraphDraft,
         WorkflowTemplateInstallBundle,
     };
 
@@ -1056,7 +1056,7 @@ mod workflow_claim_tests {
         ExecutorSpec::AgentProcedure {
             procedure: AgentProcedureExecutionSpec::by_key("workflow.plan"),
             agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-            runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+            runtime_thread_policy: RuntimeThreadPolicy::CreateNew,
         }
     }
 
@@ -1117,7 +1117,7 @@ mod workflow_claim_tests {
                 executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
                     procedure_key: procedure_key.to_string(),
                     agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-                    runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+                    runtime_thread_policy: RuntimeThreadPolicy::CreateNew,
                 }),
                 input_ports: vec![],
                 output_ports: vec![],

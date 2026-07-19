@@ -9,7 +9,7 @@ mod repository_set;
 pub mod script;
 
 pub use agentdash_domain::workflow::{
-    AgentReusePolicy, RuntimeSessionPolicy, WorkflowSessionTerminalState,
+    AgentReusePolicy, RuntimeThreadPolicy, WorkflowSessionTerminalState,
 };
 pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
 pub use definition::{

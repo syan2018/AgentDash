@@ -69,14 +69,49 @@ impl AppExecutionHookProvider {
         self.script_engine.remove_preset(key)
     }
 
+    /// Evaluates exactly the Product rule named by one admitted Complete Agent hook route.
+    ///
+    /// A Complete Agent invokes every bound definition independently. Reusing the aggregate
+    /// trigger evaluator here would execute sibling rules once per callback and duplicate Product
+    /// effects, so the immutable definition identity is the evaluation boundary.
+    pub async fn evaluate_complete_agent_hook(
+        &self,
+        definition_id: &str,
+        query: AgentFrameHookEvaluationQuery,
+    ) -> Result<HookResolution, HookError> {
+        let snapshot = match query.snapshot.clone() {
+            Some(snapshot) => snapshot,
+            None => {
+                self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                    target: query.target.clone(),
+                    provenance: query.provenance.clone(),
+                })
+                .await?
+            }
+        };
+        let query = HookRuleEvaluationQuery::from_frame_query(query);
+        let mut resolution = HookResolution::default();
+        apply_product_hook_rule(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            definition_id,
+            &mut resolution,
+            &self.script_engine,
+        )
+        .map_err(HookError::Runtime)?;
+        Ok(resolution)
+    }
+
     async fn build_snapshot_from_workflow(
         &self,
-        runtime_session_id: String,
+        runtime_thread_id: String,
         turn_id: Option<String>,
         projection: HookWorkflowProjection,
     ) -> Result<AgentFrameHookSnapshot, HookError> {
         let mut snapshot = AgentFrameHookSnapshot {
-            runtime_adapter_session_id: runtime_session_id,
+            runtime_adapter_session_id: runtime_thread_id,
             run_context: projection.run_context,
             sources: Vec::new(),
             tags: Vec::new(),
@@ -233,7 +268,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             .await
             .map_err(map_projection_error)?;
         self.build_snapshot_from_workflow(
-            query.provenance.runtime_session_id.unwrap_or_default(),
+            query.provenance.runtime_thread_id.unwrap_or_default(),
             query.provenance.turn_id,
             projection,
         )
@@ -258,7 +293,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         diag!(
             Debug,
             Subsystem::Hooks,
-            session_id = ?query.provenance.runtime_session_id,
+            session_id = ?query.provenance.runtime_thread_id,
             trigger = ?query.trigger,
             tool_name = ?query.tool_name,
             "hook: evaluate 触发"
@@ -279,7 +314,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             diag!(
                 Info,
                 Subsystem::Hooks,
-                session_id = ?query.runtime_session_id(),
+                session_id = ?query.runtime_thread_id(),
                 trigger = ?query.trigger,
                 matched = resolution.matched_rule_keys.len(),
                 blocked = resolution.block_reason.is_some(),
@@ -524,7 +559,7 @@ mod tests {
                     agent_id: uuid::Uuid::new_v4(),
                     frame_id: uuid::Uuid::new_v4(),
                 },
-                provenance: RuntimeAdapterProvenance::runtime_session(
+                provenance: RuntimeAdapterProvenance::runtime_thread(
                     snapshot.runtime_adapter_session_id.clone(),
                     None,
                     "provider_test",

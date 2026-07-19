@@ -1174,6 +1174,37 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn dynamic_mcp_tool_uses_the_same_committed_product_authority() {
+        let binding = binding();
+        let authorizer = ProductRuntimeToolAuthorizer::new(
+            Arc::new(BindingFixture {
+                value: Some(binding.clone()),
+            }),
+            Arc::new(SurfaceFixture {
+                value: Ok(snapshot(
+                    binding.binding.target.clone(),
+                    binding.binding_digest,
+                )),
+            }),
+        );
+
+        let grant = authorizer
+            .authorize(request("mcp_agentdash_workflow_tools_get_lifecycle"))
+            .await
+            .expect("bound MCP executor must use Product target authority");
+
+        assert_eq!(grant.resources, RuntimeToolResourceGrant::Product);
+        assert_eq!(
+            grant.target.run_id,
+            binding.binding.target.run_id.to_string()
+        );
+        assert_eq!(
+            grant.target.agent_id,
+            binding.binding.target.agent_id.to_string()
+        );
+    }
+
     fn binding() -> CommittedRuntimeToolProductBinding {
         let target = AgentRunTarget {
             run_id: Uuid::new_v4(),

@@ -2,17 +2,24 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_platform_spi::RuntimeToolProvider;
-use agentdash_platform_spi::{PlatformRuntimeError, DynAgentTool, ExecutionContext};
+use agentdash_platform_spi::{DynAgentTool, ExecutionContext, PlatformRuntimeError};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use crate::vfs::compile_whole_mount_runtime_vfs_access_policy;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
-use agentdash_application_agentrun::agent_run::AgentRunProductDeliveryPort;
+use agentdash_application_agentrun::agent_run::{
+    AgentRunProductInputDeliveryPort, AgentRunProductLaunchService,
+    AgentRunProductRuntimeBindingRepository,
+};
+use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 
 #[derive(Clone)]
 pub struct SessionToolServices {
-    pub product_delivery: Arc<dyn AgentRunProductDeliveryPort>,
+    pub product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
+    pub product_runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+    pub product_launch: Arc<AgentRunProductLaunchService>,
+    pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
 }
 
 #[derive(Clone, Default)]
@@ -112,7 +119,7 @@ pub(crate) fn shared_runtime_vfs_from_context(
     Ok(SharedRuntimeVfs::new_with_policy(vfs, access_policy))
 }
 
-pub(crate) fn runtime_session_id_from_context(
+pub(crate) fn runtime_thread_id_from_context(
     context: &ExecutionContext,
 ) -> Result<String, PlatformRuntimeError> {
     context

@@ -46,7 +46,7 @@ pub use crate::platform::capability_delta::SetDelta;
 /// Session 的 run-derived 业务上下文。
 ///
 /// Hook runtime 只消费由 LifecycleSubjectAssociation、LifecycleAgent 与
-/// AgentFrame 投影出的业务上下文，RuntimeSession id 仅作为 trace key。
+/// AgentFrame 投影出的业务上下文，RuntimeThread id 仅作为运行坐标。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct SubjectRunContext {
@@ -371,20 +371,20 @@ pub struct HookControlTarget {
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeAdapterProvenance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
     pub source: String,
 }
 
 impl RuntimeAdapterProvenance {
-    pub fn runtime_session(
-        runtime_session_id: impl Into<String>,
+    pub fn runtime_thread(
+        runtime_thread_id: impl Into<String>,
         turn_id: Option<String>,
         source: impl Into<String>,
     ) -> Self {
         Self {
-            runtime_session_id: Some(runtime_session_id.into()),
+            runtime_thread_id: Some(runtime_thread_id.into()),
             turn_id,
             source: source.into(),
         }
@@ -857,7 +857,7 @@ impl ExecutionHookProvider for NoopExecutionHookProvider {
         query: AgentFrameHookSnapshotQuery,
     ) -> Result<AgentFrameHookSnapshot, HookError> {
         Ok(AgentFrameHookSnapshot {
-            runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+            runtime_adapter_session_id: query.provenance.runtime_thread_id.unwrap_or_default(),
             ..AgentFrameHookSnapshot::default()
         })
     }

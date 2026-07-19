@@ -5,7 +5,7 @@ use agentdash_domain::{
     workflow::{
         ActivationRule, AgentProcedureContract, AgentProcedureExecutionSpec,
         AgentProcedureRepository, AgentReusePolicy, ExecutorRunRef, ExecutorSpec, LifecycleRun,
-        RuntimeNodeState, RuntimeSessionPolicy, WorkflowAgentCallSourceBindingRef,
+        RuntimeNodeState, RuntimeThreadPolicy, WorkflowAgentCallSourceBindingRef,
     },
 };
 use async_trait::async_trait;
@@ -173,7 +173,7 @@ impl WorkflowAgentCallLauncher {
         let Some(ExecutorSpec::AgentProcedure {
             procedure,
             agent_reuse_policy,
-            runtime_session_policy,
+            runtime_thread_policy,
         }) = ready.plan_node.executor.as_ref()
         else {
             return Ok(WorkflowAgentCallLaunchOutcome::blocked(
@@ -183,8 +183,8 @@ impl WorkflowAgentCallLauncher {
             ));
         };
 
-        let target_intent = match (agent_reuse_policy, runtime_session_policy) {
-            (AgentReusePolicy::CreateActivityAgent, RuntimeSessionPolicy::CreateNew) => {
+        let target_intent = match (agent_reuse_policy, runtime_thread_policy) {
+            (AgentReusePolicy::CreateActivityAgent, RuntimeThreadPolicy::CreateNew) => {
                 WorkflowAgentCallTargetIntent::CreateNew {
                     target: ready
                         .runtime_node
@@ -199,7 +199,7 @@ impl WorkflowAgentCallLauncher {
             }
             (
                 AgentReusePolicy::ContinueCurrentAgent,
-                RuntimeSessionPolicy::DeliverToCurrentTrace,
+                RuntimeThreadPolicy::DeliverToCurrentThread,
             ) => match current_authority(run, coordinate, ready.runtime_node) {
                 Ok(authority) => WorkflowAgentCallTargetIntent::ContinueCurrent {
                     target: authority.target,

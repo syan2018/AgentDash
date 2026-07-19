@@ -2,7 +2,6 @@ use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, AgentRunProductRuntimeSnapshotObservation,
     project_capability_state_from_frame, workspace as app_workspace,
 };
-use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_contracts::agent_run_mailbox::{MailboxMessageView, MailboxStateView};
 use agentdash_contracts::workflow::{
     AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
@@ -47,21 +46,17 @@ pub(crate) async fn load(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
     );
-    let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
-        state.repos.skill_asset_repo.clone(),
-    );
     let service = app_workspace::AgentRunWorkspaceQueryService::new(
         app_workspace::AgentRunWorkspaceQueryDeps {
-            delivery_selection_repos: app_agent_run::DeliveryRuntimeSelectionRepositories {
-                lifecycle_runs: state.repos.lifecycle_run_repo.as_ref(),
-                lifecycle_agents: state.repos.lifecycle_agent_repo.as_ref(),
-                agent_frames: state.repos.agent_frame_repo.as_ref(),
-                runtime_bindings: state.repos.agent_run_runtime_binding_repo.as_ref(),
-            },
+            product_projection: state.services.agent_run_product_projection.as_ref(),
+            applied_resource_surfaces: state
+                .services
+                .agent_run_product_persistence_composition
+                .applied_resource_surfaces
+                .as_ref(),
+            product_mailbox: state.services.agent_run_product_mailbox.as_ref(),
             agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
-            runtime_binding_repo: state.repos.agent_run_runtime_binding_repo.as_ref(),
             project_agent_repo: state.repos.project_agent_repo.as_ref(),
-            agent_run_mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
             lifecycle_subject_association_repo: state
                 .repos
                 .lifecycle_subject_association_repo
@@ -70,10 +65,7 @@ pub(crate) async fn load(
             settings_repo: state.repos.settings_repo.as_ref(),
             inline_file_repo: state.repos.inline_file_repo.as_ref(),
         },
-        state.services.agent_run_runtime.as_ref(),
         &runtime_projection,
-        &lifecycle_surface_projection,
-        state.services.lifecycle_read_model_query.as_ref(),
     );
     let snapshot = service
         .resolve(app_workspace::AgentRunWorkspaceQueryInput {

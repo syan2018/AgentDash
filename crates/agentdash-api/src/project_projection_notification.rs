@@ -1,6 +1,5 @@
 use agentdash_application_ports::project_projection_notification::{
-    ControlPlaneProjectionChanged, ProjectProjectionInvalidation,
-    ProjectProjectionNotificationPort,
+    ControlPlaneProjectionChanged, ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
 };
 use agentdash_contracts::project::{
     ProjectControlPlaneProjectionChanged, ProjectEventStreamEnvelope,

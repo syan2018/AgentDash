@@ -6,7 +6,7 @@ use uuid::Uuid;
 pub struct AgentRunPermissionRequest {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub turn_id: String,
     pub item_id: String,
     pub capability_key: String,

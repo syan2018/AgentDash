@@ -1,13 +1,12 @@
-use std::sync::Arc;
-
 use crate::lifecycle::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator, LifecycleOrchestratorDeps,
 };
 use agentdash_platform_spi::ExecutionContext;
-use agentdash_platform_spi::FunctionRunner;
 use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_platform_spi::{
+    AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
+};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -30,7 +29,6 @@ impl SharedSessionToolServicesHandle {
 pub struct CompleteLifecycleNodeTool {
     orchestrator_deps: LifecycleOrchestratorDeps,
     session_services_handle: SharedSessionToolServicesHandle,
-    function_runner: Option<Arc<dyn FunctionRunner>>,
     current_turn_id: String,
     hook_runtime: Option<agentdash_platform_spi::hooks::SharedHookRuntime>,
     owner: Option<agentdash_platform_spi::PlatformToolExecutionContext>,
@@ -62,13 +60,11 @@ impl CompleteLifecycleNodeTool {
     pub fn new(
         orchestrator_deps: LifecycleOrchestratorDeps,
         session_services_handle: SharedSessionToolServicesHandle,
-        function_runner: Option<Arc<dyn FunctionRunner>>,
         context: &ExecutionContext,
     ) -> Self {
         Self {
             orchestrator_deps,
             session_services_handle,
-            function_runner,
             current_turn_id: context.session.turn_id.clone(),
             hook_runtime: context.turn.hook_runtime.clone(),
             owner: context.turn.platform_tool_execution.clone(),
@@ -119,10 +115,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
                 "session services 尚未就绪，无法推进 lifecycle node".to_string(),
             )
         })?;
-        let mut orchestrator = LifecycleOrchestrator::new(self.orchestrator_deps.clone());
-        if let Some(function_runner) = &self.function_runner {
-            orchestrator = orchestrator.with_function_runner(function_runner.clone());
-        }
+        let orchestrator = LifecycleOrchestrator::new(self.orchestrator_deps.clone());
         let outcome = match params.outcome {
             StepOutcome::Completed => LifecycleNodeAdvanceOutcome::Completed,
             StepOutcome::Failed => LifecycleNodeAdvanceOutcome::Failed,

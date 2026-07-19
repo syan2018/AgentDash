@@ -70,7 +70,7 @@ pub use value_objects::{
     OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus,
     OutputPortDefinition, PlanActivation, PlanNode, PlanNodeKind, RunScriptArtifact,
     RunScriptArtifactStatus, RuntimeNodeError, RuntimeNodeState, RuntimeNodeStatus,
-    RuntimeSessionPolicy, RuntimeTraceRef, StandaloneFulfillment, StateArtifactRef,
+    RuntimeThreadPolicy, RuntimeTraceRef, StandaloneFulfillment, StateArtifactRef,
     StateExchangeRule, StateExchangeSnapshot, TaskPlanStatus, TaskPriority,
     ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState,
     TransitionCondition, ValidationIssue, ValidationSeverity, WorkflowAgentCallRuntimeState,

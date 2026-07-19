@@ -5,7 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+agentdash-agent-runtime = { workspace = true }
 agentdash-agent-runtime-contract.workspace = true
+agentdash-agent-service-api = { workspace = true }
 agentdash-agent-types = { workspace = true }
 agentdash-application-agentrun = { workspace = true }
 agentdash-application-lifecycle = { workspace = true }
@@ -55,6 +57,5 @@ tokio-stream = { workspace = true }
 json-patch = { workspace = true }
 agentdash-infrastructure = { workspace = true }
 agentdash-test-support = { workspace = true }
-agentdash-agent-runtime = { workspace = true }
 agentdash-agent-runtime-test-support = { workspace = true }
 sqlx = { workspace = true }

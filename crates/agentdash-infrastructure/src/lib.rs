@@ -8,6 +8,7 @@ pub mod mcp;
 pub mod migration;
 pub mod persistence;
 pub mod postgres_runtime;
+mod runtime_tool_authorization;
 pub mod script_runtime;
 pub mod secret;
 pub mod skill_source;
@@ -71,6 +72,10 @@ pub use persistence::postgres::PostgresWorkflowRecoveryRepository;
 pub use persistence::postgres::PostgresWorkflowRepository;
 pub use persistence::postgres::PostgresWorkspaceModulePresentationStore;
 pub use persistence::postgres::PostgresWorkspaceRepository;
+pub use runtime_tool_authorization::{
+    CommittedRuntimeToolProductBinding, ProductRuntimeToolAuthorizer,
+    RuntimeToolProductBindingQueryPort,
+};
 pub use script_runtime::{RhaiScriptLimits, RhaiScriptRuntime};
 pub use secret::LlmProviderSecretCipher;
 pub use skill_source::HttpRemoteSkillSource;

@@ -98,3 +98,37 @@ Task executors map `AppliedTaskScope` and `AppliedTaskOperation` to their Runtim
 An absent scope or operation is a typed deny; Project scope never implies Write, and a Task scope
 does not authorize sibling Tasks. VFS and Task grants are committed in the same immutable Product
 snapshot/CAS so neither authorization family can observe a mixed revision.
+
+## Runtime activation fence
+
+The Product runtime binding query consumed by `ProductRuntimeToolAuthorizer` must return one
+committed activation record containing the Product binding, its canonical digest, the applied
+resource snapshot revision and the Host binding generation. Those four facts are one atomic
+read. Authorization always queries `applied_resource_surface(target, Some(pinned_revision))`;
+querying the current/latest surface without the activation pin would allow an older callback
+generation to observe newly expanded grants.
+
+The committed resource snapshot must attest the exact Product binding digest, target and applied
+Agent surface revision/digest reported by the Host-resolved callback. A missing pin, generation
+mismatch, stale revision, changed binding digest or changed Agent surface evidence is a typed deny
+before the executor is entered.
+
+The W8 PostgreSQL implementation owns the unique migration, repository and production composition.
+Its commit path must serialize writers for one `(run_id, agent_id)` authority key (for example,
+with a transaction-scoped advisory lock) before reading the current pointer and performing the
+immutable-row replay/CAS checks above. The first insert is subject to the same serialization; a
+concurrent first writer cannot bypass the expected-null rule. Tests must exercise concurrent first
+insert, same-row exact replay, same-revision full-row conflict, stale current-pointer CAS and an
+old activation pinned to revision N while current has advanced to N+1.
+
+## Production composition input
+
+The Platform component exports the dependency-light `PlatformToolBroker`,
+`RuntimePlatformToolHandler`, `ProductRuntimeToolAuthorizer`, `MountsListRuntimeTool`,
+`RuntimeTaskReadTool` and `RuntimeTaskWriteTool`. It does not activate them in API/Local production
+composition before the W8 repository exists.
+
+W8 composition constructs one non-empty broker catalog containing exactly the currently committed
+platform executors `mounts_list`, `task_read` and `task_write`, injects the concrete atomic binding
+query and applied-surface query, then installs `RuntimePlatformToolHandler` as the Complete Agent
+tool callback handler. The broker rejects an empty or duplicate catalog at composition time.

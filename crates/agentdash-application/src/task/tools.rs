@@ -1,3 +1,8 @@
+use agentdash_agent_runtime::{
+    RuntimeTaskGrantedOperation, RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolExecutor,
+    RuntimeToolInvocation, RuntimeToolPermission, RuntimeToolResourceGrant,
+};
+use agentdash_agent_service_api::{AgentToolName, AgentToolResult as RuntimeAgentToolResult};
 use agentdash_domain::context_source::{
     ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
 };
@@ -15,6 +20,7 @@ use uuid::Uuid;
 use crate::repository_set::RepositorySet;
 use crate::task::scope::{
     AgentRunTaskScopeInput, AgentRunTaskScopeResolutionError, AgentRunTaskScopeResolver,
+    TaskPlanScope,
 };
 use crate::task::workspace::{
     TaskPlanChangeset, TaskPlanChangesetMode, TaskPlanCreateCommand, TaskPlanOperation,
@@ -495,6 +501,155 @@ impl AgentTool for TaskWriteTool {
     }
 }
 
+#[derive(Clone)]
+pub struct RuntimeTaskReadTool {
+    repos: RepositorySet,
+}
+
+impl RuntimeTaskReadTool {
+    pub fn new(repos: RepositorySet) -> Self {
+        Self { repos }
+    }
+}
+
+#[async_trait]
+impl RuntimeToolExecutor for RuntimeTaskReadTool {
+    fn definition(&self) -> RuntimeToolDefinition {
+        RuntimeToolDefinition {
+            name: AgentToolName::new("task_read").expect("static runtime tool name"),
+            description: "Read the current AgentRun Task view.".to_owned(),
+            parameters_schema: schema_value::<TaskReadParams>(),
+            permission: RuntimeToolPermission::ProductRead,
+            effect: RuntimeToolEffect::ReadOnly,
+        }
+    }
+
+    async fn execute(&self, invocation: RuntimeToolInvocation) -> RuntimeAgentToolResult {
+        let scope = match runtime_task_scope(&invocation, RuntimeTaskGrantedOperation::Read) {
+            Ok(scope) => scope,
+            Err(result) => return result,
+        };
+        let params: TaskReadParams = match serde_json::from_value(invocation.arguments) {
+            Ok(params) => params,
+            Err(error) => {
+                return RuntimeAgentToolResult::Rejected {
+                    code: "invalid_task_read_arguments".to_owned(),
+                    message: error.to_string(),
+                };
+            }
+        };
+        match TaskPlanWorkspace::from_repos(&self.repos)
+            .read(&scope, params.into_query())
+            .await
+        {
+            Ok(view) => RuntimeAgentToolResult::Completed {
+                output: serde_json::json!({"summary": "Task view 已读取", "view": view}),
+            },
+            Err(error) => RuntimeAgentToolResult::Failed {
+                code: "task_read_failed".to_owned(),
+                message: error.to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct RuntimeTaskWriteTool {
+    repos: RepositorySet,
+}
+
+impl RuntimeTaskWriteTool {
+    pub fn new(repos: RepositorySet) -> Self {
+        Self { repos }
+    }
+}
+
+#[async_trait]
+impl RuntimeToolExecutor for RuntimeTaskWriteTool {
+    fn definition(&self) -> RuntimeToolDefinition {
+        RuntimeToolDefinition {
+            name: AgentToolName::new("task_write").expect("static runtime tool name"),
+            description: "Apply changes to the current AgentRun Task plan.".to_owned(),
+            parameters_schema: schema_value::<TaskWriteParams>(),
+            permission: RuntimeToolPermission::ProductWrite,
+            effect: RuntimeToolEffect::ProductMutation,
+        }
+    }
+
+    async fn execute(&self, invocation: RuntimeToolInvocation) -> RuntimeAgentToolResult {
+        let scope = match runtime_task_scope(&invocation, RuntimeTaskGrantedOperation::Write) {
+            Ok(scope) => scope,
+            Err(result) => return result,
+        };
+        let params: TaskWriteParams = match serde_json::from_value(invocation.arguments) {
+            Ok(params) => params,
+            Err(error) => {
+                return RuntimeAgentToolResult::Rejected {
+                    code: "invalid_task_write_arguments".to_owned(),
+                    message: error.to_string(),
+                };
+            }
+        };
+        let changeset = match params.into_changeset() {
+            Ok(changeset) => changeset,
+            Err(error) => {
+                return RuntimeAgentToolResult::Rejected {
+                    code: "invalid_task_write_arguments".to_owned(),
+                    message: error.to_string(),
+                };
+            }
+        };
+        match TaskPlanWorkspace::from_repos(&self.repos)
+            .apply(&scope, changeset)
+            .await
+        {
+            Ok(result) => RuntimeAgentToolResult::Completed {
+                output: serde_json::json!({
+                    "summary": format!("Task 写入完成，变更 {} 个 Task。", result.changes.len()),
+                    "view": result.view
+                }),
+            },
+            Err(error) => RuntimeAgentToolResult::Failed {
+                code: "task_write_failed".to_owned(),
+                message: error.to_string(),
+            },
+        }
+    }
+}
+
+fn runtime_task_scope(
+    invocation: &RuntimeToolInvocation,
+    required: RuntimeTaskGrantedOperation,
+) -> Result<TaskPlanScope, RuntimeAgentToolResult> {
+    let RuntimeToolResourceGrant::Task(task) = &invocation.grant.resources else {
+        return Err(RuntimeAgentToolResult::Rejected {
+            code: "runtime_task_grant_required".to_owned(),
+            message: "Task tool requires a typed Task execution grant".to_owned(),
+        });
+    };
+    if !task.operations.contains(&required) {
+        return Err(RuntimeAgentToolResult::Rejected {
+            code: "runtime_task_operation_denied".to_owned(),
+            message: format!("Task execution grant does not allow {required:?}"),
+        });
+    }
+    let project_id = parse_runtime_target_uuid("project_id", &invocation.grant.target.project_id)?;
+    let run_id = parse_runtime_target_uuid("run_id", &invocation.grant.target.run_id)?;
+    let agent_id = parse_runtime_target_uuid("agent_id", &invocation.grant.target.agent_id)?;
+    Ok(TaskPlanScope {
+        project_id,
+        run_id,
+        agent_id: Some(agent_id),
+    })
+}
+
+fn parse_runtime_target_uuid(field: &str, value: &str) -> Result<Uuid, RuntimeAgentToolResult> {
+    Uuid::parse_str(value).map_err(|error| RuntimeAgentToolResult::Rejected {
+        code: "invalid_runtime_tool_target".to_owned(),
+        message: format!("{field} is not a valid UUID: {error}"),
+    })
+}
+
 impl From<TaskStatusInput> for TaskPlanStatus {
     fn from(value: TaskStatusInput) -> Self {
         match value {
@@ -633,6 +788,16 @@ fn workspace_error(error: TaskPlanWorkspaceError) -> AgentToolError {
 
 #[cfg(test)]
 mod tests {
+    use agentdash_agent_runtime::{
+        RuntimeTaskExecutionGrant, RuntimeToolAppliedSurfaceEvidence,
+        RuntimeToolAuthorizationGrant, RuntimeToolProductTarget, RuntimeToolResolvedContext,
+    };
+    use agentdash_agent_runtime_contract::RuntimeThreadId;
+    use agentdash_agent_service_api::{
+        AgentBindingGeneration, AgentProfileDigest, AgentServiceInstanceId, AgentSourceCoordinate,
+        AgentSurfaceDigest, AgentSurfaceRevision,
+    };
+
     use super::*;
 
     #[test]
@@ -660,5 +825,81 @@ mod tests {
             error.to_string().contains("execution"),
             "error should mention rejected mode: {error}"
         );
+    }
+
+    #[test]
+    fn task_grant_does_not_expand_read_into_write() {
+        let invocation =
+            runtime_invocation(Uuid::new_v4(), vec![RuntimeTaskGrantedOperation::Read]);
+        assert!(runtime_task_scope(&invocation, RuntimeTaskGrantedOperation::Read).is_ok());
+        let denied = runtime_task_scope(&invocation, RuntimeTaskGrantedOperation::Write)
+            .expect_err("read grant must not authorize write");
+        assert!(matches!(
+            denied,
+            RuntimeAgentToolResult::Rejected { code, .. }
+                if code == "runtime_task_operation_denied"
+        ));
+    }
+
+    #[test]
+    fn task_target_is_taken_from_each_invocation_grant() {
+        let first_run = Uuid::new_v4();
+        let second_run = Uuid::new_v4();
+        let first = runtime_task_scope(
+            &runtime_invocation(first_run, vec![RuntimeTaskGrantedOperation::Read]),
+            RuntimeTaskGrantedOperation::Read,
+        )
+        .unwrap();
+        let second = runtime_task_scope(
+            &runtime_invocation(second_run, vec![RuntimeTaskGrantedOperation::Read]),
+            RuntimeTaskGrantedOperation::Read,
+        )
+        .unwrap();
+        assert_eq!(first.run_id, first_run);
+        assert_eq!(second.run_id, second_run);
+        assert_ne!(first.run_id, second.run_id);
+    }
+
+    fn runtime_invocation(
+        run_id: Uuid,
+        operations: Vec<RuntimeTaskGrantedOperation>,
+    ) -> RuntimeToolInvocation {
+        RuntimeToolInvocation {
+            context: RuntimeToolResolvedContext {
+                runtime_thread_id: RuntimeThreadId::new("thread-test").unwrap(),
+                binding_generation: AgentBindingGeneration(1),
+                source: AgentSourceCoordinate::new("source-test").unwrap(),
+                service_instance_id: AgentServiceInstanceId::new("service-test").unwrap(),
+                profile_digest: AgentProfileDigest::new("profile-test").unwrap(),
+                bound_surface_revision: AgentSurfaceRevision(1),
+                bound_surface_digest: AgentSurfaceDigest::new("bound-test").unwrap(),
+                applied_surface_revision: AgentSurfaceRevision(1),
+                applied_surface_digest: AgentSurfaceDigest::new("applied-test").unwrap(),
+            },
+            tool: AgentToolName::new("task_read").unwrap(),
+            arguments: serde_json::json!({}),
+            grant: RuntimeToolAuthorizationGrant {
+                permission: RuntimeToolPermission::ProductRead,
+                effect: RuntimeToolEffect::ReadOnly,
+                target: RuntimeToolProductTarget {
+                    project_id: Uuid::new_v4().to_string(),
+                    run_id: run_id.to_string(),
+                    agent_id: Uuid::new_v4().to_string(),
+                },
+                applied_surface: RuntimeToolAppliedSurfaceEvidence {
+                    snapshot_revision: 1,
+                    revision: 1,
+                    digest: "surface-test".to_owned(),
+                    projection_revision: 1,
+                    provenance_source: "test".to_owned(),
+                    provenance_revision: 1,
+                },
+                resources: RuntimeToolResourceGrant::Task(RuntimeTaskExecutionGrant {
+                    plan_revision: 1,
+                    plan_digest: "plan-test".to_owned(),
+                    operations,
+                }),
+            },
+        }
     }
 }

@@ -18,6 +18,7 @@ pub(crate) mod provider_inline;
 pub(crate) mod provider_routine;
 pub(crate) mod provider_skill_asset;
 pub mod rewrite;
+pub mod runtime_tools;
 pub mod search;
 pub mod service;
 pub mod surface;
@@ -90,6 +91,7 @@ pub use provider::{
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_routine::RoutineMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
+pub use runtime_tools::MountsListRuntimeTool;
 pub use search::TextSearchParams;
 pub use service::{BasicTextSearchRequest, VfsService};
 pub use surface::{

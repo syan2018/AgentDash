@@ -4,6 +4,8 @@
 [`final-convergence-closeout.md`](./final-convergence-closeout.md) 为执行依据。S5
 只删除本任务已经
 正确替代并通过真实 consumer/tracer 证明的旧实现。
+Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
+[`product-control-plane-boundary-audit.md`](./product-control-plane-boundary-audit.md)。
 
 ## 当前真实状态
 
@@ -56,7 +58,11 @@
 - [x] 恢复 Wait service/provider 与 terminal convergence。
 - [x] 恢复 Workspace Module、Canvas、Terminal control/presentation composition。
 - [ ] 将 Lifecycle/Companion/Wait Product Tool contributions 接入最终 typed Broker
-  catalog；VFS、Task、Workspace Module 与 dynamic MCP 已进入 production catalog。
+  catalog；VFS、Task、Workspace Module Present 与 dynamic MCP 已进入 production
+  catalog。
+- [ ] 将 AgentFrame 已声明但 production Broker 缺失的
+  `workspace_module_list/describe/operate/invoke` 以 typed Product command seam
+  等价恢复；`workspace_module_present` 已进入 catalog。
 
 ### Product behavior tests
 
@@ -103,7 +109,7 @@
 - [ ] Dash collaboration tool spawn/read/wait/result。
 - [ ] Workflow AgentCall。
 - [ ] Routine trigger → AgentRun → terminal。
-- [ ] Workspace Module read/write/presentation。
+- [ ] Workspace Module list/describe/operate/invoke/present 与 surface/presentation feed。
 - [ ] Canvas read/write/promotion/diagnostics。
 - [ ] VFS surface read/list/search。
 - [x] Lifecycle VFS canonical `events.json` 与 derived indexes。

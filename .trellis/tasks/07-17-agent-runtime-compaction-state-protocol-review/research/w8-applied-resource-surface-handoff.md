@@ -176,6 +176,10 @@ removes its sole external consumer,
 `crates/agentdash-application/src/runtime_tools/vfs_provider.rs`, and then deletes this complete
 adapter set:
 
+- `crates/agentdash-application/tests/runtime_tool_catalog.rs` is the test-only consumer that
+  composes `VfsRuntimeToolProvider`; W8 must replace its catalog assertions with coverage of
+  `final_runtime_tool_catalog` when the production composition switches, rather than retaining the
+  current-lane provider for the test.
 - `crates/agentdash-application-vfs/src/tools/factory.rs`
   (`VfsToolFactory` / `VfsToolFactoryInput` and its `DynAgentTool` catalog).
 - `MountsListTool`, `FsReadTool`, `FsGlobTool`, `FsGrepTool`, `FsApplyPatchTool` and
@@ -213,8 +217,8 @@ the existing explicit inspect/reconcile contract may settle it as a typed result
   restart/replay, late side-effect completion and zero duplicate handler executions.
 - Application Task schema test: passed against the concrete strict read/write serde parameter
   types, including nested operation items.
-- Application-VFS library: 165 passed, including owner-isolated read dedup and backing-identity
-  patch serialization; schema-focused rerun passed 4 tests.
+- Application-VFS library: 166 passed, including strict parser-derived `mounts_list` schema,
+  owner-isolated read dedup and backing-identity patch serialization.
 - Infrastructure final catalog: both inventory and exact eight-owner-schema tests passed.
 - Owner crates passed `cargo clippy --lib --no-deps -D warnings` after acknowledging the two
   pre-existing VFS lints outside this component (`collapsible_if` and `too_many_arguments`).

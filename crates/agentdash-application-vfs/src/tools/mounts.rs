@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, MountCapability, RuntimeVfsAccessPolicy,
     RuntimeVfsOperation, ToolUpdateCallback,
 };
 use async_trait::async_trait;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::runtime_tool_execution::{VfsToolExecutionError, VfsToolExecutionResult};
@@ -16,6 +19,10 @@ use super::{legacy_error, legacy_result};
 // ---------------------------------------------------------------------------
 // mounts_list
 // ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct MountsListParams {}
 
 #[derive(Clone)]
 pub struct MountsListExecutor {
@@ -29,19 +36,17 @@ impl MountsListExecutor {
     }
 
     pub fn parameters_schema() -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": false,
-        })
+        schema_value::<MountsListParams>()
     }
 
     pub async fn execute(
         &self,
-        _: serde_json::Value,
+        args: serde_json::Value,
         cancel: CancellationToken,
     ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
+        serde_json::from_value::<MountsListParams>(args).map_err(|error| {
+            VfsToolExecutionError::InvalidArguments(format!("invalid arguments: {error}"))
+        })?;
         if cancel.is_cancelled() {
             return Err(VfsToolExecutionError::Cancelled);
         }
@@ -182,6 +187,25 @@ mod tests {
             display_name: "Main".to_string(),
             metadata: serde_json::Value::Null,
         }
+    }
+
+    #[test]
+    fn mounts_list_schema_and_parser_share_the_empty_object_contract() {
+        let schema = MountsListExecutor::parameters_schema();
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["additionalProperties"], false);
+        assert!(schema.get("properties").is_none_or(|properties| {
+            properties
+                .as_object()
+                .is_some_and(serde_json::Map::is_empty)
+        }));
+
+        serde_json::from_value::<MountsListParams>(serde_json::json!({}))
+            .expect("empty object should parse");
+        serde_json::from_value::<MountsListParams>(serde_json::json!({
+            "unexpected": true
+        }))
+        .expect_err("schema-forbidden fields must be rejected by the parser");
     }
 
     #[tokio::test]

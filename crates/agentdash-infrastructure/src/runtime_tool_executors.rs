@@ -227,6 +227,30 @@ fn product_tool_definition(
             RuntimeToolPermission::ProductWrite,
             RuntimeToolEffect::ProductMutation,
         ),
+        ProductRuntimeToolKind::WorkspaceModuleList => (
+            "workspace_module_list",
+            "List Workspace Modules visible through the applied Product runtime surface.",
+            RuntimeToolPermission::ProductRead,
+            RuntimeToolEffect::ReadOnly,
+        ),
+        ProductRuntimeToolKind::WorkspaceModuleDescribe => (
+            "workspace_module_describe",
+            "Describe one Workspace Module and its visible operations.",
+            RuntimeToolPermission::ProductRead,
+            RuntimeToolEffect::ReadOnly,
+        ),
+        ProductRuntimeToolKind::WorkspaceModuleOperate => (
+            "workspace_module_operate",
+            "Apply a Workspace Module operation through the canonical Product runtime surface.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
+        ProductRuntimeToolKind::WorkspaceModuleInvoke => (
+            "workspace_module_invoke",
+            "Invoke a Workspace Module operation through its declared Product dispatch.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
     }
 }
 
@@ -891,6 +915,10 @@ mod tests {
             ProductRuntimeToolKind::CompleteLifecycleNode,
             ProductRuntimeToolKind::CompanionRequest,
             ProductRuntimeToolKind::CompanionRespond,
+            ProductRuntimeToolKind::WorkspaceModuleList,
+            ProductRuntimeToolKind::WorkspaceModuleDescribe,
+            ProductRuntimeToolKind::WorkspaceModuleOperate,
+            ProductRuntimeToolKind::WorkspaceModuleInvoke,
         ]
         .into_iter()
         .map(|kind| {
@@ -911,6 +939,10 @@ mod tests {
                 "complete_lifecycle_node",
                 "companion_request",
                 "companion_respond",
+                "workspace_module_list",
+                "workspace_module_describe",
+                "workspace_module_operate",
+                "workspace_module_invoke",
             ]
         );
         assert_eq!(
@@ -918,7 +950,15 @@ mod tests {
             RuntimeToolPermission::ProductRead
         );
         assert_eq!(definitions[0].effect, RuntimeToolEffect::ReadOnly);
-        assert!(definitions[1..].iter().all(|definition| {
+        assert!(definitions[1..4].iter().all(|definition| {
+            definition.permission == RuntimeToolPermission::ProductWrite
+                && definition.effect == RuntimeToolEffect::ProductMutation
+        }));
+        assert!(definitions[4..6].iter().all(|definition| {
+            definition.permission == RuntimeToolPermission::ProductRead
+                && definition.effect == RuntimeToolEffect::ReadOnly
+        }));
+        assert!(definitions[6..].iter().all(|definition| {
             definition.permission == RuntimeToolPermission::ProductWrite
                 && definition.effect == RuntimeToolEffect::ProductMutation
         }));

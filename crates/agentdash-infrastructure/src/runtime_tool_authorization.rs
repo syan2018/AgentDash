@@ -155,7 +155,15 @@ fn authorize_snapshot(
         "shell_exec" => shell_vfs_grant(surface, &request.arguments)?,
         "task_read" => task_grant(surface, AppliedTaskOperation::Read, &request.arguments)?,
         "task_write" => task_grant(surface, AppliedTaskOperation::Write, &request.arguments)?,
-        "workspace_module_present" => RuntimeToolResourceGrant::Product,
+        "wait"
+        | "complete_lifecycle_node"
+        | "companion_request"
+        | "companion_respond"
+        | "workspace_module_list"
+        | "workspace_module_describe"
+        | "workspace_module_operate"
+        | "workspace_module_invoke"
+        | "workspace_module_present" => RuntimeToolResourceGrant::Product,
         name if name.starts_with("mcp_") => RuntimeToolResourceGrant::Product,
         _ => {
             return Err(denied(

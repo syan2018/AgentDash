@@ -618,7 +618,11 @@ fn static_tool_enabled(capability_state: &CapabilityState, name: &str) -> bool {
         "fs_apply_patch" => ToolCluster::Write,
         "shell_exec" => ToolCluster::Execute,
         "task_read" | "task_write" => ToolCluster::Task,
-        "workspace_module_present" => ToolCluster::WorkspaceModule,
+        "workspace_module_list"
+        | "workspace_module_describe"
+        | "workspace_module_operate"
+        | "workspace_module_invoke"
+        | "workspace_module_present" => ToolCluster::WorkspaceModule,
         "companion_request" | "companion_respond" => ToolCluster::Collaboration,
         "complete_lifecycle_node" => ToolCluster::Workflow,
         "wait" => ToolCluster::Collaboration,
@@ -971,10 +975,12 @@ mod tests {
         catalog
             .activate_recovery_profile(profile_digest.clone(), previous.clone())
             .await;
-        assert!(catalog
-            .select_recovery(&profile_digest, &previous)
-            .await
-            .is_err());
+        assert!(
+            catalog
+                .select_recovery(&profile_digest, &previous)
+                .await
+                .is_err()
+        );
 
         catalog
             .activate_recovery_profile(profile_digest.clone(), replacement.clone())
@@ -986,9 +992,11 @@ mod tests {
                 .unwrap(),
             replacement
         );
-        assert!(!catalog
-            .deactivate_recovery_profile(&profile_digest, &previous)
-            .await);
+        assert!(
+            !catalog
+                .deactivate_recovery_profile(&profile_digest, &previous)
+                .await
+        );
     }
 
     #[test]

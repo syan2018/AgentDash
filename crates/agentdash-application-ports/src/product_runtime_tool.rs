@@ -13,6 +13,10 @@ pub enum ProductRuntimeToolKind {
     CompleteLifecycleNode,
     CompanionRequest,
     CompanionRespond,
+    WorkspaceModuleList,
+    WorkspaceModuleDescribe,
+    WorkspaceModuleOperate,
+    WorkspaceModuleInvoke,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

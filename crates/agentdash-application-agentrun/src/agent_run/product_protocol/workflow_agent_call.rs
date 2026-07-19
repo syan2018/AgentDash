@@ -3,25 +3,32 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeCommand, ManagedRuntimeCommandEnvelope, ManagedRuntimeContentBlock,
-    ManagedRuntimeContextAuthority, ManagedRuntimeContextProvenance,
-    ManagedRuntimeInitialContextContribution, ManagedRuntimeInitialContextContributionContent,
-    ManagedRuntimeInitialContextMode, ManagedRuntimeInitialContextPackage,
-    ManagedRuntimeOperationEvidence, ManagedRuntimeOperationStatus,
-    ManagedRuntimeSourceBindingEvidence, RuntimeContextContributionId, RuntimeContextPackageId,
-    RuntimeContextSourceRef, RuntimeContextSourceRevision, RuntimeIdempotencyKey,
-    RuntimeOperationId, RuntimePayloadDigest, RuntimeThreadId,
+    ManagedRuntimeCommand, ManagedRuntimeCommandEnvelope, ManagedRuntimeContextAuthority,
+    ManagedRuntimeContextProvenance, ManagedRuntimeInitialContextContribution,
+    ManagedRuntimeInitialContextContributionContent, ManagedRuntimeInitialContextMode,
+    ManagedRuntimeInitialContextPackage, ManagedRuntimeOperationEvidence,
+    ManagedRuntimeOperationStatus, ManagedRuntimeSourceBindingEvidence,
+    RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
+    RuntimeContextSourceRevision, RuntimeIdempotencyKey, RuntimeOperationId, RuntimePayloadDigest,
+    RuntimeThreadId,
 };
 use agentdash_application_workflow::{
     WorkflowAgentCallContentBlock, WorkflowAgentCallDispatchError,
     WorkflowAgentCallDispatchOutcome, WorkflowAgentCallDispatchPort, WorkflowAgentCallMailboxState,
     WorkflowAgentCallRequest, WorkflowAgentCallTargetIntent,
 };
+use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::agent_run::{
+    AgentRunProductInputDeliveryPort, AgentRunProductLaunchService,
+    AgentRunProductRuntimeProvisioningRequest, DeliverAgentRunProductInput,
+    stable_product_command_operation_id,
+};
 
 use super::ProductManagedRuntimeCommandAdapter;
 
@@ -87,10 +94,10 @@ impl WorkflowAgentCallProductSaga {
         }
         let (runtime_thread_id, source_binding) = match &request.target_intent {
             WorkflowAgentCallTargetIntent::CreateNew { .. } => (
-                RuntimeThreadId::new(format!(
-                    "workflow-agent-call:{}",
-                    request.identity.request_id
-                ))
+                RuntimeThreadId::new(
+                    stable_workflow_agent_call_uuid(&request.identity.request_id, "runtime")
+                        .to_string(),
+                )
                 .map_err(|error| error.to_string())?,
                 None,
             ),
@@ -133,9 +140,15 @@ impl WorkflowAgentCallProductSaga {
         let effect_id = format!("{}:{}", self.request.identity.request_id, phase.slug());
         let runtime_operation_id = match phase {
             WorkflowAgentCallProductPhase::CreateRuntime
-            | WorkflowAgentCallProductPhase::ActivateRuntime
-            | WorkflowAgentCallProductPhase::SubmitInput => Some(
+            | WorkflowAgentCallProductPhase::ActivateRuntime => Some(
                 RuntimeOperationId::new(effect_id.clone()).map_err(|error| error.to_string())?,
+            ),
+            WorkflowAgentCallProductPhase::SubmitInput => Some(
+                stable_product_command_operation_id(
+                    self.target(),
+                    &self.request.identity.request_id,
+                )
+                .map_err(|error| error.to_string())?,
             ),
             WorkflowAgentCallProductPhase::MaterializeTarget
             | WorkflowAgentCallProductPhase::CommitBinding => None,
@@ -380,6 +393,7 @@ pub trait WorkflowAgentCallProductGraphPort: Send + Sync {
     async fn materialize_target(
         &self,
         request: &WorkflowAgentCallRequest,
+        runtime_thread_id: &RuntimeThreadId,
         effect_id: &str,
     ) -> Result<(), String>;
 
@@ -399,6 +413,7 @@ pub struct WorkflowAgentCallTargetMaterialization {
     pub request_id: String,
     pub payload_digest: String,
     pub target: AgentRunTarget,
+    pub project_agent_id: Option<uuid::Uuid>,
     pub effect_id: String,
 }
 
@@ -445,12 +460,14 @@ impl WorkflowAgentCallProductGraphPort for DurableWorkflowAgentCallProductGraphA
     async fn materialize_target(
         &self,
         request: &WorkflowAgentCallRequest,
+        _runtime_thread_id: &RuntimeThreadId,
         effect_id: &str,
     ) -> Result<(), String> {
         let expected = WorkflowAgentCallTargetMaterialization {
             request_id: request.identity.request_id.clone(),
             payload_digest: request.payload_digest.clone(),
             target: request.target_intent.target().clone(),
+            project_agent_id: None,
             effect_id: effect_id.to_owned(),
         };
         let committed = self
@@ -520,14 +537,35 @@ pub trait WorkflowAgentCallRuntimePort: Send + Sync {
     ) -> Result<WorkflowAgentCallRuntimeOutcome, String>;
 }
 
+#[async_trait]
+pub trait WorkflowAgentCallProductProvisioningPort: Send + Sync {
+    async fn resolve_provisioning(
+        &self,
+        saga: &WorkflowAgentCallProductSaga,
+    ) -> Result<AgentRunProductRuntimeProvisioningRequest, String>;
+}
+
 #[derive(Clone)]
 pub struct ProductWorkflowAgentCallRuntimeAdapter {
     runtime: ProductManagedRuntimeCommandAdapter,
+    provisioning: Arc<dyn WorkflowAgentCallProductProvisioningPort>,
+    launch: Arc<AgentRunProductLaunchService>,
+    input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
 }
 
 impl ProductWorkflowAgentCallRuntimeAdapter {
-    pub fn new(runtime: ProductManagedRuntimeCommandAdapter) -> Self {
-        Self { runtime }
+    pub fn new(
+        runtime: ProductManagedRuntimeCommandAdapter,
+        provisioning: Arc<dyn WorkflowAgentCallProductProvisioningPort>,
+        launch: Arc<AgentRunProductLaunchService>,
+        input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
+    ) -> Self {
+        Self {
+            runtime,
+            provisioning,
+            launch,
+            input_delivery,
+        }
     }
 
     fn command(
@@ -544,24 +582,9 @@ impl ProductWorkflowAgentCallRuntimeAdapter {
                 initial_context: Some(Self::initial_context(saga)?),
             },
             WorkflowAgentCallProductPhase::ActivateRuntime => ManagedRuntimeCommand::Activate,
-            WorkflowAgentCallProductPhase::SubmitInput => ManagedRuntimeCommand::SubmitInput {
-                content: saga
-                    .request
-                    .input
-                    .iter()
-                    .map(|block| match block {
-                        WorkflowAgentCallContentBlock::Text { text } => {
-                            ManagedRuntimeContentBlock::Text { text: text.clone() }
-                        }
-                        WorkflowAgentCallContentBlock::Structured { schema, value } => {
-                            ManagedRuntimeContentBlock::Structured {
-                                schema: schema.clone(),
-                                value: value.clone(),
-                            }
-                        }
-                    })
-                    .collect(),
-            },
+            WorkflowAgentCallProductPhase::SubmitInput => {
+                return Err("Workflow AgentCall input uses Product mailbox delivery".to_owned());
+            }
             WorkflowAgentCallProductPhase::MaterializeTarget
             | WorkflowAgentCallProductPhase::CommitBinding => {
                 return Err("Product graph phase is not a Runtime command".to_owned());
@@ -572,7 +595,13 @@ impl ProductWorkflowAgentCallRuntimeAdapter {
                 .map_err(|error| error.to_string())?,
             operation_id,
             thread_id: saga.runtime_thread_id.clone(),
-            expected_revision: None,
+            expected_revision: match phase {
+                WorkflowAgentCallProductPhase::ActivateRuntime => saga
+                    .source_binding
+                    .as_ref()
+                    .map(|binding| binding.committed_at_revision),
+                _ => None,
+            },
             command,
         })
     }
@@ -694,11 +723,63 @@ impl WorkflowAgentCallRuntimePort for ProductWorkflowAgentCallRuntimeAdapter {
         phase: WorkflowAgentCallProductPhase,
         identity: &WorkflowAgentCallProductPhaseIdentity,
     ) -> Result<WorkflowAgentCallRuntimeOutcome, String> {
+        if phase == WorkflowAgentCallProductPhase::SubmitInput {
+            let delivery = self
+                .input_delivery
+                .deliver(DeliverAgentRunProductInput {
+                    target: saga.target().clone(),
+                    content: workflow_input_blocks(&saga.request.input)?,
+                    source: MailboxSourceIdentity::workflow_orchestrator()
+                        .with_source_ref(saga.request.identity.node_path.clone())
+                        .with_correlation_ref(saga.request.identity.request_id.clone()),
+                    origin: MailboxMessageOrigin::System,
+                    client_command_id: saga.request.identity.request_id.clone(),
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            return Ok(if delivery.queued {
+                WorkflowAgentCallRuntimeOutcome::Accepted
+            } else {
+                WorkflowAgentCallRuntimeOutcome::Succeeded {
+                    source_binding: None,
+                }
+            });
+        }
+        let provisioning = self.provisioning.resolve_provisioning(saga).await?;
+        if provisioning.target != *saga.target()
+            || provisioning.runtime_thread_id != saga.runtime_thread_id
+        {
+            return Err("Workflow AgentCall Product provisioning authority drifted".to_owned());
+        }
+        if phase == WorkflowAgentCallProductPhase::CreateRuntime {
+            self.launch
+                .prepare_runtime_target(&provisioning)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
         let observation = self
             .runtime
             .execute(Self::command(saga, phase, identity)?)
             .await?;
-        Self::map_observation(phase, observation.status, observation.evidence)
+        let outcome = Self::map_observation(phase, observation.status, observation.evidence)?;
+        if matches!(outcome, WorkflowAgentCallRuntimeOutcome::Succeeded { .. }) {
+            match phase {
+                WorkflowAgentCallProductPhase::CreateRuntime => {
+                    self.launch
+                        .converge_created_runtime(&provisioning)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+                WorkflowAgentCallProductPhase::ActivateRuntime => {
+                    self.launch
+                        .converge_activated_runtime(&provisioning)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+                _ => {}
+            }
+        }
+        Ok(outcome)
     }
 
     async fn inspect(
@@ -718,8 +799,61 @@ impl WorkflowAgentCallRuntimePort for ProductWorkflowAgentCallRuntimeAdapter {
         else {
             return Ok(WorkflowAgentCallRuntimeOutcome::Unknown);
         };
-        Self::map_observation(phase, observation.status, observation.evidence)
+        let mut outcome = Self::map_observation(phase, observation.status, observation.evidence)?;
+        if phase == WorkflowAgentCallProductPhase::SubmitInput
+            && matches!(outcome, WorkflowAgentCallRuntimeOutcome::Accepted)
+        {
+            outcome = WorkflowAgentCallRuntimeOutcome::Succeeded {
+                source_binding: None,
+            };
+        }
+        if matches!(outcome, WorkflowAgentCallRuntimeOutcome::Succeeded { .. })
+            && matches!(
+                phase,
+                WorkflowAgentCallProductPhase::CreateRuntime
+                    | WorkflowAgentCallProductPhase::ActivateRuntime
+            )
+        {
+            let provisioning = self.provisioning.resolve_provisioning(saga).await?;
+            match phase {
+                WorkflowAgentCallProductPhase::CreateRuntime => {
+                    self.launch
+                        .converge_created_runtime(&provisioning)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+                WorkflowAgentCallProductPhase::ActivateRuntime => {
+                    self.launch
+                        .converge_activated_runtime(&provisioning)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+                _ => unreachable!("phase filtered above"),
+            }
+        }
+        Ok(outcome)
     }
+}
+
+fn workflow_input_blocks(
+    input: &[WorkflowAgentCallContentBlock],
+) -> Result<Vec<agentdash_agent_protocol::UserInputBlock>, String> {
+    let blocks = input
+        .iter()
+        .map(|block| match block {
+            WorkflowAgentCallContentBlock::Text { text } => Ok(text.clone()),
+            WorkflowAgentCallContentBlock::Structured { schema, value } => {
+                serde_json::to_string(&serde_json::json!({
+                    "schema": schema,
+                    "value": value,
+                }))
+                .map_err(|error| error.to_string())
+            }
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(agentdash_agent_protocol::text_user_input_blocks(
+        &blocks.join("\n"),
+    ))
 }
 
 #[derive(Clone)]
@@ -808,7 +942,11 @@ impl ProductWorkflowAgentCallDispatchService {
             match phase {
                 WorkflowAgentCallProductPhase::MaterializeTarget => {
                     self.product_graph
-                        .materialize_target(&saga.request, &identity.effect_id)
+                        .materialize_target(
+                            &saga.request,
+                            &saga.runtime_thread_id,
+                            &identity.effect_id,
+                        )
                         .await
                         .map_err(retryable_product_effect)?;
                     let expected_version = saga.version;
@@ -912,18 +1050,33 @@ impl WorkflowAgentCallDispatchPort for ProductWorkflowAgentCallDispatchService {
 /// in-memory saga store is compiled for tests only.
 pub fn build_durable_workflow_agent_call_dispatch(
     saga_repository: Arc<dyn WorkflowAgentCallProductSagaRepository>,
-    product_graph_repository: Arc<dyn WorkflowAgentCallProductGraphRepository>,
+    product_graph: Arc<dyn WorkflowAgentCallProductGraphPort>,
     managed_runtime: ProductManagedRuntimeCommandAdapter,
+    provisioning: Arc<dyn WorkflowAgentCallProductProvisioningPort>,
+    product_launch: Arc<AgentRunProductLaunchService>,
+    product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
 ) -> Arc<dyn WorkflowAgentCallDispatchPort> {
-    let graph = Arc::new(DurableWorkflowAgentCallProductGraphAdapter::new(
-        product_graph_repository,
+    let runtime = Arc::new(ProductWorkflowAgentCallRuntimeAdapter::new(
+        managed_runtime,
+        provisioning,
+        product_launch,
+        product_input_delivery,
     ));
-    let runtime = Arc::new(ProductWorkflowAgentCallRuntimeAdapter::new(managed_runtime));
     Arc::new(ProductWorkflowAgentCallDispatchService {
         repository: saga_repository,
-        product_graph: graph,
+        product_graph,
         runtime,
     })
+}
+
+fn stable_workflow_agent_call_uuid(request_id: &str, role: &str) -> uuid::Uuid {
+    let digest =
+        Sha256::digest(format!("agentdash.workflow-agent-call/v1:{request_id}:{role}").as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    uuid::Uuid::from_bytes(bytes)
 }
 
 fn repository_dispatch_error(
@@ -1050,6 +1203,7 @@ mod tests {
         async fn materialize_target(
             &self,
             _request: &WorkflowAgentCallRequest,
+            _runtime_thread_id: &RuntimeThreadId,
             effect_id: &str,
         ) -> Result<(), String> {
             self.materializations

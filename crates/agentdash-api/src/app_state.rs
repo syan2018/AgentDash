@@ -29,6 +29,7 @@ use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::task::tools::ApplicationRuntimeTaskToolService;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application::wait_activity::WaitActivityService;
+use agentdash_application::workflow_agent_call_product::ApplicationWorkflowAgentCallProductAdapter;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommandFacade, AgentRunProductInputDeliveryPort,
     AgentRunProductInputDeliveryService, AgentRunProductLaunchService,
@@ -49,6 +50,8 @@ use agentdash_application_lifecycle::run_view_builder::{
 use agentdash_application_lifecycle::{
     AgentRunLifecycleAppliedResourceSurfaceCompiler, AgentRunLifecycleSurfaceProjector,
     LifecycleOrchestrator, LifecycleOrchestratorDeps, LifecycleRuntimeTurnTerminalObserver,
+    LifecycleWorkflowAgentNodeMaterializationAdapter,
+    LifecycleWorkflowAgentNodeMaterializationDeps,
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_ports::product_runtime_tool::{
@@ -493,18 +496,18 @@ impl AppState {
             Arc::new(AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
                 repos.skill_asset_repo.clone(),
             ));
-        let frame_construction: Arc<dyn AgentRunFrameConstructionPort> =
-            Arc::new(AgentRunProjectOwnerFrameConstructionAdapter::new(
-                AgentRunProjectOwnerFrameConstructionDeps {
-                    repos: repos.clone(),
-                    vfs_service: vfs_service.clone(),
-                    availability: backend_registry.clone(),
-                    platform_config: platform_config.clone(),
-                    lifecycle_surface_projection,
-                    audit_bus: audit_bus.clone(),
-                    hook_plan_compiler: hook_provider.clone(),
-                },
-            ));
+        let frame_construction = Arc::new(AgentRunProjectOwnerFrameConstructionAdapter::new(
+            AgentRunProjectOwnerFrameConstructionDeps {
+                repos: repos.clone(),
+                vfs_service: vfs_service.clone(),
+                availability: backend_registry.clone(),
+                platform_config: platform_config.clone(),
+                lifecycle_surface_projection,
+                audit_bus: audit_bus.clone(),
+                hook_plan_compiler: hook_provider.clone(),
+                product_runtime_bindings: product.runtime_bindings.clone(),
+            },
+        ));
         let agent_run_product_protocol = Arc::new(AgentRunProductProtocolPorts::new(
             Arc::new(PostgresAgentRunForkSagaRepository::new(pool.clone())),
             Arc::new(ProductAgentRunForkRuntimeAdapter::with_product_launch(
@@ -592,10 +595,34 @@ impl AppState {
         );
         let workflow_agent_call = Arc::new(PostgresWorkflowAgentCallRepository::new(pool.clone()));
         let workflow_recovery = Arc::new(PostgresWorkflowRecoveryRepository::new(pool));
+        let workflow_materialization =
+            Arc::new(LifecycleWorkflowAgentNodeMaterializationAdapter::new(
+                LifecycleWorkflowAgentNodeMaterializationDeps {
+                    run_repo: repos.lifecycle_run_repo.clone(),
+                    workflow_graph_repo: repos.workflow_graph_repo.clone(),
+                    agent_repo: repos.lifecycle_agent_repo.clone(),
+                    frame_repo: repos.agent_frame_repo.clone(),
+                    association_repo: repos.lifecycle_subject_association_repo.clone(),
+                    gate_repo: repos.lifecycle_gate_repo.clone(),
+                    lineage_repo: repos.agent_lineage_repo.clone(),
+                    frame_construction: frame_construction.clone(),
+                    workflow_agent_frame_materialization: frame_construction.clone(),
+                },
+            ));
+        let workflow_product = Arc::new(ApplicationWorkflowAgentCallProductAdapter::new(
+            workflow_agent_call.clone(),
+            workflow_materialization,
+            repos.lifecycle_agent_repo.clone(),
+            repos.agent_frame_repo.clone(),
+            repos.project_agent_repo.clone(),
+        ));
         let workflow_agent_call_dispatch = build_durable_workflow_agent_call_dispatch(
             workflow_agent_call.clone(),
-            workflow_agent_call,
+            workflow_product.clone(),
             ProductManagedRuntimeCommandAdapter::new(complete_agent.runtime.clone()),
+            workflow_product,
+            product_launch.clone(),
+            product_input_delivery.clone(),
         );
         let orchestration_executor_launcher = OrchestrationExecutorLauncher::new_durable(
             repos.to_workflow_repository_set(),

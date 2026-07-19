@@ -1,8 +1,9 @@
 use agentdash_application_agentrun::agent_run::{
-    WorkflowAgentCallBindingCommit, WorkflowAgentCallProductGraphRepository,
-    WorkflowAgentCallProductPhase, WorkflowAgentCallProductPhaseIdentity,
-    WorkflowAgentCallProductRepositoryError, WorkflowAgentCallProductSaga,
-    WorkflowAgentCallProductSagaRepository, WorkflowAgentCallTargetMaterialization,
+    AgentRunProductRuntimeBinding, WorkflowAgentCallBindingCommit,
+    WorkflowAgentCallProductGraphRepository, WorkflowAgentCallProductPhase,
+    WorkflowAgentCallProductPhaseIdentity, WorkflowAgentCallProductRepositoryError,
+    WorkflowAgentCallProductSaga, WorkflowAgentCallProductSagaRepository,
+    WorkflowAgentCallTargetMaterialization,
 };
 use agentdash_application_workflow::{
     WorkflowAgentCallMailboxState, WorkflowAgentCallRequest, WorkflowAgentCallTargetIntent,
@@ -153,7 +154,13 @@ impl WorkflowAgentCallProductGraphRepository for PostgresWorkflowAgentCallReposi
             if existing != target_materialization_json(&mutation) {
                 return Err("Workflow AgentCall target materialization conflict".to_owned());
             }
-            ensure_materialized_target(&mut tx, &request, &mutation.target).await?;
+            ensure_materialized_target(
+                &mut tx,
+                &request,
+                &mutation.target,
+                mutation.project_agent_id,
+            )
+            .await?;
             tx.commit().await.map_err(db_string)?;
             return Ok(mutation);
         }
@@ -173,20 +180,25 @@ impl WorkflowAgentCallProductGraphRepository for PostgresWorkflowAgentCallReposi
             "INSERT INTO lifecycle_agents(
                  id,run_id,project_id,created_by_user_id,source,project_agent_id,status,
                  bootstrap_status,workspace_title,workspace_title_source,created_at,updated_at
-             ) VALUES ($1,$2,$3,$4,'workflow_agent',NULL,'active','pending',NULL,NULL,$5,$5)
+             ) VALUES ($1,$2,$3,$4,'workflow_agent',$5,'active','pending',NULL,NULL,$6,$6)
              ON CONFLICT (id) DO NOTHING",
         )
         .bind(mutation.target.agent_id.to_string())
         .bind(mutation.target.run_id.to_string())
         .bind(request.project_id.to_string())
         .bind(&request.created_by_user_id)
+        .bind(
+            mutation
+                .project_agent_id
+                .map(|project_agent_id| project_agent_id.to_string()),
+        )
         .bind(now)
         .execute(&mut *tx)
         .await
         .map_err(db_string)?;
         if agent_insert.rows_affected() == 0 {
             let existing = sqlx::query(
-                "SELECT run_id,project_id,created_by_user_id,source
+                "SELECT run_id,project_id,created_by_user_id,source,project_agent_id
                  FROM lifecycle_agents WHERE id=$1",
             )
             .bind(mutation.target.agent_id.to_string())
@@ -204,6 +216,12 @@ impl WorkflowAgentCallProductGraphRepository for PostgresWorkflowAgentCallReposi
                     .map_err(db_string)?
                     != request.created_by_user_id
                 || existing.try_get::<String, _>("source").map_err(db_string)? != "workflow_agent"
+                || existing
+                    .try_get::<Option<String>, _>("project_agent_id")
+                    .map_err(db_string)?
+                    != mutation
+                        .project_agent_id
+                        .map(|project_agent_id| project_agent_id.to_string())
             {
                 return Err("Workflow AgentCall target graph drifted".to_owned());
             }
@@ -235,76 +253,15 @@ impl WorkflowAgentCallProductGraphRepository for PostgresWorkflowAgentCallReposi
         {
             return Err("Workflow AgentCall binding request drifted".to_owned());
         }
-        let binding_json = product_binding_json(&mutation);
         if let Some(existing) = load_graph_effect(&mut tx, &mutation.effect_id).await? {
             if existing != binding_commit_json(&mutation) {
                 return Err("Workflow AgentCall binding commit conflict".to_owned());
             }
-            let stored = sqlx::query_scalar::<_, Value>(
-                "SELECT binding FROM agent_run_product_runtime_binding
-                 WHERE target_run_id=$1 AND target_agent_id=$2",
-            )
-            .bind(mutation.target.run_id.to_string())
-            .bind(mutation.target.agent_id.to_string())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db_string)?;
-            if stored.as_ref() != Some(&binding_json) {
-                return Err("Workflow AgentCall Product binding drifted".to_owned());
-            }
+            ensure_canonical_product_binding(&mut tx, &mutation).await?;
             tx.commit().await.map_err(db_string)?;
             return Ok(mutation);
         }
-        let project_id = sqlx::query_scalar::<_, String>(
-            "SELECT project_id FROM lifecycle_agents
-             WHERE id=$1 AND run_id=$2 FOR UPDATE",
-        )
-        .bind(mutation.target.agent_id.to_string())
-        .bind(mutation.target.run_id.to_string())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db_string)?
-        .ok_or_else(|| "Workflow AgentCall target agent does not exist".to_owned())?;
-        let evidence = &mutation.binding;
-        let binding_insert = sqlx::query(
-            "INSERT INTO agent_run_product_runtime_binding(
-                 target_run_id,target_agent_id,project_id,runtime_thread_id,source_ref,
-                 source_committed_revision,source_applied_surface_revision,
-                 source_activated_revision,binding
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-             ON CONFLICT (target_run_id,target_agent_id) DO NOTHING",
-        )
-        .bind(mutation.target.run_id.to_string())
-        .bind(mutation.target.agent_id.to_string())
-        .bind(project_id)
-        .bind(mutation.runtime_thread_id.as_str())
-        .bind(evidence.source_ref.as_str())
-        .bind(to_i64_string(evidence.committed_at_revision.0)?)
-        .bind(to_i64_string(evidence.applied_surface_revision.0)?)
-        .bind(
-            evidence
-                .activated_at_revision
-                .map(|revision| to_i64_string(revision.0))
-                .transpose()?,
-        )
-        .bind(&binding_json)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_string)?;
-        if binding_insert.rows_affected() == 0 {
-            let existing = sqlx::query_scalar::<_, Value>(
-                "SELECT binding FROM agent_run_product_runtime_binding
-                 WHERE target_run_id=$1 AND target_agent_id=$2",
-            )
-            .bind(mutation.target.run_id.to_string())
-            .bind(mutation.target.agent_id.to_string())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db_string)?;
-            if existing != binding_json {
-                return Err("Workflow AgentCall Product binding drifted".to_owned());
-            }
-        }
+        ensure_canonical_product_binding(&mut tx, &mutation).await?;
         insert_graph_effect(
             &mut tx,
             &mutation.effect_id,
@@ -322,13 +279,39 @@ impl WorkflowAgentCallProductGraphRepository for PostgresWorkflowAgentCallReposi
     }
 }
 
+async fn ensure_canonical_product_binding(
+    tx: &mut Transaction<'_, Postgres>,
+    mutation: &WorkflowAgentCallBindingCommit,
+) -> Result<(), String> {
+    let stored = sqlx::query_scalar::<_, Value>(
+        "SELECT binding FROM agent_run_product_runtime_binding
+         WHERE target_run_id=$1 AND target_agent_id=$2 FOR UPDATE",
+    )
+    .bind(mutation.target.run_id.to_string())
+    .bind(mutation.target.agent_id.to_string())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db_string)?
+    .ok_or_else(|| "Workflow AgentCall canonical Product binding is missing".to_string())?;
+    let binding: AgentRunProductRuntimeBinding =
+        serde_json::from_value(stored).map_err(|error| error.to_string())?;
+    if binding.target != mutation.target
+        || binding.runtime_thread_id != mutation.runtime_thread_id
+        || binding.source_binding != mutation.binding
+    {
+        return Err("Workflow AgentCall canonical Product binding drifted".to_string());
+    }
+    Ok(())
+}
+
 async fn ensure_materialized_target(
     tx: &mut Transaction<'_, Postgres>,
     request: &WorkflowAgentCallRequest,
     target: &agentdash_domain::agent_run_target::AgentRunTarget,
+    project_agent_id: Option<uuid::Uuid>,
 ) -> Result<(), String> {
     let agent = sqlx::query(
-        "SELECT run_id,project_id,created_by_user_id,source
+        "SELECT run_id,project_id,created_by_user_id,source,project_agent_id
          FROM lifecycle_agents WHERE id=$1",
     )
     .bind(target.agent_id.to_string())
@@ -346,6 +329,10 @@ async fn ensure_materialized_target(
             .map_err(db_string)?
             != request.created_by_user_id
         || agent.try_get::<String, _>("source").map_err(db_string)? != "workflow_agent"
+        || agent
+            .try_get::<Option<String>, _>("project_agent_id")
+            .map_err(db_string)?
+            != project_agent_id.map(|project_agent_id| project_agent_id.to_string())
     {
         return Err("Workflow AgentCall committed target graph drifted".to_owned());
     }
@@ -718,6 +705,7 @@ fn target_materialization_json(mutation: &WorkflowAgentCallTargetMaterialization
         "request_id": mutation.request_id,
         "payload_digest": mutation.payload_digest,
         "target": mutation.target,
+        "project_agent_id": mutation.project_agent_id,
         "effect_id": mutation.effect_id,
     })
 }
@@ -730,17 +718,6 @@ fn binding_commit_json(mutation: &WorkflowAgentCallBindingCommit) -> Value {
         "runtime_thread_id": mutation.runtime_thread_id,
         "binding": mutation.binding,
         "effect_id": mutation.effect_id,
-    })
-}
-
-fn product_binding_json(mutation: &WorkflowAgentCallBindingCommit) -> Value {
-    json!({
-        "target": {
-            "run_id": mutation.target.run_id,
-            "agent_id": mutation.target.agent_id,
-        },
-        "runtime_thread_id": mutation.runtime_thread_id,
-        "source_binding": mutation.binding,
     })
 }
 
@@ -824,10 +801,6 @@ fn decode<T: DeserializeOwned>(value: Value, context: &str) -> Result<T, String>
 
 fn to_i64(value: u64) -> Result<i64, WorkflowAgentCallProductRepositoryError> {
     i64::try_from(value).map_err(|error| repository_persistence(error.to_string()))
-}
-
-fn to_i64_string(value: u64) -> Result<i64, String> {
-    i64::try_from(value).map_err(|error| error.to_string())
 }
 
 fn repository_db(error: sqlx::Error) -> WorkflowAgentCallProductRepositoryError {
@@ -1065,6 +1038,7 @@ mod tests {
             request_id: request.identity.request_id.clone(),
             payload_digest: request.payload_digest.clone(),
             target: request.target_intent.target().clone(),
+            project_agent_id: None,
             effect_id: format!("workflow-agent-call-materialize:{}", Uuid::new_v4()),
         };
         let committed = restarted

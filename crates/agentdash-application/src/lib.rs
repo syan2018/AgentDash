@@ -43,6 +43,7 @@ pub mod vfs {
     pub use agentdash_application_vfs::*;
 }
 pub mod vfs_surface_resolver;
+pub mod workflow_agent_call_product;
 pub mod workspace;
 
 pub use error::ApplicationError;

@@ -15,6 +15,7 @@ mod owner_bootstrap;
 pub mod plan;
 mod request_assembler;
 mod subject_assignment;
+mod workflow_node_materialization;
 mod workflow_projection;
 
 use std::path::PathBuf;

@@ -28,13 +28,15 @@ use super::composer_project_agent::{
 
 #[derive(Clone)]
 pub struct AgentRunProjectOwnerFrameConstructionAdapter {
-    repos: RepositorySet,
+    pub(super) repos: RepositorySet,
     vfs_service: Arc<VfsService>,
     availability: Arc<dyn BackendAvailability>,
-    platform_config: Arc<PlatformConfig>,
-    lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
-    audit_bus: SharedContextAuditBus,
+    pub(super) platform_config: Arc<PlatformConfig>,
+    pub(super) lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
+    pub(super) audit_bus: SharedContextAuditBus,
     hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
+    pub(super) product_runtime_bindings:
+        Arc<dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository>,
 }
 
 pub struct AgentRunProjectOwnerFrameConstructionDeps {
@@ -45,6 +47,8 @@ pub struct AgentRunProjectOwnerFrameConstructionDeps {
     pub lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
     pub audit_bus: SharedContextAuditBus,
     pub hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
+    pub product_runtime_bindings:
+        Arc<dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository>,
 }
 
 impl AgentRunProjectOwnerFrameConstructionAdapter {
@@ -57,6 +61,7 @@ impl AgentRunProjectOwnerFrameConstructionAdapter {
             lifecycle_surface_projection: deps.lifecycle_surface_projection,
             audit_bus: deps.audit_bus,
             hook_plan_compiler: deps.hook_plan_compiler,
+            product_runtime_bindings: deps.product_runtime_bindings,
         }
     }
 

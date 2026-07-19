@@ -10,6 +10,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_run_mailbox_states",
     "agent_run_applied_resource_surface_snapshot",
     "agent_run_applied_resource_surface_current",
+    "agent_run_product_runtime_binding",
     "agent_run_product_runtime_command_claim",
     "agent_run_product_mailbox_head",
     "agent_run_product_mailbox_change",
@@ -163,7 +164,50 @@ pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
 
 pub async fn assert_postgres_schema_ready(pool: &PgPool) -> Result<(), DomainError> {
     assert_postgres_tables_ready(pool, REQUIRED_POSTGRES_TABLES).await?;
+    assert_postgres_columns_ready(
+        pool,
+        "agent_run_product_runtime_binding",
+        &[
+            "binding_digest",
+            "applied_resource_snapshot_revision",
+            "applied_resource_binding_id",
+            "applied_resource_binding_generation",
+        ],
+    )
+    .await?;
     assert_postgres_tables_absent(pool, RETIRED_POSTGRES_TABLES).await
+}
+
+async fn assert_postgres_columns_ready(
+    pool: &PgPool,
+    table: &str,
+    columns: &[&str],
+) -> Result<(), DomainError> {
+    let present: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema='public' AND table_name=$1 AND column_name=ANY($2)",
+    )
+    .bind(table)
+    .bind(columns)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| {
+        DomainError::InvalidConfig(format!("schema column readiness 检查失败: {err}"))
+    })?;
+    let missing: Vec<&str> = columns
+        .iter()
+        .copied()
+        .filter(|column| !present.iter().any(|value| value == column))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(DomainError::InvalidConfig(format!(
+            "PostgreSQL schema 缺少 {table} final activation columns: {}",
+            missing.join(", ")
+        )))
+    }
 }
 
 pub async fn assert_postgres_tables_ready(

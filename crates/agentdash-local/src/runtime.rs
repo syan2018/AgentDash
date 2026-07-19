@@ -4,6 +4,7 @@
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Context;
 use serde::Serialize;

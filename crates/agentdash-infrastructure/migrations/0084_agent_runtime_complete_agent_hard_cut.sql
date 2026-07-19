@@ -632,12 +632,37 @@ CREATE TABLE agent_run_product_runtime_binding (
     source_activated_revision BIGINT CHECK (
         source_activated_revision IS NULL OR source_activated_revision >= 0
     ),
+    binding_digest TEXT NOT NULL CHECK (btrim(binding_digest) <> ''),
+    applied_resource_snapshot_revision BIGINT CHECK (
+        applied_resource_snapshot_revision IS NULL OR applied_resource_snapshot_revision > 0
+    ),
+    applied_resource_binding_id TEXT,
+    applied_resource_binding_generation NUMERIC(20, 0) CHECK (
+        applied_resource_binding_generation IS NULL OR (
+            applied_resource_binding_generation BETWEEN 1 AND 18446744073709551615
+        )
+    ),
     binding JSONB NOT NULL CHECK (jsonb_typeof(binding) = 'object'),
     PRIMARY KEY (target_run_id, target_agent_id),
     FOREIGN KEY (target_agent_id, target_run_id, project_id)
         REFERENCES lifecycle_agents(id, run_id, project_id) ON DELETE CASCADE,
     FOREIGN KEY (runtime_thread_id)
-        REFERENCES agent_runtime_thread_binding(thread_id) ON DELETE RESTRICT
+        REFERENCES agent_runtime_thread_binding(thread_id) ON DELETE RESTRICT,
+    CHECK (
+        (
+            source_activated_revision IS NULL
+            AND applied_resource_snapshot_revision IS NULL
+            AND applied_resource_binding_id IS NULL
+            AND applied_resource_binding_generation IS NULL
+        )
+        OR (
+            source_activated_revision IS NOT NULL
+            AND applied_resource_snapshot_revision IS NOT NULL
+            AND applied_resource_binding_id IS NOT NULL
+            AND btrim(applied_resource_binding_id) <> ''
+            AND applied_resource_binding_generation IS NOT NULL
+        )
+    )
 );
 
 CREATE TABLE agent_run_applied_resource_surface_snapshot (
@@ -1207,6 +1232,11 @@ CREATE TABLE agent_runtime_callback_reservation (
         )
         ON DELETE RESTRICT
 );
+
+ALTER TABLE agent_run_product_runtime_binding
+    ADD CONSTRAINT agent_run_product_runtime_binding_host_generation_fkey
+    FOREIGN KEY (applied_resource_binding_id, applied_resource_binding_generation)
+        REFERENCES agent_runtime_binding(binding_id, generation) ON DELETE RESTRICT;
 
 CREATE TABLE agent_runtime_callback_outcome (
     route_id TEXT NOT NULL,

@@ -1,45 +1,48 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use async_trait::async_trait;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 
+use agentdash_agent_runtime::{PlatformToolBroker, RuntimeToolExecutor};
 use agentdash_agent_runtime_contract::ManagedAgentRuntimeGateway;
 use agentdash_agent_runtime_host::{
-    CompleteAgentHookHandler, CompleteAgentToolHandler, CompleteAgentVerificationMethod,
-    CompleteAgentVerificationRecord, ResolvedCompleteAgentHookCallback,
-    ResolvedCompleteAgentToolCallback,
+    CompleteAgentVerificationMethod, CompleteAgentVerificationRecord, RuntimePlatformHookHandler,
+    RuntimePlatformToolHandler,
 };
-use agentdash_agent_service_api::{
-    AgentHookDecision, AgentHostCallbackError, AgentHostCallbackErrorCode, AgentHostCallbacks,
-    AgentPayloadDigest, AgentServiceInstanceId, AgentToolResult,
-};
+use agentdash_agent_service_api::{AgentHostCallbacks, AgentPayloadDigest, AgentServiceInstanceId};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
 };
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::task::tools::ApplicationRuntimeTaskToolService;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductProjectionQueryPort, AgentRunTerminalSourceReconcilePort,
-    ProductManagedRuntimeCommandAdapter, build_durable_workflow_agent_call_dispatch,
+    AgentRunProductCommandFacade, AgentRunProductProjectionQueryPort,
+    AgentRunTerminalSourceReconcilePort, ProductMailboxFacade, ProductManagedRuntimeCommandAdapter,
+    build_durable_workflow_agent_call_dispatch,
 };
 use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeChannelInvoker};
 use agentdash_application_lifecycle::run_view_builder::{
     LifecycleRunViewQueryDeps, LifecycleRunViewQueryPort, LifecycleRunViewQueryService,
 };
-use agentdash_application_vfs::{MountProviderRegistry, VfsMutationDispatcher, VfsService};
+use agentdash_application_vfs::{
+    AppliedVfsRuntimeToolService, MountProviderRegistry, VfsMutationDispatcher, VfsService,
+};
 use agentdash_application_workflow::OrchestrationExecutorLauncher;
 use agentdash_contracts::project::ProjectEventStreamEnvelope;
 use agentdash_diagnostics::DiagnosticBuffer;
 use agentdash_domain::llm_provider::LlmSecretCodec;
-use agentdash_infrastructure::AgentRunProductProjectionComposition;
+use agentdash_infrastructure::{
+    AgentRunProductPersistenceComposition, AgentRunProductProjectionComposition,
+};
 use agentdash_infrastructure::{
     CompleteAgentComposition, PinnedCompleteAgentVerificationCatalog,
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
     PostgresWorkflowAgentCallRepository, PostgresWorkflowExecutorEffectRepository,
     PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
+    ProcessShellTerminalRegistry, ProductRuntimeToolAuthorizer, final_runtime_tool_catalog,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, AuthMode, MarketplaceSourceProvider, MemoryDiscoveryProvider,
@@ -68,36 +71,6 @@ fn resolve_platform_mcp_base_url(raw_value: Option<String>) -> Option<String> {
     raw_value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-struct UnsupportedAgentNativeCallbacks;
-
-fn unsupported_callback(kind: &str) -> AgentHostCallbackError {
-    AgentHostCallbackError::new(
-        AgentHostCallbackErrorCode::Unsupported,
-        format!("{kind} callback has no Product handler registered"),
-        false,
-    )
-}
-
-#[async_trait]
-impl CompleteAgentToolHandler for UnsupportedAgentNativeCallbacks {
-    async fn invoke(
-        &self,
-        _callback: ResolvedCompleteAgentToolCallback,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
-        Err(unsupported_callback("tool"))
-    }
-}
-
-#[async_trait]
-impl CompleteAgentHookHandler for UnsupportedAgentNativeCallbacks {
-    async fn invoke(
-        &self,
-        _callback: ResolvedCompleteAgentHookCallback,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
-        Err(unsupported_callback("hook"))
-    }
 }
 
 fn builtin_complete_agent_verifier() -> Result<PinnedCompleteAgentVerificationCatalog> {
@@ -132,7 +105,12 @@ pub struct ServiceSet {
     pub complete_agent_callbacks: Arc<dyn AgentHostCallbacks>,
     pub agent_run_product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
     pub agent_run_product_projection_composition: Arc<AgentRunProductProjectionComposition>,
+    pub agent_run_product_persistence_composition: Arc<AgentRunProductPersistenceComposition>,
     pub agent_run_product_runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
+    pub agent_run_product_commands: Arc<AgentRunProductCommandFacade>,
+    pub agent_run_product_mailbox: Arc<ProductMailboxFacade>,
+    pub runtime_tool_broker: Arc<PlatformToolBroker>,
+    pub shell_terminal_registry: Arc<ProcessShellTerminalRegistry>,
     pub lifecycle_run_views: Arc<dyn LifecycleRunViewQueryPort>,
     pub workspace_module_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
     pub terminal_projections: Arc<PostgresAgentRunTerminalProjectionStore>,
@@ -224,12 +202,39 @@ impl AppState {
         let mount_provider_registry = vfs_bootstrap.mount_provider_registry;
         let vfs_service = vfs_bootstrap.vfs_service;
         let vfs_mutation_dispatcher = vfs_bootstrap.vfs_mutation_dispatcher;
+        let vfs_materialization_service = vfs_bootstrap.vfs_materialization_service;
+
+        let product_persistence =
+            Arc::new(AgentRunProductPersistenceComposition::build(pool.clone()));
+        let runtime_product_bindings = Arc::new(
+            PostgresAgentRunProductRuntimeBindingRepository::new(pool.clone()),
+        );
+        let shell_terminal_registry = Arc::new(ProcessShellTerminalRegistry::default());
+        let applied_vfs_tools = Arc::new(
+            AppliedVfsRuntimeToolService::new(vfs_service.clone(), shell_terminal_registry.clone())
+                .with_materialization(Some(vfs_materialization_service))
+                .with_shell_output_registry(Some(shell_output_registry.clone())),
+        );
+        let runtime_task_tools = Arc::new(ApplicationRuntimeTaskToolService::new(repos.clone()));
+        let runtime_tool_catalog: Vec<Arc<dyn RuntimeToolExecutor>> =
+            final_runtime_tool_catalog(applied_vfs_tools, runtime_task_tools);
+        let runtime_tool_authorizer = Arc::new(ProductRuntimeToolAuthorizer::new(
+            runtime_product_bindings.clone(),
+            product_persistence.applied_resource_surfaces.clone(),
+        ));
+        let runtime_tool_broker = Arc::new(
+            PlatformToolBroker::new(runtime_tool_catalog, runtime_tool_authorizer)
+                .map_err(anyhow::Error::msg)?,
+        );
+        let runtime_tool_handler =
+            Arc::new(RuntimePlatformToolHandler::new(runtime_tool_broker.clone()));
+        let runtime_hook_handler = Arc::new(RuntimePlatformHookHandler::new());
 
         let host_incarnation_id = format!("agentdash-api-host-{}", uuid::Uuid::new_v4());
         let complete_agent = Arc::new(CompleteAgentComposition::build(
             pool.clone(),
-            Arc::new(UnsupportedAgentNativeCallbacks),
-            Arc::new(UnsupportedAgentNativeCallbacks),
+            runtime_tool_handler,
+            runtime_hook_handler,
             Arc::new(builtin_complete_agent_verifier()?),
             host_incarnation_id.clone(),
             format!("agentdash-api-runtime-{}", uuid::Uuid::new_v4()),
@@ -241,6 +246,12 @@ impl AppState {
         {
             complete_agent.register_contribution(contribution).await?;
         }
+        let product_commands = Arc::new(product_persistence.product_command_facade(
+            runtime_product_bindings.clone(),
+            complete_agent.runtime.clone(),
+        ));
+        let product_mailbox =
+            Arc::new(product_persistence.product_mailbox_facade(runtime_product_bindings));
 
         let product = Arc::new(
             AgentRunProductProjectionComposition::build(
@@ -325,7 +336,12 @@ impl AppState {
                 complete_agent,
                 agent_run_product_projection: product.gateway.clone(),
                 agent_run_product_projection_composition: product.clone(),
+                agent_run_product_persistence_composition: product_persistence,
                 agent_run_product_runtime_bindings: product.runtime_bindings.clone(),
+                agent_run_product_commands: product_commands,
+                agent_run_product_mailbox: product_mailbox,
+                runtime_tool_broker,
+                shell_terminal_registry,
                 lifecycle_run_views,
                 workspace_module_presentations: product.workspace_presentations.clone(),
                 terminal_projections: product.terminals.clone(),

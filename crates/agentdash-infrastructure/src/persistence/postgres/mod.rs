@@ -164,7 +164,7 @@ pub use agent_run_product_persistence::{
 };
 pub use agent_run_product_projection_repository::{
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
-    PostgresWorkspaceModulePresentationStore,
+    PostgresWorkspaceModulePresentationStore, product_runtime_binding_digest,
 };
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;

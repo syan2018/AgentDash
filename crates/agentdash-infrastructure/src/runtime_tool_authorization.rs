@@ -43,6 +43,16 @@ pub trait RuntimeToolProductBindingQueryPort: Send + Sync {
     ) -> Result<Option<CommittedRuntimeToolProductBinding>, String>;
 }
 
+#[async_trait]
+impl RuntimeToolProductBindingQueryPort for crate::PostgresAgentRunProductRuntimeBindingRepository {
+    async fn binding_and_digest(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+    ) -> Result<Option<CommittedRuntimeToolProductBinding>, String> {
+        self.load_committed_tool_binding(runtime_thread_id).await
+    }
+}
+
 impl ProductRuntimeToolAuthorizer {
     pub fn new(
         bindings: Arc<dyn RuntimeToolProductBindingQueryPort>,

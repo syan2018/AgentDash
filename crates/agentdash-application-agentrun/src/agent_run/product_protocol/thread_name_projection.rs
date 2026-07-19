@@ -163,7 +163,7 @@ impl AgentRunThreadNameProjectionObserver {
                 target.run_id,
                 target.agent_id,
                 None,
-                agentdash_agent_protocol::ControlPlaneProjectionChangeReason::TitleChanged,
+                agentdash_application_ports::project_projection_notification::ControlPlaneProjectionChangeReason::TitleChanged,
                 Some(binding.runtime_thread_id),
             ))
             .await
@@ -376,7 +376,7 @@ mod tests {
             assert_eq!(invalidation.runtime_thread_id.as_ref(), Some(&thread_id));
             assert_eq!(
                 invalidation.reason,
-                agentdash_agent_protocol::ControlPlaneProjectionChangeReason::TitleChanged
+                agentdash_application_ports::project_projection_notification::ControlPlaneProjectionChangeReason::TitleChanged
             );
         }
     }

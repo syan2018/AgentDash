@@ -13,6 +13,7 @@ path = "src/generate_ts.rs"
 
 [dependencies]
 agentdash-agent-runtime-contract = { workspace = true }
+agentdash-application-ports = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
 agentdash-platform-spi = { workspace = true }

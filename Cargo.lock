@@ -427,11 +427,13 @@ dependencies = [
  "agentdash-relay",
  "async-trait",
  "chrono",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.18",
  "tokio",
+ "ts-rs",
  "uuid",
 ]
 
@@ -537,6 +539,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
+ "agentdash-application-ports",
  "agentdash-domain",
  "agentdash-platform-spi",
  "chrono",

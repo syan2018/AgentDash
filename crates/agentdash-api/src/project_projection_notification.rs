@@ -1,6 +1,6 @@
-use agentdash_agent_protocol::ControlPlaneProjectionChanged;
 use agentdash_application_ports::project_projection_notification::{
-    ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
+    ControlPlaneProjectionChanged, ProjectProjectionInvalidation,
+    ProjectProjectionNotificationPort,
 };
 use agentdash_contracts::project::{
     ProjectControlPlaneProjectionChanged, ProjectEventStreamEnvelope,
@@ -33,7 +33,6 @@ impl ProjectProjectionNotificationPort for ProjectProjectionNotificationPublishe
             frame_id: invalidation.frame_id.map(|id| id.to_string()),
             gate_id: invalidation.gate_id.map(|id| id.to_string()),
             mailbox_message_id: invalidation.mailbox_message_id.map(|id| id.to_string()),
-            delivery_runtime_session_id: None,
         };
         let event = ProjectEventStreamEnvelope::control_plane_projection_changed(
             ProjectControlPlaneProjectionChanged::new(invalidation.project_id.to_string(), change),

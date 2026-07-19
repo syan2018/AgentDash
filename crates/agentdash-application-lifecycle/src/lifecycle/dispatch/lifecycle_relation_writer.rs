@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
 use agentdash_application_ports::project_projection_notification::{
-    ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
+    ControlPlaneProjectionChangeReason, ProjectProjectionInvalidation,
+    ProjectProjectionNotificationPort,
 };
 use uuid::Uuid;
 

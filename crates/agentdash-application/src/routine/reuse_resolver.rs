@@ -656,6 +656,7 @@ mod tests {
                 error: None,
                 trace_refs: Vec::new(),
                 cache: None,
+                agent_call: None,
             });
             assert!(run.add_orchestration(orchestration));
             let mut execution = RoutineExecution::new(routine.id, "webhook");

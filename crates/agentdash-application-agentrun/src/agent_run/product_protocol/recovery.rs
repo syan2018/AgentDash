@@ -1,5 +1,9 @@
 use thiserror::Error;
 
+use crate::agent_run::{
+    AgentRunProductRuntimeRecoveryAdvancementPort, AgentRunProductRuntimeRecoveryRepositoryError,
+};
+
 use super::{
     AgentRunForkSagaRepositoryError, AgentRunForkSagaWorker, AgentRunProductProtocolPorts,
     CompanionFreshRepositoryError, CompanionFreshSagaWorker,
@@ -9,6 +13,7 @@ use super::{
 pub struct AgentRunProductProtocolRecoveryReport {
     pub fork_sagas_advanced: usize,
     pub fresh_sagas_advanced: usize,
+    pub runtime_recoveries_advanced: usize,
     pub failures: Vec<AgentRunProductProtocolRecoveryFailure>,
 }
 
@@ -25,17 +30,26 @@ pub enum AgentRunProductProtocolRecoveryError {
     ForkScan(#[from] AgentRunForkSagaRepositoryError),
     #[error("failed to scan recoverable fresh Companion sagas: {0}")]
     FreshScan(#[from] CompanionFreshRepositoryError),
+    #[error("failed to scan recoverable Product Runtime recovery sagas: {0}")]
+    RuntimeRecoveryScan(#[from] AgentRunProductRuntimeRecoveryRepositoryError),
 }
 
 /// Restart-safe Product protocol recovery over the same durable repositories and Runtime ports
 /// used by foreground dispatch.
 pub struct AgentRunProductProtocolRecoveryWorker<'a> {
     ports: &'a AgentRunProductProtocolPorts,
+    runtime_recovery: &'a dyn AgentRunProductRuntimeRecoveryAdvancementPort,
 }
 
 impl<'a> AgentRunProductProtocolRecoveryWorker<'a> {
-    pub fn new(ports: &'a AgentRunProductProtocolPorts) -> Self {
-        Self { ports }
+    pub fn new(
+        ports: &'a AgentRunProductProtocolPorts,
+        runtime_recovery: &'a dyn AgentRunProductRuntimeRecoveryAdvancementPort,
+    ) -> Self {
+        Self {
+            ports,
+            runtime_recovery,
+        }
     }
 
     /// Advances every selected saga by one durable state-machine step. Repeated ticks converge
@@ -85,9 +99,23 @@ impl<'a> AgentRunProductProtocolRecoveryWorker<'a> {
             }
         }
 
+        let runtime_recovery_ids = self.runtime_recovery.list_recoverable(limit).await?;
+        let mut runtime_recoveries_advanced = 0;
+        for recovery_id in &runtime_recovery_ids {
+            match self.runtime_recovery.advance(recovery_id).await {
+                Ok(_) => runtime_recoveries_advanced += 1,
+                Err(error) => failures.push(AgentRunProductProtocolRecoveryFailure {
+                    protocol: "product_runtime_recovery",
+                    request_id: recovery_id.as_str().to_owned(),
+                    reason: error.to_string(),
+                }),
+            }
+        }
+
         Ok(AgentRunProductProtocolRecoveryReport {
             fork_sagas_advanced,
             fresh_sagas_advanced,
+            runtime_recoveries_advanced,
             failures,
         })
     }

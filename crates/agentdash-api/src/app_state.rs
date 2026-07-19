@@ -31,10 +31,11 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommandFacade, AgentRunProductInputDeliveryPort,
     AgentRunProductInputDeliveryService, AgentRunProductLaunchService,
     AgentRunProductProjectionQueryPort, AgentRunProductProtocolPorts,
-    AgentRunProductRuntimeRecoveryPort, AgentRunProductRuntimeRecoveryService,
-    AgentRunTerminalSourceReconcilePort, ProductAgentRunForkGraphAdapter,
-    ProductAgentRunForkRuntimeAdapter, ProductAgentRunRuntimeProjectionAdapter,
-    ProductCompanionFreshRuntimeAdapter, ProductMailboxFacade, ProductManagedRuntimeCommandAdapter,
+    AgentRunProductRuntimeRecoveryAdvancementPort, AgentRunProductRuntimeRecoveryPort,
+    AgentRunProductRuntimeRecoveryService, AgentRunTerminalSourceReconcilePort,
+    ProductAgentRunForkGraphAdapter, ProductAgentRunForkRuntimeAdapter,
+    ProductAgentRunRuntimeProjectionAdapter, ProductCompanionFreshRuntimeAdapter,
+    ProductMailboxFacade, ProductManagedRuntimeCommandAdapter,
     build_durable_workflow_agent_call_dispatch,
 };
 use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeChannelInvoker};
@@ -61,7 +62,8 @@ use agentdash_infrastructure::{
     CompleteAgentComposition, CompleteAgentProductRuntimeProvisioner,
     CompleteAgentServiceSelectionCatalog, PinnedCompleteAgentVerificationCatalog,
     PostgresAgentRunForkSagaRepository, PostgresAgentRunMailboxRepository,
-    PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
+    PostgresAgentRunProductRuntimeBindingRepository,
+    PostgresAgentRunProductRuntimeRecoverySagaRepository, PostgresAgentRunTerminalProjectionStore,
     PostgresCompanionFreshSagaRepository, PostgresWorkflowAgentCallRepository,
     PostgresWorkflowExecutorEffectRepository, PostgresWorkflowRecoveryRepository,
     PostgresWorkspaceModulePresentationStore, ProcessShellTerminalRegistry,
@@ -157,6 +159,8 @@ pub struct ServiceSet {
     pub agent_run_product_mailbox: Arc<ProductMailboxFacade>,
     pub agent_run_product_launch: Arc<AgentRunProductLaunchService>,
     pub agent_run_product_recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort>,
+    pub agent_run_product_recovery_advancement:
+        Arc<dyn AgentRunProductRuntimeRecoveryAdvancementPort>,
     pub agent_run_product_protocol: Arc<AgentRunProductProtocolPorts>,
     pub agent_run_product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
     pub agent_run_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
@@ -438,13 +442,19 @@ impl AppState {
             product_resource_materializer.clone(),
             product_persistence.applied_resource_surfaces.clone(),
         ));
+        let product_recovery_service = Arc::new(AgentRunProductRuntimeRecoveryService::new(
+            Arc::new(PostgresAgentRunProductRuntimeRecoverySagaRepository::new(
+                pool.clone(),
+            )),
+            complete_agent.runtime.clone(),
+            runtime_product_bindings.clone(),
+            product_resource_materializer,
+            product_persistence.applied_resource_surfaces.clone(),
+        ));
         let product_recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort> =
-            Arc::new(AgentRunProductRuntimeRecoveryService::new(
-                complete_agent.runtime.clone(),
-                runtime_product_bindings.clone(),
-                product_resource_materializer,
-                product_persistence.applied_resource_surfaces.clone(),
-            ));
+            product_recovery_service.clone();
+        let product_recovery_advancement: Arc<dyn AgentRunProductRuntimeRecoveryAdvancementPort> =
+            product_recovery_service;
         runtime_wire_complete_agents
             .install_recovery_observer(Arc::new(
                 ProductRuntimeWireCompleteAgentRecoveryObserver::new(
@@ -595,6 +605,7 @@ impl AppState {
                 agent_run_product_mailbox: product_mailbox,
                 agent_run_product_launch: product_launch,
                 agent_run_product_recovery: product_recovery,
+                agent_run_product_recovery_advancement: product_recovery_advancement,
                 agent_run_product_protocol,
                 agent_run_product_input_delivery: product_input_delivery,
                 agent_run_frame_construction: frame_construction,

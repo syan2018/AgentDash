@@ -121,6 +121,10 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
     });
 
     let agent_run_product_protocol = state.services.agent_run_product_protocol.clone();
+    let agent_run_product_recovery_advancement = state
+        .services
+        .agent_run_product_recovery_advancement
+        .clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(AGENT_RUN_PRODUCT_PROTOCOL_RECOVERY_POLL_INTERVAL);
         loop {
@@ -128,6 +132,7 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
             let worker =
                 agentdash_application_agentrun::agent_run::AgentRunProductProtocolRecoveryWorker::new(
                     agent_run_product_protocol.as_ref(),
+                    agent_run_product_recovery_advancement.as_ref(),
                 );
             match worker
                 .advance_batch(AGENT_RUN_PRODUCT_PROTOCOL_RECOVERY_BATCH_LIMIT)

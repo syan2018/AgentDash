@@ -13,8 +13,9 @@ use crate::{
     inline_persistence::InlineContentOverlay,
     runtime_tool_execution::{VfsToolExecutionError, VfsToolUpdateSink},
     tools::{
-        FsApplyPatchExecutor, FsGlobExecutor, FsGrepExecutor, FsReadExecutor, MountsListExecutor,
-        SharedRuntimeVfs, ShellExecExecutor, ShellTerminalOwner, ShellTerminalRegistry,
+        FsApplyPatchExecutionState, FsApplyPatchExecutor, FsGlobExecutor, FsGrepExecutor,
+        FsReadExecutionState, FsReadExecutor, MountsListExecutor, SharedRuntimeVfs,
+        ShellExecExecutor, ShellTerminalOwner, ShellTerminalRegistry,
     },
 };
 
@@ -93,6 +94,8 @@ pub struct AppliedVfsRuntimeToolService {
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    read_execution_state: FsReadExecutionState,
+    patch_execution_state: FsApplyPatchExecutionState,
 }
 
 impl AppliedVfsRuntimeToolService {
@@ -107,6 +110,8 @@ impl AppliedVfsRuntimeToolService {
             shell_output_registry: None,
             overlay: None,
             identity: None,
+            read_execution_state: FsReadExecutionState::default(),
+            patch_execution_state: FsApplyPatchExecutionState::default(),
         }
     }
 
@@ -137,6 +142,17 @@ impl AppliedVfsRuntimeToolService {
     ) -> Self {
         self.identity = identity;
         self
+    }
+
+    pub fn parameters_schema(kind: AppliedVfsToolKind) -> Value {
+        match kind {
+            AppliedVfsToolKind::MountsList => MountsListExecutor::parameters_schema(),
+            AppliedVfsToolKind::Read => FsReadExecutor::parameters_schema(),
+            AppliedVfsToolKind::Glob => FsGlobExecutor::parameters_schema(),
+            AppliedVfsToolKind::Grep => FsGrepExecutor::parameters_schema(),
+            AppliedVfsToolKind::ApplyPatch => FsApplyPatchExecutor::parameters_schema(),
+            AppliedVfsToolKind::ShellExec => ShellExecExecutor::parameters_schema(),
+        }
     }
 
     pub async fn execute(&self, request: AppliedVfsToolRequest) -> AppliedVfsToolOutcome {
@@ -173,6 +189,10 @@ impl AppliedVfsRuntimeToolService {
                     self.overlay.clone(),
                     self.identity.clone(),
                 )
+                .with_execution_state(
+                    self.read_execution_state.clone(),
+                    runtime_owner_scope(&request.owner),
+                )
                 .execute(request.arguments, cancel)
                 .await
             }
@@ -203,6 +223,7 @@ impl AppliedVfsRuntimeToolService {
                     self.overlay.clone(),
                     self.identity.clone(),
                 )
+                .with_execution_state(self.patch_execution_state.clone())
                 .execute(request.arguments, cancel)
                 .await
             }
@@ -282,6 +303,13 @@ impl AppliedVfsRuntimeToolService {
             },
         }
     }
+}
+
+fn runtime_owner_scope(owner: &AppliedVfsToolOwner) -> String {
+    format!(
+        "{}\u{1f}{}\u{1f}{}",
+        owner.run_id, owner.agent_id, owner.runtime_thread_id
+    )
 }
 
 fn build_invocation_vfs(

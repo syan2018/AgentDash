@@ -28,6 +28,15 @@ impl MountsListExecutor {
         Self { service, vfs }
     }
 
+    pub fn parameters_schema() -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        })
+    }
+
     pub async fn execute(
         &self,
         _: serde_json::Value,
@@ -96,7 +105,7 @@ impl AgentTool for MountsListTool {
          - If only one mount exists, the prefix can be omitted in other tool calls."
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({ "type": "object", "properties": {}, "required": [], "additionalProperties": false })
+        MountsListExecutor::parameters_schema()
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })

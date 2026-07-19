@@ -43,6 +43,10 @@ impl FsGlobExecutor {
         }
     }
 
+    pub fn parameters_schema() -> serde_json::Value {
+        schema_value::<FsGlobParams>()
+    }
+
     pub async fn execute(
         &self,
         args: serde_json::Value,
@@ -167,7 +171,7 @@ impl AgentTool for FsGlobTool {
          - For text content search, use fs_grep instead."
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<FsGlobParams>()
+        FsGlobExecutor::parameters_schema()
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::FsGlob)

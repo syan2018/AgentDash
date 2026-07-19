@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
@@ -638,6 +638,58 @@ impl CompleteAgentCallbackBroker {
         }
         Ok(())
     }
+
+    async fn handler_deadline_budget(
+        &self,
+        key: &CompleteAgentCallbackKey,
+        deadline_at_ms: u64,
+    ) -> Result<Duration, AgentHostCallbackError> {
+        let now_ms = self.clock.now_ms();
+        let Some(remaining_ms) = deadline_at_ms
+            .checked_sub(now_ms)
+            .filter(|value| *value > 0)
+        else {
+            self.mark_inspection_required(
+                key,
+                "callback deadline elapsed after durable reservation; handler outcome requires inspection",
+            )
+            .await?;
+            return Err(callback_error(
+                AgentHostCallbackErrorCode::DeadlineExceeded,
+                "callback deadline elapsed after durable reservation; outcome requires inspection",
+                false,
+            ));
+        };
+        Ok(Duration::from_millis(remaining_ms))
+    }
+
+    async fn quarantine_handler_timeout(
+        &self,
+        key: &CompleteAgentCallbackKey,
+    ) -> Result<(), AgentHostCallbackError> {
+        self.mark_inspection_required(
+            key,
+            "callback handler crossed its absolute deadline; side-effect outcome requires inspection",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn ensure_handler_completed_before_deadline(
+        &self,
+        key: &CompleteAgentCallbackKey,
+        deadline_at_ms: u64,
+    ) -> Result<(), AgentHostCallbackError> {
+        if self.clock.now_ms() < deadline_at_ms {
+            return Ok(());
+        }
+        self.quarantine_handler_timeout(key).await?;
+        Err(callback_error(
+            AgentHostCallbackErrorCode::DeadlineExceeded,
+            "callback handler crossed its absolute deadline; outcome requires inspection",
+            false,
+        ))
+    }
 }
 
 #[async_trait]
@@ -667,13 +719,29 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
             },
         )
         .await?;
-        let result = self
-            .tool_handler
-            .invoke(ResolvedCompleteAgentToolCallback {
+        let deadline_at_ms = call.meta.deadline_at_ms;
+        let budget = self.handler_deadline_budget(&key, deadline_at_ms).await?;
+        let result = match tokio::time::timeout(
+            budget,
+            self.tool_handler.invoke(ResolvedCompleteAgentToolCallback {
                 context,
                 invocation: call,
-            })
-            .await;
+            }),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                self.quarantine_handler_timeout(&key).await?;
+                return Err(callback_error(
+                    AgentHostCallbackErrorCode::DeadlineExceeded,
+                    "callback handler crossed its absolute deadline; outcome requires inspection",
+                    false,
+                ));
+            }
+        };
+        self.ensure_handler_completed_before_deadline(&key, deadline_at_ms)
+            .await?;
         self.reconcile_tool(&key, &request_digest, result.clone())
             .await?;
         result
@@ -704,17 +772,33 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
             },
         )
         .await?;
-        let result = self
-            .hook_handler
-            .invoke(ResolvedCompleteAgentHookCallback {
+        let budget = self
+            .handler_deadline_budget(&key, call.meta.deadline_at_ms)
+            .await?;
+        let result = match tokio::time::timeout(
+            budget,
+            self.hook_handler.invoke(ResolvedCompleteAgentHookCallback {
                 context,
                 invocation: call.clone(),
-            })
-            .await
-            .and_then(|decision| {
+            }),
+        )
+        .await
+        {
+            Ok(result) => result.and_then(|decision| {
                 ensure_hook_decision_allowed(&call, &decision)?;
                 Ok(decision)
-            });
+            }),
+            Err(_) => {
+                self.quarantine_handler_timeout(&key).await?;
+                return Err(callback_error(
+                    AgentHostCallbackErrorCode::DeadlineExceeded,
+                    "callback handler crossed its absolute deadline; outcome requires inspection",
+                    false,
+                ));
+            }
+        };
+        self.ensure_handler_completed_before_deadline(&key, call.meta.deadline_at_ms)
+            .await?;
         self.reconcile_hook(&key, &request_digest, result.clone())
             .await?;
         result
@@ -1013,7 +1097,7 @@ fn callback_error(
 mod tests {
     use std::{
         collections::{BTreeMap, BTreeSet},
-        sync::atomic::{AtomicUsize, Ordering},
+        sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     };
 
     use agentdash_agent_service_api::{
@@ -1199,11 +1283,86 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct DeadlineCrossingToolHandler {
+        calls: AtomicUsize,
+        late_completions: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl CompleteAgentToolHandler for DeadlineCrossingToolHandler {
+        async fn invoke(
+            &self,
+            _callback: ResolvedCompleteAgentToolCallback,
+        ) -> Result<AgentToolResult, AgentHostCallbackError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let late_completions = self.late_completions.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                late_completions.fetch_add(1, Ordering::SeqCst);
+            });
+            std::future::pending().await
+        }
+    }
+
+    #[derive(Default)]
+    struct DeadlineCrossingHookHandler {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl CompleteAgentHookHandler for DeadlineCrossingHookHandler {
+        async fn invoke(
+            &self,
+            _callback: ResolvedCompleteAgentHookCallback,
+        ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            std::future::pending().await
+        }
+    }
+
+    struct DeadlineCrossingSuccessToolHandler {
+        calls: AtomicUsize,
+        clock: Arc<MutableClock>,
+    }
+
+    #[async_trait]
+    impl CompleteAgentToolHandler for DeadlineCrossingSuccessToolHandler {
+        async fn invoke(
+            &self,
+            _callback: ResolvedCompleteAgentToolCallback,
+        ) -> Result<AgentToolResult, AgentHostCallbackError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.clock.set(20);
+            Ok(AgentToolResult::Completed {
+                output: json!({"too_late": true}),
+            })
+        }
+    }
+
     struct FixedClock(u64);
 
     impl AgentCallbackClock for FixedClock {
         fn now_ms(&self) -> u64 {
             self.0
+        }
+    }
+
+    struct MutableClock(AtomicU64);
+
+    impl MutableClock {
+        fn new(now_ms: u64) -> Self {
+            Self(AtomicU64::new(now_ms))
+        }
+
+        fn set(&self, now_ms: u64) {
+            self.0.store(now_ms, Ordering::SeqCst);
+        }
+    }
+
+    impl AgentCallbackClock for MutableClock {
+        fn now_ms(&self) -> u64 {
+            self.0.load(Ordering::SeqCst)
         }
     }
 
@@ -1635,6 +1794,156 @@ mod tests {
                 output: json!({"recovered": true}),
             }
         );
+        assert_eq!(restarted_handler.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn tool_handler_crossing_deadline_is_quarantined_across_restart_and_late_completion() {
+        let repository = Arc::new(FixtureCallbackRepository::default());
+        let host_repository = Arc::new(FixtureCallbackRouteRepository::with_route(route(
+            AgentBindingGeneration(2),
+        )));
+        let handler = Arc::new(DeadlineCrossingToolHandler::default());
+        let broker = CompleteAgentCallbackBroker::with_clock(
+            handler.clone(),
+            Arc::new(AllowHookHandler),
+            host_repository.clone(),
+            repository.clone(),
+            Arc::new(FixedClock(10)),
+        );
+        let call = tool_call(AgentBindingGeneration(2), 20);
+        let key = CompleteAgentCallbackKey {
+            route_id: call.meta.route_id.clone(),
+            idempotency_key: call.meta.idempotency_key.clone(),
+        };
+
+        let timeout = broker
+            .invoke_tool(call.clone())
+            .await
+            .expect_err("handler must be bounded by the absolute callback deadline");
+        assert_eq!(timeout.code, AgentHostCallbackErrorCode::DeadlineExceeded);
+        assert!(!timeout.retryable);
+        assert_eq!(handler.calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            broker
+                .inspect_callback(&key)
+                .await
+                .expect("inspect callback")
+                .expect("callback")
+                .state,
+            CompleteAgentCallbackReservationState::InspectionRequired { .. }
+        ));
+
+        let restarted_handler = Arc::new(CountingToolHandler::default());
+        let restarted = CompleteAgentCallbackBroker::with_clock(
+            restarted_handler.clone(),
+            Arc::new(AllowHookHandler),
+            host_repository,
+            repository,
+            Arc::new(FixedClock(10)),
+        );
+        let replay = restarted
+            .invoke_tool(call.clone())
+            .await
+            .expect_err("an inspection-required effect must never be re-executed");
+        assert_eq!(replay.code, AgentHostCallbackErrorCode::Unavailable);
+        assert!(replay.retryable);
+        assert_eq!(restarted_handler.calls.load(Ordering::SeqCst), 0);
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(handler.late_completions.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            restarted
+                .inspect_callback(&key)
+                .await
+                .expect("inspect callback after late completion")
+                .expect("callback")
+                .state,
+            CompleteAgentCallbackReservationState::InspectionRequired { .. }
+        ));
+        restarted
+            .invoke_tool(call)
+            .await
+            .expect_err("a late side effect cannot reopen execution");
+        assert_eq!(restarted_handler.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn handler_returning_success_after_absolute_deadline_cannot_settle_success() {
+        let repository = Arc::new(FixtureCallbackRepository::default());
+        let clock = Arc::new(MutableClock::new(10));
+        let handler = Arc::new(DeadlineCrossingSuccessToolHandler {
+            calls: AtomicUsize::new(0),
+            clock: clock.clone(),
+        });
+        let broker = CompleteAgentCallbackBroker::with_clock(
+            handler.clone(),
+            Arc::new(AllowHookHandler),
+            Arc::new(FixtureCallbackRouteRepository::with_route(route(
+                AgentBindingGeneration(2),
+            ))),
+            repository,
+            clock,
+        );
+        let call = tool_call(AgentBindingGeneration(2), 20);
+        let key = CompleteAgentCallbackKey {
+            route_id: call.meta.route_id.clone(),
+            idempotency_key: call.meta.idempotency_key.clone(),
+        };
+
+        let timeout = broker
+            .invoke_tool(call)
+            .await
+            .expect_err("late success is an uncertain side effect, not a settled success");
+        assert_eq!(timeout.code, AgentHostCallbackErrorCode::DeadlineExceeded);
+        assert_eq!(handler.calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            broker
+                .inspect_callback(&key)
+                .await
+                .expect("inspect callback")
+                .expect("callback")
+                .state,
+            CompleteAgentCallbackReservationState::InspectionRequired { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn hook_handler_crossing_deadline_uses_the_same_effect_quarantine() {
+        let repository = Arc::new(FixtureCallbackRepository::default());
+        let hook_handler = Arc::new(DeadlineCrossingHookHandler::default());
+        let host_repository = Arc::new(FixtureCallbackRouteRepository::with_route(hook_route()));
+        let broker = CompleteAgentCallbackBroker::with_clock(
+            Arc::new(CountingToolHandler::default()),
+            hook_handler.clone(),
+            host_repository.clone(),
+            repository.clone(),
+            Arc::new(FixedClock(10)),
+        );
+        let call = hook_call();
+
+        let timeout = broker
+            .invoke_hook(call.clone())
+            .await
+            .expect_err("hook handler must be bounded by the absolute callback deadline");
+        assert_eq!(timeout.code, AgentHostCallbackErrorCode::DeadlineExceeded);
+        assert!(!timeout.retryable);
+        assert_eq!(hook_handler.calls.load(Ordering::SeqCst), 1);
+
+        let restarted_handler = Arc::new(DeadlineCrossingHookHandler::default());
+        let restarted = CompleteAgentCallbackBroker::with_clock(
+            Arc::new(CountingToolHandler::default()),
+            restarted_handler.clone(),
+            host_repository,
+            repository,
+            Arc::new(FixedClock(10)),
+        );
+        let replay = restarted
+            .invoke_hook(call)
+            .await
+            .expect_err("inspection-required hook effect must not be re-executed");
+        assert_eq!(replay.code, AgentHostCallbackErrorCode::Unavailable);
+        assert!(replay.retryable);
         assert_eq!(restarted_handler.calls.load(Ordering::SeqCst), 0);
     }
 

@@ -16,7 +16,6 @@ use agentdash_application_vfs::{
     AppliedVfsToolSurface,
 };
 use async_trait::async_trait;
-use serde_json::{Value, json};
 use uuid::Uuid;
 
 pub fn final_runtime_tool_catalog(
@@ -36,7 +35,7 @@ pub fn final_runtime_tool_catalog(
 }
 
 macro_rules! vfs_executor {
-    ($name:ident, $tool_name:literal, $kind:expr, $description:literal, $permission:expr, $effect:expr, $schema:expr) => {
+    ($name:ident, $tool_name:literal, $kind:expr, $description:literal, $permission:expr, $effect:expr) => {
         pub struct $name {
             service: Arc<AppliedVfsRuntimeToolService>,
         }
@@ -53,7 +52,7 @@ macro_rules! vfs_executor {
                 RuntimeToolDefinition {
                     name: AgentToolName::new($tool_name).expect("static runtime tool name"),
                     description: $description.to_owned(),
-                    parameters_schema: $schema,
+                    parameters_schema: AppliedVfsRuntimeToolService::parameters_schema($kind),
                     permission: $permission,
                     effect: $effect,
                 }
@@ -72,8 +71,7 @@ vfs_executor!(
     AppliedVfsToolKind::MountsList,
     "List VFS mounts granted by the applied AgentRun resource surface.",
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly,
-    object_schema(&[], &[])
+    RuntimeToolEffect::ReadOnly
 );
 vfs_executor!(
     FsReadRuntimeTool,
@@ -81,8 +79,7 @@ vfs_executor!(
     AppliedVfsToolKind::Read,
     "Read a file through the applied AgentRun VFS surface.",
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly,
-    object_schema(&["path"], &["path", "offset", "limit"])
+    RuntimeToolEffect::ReadOnly
 );
 vfs_executor!(
     FsGlobRuntimeTool,
@@ -90,8 +87,7 @@ vfs_executor!(
     AppliedVfsToolKind::Glob,
     "List files matching a glob through the applied AgentRun VFS surface.",
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly,
-    object_schema(&["pattern"], &["pattern", "path"])
+    RuntimeToolEffect::ReadOnly
 );
 vfs_executor!(
     FsGrepRuntimeTool,
@@ -99,26 +95,7 @@ vfs_executor!(
     AppliedVfsToolKind::Grep,
     "Search file contents through the applied AgentRun VFS surface.",
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly,
-    object_schema(
-        &["pattern"],
-        &[
-            "pattern",
-            "path",
-            "glob",
-            "type",
-            "output_mode",
-            "-i",
-            "-n",
-            "multiline",
-            "-B",
-            "-A",
-            "-C",
-            "context",
-            "head_limit",
-            "offset",
-        ],
-    )
+    RuntimeToolEffect::ReadOnly
 );
 vfs_executor!(
     FsApplyPatchRuntimeTool,
@@ -126,8 +103,7 @@ vfs_executor!(
     AppliedVfsToolKind::ApplyPatch,
     "Apply a patch through the applied AgentRun VFS surface.",
     RuntimeToolPermission::VfsWrite,
-    RuntimeToolEffect::VfsMutation,
-    object_schema(&["patch"], &["patch"])
+    RuntimeToolEffect::VfsMutation
 );
 vfs_executor!(
     ShellExecRuntimeTool,
@@ -135,26 +111,7 @@ vfs_executor!(
     AppliedVfsToolKind::ShellExec,
     "Execute or continue a shell command through the applied AgentRun VFS surface.",
     RuntimeToolPermission::ProcessExecute,
-    RuntimeToolEffect::LocalProcess,
-    object_schema(
-        &[],
-        &[
-            "operation",
-            "cwd",
-            "command",
-            "timeout_secs",
-            "terminal_id",
-            "after_seq",
-            "wait_ms",
-            "max_bytes",
-            "max_output_bytes",
-            "data",
-            "close_stdin",
-            "tty",
-            "cols",
-            "rows",
-        ],
-    )
+    RuntimeToolEffect::LocalProcess
 );
 
 pub struct RuntimeTaskReadTool {
@@ -183,20 +140,7 @@ impl RuntimeToolExecutor for RuntimeTaskReadTool {
         RuntimeToolDefinition {
             name: AgentToolName::new("task_read").expect("static runtime tool name"),
             description: "Read the granted Product Task scope.".to_owned(),
-            parameters_schema: object_schema(
-                &[],
-                &[
-                    "mode",
-                    "format",
-                    "run_id",
-                    "task_id",
-                    "story_id",
-                    "include_archived",
-                    "owner_agent_id",
-                    "assigned_agent_id",
-                    "statuses",
-                ],
-            ),
+            parameters_schema: self.service.parameters_schema(RuntimeTaskToolKind::Read),
             permission: RuntimeToolPermission::ProductRead,
             effect: RuntimeToolEffect::ReadOnly,
         }
@@ -213,17 +157,7 @@ impl RuntimeToolExecutor for RuntimeTaskWriteTool {
         RuntimeToolDefinition {
             name: AgentToolName::new("task_write").expect("static runtime tool name"),
             description: "Mutate the granted Product Task scope.".to_owned(),
-            parameters_schema: object_schema(
-                &[],
-                &[
-                    "mode",
-                    "run_id",
-                    "operations",
-                    "snapshot",
-                    "drop_missing",
-                    "return_mode",
-                ],
-            ),
+            parameters_schema: self.service.parameters_schema(RuntimeTaskToolKind::Write),
             permission: RuntimeToolPermission::ProductWrite,
             effect: RuntimeToolEffect::ProductMutation,
         }
@@ -417,21 +351,10 @@ fn rejected(code: impl Into<String>, message: impl Into<String>) -> AgentToolRes
     }
 }
 
-fn object_schema(required: &[&str], properties: &[&str]) -> Value {
-    let properties = properties
-        .iter()
-        .map(|name| ((*name).to_owned(), json!({})))
-        .collect::<serde_json::Map<_, _>>();
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use super::*;
     use agentdash_application_vfs::tools::{
         ShellTerminalOutputSnapshot, ShellTerminalRegistration, ShellTerminalRegistry,
@@ -456,6 +379,17 @@ mod tests {
 
     #[async_trait]
     impl RuntimeTaskToolService for NoopTaskService {
+        fn parameters_schema(&self, kind: RuntimeTaskToolKind) -> Value {
+            match kind {
+                RuntimeTaskToolKind::Read => {
+                    serde_json::json!({"type": "object", "owner": "task_read"})
+                }
+                RuntimeTaskToolKind::Write => {
+                    serde_json::json!({"type": "object", "owner": "task_write"})
+                }
+            }
+        }
+
         async fn execute(&self, _: RuntimeTaskToolRequest) -> RuntimeTaskToolOutcome {
             RuntimeTaskToolOutcome::Completed {
                 output: Value::Null,
@@ -487,5 +421,54 @@ mod tests {
                 "task_write",
             ]
         );
+    }
+
+    #[test]
+    fn final_runtime_catalog_uses_all_eight_owner_parameter_schemas_exactly() {
+        let vfs = Arc::new(AppliedVfsRuntimeToolService::new(
+            Arc::new(VfsService::new(Arc::new(MountProviderRegistry::new()))),
+            Arc::new(NoopTerminalRegistry),
+        ));
+        let task: Arc<dyn RuntimeTaskToolService> = Arc::new(NoopTaskService);
+        let expected = vec![
+            AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::MountsList),
+            AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::Read),
+            AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::Glob),
+            AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::Grep),
+            AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::ApplyPatch),
+            AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::ShellExec),
+            task.parameters_schema(RuntimeTaskToolKind::Read),
+            task.parameters_schema(RuntimeTaskToolKind::Write),
+        ];
+
+        let actual = final_runtime_tool_catalog(vfs, task)
+            .into_iter()
+            .map(|executor| executor.definition().parameters_schema)
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual, expected);
+        assert_eq!(actual[1]["properties"]["path"]["type"], "string");
+        assert!(schema_contains_enum_value(
+            &actual[5]["properties"]["operation"],
+            "start"
+        ));
+    }
+
+    fn schema_contains_enum_value(schema: &Value, expected: &str) -> bool {
+        match schema {
+            Value::Array(values) => values
+                .iter()
+                .any(|value| schema_contains_enum_value(value, expected)),
+            Value::Object(object) => {
+                object.get("enum").is_some_and(|values| {
+                    values
+                        .as_array()
+                        .is_some_and(|values| values.iter().any(|value| value == expected))
+                }) || object
+                    .values()
+                    .any(|value| schema_contains_enum_value(value, expected))
+            }
+            _ => false,
+        }
     }
 }

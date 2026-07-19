@@ -32,5 +32,7 @@ pub enum RuntimeTaskToolOutcome {
 
 #[async_trait]
 pub trait RuntimeTaskToolService: Send + Sync {
+    fn parameters_schema(&self, kind: RuntimeTaskToolKind) -> Value;
+
     async fn execute(&self, request: RuntimeTaskToolRequest) -> RuntimeTaskToolOutcome;
 }

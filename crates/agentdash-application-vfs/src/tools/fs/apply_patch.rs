@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
+use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback, Vfs};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -72,13 +72,18 @@ Important:\n\
 // fs_apply_patch
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Default)]
+pub(crate) struct FsApplyPatchExecutionState {
+    mutation_queue: MutationQueue,
+}
+
 #[derive(Clone)]
 pub struct FsApplyPatchExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
-    mutation_queue: MutationQueue,
+    execution_state: FsApplyPatchExecutionState,
 }
 impl FsApplyPatchExecutor {
     pub fn new(
@@ -92,8 +97,20 @@ impl FsApplyPatchExecutor {
             vfs,
             overlay,
             identity,
-            mutation_queue: MutationQueue::default(),
+            execution_state: FsApplyPatchExecutionState::default(),
         }
+    }
+
+    pub(crate) fn with_execution_state(
+        mut self,
+        execution_state: FsApplyPatchExecutionState,
+    ) -> Self {
+        self.execution_state = execution_state;
+        self
+    }
+
+    pub fn parameters_schema() -> serde_json::Value {
+        schema_value::<FsApplyPatchParams>()
     }
 
     pub async fn execute(
@@ -107,11 +124,11 @@ impl FsApplyPatchExecutor {
         let state = self.vfs.snapshot_state().await;
         let vfs = state.vfs;
         let access_policy = state.access_policy;
-        let mutation_keys = fs_apply_patch_mutation_keys(&params.patch)
+        let mutation_keys = fs_apply_patch_mutation_keys(&vfs, &params.patch)
             .map_err(VfsToolExecutionError::ExecutionFailed)?;
         let result = tokio::select! {
             _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
-            result = self.mutation_queue.with_locks(
+            result = self.execution_state.mutation_queue.with_locks(
                 mutation_keys,
                 self.service.apply_patch_multi_with_policy(
                     &vfs,
@@ -188,7 +205,7 @@ impl AgentTool for FsApplyPatchTool {
         FS_APPLY_PATCH_DESCRIPTION
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<FsApplyPatchParams>()
+        FsApplyPatchExecutor::parameters_schema()
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::FileChange)
@@ -289,7 +306,27 @@ fn patch_entry_diffs(patch: &str) -> Vec<String> {
     diffs
 }
 
-fn fs_apply_patch_mutation_keys(patch: &str) -> Result<Vec<String>, String> {
+fn fs_apply_patch_mutation_keys(vfs: &Vfs, patch: &str) -> Result<Vec<String>, String> {
+    fs_apply_patch_target_keys(patch)?
+        .into_iter()
+        .map(|target| {
+            let (mount_id, path) = target
+                .split_once("://")
+                .ok_or_else(|| format!("invalid normalized VFS target: {target}"))?;
+            let mount = vfs
+                .mounts
+                .iter()
+                .find(|mount| mount.id == mount_id)
+                .ok_or_else(|| format!("mount not found for patch mutation target: {mount_id}"))?;
+            Ok(format!(
+                "{}\u{1f}{}\u{1f}{}\u{1f}{}",
+                mount.provider, mount.backend_id, mount.root_ref, path
+            ))
+        })
+        .collect()
+}
+
+fn fs_apply_patch_target_keys(patch: &str) -> Result<Vec<String>, String> {
     let entries = parse_patch_text(patch).map_err(|e| format!("patch 解析失败: {e}"))?;
 
     let mut keys = BTreeSet::new();
@@ -312,6 +349,8 @@ fn fs_apply_patch_mutation_keys(patch: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod fs_apply_patch_mutation_tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Barrier;
 
     #[test]
     fn apply_patch_owner_details_preserve_actual_changes() {
@@ -348,7 +387,7 @@ mod fs_apply_patch_mutation_tests {
 
     #[test]
     fn apply_patch_mutation_keys_reject_bare_paths() {
-        let err = fs_apply_patch_mutation_keys(
+        let err = fs_apply_patch_target_keys(
             r#"*** Begin Patch
 *** Update File: src/old.rs
 @@
@@ -362,7 +401,7 @@ mod fs_apply_patch_mutation_tests {
 
     #[test]
     fn apply_patch_mutation_keys_reject_bare_move_target() {
-        let err = fs_apply_patch_mutation_keys(
+        let err = fs_apply_patch_target_keys(
             r#"*** Begin Patch
 *** Update File: workspace://src/old.rs
 *** Move to: src/new.rs
@@ -377,7 +416,7 @@ mod fs_apply_patch_mutation_tests {
 
     #[test]
     fn apply_patch_mutation_keys_include_explicit_mount_and_move_target() {
-        let keys = fs_apply_patch_mutation_keys(
+        let keys = fs_apply_patch_target_keys(
             r#"*** Begin Patch
 *** Update File: workspace://src/old.rs
 *** Move to: workspace://src/new.rs
@@ -395,7 +434,7 @@ mod fs_apply_patch_mutation_tests {
 
     #[test]
     fn apply_patch_mutation_keys_preserve_explicit_mount_prefix() {
-        let keys = fs_apply_patch_mutation_keys(
+        let keys = fs_apply_patch_target_keys(
             r#"*** Begin Patch
 *** Add File: cvs-demo://src/view.tsx
 +export const value = 1;
@@ -412,7 +451,7 @@ mod fs_apply_patch_mutation_tests {
 
     #[test]
     fn apply_patch_mutation_keys_normalize_explicit_mount_paths() {
-        let keys = fs_apply_patch_mutation_keys(
+        let keys = fs_apply_patch_target_keys(
             r#"*** Begin Patch
 *** Update File: workspace://src//old.rs
 *** Move to: workspace://src/./new.rs
@@ -430,7 +469,7 @@ mod fs_apply_patch_mutation_tests {
 
     #[test]
     fn apply_patch_mutation_keys_reject_cross_mount_move_target() {
-        let err = fs_apply_patch_mutation_keys(
+        let err = fs_apply_patch_target_keys(
             r#"*** Begin Patch
 *** Update File: workspace://src/old.rs
 *** Move to: cvs-demo://src/new.rs
@@ -441,5 +480,74 @@ mod fs_apply_patch_mutation_tests {
         .expect_err("cross-mount move should fail");
 
         assert!(err.contains("跨 mount move"));
+    }
+
+    #[test]
+    fn apply_patch_mutation_keys_follow_backing_identity_across_mount_aliases() {
+        let vfs = Vfs {
+            mounts: ["workspace", "alias"]
+                .into_iter()
+                .map(|id| agentdash_platform_spi::Mount {
+                    id: id.to_owned(),
+                    provider: "local".to_owned(),
+                    backend_id: "backend".to_owned(),
+                    root_ref: "file:///workspace".to_owned(),
+                    capabilities: vec![agentdash_platform_spi::MountCapability::Write],
+                    default_write: true,
+                    display_name: id.to_owned(),
+                    metadata: serde_json::Value::Null,
+                })
+                .collect(),
+            default_mount_id: Some("workspace".to_owned()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let workspace = fs_apply_patch_mutation_keys(
+            &vfs,
+            "*** Begin Patch\n*** Add File: workspace://src/lib.rs\n+one\n*** End Patch",
+        )
+        .expect("workspace key");
+        let alias = fs_apply_patch_mutation_keys(
+            &vfs,
+            "*** Begin Patch\n*** Add File: alias://src/lib.rs\n+two\n*** End Patch",
+        )
+        .expect("alias key");
+
+        assert_eq!(workspace, alias);
+    }
+
+    #[tokio::test]
+    async fn shared_patch_execution_state_serializes_distinct_executor_invocations() {
+        let state = FsApplyPatchExecutionState::default();
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+
+        for _ in 0..2 {
+            let state = state.clone();
+            let active = active.clone();
+            let peak = peak.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                state
+                    .mutation_queue
+                    .with_locks(vec!["backing\u{1f}src/lib.rs".to_owned()], async move {
+                        let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(now, Ordering::SeqCst);
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        active.fetch_sub(1, Ordering::SeqCst);
+                    })
+                    .await;
+            }));
+        }
+
+        barrier.wait().await;
+        for handle in handles {
+            handle.await.expect("patch invocation");
+        }
+        assert_eq!(peak.load(Ordering::SeqCst), 1);
     }
 }

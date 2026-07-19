@@ -146,6 +146,14 @@ W8 composition constructs one non-empty broker catalog only through
 7. `task_read`
 8. `task_write`
 
+Each catalog definition obtains its parameter schema mechanically from the module that owns the
+real serde parser. Application-VFS exports the six executor schemas from their concrete parameter
+types; the Product Task service exports the read/write schemas from its concrete parameter and
+operation types. The Infrastructure catalog only dispatches to those eight owner methods. This
+keeps required fields, nested object shape, enum values, defaults, descriptions and
+`additionalProperties` policy identical to execution-time parsing without introducing a second
+handwritten schema or an Application dependency on Runtime concrete types.
+
 The VFS service receives no construction-time AgentRun VFS. Every invocation maps the Host-resolved
 callback context and authorized `RuntimeVfsExecutionGrant` into a fresh VFS plus exact access
 policy, then statically dispatches one of the six Application-VFS-owned executors. Those executors
@@ -154,6 +162,14 @@ materialization, shell streaming/PTY and terminal-continuation behavior. The tar
 Runtime → Infrastructure → Application-VFS path therefore contains no `DynAgentTool`,
 `AgentTool`, `ToolProtocolProjector`, `ToolUpdateCallback` or `agentdash-agent-types` value, while
 each invocation remains isolated from every other AgentRun's mounts.
+
+The service owns the bounded execution coordinators whose semantics intentionally span individual
+executor objects. `fs_read` keeps one bounded LRU keyed by
+`(run_id, agent_id, runtime_thread_id, mount_id, path, offset, limit)`, so repeated reads survive
+fresh per-invocation executor construction while different Runtime owners remain isolated.
+`fs_apply_patch` shares one mutation queue and keys locks by the actual
+`(provider, backend_id, root_ref, normalized_path)` backing identity, so two mount aliases or two
+concurrent callback invocations cannot mutate the same file concurrently.
 
 The current-lane `AgentTool` surface is now a one-way adapter over the six direct executors. W8
 removes its sole external consumer,
@@ -184,3 +200,26 @@ Complete Agent tool callback handler. The broker rejects an empty or duplicate c
 composition time. Its acceptance gate includes a source scan over the three target-path modules
 (`runtime_tools.rs`, Infrastructure `runtime_tool_executors.rs` and the VFS execution contract)
 and a final Cargo dependency scan after the adapter deletion.
+
+The Complete Agent callback broker persists its reservation before entering either the tool or hook
+handler and bounds that handler by the remaining absolute callback deadline. Crossing the deadline
+records `InspectionRequired` because the platform side effect may already have occurred; restart or
+duplicate delivery replays that durable nonterminal fact without invoking the handler again. Only
+the existing explicit inspect/reconcile contract may settle it as a typed result or `Unknown`.
+
+## Component verification
+
+- Complete Agent callback tests: 11 passed, covering cooperative timeout, late-success quarantine,
+  restart/replay, late side-effect completion and zero duplicate handler executions.
+- Application Task schema test: passed against the concrete strict read/write serde parameter
+  types, including nested operation items.
+- Application-VFS library: 165 passed, including owner-isolated read dedup and backing-identity
+  patch serialization; schema-focused rerun passed 4 tests.
+- Infrastructure final catalog: both inventory and exact eight-owner-schema tests passed.
+- Owner crates passed `cargo clippy --lib --no-deps -D warnings` after acknowledging the two
+  pre-existing VFS lints outside this component (`collapsible_if` and `too_many_arguments`).
+
+This component requires no Agent Service API change, migration or PostgreSQL repository change.
+The remaining `agentdash-application/tests/runtime_tool_catalog.rs` all-target compile failure
+references interfaces already removed by the combined hard cut and belongs to the final
+Product/deletion integration gate.

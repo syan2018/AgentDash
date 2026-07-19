@@ -100,6 +100,10 @@ impl ShellExecExecutor {
         }
     }
 
+    pub fn parameters_schema() -> serde_json::Value {
+        schema_value::<ShellExecParams>()
+    }
+
     pub fn with_shell_output_registry(
         mut self,
         registry: Arc<agentdash_relay::ShellOutputRegistry>,
@@ -408,6 +412,7 @@ pub enum ShellExecOperation {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ShellExecParams {
     /// Instruction-style operation. Defaults to `start` for backwards-compatible command execution.
     #[serde(default)]
@@ -776,7 +781,7 @@ impl AgentTool for ShellExecTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<ShellExecParams>()
+        ShellExecExecutor::parameters_schema()
     }
 
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
@@ -1481,6 +1486,36 @@ mod shell_exec_rewrite_tests {
         assert_eq!(params.command.as_deref(), Some("echo ok"));
     }
 
+    #[test]
+    fn shell_exec_schema_and_parser_share_operation_and_unknown_field_policy() {
+        let schema = ShellExecExecutor::parameters_schema();
+        assert!(schema_contains_enum_value(
+            &schema["properties"]["operation"],
+            "start"
+        ));
+        assert!(schema_contains_enum_value(
+            &schema["properties"]["operation"],
+            "terminate"
+        ));
+        assert_eq!(schema["additionalProperties"], false);
+
+        serde_json::from_value::<ShellExecParams>(serde_json::json!({
+            "operation": "start",
+            "command": "echo ok"
+        }))
+        .expect("schema-advertised operation should parse");
+        serde_json::from_value::<ShellExecParams>(serde_json::json!({
+            "operation": "start",
+            "command": "echo ok",
+            "unexpected": true
+        }))
+        .expect_err("schema-forbidden field must be rejected by parser");
+        serde_json::from_value::<ShellExecParams>(serde_json::json!({
+            "operation": "not_an_operation"
+        }))
+        .expect_err("operation outside the schema enum must be rejected by parser");
+    }
+
     #[tokio::test]
     async fn shell_exec_empty_cwd_uses_platform_shell() {
         let result = test_shell_tool()
@@ -1572,6 +1607,24 @@ mod shell_exec_rewrite_tests {
             updates[0].details.as_ref().unwrap()["type"],
             "vfs_uri_rewrite"
         );
+    }
+
+    fn schema_contains_enum_value(schema: &serde_json::Value, expected: &str) -> bool {
+        match schema {
+            serde_json::Value::Array(values) => values
+                .iter()
+                .any(|value| schema_contains_enum_value(value, expected)),
+            serde_json::Value::Object(object) => {
+                object.get("enum").is_some_and(|values| {
+                    values
+                        .as_array()
+                        .is_some_and(|values| values.iter().any(|value| value == expected))
+                }) || object
+                    .values()
+                    .any(|value| schema_contains_enum_value(value, expected))
+            }
+            _ => false,
+        }
     }
 
     #[tokio::test]

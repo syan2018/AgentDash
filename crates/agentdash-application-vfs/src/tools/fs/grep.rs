@@ -59,6 +59,10 @@ impl FsGrepExecutor {
         }
     }
 
+    pub fn parameters_schema() -> serde_json::Value {
+        schema_value::<FsGrepParams>()
+    }
+
     pub async fn execute(
         &self,
         args: serde_json::Value,
@@ -260,7 +264,7 @@ impl AgentTool for FsGrepTool {
          - Lines longer than 500 characters are truncated with a `...(truncated)` suffix."
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<FsGrepParams>()
+        FsGrepExecutor::parameters_schema()
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::FsGrep)

@@ -33,11 +33,11 @@ use crate::types::{runtime_entry_is_binary, runtime_entry_mime_type};
 const MAX_BYTES: usize = 256 * 1024;
 /// 不带 limit 时的行数阈值。
 const MAX_LINES: usize = 5000;
-/// Per-tool-instance dedup 容量；FsReadTool 在 session/turn 维度构造，
-/// 各 session 自然 LRU 隔离。
+/// Runtime owner-scoped dedup capacity.
 const DEDUP_CAPACITY: usize = 64;
 
 type DedupKey = (
+    String,        /* runtime owner scope */
     String,        /* mount_id */
     String,        /* path */
     Option<usize>, /* offset, 1-based 入参（None = unset） */
@@ -70,12 +70,26 @@ impl DedupCache {
 }
 
 #[derive(Clone)]
+pub(crate) struct FsReadExecutionState {
+    dedup: DedupCache,
+}
+
+impl Default for FsReadExecutionState {
+    fn default() -> Self {
+        Self {
+            dedup: DedupCache::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct FsReadExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
-    dedup: DedupCache,
+    execution_state: FsReadExecutionState,
+    dedup_scope: String,
 }
 impl FsReadExecutor {
     pub fn new(
@@ -89,8 +103,23 @@ impl FsReadExecutor {
             vfs,
             overlay,
             identity,
-            dedup: DedupCache::new(),
+            execution_state: FsReadExecutionState::default(),
+            dedup_scope: "legacy-agent-tool".to_owned(),
         }
+    }
+
+    pub(crate) fn with_execution_state(
+        mut self,
+        execution_state: FsReadExecutionState,
+        dedup_scope: impl Into<String>,
+    ) -> Self {
+        self.execution_state = execution_state;
+        self.dedup_scope = dedup_scope.into();
+        self
+    }
+
+    pub fn parameters_schema() -> serde_json::Value {
+        schema_value::<FsReadParams>()
     }
 
     pub async fn execute(
@@ -181,13 +210,14 @@ impl FsReadExecutor {
         }
 
         let dedup_key: DedupKey = (
+            self.dedup_scope.clone(),
             target.mount_id.clone(),
             target.path.clone(),
             params.offset,
             params.limit,
         );
         if let Some(token) = result.version_token.as_deref()
-            && let Some(cached) = self.dedup.lookup(&dedup_key)
+            && let Some(cached) = self.execution_state.dedup.lookup(&dedup_key)
             && cached == token
         {
             return Ok(unchanged_stub_result(
@@ -197,7 +227,7 @@ impl FsReadExecutor {
             ));
         }
         if let Some(token) = result.version_token.as_deref() {
-            self.dedup.put(dedup_key, token.to_string());
+            self.execution_state.dedup.put(dedup_key, token.to_string());
         }
 
         let lines: Vec<&str> = result.content.lines().collect();
@@ -266,7 +296,7 @@ impl AgentTool for FsReadTool {
          - This tool reads files only, not directories — use fs_glob for directory listings."
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<FsReadParams>()
+        FsReadExecutor::parameters_schema()
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::FsRead)
@@ -643,7 +673,11 @@ mod fs_read_tests {
         }
     }
 
-    fn tool_with_provider(provider: Arc<MemoryReadProvider>) -> FsReadTool {
+    fn executor_with_provider(
+        provider: Arc<MemoryReadProvider>,
+        execution_state: FsReadExecutionState,
+        scope: &str,
+    ) -> FsReadExecutor {
         let mut registry = MountProviderRegistry::new();
         registry.register(provider);
         let service = Arc::new(VfsService::new(Arc::new(registry)));
@@ -663,7 +697,18 @@ mod fs_read_tests {
             source_story_id: None,
             links: Vec::new(),
         };
-        FsReadTool::new(service, SharedRuntimeVfs::new(vfs), None, None)
+        FsReadExecutor::new(service, SharedRuntimeVfs::new(vfs), None, None)
+            .with_execution_state(execution_state, scope)
+    }
+
+    fn tool_with_provider(provider: Arc<MemoryReadProvider>) -> FsReadTool {
+        FsReadTool {
+            executor: executor_with_provider(
+                provider,
+                FsReadExecutionState::default(),
+                "legacy-agent-tool",
+            ),
+        }
     }
 
     fn tool() -> FsReadTool {
@@ -672,7 +717,7 @@ mod fs_read_tests {
 
     #[test]
     fn fs_read_schema_only_requires_path() {
-        let schema = tool().parameters_schema();
+        let schema = FsReadExecutor::parameters_schema();
         let required = schema["required"]
             .as_array()
             .expect("required should be array")
@@ -684,6 +729,8 @@ mod fs_read_tests {
         assert!(schema["properties"].get("path").is_some());
         assert!(schema["properties"].get("offset").is_some());
         assert!(schema["properties"].get("limit").is_some());
+        assert_eq!(schema["properties"]["path"]["type"], "string");
+        assert_eq!(schema["additionalProperties"], false);
         assert!(
             !required.contains(&"offset"),
             "offset 应保持可省略，避免短文件读取也被迫传参"
@@ -692,6 +739,11 @@ mod fs_read_tests {
             !required.contains(&"limit"),
             "limit 应保持可省略，避免短文件读取也被迫传参"
         );
+        serde_json::from_value::<FsReadParams>(json!({
+            "path": "note.md",
+            "unexpected": true
+        }))
+        .expect_err("schema-forbidden fields must be rejected by the parser");
     }
 
     // T2 — 1-based offset 转换 + cat -n 格式
@@ -857,6 +909,43 @@ mod fs_read_tests {
         let second_text = second.content[0].extract_text().expect("text");
         assert!(second_text.contains("[unchanged since previous read"));
         assert!(!second_text.contains("alpha"));
+    }
+
+    #[tokio::test]
+    async fn fs_read_dedup_survives_executor_recreation_and_isolates_runtime_owners() {
+        let provider = Arc::new(MemoryReadProvider::with_default_files());
+        let execution_state = FsReadExecutionState::default();
+        let first = executor_with_provider(provider.clone(), execution_state.clone(), "owner-a");
+        let second = executor_with_provider(provider.clone(), execution_state.clone(), "owner-a");
+        let other_owner = executor_with_provider(provider, execution_state, "owner-b");
+        let arguments = json!({ "path": "note.md", "offset": 1, "limit": 2 });
+
+        let first_result = first
+            .execute(arguments.clone(), CancellationToken::new())
+            .await
+            .expect("first read");
+        assert!(matches!(
+            &first_result.content[0],
+            VfsToolContent::Text { text } if text.contains("alpha")
+        ));
+
+        let repeated = second
+            .execute(arguments.clone(), CancellationToken::new())
+            .await
+            .expect("repeat through a fresh executor");
+        assert!(matches!(
+            &repeated.content[0],
+            VfsToolContent::Text { text } if text.contains("[unchanged since previous read")
+        ));
+
+        let isolated = other_owner
+            .execute(arguments, CancellationToken::new())
+            .await
+            .expect("other owner read");
+        assert!(matches!(
+            &isolated.content[0],
+            VfsToolContent::Text { text } if text.contains("alpha")
+        ));
     }
 
     // T7 — dedup 失效：rotate token ⇒ 第二次走完整路径。

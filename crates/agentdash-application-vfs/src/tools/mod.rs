@@ -5,6 +5,8 @@ pub mod mounts;
 
 pub use common::{RuntimeVfsState, SharedRuntimeVfs};
 pub use factory::{VfsToolFactory, VfsToolFactoryInput};
+pub(crate) use fs::FsApplyPatchExecutionState;
+pub(crate) use fs::FsReadExecutionState;
 pub use fs::{
     FsApplyPatchExecutor, FsApplyPatchTool, FsGlobExecutor, FsGlobTool, FsGrepExecutor, FsGrepTool,
     FsReadExecutor, FsReadTool, ShellExecExecutor, ShellExecTool, ShellTerminalOutputSnapshot,

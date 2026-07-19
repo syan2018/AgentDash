@@ -87,6 +87,7 @@ fn default_read_format() -> TaskReadFormat {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TaskReadParams {
     #[serde(default = "default_read_mode")]
     pub mode: TaskReadMode,
@@ -129,6 +130,10 @@ impl TaskReadParams {
     }
 }
 
+pub fn task_read_parameters_schema() -> serde_json::Value {
+    schema_value::<TaskReadParams>()
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatusInput {
@@ -150,12 +155,14 @@ pub enum TaskPriorityInput {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SubjectRefInput {
     pub kind: String,
     pub id: Uuid,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContextSourceRefInput {
     pub kind: ContextSourceKindInput,
     pub locator: String,
@@ -214,6 +221,7 @@ fn default_write_mode() -> TaskWriteMode {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TaskWriteParams {
     #[serde(default = "default_write_mode")]
     pub mode: TaskWriteMode,
@@ -294,8 +302,13 @@ impl TaskWriteParams {
     }
 }
 
+pub fn task_write_parameters_schema() -> serde_json::Value {
+    schema_value::<TaskWriteParams>()
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[serde(deny_unknown_fields)]
 pub enum TaskWriteOperation {
     CreateTask {
         title: String,
@@ -416,6 +429,7 @@ impl TaskWriteOperation {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TaskSnapshotItem {
     #[serde(default)]
     pub id: Option<Uuid>,
@@ -466,7 +480,7 @@ impl AgentTool for TaskReadTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<TaskReadParams>()
+        task_read_parameters_schema()
     }
     fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
         Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
@@ -507,7 +521,7 @@ impl AgentTool for TaskWriteTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<TaskWriteParams>()
+        task_write_parameters_schema()
     }
     fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
         Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
@@ -551,6 +565,13 @@ impl ApplicationRuntimeTaskToolService {
 
 #[async_trait]
 impl RuntimeTaskToolService for ApplicationRuntimeTaskToolService {
+    fn parameters_schema(&self, kind: RuntimeTaskToolKind) -> serde_json::Value {
+        match kind {
+            RuntimeTaskToolKind::Read => task_read_parameters_schema(),
+            RuntimeTaskToolKind::Write => task_write_parameters_schema(),
+        }
+    }
+
     async fn execute(&self, request: RuntimeTaskToolRequest) -> RuntimeTaskToolOutcome {
         let scope = TaskPlanScope {
             project_id: match &request.scope {
@@ -817,6 +838,42 @@ mod tests {
     }
 
     #[test]
+    fn runtime_task_schemas_are_derived_from_the_strict_parser_types() {
+        let read_schema = task_read_parameters_schema();
+        assert!(schema_contains_enum_value(
+            &read_schema["properties"]["mode"],
+            "overview"
+        ));
+        assert_eq!(read_schema["additionalProperties"], false);
+
+        let write_schema = task_write_parameters_schema();
+        let operations = &write_schema["properties"]["operations"];
+        assert_eq!(operations["type"], "array");
+        assert!(operations.get("items").is_some());
+        assert!(schema_contains_enum_value(operations, "set_status"));
+        assert_eq!(write_schema["additionalProperties"], false);
+
+        serde_json::from_value::<TaskWriteParams>(serde_json::json!({
+            "operations": [{"op": "set_status", "task_id": Uuid::nil(), "status": "done"}]
+        }))
+        .expect("schema-advertised task_write operation should parse");
+        serde_json::from_value::<TaskWriteParams>(serde_json::json!({
+            "operations": [{
+                "op": "set_status",
+                "task_id": Uuid::nil(),
+                "status": "done",
+                "unexpected": true
+            }]
+        }))
+        .expect_err("schema-forbidden nested fields must be rejected by the parser");
+        serde_json::from_value::<TaskReadParams>(serde_json::json!({
+            "mode": "overview",
+            "unexpected": true
+        }))
+        .expect_err("schema-forbidden root fields must be rejected by the parser");
+    }
+
+    #[test]
     fn task_scoped_write_rejects_sibling_and_project_wide_mutations() {
         let project_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
@@ -850,5 +907,23 @@ mod tests {
                 .validate_runtime_scope(&RuntimeTaskToolScope::Project { project_id })
                 .is_ok()
         );
+    }
+
+    fn schema_contains_enum_value(schema: &serde_json::Value, expected: &str) -> bool {
+        match schema {
+            serde_json::Value::Array(values) => values
+                .iter()
+                .any(|value| schema_contains_enum_value(value, expected)),
+            serde_json::Value::Object(object) => {
+                object.get("enum").is_some_and(|values| {
+                    values
+                        .as_array()
+                        .is_some_and(|values| values.iter().any(|value| value == expected))
+                }) || object
+                    .values()
+                    .any(|value| schema_contains_enum_value(value, expected))
+            }
+            _ => false,
+        }
     }
 }

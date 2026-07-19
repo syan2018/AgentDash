@@ -64,8 +64,9 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] Lifecycle/Wait Product Tool contributions 已接入最终 typed Broker catalog；
   Wait 读取真实 shell terminal registry，Lifecycle 通过 install-once typed binding
   复用既有 orchestration reducer。
-- [ ] Companion Product Tool contribution 接入最终 typed Broker catalog；VFS、Task、
-  Workspace Module Present 与 dynamic MCP 已进入 production catalog。
+- [x] Companion request/respond Product Tool contributions 已接入最终 typed Broker
+  catalog，并复用 durable continuation saga、gate、mailbox、preflight 与 pinned
+  Product HookPlan。
 - [ ] AgentFrame 声明的 Workspace Module tools 中，list/describe/invoke/present 已通过
   typed Product command seam 进入 production Broker；operate 等待 request-scoped
   canonical RuntimeSurfaceUpdate adapter。
@@ -83,7 +84,7 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] Companion fresh 只调用 Create + `InitialAgentContextPackage`，随后独立
   `SubmitInput`。
 - [x] Companion/channel/gate/adoption/result 只写 Product repositories。
-- [ ] Dash collaboration tool 经 Tool Broker 调 Product Companion command。
+- [x] Dash collaboration tool 经 typed Tool Broker 调 Product Companion command。
 - [x] Routine 经 ProductLaunch 与 ProductInputDelivery 调 Runtime。
 - [x] Workflow AgentCall 以稳定 LifecycleAgent/AgentFrame 经 ProductLaunch、canonical
   binding/resource convergence 与 Product mailbox command 调 Runtime，并由 Runtime

@@ -286,6 +286,131 @@ describe("Managed Runtime canonical u64 codecs", () => {
 
     expect(() => decodeManagedRuntimeChangePage(page)).toThrow("kind");
   });
+
+  it.each([
+    [
+      "terminal outcome",
+      { kind: "sleep", duration_ms: "1" },
+      {
+        outcome: "future_outcome",
+        completed_at_ms: "1",
+        duration_ms: "1",
+        process_exit: null,
+        error: null,
+      },
+      "terminal.outcome",
+    ],
+    [
+      "content block",
+      {
+        kind: "agent_message",
+        content: [{ kind: "future_content" }],
+        phase: null,
+      },
+      null,
+      "content[0].kind",
+    ],
+    [
+      "plan step status",
+      {
+        kind: "plan",
+        explanation: null,
+        steps: [{ id: null, text: "step", status: "future_status" }],
+      },
+      null,
+      "steps[0].status",
+    ],
+    [
+      "file search mode",
+      {
+        kind: "file_search",
+        mode: "future_mode",
+        query: "query",
+        path: null,
+        matches: [],
+      },
+      null,
+      "body.mode",
+    ],
+    [
+      "file change kind",
+      {
+        kind: "file_change",
+        changes: [{
+          path: "file.txt",
+          change_kind: "future_change",
+          patch: "",
+          moved_to: null,
+        }],
+        output: [],
+      },
+      null,
+      "changes[0].change_kind",
+    ],
+    [
+      "command output stream",
+      {
+        kind: "command_execution",
+        command: "echo",
+        cwd: null,
+        output: [{ stream: "future_stream", text: "output" }],
+      },
+      null,
+      "output[0].stream",
+    ],
+  ])(
+    "rejects unknown nested presentation %s discriminant",
+    (_family, body, terminal, expectedPath) => {
+      const snapshot = {
+        thread_id: "thread-1",
+        revision: "1",
+        latest_change_sequence: "1",
+        captured_at_ms: "1",
+        lifecycle: "active",
+        active_turn_id: "turn-1",
+        turns: [{
+          id: "turn-1",
+          status: terminal === null ? "running" : "completed",
+          item_ids: ["item-1"],
+        }],
+        items: [{
+          id: "item-1",
+          turn_id: "turn-1",
+          status: terminal === null ? "running" : "completed",
+          presentation: {
+            body,
+            started_at_ms: "1",
+            updated_at_ms: "1",
+            terminal,
+            body_digest: "sha256:body",
+            presentation_digest: "sha256:presentation",
+          },
+        }],
+        interactions: [],
+        thread_name: null,
+        thread_name_source: null,
+        operations: [],
+        source_binding: null,
+        authority: "source_authoritative",
+        fidelity: "exact",
+        command_availability: {},
+      };
+
+      expect(() => decodeManagedRuntimeSnapshot(snapshot)).toThrow(expectedPath);
+
+      const validWire = structuredClone(snapshot);
+      validWire.items[0]!.presentation.body = {
+        kind: "sleep",
+        duration_ms: "1",
+      };
+      validWire.items[0]!.presentation.terminal = null;
+      const semantic = decodeManagedRuntimeSnapshot(validWire);
+      semantic.items[0]!.presentation.body = body as never;
+      semantic.items[0]!.presentation.terminal = terminal as never;
+
+      expect(() => encodeManagedRuntimeSnapshot(semantic)).toThrow(expectedPath);
+    },
+  );
 });
 
 describe("Complete Agent canonical u64 codecs", () => {

@@ -393,70 +393,216 @@ function encodeAvailabilityMap(
   ) as ManagedRuntimeSnapshotWire["command_availability"];
 }
 
-const PRESENTATION_BODY_KINDS = new Set([
-  "user_message",
-  "hook_prompt",
-  "agent_message",
-  "reasoning",
-  "plan",
-  "command_execution",
-  "file_change",
-  "file_read",
-  "file_search",
-  "mcp_tool_call",
-  "dynamic_tool_call",
-  "collaboration_tool_call",
-  "subagent_activity",
-  "web_search",
-  "image_view",
-  "image_generation",
-  "sleep",
-  "review",
-  "terminal_control",
-  "context_compaction",
-  "generic_tool_activity",
-  "error",
-]);
+function presentationContentBlock(value: unknown, path: string): unknown {
+  const block = record(value, path);
+  switch (block.kind) {
+    case "text":
+    case "image":
+    case "local_resource":
+    case "resource_link":
+    case "skill_reference":
+    case "mention":
+    case "structured":
+      return block;
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.kind`,
+        "known presentation content block",
+      );
+  }
+}
 
-const ITEM_UPDATE_KINDS = new Set([
-  "text_appended",
-  "reasoning_appended",
-  "content_appended",
-  "command_output_appended",
-  "patch_changed",
-  "plan_changed",
-  "tool_progress",
-  "collaboration_changed",
-  "body_replaced",
-]);
+function presentationContent(
+  value: unknown,
+  path: string,
+): unknown[] {
+  return array(value, path).map((block, index) =>
+    presentationContentBlock(block, `${path}[${index}]`)
+  );
+}
+
+function planStep(value: unknown, path: string): unknown {
+  const step = record(value, path);
+  switch (step.status) {
+    case "pending":
+    case "in_progress":
+    case "completed":
+    case "failed":
+      return step;
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.status`,
+        "known plan step status",
+      );
+  }
+}
+
+function planSteps(value: unknown, path: string): unknown[] {
+  return array(value, path).map((step, index) =>
+    planStep(step, `${path}[${index}]`)
+  );
+}
+
+function commandOutput(value: unknown, path: string): unknown {
+  const output = record(value, path);
+  switch (output.stream) {
+    case "stdout":
+    case "stderr":
+    case "combined":
+      return output;
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.stream`,
+        "known command output stream",
+      );
+  }
+}
+
+function commandOutputs(value: unknown, path: string): unknown[] {
+  return array(value, path).map((output, index) =>
+    commandOutput(output, `${path}[${index}]`)
+  );
+}
+
+function filePatch(value: unknown, path: string): unknown {
+  const patch = record(value, path);
+  switch (patch.change_kind) {
+    case "add":
+    case "update":
+    case "delete":
+    case "move":
+      return patch;
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.change_kind`,
+        "known file change kind",
+      );
+  }
+}
+
+function filePatches(value: unknown, path: string): unknown[] {
+  return array(value, path).map((patch, index) =>
+    filePatch(patch, `${path}[${index}]`)
+  );
+}
+
+function fileSearchMode(value: unknown, path: string): unknown {
+  switch (value) {
+    case "grep":
+    case "glob":
+      return value;
+    default:
+      throw new ManagedRuntimeContractDecodeError(path, "known file search mode");
+  }
+}
+
+function transformItemBody(
+  value: unknown,
+  path: string,
+  direction: "decode" | "encode",
+): unknown {
+  const body = record(value, path);
+  switch (body.kind) {
+    case "user_message":
+    case "hook_prompt":
+    case "agent_message":
+    case "file_read":
+      return {
+        ...body,
+        content: presentationContent(body.content, `${path}.content`),
+      };
+    case "reasoning":
+      return {
+        ...body,
+        summary: presentationContent(body.summary, `${path}.summary`),
+        content: presentationContent(body.content, `${path}.content`),
+      };
+    case "plan":
+      return {
+        ...body,
+        steps: planSteps(body.steps, `${path}.steps`),
+      };
+    case "command_execution":
+      return {
+        ...body,
+        output: commandOutputs(body.output, `${path}.output`),
+      };
+    case "file_change":
+      return {
+        ...body,
+        changes: filePatches(body.changes, `${path}.changes`),
+        output: presentationContent(body.output, `${path}.output`),
+      };
+    case "file_search":
+      return {
+        ...body,
+        mode: fileSearchMode(body.mode, `${path}.mode`),
+      };
+    case "mcp_tool_call":
+    case "dynamic_tool_call":
+    case "generic_tool_activity":
+      return {
+        ...body,
+        progress: presentationContent(body.progress, `${path}.progress`),
+      };
+    case "subagent_activity":
+      return {
+        ...body,
+        result: presentationContent(body.result, `${path}.result`),
+      };
+    case "web_search":
+      return {
+        ...body,
+        results: presentationContent(body.results, `${path}.results`),
+      };
+    case "image_generation":
+      return {
+        ...body,
+        outputs: presentationContent(body.outputs, `${path}.outputs`),
+      };
+    case "sleep":
+      return {
+        ...body,
+        duration_ms:
+          direction === "decode"
+            ? runtimeU64(body.duration_ms, `${path}.duration_ms`)
+            : encodeRuntimeU64(body.duration_ms as bigint, `${path}.duration_ms`),
+      };
+    case "context_compaction":
+      return {
+        ...body,
+        summary:
+          body.summary === null
+            ? null
+            : presentationContent(body.summary, `${path}.summary`),
+      };
+    case "error":
+      return {
+        ...body,
+        details:
+          body.details === null
+            ? null
+            : presentationContent(body.details, `${path}.details`),
+      };
+    case "collaboration_tool_call":
+    case "image_view":
+    case "review":
+    case "terminal_control":
+      return body;
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.kind`,
+        "known item body",
+      );
+  }
+}
 
 function decodeItemBody(value: unknown, path: string): unknown {
-  const body = record(value, path);
-  if (!PRESENTATION_BODY_KINDS.has(String(body.kind))) {
-    throw new ManagedRuntimeContractDecodeError(`${path}.kind`, "known item body");
-  }
-  return body.kind === "sleep"
-    ? {
-        ...body,
-        duration_ms: runtimeU64(body.duration_ms, `${path}.duration_ms`),
-      }
-    : body;
+  return transformItemBody(value, path, "decode");
 }
 
 function encodeItemBody(value: unknown, path: string): unknown {
-  const body = record(value, path);
-  if (!PRESENTATION_BODY_KINDS.has(String(body.kind))) {
-    throw new ManagedRuntimeContractDecodeError(`${path}.kind`, "known item body");
-  }
-  return body.kind === "sleep"
-    ? {
-        ...body,
-        duration_ms: encodeRuntimeU64(
-          body.duration_ms as bigint,
-          `${path}.duration_ms`,
-        ),
-      }
-    : body;
+  return transformItemBody(value, path, "encode");
 }
 
 function decodeItemPresentation(value: unknown, path: string): unknown {
@@ -466,6 +612,18 @@ function decodeItemPresentation(value: unknown, path: string): unknown {
       ? null
       : (() => {
           const evidence = record(presentation.terminal, `${path}.terminal`);
+          switch (evidence.outcome) {
+            case "completed":
+            case "failed":
+            case "interrupted":
+            case "lost":
+              break;
+            default:
+              throw new ManagedRuntimeContractDecodeError(
+                `${path}.terminal.outcome`,
+                "known terminal outcome",
+              );
+          }
           return {
             ...evidence,
             completed_at_ms: optionalRuntimeU64(
@@ -500,6 +658,18 @@ function encodeItemPresentation(value: unknown, path: string): unknown {
       ? null
       : (() => {
           const evidence = record(presentation.terminal, `${path}.terminal`);
+          switch (evidence.outcome) {
+            case "completed":
+            case "failed":
+            case "interrupted":
+            case "lost":
+              break;
+            default:
+              throw new ManagedRuntimeContractDecodeError(
+                `${path}.terminal.outcome`,
+                "known terminal outcome",
+              );
+          }
           return {
             ...evidence,
             completed_at_ms:
@@ -561,30 +731,60 @@ function encodeItem(value: unknown, path: string): unknown {
   };
 }
 
-function decodeItemUpdate(value: unknown, path: string): unknown {
+function transformItemUpdate(
+  value: unknown,
+  path: string,
+  direction: "decode" | "encode",
+): unknown {
   const update = record(value, path);
-  if (!ITEM_UPDATE_KINDS.has(String(update.kind))) {
-    throw new ManagedRuntimeContractDecodeError(`${path}.kind`, "known item update");
-  }
-  return update.kind === "body_replaced"
-    ? {
+  switch (update.kind) {
+    case "text_appended":
+    case "reasoning_appended":
+    case "collaboration_changed":
+      return update;
+    case "content_appended":
+    case "tool_progress":
+      return {
         ...update,
-        body: decodeItemBody(update.body, `${path}.body`),
-      }
-    : update;
+        content: presentationContent(update.content, `${path}.content`),
+      };
+    case "command_output_appended":
+      return {
+        ...update,
+        output: commandOutput(update.output, `${path}.output`),
+      };
+    case "patch_changed":
+      return {
+        ...update,
+        changes: filePatches(update.changes, `${path}.changes`),
+      };
+    case "plan_changed":
+      return {
+        ...update,
+        steps: planSteps(update.steps, `${path}.steps`),
+      };
+    case "body_replaced":
+      return {
+        ...update,
+        body:
+          direction === "decode"
+            ? decodeItemBody(update.body, `${path}.body`)
+            : encodeItemBody(update.body, `${path}.body`),
+      };
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.kind`,
+        "known item update",
+      );
+  }
+}
+
+function decodeItemUpdate(value: unknown, path: string): unknown {
+  return transformItemUpdate(value, path, "decode");
 }
 
 function encodeItemUpdate(value: unknown, path: string): unknown {
-  const update = record(value, path);
-  if (!ITEM_UPDATE_KINDS.has(String(update.kind))) {
-    throw new ManagedRuntimeContractDecodeError(`${path}.kind`, "known item update");
-  }
-  return update.kind === "body_replaced"
-    ? {
-        ...update,
-        body: encodeItemBody(update.body, `${path}.body`),
-      }
-    : update;
+  return transformItemUpdate(value, path, "encode");
 }
 
 function decodeItemTransition(value: unknown, path: string): unknown {

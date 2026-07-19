@@ -4262,6 +4262,31 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert_eq!(typed_transitions.len(), 3);
+            let typed_transition_changes = state
+                .facts
+                .changes
+                .iter()
+                .filter(|change| {
+                    matches!(
+                        change.delta,
+                        ManagedRuntimeChangeDelta::SourceProjectionChanged {
+                            section: ManagedRuntimeProjectionSection::Items,
+                            delta: ManagedRuntimeSourceProjectionDelta::ItemTransitioned { .. },
+                            ..
+                        }
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(typed_transition_changes.len(), 3);
+            for change in typed_transition_changes {
+                let outbox = state
+                    .facts
+                    .outbox
+                    .iter()
+                    .find(|entry| entry.sequence == change.sequence)
+                    .expect("typed transition outbox");
+                assert_eq!(&outbox.change, change);
+            }
             assert_eq!(typed_transitions[0].0.as_str(), "runtime-item-13");
             assert!(matches!(
                 typed_transitions[0].1,

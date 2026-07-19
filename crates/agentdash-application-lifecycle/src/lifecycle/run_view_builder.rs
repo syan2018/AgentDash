@@ -8,17 +8,21 @@
 use std::cmp::Reverse;
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::ManagedRuntimeSnapshot;
+use agentdash_agent_runtime_contract::{
+    ManagedRuntimeSnapshot, ManagedRuntimeSourceBindingEvidence, RuntimeThreadId,
+};
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductProjectionError, AgentRunProductProjectionQueryPort,
-    AgentRunProductRuntimeBinding, AgentRunProductRuntimeBindingRepository,
+    AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
+    AgentRunProductRuntimeBindingRepository, AgentRunProductRuntimeSnapshotObservation,
+    AgentRunProductRuntimeSnapshotStaleReason,
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::workflow::{
     ExecutorRunRef, LifecycleAgent, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, OrchestrationInstance,
-    RuntimeNodeState, RuntimeNodeStatus,
+    LifecycleRunStatus, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
+    NodePortValue, OrchestrationInstance, PlanNodeKind, RuntimeNodeError, RuntimeNodeState,
+    RuntimeNodeStatus, RuntimeTraceRef, SubjectRef,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -31,6 +35,31 @@ pub struct LifecycleRunView {
     pub run: LifecycleRun,
     pub agents: Vec<LifecycleAgentExecutionView>,
     pub subject_associations: Vec<LifecycleSubjectAssociation>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SubjectExecutionView {
+    pub subject_ref: SubjectRef,
+    pub associations: Vec<LifecycleSubjectAssociation>,
+    pub runs: Vec<LifecycleRunView>,
+    pub current_agent: Option<LifecycleAgentExecutionView>,
+    pub attempts: Vec<SubjectExecutionAttemptView>,
+    pub current_attempt: Option<SubjectExecutionAttemptView>,
+    pub artifacts: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubjectExecutionAttemptView {
+    pub target: AgentRunTarget,
+    pub runtime: RuntimeExecutionTraceView,
+    pub attempt: LifecycleExecutionAttemptView,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectActiveAgentsView {
+    pub project_id: Uuid,
+    pub runs: Vec<LifecycleRunView>,
+    pub agents: Vec<LifecycleAgentExecutionView>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +78,26 @@ pub struct LifecycleExecutionAttemptView {
     pub status: RuntimeNodeStatus,
     pub observed_at: DateTime<Utc>,
     pub artifacts: Value,
+    pub runtime_node: LifecycleRuntimeNodeView,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifecycleRuntimeNodeView {
+    pub node_id: String,
+    pub node_path: String,
+    pub kind: PlanNodeKind,
+    pub status: RuntimeNodeStatus,
+    pub attempt: u32,
+    pub inputs: Vec<NodePortValue>,
+    pub outputs: Vec<NodePortValue>,
+    pub executor_run_ref: Option<ExecutorRunRef>,
+    pub agent_call_target: Option<AgentRunTarget>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub error: Option<RuntimeNodeError>,
+    pub trace_refs: Vec<RuntimeTraceRef>,
+    pub artifacts: Value,
+    pub children: Vec<LifecycleRuntimeNodeView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,9 +109,20 @@ pub enum RuntimeTraceAbsenceReason {
 pub enum RuntimeTraceStaleReason {
     ProductBindingTargetMismatch,
     ProjectionBindingMissing,
-    ProjectionTargetMismatch,
+    ProductBindingChanged,
     RuntimeThreadMismatch,
     RuntimeSourceBindingMismatch,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeTraceFenceEvidence {
+    pub expected_target: AgentRunTarget,
+    pub observed_target: Option<AgentRunTarget>,
+    pub expected_runtime_thread_id: Option<RuntimeThreadId>,
+    pub observed_runtime_thread_id: Option<RuntimeThreadId>,
+    pub expected_source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
+    pub observed_source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
+    pub observed_snapshot: Option<ManagedRuntimeSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,8 +136,8 @@ pub enum RuntimeExecutionTraceView {
         snapshot: ManagedRuntimeSnapshot,
     },
     Stale {
-        binding: AgentRunProductRuntimeBinding,
         reason: RuntimeTraceStaleReason,
+        evidence: RuntimeTraceFenceEvidence,
     },
 }
 
@@ -121,88 +181,86 @@ impl LifecycleRunViewQueryService {
         };
         if binding.target != *target {
             return Ok(RuntimeExecutionTraceView::Stale {
-                binding,
                 reason: RuntimeTraceStaleReason::ProductBindingTargetMismatch,
+                evidence: stale_fence_evidence(target, None, Some(&binding), None),
             });
         }
 
-        let snapshot = match self.deps.product_projection.runtime_snapshot(target).await {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                let stale_reason = match error {
-                    AgentRunProductProjectionError::TargetNotBound => {
-                        Some(RuntimeTraceStaleReason::ProjectionBindingMissing)
-                    }
-                    AgentRunProductProjectionError::TargetMismatch => {
-                        Some(RuntimeTraceStaleReason::ProjectionTargetMismatch)
-                    }
-                    AgentRunProductProjectionError::RuntimeThreadMismatch => {
-                        Some(RuntimeTraceStaleReason::RuntimeThreadMismatch)
-                    }
-                    AgentRunProductProjectionError::RuntimeSourceBindingMismatch => {
-                        Some(RuntimeTraceStaleReason::RuntimeSourceBindingMismatch)
-                    }
-                    AgentRunProductProjectionError::Binding(_)
-                    | AgentRunProductProjectionError::Runtime(_)
-                    | AgentRunProductProjectionError::Workspace(_)
-                    | AgentRunProductProjectionError::Terminal(_) => None,
-                };
-                return match stale_reason {
-                    Some(reason) => Ok(RuntimeExecutionTraceView::Stale { binding, reason }),
-                    None => Err(LifecycleRunViewQueryError::RuntimeProjection {
-                        target: target.clone(),
-                        message: error.to_string(),
-                    }),
-                };
-            }
-        };
-        if snapshot.thread_id != binding.runtime_thread_id {
-            return Ok(RuntimeExecutionTraceView::Stale {
-                binding,
-                reason: RuntimeTraceStaleReason::RuntimeThreadMismatch,
-            });
-        }
-        if snapshot.source_binding.as_ref() != Some(&binding.source_binding) {
-            return Ok(RuntimeExecutionTraceView::Stale {
-                binding,
-                reason: RuntimeTraceStaleReason::RuntimeSourceBindingMismatch,
-            });
-        }
-        Ok(RuntimeExecutionTraceView::Current { binding, snapshot })
-    }
-}
-
-#[async_trait]
-pub trait LifecycleRunViewQueryPort: Send + Sync {
-    async fn lifecycle_run_view(
-        &self,
-        run_id: Uuid,
-    ) -> Result<LifecycleRunView, LifecycleRunViewQueryError>;
-}
-
-#[async_trait]
-impl LifecycleRunViewQueryPort for LifecycleRunViewQueryService {
-    async fn lifecycle_run_view(
-        &self,
-        run_id: Uuid,
-    ) -> Result<LifecycleRunView, LifecycleRunViewQueryError> {
-        let run = self
+        let observation = self
             .deps
-            .lifecycle_runs
-            .get_by_id(run_id)
-            .await?
-            .ok_or(LifecycleRunViewQueryError::RunNotFound { run_id })?;
-        let agents = self.deps.lifecycle_agents.list_by_run(run_id).await?;
+            .product_projection
+            .runtime_snapshot_observation(target)
+            .await
+            .map_err(|error| LifecycleRunViewQueryError::RuntimeProjection {
+                target: target.clone(),
+                message: error.to_string(),
+            })?;
+        match observation {
+            AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
+                Ok(RuntimeExecutionTraceView::Stale {
+                    reason: RuntimeTraceStaleReason::ProjectionBindingMissing,
+                    evidence: stale_fence_evidence(target, Some(&binding), None, None),
+                })
+            }
+            AgentRunProductRuntimeSnapshotObservation::Current {
+                product_binding,
+                snapshot,
+            } if product_binding != binding => Ok(RuntimeExecutionTraceView::Stale {
+                reason: RuntimeTraceStaleReason::ProductBindingChanged,
+                evidence: stale_fence_evidence(
+                    target,
+                    Some(&binding),
+                    Some(&product_binding),
+                    Some(&snapshot),
+                ),
+            }),
+            AgentRunProductRuntimeSnapshotObservation::Current {
+                product_binding,
+                snapshot,
+            } => Ok(RuntimeExecutionTraceView::Current {
+                binding: product_binding,
+                snapshot,
+            }),
+            AgentRunProductRuntimeSnapshotObservation::Stale(stale) => {
+                let reason = match stale.reason {
+                    AgentRunProductRuntimeSnapshotStaleReason::ProductBindingTargetMismatch => {
+                        RuntimeTraceStaleReason::ProductBindingTargetMismatch
+                    }
+                    AgentRunProductRuntimeSnapshotStaleReason::RuntimeThreadMismatch => {
+                        RuntimeTraceStaleReason::RuntimeThreadMismatch
+                    }
+                    AgentRunProductRuntimeSnapshotStaleReason::RuntimeSourceBindingMismatch => {
+                        RuntimeTraceStaleReason::RuntimeSourceBindingMismatch
+                    }
+                };
+                Ok(RuntimeExecutionTraceView::Stale {
+                    reason,
+                    evidence: stale_fence_evidence(
+                        target,
+                        Some(&binding),
+                        Some(&stale.product_binding),
+                        stale.observed_snapshot.as_ref(),
+                    ),
+                })
+            }
+        }
+    }
+
+    async fn build_run_view(
+        &self,
+        run: LifecycleRun,
+    ) -> Result<LifecycleRunView, LifecycleRunViewQueryError> {
+        let agents = self.deps.lifecycle_agents.list_by_run(run.id).await?;
         let mut subject_associations = self
             .deps
             .subject_associations
-            .list_by_anchor(run_id, None)
+            .list_by_anchor(run.id, None)
             .await?;
         for agent in &agents {
             subject_associations.extend(
                 self.deps
                     .subject_associations
-                    .list_by_anchor(run_id, Some(agent.id))
+                    .list_by_anchor(run.id, Some(agent.id))
                     .await?,
             );
         }
@@ -212,7 +270,7 @@ impl LifecycleRunViewQueryPort for LifecycleRunViewQueryService {
         let mut agent_views = Vec::with_capacity(agents.len());
         for agent in agents {
             let target = AgentRunTarget {
-                run_id,
+                run_id: run.id,
                 agent_id: agent.id,
             };
             let mut attempts = execution_attempts(&run, &target);
@@ -235,6 +293,129 @@ impl LifecycleRunViewQueryPort for LifecycleRunViewQueryService {
     }
 }
 
+#[async_trait]
+pub trait LifecycleRunViewQueryPort: Send + Sync {
+    async fn lifecycle_run_view(
+        &self,
+        run_id: Uuid,
+    ) -> Result<LifecycleRunView, LifecycleRunViewQueryError>;
+
+    async fn subject_execution_view(
+        &self,
+        subject: SubjectRef,
+    ) -> Result<SubjectExecutionView, LifecycleRunViewQueryError>;
+
+    async fn project_active_agents_view(
+        &self,
+        project_id: Uuid,
+    ) -> Result<ProjectActiveAgentsView, LifecycleRunViewQueryError>;
+}
+
+#[async_trait]
+impl LifecycleRunViewQueryPort for LifecycleRunViewQueryService {
+    async fn lifecycle_run_view(
+        &self,
+        run_id: Uuid,
+    ) -> Result<LifecycleRunView, LifecycleRunViewQueryError> {
+        let run = self
+            .deps
+            .lifecycle_runs
+            .get_by_id(run_id)
+            .await?
+            .ok_or(LifecycleRunViewQueryError::RunNotFound { run_id })?;
+        self.build_run_view(run).await
+    }
+
+    async fn subject_execution_view(
+        &self,
+        subject: SubjectRef,
+    ) -> Result<SubjectExecutionView, LifecycleRunViewQueryError> {
+        let mut associations = self
+            .deps
+            .subject_associations
+            .list_by_subject(&subject)
+            .await?;
+        associations.sort_by_key(|association| Reverse(association.created_at));
+        let run_ids = unique_run_ids(&associations);
+        let mut runs = self.deps.lifecycle_runs.list_by_ids(&run_ids).await?;
+        runs.sort_by_key(|run| Reverse((run.last_activity_at, run.id)));
+
+        let mut run_views = Vec::with_capacity(runs.len());
+        for run in runs {
+            run_views.push(self.build_run_view(run).await?);
+        }
+        let associated_targets = associated_targets(&associations, &run_views);
+        let current_agent = select_subject_current_agent(&associations, &run_views);
+        let mut attempts = subject_attempts(&associated_targets, &run_views);
+        attempts.sort_by_key(subject_attempt_sort_key);
+        let current_attempt = attempts.first().cloned();
+        let artifacts = current_attempt
+            .as_ref()
+            .map(|current| current.attempt.artifacts.clone())
+            .unwrap_or(Value::Null);
+
+        Ok(SubjectExecutionView {
+            subject_ref: subject,
+            associations,
+            runs: run_views,
+            current_agent,
+            attempts,
+            current_attempt,
+            artifacts,
+        })
+    }
+
+    async fn project_active_agents_view(
+        &self,
+        project_id: Uuid,
+    ) -> Result<ProjectActiveAgentsView, LifecycleRunViewQueryError> {
+        let mut runs = self
+            .deps
+            .lifecycle_runs
+            .list_by_project(project_id)
+            .await?
+            .into_iter()
+            .filter(|run| is_project_active_run(run.status))
+            .collect::<Vec<_>>();
+        runs.sort_by_key(|run| Reverse((run.last_activity_at, run.id)));
+        let mut run_views = Vec::with_capacity(runs.len());
+        for run in runs {
+            run_views.push(self.build_run_view(run).await?);
+        }
+        let agents = run_views
+            .iter()
+            .flat_map(|run| run.agents.iter().cloned())
+            .collect();
+        Ok(ProjectActiveAgentsView {
+            project_id,
+            runs: run_views,
+            agents,
+        })
+    }
+}
+
+fn stale_fence_evidence(
+    target: &AgentRunTarget,
+    expected_binding: Option<&AgentRunProductRuntimeBinding>,
+    observed_binding: Option<&AgentRunProductRuntimeBinding>,
+    observed_snapshot: Option<&ManagedRuntimeSnapshot>,
+) -> RuntimeTraceFenceEvidence {
+    RuntimeTraceFenceEvidence {
+        expected_target: target.clone(),
+        observed_target: observed_binding.map(|binding| binding.target.clone()),
+        expected_runtime_thread_id: expected_binding
+            .map(|binding| binding.runtime_thread_id.clone()),
+        observed_runtime_thread_id: observed_snapshot
+            .map(|snapshot| snapshot.thread_id.clone())
+            .or_else(|| observed_binding.map(|binding| binding.runtime_thread_id.clone())),
+        expected_source_binding: expected_binding.map(|binding| binding.source_binding.clone()),
+        observed_source_binding: observed_snapshot
+            .and_then(|snapshot| snapshot.source_binding.clone())
+            .or_else(|| observed_binding.map(|binding| binding.source_binding.clone())),
+        observed_snapshot: observed_snapshot.cloned(),
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum LifecycleRunViewQueryError {
     #[error(transparent)]
@@ -251,6 +432,152 @@ pub enum LifecycleRunViewQueryError {
         target: AgentRunTarget,
         message: String,
     },
+}
+
+fn unique_run_ids(associations: &[LifecycleSubjectAssociation]) -> Vec<Uuid> {
+    let mut run_ids = associations
+        .iter()
+        .map(|association| association.anchor_run_id)
+        .collect::<Vec<_>>();
+    run_ids.sort_unstable();
+    run_ids.dedup();
+    run_ids
+}
+
+fn associated_targets(
+    associations: &[LifecycleSubjectAssociation],
+    runs: &[LifecycleRunView],
+) -> std::collections::BTreeSet<AgentRunTarget> {
+    let mut targets = std::collections::BTreeSet::new();
+    for association in associations {
+        let Some(run) = runs
+            .iter()
+            .find(|run| run.run.id == association.anchor_run_id)
+        else {
+            continue;
+        };
+        if let Some(agent_id) = association.anchor_agent_id {
+            if run.agents.iter().any(|view| view.agent.id == agent_id) {
+                targets.insert(AgentRunTarget {
+                    run_id: run.run.id,
+                    agent_id,
+                });
+            }
+        } else {
+            targets.extend(run.agents.iter().map(|view| AgentRunTarget {
+                run_id: run.run.id,
+                agent_id: view.agent.id,
+            }));
+        }
+    }
+    targets
+}
+
+fn select_subject_current_agent(
+    associations: &[LifecycleSubjectAssociation],
+    runs: &[LifecycleRunView],
+) -> Option<LifecycleAgentExecutionView> {
+    for association in associations {
+        let Some(agent_id) = association.anchor_agent_id else {
+            continue;
+        };
+        if let Some(agent) = runs
+            .iter()
+            .find(|run| run.run.id == association.anchor_run_id)
+            .and_then(|run| run.agents.iter().find(|view| view.agent.id == agent_id))
+        {
+            return Some(agent.clone());
+        }
+    }
+    let targets = associated_targets(associations, runs);
+    runs.iter()
+        .flat_map(|run| run.agents.iter())
+        .filter(|view| {
+            targets.contains(&AgentRunTarget {
+                run_id: view.agent.run_id,
+                agent_id: view.agent.id,
+            })
+        })
+        .max_by_key(|view| {
+            (
+                view.current_attempt.as_ref().is_some_and(|attempt| {
+                    matches!(
+                        attempt.status,
+                        RuntimeNodeStatus::Ready
+                            | RuntimeNodeStatus::Claiming
+                            | RuntimeNodeStatus::Running
+                            | RuntimeNodeStatus::Blocked
+                    )
+                }),
+                view.current_attempt
+                    .as_ref()
+                    .map(|attempt| attempt.observed_at),
+                view.agent.status == "active",
+                view.agent.updated_at,
+                view.agent.id,
+            )
+        })
+        .cloned()
+}
+
+fn subject_attempts(
+    targets: &std::collections::BTreeSet<AgentRunTarget>,
+    runs: &[LifecycleRunView],
+) -> Vec<SubjectExecutionAttemptView> {
+    runs.iter()
+        .flat_map(|run| run.agents.iter())
+        .filter_map(|agent| {
+            let target = AgentRunTarget {
+                run_id: agent.agent.run_id,
+                agent_id: agent.agent.id,
+            };
+            targets
+                .contains(&target)
+                .then_some((target, agent.runtime.clone(), &agent.attempts))
+        })
+        .flat_map(|(target, runtime, attempts)| {
+            attempts
+                .iter()
+                .cloned()
+                .map(move |attempt| SubjectExecutionAttemptView {
+                    target: target.clone(),
+                    runtime: runtime.clone(),
+                    attempt,
+                })
+        })
+        .collect()
+}
+
+fn subject_attempt_sort_key(
+    item: &SubjectExecutionAttemptView,
+) -> (
+    Reverse<bool>,
+    Reverse<DateTime<Utc>>,
+    AgentRunTarget,
+    String,
+) {
+    (
+        Reverse(matches!(
+            item.attempt.status,
+            RuntimeNodeStatus::Ready
+                | RuntimeNodeStatus::Claiming
+                | RuntimeNodeStatus::Running
+                | RuntimeNodeStatus::Blocked
+        )),
+        Reverse(item.attempt.observed_at),
+        item.target.clone(),
+        item.attempt.node_path.clone(),
+    )
+}
+
+fn is_project_active_run(status: LifecycleRunStatus) -> bool {
+    matches!(
+        status,
+        LifecycleRunStatus::Draft
+            | LifecycleRunStatus::Ready
+            | LifecycleRunStatus::Running
+            | LifecycleRunStatus::Blocked
+    )
 }
 
 fn execution_attempts(
@@ -287,9 +614,37 @@ fn collect_execution_attempts(
                     .or(node.started_at)
                     .unwrap_or(orchestration.updated_at),
                 artifacts: runtime_node_artifacts(orchestration, node),
+                runtime_node: runtime_node_to_view(orchestration, node),
             });
         }
         collect_execution_attempts(orchestration, &node.children, target, attempts);
+    }
+}
+
+fn runtime_node_to_view(
+    orchestration: &OrchestrationInstance,
+    node: &RuntimeNodeState,
+) -> LifecycleRuntimeNodeView {
+    LifecycleRuntimeNodeView {
+        node_id: node.node_id.clone(),
+        node_path: node.node_path.clone(),
+        kind: node.kind,
+        status: node.status,
+        attempt: node.attempt,
+        inputs: node.inputs.clone(),
+        outputs: node.outputs.clone(),
+        executor_run_ref: node.executor_run_ref.clone(),
+        agent_call_target: node.agent_call.as_ref().map(|state| state.target.clone()),
+        started_at: node.started_at,
+        completed_at: node.completed_at,
+        error: node.error.clone(),
+        trace_refs: node.trace_refs.clone(),
+        artifacts: runtime_node_artifacts(orchestration, node),
+        children: node
+            .children
+            .iter()
+            .map(|child| runtime_node_to_view(orchestration, child))
+            .collect(),
     }
 }
 
@@ -353,7 +708,8 @@ mod tests {
         SurfaceRevision,
     };
     use agentdash_application_agentrun::agent_run::{
-        AgentRunTerminalChangePage, AgentRunTerminalChangeSequence, AgentRunTerminalSnapshot,
+        AgentRunProductProjectionError, AgentRunTerminalChangePage, AgentRunTerminalChangeSequence,
+        AgentRunTerminalSnapshot,
     };
     use agentdash_domain::workflow::{
         AgentSource, OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef,
@@ -390,6 +746,7 @@ mod tests {
     #[derive(Default)]
     struct ProjectionRepo {
         snapshots: Mutex<BTreeMap<AgentRunTarget, ManagedRuntimeSnapshot>>,
+        bindings: Mutex<BTreeMap<AgentRunTarget, AgentRunProductRuntimeBinding>>,
         missing: Mutex<BTreeSet<AgentRunTarget>>,
     }
 
@@ -408,6 +765,57 @@ mod tests {
                 .get(target)
                 .cloned()
                 .ok_or_else(|| AgentRunProductProjectionError::Runtime("snapshot missing".into()))
+        }
+
+        async fn runtime_snapshot_observation(
+            &self,
+            target: &AgentRunTarget,
+        ) -> Result<AgentRunProductRuntimeSnapshotObservation, AgentRunProductProjectionError>
+        {
+            if self.missing.lock().await.contains(target) {
+                return Ok(AgentRunProductRuntimeSnapshotObservation::Absent {
+                    requested_target: target.clone(),
+                });
+            }
+            let binding = self
+                .bindings
+                .lock()
+                .await
+                .get(target)
+                .cloned()
+                .ok_or(AgentRunProductProjectionError::TargetNotBound)?;
+            let snapshot = self
+                .snapshots
+                .lock()
+                .await
+                .get(target)
+                .cloned()
+                .ok_or_else(|| {
+                    AgentRunProductProjectionError::Runtime("snapshot missing".into())
+                })?;
+            let reason = if binding.target != *target {
+                Some(AgentRunProductRuntimeSnapshotStaleReason::ProductBindingTargetMismatch)
+            } else if binding.runtime_thread_id != snapshot.thread_id {
+                Some(AgentRunProductRuntimeSnapshotStaleReason::RuntimeThreadMismatch)
+            } else if snapshot.source_binding.as_ref() != Some(&binding.source_binding) {
+                Some(AgentRunProductRuntimeSnapshotStaleReason::RuntimeSourceBindingMismatch)
+            } else {
+                None
+            };
+            Ok(match reason {
+                Some(reason) => AgentRunProductRuntimeSnapshotObservation::Stale(
+                    agentdash_application_agentrun::agent_run::AgentRunProductRuntimeSnapshotStaleEvidence {
+                        requested_target: target.clone(),
+                        product_binding: binding,
+                        observed_snapshot: Some(snapshot),
+                        reason,
+                    },
+                ),
+                None => AgentRunProductRuntimeSnapshotObservation::Current {
+                    product_binding: binding,
+                    snapshot,
+                },
+            })
         }
 
         async fn runtime_changes(
@@ -499,6 +907,11 @@ mod tests {
                 source_binding: source.clone(),
             };
             self.bindings
+                .bindings
+                .lock()
+                .await
+                .insert(target.clone(), binding.clone());
+            self.projections
                 .bindings
                 .lock()
                 .await
@@ -721,5 +1134,153 @@ mod tests {
             panic!("expected current binding");
         };
         assert_eq!(binding.runtime_thread_id.as_str(), "thread-final-binding");
+        assert_eq!(current.runtime_node.kind, PlanNodeKind::AgentCall);
+        assert_eq!(
+            current.runtime_node.executor_run_ref,
+            Some(ExecutorRunRef::AgentRun {
+                run_id: run.id,
+                agent_id: agent.id,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn subject_execution_keeps_same_path_attempts_distinct_across_runs_and_agents() {
+        let fixture = Fixture::new();
+        let project_id = Uuid::new_v4();
+        let subject = SubjectRef::new("task", Uuid::new_v4());
+        let now = Utc::now();
+
+        let mut first_run = LifecycleRun::new_control(project_id);
+        let first_agent =
+            LifecycleAgent::new_root(first_run.id, project_id, AgentSource::WorkflowAgent);
+        let first_target = target(&first_run, &first_agent);
+        let mut first_orchestration = nested_attempt(&first_run, first_target.clone());
+        first_orchestration.node_tree[0].children[0].started_at =
+            Some(now - chrono::Duration::seconds(10));
+        first_orchestration
+            .state_snapshot
+            .node_outputs
+            .insert("agent".into(), serde_json::json!({"result": "first"}));
+        first_run.add_orchestration(first_orchestration);
+
+        let mut second_run = LifecycleRun::new_control(project_id);
+        let second_agent =
+            LifecycleAgent::new_root(second_run.id, project_id, AgentSource::WorkflowAgent);
+        let second_target = target(&second_run, &second_agent);
+        let mut second_orchestration = nested_attempt(&second_run, second_target.clone());
+        second_orchestration.node_tree[0].children[0].started_at = Some(now);
+        second_orchestration
+            .state_snapshot
+            .node_outputs
+            .insert("agent".into(), serde_json::json!({"result": "second"}));
+        second_run.add_orchestration(second_orchestration);
+
+        for run in [&first_run, &second_run] {
+            fixture.runs.create(run).await.unwrap();
+        }
+        for agent in [&first_agent, &second_agent] {
+            fixture.agents.create(agent).await.unwrap();
+        }
+        fixture
+            .insert_binding_and_snapshot(first_target, "thread-first", source("first"))
+            .await;
+        fixture
+            .insert_binding_and_snapshot(second_target.clone(), "thread-second", source("second"))
+            .await;
+        let mut first_association = LifecycleSubjectAssociation::new_agent_scoped(
+            first_run.id,
+            first_agent.id,
+            &subject,
+            "task_execution",
+            None,
+        );
+        first_association.created_at = now - chrono::Duration::seconds(10);
+        let mut second_association = LifecycleSubjectAssociation::new_agent_scoped(
+            second_run.id,
+            second_agent.id,
+            &subject,
+            "task_execution",
+            None,
+        );
+        second_association.created_at = now;
+        fixture
+            .associations
+            .create(&first_association)
+            .await
+            .unwrap();
+        fixture
+            .associations
+            .create(&second_association)
+            .await
+            .unwrap();
+
+        let view = fixture
+            .service()
+            .subject_execution_view(subject)
+            .await
+            .unwrap();
+
+        assert_eq!(view.runs.len(), 2);
+        assert_eq!(view.attempts.len(), 2);
+        assert!(
+            view.attempts
+                .iter()
+                .all(|attempt| attempt.attempt.node_path == "phase/agent")
+        );
+        assert_ne!(view.attempts[0].target, view.attempts[1].target);
+        assert_eq!(
+            view.current_agent.as_ref().unwrap().agent.id,
+            second_agent.id
+        );
+        assert_eq!(view.current_attempt.as_ref().unwrap().target, second_target);
+        assert_eq!(
+            view.artifacts.pointer("/node_outputs/result"),
+            Some(&serde_json::json!("second"))
+        );
+        assert_eq!(
+            view.current_attempt
+                .as_ref()
+                .unwrap()
+                .attempt
+                .runtime_node
+                .node_path,
+            "phase/agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn project_active_agents_excludes_terminal_runs_and_keeps_typed_absence() {
+        let fixture = Fixture::new();
+        let project_id = Uuid::new_v4();
+        let mut active_run = LifecycleRun::new_control(project_id);
+        active_run.status = LifecycleRunStatus::Blocked;
+        let active_agent =
+            LifecycleAgent::new_root(active_run.id, project_id, AgentSource::WorkflowAgent);
+        let mut completed_run = LifecycleRun::new_control(project_id);
+        completed_run.status = LifecycleRunStatus::Completed;
+        let completed_agent =
+            LifecycleAgent::new_root(completed_run.id, project_id, AgentSource::WorkflowAgent);
+        fixture.runs.create(&active_run).await.unwrap();
+        fixture.runs.create(&completed_run).await.unwrap();
+        fixture.agents.create(&active_agent).await.unwrap();
+        fixture.agents.create(&completed_agent).await.unwrap();
+
+        let view = fixture
+            .service()
+            .project_active_agents_view(project_id)
+            .await
+            .unwrap();
+
+        assert_eq!(view.runs.len(), 1);
+        assert_eq!(view.runs[0].run.id, active_run.id);
+        assert_eq!(view.agents.len(), 1);
+        assert!(matches!(
+            view.agents[0].runtime,
+            RuntimeExecutionTraceView::Absent {
+                reason: RuntimeTraceAbsenceReason::ProductBindingMissing,
+                ..
+            }
+        ));
     }
 }

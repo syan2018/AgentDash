@@ -5,6 +5,7 @@
 //! and reverse Host callbacks. It deliberately has no Product, Runtime repository,
 //! transport, infrastructure, or vendor dependencies.
 
+pub mod canonical_json;
 pub mod command;
 pub mod context;
 pub mod ids;
@@ -15,6 +16,7 @@ pub mod snapshot;
 pub mod surface;
 pub mod wire_u64;
 
+pub use canonical_json::*;
 pub use command::*;
 pub use context::*;
 pub use ids::*;

@@ -32,6 +32,16 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
+use crate::vendor_generated::codex_v2::{
+    command_execution_request_approval_params::CommandExecutionRequestApprovalParams,
+    dynamic_tool_call_params::DynamicToolCallParams,
+    file_change_request_approval_params::FileChangeRequestApprovalParams,
+    mcp_server_elicitation_request_params::McpServerElicitationRequestParams,
+    permissions_request_approval_params::PermissionsRequestApprovalParams,
+    server_notification::ServerNotification,
+    tool_request_user_input_params::ToolRequestUserInputParams,
+};
+
 pub const CODEX_INITIAL_CONTEXT_RENDERER_VERSION: &str = "agentdash.codex.initial-context.v1";
 /// Canonical digest contract for the source-authoritative `thread/read(includeTurns)` fork view.
 ///
@@ -71,26 +81,195 @@ impl CodexCompleteAgentTransportError {
 ///
 /// Vendor JSON terminates at this trait. Other crates only receive `AgentChange`/`AgentSnapshot`.
 #[derive(Debug, Clone, PartialEq)]
-pub enum CodexAppServerObservation {
-    Notification {
-        sequence: u64,
-        method: String,
-        params: Value,
-    },
+pub struct CodexAppServerObservation {
+    sequence: u64,
+    source_thread_id: Option<String>,
+    kind: CodexTypedObservation,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum CodexTypedObservation {
+    Notification(Box<ServerNotification>),
     ServerRequest {
-        sequence: u64,
         request_id: Value,
-        method: String,
-        params: Value,
+        request: Box<CodexTypedServerRequest>,
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum CodexTypedServerRequest {
+    CommandExecutionApproval(CommandExecutionRequestApprovalParams),
+    FileChangeApproval(FileChangeRequestApprovalParams),
+    PermissionsApproval(PermissionsRequestApprovalParams),
+    UserInput(ToolRequestUserInputParams),
+    DynamicTool(DynamicToolCallParams),
+    McpElicitation(CodexMcpElicitationRequest),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CodexMcpElicitationRequest {
+    thread_id: String,
+    turn_id: Option<String>,
+    server_name: String,
+    message: String,
+    requested_schema: Value,
+}
+
 impl CodexAppServerObservation {
-    pub(crate) fn sequence(&self) -> u64 {
-        match self {
-            Self::Notification { sequence, .. } | Self::ServerRequest { sequence, .. } => *sequence,
-        }
+    pub fn notification(
+        sequence: u64,
+        method: impl Into<String>,
+        params: Value,
+    ) -> Result<Self, CodexCompleteAgentTransportError> {
+        let method = method.into();
+        let source_thread_id = source_thread_id_from_params(&params).map(ToOwned::to_owned);
+        let notification = serde_json::from_value(json!({
+            "method": method,
+            "params": params,
+        }))
+        .map_err(|error| {
+            CodexCompleteAgentTransportError::protocol(format!(
+                "unknown or invalid Codex ServerNotification: {error}"
+            ))
+        })?;
+        Ok(Self {
+            sequence,
+            source_thread_id,
+            kind: CodexTypedObservation::Notification(Box::new(notification)),
+        })
     }
+
+    pub fn server_request(
+        sequence: u64,
+        request_id: Value,
+        method: impl Into<String>,
+        params: Value,
+    ) -> Result<Self, CodexCompleteAgentTransportError> {
+        let method = method.into();
+        let source_thread_id = source_thread_id_from_params(&params)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| {
+                CodexCompleteAgentTransportError::protocol(format!(
+                    "Codex server request {method} misses threadId"
+                ))
+            })?;
+        let request = decode_server_request(&method, params)?;
+        Ok(Self {
+            sequence,
+            source_thread_id: Some(source_thread_id),
+            kind: CodexTypedObservation::ServerRequest {
+                request_id,
+                request: Box::new(request),
+            },
+        })
+    }
+
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub(crate) fn source_thread_id(&self) -> Option<&str> {
+        self.source_thread_id.as_deref()
+    }
+}
+
+fn decode_server_request(
+    method: &str,
+    params: Value,
+) -> Result<CodexTypedServerRequest, CodexCompleteAgentTransportError> {
+    fn decode<T: serde::de::DeserializeOwned>(
+        method: &str,
+        params: Value,
+    ) -> Result<T, CodexCompleteAgentTransportError> {
+        serde_json::from_value(params).map_err(|error| {
+            CodexCompleteAgentTransportError::protocol(format!(
+                "invalid Codex server request {method}: {error}"
+            ))
+        })
+    }
+
+    Ok(match method {
+        "item/commandExecution/requestApproval" => {
+            CodexTypedServerRequest::CommandExecutionApproval(decode(method, params)?)
+        }
+        "item/fileChange/requestApproval" => {
+            CodexTypedServerRequest::FileChangeApproval(decode(method, params)?)
+        }
+        "item/permissions/requestApproval" => {
+            CodexTypedServerRequest::PermissionsApproval(decode(method, params)?)
+        }
+        "item/tool/requestUserInput" => CodexTypedServerRequest::UserInput(decode(method, params)?),
+        "item/tool/call" => CodexTypedServerRequest::DynamicTool(decode(method, params)?),
+        "mcpServer/elicitation/request" => {
+            let typed: McpServerElicitationRequestParams = decode(method, params.clone())?;
+            use crate::vendor_generated::codex_v2::mcp_server_elicitation_request_params::McpServerElicitationRequestParams as Source;
+            let request = match typed {
+                Source::Form {
+                    message,
+                    requested_schema,
+                    server_name,
+                    thread_id,
+                    turn_id,
+                    ..
+                } => CodexMcpElicitationRequest {
+                    thread_id,
+                    turn_id,
+                    server_name,
+                    message,
+                    requested_schema: serde_json::to_value(requested_schema).map_err(|error| {
+                        CodexCompleteAgentTransportError::protocol(format!(
+                            "invalid Codex MCP elicitation schema: {error}"
+                        ))
+                    })?,
+                },
+                Source::OpenaiForm {
+                    message,
+                    requested_schema,
+                    server_name,
+                    thread_id,
+                    turn_id,
+                    ..
+                } => CodexMcpElicitationRequest {
+                    thread_id,
+                    turn_id,
+                    server_name,
+                    message,
+                    requested_schema,
+                },
+                Source::Url {
+                    elicitation_id,
+                    message,
+                    server_name,
+                    thread_id,
+                    turn_id,
+                    url,
+                    ..
+                } => CodexMcpElicitationRequest {
+                    thread_id,
+                    turn_id,
+                    server_name,
+                    message,
+                    requested_schema: json!({
+                        "mode": "url",
+                        "elicitationId": elicitation_id,
+                        "url": url,
+                    }),
+                },
+            };
+            CodexTypedServerRequest::McpElicitation(request)
+        }
+        _ => {
+            return Err(CodexCompleteAgentTransportError::protocol(format!(
+                "unsupported Codex server request {method}"
+            )));
+        }
+    })
+}
+
+fn source_thread_id_from_params(params: &Value) -> Option<&str> {
+    ["/threadId", "/thread/id", "/thread/id/value", "/thread_id"]
+        .into_iter()
+        .find_map(|pointer| params.pointer(pointer).and_then(Value::as_str))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1399,14 +1578,13 @@ impl CodexCompleteAgentService {
         source: &AgentSourceCoordinate,
         observation: CodexAppServerObservation,
     ) -> Result<AgentChangePayload, AgentServiceError> {
-        match observation {
-            CodexAppServerObservation::ServerRequest {
+        let sequence = observation.sequence;
+        match observation.kind {
+            CodexTypedObservation::ServerRequest {
                 request_id,
-                method,
-                params,
-                sequence,
+                request,
             } => {
-                let interaction = map_server_request(sequence, &method, &params)?;
+                let interaction = map_server_request(sequence, &request_id, *request)?;
                 let pending = PendingInteraction {
                     request_id,
                     interaction: interaction.clone(),
@@ -1429,8 +1607,8 @@ impl CodexCompleteAgentService {
                 source_state.revision += 1;
                 Ok(AgentChangePayload::InteractionChanged { interaction })
             }
-            CodexAppServerObservation::Notification { method, params, .. } => {
-                map_notification(source, &method, &params)
+            CodexTypedObservation::Notification(notification) => {
+                map_notification(source, *notification)
             }
         }
     }
@@ -2001,37 +2179,30 @@ fn terminal_evidence(
 
 fn map_notification(
     source: &AgentSourceCoordinate,
-    method: &str,
-    params: &Value,
+    notification: ServerNotification,
 ) -> Result<AgentChangePayload, AgentServiceError> {
-    match method {
-        "thread/name/updated" => {
-            let notification_source = required_id::<AgentSourceCoordinate>(
-                params,
-                "threadId",
-                AgentSourceCoordinate::new,
-            )?;
+    use crate::vendor_generated::codex_v2::server_notification::ServerNotification as Source;
+
+    match notification {
+        Source::ThreadNameUpdated(notification) => {
+            let notification_source =
+                AgentSourceCoordinate::new(notification.thread_id).map_err(internal_error)?;
             if &notification_source != source {
                 return Err(protocol_violation(
                     "thread/name/updated belongs to a different source thread",
                 ));
             }
-            let thread_name = match params.get("threadName") {
-                Some(Value::String(value)) if !value.trim().is_empty() => Some(value.clone()),
-                Some(Value::Null) | None => None,
-                Some(Value::String(_)) => {
-                    return Err(protocol_violation(
-                        "thread/name/updated returned a blank thread name",
-                    ));
-                }
-                Some(_) => {
-                    return Err(protocol_violation(
-                        "thread/name/updated returned a non-string thread name",
-                    ));
-                }
-            };
+            if notification
+                .thread_name
+                .as_ref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
+                return Err(protocol_violation(
+                    "thread/name/updated returned a blank thread name",
+                ));
+            }
             Ok(AgentChangePayload::ThreadNameChanged {
-                thread_name,
+                thread_name: notification.thread_name,
                 source_info: AgentSnapshotSource {
                     authority: AgentSnapshotAuthority::AgentAuthoritative,
                     source_revision: None,
@@ -2040,178 +2211,238 @@ fn map_notification(
                 },
             })
         }
-        "turn/started" | "turn/completed" => {
-            let turn = params
-                .get("turn")
-                .ok_or_else(|| protocol_violation("turn notification misses turn"))?;
-            let id = required_id::<AgentTurnId>(turn, "id", AgentTurnId::new)?;
+        Source::TurnStarted(notification) => {
+            require_notification_source(source, &notification.thread_id, "turn/started")?;
             Ok(AgentChangePayload::TurnChanged {
-                turn: AgentTurnSnapshot {
-                    id,
-                    status: entity_status(turn.get("status")),
-                    items: Vec::new(),
-                },
+                turn: map_notification_turn(notification.turn)?,
             })
         }
-        "item/started" | "item/completed" | "item/updated" => {
-            let turn_id = required_id::<AgentTurnId>(params, "turnId", AgentTurnId::new)?;
-            let item = params
-                .get("item")
-                .ok_or_else(|| protocol_violation("item notification misses item"))?;
-            let inherited = match method {
-                "item/completed" => AgentEntityStatus::Completed,
-                "item/started" | "item/updated" => AgentEntityStatus::Running,
-                _ => unreachable!(),
-            };
-            let item = map_item(item, Some(inherited))?;
-            let transition = match method {
-                "item/started" => agentdash_agent_service_api::AgentItemTransition::Started {
-                    presentation: item.presentation.clone(),
-                },
-                "item/updated" => agentdash_agent_service_api::AgentItemTransition::Updated {
-                    update: agentdash_agent_service_api::AgentItemUpdate::BodyReplaced {
-                        body: item.presentation.body.clone(),
-                    },
-                    presentation: item.presentation.clone(),
-                },
-                "item/completed" => agentdash_agent_service_api::AgentItemTransition::Terminal {
-                    presentation: item.presentation.clone(),
-                },
-                _ => unreachable!(),
-            };
+        Source::TurnCompleted(notification) => {
+            require_notification_source(source, &notification.thread_id, "turn/completed")?;
+            Ok(AgentChangePayload::TurnChanged {
+                turn: map_notification_turn(notification.turn)?,
+            })
+        }
+        Source::ItemStarted(notification) => {
+            require_notification_source(source, &notification.thread_id, "item/started")?;
+            let turn_id = AgentTurnId::new(notification.turn_id).map_err(internal_error)?;
+            let item = map_notification_item(
+                notification.item,
+                AgentEntityStatus::Running,
+                Some(notification.started_at_ms),
+                None,
+            )?;
             Ok(AgentChangePayload::ItemTransitioned {
                 turn_id,
                 item_id: item.id,
-                transition,
+                transition: agentdash_agent_service_api::AgentItemTransition::Started {
+                    presentation: item.presentation.clone(),
+                },
             })
         }
-        "thread/archived" => Ok(AgentChangePayload::LifecycleChanged {
-            status: AgentLifecycleStatus::Closed,
-        }),
-        _ => Ok(AgentChangePayload::SnapshotInvalidated {
-            reason: format!("Codex observation {method} requires thread/read reconciliation"),
+        Source::ItemCompleted(notification) => {
+            require_notification_source(source, &notification.thread_id, "item/completed")?;
+            let turn_id = AgentTurnId::new(notification.turn_id).map_err(internal_error)?;
+            let item = map_notification_item(
+                notification.item,
+                AgentEntityStatus::Completed,
+                None,
+                Some(notification.completed_at_ms),
+            )?;
+            Ok(AgentChangePayload::ItemTransitioned {
+                turn_id,
+                item_id: item.id,
+                transition: agentdash_agent_service_api::AgentItemTransition::Terminal {
+                    presentation: item.presentation.clone(),
+                },
+            })
+        }
+        Source::ThreadArchived(notification) => {
+            require_notification_source(source, &notification.thread_id, "thread/archived")?;
+            Ok(AgentChangePayload::LifecycleChanged {
+                status: AgentLifecycleStatus::Closed,
+            })
+        }
+        Source::ThreadCompacted(_)
+        | Source::Error(_)
+        | Source::ThreadStarted(_)
+        | Source::ThreadStatusChanged(_)
+        | Source::ThreadDeleted(_)
+        | Source::ThreadUnarchived(_)
+        | Source::ThreadClosed(_)
+        | Source::SkillsChanged(_)
+        | Source::ThreadGoalUpdated(_)
+        | Source::ThreadGoalCleared(_)
+        | Source::ThreadSettingsUpdated(_)
+        | Source::ThreadTokenUsageUpdated(_)
+        | Source::HookStarted(_)
+        | Source::HookCompleted(_)
+        | Source::TurnDiffUpdated(_)
+        | Source::TurnPlanUpdated(_)
+        | Source::ItemAutoApprovalReviewStarted(_)
+        | Source::ItemAutoApprovalReviewCompleted(_)
+        | Source::ItemAgentMessageDelta(_)
+        | Source::ItemPlanDelta(_)
+        | Source::CommandExecOutputDelta(_)
+        | Source::ProcessOutputDelta(_)
+        | Source::ProcessExited(_)
+        | Source::ItemCommandExecutionOutputDelta(_)
+        | Source::ItemCommandExecutionTerminalInteraction(_)
+        | Source::ItemFileChangeOutputDelta(_)
+        | Source::ItemFileChangePatchUpdated(_)
+        | Source::ServerRequestResolved(_)
+        | Source::ItemMcpToolCallProgress(_)
+        | Source::McpServerOauthLoginCompleted(_)
+        | Source::McpServerStartupStatusUpdated(_)
+        | Source::AccountUpdated(_)
+        | Source::AccountRateLimitsUpdated(_)
+        | Source::AppListUpdated(_)
+        | Source::RemoteControlStatusChanged(_)
+        | Source::ExternalAgentConfigImportProgress(_)
+        | Source::ExternalAgentConfigImportCompleted(_)
+        | Source::FsChanged(_)
+        | Source::ItemReasoningSummaryTextDelta(_)
+        | Source::ItemReasoningSummaryPartAdded(_)
+        | Source::ItemReasoningTextDelta(_)
+        | Source::ModelRerouted(_)
+        | Source::ModelVerification(_)
+        | Source::TurnModerationMetadata(_)
+        | Source::ModelSafetyBufferingUpdated(_)
+        | Source::Warning(_)
+        | Source::GuardianWarning(_)
+        | Source::DeprecationNotice(_)
+        | Source::ConfigWarning(_)
+        | Source::FuzzyFileSearchSessionUpdated(_)
+        | Source::FuzzyFileSearchSessionCompleted(_)
+        | Source::ThreadRealtimeStarted(_)
+        | Source::ThreadRealtimeItemAdded(_)
+        | Source::ThreadRealtimeTranscriptDelta(_)
+        | Source::ThreadRealtimeTranscriptDone(_)
+        | Source::ThreadRealtimeOutputAudioDelta(_)
+        | Source::ThreadRealtimeSdp(_)
+        | Source::ThreadRealtimeError(_)
+        | Source::ThreadRealtimeClosed(_)
+        | Source::WindowsWorldWritableWarning(_)
+        | Source::WindowsSandboxSetupCompleted(_)
+        | Source::AccountLoginCompleted(_) => Ok(AgentChangePayload::SnapshotInvalidated {
+            reason: "typed Codex notification requires thread/read reconciliation".to_owned(),
         }),
     }
 }
 
 fn map_server_request(
     sequence: u64,
-    method: &str,
-    params: &Value,
+    request_id: &Value,
+    request: CodexTypedServerRequest,
 ) -> Result<AgentInteractionSnapshot, AgentServiceError> {
-    let prompt = params
-        .get("prompt")
-        .or_else(|| params.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or("Codex requires a typed interaction response")
-        .to_owned();
-    let request = match method {
-        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
-            AgentInteractionRequest::Approval {
-                prompt,
-                reason: params
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                proposed_action: Some(params.clone()),
-            }
+    let fallback_id = request_id_string(request_id)?;
+    let (interaction_id, turn_id, item_id, request) = match request {
+        CodexTypedServerRequest::CommandExecutionApproval(params) => {
+            let proposed_action = serde_json::to_value(&params).map_err(internal_error)?;
+            (
+                params.approval_id.unwrap_or_else(|| fallback_id.clone()),
+                params.turn_id,
+                Some(params.item_id),
+                AgentInteractionRequest::Approval {
+                    prompt: params
+                        .command
+                        .unwrap_or_else(|| "Codex requests command approval".to_owned()),
+                    reason: params.reason,
+                    proposed_action: Some(proposed_action),
+                },
+            )
         }
-        "item/tool/requestUserInput" => AgentInteractionRequest::UserInput {
-            prompt,
-            questions: params
-                .get("questions")
-                .and_then(Value::as_array)
-                .map(|questions| {
-                    questions
-                        .iter()
-                        .enumerate()
-                        .map(|(index, question)| {
-                            agentdash_agent_service_api::AgentInteractionQuestion {
-                                id: question
-                                    .get("id")
-                                    .and_then(Value::as_str)
-                                    .map(ToOwned::to_owned)
-                                    .unwrap_or_else(|| format!("question-{index}")),
-                                prompt: question
-                                    .get("question")
-                                    .or_else(|| question.get("prompt"))
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_owned(),
-                                options: question
-                                    .get("options")
-                                    .and_then(Value::as_array)
-                                    .map(|options| {
-                                        options
-                                            .iter()
-                                            .filter_map(|option| {
-                                                option
-                                                    .get("label")
-                                                    .or_else(|| option.get("value"))
-                                                    .and_then(Value::as_str)
-                                                    .map(ToOwned::to_owned)
-                                            })
-                                            .collect()
-                                    })
-                                    .unwrap_or_default(),
-                                allows_free_form: true,
-                            }
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-        },
-        "mcpServer/elicitation/create" => AgentInteractionRequest::McpElicitation {
-            server: params
-                .get("server")
-                .or_else(|| params.get("serverName"))
-                .and_then(Value::as_str)
-                .unwrap_or("codex-mcp")
-                .to_owned(),
-            prompt,
-            schema: params
-                .get("schema")
-                .cloned()
-                .unwrap_or_else(|| json!({"type": "object"})),
-        },
-        "item/tool/call" => AgentInteractionRequest::DynamicTool {
-            namespace: params
-                .get("namespace")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned),
-            tool: params
-                .get("tool")
-                .or_else(|| params.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or("codex.dynamic-tool")
-                .to_owned(),
-            prompt,
-            arguments: params
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| json!({})),
-        },
-        _ => {
-            return Err(service_error(
-                AgentServiceErrorCode::Unsupported,
-                format!("unsupported Codex server request {method}"),
-                false,
-            ));
+        CodexTypedServerRequest::FileChangeApproval(params) => {
+            let proposed_action = serde_json::to_value(&params).map_err(internal_error)?;
+            (
+                fallback_id.clone(),
+                params.turn_id,
+                Some(params.item_id),
+                AgentInteractionRequest::Approval {
+                    prompt: params
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "Codex requests file change approval".to_owned()),
+                    reason: params.reason,
+                    proposed_action: Some(proposed_action),
+                },
+            )
         }
+        CodexTypedServerRequest::PermissionsApproval(params) => {
+            let proposed_action = serde_json::to_value(&params).map_err(internal_error)?;
+            (
+                fallback_id.clone(),
+                params.turn_id,
+                Some(params.item_id),
+                AgentInteractionRequest::Approval {
+                    prompt: params
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "Codex requests additional permissions".to_owned()),
+                    reason: params.reason,
+                    proposed_action: Some(proposed_action),
+                },
+            )
+        }
+        CodexTypedServerRequest::UserInput(params) => (
+            fallback_id.clone(),
+            params.turn_id,
+            Some(params.item_id),
+            AgentInteractionRequest::UserInput {
+                prompt: "Codex requests user input".to_owned(),
+                questions: params
+                    .questions
+                    .into_iter()
+                    .map(|question| {
+                        let options = question.options;
+                        let allows_free_form = question.is_other || options.is_none();
+                        agentdash_agent_service_api::AgentInteractionQuestion {
+                            id: question.id,
+                            prompt: question.question,
+                            options: options
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|option| option.label)
+                                .collect(),
+                            allows_free_form,
+                        }
+                    })
+                    .collect(),
+            },
+        ),
+        CodexTypedServerRequest::DynamicTool(params) => (
+            params.call_id,
+            params.turn_id,
+            None,
+            AgentInteractionRequest::DynamicTool {
+                namespace: params.namespace,
+                tool: params.tool,
+                prompt: "Codex requests a dynamic tool call".to_owned(),
+                arguments: params.arguments,
+            },
+        ),
+        CodexTypedServerRequest::McpElicitation(params) => (
+            fallback_id,
+            params.turn_id.ok_or_else(|| {
+                protocol_violation("Codex MCP elicitation cannot be correlated to an active turn")
+            })?,
+            None,
+            AgentInteractionRequest::McpElicitation {
+                server: params.server_name,
+                prompt: params.message,
+                schema: params.requested_schema,
+            },
+        ),
     };
     Ok(AgentInteractionSnapshot {
-        id: AgentInteractionId::new(
-            params
-                .get("requestId")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("codex-request-{sequence}")),
-        )
+        id: AgentInteractionId::new(if interaction_id.is_empty() {
+            format!("codex-request-{sequence}")
+        } else {
+            interaction_id
+        })
         .map_err(internal_error)?,
-        turn_id: required_id::<AgentTurnId>(params, "turnId", AgentTurnId::new)?,
-        item_id: params
-            .get("itemId")
-            .and_then(Value::as_str)
+        turn_id: AgentTurnId::new(turn_id).map_err(internal_error)?,
+        item_id: item_id
             .map(AgentItemId::new)
             .transpose()
             .map_err(internal_error)?,
@@ -2219,6 +2450,95 @@ fn map_server_request(
         status: AgentInteractionStatus::Pending,
         resolution: None,
     })
+}
+
+fn request_id_string(request_id: &Value) -> Result<String, AgentServiceError> {
+    match request_id {
+        Value::String(value) => Ok(value.clone()),
+        Value::Number(value) if value.is_i64() || value.is_u64() => Ok(value.to_string()),
+        _ => Err(protocol_violation(
+            "Codex server request id must be a string or integer",
+        )),
+    }
+}
+
+fn require_notification_source(
+    expected: &AgentSourceCoordinate,
+    actual: &str,
+    method: &str,
+) -> Result<(), AgentServiceError> {
+    if expected.as_str() == actual {
+        Ok(())
+    } else {
+        Err(protocol_violation(format!(
+            "{method} belongs to a different source thread"
+        )))
+    }
+}
+
+fn project_codex_turn_status(
+    status: crate::vendor_generated::codex_v2::server_notification::TurnStatus,
+) -> AgentEntityStatus {
+    use crate::vendor_generated::codex_v2::server_notification::TurnStatus;
+    match status {
+        TurnStatus::Completed => AgentEntityStatus::Completed,
+        TurnStatus::Interrupted => AgentEntityStatus::Interrupted,
+        TurnStatus::Failed => AgentEntityStatus::Failed,
+        TurnStatus::InProgress => AgentEntityStatus::Running,
+    }
+}
+
+fn map_notification_turn(
+    turn: crate::vendor_generated::codex_v2::server_notification::Turn,
+) -> Result<AgentTurnSnapshot, AgentServiceError> {
+    let status = project_codex_turn_status(turn.status);
+    let items = turn
+        .items
+        .into_iter()
+        .map(|item| {
+            let value = serde_json::to_value(item).map_err(internal_error)?;
+            map_item(&value, Some(status))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(AgentTurnSnapshot {
+        id: AgentTurnId::new(turn.id).map_err(internal_error)?,
+        status,
+        items,
+    })
+}
+
+fn map_notification_item(
+    item: crate::vendor_generated::codex_v2::server_notification::ThreadItem,
+    inherited_status: AgentEntityStatus,
+    started_at_ms: Option<i64>,
+    completed_at_ms: Option<i64>,
+) -> Result<AgentItemSnapshot, AgentServiceError> {
+    let value = serde_json::to_value(item).map_err(internal_error)?;
+    let mut mapped = map_item(&value, Some(inherited_status))?;
+    let started_at_ms = started_at_ms
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| protocol_violation("Codex item startedAtMs must be non-negative"))?
+        .or(mapped.presentation.started_at_ms.map(|value| value.0));
+    let mut terminal = mapped.presentation.terminal.clone();
+    if let (Some(completed_at_ms), Some(terminal)) = (completed_at_ms, terminal.as_mut()) {
+        terminal.completed_at_ms = Some(agentdash_agent_service_api::AgentServiceU64(
+            u64::try_from(completed_at_ms)
+                .map_err(|_| protocol_violation("Codex item completedAtMs must be non-negative"))?,
+        ));
+    }
+    mapped.presentation = AgentItemPresentation::new(
+        mapped.presentation.body,
+        started_at_ms,
+        completed_at_ms
+            .map(u64::try_from)
+            .transpose()
+            .map_err(|_| protocol_violation("Codex item completedAtMs must be non-negative"))?
+            .or(mapped.presentation.updated_at_ms.map(|value| value.0)),
+        terminal,
+    )
+    .map_err(internal_error)?;
+    Ok(mapped)
 }
 
 fn interaction_result(
@@ -2474,5 +2794,264 @@ mod tests {
                 .message
                 .contains("unknown or invalid Codex ThreadItem")
         );
+    }
+
+    #[test]
+    fn every_admitted_server_request_is_typed_before_it_becomes_an_interaction() {
+        let fixtures = [
+            (
+                "item/commandExecution/requestApproval",
+                json!({
+                    "approvalId": "approval-1",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "startedAtMs": 1,
+                    "command": "cargo test",
+                    "reason": "approve command"
+                }),
+            ),
+            (
+                "item/fileChange/requestApproval",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "startedAtMs": 1,
+                    "reason": "approve files"
+                }),
+            ),
+            (
+                "item/permissions/requestApproval",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "startedAtMs": 1,
+                    "cwd": "C:\\repo",
+                    "permissions": {},
+                    "reason": "approve permissions"
+                }),
+            ),
+            (
+                "item/tool/requestUserInput",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "questions": [{
+                        "header": "Choice",
+                        "id": "choice",
+                        "question": "Choose",
+                        "options": [{"label": "A", "description": "first"}]
+                    }]
+                }),
+            ),
+            (
+                "item/tool/call",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "callId": "call-1",
+                    "namespace": "dash",
+                    "tool": "lookup",
+                    "arguments": {"query": "value"}
+                }),
+            ),
+            (
+                "mcpServer/elicitation/request",
+                json!({
+                    "mode": "openai/form",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "serverName": "mcp",
+                    "message": "Provide input",
+                    "requestedSchema": {"type": "object"}
+                }),
+            ),
+        ];
+
+        for (index, (method, params)) in fixtures.into_iter().enumerate() {
+            let observation =
+                CodexAppServerObservation::server_request(1, json!(index + 1), method, params)
+                    .expect("typed server request");
+            assert_eq!(observation.source_thread_id(), Some("thread-1"));
+            let CodexTypedObservation::ServerRequest {
+                request_id,
+                request,
+            } = observation.kind
+            else {
+                panic!("server request root");
+            };
+            let interaction =
+                map_server_request(1, &request_id, *request).expect("canonical interaction");
+            assert_eq!(interaction.turn_id.as_str(), "turn-1");
+            assert!(matches!(
+                (index, interaction.request),
+                (0..=2, AgentInteractionRequest::Approval { .. })
+                    | (3, AgentInteractionRequest::UserInput { .. })
+                    | (4, AgentInteractionRequest::DynamicTool { .. })
+                    | (5, AgentInteractionRequest::McpElicitation { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn unknown_methods_and_invalid_admitted_payloads_are_protocol_violations() {
+        for error in [
+            CodexAppServerObservation::notification(
+                1,
+                "future/notification",
+                json!({"threadId": "thread-1"}),
+            )
+            .expect_err("unknown notification"),
+            CodexAppServerObservation::notification(
+                1,
+                "thread/name/updated",
+                json!({"threadName": "missing source"}),
+            )
+            .expect_err("invalid admitted notification"),
+            CodexAppServerObservation::server_request(
+                1,
+                json!(1),
+                "future/request",
+                json!({"threadId": "thread-1"}),
+            )
+            .expect_err("unknown request"),
+            CodexAppServerObservation::server_request(
+                1,
+                json!(1),
+                "item/tool/call",
+                json!({"threadId": "thread-1"}),
+            )
+            .expect_err("invalid admitted request"),
+        ] {
+            assert!(!error.retryable);
+            assert!(!error.outcome_unknown);
+        }
+    }
+
+    #[test]
+    fn admitted_notification_families_project_without_retaining_raw_method_payload_pairs() {
+        let source = AgentSourceCoordinate::new("thread-1").expect("source");
+        let turn = |status: &str| {
+            json!({
+                "id": "turn-1",
+                "items": [],
+                "status": status
+            })
+        };
+        let item = || json!({"type": "agentMessage", "id": "item-1", "text": "hello"});
+        let fixtures = [
+            (
+                "thread/name/updated",
+                json!({"threadId": "thread-1", "threadName": "name"}),
+            ),
+            (
+                "turn/started",
+                json!({"threadId": "thread-1", "turn": turn("inProgress")}),
+            ),
+            (
+                "turn/completed",
+                json!({"threadId": "thread-1", "turn": turn("failed")}),
+            ),
+            (
+                "item/started",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "startedAtMs": 1,
+                    "item": item()
+                }),
+            ),
+            (
+                "item/completed",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "completedAtMs": 2,
+                    "item": item()
+                }),
+            ),
+            ("thread/archived", json!({"threadId": "thread-1"})),
+            (
+                "thread/compacted",
+                json!({"threadId": "thread-1", "turnId": "turn-1"}),
+            ),
+        ];
+
+        for (index, (method, params)) in fixtures.into_iter().enumerate() {
+            let observation =
+                CodexAppServerObservation::notification(index as u64 + 1, method, params)
+                    .expect("typed notification");
+            let CodexTypedObservation::Notification(notification) = observation.kind else {
+                panic!("notification root");
+            };
+            let payload = map_notification(&source, *notification).expect("canonical change");
+            assert!(matches!(
+                (index, payload),
+                (0, AgentChangePayload::ThreadNameChanged { .. })
+                    | (1..=2, AgentChangePayload::TurnChanged { .. })
+                    | (3..=4, AgentChangePayload::ItemTransitioned { .. })
+                    | (5, AgentChangePayload::LifecycleChanged { .. })
+                    | (6, AgentChangePayload::SnapshotInvalidated { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn compaction_failure_and_loss_remain_terminal_in_snapshot_projection() {
+        let source = AgentSourceCoordinate::new("thread-1").expect("source");
+        let observation = CodexAppServerObservation::notification(
+            1,
+            "turn/completed",
+            json!({
+                "threadId": "thread-1",
+                "turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "items": [{"type": "contextCompaction", "id": "compaction-1"}]
+                }
+            }),
+        )
+        .expect("typed failed turn");
+        let CodexTypedObservation::Notification(notification) = observation.kind else {
+            panic!("notification root");
+        };
+        let AgentChangePayload::TurnChanged { turn } =
+            map_notification(&source, *notification).expect("failed turn")
+        else {
+            panic!("turn change");
+        };
+        assert_eq!(turn.items[0].status, AgentEntityStatus::Failed);
+        assert_eq!(
+            turn.items[0]
+                .presentation
+                .terminal
+                .as_ref()
+                .expect("failed compaction evidence")
+                .outcome,
+            AgentTerminalStatus::Failed
+        );
+
+        for (status, expected) in [
+            (AgentEntityStatus::Failed, AgentTerminalStatus::Failed),
+            (AgentEntityStatus::Lost, AgentTerminalStatus::Lost),
+        ] {
+            let item = map_item(
+                &json!({"type": "contextCompaction", "id": "compaction-1"}),
+                Some(status),
+            )
+            .expect("typed compaction item");
+            assert_eq!(item.status, status);
+            assert_eq!(
+                item.presentation
+                    .terminal
+                    .as_ref()
+                    .expect("terminal evidence")
+                    .outcome,
+                expected
+            );
+        }
     }
 }

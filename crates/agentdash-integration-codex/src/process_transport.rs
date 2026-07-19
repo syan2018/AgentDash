@@ -172,7 +172,12 @@ impl CodexProcessTransport {
                     break;
                 };
                 match inbound {
-                    Ok(frame) => transport.handle_inbound(frame).await,
+                    Ok(frame) => {
+                        if let Err(error) = transport.handle_inbound(frame).await {
+                            transport.disconnect(error).await;
+                            break;
+                        }
+                    }
                     Err(error) => {
                         transport.disconnect(error).await;
                         break;
@@ -183,7 +188,10 @@ impl CodexProcessTransport {
         transport
     }
 
-    async fn handle_inbound(&self, inbound: RpcInbound) {
+    async fn handle_inbound(
+        &self,
+        inbound: RpcInbound,
+    ) -> Result<(), CodexCompleteAgentTransportError> {
         match inbound {
             RpcInbound::Response(response) => {
                 if let Some(id) = response.id.as_i64()
@@ -203,44 +211,44 @@ impl CodexProcessTransport {
                 }
             }
             RpcInbound::Notification(notification) => {
-                self.record_observation(notification.params, |sequence, params| {
-                    CodexAppServerObservation::Notification {
-                        sequence,
-                        method: notification.method,
-                        params,
-                    }
-                })
+                let sequence = source_thread_id(&notification.params)
+                    .map(|_| {
+                        self.next_observation_sequence
+                            .fetch_add(1, Ordering::Relaxed)
+                    })
+                    .unwrap_or(0);
+                self.record_observation(CodexAppServerObservation::notification(
+                    sequence,
+                    notification.method,
+                    notification.params,
+                )?)
                 .await;
             }
             RpcInbound::Request(request) => {
-                self.record_observation(request.params, |sequence, params| {
-                    CodexAppServerObservation::ServerRequest {
-                        sequence,
-                        request_id: request.id,
-                        method: request.method,
-                        params,
-                    }
-                })
+                let sequence = self
+                    .next_observation_sequence
+                    .fetch_add(1, Ordering::Relaxed);
+                self.record_observation(CodexAppServerObservation::server_request(
+                    sequence,
+                    request.id,
+                    request.method,
+                    request.params,
+                )?)
                 .await;
             }
         }
+        Ok(())
     }
 
-    async fn record_observation(
-        &self,
-        params: Value,
-        build: impl FnOnce(u64, Value) -> CodexAppServerObservation,
-    ) {
-        let Some(source_thread_id) = source_thread_id(&params) else {
+    async fn record_observation(&self, observation: CodexAppServerObservation) {
+        let Some(source_thread_id) = observation.source_thread_id() else {
             return;
         };
-        let sequence = self
-            .next_observation_sequence
-            .fetch_add(1, Ordering::Relaxed);
+        let source_thread_id = source_thread_id.to_owned();
         let mut state = self.observations.write().await;
         state.retained.push_back(RecordedObservation {
-            source_thread_id: source_thread_id.to_owned(),
-            observation: build(sequence, params),
+            source_thread_id,
+            observation,
         });
         while state.retained.len() > OBSERVATION_RETENTION {
             state.retained.pop_front();
@@ -569,6 +577,35 @@ mod tests {
         };
         assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
         assert_no_frame(&mut lines).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_notification_or_server_request_disconnects_the_observation_stream() {
+        for frame in [
+            json!({
+                "method": "future/notification",
+                "params": {"threadId": "thread-1"}
+            }),
+            json!({
+                "id": "request-1",
+                "method": "item/tool/call",
+                "params": {"threadId": "thread-1"}
+            }),
+        ] {
+            let (transport, _lines, mut writer) = fixture();
+            write_frame(&mut writer, frame).await;
+            tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    if transport.observations.read().await.disconnected {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("typed protocol violation disconnect");
+            assert!(transport.observations("thread-1", None, 1).await.is_err());
+        }
     }
 
     #[test]

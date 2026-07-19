@@ -699,17 +699,23 @@ async fn live_server_request_maps_to_interaction_and_resolves_through_the_same_r
         .lock()
         .await
         .push_back(CodexAppServerObservationPage {
-            observations: vec![CodexAppServerObservation::ServerRequest {
-                sequence: 3,
-                request_id: json!(44),
-                method: "item/commandExecution/requestApproval".to_owned(),
-                params: json!({
-                    "requestId": "approval-1",
-                    "turnId": "turn-1",
-                    "itemId": "item-1",
-                    "prompt": "approve?"
-                }),
-            }],
+            observations: vec![
+                CodexAppServerObservation::server_request(
+                    3,
+                    json!(44),
+                    "item/commandExecution/requestApproval",
+                    json!({
+                        "approvalId": "approval-1",
+                        "threadId": "thread-parent",
+                        "turnId": "turn-1",
+                        "itemId": "item-1",
+                        "startedAtMs": 1,
+                        "command": "echo hi",
+                        "reason": "approve?"
+                    }),
+                )
+                .expect("typed command approval"),
+            ],
             next_sequence: Some(3),
             gap: false,
         });
@@ -803,22 +809,24 @@ async fn thread_read_and_name_notifications_map_source_authoritative_set_and_cle
         .await
         .push_back(CodexAppServerObservationPage {
             observations: vec![
-                CodexAppServerObservation::Notification {
-                    sequence: 4,
-                    method: "thread/name/updated".to_owned(),
-                    params: json!({
+                CodexAppServerObservation::notification(
+                    4,
+                    "thread/name/updated",
+                    json!({
                         "threadId": "thread-parent",
                         "threadName": "更新标题"
                     }),
-                },
-                CodexAppServerObservation::Notification {
-                    sequence: 5,
-                    method: "thread/name/updated".to_owned(),
-                    params: json!({
+                )
+                .expect("typed name notification"),
+                CodexAppServerObservation::notification(
+                    5,
+                    "thread/name/updated",
+                    json!({
                         "threadId": "thread-parent",
                         "threadName": null
                     }),
-                },
+                )
+                .expect("typed cleared name notification"),
             ],
             next_sequence: Some(5),
             gap: false,
@@ -857,14 +865,17 @@ async fn thread_name_notification_for_another_source_is_rejected() {
         .lock()
         .await
         .push_back(CodexAppServerObservationPage {
-            observations: vec![CodexAppServerObservation::Notification {
-                sequence: 4,
-                method: "thread/name/updated".to_owned(),
-                params: json!({
-                    "threadId": "another-thread",
-                    "threadName": "错误来源"
-                }),
-            }],
+            observations: vec![
+                CodexAppServerObservation::notification(
+                    4,
+                    "thread/name/updated",
+                    json!({
+                        "threadId": "another-thread",
+                        "threadName": "错误来源"
+                    }),
+                )
+                .expect("typed wrong-source name notification"),
+            ],
             next_sequence: Some(4),
             gap: false,
         });
@@ -1362,17 +1373,23 @@ async fn unknown_interaction_response_outcome_enters_effect_ledger_and_is_not_re
         .lock()
         .await
         .push_back(CodexAppServerObservationPage {
-            observations: vec![CodexAppServerObservation::ServerRequest {
-                sequence: 3,
-                request_id: json!(44),
-                method: "item/commandExecution/requestApproval".to_owned(),
-                params: json!({
-                    "requestId": "approval-unknown",
-                    "turnId": "turn-1",
-                    "itemId": "item-1",
-                    "prompt": "approve?"
-                }),
-            }],
+            observations: vec![
+                CodexAppServerObservation::server_request(
+                    3,
+                    json!(44),
+                    "item/commandExecution/requestApproval",
+                    json!({
+                        "approvalId": "approval-unknown",
+                        "threadId": "thread-parent",
+                        "turnId": "turn-1",
+                        "itemId": "item-1",
+                        "startedAtMs": 1,
+                        "command": "echo hi",
+                        "reason": "approve?"
+                    }),
+                )
+                .expect("typed command approval"),
+            ],
             next_sequence: Some(3),
             gap: false,
         });

@@ -87,7 +87,7 @@ function runtimeU64(value: unknown, path: string): bigint {
 }
 
 export function encodeRuntimeU64(value: bigint, path = "$"): RuntimeU64 {
-  if (value < 0n || value > U64_MAX) {
+  if (typeof value !== "bigint" || value < 0n || value > U64_MAX) {
     throw new ManagedRuntimeContractDecodeError(path, "u64 bigint");
   }
   return value.toString(10) as RuntimeU64;
@@ -393,6 +393,258 @@ function encodeAvailabilityMap(
   ) as ManagedRuntimeSnapshotWire["command_availability"];
 }
 
+const PRESENTATION_BODY_KINDS = new Set([
+  "user_message",
+  "hook_prompt",
+  "agent_message",
+  "reasoning",
+  "plan",
+  "command_execution",
+  "file_change",
+  "file_read",
+  "file_search",
+  "mcp_tool_call",
+  "dynamic_tool_call",
+  "collaboration_tool_call",
+  "subagent_activity",
+  "web_search",
+  "image_view",
+  "image_generation",
+  "sleep",
+  "review",
+  "terminal_control",
+  "context_compaction",
+  "generic_tool_activity",
+  "error",
+]);
+
+const ITEM_UPDATE_KINDS = new Set([
+  "text_appended",
+  "reasoning_appended",
+  "content_appended",
+  "command_output_appended",
+  "patch_changed",
+  "plan_changed",
+  "tool_progress",
+  "collaboration_changed",
+  "body_replaced",
+]);
+
+function decodeItemBody(value: unknown, path: string): unknown {
+  const body = record(value, path);
+  if (!PRESENTATION_BODY_KINDS.has(String(body.kind))) {
+    throw new ManagedRuntimeContractDecodeError(`${path}.kind`, "known item body");
+  }
+  return body.kind === "sleep"
+    ? {
+        ...body,
+        duration_ms: runtimeU64(body.duration_ms, `${path}.duration_ms`),
+      }
+    : body;
+}
+
+function encodeItemBody(value: unknown, path: string): unknown {
+  const body = record(value, path);
+  if (!PRESENTATION_BODY_KINDS.has(String(body.kind))) {
+    throw new ManagedRuntimeContractDecodeError(`${path}.kind`, "known item body");
+  }
+  return body.kind === "sleep"
+    ? {
+        ...body,
+        duration_ms: encodeRuntimeU64(
+          body.duration_ms as bigint,
+          `${path}.duration_ms`,
+        ),
+      }
+    : body;
+}
+
+function decodeItemPresentation(value: unknown, path: string): unknown {
+  const presentation = record(value, path);
+  const terminal =
+    presentation.terminal === null
+      ? null
+      : (() => {
+          const evidence = record(presentation.terminal, `${path}.terminal`);
+          return {
+            ...evidence,
+            completed_at_ms: optionalRuntimeU64(
+              evidence.completed_at_ms,
+              `${path}.terminal.completed_at_ms`,
+            ),
+            duration_ms: optionalRuntimeU64(
+              evidence.duration_ms,
+              `${path}.terminal.duration_ms`,
+            ),
+          };
+        })();
+  return {
+    ...presentation,
+    body: decodeItemBody(presentation.body, `${path}.body`),
+    started_at_ms: optionalRuntimeU64(
+      presentation.started_at_ms,
+      `${path}.started_at_ms`,
+    ),
+    updated_at_ms: optionalRuntimeU64(
+      presentation.updated_at_ms,
+      `${path}.updated_at_ms`,
+    ),
+    terminal,
+  };
+}
+
+function encodeItemPresentation(value: unknown, path: string): unknown {
+  const presentation = record(value, path);
+  const terminal =
+    presentation.terminal === null
+      ? null
+      : (() => {
+          const evidence = record(presentation.terminal, `${path}.terminal`);
+          return {
+            ...evidence,
+            completed_at_ms:
+              evidence.completed_at_ms === null
+                ? null
+                : encodeRuntimeU64(
+                    evidence.completed_at_ms as bigint,
+                    `${path}.terminal.completed_at_ms`,
+                  ),
+            duration_ms:
+              evidence.duration_ms === null
+                ? null
+                : encodeRuntimeU64(
+                    evidence.duration_ms as bigint,
+                    `${path}.terminal.duration_ms`,
+                  ),
+          };
+        })();
+  return {
+    ...presentation,
+    body: encodeItemBody(presentation.body, `${path}.body`),
+    started_at_ms:
+      presentation.started_at_ms === null
+        ? null
+        : encodeRuntimeU64(
+            presentation.started_at_ms as bigint,
+            `${path}.started_at_ms`,
+          ),
+    updated_at_ms:
+      presentation.updated_at_ms === null
+        ? null
+        : encodeRuntimeU64(
+            presentation.updated_at_ms as bigint,
+            `${path}.updated_at_ms`,
+          ),
+    terminal,
+  };
+}
+
+function decodeItem(value: unknown, path: string): unknown {
+  const item = record(value, path);
+  return {
+    ...item,
+    presentation: decodeItemPresentation(
+      item.presentation,
+      `${path}.presentation`,
+    ),
+  };
+}
+
+function encodeItem(value: unknown, path: string): unknown {
+  const item = record(value, path);
+  return {
+    ...item,
+    presentation: encodeItemPresentation(
+      item.presentation,
+      `${path}.presentation`,
+    ),
+  };
+}
+
+function decodeItemUpdate(value: unknown, path: string): unknown {
+  const update = record(value, path);
+  if (!ITEM_UPDATE_KINDS.has(String(update.kind))) {
+    throw new ManagedRuntimeContractDecodeError(`${path}.kind`, "known item update");
+  }
+  return update.kind === "body_replaced"
+    ? {
+        ...update,
+        body: decodeItemBody(update.body, `${path}.body`),
+      }
+    : update;
+}
+
+function encodeItemUpdate(value: unknown, path: string): unknown {
+  const update = record(value, path);
+  if (!ITEM_UPDATE_KINDS.has(String(update.kind))) {
+    throw new ManagedRuntimeContractDecodeError(`${path}.kind`, "known item update");
+  }
+  return update.kind === "body_replaced"
+    ? {
+        ...update,
+        body: encodeItemBody(update.body, `${path}.body`),
+      }
+    : update;
+}
+
+function decodeItemTransition(value: unknown, path: string): unknown {
+  const transition = record(value, path);
+  switch (transition.kind) {
+    case "started":
+    case "terminal":
+      return {
+        ...transition,
+        presentation: decodeItemPresentation(
+          transition.presentation,
+          `${path}.presentation`,
+        ),
+      };
+    case "updated":
+      return {
+        ...transition,
+        update: decodeItemUpdate(transition.update, `${path}.update`),
+        presentation: decodeItemPresentation(
+          transition.presentation,
+          `${path}.presentation`,
+        ),
+      };
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.kind`,
+        "known item transition",
+      );
+  }
+}
+
+function encodeItemTransition(value: unknown, path: string): unknown {
+  const transition = record(value, path);
+  switch (transition.kind) {
+    case "started":
+    case "terminal":
+      return {
+        ...transition,
+        presentation: encodeItemPresentation(
+          transition.presentation,
+          `${path}.presentation`,
+        ),
+      };
+    case "updated":
+      return {
+        ...transition,
+        update: encodeItemUpdate(transition.update, `${path}.update`),
+        presentation: encodeItemPresentation(
+          transition.presentation,
+          `${path}.presentation`,
+        ),
+      };
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.kind`,
+        "known item transition",
+      );
+  }
+}
+
 export function decodeManagedRuntimeSnapshot(value: unknown): ManagedRuntimeSnapshot {
   const snapshot = record(value, "$");
   const threadNameSource =
@@ -417,6 +669,9 @@ export function decodeManagedRuntimeSnapshot(value: unknown): ManagedRuntimeSnap
     ),
     captured_at_ms: runtimeU64(snapshot.captured_at_ms, "$.captured_at_ms"),
     thread_name_source: threadNameSource,
+    items: array(snapshot.items, "$.items").map((item, index) =>
+      decodeItem(item, `$.items[${index}]`)
+    ),
     operations: array(snapshot.operations, "$.operations").map((operation, index) =>
       decodeOperation(operation, `$.operations[${index}]`)
     ),
@@ -446,6 +701,9 @@ export function encodeManagedRuntimeSnapshot(
             ...snapshot.thread_name_source,
             observed_at_ms: encodeRuntimeU64(snapshot.thread_name_source.observed_at_ms),
           },
+    items: snapshot.items.map((item, index) =>
+      encodeItem(item, `$.items[${index}]`)
+    ) as ManagedRuntimeSnapshotWire["items"],
     operations: snapshot.operations.map(encodeOperation),
     source_binding:
       snapshot.source_binding === null
@@ -453,6 +711,112 @@ export function encodeManagedRuntimeSnapshot(
         : encodeSourceBinding(snapshot.source_binding),
     command_availability: encodeAvailabilityMap(snapshot.command_availability),
   } as ManagedRuntimeSnapshotWire;
+}
+
+function decodeSourceProjectionDelta(value: unknown, path: string): unknown {
+  const projection = record(value, path);
+  switch (projection.kind) {
+    case "snapshot_replaced":
+      return {
+        ...projection,
+        items: array(projection.items, `${path}.items`).map((item, index) =>
+          decodeItem(item, `${path}.items[${index}]`)
+        ),
+        applied_surface_revision: optionalRuntimeU64(
+          projection.applied_surface_revision,
+          `${path}.applied_surface_revision`,
+        ),
+      };
+    case "items_changed":
+      return {
+        ...projection,
+        items: array(projection.items, `${path}.items`).map((item, index) =>
+          decodeItem(item, `${path}.items[${index}]`)
+        ),
+      };
+    case "item_transitioned":
+      return {
+        ...projection,
+        transition: decodeItemTransition(
+          projection.transition,
+          `${path}.transition`,
+        ),
+      };
+    case "surface_changed":
+      return {
+        ...projection,
+        applied_surface_revision: optionalRuntimeU64(
+          projection.applied_surface_revision,
+          `${path}.applied_surface_revision`,
+        ),
+      };
+    case "lifecycle_changed":
+    case "active_turn_changed":
+    case "turns_changed":
+    case "interactions_changed":
+      return projection;
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.kind`,
+        "known source projection delta",
+      );
+  }
+}
+
+function encodeSourceProjectionDelta(value: unknown, path: string): unknown {
+  const projection = record(value, path);
+  switch (projection.kind) {
+    case "snapshot_replaced":
+      return {
+        ...projection,
+        items: array(projection.items, `${path}.items`).map((item, index) =>
+          encodeItem(item, `${path}.items[${index}]`)
+        ),
+        applied_surface_revision:
+          projection.applied_surface_revision === null
+            ? null
+            : encodeRuntimeU64(
+                projection.applied_surface_revision as bigint,
+                `${path}.applied_surface_revision`,
+              ),
+      };
+    case "items_changed":
+      return {
+        ...projection,
+        items: array(projection.items, `${path}.items`).map((item, index) =>
+          encodeItem(item, `${path}.items[${index}]`)
+        ),
+      };
+    case "item_transitioned":
+      return {
+        ...projection,
+        transition: encodeItemTransition(
+          projection.transition,
+          `${path}.transition`,
+        ),
+      };
+    case "surface_changed":
+      return {
+        ...projection,
+        applied_surface_revision:
+          projection.applied_surface_revision === null
+            ? null
+            : encodeRuntimeU64(
+                projection.applied_surface_revision as bigint,
+                `${path}.applied_surface_revision`,
+              ),
+      };
+    case "lifecycle_changed":
+    case "active_turn_changed":
+    case "turns_changed":
+    case "interactions_changed":
+      return projection;
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.kind`,
+        "known source projection delta",
+      );
+  }
 }
 
 function decodeChangeDelta(value: unknown, path: string): DecodeRuntimeU64<ManagedRuntimeChangeDeltaWire> {
@@ -492,17 +856,6 @@ function decodeChangeDelta(value: unknown, path: string): DecodeRuntimeU64<Manag
         ),
       } as DecodeRuntimeU64<ManagedRuntimeChangeDeltaWire>;
     case "source_projection_changed": {
-      const projection = record(delta.delta, `${path}.delta`);
-      const decodedProjection =
-        projection.kind === "snapshot_replaced" || projection.kind === "surface_changed"
-          ? {
-              ...projection,
-              applied_surface_revision: optionalRuntimeU64(
-                projection.applied_surface_revision,
-                `${path}.delta.applied_surface_revision`,
-              ),
-            }
-          : projection;
       return {
         ...delta,
         source_change_sequence: runtimeU64(
@@ -513,7 +866,7 @@ function decodeChangeDelta(value: unknown, path: string): DecodeRuntimeU64<Manag
           delta.source_projection_revision,
           `${path}.source_projection_revision`,
         ),
-        delta: decodedProjection,
+        delta: decodeSourceProjectionDelta(delta.delta, `${path}.delta`),
       } as DecodeRuntimeU64<ManagedRuntimeChangeDeltaWire>;
     }
     case "operation_upserted":
@@ -555,6 +908,7 @@ function decodeChangeDelta(value: unknown, path: string): DecodeRuntimeU64<Manag
 
 function encodeChangeDelta(
   delta: DecodeRuntimeU64<ManagedRuntimeChangeDeltaWire>,
+  path: string,
 ): ManagedRuntimeChangeDeltaWire {
   switch (delta.kind) {
     case "thread_name_changed":
@@ -574,21 +928,11 @@ function encodeChangeDelta(
         source_projection_revision: encodeRuntimeU64(delta.source_projection_revision),
       } as ManagedRuntimeChangeDeltaWire;
     case "source_projection_changed": {
-      const projection =
-        delta.delta.kind === "snapshot_replaced" || delta.delta.kind === "surface_changed"
-          ? {
-              ...delta.delta,
-              applied_surface_revision:
-                delta.delta.applied_surface_revision === null
-                  ? null
-                  : encodeRuntimeU64(delta.delta.applied_surface_revision),
-            }
-          : delta.delta;
       return {
         ...delta,
         source_change_sequence: encodeRuntimeU64(delta.source_change_sequence),
         source_projection_revision: encodeRuntimeU64(delta.source_projection_revision),
-        delta: projection,
+        delta: encodeSourceProjectionDelta(delta.delta, `${path}.delta`),
       } as ManagedRuntimeChangeDeltaWire;
     }
     case "operation_upserted":
@@ -617,6 +961,11 @@ function encodeChangeDelta(
       } as ManagedRuntimeChangeDeltaWire;
     case "runtime_lifecycle_changed":
       return delta as ManagedRuntimeChangeDeltaWire;
+    default:
+      throw new ManagedRuntimeContractDecodeError(
+        `${path}.kind`,
+        "known Runtime delta",
+      );
   }
 }
 
@@ -635,12 +984,13 @@ export function decodeManagedRuntimePlatformChange(
 
 export function encodeManagedRuntimePlatformChange(
   change: ManagedRuntimePlatformChange,
+  path = "$",
 ): ManagedRuntimePlatformChangeWire {
   return {
     ...change,
     sequence: encodeRuntimeU64(change.sequence),
     revision: encodeRuntimeU64(change.revision),
-    delta: encodeChangeDelta(change.delta),
+    delta: encodeChangeDelta(change.delta, `${path}.delta`),
   } as ManagedRuntimePlatformChangeWire;
 }
 
@@ -674,7 +1024,9 @@ export function encodeManagedRuntimeChangePage(
 ): ManagedRuntimeChangePageWire {
   return {
     ...page,
-    changes: page.changes.map(encodeManagedRuntimePlatformChange),
+    changes: page.changes.map((change, index) =>
+      encodeManagedRuntimePlatformChange(change, `$.changes[${index}]`)
+    ),
     next: encodeRuntimeU64(page.next),
     gap:
       page.gap === null

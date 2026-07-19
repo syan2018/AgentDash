@@ -9,12 +9,13 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeInteraction, ManagedRuntimeInteractionRequest,
     ManagedRuntimeInteractionResolution, ManagedRuntimeInteractionStatus, ManagedRuntimeItem,
     ManagedRuntimeItemBody, ManagedRuntimeItemPresentation, ManagedRuntimeItemTerminalEvidence,
-    ManagedRuntimeLifecycleStatus, ManagedRuntimeOperation, ManagedRuntimePlatformChange,
-    ManagedRuntimePresentationContentBlock, ManagedRuntimeProjectionAuthority,
-    ManagedRuntimeProjectionFidelity, ManagedRuntimeProjectionSection, ManagedRuntimeSnapshot,
-    ManagedRuntimeSourceProjectionDelta, ManagedRuntimeThreadNameSource, ManagedRuntimeTurn,
-    RuntimeChangeSequence, RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest,
-    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
+    ManagedRuntimeItemTransition, ManagedRuntimeItemUpdate, ManagedRuntimeLifecycleStatus,
+    ManagedRuntimeOperation, ManagedRuntimePlatformChange, ManagedRuntimePresentationContentBlock,
+    ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
+    ManagedRuntimeProjectionSection, ManagedRuntimeSnapshot, ManagedRuntimeSourceProjectionDelta,
+    ManagedRuntimeThreadNameSource, ManagedRuntimeTurn, RuntimeChangeSequence,
+    RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest, RuntimeProjectionRevision,
+    RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_agent_service_api::{
     AgentChangePage, AgentChangePayload, AgentChangesQuery, AgentEntityStatus, AgentInteractionId,
@@ -2033,6 +2034,21 @@ fn project_source_projection_section(
             Ok(ManagedRuntimeSourceProjectionDelta::TurnsChanged { turns: turns()? })
         }
         ManagedRuntimeProjectionSection::Items => {
+            if let NormalizedAgentPlatformChangePayload::SourceChangeApplied {
+                payload: source_payload,
+                ..
+            } = payload
+                && let AgentChangePayload::ItemTransitioned {
+                    turn_id,
+                    item_id,
+                    transition,
+                } = source_payload.as_ref()
+            {
+                return Ok(ManagedRuntimeSourceProjectionDelta::ItemTransitioned {
+                    item_id: identities.runtime_item_id(item_id, turn_id)?,
+                    transition: project_item_transition(transition)?,
+                });
+            }
             Ok(ManagedRuntimeSourceProjectionDelta::ItemsChanged { items: items()? })
         }
         ManagedRuntimeProjectionSection::Interactions => {
@@ -2079,6 +2095,9 @@ fn source_payload_can_change_section(
                 ManagedRuntimeProjectionSection::ActiveTurn
             ) | (
                 AgentChangePayload::ItemChanged { .. },
+                ManagedRuntimeProjectionSection::Turns | ManagedRuntimeProjectionSection::Items
+            ) | (
+                AgentChangePayload::ItemTransitioned { .. },
                 ManagedRuntimeProjectionSection::Turns | ManagedRuntimeProjectionSection::Items
             ) | (
                 AgentChangePayload::InteractionChanged { .. },
@@ -2142,7 +2161,7 @@ fn source_observation_delta(
 fn serialized_digest(
     value: &impl Serialize,
 ) -> Result<RuntimePayloadDigest, CompleteAgentRuntimeProjectionError> {
-    let encoded = serde_json::to_vec(value)
+    let encoded = agentdash_agent_runtime_contract::canonical_json_bytes(value)
         .map_err(|_| CompleteAgentRuntimeProjectionError::ObservationEncoding)?;
     runtime_digest(&encoded)
 }
@@ -2255,6 +2274,68 @@ fn project_item_presentation(
     Ok(projected)
 }
 
+fn project_item_transition(
+    transition: &agentdash_agent_service_api::AgentItemTransition,
+) -> Result<ManagedRuntimeItemTransition, CompleteAgentRuntimeProjectionError> {
+    use agentdash_agent_service_api::AgentItemTransition as Source;
+    Ok(match transition {
+        Source::Started { presentation } => ManagedRuntimeItemTransition::Started {
+            presentation: project_item_presentation(presentation)?,
+        },
+        Source::Updated {
+            update,
+            presentation,
+        } => ManagedRuntimeItemTransition::Updated {
+            update: project_item_update(update)?,
+            presentation: project_item_presentation(presentation)?,
+        },
+        Source::Terminal { presentation } => ManagedRuntimeItemTransition::Terminal {
+            presentation: project_item_presentation(presentation)?,
+        },
+    })
+}
+
+fn project_item_update(
+    update: &agentdash_agent_service_api::AgentItemUpdate,
+) -> Result<ManagedRuntimeItemUpdate, CompleteAgentRuntimeProjectionError> {
+    use agentdash_agent_service_api::AgentItemUpdate as Source;
+    Ok(match update {
+        Source::TextAppended { text } => {
+            ManagedRuntimeItemUpdate::TextAppended { text: text.clone() }
+        }
+        Source::ReasoningAppended { text } => {
+            ManagedRuntimeItemUpdate::ReasoningAppended { text: text.clone() }
+        }
+        Source::ContentAppended { content } => ManagedRuntimeItemUpdate::ContentAppended {
+            content: project_blocks(content)?,
+        },
+        Source::CommandOutputAppended { output } => {
+            ManagedRuntimeItemUpdate::CommandOutputAppended {
+                output: project_command_output(output),
+            }
+        }
+        Source::PatchChanged { changes } => ManagedRuntimeItemUpdate::PatchChanged {
+            changes: changes.iter().map(project_file_patch).collect(),
+        },
+        Source::PlanChanged { explanation, steps } => ManagedRuntimeItemUpdate::PlanChanged {
+            explanation: explanation.clone(),
+            steps: steps.iter().map(project_plan_step).collect(),
+        },
+        Source::ToolProgress { content } => ManagedRuntimeItemUpdate::ToolProgress {
+            content: project_blocks(content)?,
+        },
+        Source::CollaborationChanged { status, result } => {
+            ManagedRuntimeItemUpdate::CollaborationChanged {
+                status: status.clone(),
+                result: result.clone(),
+            }
+        }
+        Source::BodyReplaced { body } => ManagedRuntimeItemUpdate::BodyReplaced {
+            body: project_item_body(body)?,
+        },
+    })
+}
+
 fn project_content_block(
     content: &agentdash_agent_service_api::AgentContentBlock,
 ) -> Result<ManagedRuntimePresentationContentBlock, CompleteAgentRuntimeProjectionError> {
@@ -2332,6 +2413,72 @@ fn project_blocks(
     content.iter().map(project_content_block).collect()
 }
 
+fn project_command_output(
+    output: &agentdash_agent_service_api::AgentCommandOutput,
+) -> agentdash_agent_runtime_contract::ManagedRuntimeCommandOutput {
+    agentdash_agent_runtime_contract::ManagedRuntimeCommandOutput {
+        stream: match output.stream {
+            agentdash_agent_service_api::AgentCommandOutputStream::Stdout => {
+                agentdash_agent_runtime_contract::ManagedRuntimeCommandOutputStream::Stdout
+            }
+            agentdash_agent_service_api::AgentCommandOutputStream::Stderr => {
+                agentdash_agent_runtime_contract::ManagedRuntimeCommandOutputStream::Stderr
+            }
+            agentdash_agent_service_api::AgentCommandOutputStream::Combined => {
+                agentdash_agent_runtime_contract::ManagedRuntimeCommandOutputStream::Combined
+            }
+        },
+        text: output.text.clone(),
+    }
+}
+
+fn project_file_patch(
+    change: &agentdash_agent_service_api::AgentFilePatch,
+) -> agentdash_agent_runtime_contract::ManagedRuntimeFilePatch {
+    agentdash_agent_runtime_contract::ManagedRuntimeFilePatch {
+        path: change.path.clone(),
+        change_kind: match change.change_kind {
+            agentdash_agent_service_api::AgentFileChangeKind::Add => {
+                agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Add
+            }
+            agentdash_agent_service_api::AgentFileChangeKind::Update => {
+                agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Update
+            }
+            agentdash_agent_service_api::AgentFileChangeKind::Delete => {
+                agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Delete
+            }
+            agentdash_agent_service_api::AgentFileChangeKind::Move => {
+                agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Move
+            }
+        },
+        patch: change.patch.clone(),
+        moved_to: change.moved_to.clone(),
+    }
+}
+
+fn project_plan_step(
+    step: &agentdash_agent_service_api::AgentPlanStep,
+) -> agentdash_agent_runtime_contract::ManagedRuntimePlanStep {
+    agentdash_agent_runtime_contract::ManagedRuntimePlanStep {
+        id: step.id.clone(),
+        text: step.text.clone(),
+        status: match step.status {
+            agentdash_agent_service_api::AgentPlanStepStatus::Pending => {
+                agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::Pending
+            }
+            agentdash_agent_service_api::AgentPlanStepStatus::InProgress => {
+                agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::InProgress
+            }
+            agentdash_agent_service_api::AgentPlanStepStatus::Completed => {
+                agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::Completed
+            }
+            agentdash_agent_service_api::AgentPlanStepStatus::Failed => {
+                agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::Failed
+            }
+        },
+    }
+}
+
 fn project_item_body(
     body: &agentdash_agent_service_api::AgentItemBody,
 ) -> Result<ManagedRuntimeItemBody, CompleteAgentRuntimeProjectionError> {
@@ -2357,27 +2504,7 @@ fn project_item_body(
         },
         Source::Plan { explanation, steps } => ManagedRuntimeItemBody::Plan {
             explanation: explanation.clone(),
-            steps: steps
-                .iter()
-                .map(|step| agentdash_agent_runtime_contract::ManagedRuntimePlanStep {
-                    id: step.id.clone(),
-                    text: step.text.clone(),
-                    status: match step.status {
-                        agentdash_agent_service_api::AgentPlanStepStatus::Pending => {
-                            agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::Pending
-                        }
-                        agentdash_agent_service_api::AgentPlanStepStatus::InProgress => {
-                            agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::InProgress
-                        }
-                        agentdash_agent_service_api::AgentPlanStepStatus::Completed => {
-                            agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::Completed
-                        }
-                        agentdash_agent_service_api::AgentPlanStepStatus::Failed => {
-                            agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::Failed
-                        }
-                    },
-                })
-                .collect(),
+            steps: steps.iter().map(project_plan_step).collect(),
         },
         Source::CommandExecution {
             command,
@@ -2386,47 +2513,10 @@ fn project_item_body(
         } => ManagedRuntimeItemBody::CommandExecution {
             command: command.clone(),
             cwd: cwd.clone(),
-            output: output
-                .iter()
-                .map(|output| agentdash_agent_runtime_contract::ManagedRuntimeCommandOutput {
-                    stream: match output.stream {
-                        agentdash_agent_service_api::AgentCommandOutputStream::Stdout => {
-                            agentdash_agent_runtime_contract::ManagedRuntimeCommandOutputStream::Stdout
-                        }
-                        agentdash_agent_service_api::AgentCommandOutputStream::Stderr => {
-                            agentdash_agent_runtime_contract::ManagedRuntimeCommandOutputStream::Stderr
-                        }
-                        agentdash_agent_service_api::AgentCommandOutputStream::Combined => {
-                            agentdash_agent_runtime_contract::ManagedRuntimeCommandOutputStream::Combined
-                        }
-                    },
-                    text: output.text.clone(),
-                })
-                .collect(),
+            output: output.iter().map(project_command_output).collect(),
         },
         Source::FileChange { changes, output } => ManagedRuntimeItemBody::FileChange {
-            changes: changes
-                .iter()
-                .map(|change| agentdash_agent_runtime_contract::ManagedRuntimeFilePatch {
-                    path: change.path.clone(),
-                    change_kind: match change.change_kind {
-                        agentdash_agent_service_api::AgentFileChangeKind::Add => {
-                            agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Add
-                        }
-                        agentdash_agent_service_api::AgentFileChangeKind::Update => {
-                            agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Update
-                        }
-                        agentdash_agent_service_api::AgentFileChangeKind::Delete => {
-                            agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Delete
-                        }
-                        agentdash_agent_service_api::AgentFileChangeKind::Move => {
-                            agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Move
-                        }
-                    },
-                    patch: change.patch.clone(),
-                    moved_to: change.moved_to.clone(),
-                })
-                .collect(),
+            changes: changes.iter().map(project_file_patch).collect(),
             output: project_blocks(output)?,
         },
         Source::FileRead {
@@ -2802,9 +2892,11 @@ mod tests {
 
     use agentdash_agent_runtime_contract::ManagedRuntimeAvailabilityEvidence;
     use agentdash_agent_service_api::{
-        AgentCapabilityProfile, AgentCommandEnvelope, AgentCommandReceipt,
-        AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
-        AgentForkCapability, AgentItemBody, AgentItemPresentation, AgentItemTerminalEvidence,
+        AgentCapabilityProfile, AgentCommandEnvelope, AgentCommandOutput, AgentCommandOutputStream,
+        AgentCommandReceipt, AgentConfigurationBoundary, AgentContentBlock, AgentEffectIdentity,
+        AgentEffectInspection, AgentFileChangeKind, AgentFilePatch, AgentForkCapability,
+        AgentItemBody, AgentItemPresentation, AgentItemTerminalEvidence, AgentItemTransition,
+        AgentItemUpdate, AgentPayloadDigest, AgentPlanStep, AgentPlanStepStatus,
         AgentProfileDigest, AgentServiceDefinitionId, AgentServiceDescriptor,
         AgentServiceErrorCode, AgentSnapshotSource, AgentSourceRevision, AgentSurfaceProfile,
         AgentTerminalStatus, AgentTurnSnapshot, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface,
@@ -3982,6 +4074,242 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn every_item_update_projects_into_the_independent_runtime_vocabulary() {
+        let content = || AgentContentBlock::Text {
+            text: "delta".to_owned(),
+        };
+        let updates = vec![
+            AgentItemUpdate::TextAppended {
+                text: "text".to_owned(),
+            },
+            AgentItemUpdate::ReasoningAppended {
+                text: "reasoning".to_owned(),
+            },
+            AgentItemUpdate::ContentAppended {
+                content: vec![content()],
+            },
+            AgentItemUpdate::CommandOutputAppended {
+                output: AgentCommandOutput {
+                    stream: AgentCommandOutputStream::Stdout,
+                    text: "output".to_owned(),
+                },
+            },
+            AgentItemUpdate::PatchChanged {
+                changes: vec![AgentFilePatch {
+                    path: "src/lib.rs".to_owned(),
+                    change_kind: AgentFileChangeKind::Update,
+                    patch: "@@".to_owned(),
+                    moved_to: None,
+                }],
+            },
+            AgentItemUpdate::PlanChanged {
+                explanation: Some("plan".to_owned()),
+                steps: vec![AgentPlanStep {
+                    id: Some("step-1".to_owned()),
+                    text: "work".to_owned(),
+                    status: AgentPlanStepStatus::InProgress,
+                }],
+            },
+            AgentItemUpdate::ToolProgress {
+                content: vec![content()],
+            },
+            AgentItemUpdate::CollaborationChanged {
+                status: "completed".to_owned(),
+                result: Some(serde_json::json!({"ok": true})),
+            },
+            AgentItemUpdate::BodyReplaced {
+                body: AgentItemBody::ContextCompaction {
+                    summary: Some(vec![content()]),
+                    source_digest: Some(
+                        AgentPayloadDigest::new("sha256:source").expect("source digest"),
+                    ),
+                },
+            },
+        ];
+
+        for update in updates {
+            let source_kind = serde_json::to_value(&update).expect("source update")["kind"].clone();
+            let projected = project_item_update(&update).expect("Runtime item update");
+            let runtime_kind =
+                serde_json::to_value(&projected).expect("Runtime update")["kind"].clone();
+            assert_eq!(runtime_kind, source_kind);
+        }
+    }
+
+    #[tokio::test]
+    async fn item_transitions_commit_as_typed_runtime_deltas_and_fold_to_the_snapshot() {
+        for terminal_status in [
+            AgentTerminalStatus::Completed,
+            AgentTerminalStatus::Failed,
+            AgentTerminalStatus::Interrupted,
+            AgentTerminalStatus::Lost,
+        ] {
+            let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
+            let reconciler = fixture_reconciler(repository.clone());
+            let mut initial = snapshot(1, AgentSnapshotAuthority::AgentAuthoritative);
+            initial.turns[0].items.clear();
+            reconciler
+                .reconcile_snapshot(initial, None)
+                .await
+                .expect("initial item-free snapshot");
+
+            let running = AgentItemPresentation::new(
+                AgentItemBody::ContextCompaction {
+                    summary: None,
+                    source_digest: None,
+                },
+                Some(u64::MAX - 1),
+                Some(u64::MAX - 1),
+                None,
+            )
+            .expect("running presentation");
+            let updated = AgentItemPresentation::new(
+                AgentItemBody::ContextCompaction {
+                    summary: Some(vec![AgentContentBlock::Text {
+                        text: "compact summary".to_owned(),
+                    }]),
+                    source_digest: Some(
+                        AgentPayloadDigest::new("sha256:compaction-source").expect("source digest"),
+                    ),
+                },
+                Some(u64::MAX - 1),
+                Some(u64::MAX - 1),
+                None,
+            )
+            .expect("updated presentation");
+            let terminal = AgentItemPresentation::new(
+                updated.body.clone(),
+                Some(u64::MAX - 1),
+                Some(u64::MAX),
+                Some(AgentItemTerminalEvidence {
+                    outcome: terminal_status,
+                    completed_at_ms: Some(agentdash_agent_service_api::AgentServiceU64(u64::MAX)),
+                    duration_ms: Some(agentdash_agent_service_api::AgentServiceU64(1)),
+                    process_exit: None,
+                    error: None,
+                }),
+            )
+            .expect("terminal presentation");
+            let item_id = AgentItemId::new("item-1").expect("item");
+            let turn_id = AgentTurnId::new("turn-1").expect("turn");
+            let changes = vec![
+                AgentItemTransition::Started {
+                    presentation: running,
+                },
+                AgentItemTransition::Updated {
+                    update: AgentItemUpdate::BodyReplaced {
+                        body: updated.body.clone(),
+                    },
+                    presentation: updated,
+                },
+                AgentItemTransition::Terminal {
+                    presentation: terminal,
+                },
+            ]
+            .into_iter()
+            .enumerate()
+            .map(
+                |(index, transition)| agentdash_agent_service_api::AgentChange {
+                    cursor: cursor(&format!("item-transition-{terminal_status:?}-{index}")),
+                    source_revision: None,
+                    occurred_at_ms: index as u64 + 10,
+                    payload: AgentChangePayload::ItemTransitioned {
+                        turn_id: turn_id.clone(),
+                        item_id: item_id.clone(),
+                        transition,
+                    },
+                },
+            )
+            .collect::<Vec<_>>();
+            let next = changes.last().expect("transition head").cursor.clone();
+
+            reconciler
+                .reconcile_change_page(
+                    &AgentChangesQuery {
+                        source: source(),
+                        after: None,
+                        limit: 3,
+                    },
+                    AgentChangePage {
+                        source: source(),
+                        changes,
+                        next: Some(next),
+                        gap: false,
+                    },
+                )
+                .await
+                .expect("item transition page");
+
+            let state = fixture_state(&repository).await;
+            let typed_transitions = state
+                .facts
+                .changes
+                .iter()
+                .filter_map(|change| match &change.delta {
+                    ManagedRuntimeChangeDelta::SourceProjectionChanged {
+                        section: ManagedRuntimeProjectionSection::Items,
+                        delta:
+                            ManagedRuntimeSourceProjectionDelta::ItemTransitioned {
+                                item_id,
+                                transition,
+                            },
+                        ..
+                    } => Some((item_id, transition)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(typed_transitions.len(), 3);
+            assert_eq!(typed_transitions[0].0.as_str(), "runtime-item-13");
+            assert!(matches!(
+                typed_transitions[0].1,
+                ManagedRuntimeItemTransition::Started { .. }
+            ));
+            assert!(matches!(
+                typed_transitions[1].1,
+                ManagedRuntimeItemTransition::Updated { .. }
+            ));
+            let ManagedRuntimeItemTransition::Terminal { presentation } = typed_transitions[2].1
+            else {
+                panic!("terminal Runtime transition");
+            };
+            assert_eq!(
+                serde_json::to_value(presentation).expect("terminal wire")["terminal"]["completed_at_ms"],
+                serde_json::Value::String(u64::MAX.to_string())
+            );
+
+            let source_projection = state
+                .facts
+                .source_projection
+                .as_ref()
+                .expect("source projection");
+            let identities = state
+                .facts
+                .source_identities
+                .as_ref()
+                .expect("source identities");
+            let managed = state.facts.projection.as_ref().expect("Runtime projection");
+            let expected = project_managed_runtime_snapshot(
+                source_projection,
+                identities,
+                CompleteAgentRuntimeProjectionInput {
+                    thread_id: managed.thread_id.clone(),
+                    projection_revision: managed.revision,
+                    latest_change_sequence: managed.latest_change_sequence,
+                    captured_at_ms: managed.captured_at_ms,
+                    operations: managed.operations.clone(),
+                    command_availability: managed.command_availability.clone(),
+                },
+            )
+            .expect("snapshot fold");
+            assert_eq!(&expected, managed);
+            assert_eq!(
+                managed.items[0].presentation.presentation_digest,
+                presentation.presentation_digest
+            );
+        }
     }
 
     #[tokio::test]

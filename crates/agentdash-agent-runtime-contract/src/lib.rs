@@ -5,12 +5,14 @@
 //! `agentdash-agent-service-api`; Host coordination and transport details never cross this
 //! boundary.
 
+pub mod canonical_json;
 pub mod gateway;
 pub mod ids;
 pub mod managed_projection;
 pub mod presentation;
 pub mod wire_u64;
 
+pub use canonical_json::*;
 pub use gateway::*;
 pub use ids::*;
 pub use managed_projection::*;

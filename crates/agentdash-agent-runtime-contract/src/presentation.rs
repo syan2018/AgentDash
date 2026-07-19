@@ -1,10 +1,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use ts_rs::TS;
 
-use crate::{RuntimePayloadDigest, RuntimeU64};
+use crate::{RuntimePayloadDigest, RuntimeU64, canonical_json_sha256};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -536,9 +535,10 @@ pub enum ManagedRuntimePresentationViolation {
 }
 
 fn digest<T: Serialize>(value: &T) -> RuntimePayloadDigest {
-    let canonical = serde_json::to_vec(value).expect("canonical presentation must serialize");
-    RuntimePayloadDigest::new(format!("sha256:{:x}", Sha256::digest(canonical)))
-        .expect("sha256 digest is non-empty")
+    RuntimePayloadDigest::new(
+        canonical_json_sha256(value).expect("canonical presentation must serialize"),
+    )
+    .expect("sha256 digest is non-empty")
 }
 
 #[cfg(test)]
@@ -599,6 +599,37 @@ mod tests {
         assert_eq!(
             json["terminal"]["completed_at_ms"],
             serde_json::Value::String(u64::MAX.to_string())
+        );
+    }
+
+    #[test]
+    fn presentation_digest_ignores_nested_json_object_key_order() {
+        let left = ManagedRuntimeItemBody::DynamicToolCall {
+            namespace: Some("dash".to_owned()),
+            tool: "lookup".to_owned(),
+            arguments: serde_json::json!({"z": {"b": 2, "a": 1}, "a": 0}),
+            result: Some(serde_json::json!({"output": {"y": 2, "x": 1}})),
+            progress: Vec::new(),
+        };
+        let right = ManagedRuntimeItemBody::DynamicToolCall {
+            namespace: Some("dash".to_owned()),
+            tool: "lookup".to_owned(),
+            arguments: serde_json::from_str(r#"{"a":0,"z":{"a":1,"b":2}}"#)
+                .expect("equivalent arguments"),
+            result: Some(
+                serde_json::from_str(r#"{"output":{"x":1,"y":2}}"#).expect("equivalent result"),
+            ),
+            progress: Vec::new(),
+        };
+
+        assert_eq!(left.digest(), right.digest());
+        assert_eq!(
+            ManagedRuntimeItemPresentation::new(left, Some(1), Some(2), None)
+                .expect("left presentation")
+                .presentation_digest,
+            ManagedRuntimeItemPresentation::new(right, Some(1), Some(2), None)
+                .expect("right presentation")
+                .presentation_digest
         );
     }
 

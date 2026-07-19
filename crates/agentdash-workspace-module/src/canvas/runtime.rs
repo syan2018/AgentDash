@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use agentdash_application_runtime_gateway::RuntimeSurface;
+use agentdash_application_extension_gateway::RuntimeSurface;
 use agentdash_application_vfs::VfsService;
 use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasImportMap};
 use agentdash_platform_spi::Vfs;
@@ -187,7 +187,7 @@ mod tests {
     use crate::canvas::{
         CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY, CanvasMountAccess, build_canvas_mount,
     };
-    use agentdash_application_runtime_gateway::{
+    use agentdash_application_extension_gateway::{
         RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeContext,
         RuntimeSurface,
     };

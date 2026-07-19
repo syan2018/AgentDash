@@ -97,7 +97,7 @@ pub const AGENT_RUN_TARGET_ACTIVATION_MANIFEST: &[AgentRunConsumerActivation] = 
         prerequisite: "all MCP execution callers use Runtime commands",
     },
     AgentRunConsumerActivation {
-        consumer: "agentdash-application-runtime-gateway",
+        consumer: "agentdash-application-extension-gateway",
         current_artifact: "Core tool/session/MCP gateway modules",
         workstream: AgentRunActivationWorkstream::W8LegacyBoundary,
         final_owner: AgentRunActivationOwner::LegacyDeletion,
@@ -309,7 +309,7 @@ mod tests {
         "agentdash-application-agentrun",
         "agentdash-application-lifecycle",
         "agentdash-application-ports",
-        "agentdash-application-runtime-gateway",
+        "agentdash-application-extension-gateway",
         "agentdash-application-vfs",
         "agentdash-platform-spi",
     ];
@@ -370,7 +370,7 @@ mod tests {
             [
                 "agentdash-agent-protocol",
                 "agentdash-application-ports",
-                "agentdash-application-runtime-gateway",
+                "agentdash-application-extension-gateway",
                 "agentdash-platform-spi",
             ]
             .into_iter()

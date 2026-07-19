@@ -1,8 +1,8 @@
 pub mod auth;
 pub mod background_workers;
+pub mod extension_gateway;
 pub mod relay;
 pub mod repositories;
-pub mod runtime_gateway;
 pub mod vfs;
 
 #[cfg(test)]

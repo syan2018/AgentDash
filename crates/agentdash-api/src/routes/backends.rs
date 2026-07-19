@@ -37,7 +37,7 @@ use agentdash_application::backend::{
     can_manage_global_backend_scope, ensure_local_runtime_record, list_backend_runtime_summaries,
     remove_backend_record,
 };
-use agentdash_application_runtime_gateway::{
+use agentdash_application_extension_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
     WorkspaceBrowseDirectoryOutput,
@@ -548,7 +548,7 @@ pub async fn browse_directory(
         },
         input,
     );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
+    let invocation = state.services.extension_gateway.invoke(request).await?;
     let output = serde_json::from_value::<WorkspaceBrowseDirectoryOutput>(invocation.output.output)
         .map_err(|error| {
             ApiError::Internal(format!(

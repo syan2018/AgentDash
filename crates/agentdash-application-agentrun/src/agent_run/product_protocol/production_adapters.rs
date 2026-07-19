@@ -1072,7 +1072,9 @@ mod tests {
     use agentdash_agent_runtime_contract::{
         ManagedRuntimeAppliedContextProvenance, ManagedRuntimeChangeDelta, ManagedRuntimeChangeGap,
         ManagedRuntimeChangePage, ManagedRuntimeGatewayError, ManagedRuntimeLifecycleStatus,
-        ManagedRuntimeOperationEvidence, ManagedRuntimePlatformChange,
+        ManagedRuntimeInitialContextContributionEvidence, ManagedRuntimeOperation,
+        ManagedRuntimeOperationEvidence, ManagedRuntimeOperationReceipt,
+        ManagedRuntimePlatformChange,
         ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
         ManagedRuntimeSourceBindingEvidence, RuntimeChangeSequence, RuntimeSourceRef,
         SurfaceRevision,
@@ -1879,7 +1881,7 @@ mod tests {
                 thread_id: thread_id.clone(),
                 sequence: RuntimeChangeSequence(15),
                 revision: RuntimeProjectionRevision(9),
-                delta: ManagedRuntimeChangeDelta::LifecycleChanged {
+                delta: ManagedRuntimeChangeDelta::RuntimeLifecycleChanged {
                     lifecycle: ManagedRuntimeLifecycleStatus::Active,
                 },
             }],
@@ -1940,7 +1942,7 @@ mod tests {
                     thread_id: other,
                     sequence: RuntimeChangeSequence(1),
                     revision: RuntimeProjectionRevision(1),
-                    delta: ManagedRuntimeChangeDelta::LifecycleChanged {
+                    delta: ManagedRuntimeChangeDelta::RuntimeLifecycleChanged {
                         lifecycle: ManagedRuntimeLifecycleStatus::Active,
                     },
                 }],

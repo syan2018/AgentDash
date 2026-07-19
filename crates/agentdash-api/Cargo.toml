@@ -18,7 +18,7 @@ agentdash-workspace-module = { workspace = true }
 agentdash-contracts = { workspace = true }
 agentdash-platform-spi = { workspace = true }
 agentdash-application-ports = { workspace = true }
-agentdash-application-runtime-gateway = { workspace = true }
+agentdash-application-extension-gateway = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-application-agentrun = { workspace = true }
 agentdash-application-lifecycle = { workspace = true }
@@ -26,7 +26,6 @@ agentdash-application-workflow = { workspace = true }
 agentdash-application-shared-library = { workspace = true }
 agentdash-application = { workspace = true }
 agentdash-infrastructure = { workspace = true }
-agentdash-executor = { workspace = true }
 agentdash-llm-provider = { workspace = true }
 agentdash-mcp = { workspace = true }
 agentdash-relay = { workspace = true }
@@ -34,6 +33,7 @@ agentdash-integration-api = { workspace = true }
 agentdash-integration-codex = { workspace = true }
 agentdash-agent-service-api = { workspace = true }
 agentdash-agent-runtime-host = { workspace = true }
+agentdash-agent-protocol = { workspace = true }
 agentdash-agent-runtime = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }
 agentdash-agent-runtime-wire = { workspace = true }
@@ -68,10 +68,6 @@ reqwest = { workspace = true, features = ["form", "json"] }
 sha2 = { workspace = true }
 url = "2.5"
 
-# Agent 类型（RuntimeToolProvider 使用 AgentTool trait）
-agentdash-agent-types = { workspace = true }
-
-agentdash-agent-protocol = { workspace = true }
 json-patch = { workspace = true }
 regex.workspace = true
 postgresql_embedded = { workspace = true }

@@ -10,7 +10,7 @@ agentdash-agent-types = { workspace = true }
 agentdash-application-agentrun = { workspace = true }
 agentdash-application-lifecycle = { workspace = true }
 agentdash-application-ports = { workspace = true }
-agentdash-application-runtime-gateway = { workspace = true }
+agentdash-application-extension-gateway = { workspace = true }
 agentdash-application-skill = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-application-workflow = { workspace = true }

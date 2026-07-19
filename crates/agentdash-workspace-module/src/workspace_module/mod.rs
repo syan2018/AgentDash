@@ -1,6 +1,6 @@
 pub mod presentation_protocol;
 
-use agentdash_application_runtime_gateway::{
+use agentdash_application_extension_gateway::{
     RuntimeActionDescriptor, RuntimeActionKind, validate_json_schema_subset,
 };
 use agentdash_contracts::workspace_module::{
@@ -111,16 +111,16 @@ impl WorkspaceModuleRuntimeActionCatalog {
             descriptors,
             missing_descriptor_readiness: WorkspaceModuleOperationReadiness::unavailable(
                 WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable,
-                "runtime action is not present in the RuntimeGateway actor/context catalog",
+                "runtime action is not present in the ExtensionGateway actor/context catalog",
             ),
         }
     }
 
-    pub fn missing_runtime_gateway(reason: impl Into<String>) -> Self {
+    pub fn missing_extension_gateway(reason: impl Into<String>) -> Self {
         Self {
             descriptors: Vec::new(),
             missing_descriptor_readiness: WorkspaceModuleOperationReadiness::unavailable(
-                WorkspaceModuleOperationReadinessKind::MissingRuntimeGateway,
+                WorkspaceModuleOperationReadinessKind::MissingExtensionGateway,
                 reason,
             ),
         }
@@ -146,8 +146,8 @@ impl WorkspaceModuleRuntimeActionCatalog {
 
 impl Default for WorkspaceModuleRuntimeActionCatalog {
     fn default() -> Self {
-        Self::missing_runtime_gateway(
-            "RuntimeGateway catalog is not attached to this workspace module projection",
+        Self::missing_extension_gateway(
+            "ExtensionGateway catalog is not attached to this workspace module projection",
         )
     }
 }
@@ -766,7 +766,7 @@ fn describe_permission(permission: &ExtensionPermissionDeclaration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_application_runtime_gateway::{
+    use agentdash_application_extension_gateway::{
         RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimePolicy,
     };
     use agentdash_contracts::workspace_module::{

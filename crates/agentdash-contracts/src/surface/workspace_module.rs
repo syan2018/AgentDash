@@ -141,7 +141,7 @@ pub enum WorkspaceModuleOperationDispatch {
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceModuleOperationReadinessKind {
     Ready,
-    MissingRuntimeGateway,
+    MissingExtensionGateway,
     MissingChannelTransport,
     MissingRuntimeBackendAnchor,
     BackendUnavailable,

@@ -24,7 +24,7 @@ pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductProjectionQueryPort, AgentRunTerminalSourceReconcilePort,
 };
-use agentdash_application_runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
+use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeChannelInvoker};
 use agentdash_application_vfs::{MountProviderRegistry, VfsMutationDispatcher, VfsService};
 use agentdash_contracts::project::ProjectEventStreamEnvelope;
 use agentdash_diagnostics::DiagnosticBuffer;
@@ -143,7 +143,7 @@ pub struct ServiceSet {
     pub mount_provider_registry: Arc<MountProviderRegistry>,
     pub auth_session_service: Arc<AuthSessionService>,
     pub audit_bus: SharedContextAuditBus,
-    pub runtime_gateway: Arc<RuntimeGateway>,
+    pub extension_gateway: Arc<ExtensionGateway>,
     pub extension_runtime_channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
     pub function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner>,
@@ -243,7 +243,7 @@ impl AppState {
             terminal_source_reconcile.clone(),
         ));
 
-        let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
+        let extension_gateway = crate::bootstrap::extension_gateway::build_extension_gateway(
             mcp_probe_relay,
             repos.clone(),
             backend_registry.clone(),
@@ -298,7 +298,7 @@ impl AppState {
                 mount_provider_registry,
                 auth_session_service,
                 audit_bus,
-                runtime_gateway,
+                extension_gateway,
                 extension_runtime_channel_invoker,
                 extension_package_artifact_storage,
                 function_runner,

@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 agentdash-agent-runtime-contract = { workspace = true }
-agentdash-application-runtime-gateway = { workspace = true }
+agentdash-application-extension-gateway = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-agent-protocol = { workspace = true }

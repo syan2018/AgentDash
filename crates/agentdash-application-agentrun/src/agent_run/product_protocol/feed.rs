@@ -289,7 +289,7 @@ mod tests {
                 thread_id: thread_id.clone(),
                 sequence: RuntimeChangeSequence(sequence),
                 revision: RuntimeProjectionRevision(revision),
-                delta: ManagedRuntimeChangeDelta::LifecycleChanged {
+                delta: ManagedRuntimeChangeDelta::RuntimeLifecycleChanged {
                     lifecycle: ManagedRuntimeLifecycleStatus::Active,
                 },
             }],

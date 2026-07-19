@@ -52,8 +52,6 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use agentdash_agent_runtime_contract::{RuntimeDriverGeneration, ToolSetRevision};
-
     fn runtime_id<T: FromStr>(value: &str) -> T
     where
         T::Err: std::fmt::Debug,
@@ -76,17 +74,9 @@ mod tests {
                     agent_id,
                     frame_id: Uuid::new_v4(),
                     runtime_thread_id: runtime_id("session-1"),
-                    presentation_thread_id: "presentation-1".parse().expect("presentation thread"),
                     invocation: Some(agentdash_platform_spi::PlatformToolInvocationCoordinates {
                         runtime_turn_id: runtime_id("turn-1"),
                         runtime_item_id: runtime_id("item-1"),
-                        presentation_item_id: runtime_id("turn-1:tool-1"),
-                        source_thread_id: runtime_id("source-task-thread"),
-                        source_turn_id: runtime_id("source-task-turn"),
-                        source_item_id: runtime_id("source-task-item"),
-                        binding_id: runtime_id("binding-task-scope"),
-                        binding_generation: RuntimeDriverGeneration(1),
-                        tool_set_revision: ToolSetRevision(1),
                     }),
                     launch_evidence_frame_id: Uuid::new_v4(),
                     current_surface_frame_id: Uuid::new_v4(),

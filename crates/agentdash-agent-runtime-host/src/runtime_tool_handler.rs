@@ -58,16 +58,40 @@ impl CompleteAgentToolHandler for RuntimePlatformToolHandler {
 }
 
 fn rejected_result(error: RuntimeToolBrokerError) -> AgentToolResult {
-    let code = match error {
+    let code = match &error {
         RuntimeToolBrokerError::EmptyCatalog => "empty_runtime_tool_catalog",
         RuntimeToolBrokerError::UnknownTool(_) => "unknown_runtime_tool",
         RuntimeToolBrokerError::DuplicateTool(_) => "duplicate_runtime_tool",
         RuntimeToolBrokerError::PermissionDenied { .. } => "runtime_tool_permission_denied",
         RuntimeToolBrokerError::EffectMismatch { .. } => "runtime_tool_effect_mismatch",
-        RuntimeToolBrokerError::AuthorizationDenied { .. } => "runtime_tool_authorization_denied",
+        RuntimeToolBrokerError::AuthorizationDenied { code, message } => {
+            return AgentToolResult::Rejected {
+                code: code.clone(),
+                message: message.clone(),
+            };
+        }
     };
     AgentToolResult::Rejected {
         code: code.to_owned(),
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn product_authorization_rejection_preserves_its_typed_code() {
+        assert_eq!(
+            rejected_result(RuntimeToolBrokerError::AuthorizationDenied {
+                code: "stale_product_surface".to_owned(),
+                message: "surface revision does not match".to_owned(),
+            }),
+            AgentToolResult::Rejected {
+                code: "stale_product_surface".to_owned(),
+                message: "surface revision does not match".to_owned(),
+            }
+        );
     }
 }

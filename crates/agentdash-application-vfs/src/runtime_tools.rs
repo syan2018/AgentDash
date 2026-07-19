@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use agentdash_platform_spi::{
     CapabilityState, Mount, MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule,
-    RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, Vfs,
+    RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, ToolCluster, Vfs,
 };
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -93,7 +93,6 @@ pub struct AppliedVfsRuntimeToolService {
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
-    capability_state: CapabilityState,
 }
 
 impl AppliedVfsRuntimeToolService {
@@ -108,7 +107,6 @@ impl AppliedVfsRuntimeToolService {
             shell_output_registry: None,
             overlay: None,
             identity: None,
-            capability_state: CapabilityState::default(),
         }
     }
 
@@ -141,11 +139,6 @@ impl AppliedVfsRuntimeToolService {
         self
     }
 
-    pub fn with_capability_state(mut self, capability_state: CapabilityState) -> Self {
-        self.capability_state = capability_state;
-        self
-    }
-
     pub async fn execute(&self, request: AppliedVfsToolRequest) -> AppliedVfsToolOutcome {
         self.execute_with_controls(request, CancellationToken::new(), None)
             .await
@@ -157,7 +150,7 @@ impl AppliedVfsRuntimeToolService {
         cancel: CancellationToken,
         updates: Option<VfsToolUpdateSink>,
     ) -> AppliedVfsToolOutcome {
-        let (vfs, policy) = match build_invocation_vfs(request.surface) {
+        let (vfs, policy, capability_state) = match build_invocation_vfs(request.surface) {
             Ok(value) => value,
             Err(message) => {
                 return AppliedVfsToolOutcome::Rejected {
@@ -239,7 +232,7 @@ impl AppliedVfsRuntimeToolService {
                         self.overlay.clone(),
                         self.identity.clone(),
                     )
-                    .with_capability_state(self.capability_state.clone());
+                    .with_capability_state(capability_state);
                 if let Some(registry) = &self.shell_output_registry {
                     executor = executor.with_shell_output_registry(registry.clone());
                 }
@@ -293,13 +286,14 @@ impl AppliedVfsRuntimeToolService {
 
 fn build_invocation_vfs(
     surface: AppliedVfsToolSurface,
-) -> Result<(Vfs, RuntimeVfsAccessPolicy), String> {
+) -> Result<(Vfs, RuntimeVfsAccessPolicy, CapabilityState), String> {
     if surface.mounts.is_empty() {
         return Err("applied VFS surface must contain at least one authorized mount".to_owned());
     }
     let mut mount_ids = BTreeSet::new();
     let mut mounts = Vec::with_capacity(surface.mounts.len());
     let mut rules = Vec::new();
+    let mut clusters = BTreeSet::new();
     for mount in surface.mounts {
         if mount.id.trim().is_empty()
             || mount.provider.trim().is_empty()
@@ -322,6 +316,15 @@ fn build_invocation_vfs(
             .copied()
             .flat_map(map_policy_operations)
             .collect::<BTreeSet<_>>();
+        for operation in &mount.operations {
+            clusters.insert(match operation {
+                AppliedVfsToolOperation::Read
+                | AppliedVfsToolOperation::List
+                | AppliedVfsToolOperation::Search => ToolCluster::Read,
+                AppliedVfsToolOperation::Write => ToolCluster::Write,
+                AppliedVfsToolOperation::Execute => ToolCluster::Execute,
+            });
+        }
         for scope in mount.path_scopes {
             let pattern = match scope {
                 AppliedVfsToolPathScope::All => RuntimeVfsPathPattern::All,
@@ -368,6 +371,7 @@ fn build_invocation_vfs(
             links: Vec::new(),
         },
         RuntimeVfsAccessPolicy { rules },
+        CapabilityState::from_clusters(clusters),
     ))
 }
 
@@ -432,7 +436,7 @@ mod tests {
 
     #[test]
     fn exact_scope_never_expands_to_descendants_or_prefix_siblings() {
-        let (_, policy) = build_invocation_vfs(surface(
+        let (_, policy, _) = build_invocation_vfs(surface(
             "main",
             AppliedVfsToolPathScope::Exact("docs/readme.md".to_owned()),
         ))
@@ -444,9 +448,9 @@ mod tests {
 
     #[test]
     fn invocation_surfaces_do_not_share_mounts_between_agent_runs() {
-        let (first, _) =
+        let (first, _, _) =
             build_invocation_vfs(surface("first", AppliedVfsToolPathScope::All)).unwrap();
-        let (second, _) =
+        let (second, _, _) =
             build_invocation_vfs(surface("second", AppliedVfsToolPathScope::All)).unwrap();
         assert_eq!(first.mounts[0].id, "first");
         assert_eq!(second.mounts[0].id, "second");
@@ -462,6 +466,25 @@ mod tests {
         ] {
             assert!(build_invocation_vfs(surface("main", scope)).is_err());
         }
+    }
+
+    #[test]
+    fn invocation_capabilities_are_derived_from_each_applied_surface() {
+        let (_, _, read) =
+            build_invocation_vfs(surface("read", AppliedVfsToolPathScope::All)).unwrap();
+        assert!(read.has(ToolCluster::Read));
+        assert!(!read.has(ToolCluster::Write));
+        assert!(!read.has(ToolCluster::Execute));
+
+        let mut write_surface = surface("write", AppliedVfsToolPathScope::All);
+        write_surface.mounts[0].operations = BTreeSet::from([
+            AppliedVfsToolOperation::Write,
+            AppliedVfsToolOperation::Execute,
+        ]);
+        let (_, _, write) = build_invocation_vfs(write_surface).unwrap();
+        assert!(!write.has(ToolCluster::Read));
+        assert!(write.has(ToolCluster::Write));
+        assert!(write.has(ToolCluster::Execute));
     }
 
     #[tokio::test]

@@ -14,5 +14,5 @@ pub use shell::{
     ShellTerminalRegistration, ShellTerminalRegistry,
 };
 
-pub use super::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
+pub use super::common::{SharedRuntimeVfs, resolve_uri_path};
 pub use super::mounts::MountsListTool;

@@ -169,6 +169,8 @@ adapter set:
   `tools/mod.rs` and `tools/fs.rs`.
 - Wrapper-only schema/projector fixtures and wrapper-shaped tests after equivalent direct-executor
   coverage is retained.
+- The direct `agentdash-agent-types` and now-unused `agentdash-agent-protocol` Cargo dependencies
+  after the wrapper imports are gone.
 
 That deletion removes the Application-VFS `agentdash-agent-types` dependency and all remaining
 Platform SPI `AgentTool` imports from the crate. The direct executor structs, parameter

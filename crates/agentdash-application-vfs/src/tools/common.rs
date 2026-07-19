@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_platform_spi::{
-    AgentToolResult, ContentPart, RuntimeVfsAccessPolicy, RuntimeVfsAccessSource, Vfs,
-};
+use agentdash_platform_spi::{RuntimeVfsAccessPolicy, RuntimeVfsAccessSource, Vfs};
 use tokio::sync::RwLock;
 
 use crate::{ResourceRef, compile_whole_mount_runtime_vfs_access_policy, parse_mount_uri};
@@ -117,14 +115,6 @@ impl SharedRuntimeVfs {
     pub async fn replace_with_policy(&self, vfs: Vfs, access_policy: RuntimeVfsAccessPolicy) {
         let mut guard = self.inner.write().await;
         *guard = RuntimeVfsState::new(vfs, access_policy);
-    }
-}
-
-pub fn ok_text(text: String) -> AgentToolResult {
-    AgentToolResult {
-        content: vec![ContentPart::text(text)],
-        is_error: false,
-        details: None,
     }
 }
 

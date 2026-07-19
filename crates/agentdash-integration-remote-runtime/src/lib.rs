@@ -31,6 +31,9 @@ pub trait RuntimeWirePlacement: Send + Sync {
     async fn receive(&self) -> Result<RuntimeWirePlacementEvent, RemoteRuntimeTransportError>;
 
     async fn acknowledge_disconnect(&self) {}
+
+    /// Explicitly retires a placement that was opened but must not become or remain selectable.
+    async fn close(&self, _reason: &str) {}
 }
 
 #[derive(Debug, Clone, PartialEq)]

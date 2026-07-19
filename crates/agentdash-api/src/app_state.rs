@@ -39,12 +39,12 @@ use agentdash_infrastructure::{
     AgentRunProductPersistenceComposition, AgentRunProductProjectionComposition,
 };
 use agentdash_infrastructure::{
-    CompleteAgentComposition, PinnedCompleteAgentVerificationCatalog,
-    PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
-    PostgresWorkflowAgentCallRepository, PostgresWorkflowExecutorEffectRepository,
-    PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
-    ProcessShellTerminalRegistry, ProductRuntimeToolAuthorizer, WorkspaceModulePresentRuntimeTool,
-    final_runtime_tool_catalog,
+    CompleteAgentComposition, CompleteAgentServiceSelectionCatalog,
+    PinnedCompleteAgentVerificationCatalog, PostgresAgentRunProductRuntimeBindingRepository,
+    PostgresAgentRunTerminalProjectionStore, PostgresWorkflowAgentCallRepository,
+    PostgresWorkflowExecutorEffectRepository, PostgresWorkflowRecoveryRepository,
+    PostgresWorkspaceModulePresentationStore, ProcessShellTerminalRegistry,
+    ProductRuntimeToolAuthorizer, WorkspaceModulePresentRuntimeTool, final_runtime_tool_catalog,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, AuthMode, MarketplaceSourceProvider, MemoryDiscoveryProvider,
@@ -58,13 +58,15 @@ use agentdash_workspace_module::workspace_module::presentation_protocol::{
 use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::project_projection_notification::ProjectProjectionNotificationPublisher;
 use crate::relay::{
-    RelayAgentRunTerminalProjectionProducer, RelayAgentRunTerminalSourceReconcile,
+    PinnedRuntimeWireDeploymentCatalog, RelayAgentRunTerminalProjectionProducer,
+    RelayAgentRunTerminalSourceReconcile, RuntimeWireCompleteAgentAdmission,
     registry::BackendRegistry, runtime_wire::CloudRuntimeWirePlacementRegistry,
 };
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
 const PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY: usize = 256;
 const PLATFORM_MCP_BASE_URL_ENV: &str = "AGENTDASH_MCP_BASE_URL";
+const RUNTIME_WIRE_TRUST_CATALOG_ENV: &str = "AGENTDASH_RUNTIME_WIRE_TRUST_CATALOG";
 const COMPLETE_AGENT_LEASE_DURATION_MS: u64 = 30_000;
 pub(crate) const RUNTIME_PRODUCT_CHANGE_LEASE_DURATION_MS: u64 = 30_000;
 
@@ -81,8 +83,8 @@ fn resolve_platform_mcp_base_url(raw_value: Option<String>) -> Option<String> {
 fn builtin_complete_agent_verifier() -> Result<PinnedCompleteAgentVerificationCatalog> {
     let descriptor = agentdash_integration_codex::codex_complete_agent_descriptor();
     let revision = agentdash_integration_codex::CODEX_APP_SERVER_PROTOCOL_REVISION;
-    Ok(PinnedCompleteAgentVerificationCatalog::new([
-        CompleteAgentVerificationRecord {
+    Ok(PinnedCompleteAgentVerificationCatalog::new_with_templates(
+        [CompleteAgentVerificationRecord {
             service_instance_id: AgentServiceInstanceId::new(
                 agentdash_integration_codex::CODEX_COMPLETE_AGENT_INSTANCE_ID,
             )?,
@@ -99,13 +101,28 @@ fn builtin_complete_agent_verifier() -> Result<PinnedCompleteAgentVerificationCa
                 "pinned-builtin:codex-app-server:{revision}:{}",
                 agentdash_integration_codex::CODEX_COMPLETE_AGENT_CONFORMANCE_SUITE
             ))?,
-        },
-    ])?)
+        }],
+        [
+            agentdash_infrastructure::dash_complete_agent_verification_template()
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+        ],
+    )?)
+}
+
+fn configured_runtime_wire_trust_catalog() -> Result<PinnedRuntimeWireDeploymentCatalog> {
+    match std::env::var(RUNTIME_WIRE_TRUST_CATALOG_ENV) {
+        Ok(raw) if !raw.trim().is_empty() => {
+            PinnedRuntimeWireDeploymentCatalog::from_json(&raw).map_err(anyhow::Error::new)
+        }
+        _ => Ok(PinnedRuntimeWireDeploymentCatalog::empty()),
+    }
 }
 
 /// Application services that own live process handles or composed protocol gateways.
 pub struct ServiceSet {
     pub complete_agent: Arc<CompleteAgentComposition>,
+    pub complete_agent_verifier: Arc<PinnedCompleteAgentVerificationCatalog>,
+    pub complete_agent_selections: Arc<CompleteAgentServiceSelectionCatalog>,
     pub managed_runtime: Arc<dyn ManagedAgentRuntimeGateway>,
     pub complete_agent_callbacks: Arc<dyn AgentHostCallbacks>,
     pub agent_run_product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
@@ -130,6 +147,7 @@ pub struct ServiceSet {
     pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
     pub backend_registry: Arc<BackendRegistry>,
     pub runtime_wire_placements: Arc<CloudRuntimeWirePlacementRegistry>,
+    pub runtime_wire_complete_agents: Arc<RuntimeWireCompleteAgentAdmission>,
     pub backend_runtime_events: broadcast::Sender<String>,
     pub project_control_plane_events: broadcast::Sender<ProjectEventStreamEnvelope>,
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
@@ -261,11 +279,13 @@ impl AppState {
         let runtime_hook_handler = Arc::new(RuntimePlatformHookHandler::new());
 
         let host_incarnation_id = format!("agentdash-api-host-{}", uuid::Uuid::new_v4());
+        let complete_agent_verifier = Arc::new(builtin_complete_agent_verifier()?);
+        let complete_agent_selections = Arc::new(CompleteAgentServiceSelectionCatalog::default());
         let complete_agent = Arc::new(CompleteAgentComposition::build(
             pool.clone(),
             runtime_tool_handler,
             runtime_hook_handler,
-            Arc::new(builtin_complete_agent_verifier()?),
+            complete_agent_verifier.clone(),
             host_incarnation_id.clone(),
             format!("agentdash-api-runtime-{}", uuid::Uuid::new_v4()),
             COMPLETE_AGENT_LEASE_DURATION_MS,
@@ -276,6 +296,13 @@ impl AppState {
         {
             complete_agent.register_contribution(contribution).await?;
         }
+        let runtime_wire_complete_agents = RuntimeWireCompleteAgentAdmission::new(
+            runtime_wire_placements.clone(),
+            complete_agent.clone(),
+            complete_agent_verifier.clone(),
+            complete_agent_selections.clone(),
+            Arc::new(configured_runtime_wire_trust_catalog()?),
+        );
         let product_commands = Arc::new(product_persistence.product_command_facade(
             runtime_product_bindings.clone(),
             complete_agent.runtime.clone(),
@@ -369,6 +396,8 @@ impl AppState {
                 complete_agent_callbacks: complete_agent.host_callbacks(),
                 managed_runtime: complete_agent.runtime.clone(),
                 complete_agent,
+                complete_agent_verifier,
+                complete_agent_selections,
                 agent_run_product_projection: product.gateway.clone(),
                 agent_run_product_projection_composition: product.clone(),
                 agent_run_product_persistence_composition: product_persistence,
@@ -391,6 +420,7 @@ impl AppState {
                 marketplace_source_providers: integration_registration.marketplace_source_providers,
                 backend_registry,
                 runtime_wire_placements,
+                runtime_wire_complete_agents,
                 backend_runtime_events,
                 project_control_plane_events,
                 shell_output_registry,

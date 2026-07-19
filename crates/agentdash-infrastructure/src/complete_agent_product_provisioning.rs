@@ -88,6 +88,93 @@ impl CompleteAgentServiceSelectionCatalog {
         profiles.insert(coordinate, instance_id);
         Ok(())
     }
+
+    /// Activates the latest independently verified placement for an exact Product profile.
+    pub async fn activate(
+        &self,
+        profile: &ProductExecutionProfileRef,
+        instance_id: AgentServiceInstanceId,
+    ) -> Result<Option<AgentServiceInstanceId>, AgentRunProductRuntimeProvisioningError> {
+        if !profile.validate() {
+            return Err(invalid(
+                "execution profile must have a valid immutable digest before activation",
+            ));
+        }
+        let coordinate = (
+            normalize_profile_key(&profile.profile_key)?,
+            profile.profile_digest.clone(),
+        );
+        Ok(self.profiles.write().await.insert(coordinate, instance_id))
+    }
+
+    pub async fn deactivate(
+        &self,
+        profile: &ProductExecutionProfileRef,
+        expected_instance_id: &AgentServiceInstanceId,
+    ) -> Result<bool, AgentRunProductRuntimeProvisioningError> {
+        let coordinate = (
+            normalize_profile_key(&profile.profile_key)?,
+            profile.profile_digest.clone(),
+        );
+        let mut profiles = self.profiles.write().await;
+        if profiles.get(&coordinate) != Some(expected_instance_id) {
+            return Ok(false);
+        }
+        profiles.remove(&coordinate);
+        Ok(true)
+    }
+
+    /// Atomically publishes one placement across all of its exact Product profiles.
+    ///
+    /// `previous` is removed only when it is still the current value. A profile owned by another
+    /// placement is a conflict and leaves the complete catalog unchanged.
+    pub async fn switch_placement(
+        &self,
+        previous: Option<(&[ProductExecutionProfileRef], &AgentServiceInstanceId)>,
+        next_profiles: &[ProductExecutionProfileRef],
+        next_instance_id: &AgentServiceInstanceId,
+    ) -> Result<(), AgentRunProductRuntimeProvisioningError> {
+        let next = next_profiles
+            .iter()
+            .map(profile_coordinate)
+            .collect::<Result<Vec<_>, _>>()?;
+        let previous = previous
+            .map(|(profiles, instance_id)| {
+                profiles
+                    .iter()
+                    .map(profile_coordinate)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|profiles| (profiles, instance_id))
+            })
+            .transpose()?;
+        let mut selections = self.profiles.write().await;
+        for coordinate in &next {
+            if let Some(current) = selections.get(coordinate)
+                && current != next_instance_id
+                && previous
+                    .as_ref()
+                    .is_none_or(|(_, previous_instance)| current != *previous_instance)
+            {
+                return Err(AgentRunProductRuntimeProvisioningError::Conflict {
+                    reason: format!(
+                        "Product execution profile `{}/{}` is active on another placement",
+                        coordinate.0, coordinate.1
+                    ),
+                });
+            }
+        }
+        if let Some((previous_profiles, previous_instance)) = previous {
+            for coordinate in previous_profiles {
+                if selections.get(&coordinate) == Some(previous_instance) {
+                    selections.remove(&coordinate);
+                }
+            }
+        }
+        for coordinate in next {
+            selections.insert(coordinate, next_instance_id.clone());
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -588,6 +675,20 @@ fn normalize_profile_key(value: &str) -> Result<String, AgentRunProductRuntimePr
     Ok(value)
 }
 
+fn profile_coordinate(
+    profile: &ProductExecutionProfileRef,
+) -> Result<(String, String), AgentRunProductRuntimeProvisioningError> {
+    if !profile.validate() {
+        return Err(invalid(
+            "execution profile must have a valid immutable digest",
+        ));
+    }
+    Ok((
+        normalize_profile_key(&profile.profile_key)?,
+        profile.profile_digest.clone(),
+    ))
+}
+
 fn map_dynamic_catalog_error(
     error: RuntimeMcpToolCatalogError,
 ) -> AgentRunProductRuntimeProvisioningError {
@@ -664,6 +765,63 @@ mod tests {
             catalog.select(&changed).await,
             Err(AgentRunProductRuntimeProvisioningError::Incompatible { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn placement_switch_is_atomic_across_every_exact_profile() {
+        let catalog = CompleteAgentServiceSelectionCatalog::default();
+        let previous_profile = product_profile("previous");
+        let next_profile = product_profile("next");
+        let conflicting_profile = product_profile("conflict");
+        let previous_instance = AgentServiceInstanceId::new("previous").unwrap();
+        let next_instance = AgentServiceInstanceId::new("next").unwrap();
+        let other_instance = AgentServiceInstanceId::new("other").unwrap();
+        catalog
+            .register(&previous_profile, previous_instance.clone())
+            .await
+            .unwrap();
+        catalog
+            .register(&conflicting_profile, other_instance)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            catalog
+                .switch_placement(
+                    Some((&[previous_profile.clone()], &previous_instance)),
+                    &[next_profile.clone(), conflicting_profile],
+                    &next_instance,
+                )
+                .await,
+            Err(AgentRunProductRuntimeProvisioningError::Conflict { .. })
+        ));
+        assert_eq!(
+            catalog
+                .select(&previous_profile)
+                .await
+                .unwrap()
+                .service_instance_id,
+            previous_instance
+        );
+        assert!(catalog.select(&next_profile).await.is_err());
+
+        catalog
+            .switch_placement(
+                Some((&[previous_profile.clone()], &previous_instance)),
+                &[next_profile.clone()],
+                &next_instance,
+            )
+            .await
+            .unwrap();
+        assert!(catalog.select(&previous_profile).await.is_err());
+        assert_eq!(
+            catalog
+                .select(&next_profile)
+                .await
+                .unwrap()
+                .service_instance_id,
+            next_instance
+        );
     }
 
     #[test]

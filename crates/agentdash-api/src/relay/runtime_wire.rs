@@ -5,12 +5,11 @@ use std::{
 };
 
 use agentdash_agent_runtime_wire::{
-    RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAuthenticatedTransport,
-    RuntimeWirePlacementAck, RuntimeWirePlacementClosed, RuntimeWirePlacementFrame,
-    RuntimeWirePlacementLossCode, RuntimeWirePlacementLost, RuntimeWirePlacementOpen,
-    RuntimeWirePlacementOpenAck, RuntimeWirePlacementOpenRejected,
-    RuntimeWirePlacementProtocolError, RuntimeWirePlacementProvenance,
-    RuntimeWirePlacementSequence, RuntimeWirePlacementStreamId,
+    RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAuthenticatedTransport, RuntimeWirePlacementAck,
+    RuntimeWirePlacementClosed, RuntimeWirePlacementFrame, RuntimeWirePlacementLossCode,
+    RuntimeWirePlacementLost, RuntimeWirePlacementOpen, RuntimeWirePlacementOpenAck,
+    RuntimeWirePlacementOpenRejected, RuntimeWirePlacementProtocolError,
+    RuntimeWirePlacementProvenance, RuntimeWirePlacementSequence, RuntimeWirePlacementStreamId,
     RuntimeWireServiceOfferAdvertisement,
 };
 use agentdash_integration_remote_runtime::{
@@ -52,6 +51,8 @@ pub enum CloudRuntimeWireError {
     },
     #[error("runtime wire queue overflowed")]
     QueueOverflow,
+    #[error("runtime wire Complete Agent admission failed: {reason}")]
+    CompleteAgentAdmission { reason: String },
     #[error("runtime wire placement open timed out")]
     OpenTimeout,
     #[error("runtime wire placement open was rejected: {reason}")]
@@ -81,9 +82,7 @@ struct RuntimeWireStream {
     outbound_unacked: BTreeMap<RuntimeWirePlacementSequence, RelayMessage>,
     inbound_tx: mpsc::Sender<RuntimeWirePlacementEvent>,
     open_tx: Option<
-        oneshot::Sender<
-            Result<RuntimeWirePlacementOpenAck, RuntimeWirePlacementOpenRejected>,
-        >,
+        oneshot::Sender<Result<RuntimeWirePlacementOpenAck, RuntimeWirePlacementOpenRejected>>,
     >,
     disconnect_ack: Arc<Notify>,
     disconnected: bool,
@@ -166,20 +165,24 @@ impl CloudRuntimeWirePlacementRegistry {
         );
         if let Some(current) = state.advertisements.get(&key) {
             if advertisement.revision < current.revision {
-                return Err(RuntimeWirePlacementProtocolError::AdvertisementRevisionRegression {
-                    current: current.revision,
-                    received: advertisement.revision,
-                }
-                .into());
+                return Err(
+                    RuntimeWirePlacementProtocolError::AdvertisementRevisionRegression {
+                        current: current.revision,
+                        received: advertisement.revision,
+                    }
+                    .into(),
+                );
             }
             if advertisement.revision == current.revision {
                 if advertisement.digest == current.digest {
                     return Ok(RuntimeWireAdvertisementAdmission::Replayed);
                 }
-                return Err(RuntimeWirePlacementProtocolError::AdvertisementRevisionConflict {
-                    revision: advertisement.revision,
-                }
-                .into());
+                return Err(
+                    RuntimeWirePlacementProtocolError::AdvertisementRevisionConflict {
+                        revision: advertisement.revision,
+                    }
+                    .into(),
+                );
             }
         }
         state.advertisements.insert(key, advertisement);
@@ -197,11 +200,13 @@ impl CloudRuntimeWirePlacementRegistry {
         let key = (transport.backend_id.clone(), endpoint_id.to_owned());
         if let Some(current) = state.advertisements.get(&key) {
             if revision < current.revision {
-                return Err(RuntimeWirePlacementProtocolError::AdvertisementRevisionRegression {
-                    current: current.revision,
-                    received: revision,
-                }
-                .into());
+                return Err(
+                    RuntimeWirePlacementProtocolError::AdvertisementRevisionRegression {
+                        current: current.revision,
+                        received: revision,
+                    }
+                    .into(),
+                );
             }
         }
         state.advertisements.remove(&key);
@@ -273,9 +278,7 @@ impl CloudRuntimeWirePlacementRegistry {
             let (inbound_tx, inbound_rx) = mpsc::channel(RUNTIME_WIRE_STREAM_QUEUE_CAPACITY);
             let (open_tx, open_rx) = oneshot::channel();
             let disconnect_ack = Arc::new(Notify::new());
-            let negotiated = max_in_flight
-                .min(RUNTIME_WIRE_DEFAULT_MAX_IN_FLIGHT)
-                .max(1);
+            let negotiated = max_in_flight.min(RUNTIME_WIRE_DEFAULT_MAX_IN_FLIGHT).max(1);
             let open = RuntimeWirePlacementOpen {
                 stream_id,
                 provenance: provenance.clone(),
@@ -421,11 +424,11 @@ impl CloudRuntimeWirePlacementRegistry {
                 if let Some(stream) = state.streams.get_mut(&id) {
                     let epoch = provenance_epoch_key(&stream.provenance);
                     stream.disconnected = true;
-                    let _ = stream.inbound_tx.try_send(
-                        RuntimeWirePlacementEvent::Disconnected {
+                    let _ = stream
+                        .inbound_tx
+                        .try_send(RuntimeWirePlacementEvent::Disconnected {
                             reason: reason.to_owned(),
-                        },
-                    );
+                        });
                     let ack = stream.disconnect_ack.clone();
                     state.retired_epochs.insert(epoch);
                     waits.push(ack);
@@ -522,9 +525,7 @@ impl CloudRuntimeWirePlacementRegistry {
                 payload: Box::new(RuntimeWirePlacementAck {
                     stream_id: frame.stream_id,
                     provenance: frame.provenance.clone(),
-                    through_sequence: RuntimeWirePlacementSequence(
-                        stream.last_inbound_sequence,
-                    ),
+                    through_sequence: RuntimeWirePlacementSequence(stream.last_inbound_sequence),
                 }),
             };
             (
@@ -614,6 +615,54 @@ impl CloudRuntimeWirePlacementRegistry {
         };
         let _ = outbound.0.try_send(outbound.1);
     }
+
+    async fn close_stream(
+        &self,
+        stream_id: RuntimeWirePlacementStreamId,
+        provenance: &RuntimeWirePlacementProvenance,
+        reason: &str,
+    ) {
+        let outbound = {
+            let mut state = self.state.lock().await;
+            let Some(stream) = state.streams.get(&stream_id) else {
+                return;
+            };
+            if stream.provenance != *provenance {
+                return;
+            }
+            let stream = state
+                .streams
+                .remove(&stream_id)
+                .expect("checked Runtime Wire stream");
+            state
+                .retired_epochs
+                .insert(provenance_epoch_key(provenance));
+            let _ = stream
+                .inbound_tx
+                .try_send(RuntimeWirePlacementEvent::Disconnected {
+                    reason: reason.to_owned(),
+                });
+            state.connections.get(&provenance.transport.backend_id).map(
+                |connection| {
+                    (
+                        connection.control_tx.clone(),
+                        RelayMessage::RuntimeWirePlacementClosed {
+                            id: RelayMessage::new_id("runtime-wire-close"),
+                            payload: Box::new(RuntimeWirePlacementClosed {
+                                stream_id,
+                                provenance: provenance.clone(),
+                                code: agentdash_agent_runtime_wire::RuntimeWirePlacementCloseCode::Rejected,
+                                reason: reason.to_owned(),
+                            }),
+                        },
+                    )
+                },
+            )
+        };
+        if let Some((sender, message)) = outbound {
+            let _ = sender.try_send(message);
+        }
+    }
 }
 
 struct CloudRuntimeWirePlacement {
@@ -640,9 +689,7 @@ impl RuntimeWirePlacement for CloudRuntimeWirePlacement {
             .map_err(map_transport)
     }
 
-    async fn receive(
-        &self,
-    ) -> Result<RuntimeWirePlacementEvent, RemoteRuntimeTransportError> {
+    async fn receive(&self) -> Result<RuntimeWirePlacementEvent, RemoteRuntimeTransportError> {
         self.inbound_rx
             .lock()
             .await
@@ -653,6 +700,14 @@ impl RuntimeWirePlacement for CloudRuntimeWirePlacement {
 
     async fn acknowledge_disconnect(&self) {
         self.disconnect_ack.notify_waiters();
+    }
+
+    async fn close(&self, reason: &str) {
+        if let Some(registry) = self.registry.upgrade() {
+            registry
+                .close_stream(self.stream_id, &self.provenance, reason)
+                .await;
+        }
     }
 }
 
@@ -729,3 +784,77 @@ fn map_transport(error: CloudRuntimeWireError) -> RemoteRuntimeTransportError {
 
 #[allow(dead_code)]
 fn _closed_is_availability_only(_closed: RuntimeWirePlacementClosed) {}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_agent_runtime_wire::RuntimeWireAdvertisementRevision;
+    use agentdash_agent_service_api::{
+        AgentBindingGeneration, AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId,
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn explicit_close_retires_opened_stream_and_traces_peer_close() {
+        let registry = CloudRuntimeWirePlacementRegistry::new();
+        let mut queues = registry
+            .register_connection("backend-a", "transport-a".to_owned())
+            .await
+            .unwrap();
+        let provenance = RuntimeWirePlacementProvenance {
+            transport: queues.transport.clone(),
+            endpoint_id: "codex".to_owned(),
+            host_incarnation_id: "host-a".to_owned(),
+            service_instance_id: AgentServiceInstanceId::new("remote-codex").unwrap(),
+            binding_generation: AgentBindingGeneration(4),
+            advertisement_revision: RuntimeWireAdvertisementRevision(7),
+            advertisement_digest: AgentPayloadDigest::new("sha256:advertisement").unwrap(),
+            profile_digest: AgentProfileDigest::new("sha256:profile").unwrap(),
+        };
+        let stream_id = RuntimeWirePlacementStreamId(41);
+        let (inbound_tx, inbound_rx) = mpsc::channel(1);
+        let disconnect_ack = Arc::new(Notify::new());
+        registry.state.lock().await.streams.insert(
+            stream_id,
+            RuntimeWireStream {
+                provenance: provenance.clone(),
+                max_in_flight: 1,
+                next_outbound_sequence: 1,
+                last_inbound_sequence: 0,
+                outbound_unacked: BTreeMap::new(),
+                inbound_tx,
+                open_tx: None,
+                disconnect_ack: disconnect_ack.clone(),
+                disconnected: false,
+            },
+        );
+        let placement = CloudRuntimeWirePlacement {
+            registry: Arc::downgrade(&registry),
+            stream_id,
+            provenance: provenance.clone(),
+            inbound_rx: Mutex::new(inbound_rx),
+            disconnect_ack,
+        };
+
+        placement.close("superseded").await;
+
+        assert!(matches!(
+            placement.receive().await.unwrap(),
+            RuntimeWirePlacementEvent::Disconnected { reason } if reason == "superseded"
+        ));
+        assert!(matches!(
+            queues.control_rx.recv().await.unwrap(),
+            RelayMessage::RuntimeWirePlacementClosed { payload, .. }
+                if payload.stream_id == stream_id
+                    && payload.provenance == provenance
+                    && payload.reason == "superseded"
+        ));
+        let state = registry.state.lock().await;
+        assert!(!state.streams.contains_key(&stream_id));
+        assert!(
+            state
+                .retired_epochs
+                .contains(&provenance_epoch_key(&provenance))
+        );
+    }
+}

@@ -9,9 +9,9 @@ use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
+use agentdash_agent_runtime_wire::RuntimeWireAuthenticatedTransport;
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{BackendConfig, BackendRepository, RuntimeHealthOnlineUpdate};
-use agentdash_agent_runtime_wire::RuntimeWireAuthenticatedTransport;
 use agentdash_relay::*;
 
 use crate::app_state::AppState;
@@ -523,6 +523,20 @@ async fn handle_backend_connection(
     }
     state
         .services
+        .runtime_wire_complete_agents
+        .disconnect_backend(&bid)
+        .await
+        .unwrap_or_else(|error| {
+            diag!(
+                Warn,
+                Subsystem::Relay,
+                backend_id = %bid,
+                error = %error,
+                "清理 Remote Complete Agent placement selection 失败"
+            );
+        });
+    state
+        .services
         .runtime_wire_placements
         .disconnect_backend(&runtime_wire_transport, "relay websocket disconnected")
         .await;
@@ -589,11 +603,73 @@ async fn handle_runtime_wire_backend_message(
 ) -> Result<bool, crate::relay::runtime_wire::CloudRuntimeWireError> {
     match message {
         RelayMessage::RuntimeWireOfferAdvertise { payload, .. } => {
-            state
+            let admission = state
                 .services
                 .runtime_wire_placements
-                .advertise(transport, (**payload).clone(), chrono::Utc::now().timestamp_millis())
+                .advertise(
+                    transport,
+                    (**payload).clone(),
+                    chrono::Utc::now().timestamp_millis(),
+                )
                 .await?;
+            if matches!(
+                admission,
+                crate::relay::runtime_wire::RuntimeWireAdvertisementAdmission::Accepted
+                    | crate::relay::runtime_wire::RuntimeWireAdvertisementAdmission::Replayed
+            ) {
+                let state = state.clone();
+                let transport = transport.clone();
+                let advertisement = (**payload).clone();
+                match state
+                    .services
+                    .runtime_wire_complete_agents
+                    .prepare(transport.clone(), advertisement.clone())
+                    .await
+                {
+                    Ok(Some(ticket)) => {
+                        tokio::spawn(async move {
+                            match state
+                                .services
+                                .runtime_wire_complete_agents
+                                .admit(ticket)
+                                .await
+                            {
+                                Ok(instance_id) => {
+                                    diag!(
+                                        Info,
+                                        Subsystem::Relay,
+                                        backend_id = %transport.backend_id,
+                                        endpoint_id = %advertisement.endpoint_id,
+                                        service_instance_id = %instance_id,
+                                        "Remote Complete Agent placement 已通过独立信任配置并注册"
+                                    );
+                                }
+                                Err(error) => {
+                                    diag!(
+                                        Warn,
+                                        Subsystem::Relay,
+                                        backend_id = %transport.backend_id,
+                                        endpoint_id = %advertisement.endpoint_id,
+                                        error = %error,
+                                        "Remote Complete Agent placement admission 失败"
+                                    );
+                                }
+                            }
+                        });
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        diag!(
+                            Warn,
+                            Subsystem::Relay,
+                            backend_id = %transport.backend_id,
+                            endpoint_id = %advertisement.endpoint_id,
+                            error = %error,
+                            "Remote Complete Agent placement 未通过独立信任配置"
+                        );
+                    }
+                }
+            }
             Ok(true)
         }
         RelayMessage::RuntimeWireOfferWithdraw {
@@ -601,6 +677,16 @@ async fn handle_runtime_wire_backend_message(
             revision,
             ..
         } => {
+            state
+                .services
+                .runtime_wire_complete_agents
+                .withdraw(&transport.backend_id, endpoint_id, revision.0)
+                .await
+                .map_err(|error| {
+                    crate::relay::runtime_wire::CloudRuntimeWireError::CompleteAgentAdmission {
+                        reason: error.to_string(),
+                    }
+                })?;
             state
                 .services
                 .runtime_wire_placements

@@ -628,10 +628,6 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
       return prev;
     }
 
-    if (platform.kind === "terminal_output" || platform.kind === "pty_terminal_state_changed") {
-      return prev;
-    }
-
     if (platform.kind === "session_meta_update") {
       const key = platform.data.key;
       if (key === "session_meta_updated" || key === "acp_passthrough") {

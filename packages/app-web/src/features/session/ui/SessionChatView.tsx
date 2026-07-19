@@ -5,7 +5,7 @@
  * 执行器选择、上下文用量指示、发送/取消。
  *
  * AgentRun workspace 等 runtime trace 场景复用此组件，
- * 由父组件提供 AgentRun journal target 与外层导航。
+ * 由父组件提供 AgentRun Managed Runtime target 与外层导航。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

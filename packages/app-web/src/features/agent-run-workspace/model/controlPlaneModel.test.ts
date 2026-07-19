@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import type {
-  BackboneEvent,
-  ControlPlaneProjection,
-  ControlPlaneProjectionChangeReason,
-} from "../../../generated/backbone-protocol";
-import type {
   AgentRunOwnershipView,
   ConversationCommandPlacement,
   ConversationCommandView,
@@ -76,47 +71,6 @@ function submitIntent(commandId: string): AgentRunChatSubmitIntent {
   return {
     command_id: commandId,
     prompt: "继续",
-  };
-}
-
-function controlPlaneProjectionEvent(data: {
-  projection: ControlPlaneProjection;
-  reason: ControlPlaneProjectionChangeReason;
-}): BackboneEvent {
-  return {
-    type: "platform",
-    payload: {
-      kind: "control_plane_projection_changed",
-      data: {
-        run_id: "run-1",
-        agent_id: "agent-1",
-        frame_id: null,
-        gate_id: null,
-        mailbox_message_id: null,
-        delivery_runtime_session_id: null,
-        ...data,
-      },
-    },
-  };
-}
-
-function workspaceModulePresentationRequest(
-  presentationUri = "canvas://canvas-1",
-): BackboneEvent {
-  return {
-    type: "platform",
-    payload: {
-      kind: "workspace_module_presentation_requested",
-      data: {
-        module_id: "canvas:canvas-1",
-        view_key: "preview",
-        renderer_kind: "canvas",
-        presentation_uri: presentationUri,
-        title: "Canvas Preview",
-        payload: null,
-        diagnostics: null,
-      },
-    },
   };
 }
 
@@ -222,23 +176,6 @@ describe("AgentRun control-plane model", () => {
     });
   });
 
-  it("plans workspace and list refresh from typed control-plane projection changes", () => {
-    const plan = planAgentRunLiveEvent(
-      controlPlaneProjectionEvent({
-        projection: "mailbox",
-        reason: "mailbox_state_changed",
-      }),
-    );
-
-    expect(plan).toEqual({
-      effects: {
-        refreshWorkspaceState: true,
-        refreshAgentRunListReason: "control_plane:mailbox:mailbox_state_changed",
-      },
-      refreshTaskPlan: false,
-    });
-  });
-
   it("refreshes workspace and list after a standard thread name update", () => {
     const plan = planAgentRunLiveEvent({
       type: "thread_name_updated",
@@ -270,62 +207,6 @@ describe("AgentRun control-plane model", () => {
         refreshWorkspaceState: true,
         refreshAgentRunListReason: "thread_name_updated",
       },
-      refreshTaskPlan: false,
-    });
-  });
-
-  it("plans resource surface and hook refresh from typed capability projection changes", () => {
-    const plan = planAgentRunLiveEvent(
-      controlPlaneProjectionEvent({
-        projection: "resource_surface",
-        reason: "capability_state_changed",
-      }),
-    );
-
-    expect(plan).toEqual({
-      effects: {
-        refreshWorkspaceState: true,
-        hookRuntimeRefresh: {
-          reason: "control_plane:resource_surface:capability_state_changed",
-        },
-      },
-      refreshTaskPlan: false,
-    });
-  });
-
-  it("opens a typed Workspace Module presentation request without projection semantics", () => {
-    const plan = planAgentRunLiveEvent(workspaceModulePresentationRequest());
-
-    expect(plan).toEqual({
-      effects: {
-        refreshWorkspaceState: true,
-        openWorkspacePanel: {
-          afterWorkspaceRefresh: true,
-          presentation: {
-            module_id: "canvas:canvas-1",
-            view_key: "preview",
-            renderer_kind: "canvas",
-            presentation_uri: "canvas://canvas-1",
-            title: "Canvas Preview",
-            payload: null,
-            diagnostics: null,
-          },
-          target: {
-            typeId: "canvas",
-            uri: "canvas://canvas-1",
-            options: { refreshContent: false },
-          },
-        },
-      },
-      refreshTaskPlan: false,
-    });
-  });
-
-  it("does not synthesize Canvas presentation URI from view_key", () => {
-    const plan = planAgentRunLiveEvent(workspaceModulePresentationRequest(""));
-
-    expect(plan).toEqual({
-      effects: {},
       refreshTaskPlan: false,
     });
   });
@@ -413,7 +294,6 @@ describe("AgentRun control-plane model", () => {
           frame_id: null,
           gate_id: null,
           mailbox_message_id: null,
-          delivery_runtime_session_id: null,
         },
       },
     };
@@ -425,7 +305,7 @@ describe("AgentRun control-plane model", () => {
       }),
     ).toEqual({
       refreshWorkspaceState: true,
-      refreshAgentRunListReason: "title_changed",
+      refreshAgentRunListReason: "control_plane:agent_run_list:title_changed",
     });
     expect(
       planAgentRunProjectEvent(event, {
@@ -433,5 +313,33 @@ describe("AgentRun control-plane model", () => {
         agentId: "another-agent",
       }),
     ).toEqual({});
+  });
+
+  it("refreshes mailbox workspace state from the Product project event feed", () => {
+    const event: ProjectEventStreamEnvelope = {
+      type: "ControlPlaneProjectionChanged",
+      data: {
+        project_id: "project-1",
+        change: {
+          projection: "mailbox",
+          reason: "mailbox_state_changed",
+          run_id: "run-1",
+          agent_id: "agent-1",
+          frame_id: null,
+          gate_id: null,
+          mailbox_message_id: null,
+        },
+      },
+    };
+
+    expect(
+      planAgentRunProjectEvent(event, {
+        runId: "run-1",
+        agentId: "agent-1",
+      }),
+    ).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "control_plane:mailbox:mailbox_state_changed",
+    });
   });
 });

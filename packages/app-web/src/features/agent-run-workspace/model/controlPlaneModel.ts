@@ -1,16 +1,14 @@
 import type {
   BackboneEvent,
-  ControlPlaneProjectionChanged,
-  WorkspaceModulePresentationRequested,
 } from "../../../generated/backbone-protocol";
 import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
-import type { ProjectEventStreamEnvelope } from "../../../generated/project-contracts";
+import type {
+  ControlPlaneProjectionChanged,
+  ProjectEventStreamEnvelope,
+} from "../../../generated/project-contracts";
 import type { WorkspaceModulePresentation } from "../../../generated/workspace-module-contracts";
 import type { WorkspaceModulePresentationIntent } from "../../../generated/agent-run-product-projection-contracts";
-import {
-  workspaceModulePresentationFromPlatformEventData,
-  workspaceModulePresentationTabTarget,
-} from "../../workspace-module/model/presentation";
+import { workspaceModulePresentationTabTarget } from "../../workspace-module/model/presentation";
 import type {
   AgentRunConversationCommand,
   AgentRunConversationCommandState,
@@ -147,15 +145,10 @@ export function planAgentRunProjectEvent(
   if (
     change.run_id !== target.runId
     || change.agent_id !== target.agentId
-    || change.projection !== "agent_run_list"
-    || change.reason !== "title_changed"
   ) {
     return {};
   }
-  return {
-    refreshWorkspaceState: true,
-    refreshAgentRunListReason: "title_changed",
-  };
+  return planControlPlaneProjectionChanged(change);
 }
 
 export function planAgentRunTurnEnded(): AgentRunControlPlaneEffectPlan {
@@ -202,14 +195,6 @@ export function planWorkspaceModulePresentationIntent(
   return planWorkspaceModulePresentationPayload(intent.presentation);
 }
 
-function planWorkspaceModulePresentation(
-  request: WorkspaceModulePresentationRequested,
-): AgentRunControlPlaneEffectPlan {
-  return planWorkspaceModulePresentationPayload(
-    workspaceModulePresentationFromPlatformEventData(request),
-  );
-}
-
 function planControlPlaneProjectionChanged(
   change: ControlPlaneProjectionChanged,
 ): AgentRunControlPlaneEffectPlan {
@@ -242,6 +227,9 @@ function planControlPlaneProjectionChanged(
   ) {
     plan.refreshWorkspaceState = true;
     plan.hookRuntimeRefresh = { reason };
+  }
+  if (change.reason === "title_changed") {
+    plan.refreshWorkspaceState = true;
   }
 
   if (
@@ -297,12 +285,6 @@ function planAgentRunEventEffects(
     return {};
   }
 
-  if (event.payload.kind === "workspace_module_presentation_requested") {
-    return planWorkspaceModulePresentation(event.payload.data);
-  }
-  if (event.payload.kind === "control_plane_projection_changed") {
-    return planControlPlaneProjectionChanged(event.payload.data);
-  }
   if (event.payload.kind === "context_frame_changed") {
     return {
       refreshWorkspaceState: true,

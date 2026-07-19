@@ -13,11 +13,9 @@ pub use backbone::item::{
     ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
 };
 pub use backbone::platform::{
-    ControlPlaneProjection, ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged,
     HookTraceCompletion, HookTraceData, HookTraceDiagnostic, HookTraceInjection, HookTracePayload,
     HookTraceSeverity, HookTraceTrigger, PlatformEvent, ProviderAttemptPhase,
     ProviderAttemptStatus, RuntimeTerminalDiagnostic, SessionRewindReason, SessionRewound,
-    WorkspaceModulePresentationRequested,
 };
 pub use backbone::usage::{
     ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
@@ -72,9 +70,7 @@ mod tests {
     use ts_rs::TS;
 
     use super::{
-        BackboneEnvelope, BackboneEvent, ContextDeliveryMetadata, ContextFrame,
-        ControlPlaneProjection, ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged,
-        PlatformEvent, WorkspaceModulePresentationRequested,
+        BackboneEnvelope, BackboneEvent, ContextDeliveryMetadata, ContextFrame, PlatformEvent,
     };
 
     #[test]
@@ -95,60 +91,6 @@ mod tests {
         let platform = fs::read_to_string(dir.path().join("PlatformEvent.ts"))
             .expect("read generated platform event type");
         assert!(platform.contains("context_frame_changed"));
-    }
-
-    #[test]
-    fn control_plane_projection_changed_platform_event_uses_typed_contract() {
-        let event = BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(
-            Box::new(ControlPlaneProjectionChanged {
-                projection: ControlPlaneProjection::Workspace,
-                reason: ControlPlaneProjectionChangeReason::MailboxStateChanged,
-                run_id: "run-1".to_string(),
-                agent_id: "agent-1".to_string(),
-                frame_id: Some("frame-1".to_string()),
-                gate_id: Some("gate-1".to_string()),
-                mailbox_message_id: Some("mailbox-1".to_string()),
-                delivery_runtime_session_id: None,
-            }),
-        ));
-
-        let value =
-            serde_json::to_value(event).expect("serialize control-plane projection platform event");
-        assert_eq!(value["type"], "platform");
-        assert_eq!(value["payload"]["kind"], "control_plane_projection_changed");
-        assert_eq!(value["payload"]["data"]["projection"], "workspace");
-        assert_eq!(value["payload"]["data"]["reason"], "mailbox_state_changed");
-        assert_eq!(value["payload"]["data"]["run_id"], "run-1");
-        assert_eq!(value["payload"]["data"]["agent_id"], "agent-1");
-        assert_eq!(value["payload"]["data"]["frame_id"], "frame-1");
-        assert_eq!(value["payload"]["data"]["gate_id"], "gate-1");
-        assert_eq!(value["payload"]["data"]["mailbox_message_id"], "mailbox-1");
-    }
-
-    #[test]
-    fn workspace_module_presentation_request_has_its_own_typed_discriminant() {
-        let event = BackboneEvent::Platform(PlatformEvent::WorkspaceModulePresentationRequested(
-            Box::new(WorkspaceModulePresentationRequested {
-                module_id: "canvas:cvs-canvas".to_string(),
-                view_key: "preview".to_string(),
-                renderer_kind: "canvas".to_string(),
-                presentation_uri: "canvas://cvs-canvas".to_string(),
-                title: "Canvas".to_string(),
-                payload: Some(serde_json::json!({ "reason": "smoke-test" })),
-                diagnostics: None,
-            }),
-        ));
-
-        let value =
-            serde_json::to_value(event).expect("serialize workspace module presentation request");
-        assert_eq!(
-            value["payload"]["kind"],
-            "workspace_module_presentation_requested"
-        );
-        assert_eq!(
-            value["payload"]["data"]["presentation_uri"],
-            "canvas://cvs-canvas"
-        );
     }
 
     #[test]

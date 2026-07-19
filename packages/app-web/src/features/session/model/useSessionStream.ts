@@ -10,7 +10,6 @@ import {
   createInitialStreamState,
   reduceStreamState,
 } from "./sessionStreamReducer";
-import { projectSessionTerminalPlatformEvents } from "./sessionPlatformEventDispatcher";
 import type {
   SessionDisplayEntry,
   SessionEventEnvelope,
@@ -147,15 +146,6 @@ export function useSessionStream({
     }
     return feed.snapshot ? boundary : null;
   }, [events, feed.snapshot]);
-  const liveEvents = useMemo(
-    () => events.filter((event) => !event.baseline),
-    [events],
-  );
-
-  useEffect(() => {
-    projectSessionTerminalPlatformEvents(liveEvents, onError);
-  }, [liveEvents, onError]);
-
   useEffect(() => {
     onConnectionChange?.(feed.lifecycle === "connected");
   }, [feed.lifecycle, onConnectionChange]);

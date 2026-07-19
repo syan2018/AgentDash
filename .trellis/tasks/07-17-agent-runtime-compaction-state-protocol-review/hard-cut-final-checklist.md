@@ -77,8 +77,9 @@
 - [x] MCP discovery/executor 与已迁移的静态 Product/VFS tools 共享同一 typed Runtime Tool
   Broker catalog；Surface compiler只引用可执行 tool requirements，Host callback 经
   Broker执行，MCP server metadata 不作为 context 注入。
-- [ ] Complete Agent Hook 已进入 typed callback owner；Companion 等 Product-only Hook
-  effects 仍需退出旧 aggregate execution shell。
+- [x] Complete Agent Hook 已进入 typed callback owner；Companion
+  `AfterSubagentDispatch` 等 Product-only Hook effect 由 immutable HookPlan 驱动
+  typed Product event owner，均已退出旧 aggregate execution shell。
 - [x] Product Hook plan compiler/policy handler进入production composition；只将明确选择
   `AgentCoreCallback` / `DriverNative` 的site映射进Agent surface，空计划或无条件Allow
   不能作为required hook evidence。
@@ -109,7 +110,8 @@
 - [ ] Terminal create/input/resize/close/projection。
 - [ ] Wait activity 与 gate/terminal convergence。
 - [ ] Complete Agent Tool/Hook callback、permission、deadline、effect correlation 已通过；
-  等待剩余 Product Tool families 与 Product-only Hook effect 同样进入最终路径。
+  Product-only Hook effect 已进入最终路径，等待剩余 Product Tool families 接入最终
+  Broker catalog 后闭合本项。
 - [x] MCP dynamic tool discovery → surface apply → Host callback → Broker execution。
 - [x] Compaction Dash exact / Codex native projection。
 - [x] reconnect cursor tail与gap snapshot reload。

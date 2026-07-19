@@ -168,7 +168,8 @@ pub use agent_run_product_projection_repository::{
     PostgresWorkspaceModulePresentationStore, product_runtime_binding_digest,
 };
 pub use agent_run_product_saga_repository::{
-    PostgresAgentRunForkSagaRepository, PostgresCompanionFreshSagaRepository,
+    PostgresAgentRunForkSagaRepository, PostgresAgentRunProductRuntimeRecoverySagaRepository,
+    PostgresCompanionFreshSagaRepository,
 };
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;

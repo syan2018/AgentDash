@@ -12,6 +12,7 @@ use agentdash_workspace_module::workspace_module::presentation_protocol::{
     WorkspaceModulePresentationSnapshot,
 };
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -25,7 +26,7 @@ use super::terminal_projection_protocol::{
     AgentRunTerminalProjectionRepository, AgentRunTerminalSnapshot,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRunProductRuntimeBinding {
     pub target: AgentRunTarget,
     pub runtime_thread_id: RuntimeThreadId,

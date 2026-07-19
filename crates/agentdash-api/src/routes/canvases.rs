@@ -23,11 +23,11 @@ use agentdash_application::extension_package::{
     StoreExtensionPackageArchiveInput, install_extension_package_artifact,
     store_extension_package_archive,
 };
-use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use agentdash_application_extension_gateway::{
     RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeSurface,
 };
+use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use agentdash_application_vfs::ResolvedVfsSurfaceSource;
 use agentdash_contracts::canvas::{
     CanvasAccessDto, CanvasAgentRunRuntimeSnapshotDto, CanvasFileDto, CanvasImportMapDto,
@@ -97,7 +97,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
                 .put(update_canvas)
                 .delete(delete_canvas),
         )
-        // Legacy session-scoped runtime-snapshot and runtime-invoke removed.
+        // Canvas runtime 只通过 AgentRun scoped surface 暴露。
         // Use AgentRun-scoped endpoints:
         //   GET /agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-snapshot
         //   POST /agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-invoke
@@ -657,11 +657,11 @@ pub async fn invoke_agent_run_canvas_runtime_action(
     let request = RuntimeInvocationRequest::new(
         action_key,
         RuntimeActor::UserCanvas {
-            session_id: context.runtime_thread_id.clone(),
+            runtime_thread_id: context.runtime_thread_id.clone(),
             canvas_id: Some(context.canvas.id),
         },
-        RuntimeContext::Session {
-            session_id: context.runtime_thread_id,
+        RuntimeContext::RuntimeThread {
+            runtime_thread_id: context.runtime_thread_id,
             project_id: Some(context.canvas.project_id),
             workspace_id: None,
         },
@@ -682,24 +682,23 @@ async fn resolve_agent_run_canvas_route_context(
 ) -> Result<CanvasAgentRunContext, ApiError> {
     let run_id = parse_uuid(run_id, "run_id")?;
     let agent_id = parse_uuid(agent_id, "agent_id")?;
-    let context =
-        resolve_agent_run_canvas_context(
-            &state.repos,
-            state.services.agent_run_product_runtime_bindings.as_ref(),
-            run_id,
-            agent_id,
-            canvas_mount_id,
-        )
-        .await?;
+    let context = resolve_agent_run_canvas_context(
+        &state.repos,
+        state.services.agent_run_product_runtime_bindings.as_ref(),
+        run_id,
+        agent_id,
+        canvas_mount_id,
+    )
+    .await?;
     load_project_with_permission(state, current_user, context.run.project_id, permission).await?;
     Ok(context)
 }
 
 fn agent_run_canvas_resource_surface_ref(context: &CanvasAgentRunContext) -> String {
-    agent_run_canvas_resource_surface_ref_for_session(&context.runtime_thread_id)
+    agent_run_canvas_resource_surface_ref_for_runtime_thread(&context.runtime_thread_id)
 }
 
-fn agent_run_canvas_resource_surface_ref_for_session(runtime_thread_id: &str) -> String {
+fn agent_run_canvas_resource_surface_ref_for_runtime_thread(runtime_thread_id: &str) -> String {
     ResolvedVfsSurfaceSource::RuntimeThread {
         runtime_thread_id: runtime_thread_id.to_string(),
     }
@@ -967,12 +966,12 @@ fn runtime_action_descriptor_to_contract(
 
 fn runtime_context_to_contract(context: RuntimeContext) -> RuntimeContextDto {
     match context {
-        RuntimeContext::Session {
-            session_id,
+        RuntimeContext::RuntimeThread {
+            runtime_thread_id,
             project_id,
             workspace_id,
-        } => RuntimeContextDto::Session {
-            session_id,
+        } => RuntimeContextDto::RuntimeThread {
+            runtime_thread_id,
             project_id: project_id.map(|id| id.to_string()),
             workspace_id: workspace_id.map(|id| id.to_string()),
         },
@@ -1007,11 +1006,11 @@ async fn build_canvas_runtime_bridge_surface(
         .extension_gateway
         .surface_for_actor(
             RuntimeActor::UserCanvas {
-                session_id: runtime_thread_id.to_string(),
+                runtime_thread_id: runtime_thread_id.to_string(),
                 canvas_id: Some(canvas.id),
             },
-            RuntimeContext::Session {
-                session_id: runtime_thread_id.to_string(),
+            RuntimeContext::RuntimeThread {
+                runtime_thread_id: runtime_thread_id.to_string(),
                 project_id: Some(canvas.project_id),
                 workspace_id: None,
             },
@@ -1115,8 +1114,8 @@ mod tests {
     #[test]
     fn agent_run_canvas_resource_surface_ref_uses_runtime_thread() {
         assert_eq!(
-            agent_run_canvas_resource_surface_ref_for_session("runtime-session-1"),
-            "session-runtime:runtime-session-1"
+            agent_run_canvas_resource_surface_ref_for_runtime_thread("runtime-thread-1"),
+            "runtime-thread:runtime-thread-1"
         );
     }
 

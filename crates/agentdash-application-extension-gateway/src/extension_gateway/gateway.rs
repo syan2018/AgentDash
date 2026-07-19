@@ -181,28 +181,28 @@ fn validate_runtime_thread_actor_context(
     context: &RuntimeContext,
     trace: Option<super::types::RuntimeTrace>,
 ) -> Result<(), RuntimeInvocationError> {
-    let Some(context_session_id) = context.session_id() else {
+    let Some(context_runtime_thread_id) = context.runtime_thread_id() else {
         return Err(RuntimeInvocationError::invalid_request(
-            "Session Runtime Action 必须绑定 Session context",
+            "RuntimeThread Action 必须绑定 RuntimeThread context",
             trace,
         ));
     };
-    if context_session_id.is_empty() {
+    if context_runtime_thread_id.is_empty() {
         return Err(RuntimeInvocationError::invalid_request(
-            "Session Runtime Action 的 session_id 不能为空",
+            "RuntimeThread Action 的 runtime_thread_id 不能为空",
             trace,
         ));
     }
 
-    let Some(actor_session_id) = actor.session_id() else {
+    let Some(actor_runtime_thread_id) = actor.runtime_thread_id() else {
         return Err(RuntimeInvocationError::capability_denied(
-            "Session Runtime Action 只能由绑定同一 Session 的 actor 调用",
+            "RuntimeThread Action 只能由绑定同一 RuntimeThread 的 actor 调用",
             trace,
         ));
     };
-    if actor_session_id != context_session_id {
+    if actor_runtime_thread_id != context_runtime_thread_id {
         return Err(RuntimeInvocationError::capability_denied(
-            "Runtime actor 与 Runtime context 的 session_id 不一致",
+            "Runtime actor 与 Runtime context 的 runtime_thread_id 不一致",
             trace,
         ));
     }
@@ -287,15 +287,15 @@ mod tests {
         }
     }
 
-    fn session_request(action_key: &str) -> RuntimeInvocationRequest {
+    fn runtime_thread_request(action_key: &str) -> RuntimeInvocationRequest {
         RuntimeInvocationRequest::new(
             RuntimeActionKey::parse(action_key).expect("valid action key"),
-            RuntimeActor::AgentSession {
-                session_id: "session-1".to_string(),
+            RuntimeActor::AgentRuntimeThread {
+                runtime_thread_id: "runtime-thread-1".to_string(),
                 agent_id: None,
             },
-            RuntimeContext::Session {
-                session_id: "session-1".to_string(),
+            RuntimeContext::RuntimeThread {
+                runtime_thread_id: "runtime-thread-1".to_string(),
                 project_id: None,
                 workspace_id: None,
             },
@@ -322,7 +322,7 @@ mod tests {
         let gateway = ExtensionGateway::new();
 
         let err = gateway
-            .invoke(session_request("session.echo"))
+            .invoke(runtime_thread_request("session.echo"))
             .await
             .expect_err("unregistered action should fail");
 
@@ -331,12 +331,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_action_requires_session_context() {
+    async fn runtime_thread_action_requires_runtime_thread_context() {
         let gateway = ExtensionGateway::new().with_provider(Arc::new(FakeProvider::new(
             "session.echo",
             RuntimeActionKind::RuntimeThread,
         )));
-        let mut request = session_request("session.echo");
+        let mut request = runtime_thread_request("session.echo");
         request.context = RuntimeContext::Setup {
             project_id: None,
             workspace_id: None,
@@ -347,27 +347,27 @@ mod tests {
         let err = gateway
             .invoke(request)
             .await
-            .expect_err("session action without session context should fail");
+            .expect_err("runtime thread action without runtime thread context should fail");
 
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::InvalidRequest);
     }
 
     #[tokio::test]
-    async fn setup_action_rejects_session_actor() {
+    async fn setup_action_rejects_runtime_thread_actor() {
         let gateway = ExtensionGateway::new().with_provider(Arc::new(FakeProvider::new(
             "workspace.detect",
             RuntimeActionKind::Setup,
         )));
         let mut request = setup_request("workspace.detect");
-        request.actor = RuntimeActor::AgentSession {
-            session_id: "session-1".to_string(),
+        request.actor = RuntimeActor::AgentRuntimeThread {
+            runtime_thread_id: "runtime-thread-1".to_string(),
             agent_id: None,
         };
 
         let err = gateway
             .invoke(request)
             .await
-            .expect_err("session actor should not call setup action");
+            .expect_err("runtime thread actor should not call setup action");
 
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
     }
@@ -378,7 +378,7 @@ mod tests {
             "session.echo",
             RuntimeActionKind::RuntimeThread,
         )));
-        let request = session_request("session.echo");
+        let request = runtime_thread_request("session.echo");
         let expected_trace_id = request.trace.trace_id.clone();
         let expected_invocation_id = request.trace.invocation_id.clone();
 
@@ -394,14 +394,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn registered_session_action_invokes_provider() {
+    async fn registered_runtime_thread_action_invokes_provider() {
         let gateway = ExtensionGateway::new().with_provider(Arc::new(FakeProvider::new(
             "session.echo",
             RuntimeActionKind::RuntimeThread,
         )));
 
         let result = gateway
-            .invoke(session_request("session.echo"))
+            .invoke(runtime_thread_request("session.echo"))
             .await
             .expect("registered action should invoke");
 
@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn actor_aware_surface_returns_session_actions_for_bound_session_actor() {
+    async fn actor_aware_surface_returns_runtime_thread_actions_for_bound_actor() {
         let gateway = ExtensionGateway::new()
             .with_provider(Arc::new(FakeProvider::new(
                 "session.echo",
@@ -423,18 +423,18 @@ mod tests {
 
         let surface = gateway
             .surface_for_actor(
-                RuntimeActor::AgentSession {
-                    session_id: "session-1".to_string(),
+                RuntimeActor::AgentRuntimeThread {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     agent_id: None,
                 },
-                RuntimeContext::Session {
-                    session_id: "session-1".to_string(),
+                RuntimeContext::RuntimeThread {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     project_id: None,
                     workspace_id: None,
                 },
             )
             .await
-            .expect("session actor should see session runtime actions");
+            .expect("runtime thread actor should see runtime thread actions");
         let keys = surface
             .actions
             .iter()
@@ -458,18 +458,18 @@ mod tests {
 
         let surface = gateway
             .surface_for_actor(
-                RuntimeActor::AgentSession {
-                    session_id: "session-1".to_string(),
+                RuntimeActor::AgentRuntimeThread {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     agent_id: None,
                 },
-                RuntimeContext::Session {
-                    session_id: "session-1".to_string(),
+                RuntimeContext::RuntimeThread {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     project_id: None,
                     workspace_id: None,
                 },
             )
             .await
-            .expect("session actor should see static and dynamic runtime actions");
+            .expect("runtime thread actor should see static and dynamic runtime actions");
         let keys = surface
             .actions
             .iter()
@@ -480,7 +480,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn actor_aware_surface_rejects_mismatched_session_actor() {
+    async fn actor_aware_surface_rejects_mismatched_runtime_thread_actor() {
         let gateway = ExtensionGateway::new().with_provider(Arc::new(FakeProvider::new(
             "session.echo",
             RuntimeActionKind::RuntimeThread,
@@ -488,18 +488,18 @@ mod tests {
 
         let err = gateway
             .surface_for_actor(
-                RuntimeActor::AgentSession {
-                    session_id: "session-a".to_string(),
+                RuntimeActor::AgentRuntimeThread {
+                    runtime_thread_id: "runtime-thread-a".to_string(),
                     agent_id: None,
                 },
-                RuntimeContext::Session {
-                    session_id: "session-b".to_string(),
+                RuntimeContext::RuntimeThread {
+                    runtime_thread_id: "runtime-thread-b".to_string(),
                     project_id: None,
                     workspace_id: None,
                 },
             )
             .await
-            .expect_err("mismatched session actor should not receive a surface");
+            .expect_err("mismatched runtime thread actor should not receive a surface");
 
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
     }
@@ -538,7 +538,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn actor_aware_surface_rejects_session_actor_for_setup_context() {
+    async fn actor_aware_surface_rejects_runtime_thread_actor_for_setup_context() {
         let gateway = ExtensionGateway::new().with_provider(Arc::new(FakeProvider::new(
             "workspace.detect",
             RuntimeActionKind::Setup,
@@ -546,8 +546,8 @@ mod tests {
 
         let err = gateway
             .surface_for_actor(
-                RuntimeActor::AgentSession {
-                    session_id: "session-1".to_string(),
+                RuntimeActor::AgentRuntimeThread {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     agent_id: None,
                 },
                 RuntimeContext::Setup {
@@ -558,7 +558,7 @@ mod tests {
                 },
             )
             .await
-            .expect_err("session actor should not receive setup surface");
+            .expect_err("runtime thread actor should not receive setup surface");
 
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
     }
@@ -575,8 +575,8 @@ mod tests {
                 RuntimeActionKind::Setup,
             )));
 
-        let surface = gateway.debug_surface_for_unchecked(RuntimeContext::Session {
-            session_id: String::new(),
+        let surface = gateway.debug_surface_for_unchecked(RuntimeContext::RuntimeThread {
+            runtime_thread_id: String::new(),
             project_id: None,
             workspace_id: None,
         });

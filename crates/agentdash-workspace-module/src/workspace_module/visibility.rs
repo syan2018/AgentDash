@@ -426,7 +426,7 @@ mod tests {
             target: AgentFrameRuntimeTarget {
                 frame_id: Uuid::new_v4(),
                 runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId::new(
-                    "session-a",
+                    "runtime-thread-a",
                 )
                 .unwrap(),
             },

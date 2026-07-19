@@ -92,25 +92,25 @@ pub enum RuntimeActionKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuntimeActor {
-    AgentSession {
-        session_id: String,
+    AgentRuntimeThread {
+        runtime_thread_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
     },
     UserCanvas {
-        session_id: String,
+        runtime_thread_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         canvas_id: Option<Uuid>,
     },
     WorkflowNode {
-        session_id: String,
+        runtime_thread_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         run_id: Option<Uuid>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         node_key: Option<String>,
     },
-    SessionUser {
-        session_id: String,
+    RuntimeThreadUser {
+        runtime_thread_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         user_id: Option<String>,
     },
@@ -125,12 +125,20 @@ pub enum RuntimeActor {
 }
 
 impl RuntimeActor {
-    pub fn session_id(&self) -> Option<&str> {
+    pub fn runtime_thread_id(&self) -> Option<&str> {
         match self {
-            RuntimeActor::AgentSession { session_id, .. }
-            | RuntimeActor::UserCanvas { session_id, .. }
-            | RuntimeActor::WorkflowNode { session_id, .. }
-            | RuntimeActor::SessionUser { session_id, .. } => Some(session_id),
+            RuntimeActor::AgentRuntimeThread {
+                runtime_thread_id, ..
+            }
+            | RuntimeActor::UserCanvas {
+                runtime_thread_id, ..
+            }
+            | RuntimeActor::WorkflowNode {
+                runtime_thread_id, ..
+            }
+            | RuntimeActor::RuntimeThreadUser {
+                runtime_thread_id, ..
+            } => Some(runtime_thread_id),
             RuntimeActor::PlatformUser { .. } | RuntimeActor::EnvironmentSetup { .. } => None,
         }
     }
@@ -146,8 +154,8 @@ impl RuntimeActor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuntimeContext {
-    Session {
-        session_id: String,
+    RuntimeThread {
+        runtime_thread_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project_id: Option<Uuid>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -168,14 +176,16 @@ pub enum RuntimeContext {
 impl RuntimeContext {
     pub fn action_kind(&self) -> RuntimeActionKind {
         match self {
-            RuntimeContext::Session { .. } => RuntimeActionKind::RuntimeThread,
+            RuntimeContext::RuntimeThread { .. } => RuntimeActionKind::RuntimeThread,
             RuntimeContext::Setup { .. } => RuntimeActionKind::Setup,
         }
     }
 
-    pub fn session_id(&self) -> Option<&str> {
+    pub fn runtime_thread_id(&self) -> Option<&str> {
         match self {
-            RuntimeContext::Session { session_id, .. } => Some(session_id),
+            RuntimeContext::RuntimeThread {
+                runtime_thread_id, ..
+            } => Some(runtime_thread_id),
             RuntimeContext::Setup { .. } => None,
         }
     }
@@ -184,7 +194,7 @@ impl RuntimeContext {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuntimeTarget {
-    CurrentSession,
+    CurrentRuntimeThread,
     Backend { backend_id: String },
     Workspace { workspace_id: Uuid },
     McpServer { name: String },

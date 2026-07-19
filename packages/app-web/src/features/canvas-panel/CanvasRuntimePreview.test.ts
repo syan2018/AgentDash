@@ -17,8 +17,8 @@ function snapshot(): CanvasRuntimeSnapshot {
     canvas_id: "canvas-1",
     canvas_mount_id: "cvs-canvas-1",
     vfs_mount_id: "cvs-canvas-1",
-    session_id: "session-1",
-    resource_surface_ref: "session-runtime:session-1",
+    runtime_thread_id: "runtime-thread-1",
+    resource_surface_ref: "runtime-thread:runtime-thread-1",
     entry: "src/main.tsx",
     files: [
       {
@@ -260,14 +260,14 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     const createObjectUrl = vi.fn(() => "blob:asset-1");
 
     const firstUrl = await resolveRuntimeAssetUrl({
-      surfaceRef: "session-runtime:session-1",
+      surfaceRef: "runtime-thread:runtime-thread-1",
       uri: "docs-media://assets/doc-1/source.png",
       cache,
       readBlob,
       createObjectUrl,
     });
     const secondUrl = await resolveRuntimeAssetUrl({
-      surfaceRef: "session-runtime:session-1",
+      surfaceRef: "runtime-thread:runtime-thread-1",
       uri: "docs-media://assets/doc-1/source.png",
       cache,
       readBlob,
@@ -278,7 +278,7 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     expect(secondUrl).toBe("blob:asset-1");
     expect(readBlob).toHaveBeenCalledTimes(1);
     expect(readBlob).toHaveBeenCalledWith({
-      surfaceRef: "session-runtime:session-1",
+      surfaceRef: "runtime-thread:runtime-thread-1",
       mountId: "docs-media",
       path: "assets/doc-1/source.png",
     });
@@ -290,14 +290,14 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     const readBlob = vi.fn(async () => new Blob(["{}"], { type: "application/json" }));
 
     await expect(resolveRuntimeAssetUrl({
-      surfaceRef: "session-runtime:session-1",
+      surfaceRef: "runtime-thread:runtime-thread-1",
       uri: "docs-media://assets/doc-1/source.json",
       cache,
       readBlob,
       createObjectUrl: () => "blob:asset-json",
     })).rejects.toThrow("资源不是图片 MIME: application/json");
     await expect(resolveRuntimeAssetUrl({
-      surfaceRef: "session-runtime:session-1",
+      surfaceRef: "runtime-thread:runtime-thread-1",
       uri: "https://example.test/image.png",
       cache,
       readBlob,
@@ -317,7 +317,7 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     const revokeObjectUrl = vi.fn();
 
     const firstUrl = await resolveRuntimeAssetUrl({
-      surfaceRef: "session-runtime:session-1",
+      surfaceRef: "runtime-thread:runtime-thread-1",
       uri: "docs-media://assets/doc-1/source.png",
       cache,
       readBlob,
@@ -325,7 +325,7 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     });
     revokeRuntimeAssetUrl(cache, firstUrl, revokeObjectUrl);
     const secondUrl = await resolveRuntimeAssetUrl({
-      surfaceRef: "session-runtime:session-1",
+      surfaceRef: "runtime-thread:runtime-thread-1",
       uri: "docs-media://assets/doc-1/source.png",
       cache,
       readBlob,
@@ -353,14 +353,14 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     const revokeObjectUrl = vi.fn();
 
     const firstUrl = await resolveRuntimeAssetUrl({
-      surfaceRef: "session-runtime:session-1",
+      surfaceRef: "runtime-thread:runtime-thread-1",
       uri: "docs-media://assets/doc-1/source.png",
       cache: firstGenerationCache,
       readBlob,
       createObjectUrl,
     });
     const secondUrl = await resolveRuntimeAssetUrl({
-      surfaceRef: "session-runtime:session-1",
+      surfaceRef: "runtime-thread:runtime-thread-1",
       uri: "docs-media://assets/doc-1/source.png",
       cache: secondGenerationCache,
       readBlob,
@@ -369,7 +369,7 @@ describe("CanvasRuntimePreview VFS image assets", () => {
 
     revokeAllRuntimeAssetUrls(firstGenerationCache, revokeObjectUrl);
     const stillVisibleUrl = await resolveRuntimeAssetUrl({
-      surfaceRef: "session-runtime:session-1",
+      surfaceRef: "runtime-thread:runtime-thread-1",
       uri: "docs-media://assets/doc-1/source.png",
       cache: secondGenerationCache,
       readBlob,

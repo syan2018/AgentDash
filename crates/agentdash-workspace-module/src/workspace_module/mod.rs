@@ -144,7 +144,10 @@ impl WorkspaceModuleRuntimeActionCatalog {
         }
     }
 
-    fn session_action_descriptor(&self, action_key: &str) -> Option<&RuntimeActionDescriptor> {
+    fn runtime_thread_action_descriptor(
+        &self,
+        action_key: &str,
+    ) -> Option<&RuntimeActionDescriptor> {
         self.descriptors.iter().find(|descriptor| {
             descriptor.kind == RuntimeActionKind::RuntimeThread
                 && descriptor.action_key.as_str() == action_key
@@ -400,7 +403,7 @@ fn operation_from_generated_projection(
         ExtensionGeneratedOperationDispatch::RuntimeAction { action_key } => {
             let readiness = if operation_context
                 .runtime_actions
-                .session_action_descriptor(action_key)
+                .runtime_thread_action_descriptor(action_key)
                 .is_some()
             {
                 first_unready_or_ready([&operation_context.backend_readiness])
@@ -1021,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn operation_catalog_runtime_action_requires_session_gateway_descriptor() {
+    fn operation_catalog_runtime_action_requires_runtime_thread_gateway_descriptor() {
         let projection = ExtensionRuntimeProjection {
             installations: vec![ExtensionInstallationProjection {
                 installation_id: Uuid::new_v4(),

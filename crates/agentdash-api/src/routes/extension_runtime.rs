@@ -25,13 +25,13 @@ use agentdash_application::extension_runtime::{
     UninstallExtensionInstallationInput, extension_runtime_projection_from_installations,
     uninstall_extension_installation,
 };
-use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use agentdash_application_extension_gateway::{
     ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
     ExtensionRuntimeChannelInvokeResult, RuntimeActionKey, RuntimeActor, RuntimeContext,
     RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
     attach_extension_invocation_workspace, resolve_extension_invocation_workspace,
 };
+use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use agentdash_application_ports::extension_runtime::{
     ExtensionBackendServiceInvokeRequest as BackendServiceTransportRequest,
     ExtensionBackendServiceInvokeResponse as BackendServiceTransportResponse,
@@ -146,7 +146,7 @@ pub async fn invoke_agent_run_extension_runtime_action(
     )
     .await?;
     let project_id = runtime_surface.project_id;
-    let session_id = runtime_surface.runtime_thread_id.clone();
+    let runtime_thread_id = runtime_surface.runtime_thread_id.clone();
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
     ensure_project_backend_access(&state, project_id, &backend_id).await?;
@@ -158,12 +158,12 @@ pub async fn invoke_agent_run_extension_runtime_action(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let mut request = RuntimeInvocationRequest::new(
         action_key,
-        RuntimeActor::SessionUser {
-            session_id: session_id.clone(),
+        RuntimeActor::RuntimeThreadUser {
+            runtime_thread_id: runtime_thread_id.clone(),
             user_id: Some(current_user.user_id.clone()),
         },
-        RuntimeContext::Session {
-            session_id,
+        RuntimeContext::RuntimeThread {
+            runtime_thread_id,
             project_id: Some(project_id),
             workspace_id: None,
         },
@@ -196,7 +196,7 @@ pub async fn invoke_agent_run_extension_runtime_channel(
     )
     .await?;
     let project_id = runtime_surface.project_id;
-    let session_id = runtime_surface.runtime_thread_id.clone();
+    let runtime_thread_id = runtime_surface.runtime_thread_id.clone();
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
     if req.channel_key.trim().is_empty() {
@@ -222,13 +222,13 @@ pub async fn invoke_agent_run_extension_runtime_channel(
                 extension_key: extension_key.trim().to_string(),
             },
         )
-        .unwrap_or(ExtensionRuntimeChannelConsumer::SessionUser);
+        .unwrap_or(ExtensionRuntimeChannelConsumer::RuntimeThreadUser);
     let result = state
         .services
         .extension_runtime_channel_invoker
         .invoke(ExtensionRuntimeChannelInvokeRequest {
             project_id,
-            session_id,
+            runtime_thread_id,
             backend_id,
             workspace,
             consumer,
@@ -260,7 +260,7 @@ pub async fn invoke_agent_run_extension_backend_service(
     )
     .await?;
     let project_id = runtime_surface.project_id;
-    let session_id = runtime_surface.runtime_thread_id.clone();
+    let runtime_thread_id = runtime_surface.runtime_thread_id.clone();
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
     ensure_project_backend_access(&state, project_id, &backend_id).await?;
@@ -342,7 +342,7 @@ pub async fn invoke_agent_run_extension_backend_service(
                 service_key,
                 route,
                 project_id: project_id.to_string(),
-                session_id,
+                session_id: runtime_thread_id,
                 method,
                 headers: req.headers,
                 body: req.body,

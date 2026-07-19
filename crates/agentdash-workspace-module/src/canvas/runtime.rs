@@ -95,7 +95,7 @@ pub fn build_runtime_snapshot(
     let runtime_bridge = if runtime_thread_id.is_some() {
         CanvasRuntimeBridgeSnapshot::disabled("Canvas runtime bridge surface 尚未装配")
     } else {
-        CanvasRuntimeBridgeSnapshot::disabled("Canvas runtime snapshot 尚未绑定 Session")
+        CanvasRuntimeBridgeSnapshot::disabled("Canvas runtime snapshot 尚未绑定 RuntimeThread")
     };
 
     CanvasRuntimeSnapshot {
@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn build_runtime_snapshot_disables_bridge_without_session_surface() {
+    fn build_runtime_snapshot_disables_bridge_without_runtime_thread_surface() {
         let canvas = Canvas::new(
             Uuid::new_v4(),
             "cvs-demo".to_string(),
@@ -240,7 +240,7 @@ mod tests {
                 .disabled_reason
                 .as_deref()
                 .unwrap_or_default()
-                .contains("Session")
+                .contains("RuntimeThread")
         );
     }
 
@@ -265,7 +265,7 @@ mod tests {
 
         assert_eq!(
             snapshot.resource_surface_ref.as_deref(),
-            Some("session-runtime:runtime-thread-1")
+            Some("runtime-thread:runtime-thread-1")
         );
     }
 
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn canvas_runtime_bridge_snapshot_can_attach_actor_surface() {
         let surface = RuntimeSurface {
-            context: RuntimeContext::Session {
+            context: RuntimeContext::RuntimeThread {
                 runtime_thread_id: "runtime-thread-1".to_string(),
                 project_id: None,
                 workspace_id: None,

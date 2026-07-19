@@ -58,7 +58,7 @@ impl ResolvedVfsSurfaceSource {
                 task_id,
             } => format!("task-preview:{project_id}:{task_id}"),
             Self::RuntimeThread { runtime_thread_id } => {
-                format!("session-runtime:{}", runtime_thread_id.trim())
+                format!("runtime-thread:{}", runtime_thread_id.trim())
             }
             Self::AgentRun { run_id, agent_id } => format!("agent-run:{run_id}:{agent_id}"),
             Self::ProjectSkillAssets { project_id } => format!("project-skill-assets:{project_id}"),
@@ -116,10 +116,10 @@ impl ResolvedVfsSurfaceSource {
                     .map_err(|_| format!("无效的 task preview task_id: {task_id}"))?,
             });
         }
-        if let Some(rest) = trimmed.strip_prefix("session-runtime:") {
+        if let Some(rest) = trimmed.strip_prefix("runtime-thread:") {
             let runtime_thread_id = rest.trim();
             if runtime_thread_id.is_empty() {
-                return Err(format!("无效的 session runtime surface_ref: {trimmed}"));
+                return Err(format!("无效的 runtime thread surface_ref: {trimmed}"));
             }
             return Ok(Self::RuntimeThread {
                 runtime_thread_id: runtime_thread_id.to_string(),
@@ -303,14 +303,14 @@ mod tests {
     #[test]
     fn runtime_thread_surface_ref_trims_runtime_thread_id() {
         let source = ResolvedVfsSurfaceSource::RuntimeThread {
-            runtime_thread_id: "  sess-1  ".to_string(),
+            runtime_thread_id: "  runtime-thread-1  ".to_string(),
         };
 
-        assert_eq!(source.surface_ref(), "session-runtime:sess-1");
+        assert_eq!(source.surface_ref(), "runtime-thread:runtime-thread-1");
         assert_eq!(
             ResolvedVfsSurfaceSource::parse_surface_ref(&source.surface_ref()).unwrap(),
             ResolvedVfsSurfaceSource::RuntimeThread {
-                runtime_thread_id: "sess-1".to_string()
+                runtime_thread_id: "runtime-thread-1".to_string()
             }
         );
     }

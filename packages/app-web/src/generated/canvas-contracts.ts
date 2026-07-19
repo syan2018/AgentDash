@@ -44,7 +44,7 @@ export type CanvasRuntimeObservationStatusDto = "building" | "ready" | "error";
 
 export type CanvasRuntimeObservationUpsertRequest = { frame_id: string, generation: number, captured_at?: string, status: CanvasRuntimeObservationStatusDto, message?: string, viewport: CanvasRuntimeViewportDto, document: CanvasRuntimeDocumentStateDto, diagnostics: Array<CanvasRuntimeDiagnosticDto>, screenshot_ref?: string, };
 
-export type CanvasRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, session_id?: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasRuntimeBridgeSnapshotDto, };
+export type CanvasRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, runtime_thread_id?: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasRuntimeBridgeSnapshotDto, };
 
 export type CanvasRuntimeViewportDto = { width: number, height: number, device_pixel_ratio: number, };
 
@@ -66,7 +66,7 @@ export type RuntimeActionDescriptorDto = { action_key: string, kind: RuntimeActi
 
 export type RuntimeActionKindDto = "runtime_thread" | "setup";
 
-export type RuntimeContextDto = { "type": "session", session_id: string, project_id?: string, workspace_id?: string, } | { "type": "setup", project_id?: string, workspace_id?: string, backend_id?: string, root_ref?: string, };
+export type RuntimeContextDto = { "type": "runtime_thread", runtime_thread_id: string, project_id?: string, workspace_id?: string, } | { "type": "setup", project_id?: string, workspace_id?: string, backend_id?: string, root_ref?: string, };
 
 export type RuntimeInvocationOutputDto = { output: JsonValue, metadata: { [key in string]?: JsonValue }, };
 

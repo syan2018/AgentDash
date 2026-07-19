@@ -132,7 +132,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
         if context.action_kind() != RuntimeActionKind::RuntimeThread {
             return Ok(false);
         }
-        let project_id = session_project_id_for_invoke(context)?;
+        let project_id = runtime_thread_project_id_for_invoke(context)?;
         Ok(self
             .resolve_project_action(project_id, action_key.as_str(), None)
             .await?
@@ -144,7 +144,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
         _actor: &RuntimeActor,
         context: &RuntimeContext,
     ) -> Result<Vec<RuntimeActionDescriptor>, RuntimeInvocationError> {
-        let Some(project_id) = session_project_id_for_catalog(context) else {
+        let Some(project_id) = runtime_thread_project_id_for_catalog(context) else {
             return Ok(Vec::new());
         };
         self.resolve_project_action_catalog(project_id, None)
@@ -158,7 +158,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
         &self,
         request: RuntimeInvocationRequest,
     ) -> Result<RuntimeInvocationOutput, RuntimeInvocationError> {
-        let (session_id, project_id) = session_project(&request)?;
+        let (runtime_thread_id, project_id) = runtime_thread_project(&request)?;
         let backend_id = backend_target(&request)?;
         let action_key = request.action_key.as_str();
         let resolved = self
@@ -187,7 +187,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
             extension_id: resolved.installation.manifest.extension_id.clone(),
             action_key: resolved.action.action_key.clone(),
             project_id: project_id.to_string(),
-            session_id,
+            session_id: runtime_thread_id,
             input: request.input.clone(),
             package_artifact: Some(ExtensionPackageArtifactPayload {
                 artifact_id: artifact.artifact_id.to_string(),
@@ -364,54 +364,56 @@ fn extension_action_descriptor(
     })
 }
 
-fn session_project_id_for_catalog(context: &RuntimeContext) -> Option<Uuid> {
+fn runtime_thread_project_id_for_catalog(context: &RuntimeContext) -> Option<Uuid> {
     match context {
-        RuntimeContext::Session {
-            session_id,
+        RuntimeContext::RuntimeThread {
+            runtime_thread_id,
             project_id: Some(project_id),
             ..
-        } if !session_id.trim().is_empty() => Some(*project_id),
+        } if !runtime_thread_id.trim().is_empty() => Some(*project_id),
         _ => None,
     }
 }
 
-fn session_project_id_for_invoke(context: &RuntimeContext) -> Result<Uuid, RuntimeInvocationError> {
+fn runtime_thread_project_id_for_invoke(
+    context: &RuntimeContext,
+) -> Result<Uuid, RuntimeInvocationError> {
     match context {
-        RuntimeContext::Session {
-            session_id,
+        RuntimeContext::RuntimeThread {
+            runtime_thread_id,
             project_id: Some(project_id),
             ..
-        } if !session_id.trim().is_empty() => Ok(*project_id),
-        RuntimeContext::Session {
+        } if !runtime_thread_id.trim().is_empty() => Ok(*project_id),
+        RuntimeContext::RuntimeThread {
             project_id: None, ..
         } => Err(RuntimeInvocationError::invalid_request(
-            "extension runtime action 必须绑定 Project scoped Session context",
+            "extension runtime action 必须绑定 Project scoped RuntimeThread context",
             None,
         )),
         _ => Err(RuntimeInvocationError::invalid_request(
-            "extension runtime action 必须使用 Session context",
+            "extension runtime action 必须使用 RuntimeThread context",
             None,
         )),
     }
 }
 
-fn session_project(
+fn runtime_thread_project(
     request: &RuntimeInvocationRequest,
 ) -> Result<(String, Uuid), RuntimeInvocationError> {
     match &request.context {
-        RuntimeContext::Session {
-            session_id,
+        RuntimeContext::RuntimeThread {
+            runtime_thread_id,
             project_id: Some(project_id),
             ..
-        } if !session_id.trim().is_empty() => Ok((session_id.clone(), *project_id)),
-        RuntimeContext::Session {
+        } if !runtime_thread_id.trim().is_empty() => Ok((runtime_thread_id.clone(), *project_id)),
+        RuntimeContext::RuntimeThread {
             project_id: None, ..
         } => Err(RuntimeInvocationError::invalid_request(
-            "extension runtime action 必须绑定 Project scoped Session context",
+            "extension runtime action 必须绑定 Project scoped RuntimeThread context",
             Some(request.trace.clone()),
         )),
         _ => Err(RuntimeInvocationError::invalid_request(
-            "extension runtime action 必须使用 Session context",
+            "extension runtime action 必须使用 RuntimeThread context",
             Some(request.trace.clone()),
         )),
     }
@@ -580,7 +582,7 @@ fn runtime_host_payloads(
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtensionRuntimeChannelInvokeRequest {
     pub project_id: Uuid,
-    pub session_id: String,
+    pub runtime_thread_id: String,
     pub backend_id: String,
     pub workspace: Option<ExtensionInvocationWorkspaceContext>,
     pub consumer: ExtensionRuntimeChannelConsumer,
@@ -595,7 +597,7 @@ pub struct ExtensionRuntimeChannelInvokeRequest {
 pub enum ExtensionRuntimeChannelConsumer {
     ExtensionPanel { extension_key: String },
     UserCanvas { canvas_id: Option<Uuid> },
-    SessionUser,
+    RuntimeThreadUser,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -609,7 +611,7 @@ pub struct ExtensionRuntimeChannelInvokeResult {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtensionRuntimeBackendServiceInvokeRequest {
     pub project_id: Uuid,
-    pub session_id: String,
+    pub runtime_thread_id: String,
     pub backend_id: String,
     pub workspace: Option<ExtensionInvocationWorkspaceContext>,
     pub extension_key: String,
@@ -676,7 +678,7 @@ impl ExtensionRuntimeBackendServiceInvoker {
             service_key: service.service_key.clone(),
             route: request.route.clone(),
             project_id: request.project_id.to_string(),
-            session_id: request.session_id.clone(),
+            session_id: request.runtime_thread_id.clone(),
             method: normalize_backend_service_method(&request.method),
             headers: request.headers.clone(),
             body: request.body.clone(),
@@ -767,7 +769,7 @@ impl ExtensionRuntimeChannelInvoker {
             channel_key: resolved.channel.channel_key.clone(),
             method: resolved.method.name.clone(),
             project_id: request.project_id.to_string(),
-            session_id: request.session_id.clone(),
+            session_id: request.runtime_thread_id.clone(),
             input: request.input.clone(),
             package_artifact: ExtensionPackageArtifactPayload {
                 artifact_id: artifact.artifact_id.to_string(),
@@ -861,7 +863,7 @@ fn resolve_channel_invocation<'a>(
             .iter()
             .find(|installation| installation.extension_key == *extension_key),
         ExtensionRuntimeChannelConsumer::UserCanvas { .. }
-        | ExtensionRuntimeChannelConsumer::SessionUser => None,
+        | ExtensionRuntimeChannelConsumer::RuntimeThreadUser => None,
     };
     if matches!(
         request.consumer,
@@ -1133,8 +1135,8 @@ fn channel_consumer_payload(
                 dependency_alias: dependency_alias.map(str::to_string),
             }
         }
-        ExtensionRuntimeChannelConsumer::SessionUser => ExtensionChannelConsumerPayload {
-            kind: "session_user".to_string(),
+        ExtensionRuntimeChannelConsumer::RuntimeThreadUser => ExtensionChannelConsumerPayload {
+            kind: "runtime_thread_user".to_string(),
             extension_key: None,
             extension_id: None,
             dependency_alias: dependency_alias.map(str::to_string),
@@ -1632,12 +1634,12 @@ mod tests {
 
         let surface = gateway
             .surface_for_actor(
-                RuntimeActor::SessionUser {
-                    session_id: "session-1".to_string(),
+                RuntimeActor::RuntimeThreadUser {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     user_id: None,
                 },
-                RuntimeContext::Session {
-                    session_id: "session-1".to_string(),
+                RuntimeContext::RuntimeThread {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     project_id: Some(project_id),
                     workspace_id: None,
                 },
@@ -1690,12 +1692,12 @@ mod tests {
 
         let catalog_err = gateway
             .surface_for_actor(
-                RuntimeActor::SessionUser {
-                    session_id: "session-1".to_string(),
+                RuntimeActor::RuntimeThreadUser {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     user_id: None,
                 },
-                RuntimeContext::Session {
-                    session_id: "session-1".to_string(),
+                RuntimeContext::RuntimeThread {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     project_id: Some(project_id),
                     workspace_id: None,
                 },
@@ -1730,12 +1732,12 @@ mod tests {
 
         let surface = gateway
             .surface_for_actor(
-                RuntimeActor::SessionUser {
-                    session_id: "session-1".to_string(),
+                RuntimeActor::RuntimeThreadUser {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     user_id: None,
                 },
-                RuntimeContext::Session {
-                    session_id: "session-1".to_string(),
+                RuntimeContext::RuntimeThread {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     project_id: None,
                     workspace_id: None,
                 },
@@ -1763,12 +1765,12 @@ mod tests {
 
         let surface = gateway
             .surface_for_actor(
-                RuntimeActor::SessionUser {
-                    session_id: "session-1".to_string(),
+                RuntimeActor::RuntimeThreadUser {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     user_id: None,
                 },
-                RuntimeContext::Session {
-                    session_id: "session-1".to_string(),
+                RuntimeContext::RuntimeThread {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     project_id: Some(project_id),
                     workspace_id: None,
                 },
@@ -2238,7 +2240,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn provider_supports_enabled_session_extension_action() {
+    async fn provider_supports_enabled_runtime_thread_extension_action() {
         let project_id = Uuid::new_v4();
         let provider = ExtensionRuntimeActionProvider::new(
             Arc::new(FixtureInstallationRepo {
@@ -2252,8 +2254,8 @@ mod tests {
         let supported = provider
             .supports_action(
                 &RuntimeActionKey::parse("local-hello.profile").expect("key"),
-                &RuntimeContext::Session {
-                    session_id: "session-1".to_string(),
+                &RuntimeContext::RuntimeThread {
+                    runtime_thread_id: "runtime-thread-1".to_string(),
                     project_id: Some(project_id),
                     workspace_id: None,
                 },
@@ -2266,12 +2268,12 @@ mod tests {
     fn request(project_id: Uuid, action_key: &str) -> RuntimeInvocationRequest {
         let mut request = RuntimeInvocationRequest::new(
             RuntimeActionKey::parse(action_key).expect("key"),
-            RuntimeActor::SessionUser {
-                session_id: "session-1".to_string(),
+            RuntimeActor::RuntimeThreadUser {
+                runtime_thread_id: "runtime-thread-1".to_string(),
                 user_id: None,
             },
-            RuntimeContext::Session {
-                session_id: "session-1".to_string(),
+            RuntimeContext::RuntimeThread {
+                runtime_thread_id: "runtime-thread-1".to_string(),
                 project_id: Some(project_id),
                 workspace_id: None,
             },
@@ -2318,7 +2320,7 @@ mod tests {
     ) -> ExtensionRuntimeChannelInvokeRequest {
         ExtensionRuntimeChannelInvokeRequest {
             project_id,
-            session_id: "session-1".to_string(),
+            runtime_thread_id: "runtime-thread-1".to_string(),
             backend_id: "backend-1".to_string(),
             workspace: Some(ExtensionInvocationWorkspaceContext::new(
                 "main",
@@ -2341,7 +2343,7 @@ mod tests {
     ) -> ExtensionRuntimeBackendServiceInvokeRequest {
         ExtensionRuntimeBackendServiceInvokeRequest {
             project_id,
-            session_id: "session-1".to_string(),
+            runtime_thread_id: "runtime-thread-1".to_string(),
             backend_id: "backend-1".to_string(),
             workspace: Some(ExtensionInvocationWorkspaceContext::new(
                 "main",

@@ -60,7 +60,7 @@ export type ManagedRuntimeInitialContextContributionEvidence = { contribution_id
 
 export type ManagedRuntimeInitialContextContributionKind = "compact_summary" | "workflow_context" | "constraint_set";
 
-export type ManagedRuntimeOperationEvidence = { "kind": "create", binding: ManagedRuntimeSourceBindingEvidence, initial_context: ManagedRuntimeAppliedInitialContextEvidence | null, } | { "kind": "resume", binding: ManagedRuntimeSourceBindingEvidence, } | { "kind": "fork", parent_binding: ManagedRuntimeSourceBindingEvidence, progress: ManagedRuntimeForkProgressEvidence, } | { "kind": "activate", binding: ManagedRuntimeSourceBindingEvidence, };
+export type ManagedRuntimeOperationEvidence = { "kind": "create", binding: ManagedRuntimeSourceBindingEvidence, initial_context: ManagedRuntimeAppliedInitialContextEvidence | null, } | { "kind": "resume", binding: ManagedRuntimeSourceBindingEvidence, } | { "kind": "rebind", previous_binding: ManagedRuntimeSourceBindingEvidence, binding: ManagedRuntimeSourceBindingEvidence, } | { "kind": "fork", parent_binding: ManagedRuntimeSourceBindingEvidence, progress: ManagedRuntimeForkProgressEvidence, } | { "kind": "activate", binding: ManagedRuntimeSourceBindingEvidence, };
 
 export type ManagedRuntimeOperationStatus = "accepted" | "running" | "succeeded" | "failed" | "interrupted" | "lost";
 

@@ -289,6 +289,7 @@ struct DesiredRemotePlacement {
 struct PendingRemoteRecovery {
     desired: DesiredRemotePlacement,
     previous: Option<ActiveRemotePlacement>,
+    runtime_threads: Option<Vec<RuntimeThreadId>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -630,6 +631,7 @@ impl RuntimeWireCompleteAgentAdmission {
             PendingRemoteRecovery {
                 desired: desired.clone(),
                 previous,
+                runtime_threads: None,
             },
         );
         drop(state);
@@ -679,14 +681,30 @@ impl RuntimeWireCompleteAgentAdmission {
                 .close("remote Complete Agent placement was superseded")
                 .await;
         }
-        let runtime_threads = self
-            .complete_agent
-            .host
-            .lost_runtime_threads_for_profile(&active.service_profile_digest)
-            .await
-            .map_err(|error| RuntimeWireCompleteAgentAdmissionError::Recovery {
-                reason: error.to_string(),
-            })?;
+        let runtime_threads = if let Some(runtime_threads) = pending.runtime_threads {
+            runtime_threads
+        } else {
+            let runtime_threads = self
+                .complete_agent
+                .host
+                .lost_runtime_threads_for_profile(&active.service_profile_digest)
+                .await
+                .map_err(|error| RuntimeWireCompleteAgentAdmissionError::Recovery {
+                    reason: error.to_string(),
+                })?;
+            let mut state = self.state.lock().await;
+            if state.desired.get(key) != Some(desired) {
+                return Err(RuntimeWireCompleteAgentAdmissionError::StaleAdmission);
+            }
+            let pending = state
+                .pending_recovery
+                .get_mut(key)
+                .filter(|pending| pending.desired == *desired)
+                .ok_or(RuntimeWireCompleteAgentAdmissionError::StaleAdmission)?;
+            pending.previous = None;
+            pending.runtime_threads = Some(runtime_threads.clone());
+            runtime_threads
+        };
         if !runtime_threads.is_empty() {
             let observer = self.recovery_observer.read().await.clone().ok_or_else(|| {
                 RuntimeWireCompleteAgentAdmissionError::Recovery {
@@ -1095,6 +1113,9 @@ mod tests {
             PendingRemoteRecovery {
                 desired: desired.clone(),
                 previous: None,
+                runtime_threads: Some(vec![
+                    RuntimeThreadId::new("runtime-thread-a").expect("RuntimeThread"),
+                ]),
             },
         );
 
@@ -1103,6 +1124,14 @@ mod tests {
             RemotePlacementPreparation::RetryRecovery
         );
         assert!(!state.admitting.contains_key(&key));
+        assert_eq!(
+            state
+                .pending_recovery
+                .get(&key)
+                .and_then(|pending| pending.runtime_threads.as_ref())
+                .map(Vec::as_slice),
+            Some([RuntimeThreadId::new("runtime-thread-a").expect("RuntimeThread")].as_slice())
+        );
     }
 
     #[test]

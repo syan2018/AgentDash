@@ -68,7 +68,21 @@ pub enum CompleteAgentCompositionError {
 /// Records come from deployment/builtin trusted configuration or a successfully validated remote
 /// transport advertisement. Contributions are only lookup requests and never populate this map.
 pub struct PinnedCompleteAgentVerificationCatalog {
-    records: BTreeMap<AgentServiceInstanceId, CompleteAgentVerificationRecord>,
+    records: RwLock<BTreeMap<AgentServiceInstanceId, CompleteAgentVerificationRecord>>,
+    templates: Vec<CompleteAgentVerificationTemplate>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompleteAgentVerificationTemplate {
+    pub expected_publisher_integration: String,
+    pub expected_service_version: String,
+    pub expected_build_digest: agentdash_agent_service_api::AgentPayloadDigest,
+    pub expected_profile_digest: agentdash_agent_service_api::AgentProfileDigest,
+    pub expected_conformance_suite_revision: String,
+    pub method: agentdash_agent_runtime_host::CompleteAgentVerificationMethod,
+    pub verifier_identity: String,
+    pub verifier_revision: String,
+    pub evidence_digest: agentdash_agent_service_api::AgentPayloadDigest,
 }
 
 impl PinnedCompleteAgentVerificationCatalog {
@@ -77,20 +91,7 @@ impl PinnedCompleteAgentVerificationCatalog {
     ) -> Result<Self, CompleteAgentVerificationError> {
         let mut catalog = BTreeMap::new();
         for record in records {
-            if record.service_instance_id.as_str().trim().is_empty()
-                || record.expected_publisher_integration.trim().is_empty()
-                || record.expected_service_version.trim().is_empty()
-                || record.expected_build_digest.as_str().trim().is_empty()
-                || record.expected_profile_digest.as_str().trim().is_empty()
-                || record.expected_conformance_suite_revision.trim().is_empty()
-                || record.verifier_identity.trim().is_empty()
-                || record.verifier_revision.trim().is_empty()
-                || record.evidence_digest.as_str().trim().is_empty()
-            {
-                return Err(CompleteAgentVerificationError::InvalidRecord {
-                    reason: "trusted verification record contains empty coordinates".to_owned(),
-                });
-            }
+            validate_record(&record)?;
             let instance_id = record.service_instance_id.clone();
             if catalog.insert(instance_id.clone(), record).is_some() {
                 return Err(CompleteAgentVerificationError::InvalidRecord {
@@ -98,7 +99,49 @@ impl PinnedCompleteAgentVerificationCatalog {
                 });
             }
         }
-        Ok(Self { records: catalog })
+        Ok(Self {
+            records: RwLock::new(catalog),
+            templates: Vec::new(),
+        })
+    }
+
+    pub fn new_with_templates(
+        records: impl IntoIterator<Item = CompleteAgentVerificationRecord>,
+        templates: impl IntoIterator<Item = CompleteAgentVerificationTemplate>,
+    ) -> Result<Self, CompleteAgentVerificationError> {
+        let mut catalog = Self::new(records)?;
+        for template in templates {
+            validate_template(&template)?;
+            if catalog.templates.contains(&template) {
+                return Err(CompleteAgentVerificationError::InvalidRecord {
+                    reason: "duplicate trusted Complete Agent verification template".to_owned(),
+                });
+            }
+            catalog.templates.push(template);
+        }
+        Ok(catalog)
+    }
+
+    /// Adds one exact record produced by an independently verified placement advertisement.
+    pub async fn register_record(
+        &self,
+        record: CompleteAgentVerificationRecord,
+    ) -> Result<(), CompleteAgentVerificationError> {
+        validate_record(&record)?;
+        let mut records = self.records.write().await;
+        if let Some(existing) = records.get(&record.service_instance_id) {
+            if existing == &record {
+                return Ok(());
+            }
+            return Err(CompleteAgentVerificationError::InvalidRecord {
+                reason: format!(
+                    "trusted verification record conflicts for {}",
+                    record.service_instance_id
+                ),
+            });
+        }
+        records.insert(record.service_instance_id.clone(), record);
+        Ok(())
     }
 }
 
@@ -108,12 +151,37 @@ impl CompleteAgentRegistrationVerifier for PinnedCompleteAgentVerificationCatalo
         &self,
         request: CompleteAgentVerificationRequest,
     ) -> Result<CompleteAgentServiceVerification, CompleteAgentVerificationError> {
-        let record = self
+        let exact = self
             .records
+            .read()
+            .await
             .get(&request.service_instance_id)
-            .ok_or_else(|| CompleteAgentVerificationError::MissingRecord {
+            .cloned();
+        let record = if let Some(record) = exact {
+            record
+        } else {
+            let template = self
+                .templates
+                .iter()
+                .find(|template| template_matches(template, &request))
+                .ok_or_else(|| CompleteAgentVerificationError::MissingRecord {
+                    service_instance_id: request.service_instance_id.clone(),
+                })?;
+            CompleteAgentVerificationRecord {
                 service_instance_id: request.service_instance_id.clone(),
-            })?;
+                expected_publisher_integration: template.expected_publisher_integration.clone(),
+                expected_service_version: template.expected_service_version.clone(),
+                expected_build_digest: template.expected_build_digest.clone(),
+                expected_profile_digest: template.expected_profile_digest.clone(),
+                expected_conformance_suite_revision: template
+                    .expected_conformance_suite_revision
+                    .clone(),
+                method: template.method,
+                verifier_identity: template.verifier_identity.clone(),
+                verifier_revision: template.verifier_revision.clone(),
+                evidence_digest: template.evidence_digest.clone(),
+            }
+        };
         for (matches, coordinate) in [
             (
                 record.expected_publisher_integration == request.publisher_integration,
@@ -156,6 +224,60 @@ impl CompleteAgentRegistrationVerifier for PinnedCompleteAgentVerificationCatalo
             },
         })
     }
+}
+
+fn validate_record(
+    record: &CompleteAgentVerificationRecord,
+) -> Result<(), CompleteAgentVerificationError> {
+    if record.service_instance_id.as_str().trim().is_empty()
+        || record.expected_publisher_integration.trim().is_empty()
+        || record.expected_service_version.trim().is_empty()
+        || record.expected_build_digest.as_str().trim().is_empty()
+        || record.expected_profile_digest.as_str().trim().is_empty()
+        || record.expected_conformance_suite_revision.trim().is_empty()
+        || record.verifier_identity.trim().is_empty()
+        || record.verifier_revision.trim().is_empty()
+        || record.evidence_digest.as_str().trim().is_empty()
+    {
+        return Err(CompleteAgentVerificationError::InvalidRecord {
+            reason: "trusted verification record contains empty coordinates".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_template(
+    template: &CompleteAgentVerificationTemplate,
+) -> Result<(), CompleteAgentVerificationError> {
+    if template.expected_publisher_integration.trim().is_empty()
+        || template.expected_service_version.trim().is_empty()
+        || template.expected_build_digest.as_str().trim().is_empty()
+        || template.expected_profile_digest.as_str().trim().is_empty()
+        || template
+            .expected_conformance_suite_revision
+            .trim()
+            .is_empty()
+        || template.verifier_identity.trim().is_empty()
+        || template.verifier_revision.trim().is_empty()
+        || template.evidence_digest.as_str().trim().is_empty()
+    {
+        return Err(CompleteAgentVerificationError::InvalidRecord {
+            reason: "trusted verification template contains empty coordinates".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn template_matches(
+    template: &CompleteAgentVerificationTemplate,
+    request: &CompleteAgentVerificationRequest,
+) -> bool {
+    template.expected_publisher_integration == request.publisher_integration
+        && template.expected_service_version == request.service_version
+        && template.expected_build_digest == request.claimed_build_digest
+        && template.expected_profile_digest == request.profile_digest
+        && template.expected_conformance_suite_revision
+            == request.claimed_conformance_suite_revision
 }
 
 /// Final production kernel for Managed Runtime and Complete Agent coordination.
@@ -376,5 +498,46 @@ mod tests {
             verified.verified_build.claimed_build_digest,
             trusted_record.expected_build_digest
         );
+    }
+
+    #[tokio::test]
+    async fn trusted_builtin_template_verifies_dynamic_instance_without_trusting_its_claims() {
+        let trusted = record();
+        let catalog = PinnedCompleteAgentVerificationCatalog::new_with_templates(
+            [],
+            [CompleteAgentVerificationTemplate {
+                expected_publisher_integration: trusted.expected_publisher_integration.clone(),
+                expected_service_version: trusted.expected_service_version.clone(),
+                expected_build_digest: trusted.expected_build_digest.clone(),
+                expected_profile_digest: trusted.expected_profile_digest.clone(),
+                expected_conformance_suite_revision: trusted
+                    .expected_conformance_suite_revision
+                    .clone(),
+                method: trusted.method,
+                verifier_identity: trusted.verifier_identity.clone(),
+                verifier_revision: trusted.verifier_revision.clone(),
+                evidence_digest: trusted.evidence_digest.clone(),
+            }],
+        )
+        .expect("trusted template");
+        let mut dynamic = request();
+        dynamic.service_instance_id =
+            AgentServiceInstanceId::new("fixture-service-dynamic").unwrap();
+
+        let verified = catalog.verify(dynamic).await.expect("template match");
+        assert_eq!(
+            verified.service_instance_id.as_str(),
+            "fixture-service-dynamic"
+        );
+        assert_eq!(verified.verifier_identity, trusted.verifier_identity);
+
+        let mut drifted = request();
+        drifted.service_instance_id =
+            AgentServiceInstanceId::new("fixture-service-untrusted").unwrap();
+        drifted.claimed_build_digest = AgentPayloadDigest::new("sha256:drifted").unwrap();
+        assert!(matches!(
+            catalog.verify(drifted).await,
+            Err(CompleteAgentVerificationError::MissingRecord { .. })
+        ));
     }
 }

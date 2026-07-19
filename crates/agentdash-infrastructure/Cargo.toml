@@ -19,6 +19,7 @@ agentdash-agent-runtime = { workspace = true }
 agentdash-agent-runtime-host = { workspace = true }
 agentdash-integration-api = { workspace = true }
 agentdash-integration-native-agent = { workspace = true }
+agentdash-llm-provider = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }
 agentdash-process = { workspace = true }
 serde = { workspace = true }

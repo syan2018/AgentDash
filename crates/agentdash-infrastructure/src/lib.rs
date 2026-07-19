@@ -1,6 +1,7 @@
 mod agent_run_product_persistence_composition;
 mod agent_run_product_projection_composition;
 mod complete_agent_composition;
+mod complete_agent_product_provisioning;
 pub mod function_runner;
 pub mod hooks;
 mod managed_runtime_product_change_delivery;
@@ -8,6 +9,7 @@ pub mod mcp;
 pub mod migration;
 pub mod persistence;
 pub mod postgres_runtime;
+mod production_complete_agent_selection;
 mod runtime_shell_terminal_registry;
 mod runtime_tool_authorization;
 mod runtime_tool_executors;
@@ -20,7 +22,12 @@ pub mod workflow_scripts;
 pub use agent_run_product_persistence_composition::AgentRunProductPersistenceComposition;
 pub use agent_run_product_projection_composition::AgentRunProductProjectionComposition;
 pub use complete_agent_composition::{
-    CompleteAgentComposition, CompleteAgentCompositionError, PinnedCompleteAgentVerificationCatalog,
+    CompleteAgentComposition, CompleteAgentCompositionError, CompleteAgentVerificationTemplate,
+    PinnedCompleteAgentVerificationCatalog,
+};
+pub use complete_agent_product_provisioning::{
+    CompleteAgentProductRuntimeProvisioner, CompleteAgentServiceSelectionCatalog,
+    CompleteAgentServiceSelector, VerifiedCompleteAgentSelection,
 };
 pub use function_runner::DefaultFunctionRunner;
 pub use hooks::RhaiHookScriptEvaluator;
@@ -75,6 +82,9 @@ pub use persistence::postgres::PostgresWorkflowRepository;
 pub use persistence::postgres::PostgresWorkspaceModulePresentationStore;
 pub use persistence::postgres::PostgresWorkspaceRepository;
 pub use persistence::postgres::product_runtime_binding_digest;
+pub use production_complete_agent_selection::{
+    ProductionCompleteAgentServiceSelector, dash_complete_agent_verification_template,
+};
 pub use runtime_shell_terminal_registry::{
     ProcessShellTerminalOutput, ProcessShellTerminalRegistry,
 };

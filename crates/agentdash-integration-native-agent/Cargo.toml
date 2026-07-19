@@ -11,10 +11,8 @@ agentdash-agent-protocol = { workspace = true }
 agentdash-agent-service-api = { workspace = true }
 agentdash-integration-api = { workspace = true }
 async-trait = { workspace = true }
+futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true }
-
-[dev-dependencies]
-futures = { workspace = true }

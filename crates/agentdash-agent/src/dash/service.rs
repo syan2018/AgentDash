@@ -1258,8 +1258,43 @@ impl DashAgentService {
     ) -> Result<DashCoreContext, DashServiceError> {
         let repository = self.repository.load().await?;
         let surface = repository.surface.clone();
+        let entries = repository.store.history().entries();
+        let mut applied_compactions = BTreeMap::new();
+        let mut latest_compaction = None;
+        for (index, entry) in entries.iter().enumerate() {
+            match &entry.payload {
+                HistoryPayload::CompactionApplied {
+                    compaction_id,
+                    summary,
+                    retained_from,
+                    ..
+                } => {
+                    applied_compactions.insert(
+                        compaction_id.clone(),
+                        (summary.clone(), retained_from.clone()),
+                    );
+                }
+                HistoryPayload::CompactionCompleted { compaction_id } => {
+                    if let Some((summary, retained_from)) =
+                        applied_compactions.get(compaction_id).cloned()
+                    {
+                        latest_compaction = Some((index, summary, retained_from));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let (compaction_summary, history_start) = latest_compaction
+            .map(|(completed_index, summary, retained_from)| {
+                let start = retained_from
+                    .as_ref()
+                    .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
+                    .unwrap_or(completed_index.saturating_add(1));
+                (Some(summary), start)
+            })
+            .unwrap_or((None, 0));
         let mut history = Vec::new();
-        for entry in repository.store.history().entries() {
+        for entry in &entries[history_start..] {
             match &entry.payload {
                 HistoryPayload::InputAccepted { content, .. } => history.push(DashMessage {
                     role: DashMessageRole::User,
@@ -1277,11 +1312,20 @@ impl DashAgentService {
             }
         }
         history.pop();
+        let mut system_prompt = surface
+            .as_ref()
+            .map(|surface| surface.system_prompt.clone())
+            .unwrap_or_default();
+        if let Some(summary) = compaction_summary {
+            if !system_prompt.is_empty() {
+                system_prompt.push_str("\n\n");
+            }
+            system_prompt.push_str("<compacted_context>\n");
+            system_prompt.push_str(&summary);
+            system_prompt.push_str("\n</compacted_context>");
+        }
         Ok(DashCoreContext {
-            system_prompt: surface
-                .as_ref()
-                .map(|surface| surface.system_prompt.clone())
-                .unwrap_or_default(),
+            system_prompt,
             history,
             tools: surface.map(|surface| surface.tools).unwrap_or_default(),
             max_provider_rounds: 8,

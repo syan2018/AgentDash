@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::dispatch::{CompanionChildDispatchRequest, CompanionChildDispatchService};
+use super::dispatch::adoption_mode_key;
 use super::gate_control::CompanionParentRequestOpenResult;
 use super::model_preflight::{CompanionModelPreflightPort, CompanionModelPreflightRequest};
 use super::reply_contract::{
@@ -71,8 +71,10 @@ use agentdash_agent_runtime_contract::ManagedRuntimeEntityStatus;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductInputDeliveryPort, CompanionAdoptionMode as ProtocolCompanionAdoptionMode,
     CompanionContextMode, CompanionContextSourceDraft, CompanionContextSources,
-    CompiledContextAuthority, DeliverAgentRunProductInput, SubmitInput,
-    compile_companion_dispatch_target,
+    CompanionContinuationInputSource, CompanionContinuationPhase,
+    CompanionContinuationRepositoryError, CompanionContinuationRequest, CompanionContinuationSaga,
+    CompanionContinuationWorker, CompiledContextAuthority, DeliverAgentRunProductInput,
+    SubmitInput, compile_companion_dispatch_target,
 };
 use agentdash_application_workflow::WorkflowScriptPreflightOutput;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
@@ -203,7 +205,9 @@ fn companion_wake_source(
         .with_metadata(metadata)
 }
 
-fn companion_channel_service(repos: &crate::repository_set::RepositorySet) -> ChannelService {
+pub(crate) fn companion_channel_service(
+    repos: &crate::repository_set::RepositorySet,
+) -> ChannelService {
     ChannelService::new(
         Arc::new(LifecycleRunChannelOwnerStore::new(
             repos.lifecycle_run_repo.clone(),
@@ -212,7 +216,7 @@ fn companion_channel_service(repos: &crate::repository_set::RepositorySet) -> Ch
     )
 }
 
-async fn ensure_companion_agent_channel(
+pub(crate) async fn ensure_companion_agent_channel(
     repos: &crate::repository_set::RepositorySet,
     run_id: Uuid,
     parent_agent_id: Uuid,
@@ -328,7 +332,7 @@ fn channel_address_from_mailbox_source(source: &MailboxSourceIdentity) -> Channe
     address
 }
 
-fn companion_channel_delivery_intent(
+pub(crate) fn companion_channel_delivery_intent(
     channel_id: Uuid,
     run_id: Uuid,
     agent_id: Uuid,
@@ -1421,42 +1425,14 @@ impl CompanionRequestTool {
         )
         .await;
 
-        let dispatch_result = CompanionChildDispatchService::new(
-            &self.repos,
-            runtime_thread_services.product_protocols.as_ref(),
-            runtime_thread_services.frame_construction.as_ref(),
-        )
-        .dispatch_child(CompanionChildDispatchRequest {
-            project_id,
-            parent_run_id,
-            parent_agent_id,
-            parent_frame_id,
-            wait,
-            slice_mode,
-            adoption_mode,
-            dispatch_id: dispatch_plan.dispatch_id.clone(),
-            companion_label: companion_label.clone(),
-            task_id: requested_task_id,
-            selected_project_agent_id: selected_companion.project_agent.id,
-            selected_agent_key: selected_companion.agent_key.clone(),
-            companion_executor_config,
-            parent_session_id: current_session_id.clone(),
-            dispatch_prompt: dispatch_prompt.clone(),
-            protocol_plan,
-        })
-        .await?;
-
-        let gate_ref = dispatch_result.gate_ref.map(|id| id.to_string());
-        let source_ref = gate_ref
-            .clone()
-            .unwrap_or_else(|| dispatch_plan.dispatch_id.clone());
+        let source_ref = dispatch_plan.dispatch_id.clone();
         let source = MailboxSourceIdentity::new("companion", "dispatch", "agent")
             .with_source_ref(source_ref)
             .with_correlation_ref(dispatch_plan.dispatch_id.clone())
             .with_route("sub")
             .with_metadata(serde_json::json!({
                 "dispatch_id": dispatch_plan.dispatch_id.clone(),
-                "gate_id": gate_ref.clone(),
+                "gate_id": None::<String>,
                 "wait": wait,
                 "parent_run_id": parent_run_id.to_string(),
                 "parent_agent_id": parent_agent_id.to_string(),
@@ -1468,94 +1444,170 @@ impl CompanionRequestTool {
                 "adoption_mode": adoption_mode,
                 "task_id": requested_task_id.map(|id| id.to_string()),
             }));
-        let channel_id = ensure_companion_agent_channel(
-            &self.repos,
+        let runtime_protocol = if matches!(
+            protocol_plan.preparation,
+            agentdash_application_agentrun::agent_run::CompanionRuntimePreparation::ForkParentHistory { .. }
+        ) {
+            agentdash_application_agentrun::agent_run::CompanionContinuationRuntimeProtocol::FullFork
+        } else {
+            agentdash_application_agentrun::agent_run::CompanionContinuationRuntimeProtocol::FreshCreate
+        };
+        let child_agent_id = stable_companion_uuid(
+            &dispatch_plan.dispatch_id,
+            match runtime_protocol {
+                agentdash_application_agentrun::agent_run::CompanionContinuationRuntimeProtocol::FullFork => "full-agent",
+                agentdash_application_agentrun::agent_run::CompanionContinuationRuntimeProtocol::FreshCreate => "fresh-agent",
+            },
+        );
+        let (child_run_id, child_runtime_thread_id, runtime_protocol_request_id) =
+            match runtime_protocol {
+                agentdash_application_agentrun::agent_run::CompanionContinuationRuntimeProtocol::FullFork => (
+                    stable_companion_uuid(&dispatch_plan.dispatch_id, "full-run"),
+                    agentdash_agent_runtime_contract::RuntimeThreadId::new(format!(
+                        "companion-full:{}",
+                        stable_companion_uuid(&dispatch_plan.dispatch_id, "full-runtime")
+                    ))
+                    .expect("stable full RuntimeThread id"),
+                    stable_companion_uuid(&dispatch_plan.dispatch_id, "full-request"),
+                ),
+                agentdash_application_agentrun::agent_run::CompanionContinuationRuntimeProtocol::FreshCreate => (
+                    parent_run_id,
+                    agentdash_agent_runtime_contract::RuntimeThreadId::new(
+                        stable_companion_uuid(&dispatch_plan.dispatch_id, "fresh-runtime")
+                            .to_string(),
+                    )
+                    .expect("stable fresh RuntimeThread id"),
+                    stable_companion_uuid(&dispatch_plan.dispatch_id, "fresh-request"),
+                ),
+            };
+        let continuation_request = CompanionContinuationRequest {
+            request_id: stable_companion_uuid(&dispatch_plan.dispatch_id, "continuation"),
+            dispatch_id: dispatch_plan.dispatch_id.clone(),
+            runtime_protocol,
+            runtime_protocol_request_id,
+            project_id,
             parent_run_id,
             parent_agent_id,
-            dispatch_result.agent_ref,
-            &companion_label,
-        )
-        .await
-        .map_err(|error| {
-            AgentToolError::ExecutionFailed(format!("companion channel 创建失败: {error}"))
-        })?;
-        let channel_intent = companion_channel_delivery_intent(
-            channel_id,
-            dispatch_result.run_ref,
-            dispatch_result.agent_ref,
-            ChannelParticipantRef::LifecycleAgent {
-                run_id: parent_run_id,
-                agent_id: parent_agent_id,
+            parent_frame_id,
+            child_run_id,
+            child_agent_id,
+            child_frame_id: None,
+            child_runtime_thread_id: child_runtime_thread_id.clone(),
+            selected_project_agent_id: selected_companion.project_agent.id,
+            selected_agent_key: selected_companion.agent_key.clone(),
+            companion_executor_config,
+            parent_runtime_thread_id: current_session_id.clone(),
+            protocol_plan,
+            companion_label: companion_label.clone(),
+            adoption_mode: adoption_mode_key(adoption_mode).to_owned(),
+            wait,
+            task_id: requested_task_id,
+            first_input_text: dispatch_prompt,
+            first_input_source: CompanionContinuationInputSource {
+                namespace: source.namespace.clone(),
+                kind: source.kind.clone(),
+                source_ref: source.source_ref.clone(),
+                correlation_ref: source.correlation_ref.clone(),
+                actor: source.actor.clone(),
+                route: source.route.clone(),
+                display_label_key: source.display_label_key.clone(),
+                metadata: source.metadata.clone(),
             },
-            &source,
-            "companion_dispatch",
-            &dispatch_result.launch_source.dispatch_prompt,
-        );
-        let _materialized = companion_channel_service(&self.repos)
-            .materialize_delivery_to_mailbox(&channel_intent)
-            .map_err(|error| {
-                AgentToolError::ExecutionFailed(format!(
-                    "companion channel materialization 失败: {error}"
-                ))
-            })?;
-        let mailbox_message_id = runtime_thread_services
-            .product_input_delivery
-            .record_dispatched(DeliverAgentRunProductInput {
-                target: AgentRunTarget {
-                    run_id: dispatch_result.run_ref,
-                    agent_id: dispatch_result.agent_ref,
-                },
-                origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::Companion,
-                content: agentdash_agent_protocol::text_user_input_blocks(
-                    dispatch_result.launch_source.dispatch_prompt.clone(),
-                ),
-                source: source.clone(),
-                client_command_id: format!(
-                    "companion-dispatch:{}:{}",
-                    dispatch_plan.dispatch_id, dispatch_result.agent_ref
-                ),
-            })
+        };
+        let requested = CompanionContinuationSaga::requested(continuation_request.clone())
+            .map_err(AgentToolError::ExecutionFailed)?;
+        let mut continuation = match runtime_thread_services
+            .companion_continuations
+            .create(requested)
             .await
-            .map_err(|error| {
-                AgentToolError::ExecutionFailed(format!(
-                    "child companion mailbox evidence 写入失败: {error}"
-                ))
-            })?;
-        let runtime_operation_id = dispatch_result
-            .launch_source
-            .dispatch_prompt
-            .is_empty()
-            .then(String::new);
-        let mailbox_message_id = Some(mailbox_message_id.to_string());
-        let mailbox_outcome = "dispatched";
-        companion_channel_service(&self.repos)
-            .record_delivery_state(
-                &ChannelOwner::LifecycleRun {
-                    run_id: parent_run_id,
-                },
-                channel_id,
-                ChannelDeliveryState {
-                    delivery_id: channel_intent.id,
-                    message_id: channel_intent.message.id,
-                    target: channel_intent.target.clone(),
-                    status: ChannelDeliveryStatus::Materialized,
-                    materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
-                        message_id: Uuid::parse_str(
-                            mailbox_message_id
-                                .as_deref()
-                                .expect("mailbox message id was just recorded"),
+        {
+            Ok(saga) => saga,
+            Err(CompanionContinuationRepositoryError::AlreadyExists) => {
+                let existing = runtime_thread_services
+                    .companion_continuations
+                    .load(continuation_request.request_id)
+                    .await
+                    .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+                    .ok_or_else(|| {
+                        AgentToolError::ExecutionFailed(
+                            "Companion continuation duplicate 丢失持久化事实".to_owned(),
                         )
-                        .expect("recorded mailbox message id is UUID"),
-                    }),
-                    updated_at: Utc::now(),
-                },
-            )
-            .await
-            .map_err(|error| {
-                AgentToolError::ExecutionFailed(format!(
-                    "companion channel delivery state 写入失败: {error}"
-                ))
-            })?;
+                    })?;
+                if existing.request() != &continuation_request {
+                    return Err(AgentToolError::ExecutionFailed(
+                        "Companion continuation duplicate 与原始请求不一致".to_owned(),
+                    ));
+                }
+                existing
+            }
+            Err(error) => return Err(AgentToolError::ExecutionFailed(error.to_string())),
+        };
+        let worker = CompanionContinuationWorker::new(
+            runtime_thread_services.companion_continuations.as_ref(),
+            runtime_thread_services
+                .companion_continuation_effects
+                .as_ref(),
+        );
+        for _ in 0..6 {
+            if continuation.phase() == CompanionContinuationPhase::Succeeded
+                || continuation.failure().is_some()
+            {
+                break;
+            }
+            let previous_version = continuation.version();
+            match worker.advance(continuation_request.request_id).await {
+                Ok(advanced) => continuation = advanced,
+                Err(CompanionContinuationRepositoryError::Conflict) => {
+                    continuation = runtime_thread_services
+                        .companion_continuations
+                        .load(continuation_request.request_id)
+                        .await
+                        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+                        .ok_or_else(|| {
+                            AgentToolError::ExecutionFailed(
+                                "Companion continuation CAS 后丢失持久化事实".to_owned(),
+                            )
+                        })?;
+                }
+                Err(CompanionContinuationRepositoryError::Unavailable(_)) => break,
+                Err(error) => return Err(AgentToolError::ExecutionFailed(error.to_string())),
+            }
+            if continuation.version() == previous_version {
+                break;
+            }
+        }
+        if let Some(failure) = continuation.failure() {
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "Companion continuation 在 {:?} 失败: {}",
+                failure.phase, failure.reason
+            )));
+        }
+        let gate_id = continuation
+            .evidence()
+            .gate
+            .as_ref()
+            .and_then(|evidence| evidence.gate_id);
+        let frame_ref = continuation
+            .evidence()
+            .runtime
+            .as_ref()
+            .map(|evidence| evidence.child_frame_id)
+            .unwrap_or(parent_frame_id);
+        let runtime_operation_id = continuation
+            .evidence()
+            .first_input
+            .as_ref()
+            .and_then(|evidence| evidence.runtime_operation_id.clone());
+        let mailbox_message_id = continuation
+            .evidence()
+            .first_input
+            .as_ref()
+            .map(|evidence| evidence.mailbox_message_id.to_string());
+        let mailbox_outcome = if mailbox_message_id.is_some() {
+            "dispatched"
+        } else {
+            "pending"
+        };
 
         // ─── Hook: after_subagent_dispatch ──────────────────────────────
         let after_resolution = evaluate_subagent_hook(
@@ -1565,10 +1617,10 @@ impl CompanionRequestTool {
             &companion_label,
             Some(serde_json::json!({
                 "dispatch_id": dispatch_plan.dispatch_id,
-                "agent_ref": dispatch_result.agent_ref.to_string(),
-                "frame_ref": dispatch_result.frame_ref.to_string(),
-                "gate_ref": dispatch_result.gate_ref.map(|id| id.to_string()),
-                "runtime_thread_id": dispatch_result.runtime_thread_id.to_string(),
+                "agent_ref": child_agent_id.to_string(),
+                "frame_ref": frame_ref.to_string(),
+                "gate_ref": gate_id.map(|id| id.to_string()),
+                "runtime_thread_id": child_runtime_thread_id.to_string(),
                 "runtime_operation_id": runtime_operation_id,
                 "mailbox_message_id": mailbox_message_id.clone(),
                 "mailbox_outcome": mailbox_outcome,
@@ -1591,14 +1643,24 @@ impl CompanionRequestTool {
 
         // ─── Wait 路径: 轮询 durable LifecycleGate ─────────────────────
         if wait {
-            let gate_id = dispatch_result.gate_ref.ok_or_else(|| {
-                AgentToolError::ExecutionFailed("dispatch 未创建 gate（内部错误）".to_string())
-            })?;
+            let Some(gate_id) = gate_id else {
+                return Ok(companion_subagent_agent_tool_result(
+                    CompanionSubagentVisibleResult {
+                        companion_label: &companion_label,
+                        child_agent_id,
+                        gate_id: None,
+                        status: "running",
+                        summary: "Companion Runtime 正在恢复并建立等待边界",
+                        timed_out: None,
+                        result_preview: None,
+                    },
+                ));
+            };
             if let Some(on_update) = on_update.as_ref() {
                 on_update(companion_subagent_agent_tool_result(
                     CompanionSubagentVisibleResult {
                         companion_label: &companion_label,
-                        child_agent_id: dispatch_result.agent_ref,
+                        child_agent_id,
                         gate_id: Some(gate_id),
                         status: "running",
                         summary: "已派发 companion agent，等待回传",
@@ -1637,7 +1699,7 @@ impl CompanionRequestTool {
                 return Ok(companion_subagent_agent_tool_result(
                     CompanionSubagentVisibleResult {
                         companion_label: &companion_label,
-                        child_agent_id: dispatch_result.agent_ref,
+                        child_agent_id,
                         gate_id: Some(gate_id),
                         status: "timed_out",
                         summary: "等待 companion result 超时",
@@ -1674,7 +1736,7 @@ impl CompanionRequestTool {
             return Ok(companion_subagent_agent_tool_result(
                 CompanionSubagentVisibleResult {
                     companion_label: &companion_label,
-                    child_agent_id: dispatch_result.agent_ref,
+                    child_agent_id,
                     gate_id: Some(gate_id),
                     status: &status,
                     summary: &summary,
@@ -1688,8 +1750,8 @@ impl CompanionRequestTool {
         Ok(companion_subagent_agent_tool_result(
             CompanionSubagentVisibleResult {
                 companion_label: &companion_label,
-                child_agent_id: dispatch_result.agent_ref,
-                gate_id: dispatch_result.gate_ref,
+                child_agent_id,
+                gate_id,
                 status: "running",
                 summary: "已派发 companion agent，等待异步回流",
                 timed_out: None,

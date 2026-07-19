@@ -6,6 +6,7 @@
 
 mod activation;
 mod companion;
+mod companion_continuation;
 mod feed;
 mod fork_saga;
 mod production_adapters;
@@ -25,6 +26,7 @@ pub struct AgentRunForkGraph {
 
 pub use activation::*;
 pub use companion::*;
+pub use companion_continuation::*;
 pub use feed::*;
 pub use fork_saga::*;
 pub use production_adapters::*;

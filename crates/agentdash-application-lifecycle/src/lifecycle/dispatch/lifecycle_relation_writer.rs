@@ -47,15 +47,27 @@ impl<'a> LifecycleRelationWriter<'a> {
         plan: &DispatchPlan,
     ) -> Result<RelationWriteResult, WorkflowApplicationError> {
         if let Some(parent_agent_id) = plan.parent_agent_id {
-            let lineage = AgentLineage::new(
-                run.id,
-                Some(parent_agent_id),
-                agent.id,
-                lineage_relation_kind(&plan.agent_policy),
-                Some(frame_id),
-                None,
-            );
-            self.lineage_repo.create(&lineage).await?;
+            if let Some(existing) = self.lineage_repo.find_parent(agent.id).await? {
+                if existing.run_id != run.id
+                    || existing.parent_agent_id != Some(parent_agent_id)
+                    || existing.source_frame_id != Some(frame_id)
+                {
+                    return Err(WorkflowApplicationError::Conflict(format!(
+                        "LifecycleAgent {} lineage evidence drifted",
+                        agent.id
+                    )));
+                }
+            } else {
+                let lineage = AgentLineage::new(
+                    run.id,
+                    Some(parent_agent_id),
+                    agent.id,
+                    lineage_relation_kind(&plan.agent_policy),
+                    Some(frame_id),
+                    None,
+                );
+                self.lineage_repo.create(&lineage).await?;
+            }
             if let Some(port) = self.project_projection_notifications.as_ref() {
                 let _ = port
                     .publish_project_projection_invalidated(

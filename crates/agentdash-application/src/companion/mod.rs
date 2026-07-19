@@ -1,3 +1,4 @@
+mod continuation;
 pub(crate) mod dispatch;
 pub mod gate_control;
 pub mod model_preflight;
@@ -9,6 +10,7 @@ pub(crate) mod tool_context;
 pub mod tools;
 pub mod workflow_script_preflight;
 
+pub use continuation::ApplicationCompanionContinuationEffects;
 pub use gate_control::{
     CompanionGateControlDeps, CompanionGateControlRepos, CompanionGateControlService,
     CompanionGateRespondResult, CompanionHumanResponseMailboxDelivery,

@@ -11,6 +11,7 @@ use agentdash_agent_runtime_host::{
 };
 use agentdash_agent_service_api::{AgentHostCallbacks, AgentPayloadDigest, AgentServiceInstanceId};
 use agentdash_application::auth::session_service::AuthSessionService;
+use agentdash_application::companion::ApplicationCompanionContinuationEffects;
 use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
 };
@@ -33,6 +34,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductProjectionQueryPort, AgentRunProductProtocolPorts,
     AgentRunProductRuntimeRecoveryAdvancementPort, AgentRunProductRuntimeRecoveryPort,
     AgentRunProductRuntimeRecoveryService, AgentRunTerminalSourceReconcilePort,
+    CompanionContinuationEffectPort, CompanionContinuationSagaRepository,
     ProductAgentRunForkGraphAdapter, ProductAgentRunForkRuntimeAdapter,
     ProductAgentRunRuntimeProjectionAdapter, ProductCompanionFreshRuntimeAdapter,
     ProductMailboxFacade, ProductManagedRuntimeCommandAdapter,
@@ -64,10 +66,10 @@ use agentdash_infrastructure::{
     PostgresAgentRunForkSagaRepository, PostgresAgentRunMailboxRepository,
     PostgresAgentRunProductRuntimeBindingRepository,
     PostgresAgentRunProductRuntimeRecoverySagaRepository, PostgresAgentRunTerminalProjectionStore,
-    PostgresCompanionFreshSagaRepository, PostgresWorkflowAgentCallRepository,
-    PostgresWorkflowExecutorEffectRepository, PostgresWorkflowRecoveryRepository,
-    PostgresWorkspaceModulePresentationStore, ProcessShellTerminalRegistry,
-    ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
+    PostgresCompanionContinuationSagaRepository, PostgresCompanionFreshSagaRepository,
+    PostgresWorkflowAgentCallRepository, PostgresWorkflowExecutorEffectRepository,
+    PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
+    ProcessShellTerminalRegistry, ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
     ProductionCompleteAgentServiceSelector, WorkspaceModulePresentRuntimeTool,
     final_runtime_tool_catalog,
 };
@@ -162,6 +164,8 @@ pub struct ServiceSet {
     pub agent_run_product_recovery_advancement:
         Arc<dyn AgentRunProductRuntimeRecoveryAdvancementPort>,
     pub agent_run_product_protocol: Arc<AgentRunProductProtocolPorts>,
+    pub companion_continuations: Arc<dyn CompanionContinuationSagaRepository>,
+    pub companion_continuation_effects: Arc<dyn CompanionContinuationEffectPort>,
     pub agent_run_product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
     pub agent_run_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     pub hook_provider: Arc<AppExecutionHookProvider>,
@@ -501,6 +505,16 @@ impl AppState {
                 complete_agent.runtime.clone(),
             )),
         ));
+        let companion_continuations: Arc<dyn CompanionContinuationSagaRepository> = Arc::new(
+            PostgresCompanionContinuationSagaRepository::new(pool.clone()),
+        );
+        let companion_continuation_effects: Arc<dyn CompanionContinuationEffectPort> =
+            Arc::new(ApplicationCompanionContinuationEffects::new(
+                repos.clone(),
+                agent_run_product_protocol.clone(),
+                product_input_delivery.clone(),
+                frame_construction.clone(),
+            ));
         let routine_executor = Arc::new(RoutineExecutor::new(
             repos.clone(),
             backend_registry.clone(),
@@ -607,6 +621,8 @@ impl AppState {
                 agent_run_product_recovery: product_recovery,
                 agent_run_product_recovery_advancement: product_recovery_advancement,
                 agent_run_product_protocol,
+                companion_continuations,
+                companion_continuation_effects,
                 agent_run_product_input_delivery: product_input_delivery,
                 agent_run_frame_construction: frame_construction,
                 hook_provider,

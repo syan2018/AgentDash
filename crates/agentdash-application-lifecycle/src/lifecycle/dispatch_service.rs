@@ -43,7 +43,7 @@ pub struct LifecycleDispatchService<'a> {
     run_repo: &'a dyn LifecycleRunRepository,
     workflow_graph_repo: &'a dyn WorkflowGraphRepository,
     agent_repo: &'a dyn LifecycleAgentRepository,
-    _frame_repo: &'a dyn AgentFrameRepository,
+    frame_repo: &'a dyn AgentFrameRepository,
     association_repo: &'a dyn LifecycleSubjectAssociationRepository,
     gate_repo: &'a dyn LifecycleGateRepository,
     lineage_repo: &'a dyn AgentLineageRepository,
@@ -69,7 +69,7 @@ impl<'a> LifecycleDispatchService<'a> {
             run_repo,
             workflow_graph_repo,
             agent_repo,
-            _frame_repo: frame_repo,
+            frame_repo,
             association_repo,
             gate_repo,
             lineage_repo,
@@ -157,6 +157,22 @@ impl<'a> LifecycleDispatchService<'a> {
             agent_id = %facts.runtime_refs.agent_ref,
             "dispatch: launch_agent 完成"
         );
+        Ok(AgentLaunchDispatchResult {
+            runtime_refs: facts.runtime_refs,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
+        })
+    }
+
+    pub async fn launch_agent_with_stable_runtime_identity(
+        &self,
+        intent: &AgentLaunchIntent,
+        agent_id: uuid::Uuid,
+        delivery_runtime_ref: uuid::Uuid,
+    ) -> Result<AgentLaunchDispatchResult, WorkflowApplicationError> {
+        let mut plan = DispatchPlan::from(intent);
+        plan.stable_agent_id = Some(agent_id);
+        plan.stable_delivery_runtime_ref = Some(delivery_runtime_ref);
+        let facts = self.dispatch_common(plan).await?;
         Ok(AgentLaunchDispatchResult {
             runtime_refs: facts.runtime_refs,
             delivery_runtime_ref: facts.delivery_runtime_ref,
@@ -273,6 +289,7 @@ impl<'a> LifecycleDispatchService<'a> {
     fn agent_runtime_materializer(&self) -> AgentRuntimeMaterializer<'_> {
         AgentRuntimeMaterializer::new(
             self.agent_repo,
+            self.frame_repo,
             self.frame_construction,
             self.workflow_agent_frame_materialization,
         )

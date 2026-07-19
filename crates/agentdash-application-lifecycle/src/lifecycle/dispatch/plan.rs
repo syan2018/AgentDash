@@ -24,6 +24,8 @@ pub(crate) struct DispatchPlan {
     pub(crate) run_policy: RunPolicy,
     pub(crate) agent_policy: AgentPolicy,
     pub(crate) gate_policy: Option<GatePolicy>,
+    pub(crate) stable_agent_id: Option<Uuid>,
+    pub(crate) stable_delivery_runtime_ref: Option<Uuid>,
 }
 
 pub(crate) struct DispatchFacts {
@@ -66,6 +68,8 @@ impl From<&AgentLaunchIntent> for DispatchPlan {
             run_policy: intent.run_policy.clone(),
             agent_policy: intent.agent_policy.clone(),
             gate_policy: None,
+            stable_agent_id: None,
+            stable_delivery_runtime_ref: None,
         }
     }
 }
@@ -85,6 +89,8 @@ impl From<&SubjectExecutionIntent> for DispatchPlan {
             run_policy: intent.run_policy.clone(),
             agent_policy: intent.agent_policy.clone(),
             gate_policy: None,
+            stable_agent_id: None,
+            stable_delivery_runtime_ref: None,
         }
     }
 }
@@ -104,6 +110,8 @@ impl From<&InteractionDispatchIntent> for DispatchPlan {
             run_policy: RunPolicy::AppendGraph,
             agent_policy: AgentPolicy::SpawnChild,
             gate_policy: Some(intent.gate_policy.clone()),
+            stable_agent_id: None,
+            stable_delivery_runtime_ref: None,
         }
     }
 }

@@ -10,7 +10,8 @@ use crate::vfs::compile_whole_mount_runtime_vfs_access_policy;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductInputDeliveryPort, AgentRunProductLaunchService, AgentRunProductProtocolPorts,
-    AgentRunProductRuntimeBindingRepository,
+    AgentRunProductRuntimeBindingRepository, CompanionContinuationEffectPort,
+    CompanionContinuationSagaRepository,
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 
@@ -20,6 +21,8 @@ pub struct RuntimeThreadToolServices {
     pub product_runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub product_launch: Arc<AgentRunProductLaunchService>,
     pub product_protocols: Arc<AgentRunProductProtocolPorts>,
+    pub companion_continuations: Arc<dyn CompanionContinuationSagaRepository>,
+    pub companion_continuation_effects: Arc<dyn CompanionContinuationEffectPort>,
     pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
 }
 

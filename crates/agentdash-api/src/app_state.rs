@@ -209,6 +209,7 @@ impl AppState {
         let vfs_service = vfs_bootstrap.vfs_service;
         let vfs_mutation_dispatcher = vfs_bootstrap.vfs_mutation_dispatcher;
         let vfs_materialization_service = vfs_bootstrap.vfs_materialization_service;
+        let lifecycle_history_query = vfs_bootstrap.lifecycle_history_query;
 
         let product_persistence =
             Arc::new(AgentRunProductPersistenceComposition::build(pool.clone()));
@@ -288,6 +289,9 @@ impl AppState {
             )
             .map_err(anyhow::Error::msg)?,
         );
+        lifecycle_history_query
+            .bind_product_projection(product.gateway.clone())
+            .map_err(|error| anyhow::anyhow!(error))?;
         let terminal_source_reconcile: Arc<dyn AgentRunTerminalSourceReconcilePort> =
             Arc::new(RelayAgentRunTerminalSourceReconcile::new(
                 backend_registry.clone(),

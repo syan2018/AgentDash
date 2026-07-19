@@ -12,12 +12,12 @@ pub struct LifecyclePathEntry {
     pub virtual_entry: bool,
 }
 
-const DIRECTORY_HINT_DESCRIPTION: &str = "Lifecycle journey VFS，包含 AgentRun delivery session 日志、消息、工具执行记录，以及当前 runtime node 的 artifact / record 投影";
+const DIRECTORY_HINT_DESCRIPTION: &str = "Lifecycle journey VFS，包含从 canonical Agent history 重建的只读消息、工具与压缩记录，以及当前 runtime node 的 artifact / record 投影";
 
 pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     LifecyclePathEntry {
         path: "state",
-        description: "AgentRun delivery session anchor 与 run 状态概览（JSON）",
+        description: "AgentRun canonical history anchor 与 run 状态概览（JSON）",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
@@ -29,31 +29,31 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/meta",
-        description: "AgentRun delivery session 元信息",
+        description: "AgentRun canonical history 元信息",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/summary",
-        description: "AgentRun delivery session 摘要",
+        description: "AgentRun canonical history 摘要",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/conclusions",
-        description: "AgentRun delivery session 结论",
+        description: "AgentRun canonical history 结论",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/events.json",
-        description: "AgentRun delivery session 原始事件投影",
+        description: "AgentRun canonical history 完整投影",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/items",
-        description: "AgentRun delivery session 全量 item 索引",
+        description: "AgentRun canonical history 全量 item 索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -65,7 +65,7 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/messages",
-        description: "AgentRun delivery session 用户与 Agent 消息索引",
+        description: "AgentRun canonical history 用户与 Agent 消息索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -77,7 +77,7 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/tools",
-        description: "AgentRun delivery session 工具 ThreadItem 索引",
+        description: "AgentRun canonical history 工具 item 索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -89,7 +89,7 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/writes",
-        description: "AgentRun delivery session 成功写入类工具 ThreadItem 索引",
+        description: "AgentRun canonical history 文件变更 item 索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -101,7 +101,7 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/summaries",
-        description: "AgentRun delivery session 每轮上下文压缩摘要留档",
+        description: "AgentRun canonical history 上下文压缩 item 索引",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -113,13 +113,13 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "session/terminal",
-        description: "AgentRun delivery session 终端输出聚合",
+        description: "AgentRun canonical history 中的终端控制 item（不包含独立 PTY feed）",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
     LifecyclePathEntry {
         path: "session/turns",
-        description: "AgentRun delivery session turn 列表",
+        description: "AgentRun canonical history turn 列表",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -143,7 +143,7 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "agent-runs/{agent_id}/sessions",
-        description: "指定 AgentRun 的 delivery session 投影入口",
+        description: "指定 AgentRun 的 canonical history 投影入口",
         kind: LifecyclePathKind::Dir,
         virtual_entry: true,
     },
@@ -161,7 +161,7 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     },
     LifecyclePathEntry {
         path: "agent-runs/{agent_id}/sessions/events.json",
-        description: "指定 AgentRun 的 delivery session 原始事件投影",
+        description: "指定 AgentRun 的 canonical history 完整投影",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
@@ -215,8 +215,6 @@ pub fn lifecycle_root_entries(include_skills: bool) -> Vec<RuntimeFileEntry> {
         RuntimeFileEntry::file("state").as_virtual(),
         RuntimeFileEntry::dir("session").as_virtual(),
         RuntimeFileEntry::dir("agent-runs").as_virtual(),
-        RuntimeFileEntry::dir("artifacts"),
-        RuntimeFileEntry::dir("records"),
     ];
     if include_skills {
         entries.push(RuntimeFileEntry::dir("skills").as_virtual());

@@ -369,6 +369,7 @@ name = "agentdash-application-lifecycle"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent",
+ "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-application-agentrun",
  "agentdash-application-ports",

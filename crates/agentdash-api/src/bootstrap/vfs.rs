@@ -3,6 +3,9 @@ use std::sync::Arc;
 
 use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::repository_set::RepositorySet;
+use agentdash_application_lifecycle::lifecycle::{
+    DeferredLifecycleHistoryQuery, LifecycleMountProvider,
+};
 use agentdash_application_vfs::{
     InlineFsMountProvider, MountProviderRegistry, MountProviderRegistryBuilder,
     RoutineMountProvider, SkillAssetFsMountProvider, VfsMaterializationService,
@@ -20,6 +23,7 @@ pub(crate) struct VfsBootstrapOutput {
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
     pub vfs_materialization_service: Arc<VfsMaterializationService>,
     pub mcp_relay_provider: Arc<dyn agentdash_platform_spi::McpRelayProvider>,
+    pub lifecycle_history_query: DeferredLifecycleHistoryQuery,
 }
 
 pub(crate) fn build_vfs_kernel(
@@ -27,6 +31,7 @@ pub(crate) fn build_vfs_kernel(
     backend_registry: Arc<BackendRegistry>,
     integration_mount_providers: Vec<Arc<dyn MountProvider>>,
 ) -> VfsBootstrapOutput {
+    let lifecycle_history_query = DeferredLifecycleHistoryQuery::default();
     let mut mount_registry_builder = MountProviderRegistryBuilder::new()
         .register(Arc::new(InlineFsMountProvider::new(
             repos.inline_file_repo.clone(),
@@ -37,6 +42,13 @@ pub(crate) fn build_vfs_kernel(
         )))
         .register(Arc::new(SkillAssetFsMountProvider::new(
             repos.skill_asset_repo.clone(),
+        )))
+        .register(Arc::new(LifecycleMountProvider::new(
+            repos.lifecycle_run_repo.clone(),
+            repos.lifecycle_agent_repo.clone(),
+            repos.inline_file_repo.clone(),
+            repos.skill_asset_repo.clone(),
+            Arc::new(lifecycle_history_query.clone()),
         )))
         .register(Arc::new(RelayFsMountProvider::new(
             backend_registry.clone(),
@@ -81,6 +93,7 @@ pub(crate) fn build_vfs_kernel(
         vfs_mutation_dispatcher,
         vfs_materialization_service: materialization_service,
         mcp_relay_provider,
+        lifecycle_history_query,
     }
 }
 

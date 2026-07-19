@@ -976,6 +976,7 @@ mod tests {
                 ManagedRuntimeCommandKind::SubmitInput,
                 ManagedRuntimeCommandAvailability::Available { evidence },
             )]),
+            conversation_history: Vec::new(),
         }
     }
 

@@ -105,7 +105,7 @@
 
 ## C5 — Final Hard Cut
 
-Application/Product 领域不属于 Hard Cut。Companion、Frame、Routine、Workflow、
+Application/Product 领域不属于 Hard Cut，也不是本任务的重构对象。Companion、Frame、Routine、Workflow、
 Workspace、Canvas、Terminal、Wait、Lifecycle 只迁移 Runtime 接入 seam；其业务规则、
 route、worker、权限、gate、mailbox 与用户可见行为必须保持。移除 module export、
 route mount、AppState composition 或 Product caller 不能证明旧 Runtime 已被替代。
@@ -133,6 +133,10 @@ Negative evidence:
 - [ ] protocol 中 Backbone platform/product、Runtime internal、journal carrier。
 - [ ] Relay Prompt/SessionEvent legacy variants。
 - [ ] 无消费者的 SPI Agent delegate/re-export。
+- [ ] 拆解并删除 `agentdash-platform-spi::session_persistence` 语义聚合：仍有消费者的
+  AgentFrame/capability transition 归 Product owner，Runtime command/binding/recovery
+  归 Runtime Contract，history/compaction/lineage 归 Complete Agent 或 canonical
+  conversation owner；迁移完成后不保留同义 SPI 外壳。
 - [ ] 旧 schema tables/fields/indexes。
 
 ## RuntimeThread semantic cut
@@ -156,8 +160,11 @@ history-derived `AgentSession`。
 - [ ] Product read models：AgentRun workspace、conversation execution、command
   availability 只读取 fenced Product binding + canonical Managed Runtime snapshot；其
   runtime coordinate 为 `runtime_thread_id`。
+- [ ] VFS、Extension、Canvas、Runtime Tool 与 Frame policy 中的
+  `SessionRuntime*`、`RuntimeContext::Session`、`SharedSessionToolServices*` 同步切换为
+  RuntimeThread 语义；倒装命名不能绕过 semantic cut。
 - [ ] 生成、编译和行为验证完成后，非 migration/fixture 的平台
-  `RuntimeSession*` negative search 为零。
+  `RuntimeSession*` / `SessionRuntime*` negative search 为零。
 
 ### 保留的 Session ownership
 

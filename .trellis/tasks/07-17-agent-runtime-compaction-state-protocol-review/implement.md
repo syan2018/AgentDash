@@ -99,16 +99,17 @@ Stable checkpoint 是可提交和交接的集成边界：
 | S2 Target Domains Ready | Dash/Core、Runtime/Host、Surface target domains 在隔离 composition 可验证 |
 | S3 Complete Agent Lane | Native、Codex、Remote 均通过 Complete Agent conformance |
 | S4 Product Lane Ready | AgentRun、Companion、API/UI target caller 在隔离 composition 通过 |
-| S5 Atomic Hard Cut | caller、contract/crate、composition、schema、projection、deletion 一次切换 |
+| S5 Atomic Hard Cut | final Runtime seam/schema/composition 激活，随后只删除已被替代的旧 Runtime implementation |
 | S6 Final Conformance | recovery、fault matrix、negative gates、最终 specs 全部通过 |
 
-S0–S4 不提前改变 production path。每个 bundle 把 production activation 部分保留为经过
-自身 checker 审阅的 activation component 与 consumer/deletion manifest；Wave 4 在同一
-冻结 revision 上组合跨 owner components，形成完整 activation-ready change set。S5 由
-原 bundle owner维护自身领域修改，Hard Cut owner 串行集成 Cargo/lockfile、正式
-migration、production composition、canonical generated contracts 和最终 legacy
-deletion。单个 component 不引入只为独立编译存在的反向依赖或兼容 shim。完整 wave、
-slot 和返工路由见 `transition-architecture.md` §12。
+S0–S4 不提前改变 production path。每个 Runtime/Agent bundle 把 production activation
+部分保留为经过自身 checker 审阅的 activation component 与 consumer/deletion manifest；
+Product bundle 只证明既有业务通过 final seam 完整可用，不提供 Product deletion
+candidate。Wave 4 在同一冻结 revision 上组合 activation-ready change set。S5 由原
+Runtime/Agent owner 维护自身领域修改，Hard Cut owner 串行集成 Cargo/lockfile、正式
+Runtime migration、production composition、canonical generated contracts 和最终
+legacy Runtime deletion。单个 component 不引入只为独立编译存在的反向依赖或兼容
+shim。完整 wave、slot 和返工路由见 `transition-architecture.md` §12。
 
 ## 2. 工作包总表
 

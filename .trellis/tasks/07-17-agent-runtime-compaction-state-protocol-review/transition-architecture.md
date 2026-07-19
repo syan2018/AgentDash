@@ -441,8 +441,10 @@ canonical UI consumer 的完整 Product tracer。当前实施按
 
 ### S5 — Atomic Hard Cut（W8 integration checkpoint）
 
-S5 不是单一 crate 的局部修改，而是由 Platform Runtime、Dash/Native、External Agents、
-Product/Protocol 与 Hard Cut 五个 bundle 共同形成的唯一 production cutover。
+S5 是 Agent Runtime 内核的唯一 production cutover，而不是 Application/Product
+重构。Platform Runtime、Dash/Native 与 External Agents 提供 final Runtime/Complete
+Agent activation；Product/Protocol 只提供既有业务已经正确适配 final seam 的保真证据；
+Hard Cut 只集成并删除已经被上述 Runtime target 完整替代的旧 Runtime implementation。
 
 Hard Cut 的 integration ownership 不覆盖其它 bundle：legacy/final contract、Runtime/
 Host/Surface 由 Platform Runtime bundle 负责；Agent/Core/Native 由 Dash/Native 负责；
@@ -461,7 +463,7 @@ Product capability、route、module 或 caller 的缺席不构成 replacement。
 | Platform Runtime-owned final contract/wire activation + legacy cleanup | 防止新旧 contract 同时残留或由 Hard Cut agent 越权修改 |
 | Dash/Native-owned Agent/Core physical crate/API activation + all consumer switches | Agent/Core 与 Native consumers 同 bundle 切换，避免断开的 imports |
 | production composition / service registry 切换 | 保证只有 Complete Agent route 被选择 |
-| Application/API/UI caller 与 canonical generated contract 切换 | 消费者不能继续读取旧 projection，S4 test output 不成为第二套 DTO |
+| Application/API/UI 适配 final seam 与 canonical generated contract | Product 业务保持原 owner 和行为，只替换 Runtime 接入点 |
 | RuntimeJournalFact/legacy ports/crates 删除 | consumer 为零后立即消除第二事实链 |
 | direct + fork + reconnect + callback tracer bullets | 证明切换的是完整路径而非局部编译 |
 | negative searches / cargo metadata / migration guard | 证明旧 production path 已不存在 |
@@ -470,9 +472,10 @@ Product capability、route、module 或 caller 的缺席不构成 replacement。
 route、composition 与测试，再只把旧 Runtime/Journal/Session 依赖机械适配到最终 owner。
 这一恢复属于补齐未完成的 S4，不在 Hard Cut 内重新实现 Product 领域。
 
-S5 的稳定结果只有一种：所有 production callers 指向 final Runtime/Host/Complete Agent
-路径，同时 07-10 前已有的 Product 能力和 07-12 canonical presentation 全部可用。只有
-七类 replacement evidence 完整的旧实现才能物理删除。
+S5 的稳定结果只有一种：所有 Runtime production callers 指向 final
+Runtime/Host/Complete Agent 路径，同时 07-10 前已有的 Product 能力和 07-12 canonical
+presentation 全部可用。只有七类 replacement evidence 完整的旧 Runtime 实现才能物理
+删除；Application/Product 模块本身不进入 manifest。
 
 ### S6 — Final Conformance（W9）
 

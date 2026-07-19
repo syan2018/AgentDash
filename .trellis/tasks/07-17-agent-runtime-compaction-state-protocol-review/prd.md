@@ -489,9 +489,11 @@ infrastructure adapter 理由。
   crate 收尾以 `final-convergence-closeout.md` 为执行索引；
 - S0–S4 允许在隔离 test composition 中建立 target lane，但不得提前改变 production
   composition、canonical generated contract、正式 repository/schema 或默认 caller；
-- S5 把 caller、contract/crate identity、composition、repository/schema、projection
-  与 legacy deletion 作为一个 cutover unit 激活。S5 完成后必须只有一条 production
-  path、一个事实 owner 和一套 canonical schema/contract；
+- S5 的改造对象仅限 Agent Runtime 内核及其旧实现：切换 Runtime caller seam、
+  contract/crate identity、Runtime composition、repository/schema、projection 后，
+  原子删除已被完整替代的 legacy Runtime implementation。Application/Product 只把
+  既有业务接到 final seam，不属于 Hard Cut 的重构或删除对象。S5 完成后必须只有一条
+  Runtime production path、一个事实 owner 和一套 canonical schema/contract；
 - S5 deletion 只接受 replacement manifest 中已经同时证明 target implementation、
   production caller、composition、repository/schema、projection consumer、behavior
   tracer 与 negative evidence 的旧实现。取消 module/route/caller 不构成零消费者证据；

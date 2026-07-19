@@ -1036,6 +1036,14 @@ pub trait AgentRunForkSagaRepository: Send + Sync {
         request_id: &AgentRunForkRequestId,
     ) -> Result<Option<AgentRunForkSaga>, AgentRunForkSagaRepositoryError>;
 
+    /// 返回尚未进入 terminal 状态的 durable saga，供进程重启后的恢复 worker 推进。
+    ///
+    /// 返回顺序必须稳定，避免持续失败的请求使其余请求永久饥饿。
+    async fn list_recoverable(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<AgentRunForkRequestId>, AgentRunForkSagaRepositoryError>;
+
     async fn save(
         &self,
         expected_version: u64,
@@ -1119,6 +1127,24 @@ impl AgentRunForkSagaRepository for RecordingAgentRunForkSagaRepository {
         request_id: &AgentRunForkRequestId,
     ) -> Result<Option<AgentRunForkSaga>, AgentRunForkSagaRepositoryError> {
         Ok(self.state.lock().await.sagas.get(request_id).cloned())
+    }
+
+    async fn list_recoverable(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<AgentRunForkRequestId>, AgentRunForkSagaRepositoryError> {
+        let mut request_ids = self
+            .state
+            .lock()
+            .await
+            .sagas
+            .values()
+            .filter(|saga| saga.next_step() != AgentRunForkSagaStep::Terminal)
+            .map(|saga| saga.request_id().clone())
+            .collect::<Vec<_>>();
+        request_ids.sort_by_key(|request_id| request_id.0);
+        request_ids.truncate(limit);
+        Ok(request_ids)
     }
 
     async fn save(

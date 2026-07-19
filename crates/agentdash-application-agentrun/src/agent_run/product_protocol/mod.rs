@@ -9,6 +9,7 @@ mod companion;
 mod feed;
 mod fork_saga;
 mod production_adapters;
+mod recovery;
 mod thread_name_projection;
 mod workflow_agent_call;
 
@@ -27,5 +28,6 @@ pub use companion::*;
 pub use feed::*;
 pub use fork_saga::*;
 pub use production_adapters::*;
+pub use recovery::*;
 pub use thread_name_projection::*;
 pub use workflow_agent_call::*;

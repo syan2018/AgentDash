@@ -1007,6 +1007,11 @@ pub trait CompanionFreshSagaRepository: Send + Sync {
         &self,
         request_id: &CompanionFreshRequestId,
     ) -> Result<Option<CompanionFreshSaga>, CompanionFreshRepositoryError>;
+    /// 返回尚未 terminalize 的 durable fresh saga，供重启恢复 worker 继续推进。
+    async fn list_recoverable(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<CompanionFreshRequestId>, CompanionFreshRepositoryError>;
     async fn save(
         &self,
         expected_version: u64,
@@ -1065,6 +1070,23 @@ impl CompanionFreshSagaRepository for RecordingCompanionFreshSagaRepository {
         request_id: &CompanionFreshRequestId,
     ) -> Result<Option<CompanionFreshSaga>, CompanionFreshRepositoryError> {
         Ok(self.sagas.lock().await.get(request_id).cloned())
+    }
+
+    async fn list_recoverable(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<CompanionFreshRequestId>, CompanionFreshRepositoryError> {
+        let mut request_ids = self
+            .sagas
+            .lock()
+            .await
+            .values()
+            .filter(|saga| saga.next_step() != CompanionFreshStep::Terminal)
+            .map(|saga| saga.request_id().clone())
+            .collect::<Vec<_>>();
+        request_ids.sort_by_key(|request_id| request_id.0);
+        request_ids.truncate(limit);
+        Ok(request_ids)
     }
 
     async fn save(

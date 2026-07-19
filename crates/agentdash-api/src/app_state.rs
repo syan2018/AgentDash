@@ -22,22 +22,23 @@ use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfi
 use agentdash_application::product_runtime_surface::{
     ProductAgentRunAppliedResourceSurfaceCompiler, ProductAgentRunFactsResolver,
 };
+pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::scheduling::CronSchedulerHandle;
-pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::task::tools::ApplicationRuntimeTaskToolService;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommandFacade, AgentRunProductInputDeliveryPort,
     AgentRunProductInputDeliveryService, AgentRunProductLaunchService,
-    AgentRunProductProjectionQueryPort, AgentRunProductRuntimeRecoveryPort,
-    AgentRunProductRuntimeRecoveryService, AgentRunTerminalSourceReconcilePort,
-    ProductMailboxFacade, ProductManagedRuntimeCommandAdapter,
+    AgentRunProductProjectionQueryPort, AgentRunProductProtocolPorts,
+    AgentRunProductRuntimeRecoveryPort, AgentRunProductRuntimeRecoveryService,
+    AgentRunTerminalSourceReconcilePort, ProductAgentRunForkGraphAdapter,
+    ProductAgentRunForkRuntimeAdapter, ProductAgentRunRuntimeProjectionAdapter,
+    ProductCompanionFreshRuntimeAdapter, ProductMailboxFacade, ProductManagedRuntimeCommandAdapter,
     build_durable_workflow_agent_call_dispatch,
 };
-use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
-use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeChannelInvoker};
+use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
 use agentdash_application_lifecycle::run_view_builder::{
     LifecycleRunViewQueryDeps, LifecycleRunViewQueryPort, LifecycleRunViewQueryService,
 };
@@ -45,6 +46,7 @@ use agentdash_application_lifecycle::{
     AgentRunLifecycleAppliedResourceSurfaceCompiler, AgentRunLifecycleSurfaceProjector,
     LifecycleOrchestrator, LifecycleOrchestratorDeps, LifecycleRuntimeTurnTerminalObserver,
 };
+use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_vfs::{
     AppliedVfsRuntimeToolService, MountProviderRegistry, VfsMutationDispatcher, VfsService,
 };
@@ -57,10 +59,10 @@ use agentdash_infrastructure::{
 };
 use agentdash_infrastructure::{
     CompleteAgentComposition, CompleteAgentProductRuntimeProvisioner,
-    CompleteAgentServiceSelectionCatalog,
-    PinnedCompleteAgentVerificationCatalog, PostgresAgentRunMailboxRepository,
-    PostgresAgentRunProductRuntimeBindingRepository,
-    PostgresAgentRunTerminalProjectionStore, PostgresWorkflowAgentCallRepository,
+    CompleteAgentServiceSelectionCatalog, PinnedCompleteAgentVerificationCatalog,
+    PostgresAgentRunForkSagaRepository, PostgresAgentRunMailboxRepository,
+    PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
+    PostgresCompanionFreshSagaRepository, PostgresWorkflowAgentCallRepository,
     PostgresWorkflowExecutorEffectRepository, PostgresWorkflowRecoveryRepository,
     PostgresWorkspaceModulePresentationStore, ProcessShellTerminalRegistry,
     ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
@@ -79,10 +81,10 @@ use agentdash_workspace_module::workspace_module::presentation_protocol::{
 use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::project_projection_notification::ProjectProjectionNotificationPublisher;
 use crate::relay::{
-    PinnedRuntimeWireDeploymentCatalog, RelayAgentRunTerminalProjectionProducer,
-    ProductRuntimeWireCompleteAgentRecoveryObserver, RelayAgentRunTerminalSourceReconcile,
-    RuntimeWireCompleteAgentAdmission,
-    registry::BackendRegistry, runtime_wire::CloudRuntimeWirePlacementRegistry,
+    PinnedRuntimeWireDeploymentCatalog, ProductRuntimeWireCompleteAgentRecoveryObserver,
+    RelayAgentRunTerminalProjectionProducer, RelayAgentRunTerminalSourceReconcile,
+    RuntimeWireCompleteAgentAdmission, registry::BackendRegistry,
+    runtime_wire::CloudRuntimeWirePlacementRegistry,
 };
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -155,6 +157,7 @@ pub struct ServiceSet {
     pub agent_run_product_mailbox: Arc<ProductMailboxFacade>,
     pub agent_run_product_launch: Arc<AgentRunProductLaunchService>,
     pub agent_run_product_recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort>,
+    pub agent_run_product_protocol: Arc<AgentRunProductProtocolPorts>,
     pub agent_run_product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
     pub agent_run_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     pub hook_provider: Arc<AppExecutionHookProvider>,
@@ -398,14 +401,13 @@ impl AppState {
             repos.clone(),
             runtime_product_bindings.clone(),
         ));
-        let product_surface_compiler = Arc::new(
-            AgentRunLifecycleAppliedResourceSurfaceCompiler::new(
+        let product_surface_compiler =
+            Arc::new(AgentRunLifecycleAppliedResourceSurfaceCompiler::new(
                 Arc::new(ProductAgentRunAppliedResourceSurfaceCompiler::new(
                     product_facts.as_ref().clone(),
                 )),
                 product_facts,
-            ),
-        );
+            ));
         let product_resource_materializer = Arc::new(
             product_persistence.applied_resource_surface_materializer(product_surface_compiler),
         );
@@ -423,13 +425,12 @@ impl AppState {
             )
             .map_err(anyhow::Error::msg)?,
         );
-        let product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort> = Arc::new(
-            AgentRunProductInputDeliveryService::new(
+        let product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort> =
+            Arc::new(AgentRunProductInputDeliveryService::new(
                 Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone())),
                 product.gateway.clone(),
                 product_commands.clone(),
-            ),
-        );
+            ));
         let product_launch = Arc::new(AgentRunProductLaunchService::new(
             product_runtime_provisioner,
             complete_agent.runtime.clone(),
@@ -453,6 +454,24 @@ impl AppState {
                 ),
             ))
             .await;
+        let agent_run_product_protocol = Arc::new(AgentRunProductProtocolPorts::new(
+            Arc::new(PostgresAgentRunForkSagaRepository::new(pool.clone())),
+            Arc::new(ProductAgentRunForkRuntimeAdapter::new(
+                complete_agent.runtime.clone(),
+            )),
+            Arc::new(ProductAgentRunForkGraphAdapter::new(
+                repos.lifecycle_run_repo.clone(),
+                repos.lifecycle_agent_repo.clone(),
+                repos.agent_frame_repo.clone(),
+            )),
+            Arc::new(PostgresCompanionFreshSagaRepository::new(pool.clone())),
+            Arc::new(ProductCompanionFreshRuntimeAdapter::new(
+                complete_agent.runtime.clone(),
+            )),
+            Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(
+                complete_agent.runtime.clone(),
+            )),
+        ));
         let lifecycle_surface_projection =
             Arc::new(AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
                 repos.skill_asset_repo.clone(),
@@ -573,6 +592,7 @@ impl AppState {
                 agent_run_product_mailbox: product_mailbox,
                 agent_run_product_launch: product_launch,
                 agent_run_product_recovery: product_recovery,
+                agent_run_product_protocol,
                 agent_run_product_input_delivery: product_input_delivery,
                 agent_run_frame_construction: frame_construction,
                 hook_provider,

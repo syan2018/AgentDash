@@ -54,15 +54,34 @@ impl AgentRunForkSagaRepository for PostgresAgentRunForkSagaRepository {
         &self,
         request_id: &AgentRunForkRequestId,
     ) -> Result<Option<AgentRunForkSaga>, AgentRunForkSagaRepositoryError> {
-        sqlx::query_scalar::<_, Value>(
-            "SELECT saga FROM agent_run_fork_saga WHERE request_id=$1",
+        sqlx::query_scalar::<_, Value>("SELECT saga FROM agent_run_fork_saga WHERE request_id=$1")
+            .bind(request_id.0)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(fork_unavailable)?
+            .map(|value| serde_json::from_value(value).map_err(fork_unavailable))
+            .transpose()
+    }
+
+    async fn list_recoverable(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<AgentRunForkRequestId>, AgentRunForkSagaRepositoryError> {
+        let limit = i64::try_from(limit).map_err(fork_unavailable)?;
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT request_id
+             FROM agent_run_fork_saga
+             WHERE phase <> 'succeeded'
+               AND COALESCE(saga->'failed', 'null'::jsonb) = 'null'::jsonb
+               AND COALESCE(saga->'lost', 'null'::jsonb) = 'null'::jsonb
+             ORDER BY updated_at, request_id
+             LIMIT $1",
         )
-        .bind(request_id.0)
-        .fetch_optional(&self.pool)
+        .bind(limit)
+        .fetch_all(&self.pool)
         .await
-        .map_err(fork_unavailable)?
-        .map(|value| serde_json::from_value(value).map_err(fork_unavailable))
-        .transpose()
+        .map(|request_ids| request_ids.into_iter().map(AgentRunForkRequestId).collect())
+        .map_err(fork_unavailable)
     }
 
     async fn save(
@@ -219,7 +238,9 @@ impl CompanionFreshSagaRepository for PostgresCompanionFreshSagaRepository {
         .bind(identities.first_input_effect_id)
         .bind(nullable_json(value.get("durable_dispatch").cloned()))
         .bind(nullable_json(value.get("context_evidence").cloned()))
-        .bind(nullable_json(value.pointer("/receipts/first_input").cloned()))
+        .bind(nullable_json(
+            value.pointer("/receipts/first_input").cloned(),
+        ))
         .bind(value)
         .execute(&self.pool)
         .await;
@@ -234,15 +255,39 @@ impl CompanionFreshSagaRepository for PostgresCompanionFreshSagaRepository {
         &self,
         request_id: &CompanionFreshRequestId,
     ) -> Result<Option<CompanionFreshSaga>, CompanionFreshRepositoryError> {
-        sqlx::query_scalar::<_, Value>(
-            "SELECT saga FROM companion_fresh_saga WHERE request_id=$1",
+        sqlx::query_scalar::<_, Value>("SELECT saga FROM companion_fresh_saga WHERE request_id=$1")
+            .bind(request_id.0)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(fresh_unavailable)?
+            .map(|value| serde_json::from_value(value).map_err(fresh_unavailable))
+            .transpose()
+    }
+
+    async fn list_recoverable(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<CompanionFreshRequestId>, CompanionFreshRepositoryError> {
+        let limit = i64::try_from(limit).map_err(fresh_unavailable)?;
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT request_id
+             FROM companion_fresh_saga
+             WHERE phase <> 'succeeded'
+               AND COALESCE(saga->'failed', 'null'::jsonb) = 'null'::jsonb
+               AND COALESCE(saga->'lost', 'null'::jsonb) = 'null'::jsonb
+             ORDER BY updated_at, request_id
+             LIMIT $1",
         )
-        .bind(request_id.0)
-        .fetch_optional(&self.pool)
+        .bind(limit)
+        .fetch_all(&self.pool)
         .await
-        .map_err(fresh_unavailable)?
-        .map(|value| serde_json::from_value(value).map_err(fresh_unavailable))
-        .transpose()
+        .map(|request_ids| {
+            request_ids
+                .into_iter()
+                .map(CompanionFreshRequestId)
+                .collect()
+        })
+        .map_err(fresh_unavailable)
     }
 
     async fn save(
@@ -267,7 +312,9 @@ impl CompanionFreshSagaRepository for PostgresCompanionFreshSagaRepository {
         .bind(string_field(&value, "phase").map_err(fresh_unavailable)?)
         .bind(nullable_json(value.get("durable_dispatch").cloned()))
         .bind(nullable_json(value.get("context_evidence").cloned()))
-        .bind(nullable_json(value.pointer("/receipts/first_input").cloned()))
+        .bind(nullable_json(
+            value.pointer("/receipts/first_input").cloned(),
+        ))
         .bind(value)
         .execute(&self.pool)
         .await
@@ -294,13 +341,12 @@ async fn fork_save_conflict(
     request_id: &AgentRunForkRequestId,
     expected: u64,
 ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError> {
-    let actual = sqlx::query_scalar::<_, i64>(
-        "SELECT version FROM agent_run_fork_saga WHERE request_id=$1",
-    )
-    .bind(request_id.0)
-    .fetch_optional(pool)
-    .await
-    .map_err(fork_unavailable)?;
+    let actual =
+        sqlx::query_scalar::<_, i64>("SELECT version FROM agent_run_fork_saga WHERE request_id=$1")
+            .bind(request_id.0)
+            .fetch_optional(pool)
+            .await
+            .map_err(fork_unavailable)?;
     match actual {
         None => Err(AgentRunForkSagaRepositoryError::NotFound),
         Some(actual) => Err(AgentRunForkSagaRepositoryError::Conflict {

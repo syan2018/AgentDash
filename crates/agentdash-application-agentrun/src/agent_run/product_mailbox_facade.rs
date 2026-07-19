@@ -1,9 +1,8 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use agentdash_domain::{
     agent_run_mailbox::{AgentRunMailboxMessage, AgentRunMailboxState},
     agent_run_target::AgentRunTarget,
-    workflow::AgentRunCommandKind,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -19,15 +18,63 @@ pub struct ProductMailboxCursor {
     pub latest_change_sequence: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ProductMailboxSnapshotDigest(String);
+
+impl ProductMailboxSnapshotDigest {
+    pub fn new(value: impl Into<String>) -> Result<Self, ProductMailboxDigestError> {
+        let value = value.into();
+        let Some(hex) = value.strip_prefix("sha256:") else {
+            return Err(ProductMailboxDigestError::InvalidFormat);
+        };
+        if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(ProductMailboxDigestError::InvalidFormat);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum ProductMailboxDigestError {
+    #[error("Product mailbox snapshot digest must be a sha256 hex digest")]
+    InvalidFormat,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductMailboxCommitEvidence {
+    pub snapshot_digest: ProductMailboxSnapshotDigest,
+    pub committed_at_ms: ProductMailboxCommittedAtMs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ProductMailboxCommittedAtMs(pub u64);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProductMailboxChangeOrigin {
+    Command {
+        client_command_id: String,
+        command_kind: ProductMailboxCommandKind,
+    },
+    CanonicalReconcile,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductMailboxChange {
     pub change_id: Uuid,
+    pub target: AgentRunTarget,
     pub sequence: u64,
     pub revision: u64,
+    pub origin: ProductMailboxChangeOrigin,
+    pub commit: ProductMailboxCommitEvidence,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductMailboxChangePage {
+    pub target: AgentRunTarget,
     pub changes: Vec<ProductMailboxChange>,
     pub next: u64,
     pub gap: Option<ProductMailboxChangeGap>,
@@ -39,34 +86,59 @@ pub struct ProductMailboxChangeGap {
     pub earliest_available: u64,
     pub latest_available: u64,
     pub snapshot_revision: u64,
+    pub snapshot_digest: ProductMailboxSnapshotDigest,
+    pub detected_at_ms: ProductMailboxCommittedAtMs,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductMailboxSnapshot {
     pub target: AgentRunTarget,
     pub cursor: ProductMailboxCursor,
+    pub commit: ProductMailboxCommitEvidence,
     pub messages: Vec<AgentRunMailboxMessage>,
     pub state: Option<AgentRunMailboxState>,
 }
 
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum ProductMailboxReadError {
+    #[error("Product mailbox read target mismatch: expected {expected:?}, observed {observed:?}")]
+    TargetMismatch {
+        expected: AgentRunTarget,
+        observed: AgentRunTarget,
+    },
+    #[error("Product mailbox message `{message_id}` was not found for {target:?}")]
+    MessageNotFound {
+        target: AgentRunTarget,
+        message_id: Uuid,
+    },
+    #[error("Product mailbox change continuity is invalid: {message}")]
+    InvalidContinuity { message: String },
+    #[error("Product mailbox read storage failed: {message}")]
+    Storage { message: String },
+}
+
 #[async_trait]
 pub trait ProductMailboxReadRepository: Send + Sync {
-    /// Reads messages and state in one database snapshot, reconciles their canonical digest
-    /// against the Product head, and returns the matching cursor atomically.
-    async fn snapshot(&self, target: &AgentRunTarget) -> Result<ProductMailboxSnapshot, String>;
+    /// Reads messages and state in one database snapshot, computes the canonical digest,
+    /// reconciles the Product head/change, and returns the cursor for that exact state.
+    async fn snapshot(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<ProductMailboxSnapshot, ProductMailboxReadError>;
 
+    /// Reconciles external canonical mutations before reading the ordered Product change log.
     async fn changes(
         &self,
         target: &AgentRunTarget,
         after: u64,
         limit: usize,
-    ) -> Result<ProductMailboxChangePage, String>;
+    ) -> Result<ProductMailboxChangePage, ProductMailboxReadError>;
 
     async fn content(
         &self,
         target: &AgentRunTarget,
         message_id: Uuid,
-    ) -> Result<Option<serde_json::Value>, String>;
+    ) -> Result<Option<serde_json::Value>, ProductMailboxReadError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,13 +156,21 @@ pub enum ProductMailboxCommand {
     Resume,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProductMailboxCommandKind {
+    Promote,
+    Delete,
+    Move,
+    Resume,
+}
+
 impl ProductMailboxCommand {
-    fn receipt_kind(&self) -> AgentRunCommandKind {
+    fn receipt_kind(&self) -> ProductMailboxCommandKind {
         match self {
-            Self::Promote { .. } => AgentRunCommandKind::MailboxPromote,
-            Self::Delete { .. } => AgentRunCommandKind::MailboxDelete,
-            Self::Move { .. } => AgentRunCommandKind::MailboxMove,
-            Self::Resume => AgentRunCommandKind::MailboxResume,
+            Self::Promote { .. } => ProductMailboxCommandKind::Promote,
+            Self::Delete { .. } => ProductMailboxCommandKind::Delete,
+            Self::Move { .. } => ProductMailboxCommandKind::Move,
+            Self::Resume => ProductMailboxCommandKind::Resume,
         }
     }
 }
@@ -104,10 +184,12 @@ pub struct ProductMailboxCommandRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductMailboxCommandReceipt {
+    pub target: AgentRunTarget,
     pub client_command_id: String,
     pub duplicate: bool,
     pub revision: u64,
     pub latest_change_sequence: u64,
+    pub commit: ProductMailboxCommitEvidence,
 }
 
 #[derive(Debug, Clone)]
@@ -115,30 +197,62 @@ pub struct ProductMailboxDurableCommand {
     pub target: AgentRunTarget,
     pub client_command_id: String,
     pub request_digest: String,
-    pub command_kind: AgentRunCommandKind,
+    pub command_kind: ProductMailboxCommandKind,
     pub command: ProductMailboxCommand,
+}
+
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum ProductMailboxCommandRepositoryError {
+    #[error(
+        "Product mailbox client command `{client_command_id}` for {target:?} has a different request digest"
+    )]
+    RequestDigestConflict {
+        target: AgentRunTarget,
+        client_command_id: String,
+    },
+    #[error(
+        "Product mailbox command target mismatch: expected {expected:?}, observed {observed:?}"
+    )]
+    TargetMismatch {
+        expected: AgentRunTarget,
+        observed: AgentRunTarget,
+    },
+    #[error("Product mailbox message `{message_id}` was not found for {target:?}")]
+    MessageNotFound {
+        target: AgentRunTarget,
+        message_id: Uuid,
+    },
+    #[error("Product mailbox receipt is non-terminal for client command `{client_command_id}`")]
+    NonTerminalReceipt { client_command_id: String },
+    #[error("Product mailbox command storage failed: {message}")]
+    Storage { message: String },
 }
 
 #[async_trait]
 pub trait ProductMailboxCommandRepository: Send + Sync {
+    /// Target fences, mutation, head/change advancement, and terminal receipt commit form one UoW.
     async fn execute(
         &self,
         command: ProductMailboxDurableCommand,
-    ) -> Result<ProductMailboxCommandReceipt, String>;
+    ) -> Result<ProductMailboxCommandReceipt, ProductMailboxCommandRepositoryError>;
 }
 
 #[derive(Debug, Error)]
 pub enum ProductMailboxError {
     #[error("AgentRun Product binding is missing")]
     TargetNotBound,
+    #[error("AgentRun Product binding repository failed: {0}")]
+    Binding(String),
+    #[error("AgentRun Product binding target mismatch")]
+    BindingTargetMismatch,
     #[error("Product mailbox input is invalid: {0}")]
     Invalid(String),
-    #[error("Product mailbox command conflicts with a previous client command: {0}")]
-    Conflict(String),
-    #[error("Product mailbox entity was not found: {0}")]
-    NotFound(String),
-    #[error("Product mailbox repository failed: {0}")]
-    Repository(String),
+    #[error(transparent)]
+    Read(#[from] ProductMailboxReadError),
+    #[error(transparent)]
+    Command(#[from] ProductMailboxCommandRepositoryError),
+    #[error("Product mailbox snapshot digest does not match canonical state")]
+    SnapshotDigestMismatch,
 }
 
 pub struct ProductMailboxFacade {
@@ -165,10 +279,9 @@ impl ProductMailboxFacade {
         target: AgentRunTarget,
     ) -> Result<ProductMailboxSnapshot, ProductMailboxError> {
         self.require_binding(&target).await?;
-        self.reads
-            .snapshot(&target)
-            .await
-            .map_err(ProductMailboxError::Repository)
+        let snapshot = self.reads.snapshot(&target).await?;
+        validate_snapshot(&target, &snapshot)?;
+        Ok(snapshot)
     }
 
     pub async fn changes(
@@ -178,10 +291,9 @@ impl ProductMailboxFacade {
         limit: usize,
     ) -> Result<ProductMailboxChangePage, ProductMailboxError> {
         self.require_binding(&target).await?;
-        self.reads
-            .changes(&target, after, limit)
-            .await
-            .map_err(ProductMailboxError::Repository)
+        let page = self.reads.changes(&target, after, limit).await?;
+        validate_change_page(&target, after, &page)?;
+        Ok(page)
     }
 
     pub async fn content(
@@ -192,9 +304,8 @@ impl ProductMailboxFacade {
         self.require_binding(&target).await?;
         self.reads
             .content(&target, message_id)
-            .await
-            .map_err(ProductMailboxError::Repository)?
-            .ok_or_else(|| ProductMailboxError::NotFound(message_id.to_string()))
+            .await?
+            .ok_or_else(|| ProductMailboxReadError::MessageNotFound { target, message_id }.into())
     }
 
     pub async fn execute(
@@ -211,91 +322,167 @@ impl ProductMailboxFacade {
         let request_digest = format!(
             "sha256:{:x}",
             Sha256::digest(
-                serde_json::to_vec(&request.command)
-                    .expect("Product mailbox command is serializable")
+                serde_json::to_vec(&(
+                    "agentdash.product-mailbox-command/v1",
+                    &request.target,
+                    &request.command,
+                ))
+                .expect("Product mailbox command is serializable")
             )
         );
-        self.commands
+        let receipt = self
+            .commands
             .execute(ProductMailboxDurableCommand {
-                target: request.target,
+                target: request.target.clone(),
                 client_command_id: client_command_id.to_owned(),
                 request_digest,
                 command_kind: request.command.receipt_kind(),
                 command: request.command,
             })
-            .await
-            .map_err(|error| {
-                if error.starts_with("conflict:") {
-                    ProductMailboxError::Conflict(error)
-                } else if error.starts_with("not_found:") {
-                    ProductMailboxError::NotFound(error)
-                } else {
-                    ProductMailboxError::Repository(error)
-                }
-            })
+            .await?;
+        if receipt.target != request.target {
+            return Err(ProductMailboxCommandRepositoryError::TargetMismatch {
+                expected: request.target,
+                observed: receipt.target,
+            }
+            .into());
+        }
+        Ok(receipt)
     }
 
     async fn require_binding(&self, target: &AgentRunTarget) -> Result<(), ProductMailboxError> {
-        self.bindings
+        let binding = self
+            .bindings
             .load_product_binding(target)
             .await
-            .map_err(ProductMailboxError::Repository)?
+            .map_err(ProductMailboxError::Binding)?
             .ok_or(ProductMailboxError::TargetNotBound)?;
+        if binding.target != *target {
+            return Err(ProductMailboxError::BindingTargetMismatch);
+        }
         Ok(())
     }
+}
+
+fn validate_snapshot(
+    target: &AgentRunTarget,
+    snapshot: &ProductMailboxSnapshot,
+) -> Result<(), ProductMailboxError> {
+    if snapshot.target != *target {
+        return Err(ProductMailboxReadError::TargetMismatch {
+            expected: target.clone(),
+            observed: snapshot.target.clone(),
+        }
+        .into());
+    }
+    for message in &snapshot.messages {
+        let observed = AgentRunTarget {
+            run_id: message.run_id,
+            agent_id: message.agent_id,
+        };
+        if observed != *target {
+            return Err(ProductMailboxReadError::TargetMismatch {
+                expected: target.clone(),
+                observed,
+            }
+            .into());
+        }
+    }
+    if let Some(state) = &snapshot.state {
+        let observed = AgentRunTarget {
+            run_id: state.run_id,
+            agent_id: state.agent_id,
+        };
+        if observed != *target {
+            return Err(ProductMailboxReadError::TargetMismatch {
+                expected: target.clone(),
+                observed,
+            }
+            .into());
+        }
+    }
+    if canonical_product_mailbox_digest(&snapshot.messages, snapshot.state.as_ref())
+        != snapshot.commit.snapshot_digest
+    {
+        return Err(ProductMailboxError::SnapshotDigestMismatch);
+    }
+    Ok(())
+}
+
+fn validate_change_page(
+    target: &AgentRunTarget,
+    after: u64,
+    page: &ProductMailboxChangePage,
+) -> Result<(), ProductMailboxError> {
+    if page.target != *target {
+        return Err(ProductMailboxReadError::TargetMismatch {
+            expected: target.clone(),
+            observed: page.target.clone(),
+        }
+        .into());
+    }
+    if let Some(gap) = &page.gap {
+        if gap.requested_after != after
+            || gap.earliest_available > gap.latest_available
+            || !page.changes.is_empty()
+            || page.next != gap.latest_available
+        {
+            return Err(ProductMailboxReadError::InvalidContinuity {
+                message: "gap page evidence is inconsistent".to_owned(),
+            }
+            .into());
+        }
+        return Ok(());
+    }
+    let mut expected =
+        after
+            .checked_add(1)
+            .ok_or_else(|| ProductMailboxReadError::InvalidContinuity {
+                message: "requested cursor overflow".to_owned(),
+            })?;
+    for change in &page.changes {
+        if change.target != *target || change.sequence != expected {
+            return Err(ProductMailboxReadError::InvalidContinuity {
+                message: format!("expected sequence {expected}, observed {}", change.sequence),
+            }
+            .into());
+        }
+        expected =
+            expected
+                .checked_add(1)
+                .ok_or_else(|| ProductMailboxReadError::InvalidContinuity {
+                    message: "change cursor overflow".to_owned(),
+                })?;
+    }
+    let expected_next = page
+        .changes
+        .last()
+        .map(|change| change.sequence)
+        .unwrap_or(after);
+    if page.next != expected_next {
+        return Err(ProductMailboxReadError::InvalidContinuity {
+            message: "page next cursor does not match the final change".to_owned(),
+        }
+        .into());
+    }
+    Ok(())
 }
 
 pub fn canonical_product_mailbox_digest(
     messages: &[AgentRunMailboxMessage],
     state: Option<&AgentRunMailboxState>,
-) -> String {
+) -> ProductMailboxSnapshotDigest {
+    let mut messages = messages.iter().collect::<Vec<_>>();
+    messages.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left.order_key.cmp(&right.order_key))
+            .then_with(|| left.id.cmp(&right.id))
+    });
     let canonical_messages = messages
-        .iter()
-        .map(|message| {
-            serde_json::json!({
-                "id": message.id,
-                "run_id": message.run_id,
-                "agent_id": message.agent_id,
-                "origin": message.origin.as_str(),
-                "source": {
-                    "namespace": message.source.namespace,
-                    "kind": message.source.kind,
-                    "source_ref": message.source.source_ref,
-                    "correlation_ref": message.source.correlation_ref,
-                    "actor": message.source.actor,
-                    "route": message.source.route,
-                    "display_label_key": message.source.display_label_key,
-                    "metadata": message.source.metadata,
-                },
-                "delivery": {
-                    "kind": message.delivery.kind(),
-                    "value": message.delivery.to_json(),
-                },
-                "barrier": message.barrier.as_str(),
-                "drain_mode": message.drain_mode.as_str(),
-                "status": message.status.as_str(),
-                "priority": message.priority,
-                "order_key": message.order_key,
-                "source_dedup_key": message.source_dedup_key,
-                "delivery_request_digest": message.delivery_request_digest,
-                "accepted_runtime_operation_id": message.accepted_runtime_operation_id,
-                "reconcile_required": message.reconcile_required,
-                "claim_token": message.claim_token,
-                "claimed_at": message.claimed_at,
-                "claim_expires_at": message.claim_expires_at,
-                "payload_json": message.payload_json,
-                "launch_planning_input": message.launch_planning_input,
-                "preview": message.preview,
-                "has_images": message.has_images,
-                "retain_payload": message.retain_payload,
-                "attempt_count": message.attempt_count,
-                "last_error": message.last_error,
-                "created_at": message.created_at,
-                "updated_at": message.updated_at,
-                "consumed_at": message.consumed_at,
-                "deleted_at": message.deleted_at,
-            })
-        })
+        .into_iter()
+        .map(canonical_mailbox_message)
         .collect::<Vec<_>>();
     let canonical_state = state.map(|state| {
         serde_json::json!({
@@ -307,13 +494,77 @@ pub fn canonical_product_mailbox_digest(
             "updated_at": state.updated_at,
         })
     });
-    let canonical = serde_json::to_vec(&serde_json::json!({
+    let canonical = normalize_json(serde_json::json!({
         "schema": "agentdash.product-mailbox-snapshot/v1",
         "messages": canonical_messages,
         "state": canonical_state,
+    }));
+    let bytes =
+        serde_json::to_vec(&canonical).expect("canonical Product mailbox snapshot is serializable");
+    ProductMailboxSnapshotDigest::new(format!("sha256:{:x}", Sha256::digest(bytes)))
+        .expect("sha256 digest")
+}
+
+fn canonical_mailbox_message(message: &AgentRunMailboxMessage) -> serde_json::Value {
+    normalize_json(serde_json::json!({
+        "id": message.id,
+        "run_id": message.run_id,
+        "agent_id": message.agent_id,
+        "origin": message.origin.as_str(),
+        "source": {
+            "namespace": message.source.namespace,
+            "kind": message.source.kind,
+            "source_ref": message.source.source_ref,
+            "correlation_ref": message.source.correlation_ref,
+            "actor": message.source.actor,
+            "route": message.source.route,
+            "display_label_key": message.source.display_label_key,
+            "metadata": message.source.metadata,
+        },
+        "delivery": {
+            "kind": message.delivery.kind(),
+            "value": message.delivery.to_json(),
+        },
+        "barrier": message.barrier.as_str(),
+        "drain_mode": message.drain_mode.as_str(),
+        "status": message.status.as_str(),
+        "priority": message.priority,
+        "order_key": message.order_key,
+        "source_dedup_key": message.source_dedup_key,
+        "delivery_request_digest": message.delivery_request_digest,
+        "accepted_runtime_operation_id": message.accepted_runtime_operation_id,
+        "reconcile_required": message.reconcile_required,
+        "claim_token": message.claim_token,
+        "claimed_at": message.claimed_at,
+        "claim_expires_at": message.claim_expires_at,
+        "payload_json": message.payload_json,
+        "launch_planning_input": message.launch_planning_input,
+        "preview": message.preview,
+        "has_images": message.has_images,
+        "retain_payload": message.retain_payload,
+        "attempt_count": message.attempt_count,
+        "last_error": message.last_error,
+        "created_at": message.created_at,
+        "updated_at": message.updated_at,
+        "consumed_at": message.consumed_at,
+        "deleted_at": message.deleted_at,
     }))
-    .expect("canonical Product mailbox snapshot is serializable");
-    format!("sha256:{:x}", Sha256::digest(canonical))
+}
+
+fn normalize_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(normalize_json).collect())
+        }
+        serde_json::Value::Object(values) => {
+            let sorted = values
+                .into_iter()
+                .map(|(key, value)| (key, normalize_json(value)))
+                .collect::<BTreeMap<_, _>>();
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        scalar => scalar,
+    }
 }
 
 #[cfg(test)]
@@ -330,120 +581,139 @@ mod tests {
         ManagedRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
         RuntimeThreadId, SurfaceRevision,
     };
+    use agentdash_domain::agent_run_mailbox::{
+        ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
+        MailboxMessageStatus, MailboxSourceIdentity,
+    };
     use tokio::sync::Mutex;
 
     use super::*;
     use crate::agent_run::AgentRunProductRuntimeBinding;
 
-    struct BindingRepository {
-        binding: AgentRunProductRuntimeBinding,
+    #[derive(Clone)]
+    struct FixtureReceipt {
+        request_digest: String,
+        receipt: ProductMailboxCommandReceipt,
     }
 
-    #[async_trait]
-    impl AgentRunProductRuntimeBindingRepository for BindingRepository {
-        async fn load_product_binding(
-            &self,
-            _target: &AgentRunTarget,
-        ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
-            Ok(Some(self.binding.clone()))
-        }
+    #[derive(Clone)]
+    struct FixtureMailboxState {
+        messages: Vec<AgentRunMailboxMessage>,
+        mailbox_state: Option<AgentRunMailboxState>,
+        cursor: ProductMailboxCursor,
+        head: Option<ProductMailboxCommitEvidence>,
+        changes: Vec<ProductMailboxChange>,
+        receipts: HashMap<String, FixtureReceipt>,
+        clock_ms: i64,
+        retention: usize,
     }
 
-    #[derive(Default)]
-    struct AtomicCommandFixture {
-        receipts: Mutex<HashMap<String, (String, ProductMailboxCommandReceipt)>>,
-        cursor: Mutex<ProductMailboxCursor>,
+    struct FixtureProductMailboxStore {
+        state: Mutex<FixtureMailboxState>,
         fail_before_commit_once: AtomicBool,
-        commits: Mutex<u64>,
     }
 
-    #[async_trait]
-    impl ProductMailboxCommandRepository for AtomicCommandFixture {
-        async fn execute(
-            &self,
-            command: ProductMailboxDurableCommand,
-        ) -> Result<ProductMailboxCommandReceipt, String> {
-            let key = format!(
-                "{}:{}:{}",
-                command.target.run_id, command.target.agent_id, command.client_command_id
-            );
-            let mut receipts = self.receipts.lock().await;
-            if let Some((digest, receipt)) = receipts.get(&key) {
-                if digest != &command.request_digest {
-                    return Err("conflict: request digest differs".to_owned());
-                }
-                return Ok(ProductMailboxCommandReceipt {
-                    duplicate: true,
-                    ..receipt.clone()
-                });
+    impl FixtureProductMailboxStore {
+        fn new(target: &AgentRunTarget) -> Self {
+            Self {
+                state: Mutex::new(FixtureMailboxState {
+                    messages: vec![
+                        mailbox_message(target, Uuid::from_u128(1), 0, 0, "first"),
+                        mailbox_message(target, Uuid::from_u128(2), 0, 1024, "second"),
+                        mailbox_message(target, Uuid::from_u128(3), 0, 2048, "third"),
+                    ],
+                    mailbox_state: Some(AgentRunMailboxState {
+                        run_id: target.run_id,
+                        agent_id: target.agent_id,
+                        paused: true,
+                        pause_reason: Some("manual".to_owned()),
+                        pause_message: Some("paused".to_owned()),
+                        updated_at: "1970-01-01T00:00:01Z".parse().expect("timestamp"),
+                    }),
+                    cursor: ProductMailboxCursor::default(),
+                    head: None,
+                    changes: Vec::new(),
+                    receipts: HashMap::new(),
+                    clock_ms: 1_000,
+                    retention: 16,
+                }),
+                fail_before_commit_once: AtomicBool::new(false),
             }
-            if self.fail_before_commit_once.swap(false, Ordering::SeqCst) {
-                return Err("injected crash before atomic commit".to_owned());
-            }
-            let mut cursor = self.cursor.lock().await;
-            cursor.revision += 1;
-            cursor.latest_change_sequence += 1;
-            let receipt = ProductMailboxCommandReceipt {
-                client_command_id: command.client_command_id,
-                duplicate: false,
-                revision: cursor.revision,
-                latest_change_sequence: cursor.latest_change_sequence,
-            };
-            receipts.insert(key, (command.request_digest, receipt.clone()));
-            *self.commits.lock().await += 1;
-            Ok(receipt)
         }
-    }
 
-    struct AtomicReadFixture {
-        target: AgentRunTarget,
-        state: Mutex<(ProductMailboxCursor, Vec<ProductMailboxChange>)>,
-    }
-
-    impl AtomicReadFixture {
-        async fn external_mutation(&self) {
+        async fn external_mutation(&self, target: &AgentRunTarget, preview: &str) {
             let mut state = self.state.lock().await;
-            state.0.revision += 1;
-            state.0.latest_change_sequence += 1;
-            let cursor = state.0;
-            state.1.push(ProductMailboxChange {
-                change_id: Uuid::new_v4(),
-                sequence: cursor.latest_change_sequence,
-                revision: cursor.revision,
-            });
+            state.clock_ms += 1;
+            let message = state
+                .messages
+                .iter_mut()
+                .find(|message| message.run_id == target.run_id)
+                .expect("fixture target");
+            message.preview = preview.to_owned();
+        }
+
+        async fn raw_state(&self) -> FixtureMailboxState {
+            self.state.lock().await.clone()
         }
     }
 
     #[async_trait]
-    impl ProductMailboxReadRepository for AtomicReadFixture {
+    impl ProductMailboxReadRepository for FixtureProductMailboxStore {
         async fn snapshot(
             &self,
-            _target: &AgentRunTarget,
-        ) -> Result<ProductMailboxSnapshot, String> {
-            let state = self.state.lock().await;
-            Ok(ProductMailboxSnapshot {
-                target: self.target.clone(),
-                cursor: state.0,
-                messages: Vec::new(),
-                state: None,
-            })
+            target: &AgentRunTarget,
+        ) -> Result<ProductMailboxSnapshot, ProductMailboxReadError> {
+            let mut state = self.state.lock().await;
+            reconcile(
+                &mut state,
+                target,
+                ProductMailboxChangeOrigin::CanonicalReconcile,
+            )?;
+            snapshot_from_state(&state, target)
         }
 
         async fn changes(
             &self,
-            _target: &AgentRunTarget,
+            target: &AgentRunTarget,
             after: u64,
             limit: usize,
-        ) -> Result<ProductMailboxChangePage, String> {
-            let state = self.state.lock().await;
+        ) -> Result<ProductMailboxChangePage, ProductMailboxReadError> {
+            let mut state = self.state.lock().await;
+            reconcile(
+                &mut state,
+                target,
+                ProductMailboxChangeOrigin::CanonicalReconcile,
+            )?;
+            let earliest = state
+                .changes
+                .first()
+                .map(|change| change.sequence)
+                .unwrap_or(state.cursor.latest_change_sequence.saturating_add(1));
+            if after.saturating_add(1) < earliest {
+                let head = state.head.as_ref().expect("reconciled head");
+                return Ok(ProductMailboxChangePage {
+                    target: target.clone(),
+                    changes: Vec::new(),
+                    next: state.cursor.latest_change_sequence,
+                    gap: Some(ProductMailboxChangeGap {
+                        requested_after: after,
+                        earliest_available: earliest,
+                        latest_available: state.cursor.latest_change_sequence,
+                        snapshot_revision: state.cursor.revision,
+                        snapshot_digest: head.snapshot_digest.clone(),
+                        detected_at_ms: committed_at(state.clock_ms),
+                    }),
+                });
+            }
             let changes = state
-                .1
+                .changes
                 .iter()
                 .filter(|change| change.sequence > after)
                 .take(limit)
                 .cloned()
                 .collect::<Vec<_>>();
             Ok(ProductMailboxChangePage {
+                target: target.clone(),
                 next: changes
                     .last()
                     .map(|change| change.sequence)
@@ -455,22 +725,343 @@ mod tests {
 
         async fn content(
             &self,
+            target: &AgentRunTarget,
+            message_id: Uuid,
+        ) -> Result<Option<serde_json::Value>, ProductMailboxReadError> {
+            let state = self.state.lock().await;
+            let message = state
+                .messages
+                .iter()
+                .find(|message| message.id == message_id);
+            match message {
+                Some(message)
+                    if message.run_id == target.run_id && message.agent_id == target.agent_id =>
+                {
+                    Ok(message.payload_json.clone())
+                }
+                Some(message) => Err(ProductMailboxReadError::TargetMismatch {
+                    expected: target.clone(),
+                    observed: AgentRunTarget {
+                        run_id: message.run_id,
+                        agent_id: message.agent_id,
+                    },
+                }),
+                None => Ok(None),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ProductMailboxCommandRepository for FixtureProductMailboxStore {
+        async fn execute(
+            &self,
+            command: ProductMailboxDurableCommand,
+        ) -> Result<ProductMailboxCommandReceipt, ProductMailboxCommandRepositoryError> {
+            let mut locked = self.state.lock().await;
+            let key = format!(
+                "{}:{}:{}",
+                command.target.run_id, command.target.agent_id, command.client_command_id
+            );
+            if let Some(stored) = locked.receipts.get(&key) {
+                if stored.request_digest != command.request_digest {
+                    return Err(
+                        ProductMailboxCommandRepositoryError::RequestDigestConflict {
+                            target: command.target,
+                            client_command_id: command.client_command_id,
+                        },
+                    );
+                }
+                return Ok(ProductMailboxCommandReceipt {
+                    duplicate: true,
+                    ..stored.receipt.clone()
+                });
+            }
+
+            let mut working = locked.clone();
+            validate_command_targets(&working, &command)?;
+            working.clock_ms += 1;
+            apply_command(&mut working, &command)?;
+            reconcile(
+                &mut working,
+                &command.target,
+                ProductMailboxChangeOrigin::Command {
+                    client_command_id: command.client_command_id.clone(),
+                    command_kind: command.command_kind,
+                },
+            )
+            .map_err(read_to_command_error)?;
+            let head = working.head.clone().expect("command reconciled head");
+            let receipt = ProductMailboxCommandReceipt {
+                target: command.target.clone(),
+                client_command_id: command.client_command_id.clone(),
+                duplicate: false,
+                revision: working.cursor.revision,
+                latest_change_sequence: working.cursor.latest_change_sequence,
+                commit: head,
+            };
+            working.receipts.insert(
+                key,
+                FixtureReceipt {
+                    request_digest: command.request_digest,
+                    receipt: receipt.clone(),
+                },
+            );
+            if self.fail_before_commit_once.swap(false, Ordering::SeqCst) {
+                return Err(ProductMailboxCommandRepositoryError::Storage {
+                    message: "injected crash before commit".to_owned(),
+                });
+            }
+            *locked = working;
+            Ok(receipt)
+        }
+    }
+
+    fn validate_command_targets(
+        state: &FixtureMailboxState,
+        command: &ProductMailboxDurableCommand,
+    ) -> Result<(), ProductMailboxCommandRepositoryError> {
+        let mut ids = Vec::new();
+        match command.command {
+            ProductMailboxCommand::Promote { message_id }
+            | ProductMailboxCommand::Delete { message_id } => ids.push(message_id),
+            ProductMailboxCommand::Move {
+                message_id,
+                after_message_id,
+            } => {
+                ids.push(message_id);
+                if let Some(after_message_id) = after_message_id {
+                    ids.push(after_message_id);
+                }
+            }
+            ProductMailboxCommand::Resume => {
+                if let Some(mailbox_state) = &state.mailbox_state {
+                    let observed = AgentRunTarget {
+                        run_id: mailbox_state.run_id,
+                        agent_id: mailbox_state.agent_id,
+                    };
+                    if observed != command.target {
+                        return Err(ProductMailboxCommandRepositoryError::TargetMismatch {
+                            expected: command.target.clone(),
+                            observed,
+                        });
+                    }
+                }
+            }
+        }
+        for message_id in ids {
+            let message = state
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+                .ok_or_else(|| ProductMailboxCommandRepositoryError::MessageNotFound {
+                    target: command.target.clone(),
+                    message_id,
+                })?;
+            let observed = AgentRunTarget {
+                run_id: message.run_id,
+                agent_id: message.agent_id,
+            };
+            if observed != command.target {
+                return Err(ProductMailboxCommandRepositoryError::TargetMismatch {
+                    expected: command.target.clone(),
+                    observed,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_command(
+        state: &mut FixtureMailboxState,
+        command: &ProductMailboxDurableCommand,
+    ) -> Result<(), ProductMailboxCommandRepositoryError> {
+        match command.command {
+            ProductMailboxCommand::Promote { message_id } => {
+                let message = state
+                    .messages
+                    .iter_mut()
+                    .find(|message| message.id == message_id)
+                    .expect("target validated");
+                message.priority = 100;
+            }
+            ProductMailboxCommand::Delete { message_id } => {
+                let message = state
+                    .messages
+                    .iter_mut()
+                    .find(|message| message.id == message_id)
+                    .expect("target validated");
+                message.status = MailboxMessageStatus::Deleted;
+                message.payload_json = None;
+                message.deleted_at = Some("1970-01-01T00:00:02Z".parse().expect("timestamp"));
+            }
+            ProductMailboxCommand::Move {
+                message_id,
+                after_message_id,
+            } => {
+                let from = state
+                    .messages
+                    .iter()
+                    .position(|message| message.id == message_id)
+                    .expect("target validated");
+                let moved = state.messages.remove(from);
+                let destination = after_message_id
+                    .map(|anchor| {
+                        state
+                            .messages
+                            .iter()
+                            .position(|message| message.id == anchor)
+                            .expect("anchor validated")
+                            + 1
+                    })
+                    .unwrap_or(0);
+                state.messages.insert(destination, moved);
+                for (index, message) in state.messages.iter_mut().enumerate() {
+                    message.order_key = i64::try_from(index).expect("fixture order") * 1024;
+                }
+            }
+            ProductMailboxCommand::Resume => {
+                let mailbox_state = state.mailbox_state.as_mut().ok_or_else(|| {
+                    ProductMailboxCommandRepositoryError::Storage {
+                        message: "fixture mailbox state missing".to_owned(),
+                    }
+                })?;
+                mailbox_state.paused = false;
+                mailbox_state.pause_reason = None;
+                mailbox_state.pause_message = None;
+            }
+        }
+        Ok(())
+    }
+
+    fn reconcile(
+        state: &mut FixtureMailboxState,
+        target: &AgentRunTarget,
+        origin: ProductMailboxChangeOrigin,
+    ) -> Result<(), ProductMailboxReadError> {
+        for message in &state.messages {
+            let observed = AgentRunTarget {
+                run_id: message.run_id,
+                agent_id: message.agent_id,
+            };
+            if observed != *target {
+                return Err(ProductMailboxReadError::TargetMismatch {
+                    expected: target.clone(),
+                    observed,
+                });
+            }
+        }
+        if let Some(mailbox_state) = &state.mailbox_state {
+            let observed = AgentRunTarget {
+                run_id: mailbox_state.run_id,
+                agent_id: mailbox_state.agent_id,
+            };
+            if observed != *target {
+                return Err(ProductMailboxReadError::TargetMismatch {
+                    expected: target.clone(),
+                    observed,
+                });
+            }
+        }
+        let digest =
+            canonical_product_mailbox_digest(&state.messages, state.mailbox_state.as_ref());
+        if state
+            .head
+            .as_ref()
+            .is_some_and(|head| head.snapshot_digest == digest)
+        {
+            return Ok(());
+        }
+        state.cursor.revision = state.cursor.revision.checked_add(1).ok_or_else(|| {
+            ProductMailboxReadError::Storage {
+                message: "revision overflow".to_owned(),
+            }
+        })?;
+        state.cursor.latest_change_sequence = state
+            .cursor
+            .latest_change_sequence
+            .checked_add(1)
+            .ok_or_else(|| ProductMailboxReadError::Storage {
+                message: "sequence overflow".to_owned(),
+            })?;
+        let commit = ProductMailboxCommitEvidence {
+            snapshot_digest: digest,
+            committed_at_ms: committed_at(state.clock_ms),
+        };
+        state.changes.push(ProductMailboxChange {
+            change_id: Uuid::new_v4(),
+            target: target.clone(),
+            sequence: state.cursor.latest_change_sequence,
+            revision: state.cursor.revision,
+            origin,
+            commit: commit.clone(),
+        });
+        state.head = Some(commit);
+        if state.changes.len() > state.retention {
+            let remove = state.changes.len() - state.retention;
+            state.changes.drain(0..remove);
+        }
+        Ok(())
+    }
+
+    fn snapshot_from_state(
+        state: &FixtureMailboxState,
+        target: &AgentRunTarget,
+    ) -> Result<ProductMailboxSnapshot, ProductMailboxReadError> {
+        let mut messages = state.messages.clone();
+        messages.sort_by(product_mailbox_order);
+        Ok(ProductMailboxSnapshot {
+            target: target.clone(),
+            cursor: state.cursor,
+            commit: state
+                .head
+                .clone()
+                .ok_or_else(|| ProductMailboxReadError::Storage {
+                    message: "head missing after reconcile".to_owned(),
+                })?,
+            messages,
+            state: state.mailbox_state.clone(),
+        })
+    }
+
+    fn read_to_command_error(
+        error: ProductMailboxReadError,
+    ) -> ProductMailboxCommandRepositoryError {
+        match error {
+            ProductMailboxReadError::TargetMismatch { expected, observed } => {
+                ProductMailboxCommandRepositoryError::TargetMismatch { expected, observed }
+            }
+            ProductMailboxReadError::MessageNotFound { target, message_id } => {
+                ProductMailboxCommandRepositoryError::MessageNotFound { target, message_id }
+            }
+            ProductMailboxReadError::InvalidContinuity { message }
+            | ProductMailboxReadError::Storage { message } => {
+                ProductMailboxCommandRepositoryError::Storage { message }
+            }
+        }
+    }
+
+    struct FixtureBindingRepository {
+        binding: AgentRunProductRuntimeBinding,
+    }
+
+    #[async_trait]
+    impl AgentRunProductRuntimeBindingRepository for FixtureBindingRepository {
+        async fn load_product_binding(
+            &self,
             _target: &AgentRunTarget,
-            _message_id: Uuid,
-        ) -> Result<Option<serde_json::Value>, String> {
-            Ok(None)
+        ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
+            Ok(Some(self.binding.clone()))
         }
     }
 
     fn fixture() -> (
         AgentRunTarget,
-        Arc<AtomicReadFixture>,
-        Arc<AtomicCommandFixture>,
+        Arc<FixtureProductMailboxStore>,
         ProductMailboxFacade,
     ) {
         let target = AgentRunTarget {
-            run_id: Uuid::new_v4(),
-            agent_id: Uuid::new_v4(),
+            run_id: Uuid::from_u128(100),
+            agent_id: Uuid::from_u128(101),
         };
         let binding = AgentRunProductRuntimeBinding {
             target: target.clone(),
@@ -482,82 +1073,386 @@ mod tests {
                 activated_at_revision: Some(RuntimeProjectionRevision(1)),
             },
         };
-        let reads = Arc::new(AtomicReadFixture {
-            target: target.clone(),
-            state: Mutex::new((ProductMailboxCursor::default(), Vec::new())),
-        });
-        let commands = Arc::new(AtomicCommandFixture::default());
+        let store = Arc::new(FixtureProductMailboxStore::new(&target));
         let facade = ProductMailboxFacade::new(
-            Arc::new(BindingRepository { binding }),
-            reads.clone(),
-            commands.clone(),
+            Arc::new(FixtureBindingRepository { binding }),
+            store.clone(),
+            store.clone(),
         );
-        (target, reads, commands, facade)
+        (target, store, facade)
+    }
+
+    fn request(
+        target: &AgentRunTarget,
+        client_command_id: &str,
+        command: ProductMailboxCommand,
+    ) -> ProductMailboxCommandRequest {
+        ProductMailboxCommandRequest {
+            target: target.clone(),
+            client_command_id: client_command_id.to_owned(),
+            command,
+        }
+    }
+
+    fn mailbox_message(
+        target: &AgentRunTarget,
+        id: Uuid,
+        priority: i32,
+        order_key: i64,
+        preview: &str,
+    ) -> AgentRunMailboxMessage {
+        AgentRunMailboxMessage {
+            id,
+            run_id: target.run_id,
+            agent_id: target.agent_id,
+            origin: MailboxMessageOrigin::User,
+            source: MailboxSourceIdentity::composer(),
+            delivery: MailboxDelivery::LaunchOrContinueTurn,
+            barrier: ConsumptionBarrier::AgentRunTurnBoundary,
+            drain_mode: MailboxDrainMode::One,
+            status: MailboxMessageStatus::Queued,
+            priority,
+            order_key,
+            source_dedup_key: Some(format!("message:{id}")),
+            delivery_request_digest: format!("sha256:{}", id.simple()),
+            accepted_runtime_operation_id: None,
+            reconcile_required: false,
+            claim_token: None,
+            claimed_at: None,
+            claim_expires_at: None,
+            payload_json: Some(serde_json::json!([{ "type": "text", "text": preview }])),
+            launch_planning_input: None,
+            preview: preview.to_owned(),
+            has_images: false,
+            retain_payload: true,
+            attempt_count: 0,
+            last_error: None,
+            created_at: "1970-01-01T00:00:01Z".parse().expect("timestamp"),
+            updated_at: "1970-01-01T00:00:01Z".parse().expect("timestamp"),
+            consumed_at: None,
+            deleted_at: None,
+        }
+    }
+
+    fn committed_at(ms: i64) -> ProductMailboxCommittedAtMs {
+        ProductMailboxCommittedAtMs(u64::try_from(ms).expect("non-negative fixture clock"))
+    }
+
+    fn product_mailbox_order(
+        left: &AgentRunMailboxMessage,
+        right: &AgentRunMailboxMessage,
+    ) -> std::cmp::Ordering {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left.order_key.cmp(&right.order_key))
+            .then_with(|| left.id.cmp(&right.id))
     }
 
     #[tokio::test]
-    async fn crash_before_uow_commit_retries_once_and_replays_terminal_receipt() {
-        let (target, _, commands, facade) = fixture();
-        commands
-            .fail_before_commit_once
-            .store(true, Ordering::SeqCst);
-        let request = ProductMailboxCommandRequest {
-            target,
-            client_command_id: "mailbox-crash".to_owned(),
-            command: ProductMailboxCommand::Resume,
-        };
-        assert!(matches!(
-            facade.execute(request.clone()).await,
-            Err(ProductMailboxError::Repository(_))
-        ));
-        let accepted = facade.execute(request.clone()).await.expect("retry");
-        let replay = facade.execute(request).await.expect("replay");
-        assert_eq!(accepted.revision, 1);
-        assert!(replay.duplicate);
-        assert_eq!(replay.revision, accepted.revision);
-        assert_eq!(*commands.commits.lock().await, 1);
-    }
+    async fn promote_delete_move_and_resume_commit_mutation_receipt_head_and_change_together() {
+        let (target, store, facade) = fixture();
+        let initial = facade.snapshot(target.clone()).await.expect("initial");
+        let initial_sequence = initial.cursor.latest_change_sequence;
 
-    #[tokio::test]
-    async fn same_mailbox_client_with_different_payload_conflicts() {
-        let (target, _, _, facade) = fixture();
-        facade
-            .execute(ProductMailboxCommandRequest {
-                target: target.clone(),
-                client_command_id: "mailbox-conflict".to_owned(),
-                command: ProductMailboxCommand::Resume,
-            })
-            .await
-            .expect("first");
-        let error = facade
-            .execute(ProductMailboxCommandRequest {
-                target,
-                client_command_id: "mailbox-conflict".to_owned(),
-                command: ProductMailboxCommand::Delete {
-                    message_id: Uuid::new_v4(),
+        let promote = facade
+            .execute(request(
+                &target,
+                "promote",
+                ProductMailboxCommand::Promote {
+                    message_id: Uuid::from_u128(2),
                 },
-            })
+            ))
             .await
-            .expect_err("digest conflict");
-        assert!(matches!(error, ProductMailboxError::Conflict(_)));
-    }
+            .expect("promote");
+        let promoted = facade.snapshot(target.clone()).await.expect("promoted");
+        assert_eq!(promoted.messages[0].id, Uuid::from_u128(2));
+        assert_eq!(
+            promote.commit.snapshot_digest,
+            promoted.commit.snapshot_digest
+        );
 
-    #[tokio::test]
-    async fn snapshot_and_change_cursor_stay_continuous_under_concurrent_reads() {
-        let (target, reads, _, facade) = fixture();
-        for _ in 0..32 {
-            let (_, snapshot) =
-                tokio::join!(reads.external_mutation(), facade.snapshot(target.clone()),);
-            let snapshot = snapshot.expect("snapshot");
+        let moved = facade
+            .execute(request(
+                &target,
+                "move",
+                ProductMailboxCommand::Move {
+                    message_id: Uuid::from_u128(3),
+                    after_message_id: None,
+                },
+            ))
+            .await
+            .expect("move");
+        let after_move = facade.snapshot(target.clone()).await.expect("after move");
+        assert_eq!(after_move.messages[0].id, Uuid::from_u128(2));
+        assert_eq!(
+            after_move
+                .messages
+                .iter()
+                .filter(|message| message.priority == 0)
+                .min_by_key(|message| message.order_key)
+                .expect("moved message")
+                .id,
+            Uuid::from_u128(3)
+        );
+        assert_eq!(
+            moved.commit.snapshot_digest,
+            after_move.commit.snapshot_digest
+        );
+
+        let deleted = facade
+            .execute(request(
+                &target,
+                "delete",
+                ProductMailboxCommand::Delete {
+                    message_id: Uuid::from_u128(1),
+                },
+            ))
+            .await
+            .expect("delete");
+        let after_delete = facade.snapshot(target.clone()).await.expect("after delete");
+        let deleted_message = after_delete
+            .messages
+            .iter()
+            .find(|message| message.id == Uuid::from_u128(1))
+            .expect("deleted row");
+        assert_eq!(deleted_message.status, MailboxMessageStatus::Deleted);
+        assert!(deleted_message.payload_json.is_none());
+        assert_eq!(
+            deleted.commit.snapshot_digest,
+            after_delete.commit.snapshot_digest
+        );
+
+        let resumed = facade
+            .execute(request(&target, "resume", ProductMailboxCommand::Resume))
+            .await
+            .expect("resume");
+        let after_resume = facade.snapshot(target.clone()).await.expect("after resume");
+        assert!(!after_resume.state.as_ref().expect("state").paused);
+        assert_eq!(
+            resumed.commit.snapshot_digest,
+            after_resume.commit.snapshot_digest
+        );
+
+        let raw = store.raw_state().await;
+        assert_eq!(raw.receipts.len(), 4);
+        assert_eq!(raw.cursor.latest_change_sequence, initial_sequence + 4);
+        for receipt in raw.receipts.values() {
+            let change = raw
+                .changes
+                .iter()
+                .find(|change| change.sequence == receipt.receipt.latest_change_sequence)
+                .expect("receipt change retained");
             assert_eq!(
-                snapshot.cursor.revision,
-                snapshot.cursor.latest_change_sequence
+                receipt.receipt.commit.snapshot_digest,
+                change.commit.snapshot_digest
             );
         }
-        let snapshot = facade.snapshot(target.clone()).await.expect("snapshot");
-        let page = facade.changes(target, 0, 256).await.expect("changes");
-        assert_eq!(page.next, snapshot.cursor.latest_change_sequence);
-        assert_eq!(page.changes.len() as u64, page.next);
+    }
+
+    #[tokio::test]
+    async fn crash_before_commit_rolls_back_mutation_head_change_and_receipt() {
+        let (target, store, facade) = fixture();
+        let before = facade.snapshot(target.clone()).await.expect("before");
+        store.fail_before_commit_once.store(true, Ordering::SeqCst);
+        let command = request(
+            &target,
+            "crash",
+            ProductMailboxCommand::Delete {
+                message_id: Uuid::from_u128(1),
+            },
+        );
+        assert!(matches!(
+            facade.execute(command.clone()).await,
+            Err(ProductMailboxError::Command(
+                ProductMailboxCommandRepositoryError::Storage { .. }
+            ))
+        ));
+        let after_crash = facade.snapshot(target.clone()).await.expect("after crash");
+        assert_eq!(after_crash.cursor, before.cursor);
+        assert_eq!(after_crash.commit, before.commit);
+        assert_eq!(
+            after_crash
+                .messages
+                .iter()
+                .find(|message| message.id == Uuid::from_u128(1))
+                .expect("message")
+                .status,
+            MailboxMessageStatus::Queued
+        );
+        assert!(store.raw_state().await.receipts.is_empty());
+
+        let accepted = facade.execute(command.clone()).await.expect("retry");
+        let replay = facade.execute(command).await.expect("replay");
+        assert!(!accepted.duplicate);
+        assert!(replay.duplicate);
+        assert_eq!(accepted.commit, replay.commit);
+    }
+
+    #[tokio::test]
+    async fn same_client_different_payload_conflicts_without_mutation() {
+        let (target, store, facade) = fixture();
+        facade
+            .execute(request(
+                &target,
+                "same-client",
+                ProductMailboxCommand::Promote {
+                    message_id: Uuid::from_u128(1),
+                },
+            ))
+            .await
+            .expect("first");
+        let before = store.raw_state().await;
+        let error = facade
+            .execute(request(
+                &target,
+                "same-client",
+                ProductMailboxCommand::Delete {
+                    message_id: Uuid::from_u128(1),
+                },
+            ))
+            .await
+            .expect_err("conflict");
+        assert!(matches!(
+            error,
+            ProductMailboxError::Command(
+                ProductMailboxCommandRepositoryError::RequestDigestConflict { .. }
+            )
+        ));
+        let after = store.raw_state().await;
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.messages, before.messages);
+        assert_eq!(after.receipts.len(), before.receipts.len());
+    }
+
+    #[tokio::test]
+    async fn cross_target_delete_and_move_anchor_are_rejected_before_any_mutation() {
+        let (target, store, facade) = fixture();
+        let foreign = AgentRunTarget {
+            run_id: Uuid::from_u128(200),
+            agent_id: Uuid::from_u128(201),
+        };
+        {
+            let mut state = store.state.lock().await;
+            state.messages.push(mailbox_message(
+                &foreign,
+                Uuid::from_u128(99),
+                0,
+                4096,
+                "foreign",
+            ));
+        }
+        let before = store.raw_state().await;
+        for command in [
+            ProductMailboxCommand::Delete {
+                message_id: Uuid::from_u128(99),
+            },
+            ProductMailboxCommand::Move {
+                message_id: Uuid::from_u128(1),
+                after_message_id: Some(Uuid::from_u128(99)),
+            },
+        ] {
+            let error = facade
+                .execute(request(&target, &format!("{command:?}"), command))
+                .await
+                .expect_err("target mismatch");
+            assert!(matches!(
+                error,
+                ProductMailboxError::Command(
+                    ProductMailboxCommandRepositoryError::TargetMismatch { .. }
+                )
+            ));
+        }
+        let after = store.raw_state().await;
+        assert_eq!(after.messages, before.messages);
+        assert_eq!(after.cursor, before.cursor);
+        assert!(after.receipts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn external_canonical_mutation_reconciles_one_real_snapshot_change() {
+        let (target, store, facade) = fixture();
+        let initial = facade.snapshot(target.clone()).await.expect("initial");
+        store.external_mutation(&target, "external").await;
+        let reconciled = facade.snapshot(target.clone()).await.expect("reconciled");
+        assert_eq!(reconciled.cursor.revision, initial.cursor.revision + 1);
+        assert_eq!(
+            reconciled.cursor.latest_change_sequence,
+            initial.cursor.latest_change_sequence + 1
+        );
+        assert_eq!(reconciled.messages[0].preview, "external");
+        let page = facade
+            .changes(target, initial.cursor.latest_change_sequence, 256)
+            .await
+            .expect("changes");
+        assert_eq!(page.changes.len(), 1);
+        assert_eq!(
+            page.changes[0].commit.snapshot_digest,
+            reconciled.commit.snapshot_digest
+        );
+        assert!(matches!(
+            page.changes[0].origin,
+            ProductMailboxChangeOrigin::CanonicalReconcile
+        ));
+    }
+
+    #[tokio::test]
+    async fn strict_sequence_paging_and_retention_gap_are_typed() {
+        let (target, store, facade) = fixture();
+        store.state.lock().await.retention = 3;
+        let initial = facade.snapshot(target.clone()).await.expect("initial");
+        for index in 0..5 {
+            store
+                .external_mutation(&target, &format!("external-{index}"))
+                .await;
+            facade.snapshot(target.clone()).await.expect("reconcile");
+        }
+        let gap = facade
+            .changes(target.clone(), initial.cursor.latest_change_sequence, 2)
+            .await
+            .expect("gap");
+        let evidence = gap.gap.expect("retention gap");
+        assert_eq!(evidence.latest_available, gap.next);
+        assert!(gap.changes.is_empty());
+
+        let page = facade
+            .changes(target, evidence.earliest_available - 1, 2)
+            .await
+            .expect("page");
         assert!(page.gap.is_none());
+        assert_eq!(page.changes.len(), 2);
+        assert_eq!(page.changes[1].sequence, page.changes[0].sequence + 1);
+        assert_eq!(page.next, page.changes[1].sequence);
+    }
+
+    #[test]
+    fn canonical_digest_sorts_by_product_order_and_stable_id_and_normalizes_json_keys() {
+        let target = AgentRunTarget {
+            run_id: Uuid::from_u128(300),
+            agent_id: Uuid::from_u128(301),
+        };
+        let mut first = mailbox_message(&target, Uuid::from_u128(2), 0, 0, "same");
+        first.source.metadata = Some(serde_json::json!({ "z": 1, "a": { "y": 2, "b": 3 } }));
+        let mut second = mailbox_message(&target, Uuid::from_u128(1), 0, 0, "same");
+        second.source.metadata = Some(serde_json::json!({ "a": { "b": 3, "y": 2 }, "z": 1 }));
+        let left = canonical_product_mailbox_digest(&[first.clone(), second.clone()], None);
+        let right = canonical_product_mailbox_digest(&[second, first], None);
+        assert_eq!(left, right);
+        assert!(left.as_str().starts_with("sha256:"));
+    }
+
+    #[tokio::test]
+    async fn facade_rejects_mixed_target_snapshot_even_with_repository_cursor() {
+        let (target, store, facade) = fixture();
+        facade.snapshot(target.clone()).await.expect("initial");
+        {
+            let mut state = store.state.lock().await;
+            state.messages[0].run_id = Uuid::from_u128(999);
+        }
+        let error = facade.snapshot(target).await.expect_err("mixed target");
+        assert!(matches!(
+            error,
+            ProductMailboxError::Read(ProductMailboxReadError::TargetMismatch { .. })
+        ));
     }
 }

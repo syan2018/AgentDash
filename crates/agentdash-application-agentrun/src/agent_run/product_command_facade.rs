@@ -4,8 +4,8 @@ use agentdash_agent_runtime_contract::{
     ManagedAgentRuntimeGateway, ManagedRuntimeCommand, ManagedRuntimeCommandAvailability,
     ManagedRuntimeCommandEnvelope, ManagedRuntimeCommandKind, ManagedRuntimeContentBlock,
     ManagedRuntimeGatewayError, ManagedRuntimeInteractionResponse, ManagedRuntimeOperationReceipt,
-    ManagedRuntimeReadRequest, RuntimeIdempotencyKey, RuntimeInteractionId, RuntimeOperationId,
-    RuntimeProjectionRevision,
+    ManagedRuntimeReadRequest, ManagedRuntimeUnavailabilityReason, RuntimeIdempotencyKey,
+    RuntimeInteractionId, RuntimeOperationId, RuntimeProjectionRevision,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
@@ -23,6 +23,19 @@ pub struct ProductRuntimeCommandClaimRequest {
     pub envelope: ManagedRuntimeCommandEnvelope,
 }
 
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum ProductRuntimeCommandClaimError {
+    #[error(
+        "Product Runtime client command `{client_command_id}` for {target:?} has a different request digest"
+    )]
+    RequestDigestConflict {
+        target: AgentRunTarget,
+        client_command_id: String,
+    },
+    #[error("Product Runtime command claim storage failed: {message}")]
+    Storage { message: String },
+}
+
 #[async_trait]
 pub trait ProductRuntimeCommandClaimRepository: Send + Sync {
     async fn load(
@@ -30,12 +43,12 @@ pub trait ProductRuntimeCommandClaimRepository: Send + Sync {
         target: &AgentRunTarget,
         client_command_id: &str,
         request_digest: &str,
-    ) -> Result<Option<ManagedRuntimeCommandEnvelope>, String>;
+    ) -> Result<Option<ManagedRuntimeCommandEnvelope>, ProductRuntimeCommandClaimError>;
 
     async fn claim(
         &self,
         request: ProductRuntimeCommandClaimRequest,
-    ) -> Result<ManagedRuntimeCommandEnvelope, String>;
+    ) -> Result<ManagedRuntimeCommandEnvelope, ProductRuntimeCommandClaimError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -85,8 +98,19 @@ pub enum AgentRunProductCommandError {
     InvalidClientCommandId,
     #[error("client command id is already bound to a different Product command")]
     ClientCommandConflict,
-    #[error("Managed Runtime command is unavailable: {0}")]
-    CommandUnavailable(String),
+    #[error("Managed Runtime command {kind:?} is unavailable: {reason:?}")]
+    CommandUnavailable {
+        kind: ManagedRuntimeCommandKind,
+        reason: Option<ManagedRuntimeUnavailabilityReason>,
+    },
+    #[error(
+        "Managed Runtime availability evidence for {kind:?} was decided at {decided_at_revision:?}, snapshot is {snapshot_revision:?}"
+    )]
+    StaleAvailabilityEvidence {
+        kind: ManagedRuntimeCommandKind,
+        decided_at_revision: RuntimeProjectionRevision,
+        snapshot_revision: RuntimeProjectionRevision,
+    },
     #[error("Managed Runtime has no active turn for this command")]
     ActiveTurnMissing,
     #[error(transparent)]
@@ -169,18 +193,24 @@ impl AgentRunProductCommandFacade {
         let runtime_kind = request
             .command
             .runtime_kind(snapshot.active_turn_id.is_some());
-        match snapshot.command_availability.get(&runtime_kind) {
-            Some(ManagedRuntimeCommandAvailability::Available { .. }) => {}
-            Some(ManagedRuntimeCommandAvailability::Unavailable { reason, .. }) => {
-                return Err(AgentRunProductCommandError::CommandUnavailable(
-                    format!("{reason:?}").to_ascii_lowercase(),
-                ));
-            }
-            None => {
-                return Err(AgentRunProductCommandError::CommandUnavailable(
-                    format!("{runtime_kind:?}").to_ascii_lowercase(),
-                ));
-            }
+        let Some(availability) = snapshot.command_availability.get(&runtime_kind) else {
+            return Err(AgentRunProductCommandError::CommandUnavailable {
+                kind: runtime_kind,
+                reason: None,
+            });
+        };
+        if availability.evidence().decided_at_revision != snapshot.revision {
+            return Err(AgentRunProductCommandError::StaleAvailabilityEvidence {
+                kind: runtime_kind,
+                decided_at_revision: availability.evidence().decided_at_revision,
+                snapshot_revision: snapshot.revision,
+            });
+        }
+        if let ManagedRuntimeCommandAvailability::Unavailable { reason, .. } = availability {
+            return Err(AgentRunProductCommandError::CommandUnavailable {
+                kind: runtime_kind,
+                reason: Some(reason.clone()),
+            });
         }
         let command = match request.command {
             AgentRunProductCommand::SubmitInput { content } => {
@@ -243,11 +273,16 @@ impl AgentRunProductCommandFacade {
     }
 }
 
-fn product_command_claim_error(error: String) -> AgentRunProductCommandError {
-    if error.starts_with("conflict:") {
-        AgentRunProductCommandError::ClientCommandConflict
-    } else {
-        AgentRunProductCommandError::Binding(error)
+fn product_command_claim_error(
+    error: ProductRuntimeCommandClaimError,
+) -> AgentRunProductCommandError {
+    match error {
+        ProductRuntimeCommandClaimError::RequestDigestConflict { .. } => {
+            AgentRunProductCommandError::ClientCommandConflict
+        }
+        ProductRuntimeCommandClaimError::Storage { message } => {
+            AgentRunProductCommandError::Binding(message)
+        }
     }
 }
 
@@ -302,25 +337,29 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryClaims {
+    struct FixtureRuntimeCommandClaims {
         claims: Mutex<HashMap<String, (String, ManagedRuntimeCommandEnvelope)>>,
     }
 
     #[async_trait]
-    impl ProductRuntimeCommandClaimRepository for MemoryClaims {
+    impl ProductRuntimeCommandClaimRepository for FixtureRuntimeCommandClaims {
         async fn load(
             &self,
             target: &AgentRunTarget,
             client_command_id: &str,
             request_digest: &str,
-        ) -> Result<Option<ManagedRuntimeCommandEnvelope>, String> {
+        ) -> Result<Option<ManagedRuntimeCommandEnvelope>, ProductRuntimeCommandClaimError>
+        {
             let key = format!("{}:{}:{client_command_id}", target.run_id, target.agent_id);
             let claims = self.claims.lock().await;
             let Some((stored_digest, envelope)) = claims.get(&key) else {
                 return Ok(None);
             };
             if stored_digest != request_digest {
-                return Err("conflict: request digest differs".to_owned());
+                return Err(ProductRuntimeCommandClaimError::RequestDigestConflict {
+                    target: target.clone(),
+                    client_command_id: client_command_id.to_owned(),
+                });
             }
             Ok(Some(envelope.clone()))
         }
@@ -328,7 +367,7 @@ mod tests {
         async fn claim(
             &self,
             request: ProductRuntimeCommandClaimRequest,
-        ) -> Result<ManagedRuntimeCommandEnvelope, String> {
+        ) -> Result<ManagedRuntimeCommandEnvelope, ProductRuntimeCommandClaimError> {
             let key = format!(
                 "{}:{}:{}",
                 request.target.run_id, request.target.agent_id, request.client_command_id
@@ -336,7 +375,10 @@ mod tests {
             let mut claims = self.claims.lock().await;
             if let Some((stored_digest, envelope)) = claims.get(&key) {
                 if stored_digest != &request.request_digest {
-                    return Err("conflict: request digest differs".to_owned());
+                    return Err(ProductRuntimeCommandClaimError::RequestDigestConflict {
+                        target: request.target,
+                        client_command_id: request.client_command_id,
+                    });
                 }
                 return Ok(envelope.clone());
             }
@@ -470,7 +512,7 @@ mod tests {
             accepted: Mutex::new(HashMap::new()),
             observed: Mutex::new(Vec::new()),
         });
-        let claims = Arc::new(MemoryClaims::default());
+        let claims = Arc::new(FixtureRuntimeCommandClaims::default());
         (
             target,
             AgentRunProductCommandFacade::new(
@@ -479,6 +521,21 @@ mod tests {
                 claims,
             ),
             runtime,
+        )
+    }
+
+    fn facade_from_parts(
+        binding: AgentRunProductRuntimeBinding,
+        snapshot: ManagedRuntimeSnapshot,
+    ) -> AgentRunProductCommandFacade {
+        AgentRunProductCommandFacade::new(
+            Arc::new(BindingRepository { binding }),
+            Arc::new(IdempotentRuntime {
+                snapshot,
+                accepted: Mutex::new(HashMap::new()),
+                observed: Mutex::new(Vec::new()),
+            }),
+            Arc::new(FixtureRuntimeCommandClaims::default()),
         )
     }
 
@@ -567,6 +624,144 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_binding_target_and_runtime_source_mismatch() {
+        let (target, mut binding, snapshot) = fixture(false);
+        binding.target = AgentRunTarget {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+        };
+        let error = facade_from_parts(binding, snapshot)
+            .execute(request(
+                target,
+                "binding-target-mismatch",
+                AgentRunProductCommand::RequestCompaction,
+            ))
+            .await
+            .expect_err("binding target fence");
+        assert!(matches!(error, AgentRunProductCommandError::TargetMismatch));
+
+        let (target, binding, mut snapshot) = fixture(false);
+        snapshot.source_binding = Some(ManagedRuntimeSourceBindingEvidence {
+            source_ref: RuntimeSourceRef::new("source:different").expect("source"),
+            ..binding.source_binding.clone()
+        });
+        let error = facade_from_parts(binding, snapshot)
+            .execute(request(
+                target,
+                "binding-source-mismatch",
+                AgentRunProductCommand::RequestCompaction,
+            ))
+            .await
+            .expect_err("source binding fence");
+        assert!(matches!(
+            error,
+            AgentRunProductCommandError::RuntimeBindingMismatch
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_expected_revision_conflict_before_claim() {
+        let (target, binding, snapshot) = fixture(false);
+        let mut request = request(
+            target,
+            "revision-conflict",
+            AgentRunProductCommand::RequestCompaction,
+        );
+        request.expected_revision = RuntimeProjectionRevision(6);
+        let error = facade_from_parts(binding, snapshot)
+            .execute(request)
+            .await
+            .expect_err("revision conflict");
+        assert!(matches!(
+            error,
+            AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Conflict {
+                actual: RuntimeProjectionRevision(7)
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_unavailable_and_stale_availability_evidence() {
+        let (target, binding, mut snapshot) = fixture(false);
+        snapshot
+            .command_availability
+            .remove(&ManagedRuntimeCommandKind::RequestCompaction);
+        let error = facade_from_parts(binding, snapshot)
+            .execute(request(
+                target,
+                "missing-availability",
+                AgentRunProductCommand::RequestCompaction,
+            ))
+            .await
+            .expect_err("missing availability");
+        assert!(matches!(
+            error,
+            AgentRunProductCommandError::CommandUnavailable {
+                kind: ManagedRuntimeCommandKind::RequestCompaction,
+                reason: None
+            }
+        ));
+
+        let (target, binding, mut snapshot) = fixture(false);
+        snapshot.command_availability.insert(
+            ManagedRuntimeCommandKind::RequestCompaction,
+            ManagedRuntimeCommandAvailability::Unavailable {
+                reason: ManagedRuntimeUnavailabilityReason::OperationInFlight,
+                evidence: ManagedRuntimeAvailabilityEvidence {
+                    decided_at_revision: snapshot.revision,
+                    blocking_operation_id: None,
+                    bound_surface_revision: None,
+                    applied_surface_revision: None,
+                },
+            },
+        );
+        let error = facade_from_parts(binding, snapshot)
+            .execute(request(
+                target,
+                "unavailable",
+                AgentRunProductCommand::RequestCompaction,
+            ))
+            .await
+            .expect_err("unavailable");
+        assert!(matches!(
+            error,
+            AgentRunProductCommandError::CommandUnavailable {
+                kind: ManagedRuntimeCommandKind::RequestCompaction,
+                reason: Some(ManagedRuntimeUnavailabilityReason::OperationInFlight)
+            }
+        ));
+
+        let (target, binding, mut snapshot) = fixture(false);
+        snapshot.command_availability.insert(
+            ManagedRuntimeCommandKind::RequestCompaction,
+            ManagedRuntimeCommandAvailability::Available {
+                evidence: ManagedRuntimeAvailabilityEvidence {
+                    decided_at_revision: RuntimeProjectionRevision(6),
+                    blocking_operation_id: None,
+                    bound_surface_revision: None,
+                    applied_surface_revision: None,
+                },
+            },
+        );
+        let error = facade_from_parts(binding, snapshot)
+            .execute(request(
+                target,
+                "stale-availability",
+                AgentRunProductCommand::RequestCompaction,
+            ))
+            .await
+            .expect_err("stale availability evidence");
+        assert!(matches!(
+            error,
+            AgentRunProductCommandError::StaleAvailabilityEvidence {
+                kind: ManagedRuntimeCommandKind::RequestCompaction,
+                decided_at_revision: RuntimeProjectionRevision(6),
+                snapshot_revision: RuntimeProjectionRevision(7)
+            }
+        ));
+    }
+
+    #[tokio::test]
     async fn operation_identity_is_stable_across_facade_restart() {
         let (target, binding, snapshot) = fixture(false);
         let runtime_before = Arc::new(IdempotentRuntime {
@@ -574,7 +769,7 @@ mod tests {
             accepted: Mutex::new(HashMap::new()),
             observed: Mutex::new(Vec::new()),
         });
-        let durable_claims = Arc::new(MemoryClaims::default());
+        let durable_claims = Arc::new(FixtureRuntimeCommandClaims::default());
         let before = AgentRunProductCommandFacade::new(
             Arc::new(BindingRepository {
                 binding: binding.clone(),
@@ -682,7 +877,7 @@ mod tests {
             lose_first_response: Mutex::new(true),
             read_count: Mutex::new(0),
         });
-        let claims = Arc::new(MemoryClaims::default());
+        let claims = Arc::new(FixtureRuntimeCommandClaims::default());
         let first_process = AgentRunProductCommandFacade::new(
             Arc::new(BindingRepository {
                 binding: binding.clone(),

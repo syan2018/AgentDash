@@ -8,8 +8,8 @@ use agentdash_agent_protocol::codex_app_server_protocol::{
     ThreadItem, Turn, TurnError, TurnPlanStep, TurnPlanStepStatus, TurnStatus, UserInput,
 };
 use agentdash_agent_protocol::{
-    AgentDashThreadItem, BackboneEnvelope, CommandExecutionStatus, McpToolCallStatus,
-    PatchApplyStatus,
+    AgentDashThreadItem, BackboneEnvelope, CanonicalConversationRecord, CommandExecutionStatus,
+    McpToolCallStatus, PatchApplyStatus,
 };
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunAcceptedRefs, AgentRunCommandOnlyRequest, AgentRunCommandReceipt,
@@ -336,6 +336,7 @@ fn main() {
         &mut upstream,
         check,
         |dir| {
+            export_all::<CanonicalConversationRecord>(dir);
             export_all::<BackboneEnvelope>(dir);
             export_all::<AgentDashThreadItem>(dir);
             export_all::<CommandExecutionStatus>(dir);

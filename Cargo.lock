@@ -54,37 +54,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-client-protocol"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c56a59cf6315e99f874d2c1f96c69d2da5ffe0087d211297fc4a41f849770a2"
-dependencies = [
- "agent-client-protocol-schema",
- "anyhow",
- "async-broadcast",
- "async-trait",
- "derive_more 2.1.1",
- "futures",
- "log",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "agent-client-protocol-schema"
-version = "0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0497b9a95a404e35799904835c57c6f8c69b9d08ccfd3cb5b7d746425cd6789"
-dependencies = [
- "anyhow",
- "derive_more 2.1.1",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "strum 0.28.0",
-]
-
-[[package]]
 name = "agentdash-agent"
 version = "0.1.0"
 dependencies = [
@@ -121,18 +90,28 @@ dependencies = [
 name = "agentdash-agent-protocol"
 version = "0.1.0"
 dependencies = [
- "agent-client-protocol",
- "agentdash-agent",
- "agentdash-diagnostics",
- "base64 0.22.1",
  "chrono",
  "schemars 1.2.1",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
- "tracing",
  "ts-rs",
+]
+
+[[package]]
+name = "agentdash-agent-protocol-codegen"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-protocol",
+ "anyhow",
+ "codex-app-server-protocol",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "typify",
 ]
 
 [[package]]
@@ -2082,7 +2061,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "strum 0.27.2",
+ "strum",
  "strum_macros",
  "sys-locale",
  "thiserror 2.0.18",
@@ -2304,15 +2283,6 @@ name = "convert_case"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
-dependencies = [
- "unicode-segmentation",
-]
-
-[[package]]
-name = "convert_case"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -2792,7 +2762,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb7330aeadfbe296029522e6c40f315320aba36fc43a5b3632f3795348f3bd22"
 dependencies = [
- "convert_case 0.6.0",
+ "convert_case",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -2805,12 +2775,10 @@ version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
 dependencies = [
- "convert_case 0.10.0",
  "proc-macro2",
  "quote",
  "rustc_version",
  "syn 2.0.117",
- "unicode-xid",
 ]
 
 [[package]]
@@ -9658,15 +9626,6 @@ name = "strum"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
-
-[[package]]
-name = "strum"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
-dependencies = [
- "strum_macros",
-]
 
 [[package]]
 name = "strum_macros"

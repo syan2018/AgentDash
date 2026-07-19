@@ -236,6 +236,17 @@ export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMes
 export type ByteRange = { end: number, start: number, };
 
 /**
+ * One immutable, AgentDash-owned App Server Protocol-shaped presentation body.
+ */
+export type CanonicalConversationPresentation = { durability: PresentationDurability, envelope: BackboneEnvelope, };
+
+/**
+ * Stable source history record. Vector order is the observable presentation order;
+ * `presentation_id` remains stable across snapshot hydration and ordered changes.
+ */
+export type CanonicalConversationRecord = { presentation_id: string, presentation: CanonicalConversationPresentation, };
+
+/**
  *This translation layer make sure that we expose codex error code in camel case.
 
 When an upstream HTTP status is available (for example, from the Responses API or a provider), it is forwarded in `httpStatusCode` on the relevant `codexErrorInfo` variant.
@@ -3039,6 +3050,12 @@ export type PlanDeltaNotification = { delta: string, itemId: string, threadId: s
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
 export type PlatformEvent = { "kind": "context_frame_changed", "data": ContextFrameChanged } | { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "control_plane_projection_changed", "data": ControlPlaneProjectionChanged } | { "kind": "workspace_module_presentation_requested", "data": WorkspaceModulePresentationRequested } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "pty_terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
+
+/**
+ * Presentation durability is explicit producer evidence and is never inferred
+ * from a Runtime cursor or transport replay.
+ */
+export type PresentationDurability = "durable" | "ephemeral";
 
 export type ProjectGuidelineEntry = { path: string, content: string, };
 

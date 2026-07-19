@@ -1,5 +1,6 @@
 pub mod backbone;
 pub mod generated;
+pub mod presentation;
 pub mod thread_item;
 
 // ─── 集中 re-export（保持外部 API 不变）───────────────────
@@ -24,9 +25,11 @@ pub use backbone::usage::{
 };
 pub use backbone::user_input::{
     UserInputBlock, UserInputConversionError, UserInputSource, UserInputSubmissionKind,
-    UserInputSubmittedNotification, codex_user_input_to_text, content_block_to_codex_user_input,
-    content_blocks_to_codex_user_input, text_user_input_block, text_user_input_blocks,
-    user_input_blocks_to_content_parts, user_input_text,
+    UserInputSubmittedNotification, codex_user_input_to_text, text_user_input_block,
+    text_user_input_blocks, user_input_text,
+};
+pub use presentation::{
+    CanonicalConversationPresentation, CanonicalConversationRecord, PresentationDurability,
 };
 
 /// AgentDash-owned Codex-shaped protocol facade.
@@ -56,16 +59,11 @@ pub mod codex_app_server_protocol {
     pub use crate::generated::codex_v2::tool_request_user_input_params::ToolRequestUserInputParams;
 }
 
-mod transcript_projection;
-pub use transcript_projection::{TranscriptProjectionEvent, project_transcript};
-
 pub use thread_item::{
     AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus,
     DynamicToolCallOutputContentItem, DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus,
     ShellExecExecutionMode,
 };
-
-pub use agent_client_protocol::{ContentBlock, EmbeddedResourceResource, TextContent};
 
 #[cfg(test)]
 mod tests {

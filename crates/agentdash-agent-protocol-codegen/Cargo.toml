@@ -1,0 +1,17 @@
+[package]
+name = "agentdash-agent-protocol-codegen"
+description = "Pinned Codex protocol generator for AgentDash-owned conversation contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-agent-protocol = { workspace = true }
+anyhow = { workspace = true }
+codex-app-server-protocol = { workspace = true }
+schemars08 = { package = "schemars", version = "0.8.22" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+typify = { workspace = true }

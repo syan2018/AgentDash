@@ -406,6 +406,17 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
     match msg {
         RelayMessage::Register { .. } => "register",
         RelayMessage::RegisterAck { .. } => "register_ack",
+        RelayMessage::RuntimeWireOfferAdvertise { .. } => "runtime_wire.offer.advertise",
+        RelayMessage::RuntimeWireOfferWithdraw { .. } => "runtime_wire.offer.withdraw",
+        RelayMessage::RuntimeWirePlacementOpen { .. } => "runtime_wire.placement.open",
+        RelayMessage::RuntimeWirePlacementOpenAck { .. } => "runtime_wire.placement.open_ack",
+        RelayMessage::RuntimeWirePlacementOpenRejected { .. } => {
+            "runtime_wire.placement.open_rejected"
+        }
+        RelayMessage::RuntimeWirePlacementFrame { .. } => "runtime_wire.placement.frame",
+        RelayMessage::RuntimeWirePlacementAck { .. } => "runtime_wire.placement.ack",
+        RelayMessage::RuntimeWirePlacementClosed { .. } => "runtime_wire.placement.closed",
+        RelayMessage::RuntimeWirePlacementLost { .. } => "runtime_wire.placement.lost",
         RelayMessage::Ping { .. } => "ping",
         RelayMessage::Pong { .. } => "pong",
         RelayMessage::CommandPrompt { .. } => "command.prompt",

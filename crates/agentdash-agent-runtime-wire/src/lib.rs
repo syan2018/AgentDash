@@ -1,9 +1,11 @@
 //! Canonical cross-process framing for Managed Runtime and Complete Agent traffic.
 
 mod complete_agent;
+mod placement;
 pub mod wire_u64;
 
 pub use complete_agent::*;
+pub use placement::*;
 pub use wire_u64::*;
 
 use agentdash_agent_runtime_contract::{

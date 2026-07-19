@@ -15,6 +15,9 @@ default = ["standalone"]
 standalone = []
 
 [dependencies]
+agentdash-agent-runtime-wire.workspace = true
+agentdash-agent-service-api.workspace = true
+agentdash-integration-remote-runtime.workspace = true
 agentdash-relay.workspace = true
 agentdash-contracts.workspace = true
 agentdash-platform-spi.workspace = true

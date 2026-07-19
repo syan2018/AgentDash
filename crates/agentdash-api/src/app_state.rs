@@ -55,6 +55,7 @@ use crate::project_projection_notification::ProjectProjectionNotificationPublish
 use crate::relay::{
     RelayAgentRunTerminalProjectionProducer, RelayAgentRunTerminalSourceReconcile,
     registry::BackendRegistry,
+    runtime_wire::CloudRuntimeWirePlacementRegistry,
 };
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -123,6 +124,7 @@ pub struct ServiceSet {
     pub memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
     pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
     pub backend_registry: Arc<BackendRegistry>,
+    pub runtime_wire_placements: Arc<CloudRuntimeWirePlacementRegistry>,
     pub backend_runtime_events: broadcast::Sender<String>,
     pub project_control_plane_events: broadcast::Sender<ProjectEventStreamEnvelope>,
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
@@ -193,6 +195,7 @@ impl AppState {
         let mcp_probe_relay = relay_bootstrap.mcp_probe_relay;
         let setup_action_transport = relay_bootstrap.setup_action_transport;
         let shell_output_registry = relay_bootstrap.shell_output_registry;
+        let runtime_wire_placements = relay_bootstrap.runtime_wire_placements;
 
         let vfs_bootstrap = crate::bootstrap::vfs::build_vfs_kernel(
             repos.clone(),
@@ -354,6 +357,7 @@ impl AppState {
                 memory_discovery_providers: integration_registration.memory_discovery_providers,
                 marketplace_source_providers: integration_registration.marketplace_source_providers,
                 backend_registry,
+                runtime_wire_placements,
                 backend_runtime_events,
                 project_control_plane_events,
                 shell_output_registry,

@@ -6,6 +6,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::RelayError;
+use agentdash_agent_runtime_wire::{
+    RuntimeWireAdvertisementRevision, RuntimeWirePlacementAck, RuntimeWirePlacementClosed,
+    RuntimeWirePlacementFrame, RuntimeWirePlacementLost, RuntimeWirePlacementOpen,
+    RuntimeWirePlacementOpenAck, RuntimeWirePlacementOpenRejected,
+    RuntimeWireServiceOfferAdvertisement,
+};
 
 pub mod discovery;
 pub mod extension_runtime;
@@ -51,6 +57,73 @@ pub enum RelayMessage {
     RegisterAck {
         id: String,
         payload: RegisterAckPayload,
+    },
+
+    // ── Complete Agent Runtime Wire placement ──
+    /// Local -> Cloud: replace the authenticated backend connection's endpoint inventory.
+    #[serde(rename = "runtime_wire.offer.advertise")]
+    RuntimeWireOfferAdvertise {
+        id: String,
+        payload: Box<RuntimeWireServiceOfferAdvertisement>,
+    },
+
+    /// Local -> Cloud: an endpoint claim was withdrawn. Host facts remain durable; only live
+    /// availability changes.
+    #[serde(rename = "runtime_wire.offer.withdraw")]
+    RuntimeWireOfferWithdraw {
+        id: String,
+        endpoint_id: String,
+        revision: RuntimeWireAdvertisementRevision,
+    },
+
+    /// Cloud -> Local.
+    #[serde(rename = "runtime_wire.placement.open")]
+    RuntimeWirePlacementOpen {
+        id: String,
+        payload: Box<RuntimeWirePlacementOpen>,
+    },
+
+    /// Local -> Cloud.
+    #[serde(rename = "runtime_wire.placement.open_ack")]
+    RuntimeWirePlacementOpenAck {
+        id: String,
+        payload: Box<RuntimeWirePlacementOpenAck>,
+    },
+
+    /// Local -> Cloud.
+    #[serde(rename = "runtime_wire.placement.open_rejected")]
+    RuntimeWirePlacementOpenRejected {
+        id: String,
+        payload: Box<RuntimeWirePlacementOpenRejected>,
+    },
+
+    /// Bidirectional data frame.
+    #[serde(rename = "runtime_wire.placement.frame")]
+    RuntimeWirePlacementFrame {
+        id: String,
+        payload: Box<RuntimeWirePlacementFrame>,
+    },
+
+    /// Bidirectional cumulative outer transport acknowledgment.
+    #[serde(rename = "runtime_wire.placement.ack")]
+    RuntimeWirePlacementAck {
+        id: String,
+        payload: Box<RuntimeWirePlacementAck>,
+    },
+
+    /// Bidirectional graceful close. This changes availability and does not manufacture an Agent
+    /// terminal.
+    #[serde(rename = "runtime_wire.placement.closed")]
+    RuntimeWirePlacementClosed {
+        id: String,
+        payload: Box<RuntimeWirePlacementClosed>,
+    },
+
+    /// Bidirectional definitive placement loss.
+    #[serde(rename = "runtime_wire.placement.lost")]
+    RuntimeWirePlacementLost {
+        id: String,
+        payload: Box<RuntimeWirePlacementLost>,
     },
 
     // ── 心跳 ──
@@ -655,6 +728,15 @@ impl RelayMessage {
         match self {
             Self::Register { id, .. }
             | Self::RegisterAck { id, .. }
+            | Self::RuntimeWireOfferAdvertise { id, .. }
+            | Self::RuntimeWireOfferWithdraw { id, .. }
+            | Self::RuntimeWirePlacementOpen { id, .. }
+            | Self::RuntimeWirePlacementOpenAck { id, .. }
+            | Self::RuntimeWirePlacementOpenRejected { id, .. }
+            | Self::RuntimeWirePlacementFrame { id, .. }
+            | Self::RuntimeWirePlacementAck { id, .. }
+            | Self::RuntimeWirePlacementClosed { id, .. }
+            | Self::RuntimeWirePlacementLost { id, .. }
             | Self::Ping { id, .. }
             | Self::Pong { id, .. }
             | Self::CommandPrompt { id, .. }

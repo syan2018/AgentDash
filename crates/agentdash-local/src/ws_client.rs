@@ -36,6 +36,8 @@ pub struct Config {
     pub extension_artifact_cache_root: PathBuf,
     pub runner_status: Option<RunnerStatusReporter>,
     pub relay_status_tx: Option<watch::Sender<RelayConnectionStatus>>,
+    pub runtime_wire_endpoints:
+        Arc<crate::runtime_wire::LocalRuntimeWireEndpointCatalog>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -364,12 +366,37 @@ async fn run_session(
     }
 
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<RelayMessage>();
+    let (runtime_wire_control_tx, mut runtime_wire_control_rx) =
+        mpsc::channel::<RelayMessage>(32);
+    let (runtime_wire_critical_tx, mut runtime_wire_critical_rx) =
+        mpsc::channel::<RelayMessage>(128);
+    let runtime_wire_router = crate::runtime_wire::LocalRuntimeWireRouter::new(
+        config.backend_id.clone(),
+        config.runtime_wire_endpoints.clone(),
+        runtime_wire_control_tx,
+        runtime_wire_critical_tx,
+    );
     let mut writer_task = tokio::spawn(async move {
-        while let Some(relay_msg) = outbound_rx.recv().await {
-            send_message(&mut write, &relay_msg).await?;
+        loop {
+            tokio::select! {
+                biased;
+                relay_msg = runtime_wire_control_rx.recv() => {
+                    let Some(relay_msg) = relay_msg else { break; };
+                    send_message(&mut write, &relay_msg).await?;
+                }
+                relay_msg = runtime_wire_critical_rx.recv() => {
+                    let Some(relay_msg) = relay_msg else { break; };
+                    send_message(&mut write, &relay_msg).await?;
+                }
+                relay_msg = outbound_rx.recv() => {
+                    let Some(relay_msg) = relay_msg else { break; };
+                    send_message(&mut write, &relay_msg).await?;
+                }
+            }
         }
         Ok::<(), anyhow::Error>(())
     });
+    runtime_wire_router.advertise_catalog().await?;
 
     // 进入消息循环：WS 读取不直接执行命令，避免长耗时工具调用阻塞后续命令和事件写出。
     let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
@@ -385,6 +412,9 @@ async fn run_session(
                 match msg {
                     Some(Ok(ws_msg)) => {
                         if let Some(relay_msg) = parse_ws_message(&ws_msg, &config.backend_id) {
+                            if runtime_wire_router.handle(&relay_msg).await {
+                                continue;
+                            }
                             let dispatch_plan = handler.dispatch_plan(&relay_msg);
                             if dispatch_plan.execution_mode == CommandExecutionMode::Background {
                                 let handler = handler.clone();

@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{BackendConfig, BackendRepository, RuntimeHealthOnlineUpdate};
+use agentdash_agent_runtime_wire::RuntimeWireAuthenticatedTransport;
 use agentdash_relay::*;
 
 use crate::app_state::AppState;
@@ -239,6 +240,27 @@ async fn handle_backend_connection(
         return;
     }
 
+    let mut runtime_wire_queues = match state
+        .services
+        .runtime_wire_placements
+        .register_connection(&bid, format!("relay-ws-{}", uuid::Uuid::new_v4()))
+        .await
+    {
+        Ok(queues) => queues,
+        Err(error) => {
+            diag!(
+                Warn,
+                Subsystem::Relay,
+                backend_id = %bid,
+                error = %error,
+                "Runtime Wire transport registration failed"
+            );
+            state.services.backend_registry.unregister(&bid).await;
+            return;
+        }
+    };
+    let runtime_wire_transport = runtime_wire_queues.transport.clone();
+
     let connected_at = chrono::Utc::now();
     if let Err(error) = state
         .repos
@@ -329,11 +351,51 @@ async fn handle_backend_connection(
 
     loop {
         tokio::select! {
+            biased;
+            control = runtime_wire_queues.control_rx.recv() => {
+                if let Some(control) = control
+                    && let Err(error) = send_relay(&mut ws_tx, &control).await {
+                        diag!(Warn, Subsystem::Relay,
+                            backend_id = %bid,
+                            error = %error,
+                            "Runtime Wire control frame send failed"
+                        );
+                        break;
+                    }
+            }
+            critical = runtime_wire_queues.critical_rx.recv() => {
+                if let Some(critical) = critical
+                    && let Err(error) = send_relay(&mut ws_tx, &critical).await {
+                        diag!(Warn, Subsystem::Relay,
+                            backend_id = %bid,
+                            error = %error,
+                            "Runtime Wire critical frame send failed"
+                        );
+                        break;
+                    }
+            }
             msg = ws_rx.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         match parse_relay_message_text(text.as_ref()) {
-                            Ok(relay_msg) => handle_backend_message(&state, &bid, relay_msg).await,
+                            Ok(relay_msg) => {
+                                match handle_runtime_wire_backend_message(
+                                    &state,
+                                    &runtime_wire_transport,
+                                    &relay_msg,
+                                ).await {
+                                    Ok(true) => {}
+                                    Ok(false) => handle_backend_message(&state, &bid, relay_msg).await,
+                                    Err(error) => {
+                                        diag!(Warn, Subsystem::Relay,
+                                            backend_id = %bid,
+                                            request_id = %relay_msg.id(),
+                                            error = %error,
+                                            "Runtime Wire inbound frame rejected"
+                                        );
+                                    }
+                                }
+                            }
                             Err(error) => {
                                 let context =
                                     DiagnosticErrorContext::new("relay.ws.message_loop", "deserialize")
@@ -459,6 +521,11 @@ async fn handle_backend_connection(
             );
         }
     }
+    state
+        .services
+        .runtime_wire_placements
+        .disconnect_backend(&runtime_wire_transport, "relay websocket disconnected")
+        .await;
     state.services.backend_registry.unregister(&bid).await;
     if let Err(error) = state
         .repos
@@ -512,6 +579,51 @@ async fn handle_backend_connection(
                 "写入终端离线 Product 投影失败"
             );
         }
+    }
+}
+
+async fn handle_runtime_wire_backend_message(
+    state: &Arc<AppState>,
+    transport: &RuntimeWireAuthenticatedTransport,
+    message: &RelayMessage,
+) -> Result<bool, crate::relay::runtime_wire::CloudRuntimeWireError> {
+    match message {
+        RelayMessage::RuntimeWireOfferAdvertise { payload, .. } => {
+            state
+                .services
+                .runtime_wire_placements
+                .advertise(transport, (**payload).clone(), chrono::Utc::now().timestamp_millis())
+                .await?;
+            Ok(true)
+        }
+        RelayMessage::RuntimeWireOfferWithdraw {
+            endpoint_id,
+            revision,
+            ..
+        } => {
+            state
+                .services
+                .runtime_wire_placements
+                .withdraw(transport, endpoint_id, *revision)
+                .await?;
+            Ok(true)
+        }
+        RelayMessage::RuntimeWirePlacementOpenAck { .. }
+        | RelayMessage::RuntimeWirePlacementOpenRejected { .. }
+        | RelayMessage::RuntimeWirePlacementFrame { .. }
+        | RelayMessage::RuntimeWirePlacementAck { .. }
+        | RelayMessage::RuntimeWirePlacementClosed { .. }
+        | RelayMessage::RuntimeWirePlacementLost { .. } => {
+            state
+                .services
+                .runtime_wire_placements
+                .route_backend_message(transport, message)
+                .await
+        }
+        RelayMessage::RuntimeWirePlacementOpen { .. } => {
+            Err(crate::relay::runtime_wire::CloudRuntimeWireError::StaleTransport)
+        }
+        _ => Ok(false),
     }
 }
 

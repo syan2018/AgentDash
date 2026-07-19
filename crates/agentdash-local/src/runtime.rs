@@ -527,6 +527,8 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
             .join(local_runtime_backend_key(&config.backend_id)),
         runner_status: None,
         relay_status_tx: None,
+        runtime_wire_endpoints:
+            crate::runtime_wire::LocalRuntimeWireEndpointCatalog::empty(),
     })
 }
 

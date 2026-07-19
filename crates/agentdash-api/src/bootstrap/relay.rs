@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::relay::registry::BackendRegistry;
+use crate::relay::runtime_wire::CloudRuntimeWirePlacementRegistry;
 
 pub(crate) struct RelayBootstrapOutput {
     pub backend_registry: Arc<BackendRegistry>,
@@ -11,6 +12,7 @@ pub(crate) struct RelayBootstrapOutput {
     pub setup_action_transport:
         Arc<dyn agentdash_application_ports::backend_transport::BackendTransport>,
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
+    pub runtime_wire_placements: Arc<CloudRuntimeWirePlacementRegistry>,
 }
 
 pub(crate) fn build_relay_runtime(channel_capacity: usize) -> RelayBootstrapOutput {
@@ -22,6 +24,7 @@ pub(crate) fn build_relay_runtime(channel_capacity: usize) -> RelayBootstrapOutp
         dyn agentdash_application_ports::backend_transport::BackendTransport,
     > = backend_registry.clone();
     let shell_output_registry = agentdash_relay::ShellOutputRegistry::new();
+    let runtime_wire_placements = CloudRuntimeWirePlacementRegistry::new();
 
     RelayBootstrapOutput {
         backend_registry,
@@ -29,5 +32,6 @@ pub(crate) fn build_relay_runtime(channel_capacity: usize) -> RelayBootstrapOutp
         mcp_probe_relay,
         setup_action_transport,
         shell_output_registry,
+        runtime_wire_placements,
     }
 }

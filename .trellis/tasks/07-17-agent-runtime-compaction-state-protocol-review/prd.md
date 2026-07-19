@@ -344,6 +344,12 @@ Fresh Agent 的 `CreateAgentCommand` 原子携带 package；create receipt/inspe
 child 在 ancestor binding 替换、journal retention 或 ancestor 删除后仍必须具备明确、
 可验证的恢复语义。
 
+`Full` 的 exact fork 只继承 Agent history/cutoff，不继承 parent 的平台
+AgentFrame、ProjectAgent、surface 或 execution profile。Product saga 必须持久化用户
+选定的 child frame/profile/resource evidence，在 Agent child 已创建后、Runtime Activate
+前完成 child binding 与 surface materialization；因此 Full Companion 可以选择不同的
+specialist Agent，而不篡改已 fork 的 Agent history。
+
 ### R7 — Compaction ownership 与 tracer bullet
 
 Compaction 是完整 Agent 生命周期能力，不是所有 Adapter 共用的平台 context kernel：

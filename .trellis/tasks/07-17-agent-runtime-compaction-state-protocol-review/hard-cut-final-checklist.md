@@ -85,7 +85,8 @@
 - [ ] Project Agent / AgentRun create、resume、delete。
 - [ ] 普通 input → Complete Agent → canonical Turn/Item/output → UI。
 - [ ] Native exact fork 与 Codex native fork。
-- [ ] Companion Full exact fork。
+- [ ] Companion Full exact history fork；selected child AgentFrame/surface/profile 在
+  Activate 前独立应用，并覆盖 parent 与 specialist profile 不同的 tracer。
 - [ ] Companion Compact / WorkflowOnly / ConstraintsOnly fresh create。
 - [ ] Companion channel、gate、adoption、result、mailbox。
 - [ ] Dash collaboration tool spawn/read/wait/result。

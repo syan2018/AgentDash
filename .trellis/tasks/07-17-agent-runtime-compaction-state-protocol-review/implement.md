@@ -346,6 +346,9 @@ cargo test -p agentdash-agent-runtime-host binding
 - [ ] fresh create 将 `InitialAgentContextPackage` 原子映射为 Dash Agent history，并
   回执 applied digest/fidelity；package apply 前不暴露 active child。
 - [ ] 产品 fork 调用 Dash Agent exact history fork，返回 child coordinate/digest。
+- [ ] Companion Full 在 exact history fork 后、Activate 前应用 Product 持久化的
+  selected child AgentFrame/surface/profile；禁止把 parent platform profile 当成
+  history 的一部分继承。
 - [ ] 删除“新 source binding + 空 history”的 product fork 路径。
 - [ ] manual/automatic compaction 由 Dash Agent 执行，Runtime 只观察/投影。
 - [ ] source effect inspect 支持 AlreadyApplied/NotApplied/Unknown。

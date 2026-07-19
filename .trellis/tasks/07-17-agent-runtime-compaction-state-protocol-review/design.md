@@ -741,6 +741,11 @@ Companion command 必须显式选择：
 - `Compact / WorkflowOnly / ConstraintsOnly` → `FreshWithContextPackage`：创建新
   Agent 并提交相应 typed context package。
 
+Exact fork 的继承边界止于 Agent history/cutoff。Companion 选定的 child
+ProjectAgent、AgentFrame、surface 与 execution profile 属于 Product durable state，
+由 fork saga 在 child 创建后、Activate 前应用；它们不能从 parent history/profile
+隐式克隆。这样 Full 可以在保留精确历史的同时切换到用户选择的 specialist Agent。
+
 `FreshWithContextPackage` 在 Complete Agent seam 上编译为平台中立合同：
 
 ```rust

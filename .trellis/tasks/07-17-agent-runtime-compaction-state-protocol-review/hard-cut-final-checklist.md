@@ -99,6 +99,9 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
   `AgentCoreCallback` / `DriverNative` 的site映射进Agent surface，空计划或无条件Allow
   不能作为required hook evidence。
 - [x] Workspace/Canvas/VFS grants 只读 AppliedResourceSurface。
+- [x] Product 运行期 surface update 由 request-scoped target/RuntimeThread 解析当前
+  binding，写入新的 immutable AgentFrame revision，经 Runtime convergence 后从最新
+  Frame 重新 materialize AppliedResourceSurface；launch frame 保持不可变证据。
 - [x] Lifecycle VFS mount 进入 AgentRun AppliedResourceSurface materialization。
 - [x] Terminal control与展示只读写 Product terminal projection/control owner。
 - [x] AgentRun workspace/runtime trace 读取 canonical Product/Runtime projection。
@@ -121,8 +124,8 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] Workflow AgentCall，并覆盖重启 inspect 后补齐 Product convergence。
 - [x] Routine trigger → AgentRun → terminal，并覆盖 prepared 状态进程重启恢复。
 - [ ] Workspace Module list/describe/invoke/present 已进入 production Broker；等待 operate
-  的 immutable Frame revision、Rebind/Activate、AppliedResourceSurface 与 presentation
-  feed 纵向 tracer。
+  接入已完成的 immutable Frame revision、Runtime convergence 与
+  AppliedResourceSurface adapter，并补 presentation feed 纵向 tracer。
 - [ ] Canvas read/write/promotion/diagnostics。
 - [ ] VFS surface read/list/search。
 - [x] Lifecycle VFS canonical `events.json` 与 derived indexes。

@@ -38,8 +38,8 @@ pub use history_projection::{
 };
 pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
-    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator, LifecycleOrchestratorDeps,
-    OrchestrationResult,
+    AdvanceCurrentRuntimeThreadActivityInput, LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
+    LifecycleOrchestratorDeps, OrchestrationResult,
 };
 pub use projection::{
     ActiveWorkflowProjection, resolve_active_workflow_projection_for_target,

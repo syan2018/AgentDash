@@ -67,6 +67,28 @@ pub struct AdvanceCurrentActivityInput {
 }
 
 #[derive(Debug, Clone)]
+pub struct AdvanceCurrentRuntimeThreadActivityInput {
+    pub runtime_thread_id: String,
+    pub project_id: Uuid,
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub outcome: LifecycleNodeAdvanceOutcome,
+    pub summary: Option<String>,
+}
+
+struct ResolvedAdvanceCurrentActivityInput {
+    run: LifecycleRun,
+    orchestration_id: Uuid,
+    node_path: String,
+    attempt: u32,
+    run_id: Uuid,
+    agent_id: Uuid,
+    runtime_thread_id: String,
+    outcome: LifecycleNodeAdvanceOutcome,
+    summary: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub enum AdvanceCurrentNodeStatus {
     Completed,
     Failed,
@@ -229,6 +251,73 @@ impl LifecycleOrchestrator {
         let attempt = input.owner.node_attempt.ok_or_else(|| {
             "Platform Tool owner context 缺少 node_attempt，无法推进 lifecycle node".to_string()
         })?;
+        let result = self
+            .advance_resolved_activity(ResolvedAdvanceCurrentActivityInput {
+                run,
+                orchestration_id,
+                node_path,
+                attempt,
+                run_id: input.owner.run_id,
+                agent_id: input.owner.agent_id,
+                runtime_thread_id: input.owner.runtime_thread_id.to_string(),
+                outcome: input.outcome,
+                summary: input.summary,
+            })
+            .await?;
+        self.refresh_hook_snapshot(&input.hook_runtime, &input.turn_id)
+            .await?;
+        Ok(result)
+    }
+
+    pub async fn advance_current_runtime_thread_activity(
+        &self,
+        input: AdvanceCurrentRuntimeThreadActivityInput,
+    ) -> Result<AdvanceCurrentNodeResult, String> {
+        let association = ActivityRuntimeAssociationResolver::new(
+            self.deps.frame_repo.as_ref(),
+            self.deps.run_repo.as_ref(),
+        )
+        .with_binding_repo(self.deps.binding_repo.as_ref())
+        .resolve_by_message_stream_trace(&input.runtime_thread_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "RuntimeThread 没有绑定 lifecycle runtime node，无法推进当前 activity".to_owned()
+        })?;
+        if association.run.id != input.run_id || association.run.project_id != input.project_id {
+            return Err(
+                "RuntimeThread lifecycle association 与授权 Product target 不一致".to_owned(),
+            );
+        }
+        self.advance_resolved_activity(ResolvedAdvanceCurrentActivityInput {
+            run: association.run,
+            orchestration_id: association.orchestration_id,
+            node_path: association.node_path,
+            attempt: association.attempt,
+            run_id: input.run_id,
+            agent_id: input.agent_id,
+            runtime_thread_id: input.runtime_thread_id,
+            outcome: input.outcome,
+            summary: input.summary,
+        })
+        .await
+    }
+
+    async fn advance_resolved_activity(
+        &self,
+        input: ResolvedAdvanceCurrentActivityInput,
+    ) -> Result<AdvanceCurrentNodeResult, String> {
+        let ResolvedAdvanceCurrentActivityInput {
+            run,
+            orchestration_id,
+            node_path,
+            attempt,
+            run_id: authorized_run_id,
+            agent_id: authorized_agent_id,
+            runtime_thread_id,
+            outcome,
+            summary,
+        } = input;
         let node = run
             .orchestrations
             .iter()
@@ -243,13 +332,12 @@ impl LifecycleOrchestrator {
             let matches_target = matches!(
                 executor_run_ref,
                 agentdash_domain::workflow::ExecutorRunRef::AgentRun { run_id, agent_id }
-                    if *run_id == input.owner.run_id && *agent_id == input.owner.agent_id
+                    if *run_id == authorized_run_id && *agent_id == authorized_agent_id
             );
             let matches_thread = node.agent_call.as_ref().is_some_and(|state| {
-                state.target.run_id == input.owner.run_id
-                    && state.target.agent_id == input.owner.agent_id
-                    && state.runtime_thread_id.as_deref()
-                        == Some(input.owner.runtime_thread_id.as_str())
+                state.target.run_id == authorized_run_id
+                    && state.target.agent_id == authorized_agent_id
+                    && state.runtime_thread_id.as_deref() == Some(runtime_thread_id.as_str())
             });
             if !matches_target || !matches_thread {
                 return Err(
@@ -259,7 +347,7 @@ impl LifecycleOrchestrator {
             }
         }
 
-        let status = if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
+        let status = if outcome == LifecycleNodeAdvanceOutcome::Failed {
             RuntimeNodeStatus::Failed
         } else {
             RuntimeNodeStatus::Completed
@@ -270,20 +358,14 @@ impl LifecycleOrchestrator {
         } else {
             Vec::new()
         };
-        let event = runtime_terminal_event(
-            node_path.clone(),
-            attempt,
-            status,
-            outputs,
-            input.summary.clone(),
-        );
+        let event = runtime_terminal_event(node_path.clone(), attempt, status, outputs, summary);
         let run_before = run.clone();
         let updated_run = match apply_orchestration_event_to_run(run, orchestration_id, event) {
             Ok((run, _outcome)) => run,
             Err(OrchestrationRuntimeError::CompletionPolicyRejected {
                 missing_output_ports,
                 ..
-            }) if input.outcome == LifecycleNodeAdvanceOutcome::Completed => {
+            }) if outcome == LifecycleNodeAdvanceOutcome::Completed => {
                 return Ok(AdvanceCurrentNodeResult {
                     run: run_before,
                     orchestration_id,
@@ -297,7 +379,7 @@ impl LifecycleOrchestrator {
                 });
             }
             Err(OrchestrationRuntimeError::StateExchangeMissingOutput { from_port, .. })
-                if input.outcome == LifecycleNodeAdvanceOutcome::Completed =>
+                if outcome == LifecycleNodeAdvanceOutcome::Completed =>
             {
                 return Ok(AdvanceCurrentNodeResult {
                     run: run_before,
@@ -319,15 +401,13 @@ impl LifecycleOrchestrator {
             .await
             .map_err(|error| format!("更新 LifecycleRun orchestration 失败: {error}"))?;
         let drain_result = self.drain_ready_nodes(updated_run.id).await?;
-        self.refresh_hook_snapshot(&input.hook_runtime, &input.turn_id)
-            .await?;
 
         let final_run = self.load_run(updated_run.id).await?;
         Ok(AdvanceCurrentNodeResult {
             run: final_run,
             orchestration_id,
             node_path,
-            status: if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
+            status: if outcome == LifecycleNodeAdvanceOutcome::Failed {
                 AdvanceCurrentNodeStatus::Failed
             } else {
                 AdvanceCurrentNodeStatus::Completed

@@ -12,6 +12,7 @@ pub mod hook_workflow_projection;
 pub mod launch;
 pub mod lifecycle_materialization;
 pub mod lifecycle_surface_projection;
+pub mod product_runtime_tool;
 pub mod project_projection_notification;
 pub mod request_digest;
 pub mod runtime_surface_adoption;

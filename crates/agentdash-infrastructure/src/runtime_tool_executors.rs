@@ -15,6 +15,10 @@ use agentdash_application_agentrun::runtime_task_tools::{
     RuntimeTaskToolKind, RuntimeTaskToolOutcome, RuntimeTaskToolRequest, RuntimeTaskToolScope,
     RuntimeTaskToolService,
 };
+use agentdash_application_ports::product_runtime_tool::{
+    ProductRuntimeToolContext, ProductRuntimeToolKind, ProductRuntimeToolOutcome,
+    ProductRuntimeToolRequest, ProductRuntimeToolService, ProductRuntimeToolTarget,
+};
 use agentdash_application_vfs::{
     AppliedVfsRuntimeToolService, AppliedVfsToolKind, AppliedVfsToolMount, AppliedVfsToolOperation,
     AppliedVfsToolOutcome, AppliedVfsToolOwner, AppliedVfsToolPathScope, AppliedVfsToolRequest,
@@ -45,6 +49,128 @@ pub fn final_runtime_tool_catalog(
         Arc::new(RuntimeTaskWriteTool::new(task)),
         workspace_module_present,
     ]
+}
+
+pub fn product_runtime_tool_catalog(
+    services: impl IntoIterator<Item = Arc<dyn ProductRuntimeToolService>>,
+) -> Vec<Arc<dyn RuntimeToolExecutor>> {
+    services
+        .into_iter()
+        .map(|service| {
+            Arc::new(ProductCommandRuntimeTool::new(service)) as Arc<dyn RuntimeToolExecutor>
+        })
+        .collect()
+}
+
+pub struct ProductCommandRuntimeTool {
+    service: Arc<dyn ProductRuntimeToolService>,
+}
+
+impl ProductCommandRuntimeTool {
+    pub fn new(service: Arc<dyn ProductRuntimeToolService>) -> Self {
+        Self { service }
+    }
+}
+
+#[async_trait]
+impl RuntimeToolExecutor for ProductCommandRuntimeTool {
+    fn definition(&self) -> RuntimeToolDefinition {
+        let (name, description, permission, effect) = product_tool_definition(self.service.kind());
+        RuntimeToolDefinition {
+            name: AgentToolName::new(name).expect("static Product runtime tool name"),
+            description: description.to_owned(),
+            parameters_schema: self.service.parameters_schema(),
+            permission,
+            effect,
+        }
+    }
+
+    async fn execute(&self, invocation: RuntimeToolInvocation) -> AgentToolResult {
+        if !matches!(
+            invocation.grant.resources,
+            RuntimeToolResourceGrant::Product
+        ) {
+            return rejected(
+                "runtime_product_grant_required",
+                "Product tool requires a typed Product execution grant",
+            );
+        }
+        let project_id = match parse_uuid("project_id", &invocation.grant.target.project_id) {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let run_id = match parse_uuid("run_id", &invocation.grant.target.run_id) {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let agent_id = match parse_uuid("agent_id", &invocation.grant.target.agent_id) {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let request = ProductRuntimeToolRequest {
+            context: ProductRuntimeToolContext {
+                runtime_thread_id: invocation.context.runtime_thread_id,
+                target: ProductRuntimeToolTarget {
+                    project_id,
+                    run_id,
+                    agent_id,
+                },
+                turn_id: invocation.context.turn_id.to_string(),
+                item_id: invocation.context.item_id.map(|value| value.to_string()),
+                effect_id: invocation.context.effect_id.to_string(),
+                invocation_id: invocation.context.callback_idempotency_key,
+                deadline_at_ms: invocation.context.deadline_at_ms,
+            },
+            arguments: invocation.arguments,
+        };
+        match self.service.execute(request).await {
+            ProductRuntimeToolOutcome::Completed { output } => {
+                AgentToolResult::Completed { output }
+            }
+            ProductRuntimeToolOutcome::Rejected { code, message } => {
+                AgentToolResult::Rejected { code, message }
+            }
+            ProductRuntimeToolOutcome::Failed { code, message } => {
+                AgentToolResult::Failed { code, message }
+            }
+        }
+    }
+}
+
+fn product_tool_definition(
+    kind: ProductRuntimeToolKind,
+) -> (
+    &'static str,
+    &'static str,
+    RuntimeToolPermission,
+    RuntimeToolEffect,
+) {
+    match kind {
+        ProductRuntimeToolKind::Wait => (
+            "wait",
+            "Wait for bounded Product activities without cancelling their background execution.",
+            RuntimeToolPermission::ProductRead,
+            RuntimeToolEffect::ReadOnly,
+        ),
+        ProductRuntimeToolKind::CompleteLifecycleNode => (
+            "complete_lifecycle_node",
+            "Submit the current lifecycle node terminal outcome to Product orchestration.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
+        ProductRuntimeToolKind::CompanionRequest => (
+            "companion_request",
+            "Request durable Companion collaboration through the Product command path.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
+        ProductRuntimeToolKind::CompanionRespond => (
+            "companion_respond",
+            "Respond to a durable Companion collaboration request.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
+    }
 }
 
 macro_rules! vfs_executor {
@@ -526,6 +652,16 @@ fn rejected(code: impl Into<String>, message: impl Into<String>) -> AgentToolRes
 
 #[cfg(test)]
 mod tests {
+    use agentdash_agent_runtime::{
+        RuntimeToolAppliedSurfaceEvidence, RuntimeToolAuthorizationGrant, RuntimeToolProductTarget,
+        RuntimeToolProvenanceEvidence, RuntimeToolResolvedContext,
+    };
+    use agentdash_agent_runtime_contract::RuntimeThreadId;
+    use agentdash_agent_service_api::{
+        AgentBindingGeneration, AgentEffectIdentity, AgentItemId, AgentProfileDigest,
+        AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceDigest, AgentSurfaceRevision,
+        AgentTurnId,
+    };
     use serde_json::Value;
 
     use super::*;
@@ -594,6 +730,40 @@ mod tests {
         }
     }
 
+    struct NoopProductToolService {
+        kind: ProductRuntimeToolKind,
+    }
+
+    #[async_trait]
+    impl ProductRuntimeToolService for NoopProductToolService {
+        fn kind(&self) -> ProductRuntimeToolKind {
+            self.kind
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({
+                "type": "object",
+                "owner": format!("{:?}", self.kind),
+            })
+        }
+
+        async fn execute(&self, request: ProductRuntimeToolRequest) -> ProductRuntimeToolOutcome {
+            ProductRuntimeToolOutcome::Completed {
+                output: serde_json::json!({
+                    "runtime_thread_id": request.context.runtime_thread_id,
+                    "project_id": request.context.target.project_id,
+                    "run_id": request.context.target.run_id,
+                    "agent_id": request.context.target.agent_id,
+                    "turn_id": request.context.turn_id,
+                    "item_id": request.context.item_id,
+                    "effect_id": request.context.effect_id,
+                    "invocation_id": request.context.invocation_id,
+                    "arguments": request.arguments,
+                }),
+            }
+        }
+    }
+
     #[test]
     fn final_runtime_catalog_defines_all_nine_platform_tools() {
         let vfs = Arc::new(AppliedVfsRuntimeToolService::new(
@@ -657,6 +827,77 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn product_runtime_catalog_exposes_all_product_tool_families() {
+        let services = [
+            ProductRuntimeToolKind::Wait,
+            ProductRuntimeToolKind::CompleteLifecycleNode,
+            ProductRuntimeToolKind::CompanionRequest,
+            ProductRuntimeToolKind::CompanionRespond,
+        ]
+        .into_iter()
+        .map(|kind| {
+            Arc::new(NoopProductToolService { kind }) as Arc<dyn ProductRuntimeToolService>
+        });
+        let definitions = product_runtime_tool_catalog(services)
+            .into_iter()
+            .map(|executor| executor.definition())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            definitions
+                .iter()
+                .map(|definition| definition.name.to_string())
+                .collect::<Vec<_>>(),
+            vec![
+                "wait",
+                "complete_lifecycle_node",
+                "companion_request",
+                "companion_respond",
+            ]
+        );
+        assert_eq!(
+            definitions[0].permission,
+            RuntimeToolPermission::ProductRead
+        );
+        assert_eq!(definitions[0].effect, RuntimeToolEffect::ReadOnly);
+        assert!(definitions[1..].iter().all(|definition| {
+            definition.permission == RuntimeToolPermission::ProductWrite
+                && definition.effect == RuntimeToolEffect::ProductMutation
+        }));
+    }
+
+    #[tokio::test]
+    async fn product_runtime_executor_forwards_authorized_callback_coordinates() {
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let executor = ProductCommandRuntimeTool::new(Arc::new(NoopProductToolService {
+            kind: ProductRuntimeToolKind::Wait,
+        }));
+        let result = executor
+            .execute(RuntimeToolInvocation {
+                context: product_runtime_context(),
+                tool: AgentToolName::new("wait").expect("tool"),
+                arguments: serde_json::json!({"activity_refs": ["gate"]}),
+                grant: product_grant(project_id, run_id, agent_id),
+            })
+            .await;
+
+        let AgentToolResult::Completed { output } = result else {
+            panic!("Product command must complete");
+        };
+        assert_eq!(output["runtime_thread_id"], "runtime-thread");
+        assert_eq!(output["project_id"], project_id.to_string());
+        assert_eq!(output["run_id"], run_id.to_string());
+        assert_eq!(output["agent_id"], agent_id.to_string());
+        assert_eq!(output["turn_id"], "turn");
+        assert_eq!(output["item_id"], "item");
+        assert_eq!(output["effect_id"], "effect");
+        assert_eq!(output["invocation_id"], "callback");
+        assert_eq!(output["arguments"]["activity_refs"][0], "gate");
+    }
+
     fn schema_contains_enum_value(schema: &Value, expected: &str) -> bool {
         match schema {
             Value::Array(values) => values
@@ -672,6 +913,62 @@ mod tests {
                     .any(|value| schema_contains_enum_value(value, expected))
             }
             _ => false,
+        }
+    }
+
+    fn product_runtime_context() -> RuntimeToolResolvedContext {
+        RuntimeToolResolvedContext {
+            runtime_thread_id: RuntimeThreadId::new("runtime-thread").expect("thread"),
+            binding_generation: AgentBindingGeneration(1),
+            source: AgentSourceCoordinate::new("source").expect("source"),
+            service_instance_id: AgentServiceInstanceId::new("service").expect("service"),
+            profile_digest: AgentProfileDigest::new("profile").expect("profile"),
+            bound_surface_revision: AgentSurfaceRevision(1),
+            bound_surface_digest: AgentSurfaceDigest::new("bound").expect("bound"),
+            applied_surface_revision: AgentSurfaceRevision(1),
+            applied_surface_digest: AgentSurfaceDigest::new("applied").expect("applied"),
+            turn_id: AgentTurnId::new("turn").expect("turn"),
+            item_id: Some(AgentItemId::new("item").expect("item")),
+            effect_id: AgentEffectIdentity::new("effect").expect("effect"),
+            callback_idempotency_key: "callback".to_owned(),
+            deadline_at_ms: u64::MAX,
+        }
+    }
+
+    fn product_grant(
+        project_id: Uuid,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> RuntimeToolAuthorizationGrant {
+        let provenance = RuntimeToolProvenanceEvidence {
+            source_kind: "test".to_owned(),
+            source_id: "surface".to_owned(),
+            source_revision: 1,
+            projection_revision: 1,
+            captured_at_ms: 1,
+        };
+        RuntimeToolAuthorizationGrant {
+            permission: RuntimeToolPermission::ProductRead,
+            effect: RuntimeToolEffect::ReadOnly,
+            target: RuntimeToolProductTarget {
+                project_id: project_id.to_string(),
+                run_id: run_id.to_string(),
+                agent_id: agent_id.to_string(),
+            },
+            applied_surface: RuntimeToolAppliedSurfaceEvidence {
+                snapshot_revision: 1,
+                agent_surface_revision: 1,
+                agent_surface_digest: "surface".to_owned(),
+                vfs_revision: 1,
+                vfs_digest: "vfs".to_owned(),
+                vfs_provenance: provenance.clone(),
+                task_revision: 1,
+                task_digest: "task".to_owned(),
+                task_provenance: provenance,
+                product_binding_digest: "binding".to_owned(),
+                host_binding_generation: 1,
+            },
+            resources: RuntimeToolResourceGrant::Product,
         }
     }
 }

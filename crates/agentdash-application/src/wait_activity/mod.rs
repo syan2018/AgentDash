@@ -1,4 +1,5 @@
 mod provider;
+mod runtime_tool_service;
 mod service;
 mod sources;
 #[cfg(test)]

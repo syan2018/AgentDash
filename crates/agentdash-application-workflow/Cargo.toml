@@ -22,5 +22,4 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-agentdash-test-support = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

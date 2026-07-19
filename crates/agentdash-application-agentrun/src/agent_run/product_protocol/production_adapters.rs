@@ -37,6 +37,83 @@ use super::{
 
 const PRODUCT_RUNTIME_CHANGE_PAGE_LIMIT: u32 = 256;
 
+#[derive(Debug, Clone)]
+pub struct ProductManagedRuntimeOperationObservation {
+    pub status: ManagedRuntimeOperationStatus,
+    pub evidence: Option<ManagedRuntimeOperationEvidence>,
+    pub accepted_revision: RuntimeProjectionRevision,
+}
+
+#[derive(Clone)]
+pub struct ProductManagedRuntimeCommandAdapter {
+    gateway: Arc<dyn ManagedAgentRuntimeGateway>,
+}
+
+impl ProductManagedRuntimeCommandAdapter {
+    pub fn new(gateway: Arc<dyn ManagedAgentRuntimeGateway>) -> Self {
+        Self { gateway }
+    }
+
+    pub async fn execute(
+        &self,
+        command: ManagedRuntimeCommandEnvelope,
+    ) -> Result<ProductManagedRuntimeOperationObservation, String> {
+        let expected_operation_id = command.operation_id.clone();
+        let expected_thread_id = command.thread_id.clone();
+        let receipt = self
+            .gateway
+            .execute(command)
+            .await
+            .map_err(|error| error.to_string())?;
+        if receipt.operation_id != expected_operation_id || receipt.thread_id != expected_thread_id
+        {
+            return Err(
+                "Runtime receipt identity drifted from the dispatched operation".to_owned(),
+            );
+        }
+        Ok(ProductManagedRuntimeOperationObservation {
+            status: receipt.status,
+            evidence: receipt.evidence,
+            accepted_revision: receipt.accepted_revision,
+        })
+    }
+
+    pub async fn inspect(
+        &self,
+        thread_id: &RuntimeThreadId,
+        operation_id: &RuntimeOperationId,
+    ) -> Result<Option<ProductManagedRuntimeOperationObservation>, String> {
+        let snapshot = match self
+            .gateway
+            .read(ManagedRuntimeReadRequest {
+                thread_id: thread_id.clone(),
+            })
+            .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(agentdash_agent_runtime_contract::ManagedRuntimeGatewayError::NotFound) => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        if &snapshot.thread_id != thread_id {
+            return Err("Runtime inspection returned a different thread".to_owned());
+        }
+        let Some(operation) = snapshot
+            .operations
+            .iter()
+            .find(|operation| &operation.id == operation_id)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ProductManagedRuntimeOperationObservation {
+            status: operation.status,
+            evidence: operation.evidence.clone(),
+            accepted_revision: snapshot.revision,
+        }))
+    }
+}
+
 /// Product's exact-fork adapter over the final managed Runtime Gateway.
 pub struct ProductAgentRunForkRuntimeAdapter {
     gateway: Arc<dyn ManagedAgentRuntimeGateway>,
@@ -385,12 +462,14 @@ impl AgentRunForkRuntimePort for ProductAgentRunForkRuntimeAdapter {
 
 /// Product's fresh Companion adapter over the final managed Runtime Gateway.
 pub struct ProductCompanionFreshRuntimeAdapter {
-    gateway: Arc<dyn ManagedAgentRuntimeGateway>,
+    runtime: ProductManagedRuntimeCommandAdapter,
 }
 
 impl ProductCompanionFreshRuntimeAdapter {
     pub fn new(gateway: Arc<dyn ManagedAgentRuntimeGateway>) -> Self {
-        Self { gateway }
+        Self {
+            runtime: ProductManagedRuntimeCommandAdapter::new(gateway),
+        }
     }
 
     fn initial_context(
@@ -539,24 +618,13 @@ impl CompanionFreshRuntimePort for ProductCompanionFreshRuntimeAdapter {
         identity: &CompanionFreshOperationIdentity,
     ) -> Result<CompanionFreshEffectOutcome, String> {
         let command = Self::command(saga, identity)?;
-        let receipt = self
-            .gateway
-            .execute(command)
-            .await
-            .map_err(|error| error.to_string())?;
-        if receipt.operation_id != identity.runtime_operation_id
-            || receipt.thread_id != *saga.runtime_thread_id()
-        {
-            return Err(
-                "Runtime receipt identity drifted from the dispatched operation".to_owned(),
-            );
-        }
+        let observation = self.runtime.execute(command).await?;
         Self::map_outcome(
             saga,
             identity,
-            receipt.status,
-            receipt.evidence.as_ref(),
-            receipt.accepted_revision,
+            observation.status,
+            observation.evidence.as_ref(),
+            observation.accepted_revision,
         )
     }
 
@@ -565,35 +633,19 @@ impl CompanionFreshRuntimePort for ProductCompanionFreshRuntimeAdapter {
         saga: &CompanionFreshSaga,
         identity: &CompanionFreshOperationIdentity,
     ) -> Result<CompanionFreshEffectOutcome, String> {
-        let snapshot = match self
-            .gateway
-            .read(ManagedRuntimeReadRequest {
-                thread_id: saga.runtime_thread_id().clone(),
-            })
-            .await
-        {
-            Ok(snapshot) => snapshot,
-            Err(agentdash_agent_runtime_contract::ManagedRuntimeGatewayError::NotFound) => {
-                return Ok(CompanionFreshEffectOutcome::Unknown);
-            }
-            Err(error) => return Err(error.to_string()),
-        };
-        if snapshot.thread_id != *saga.runtime_thread_id() {
-            return Err("Runtime inspection returned a different thread".to_owned());
-        }
-        let Some(operation) = snapshot
-            .operations
-            .iter()
-            .find(|operation| operation.id == identity.runtime_operation_id)
+        let Some(observation) = self
+            .runtime
+            .inspect(saga.runtime_thread_id(), &identity.runtime_operation_id)
+            .await?
         else {
             return Ok(CompanionFreshEffectOutcome::Unknown);
         };
         Self::map_outcome(
             saga,
             identity,
-            operation.status,
-            operation.evidence.as_ref(),
-            snapshot.revision,
+            observation.status,
+            observation.evidence.as_ref(),
+            observation.accepted_revision,
         )
     }
 }

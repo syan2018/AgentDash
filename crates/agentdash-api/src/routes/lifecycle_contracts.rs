@@ -217,8 +217,8 @@ fn subject_runtime_attempt_to_contract(
 
 fn executor_run_ref_to_contract(refs: app::ExecutorRunRefView) -> contract::ExecutorRunRef {
     match refs {
-        app::ExecutorRunRefView::RuntimeSession { session_id } => {
-            contract::ExecutorRunRef::RuntimeSession { session_id }
+        app::ExecutorRunRefView::AgentRun { run_id, agent_id } => {
+            contract::ExecutorRunRef::AgentRun { run_id, agent_id }
         }
         app::ExecutorRunRefView::FunctionRun { run_id } => {
             contract::ExecutorRunRef::FunctionRun { run_id }

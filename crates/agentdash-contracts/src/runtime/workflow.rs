@@ -587,10 +587,11 @@ pub struct OrchestrationExecutorDrainResultDto {
 #[serde(rename_all = "snake_case")]
 pub struct LaunchedAgentNodeDto {
     pub run_id: String,
+    pub agent_id: String,
     pub orchestration_id: String,
     pub node_path: String,
     pub attempt: u32,
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -610,7 +611,7 @@ fn default_attempt() -> u32 {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutorRunRef {
-    RuntimeSession { session_id: String },
+    AgentRun { run_id: String, agent_id: String },
     FunctionRun { run_id: String },
     HumanDecision { decision_id: String },
 }

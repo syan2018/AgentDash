@@ -898,10 +898,11 @@ fn orchestration_drain_result_to_contract(
             .into_iter()
             .map(|node| LaunchedAgentNodeDto {
                 run_id: node.run_id.to_string(),
+                agent_id: node.agent_id.to_string(),
                 orchestration_id: node.orchestration_id.to_string(),
                 node_path: node.node_path,
                 attempt: node.attempt,
-                runtime_session_id: node.runtime_session_id,
+                runtime_thread_id: node.runtime_thread_id,
             })
             .collect(),
         opened_human_gates: result

@@ -538,8 +538,9 @@ fn runtime_node_to_view(node: &RuntimeNodeState) -> RuntimeNodeView {
 
 fn executor_run_ref_to_view(refs: &DomainExecutorRunRef) -> ExecutorRunRefView {
     match refs {
-        DomainExecutorRunRef::RuntimeSession { session_id } => ExecutorRunRefView::RuntimeSession {
-            session_id: session_id.clone(),
+        DomainExecutorRunRef::AgentRun { run_id, agent_id } => ExecutorRunRefView::AgentRun {
+            run_id: run_id.to_string(),
+            agent_id: agent_id.to_string(),
         },
         DomainExecutorRunRef::FunctionRun { run_id } => ExecutorRunRefView::FunctionRun {
             run_id: run_id.clone(),

@@ -5,7 +5,7 @@ use agentdash_domain::workflow::{
     LifecycleRun, NodePortValue, OrchestrationInstance, OrchestrationPlanSnapshot,
     OrchestrationSourceRef, OrchestrationStatus, PlanNode, PlanNodeKind, RuntimeNodeError,
     RuntimeNodeState, RuntimeNodeStatus, RuntimeTraceRef, StateExchangeRule, StateExchangeSnapshot,
-    TransitionCondition,
+    TransitionCondition, WorkflowAgentCallRuntimeState,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
@@ -105,6 +105,7 @@ fn materialize_plan_activation_with_input(
             inputs: Vec::new(),
             outputs: Vec::new(),
             executor_run_ref: None,
+            agent_call: None,
             children: Vec::new(),
             phase_path: plan_node_phase_path(node),
             started_at: None,
@@ -177,6 +178,24 @@ fn plan_node_phase_path(node: &PlanNode) -> Vec<String> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrchestrationRuntimeEvent {
+    AgentCallPrepared {
+        node_path: String,
+        attempt: u32,
+        request_id: String,
+        payload_digest: String,
+        target: agentdash_domain::agent_run_target::AgentRunTarget,
+        request: Value,
+        timestamp: DateTime<Utc>,
+    },
+    AgentCallDispatched {
+        node_path: String,
+        attempt: u32,
+        request_id: String,
+        payload_digest: String,
+        target: agentdash_domain::agent_run_target::AgentRunTarget,
+        runtime_thread_id: String,
+        timestamp: DateTime<Utc>,
+    },
     NodeClaimed {
         node_path: String,
         attempt: u32,
@@ -255,6 +274,12 @@ pub enum OrchestrationRuntimeError {
     PlanNodeNotFound { node_id: String },
     #[error("runtime node 不存在: {node_id}")]
     RuntimeNodeNotFound { node_id: String },
+    #[error(
+        "AgentCall payload conflicts with prepared history: node_path={node_path}, attempt={attempt}"
+    )]
+    AgentCallPayloadConflict { node_path: String, attempt: u32 },
+    #[error("AgentCall dispatch has no prepared history: node_path={node_path}, attempt={attempt}")]
+    AgentCallNotPrepared { node_path: String, attempt: u32 },
     #[error("node `{node_id}` 缺少 required output ports: {missing_output_ports:?}")]
     CompletionPolicyRejected {
         node_id: String,
@@ -305,6 +330,85 @@ fn apply_orchestration_event_inner(
     let mut outcome = OrchestrationRuntimeApplyOutcome::default();
 
     match event {
+        OrchestrationRuntimeEvent::AgentCallPrepared {
+            node_path,
+            attempt,
+            request_id,
+            payload_digest,
+            target,
+            request,
+            timestamp,
+        } => {
+            let Some(node) = find_runtime_node_mut(&mut instance.node_tree, &node_path, attempt)
+            else {
+                return Err(OrchestrationRuntimeError::NodeNotFound { node_path, attempt });
+            };
+            match &node.agent_call {
+                Some(existing)
+                    if existing.request_id != request_id
+                        || existing.payload_digest != payload_digest
+                        || existing.target != target
+                        || existing.request != request =>
+                {
+                    return Err(OrchestrationRuntimeError::AgentCallPayloadConflict {
+                        node_path,
+                        attempt,
+                    });
+                }
+                Some(_) => {}
+                None => {
+                    node.agent_call = Some(WorkflowAgentCallRuntimeState {
+                        request_id,
+                        payload_digest,
+                        target,
+                        request,
+                        prepared_at: timestamp,
+                        dispatched_at: None,
+                        runtime_thread_id: None,
+                    });
+                }
+            }
+        }
+        OrchestrationRuntimeEvent::AgentCallDispatched {
+            node_path,
+            attempt,
+            request_id,
+            payload_digest,
+            target,
+            runtime_thread_id,
+            timestamp,
+        } => {
+            let Some(node) = find_runtime_node_mut(&mut instance.node_tree, &node_path, attempt)
+            else {
+                return Err(OrchestrationRuntimeError::NodeNotFound { node_path, attempt });
+            };
+            let Some(agent_call) = node.agent_call.as_mut() else {
+                return Err(OrchestrationRuntimeError::AgentCallNotPrepared { node_path, attempt });
+            };
+            if agent_call.request_id != request_id
+                || agent_call.payload_digest != payload_digest
+                || agent_call.target != target
+                || agent_call
+                    .runtime_thread_id
+                    .as_ref()
+                    .is_some_and(|existing| existing != &runtime_thread_id)
+            {
+                return Err(OrchestrationRuntimeError::AgentCallPayloadConflict {
+                    node_path,
+                    attempt,
+                });
+            }
+            if agent_call.dispatched_at.is_none() {
+                agent_call.dispatched_at = Some(timestamp);
+                agent_call.runtime_thread_id = Some(runtime_thread_id.clone());
+            }
+            push_runtime_trace_ref(
+                node,
+                RuntimeTraceRef::RuntimeThread {
+                    thread_id: runtime_thread_id,
+                },
+            );
+        }
         OrchestrationRuntimeEvent::NodeClaimed {
             node_path,
             attempt,
@@ -849,8 +953,9 @@ fn upsert_node_port_value(values: &mut Vec<NodePortValue>, port_key: String, val
 
 fn runtime_trace_ref_from_executor_run_ref(executor_run_ref: &ExecutorRunRef) -> RuntimeTraceRef {
     match executor_run_ref {
-        ExecutorRunRef::RuntimeSession { session_id } => RuntimeTraceRef::RuntimeSession {
-            session_id: session_id.clone(),
+        ExecutorRunRef::AgentRun { run_id, agent_id } => RuntimeTraceRef::AgentRun {
+            run_id: *run_id,
+            agent_id: *agent_id,
         },
         ExecutorRunRef::FunctionRun { run_id } => RuntimeTraceRef::FunctionRun {
             run_id: run_id.clone(),
@@ -1230,8 +1335,9 @@ mod tests {
             OrchestrationRuntimeEvent::NodeStarted {
                 node_path: "entry".to_string(),
                 attempt: 1,
-                executor_run_ref: Some(ExecutorRunRef::RuntimeSession {
-                    session_id: "session-1".to_string(),
+                executor_run_ref: Some(ExecutorRunRef::AgentRun {
+                    run_id: Uuid::nil(),
+                    agent_id: Uuid::from_u128(1),
                 }),
                 timestamp: Utc::now(),
             },
@@ -1248,14 +1354,16 @@ mod tests {
         assert_eq!(entry.status, RuntimeNodeStatus::Running);
         assert_eq!(
             entry.executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession {
-                session_id: "session-1".to_string()
+            Some(ExecutorRunRef::AgentRun {
+                run_id: Uuid::nil(),
+                agent_id: Uuid::from_u128(1),
             })
         );
         assert_eq!(
             entry.trace_refs,
-            vec![RuntimeTraceRef::RuntimeSession {
-                session_id: "session-1".to_string()
+            vec![RuntimeTraceRef::AgentRun {
+                run_id: Uuid::nil(),
+                agent_id: Uuid::from_u128(1),
             }]
         );
         assert!(entry.started_at.is_some());
@@ -1305,8 +1413,9 @@ mod tests {
             OrchestrationRuntimeEvent::NodeStarted {
                 node_path: "entry".to_string(),
                 attempt: 1,
-                executor_run_ref: Some(ExecutorRunRef::RuntimeSession {
-                    session_id: "session-1".to_string(),
+                executor_run_ref: Some(ExecutorRunRef::AgentRun {
+                    run_id: Uuid::nil(),
+                    agent_id: Uuid::from_u128(1),
                 }),
                 timestamp: Utc::now(),
             },

@@ -1,11 +1,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutorRunRef {
-    RuntimeSession { session_id: String },
+    AgentRun { run_id: Uuid, agent_id: Uuid },
     FunctionRun { run_id: String },
     HumanDecision { decision_id: String },
 }

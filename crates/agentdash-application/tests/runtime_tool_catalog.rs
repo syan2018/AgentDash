@@ -420,6 +420,7 @@ fn attach_running_catalog_orchestration(run: &mut LifecycleRun) -> Uuid {
         inputs: Vec::new(),
         outputs: Vec::new(),
         executor_run_ref: None,
+        agent_call: None,
         children: Vec::new(),
         phase_path: Vec::new(),
         started_at: None,
@@ -886,7 +887,9 @@ fn load_main_tool_scenarios() -> Vec<ToolProjectionScenario> {
     serde_json::from_slice(&json).unwrap()
 }
 
-fn contribution_from_production_tool(tool: &dyn agentdash_platform_spi::AgentTool) -> ToolContribution {
+fn contribution_from_production_tool(
+    tool: &dyn agentdash_platform_spi::AgentTool,
+) -> ToolContribution {
     let projection = match tool.protocol_projector().expect("owner projector") {
         agentdash_agent_types::ToolProtocolProjector::Command => ToolProtocolProjection::Command,
         agentdash_agent_types::ToolProtocolProjector::FileChange => {

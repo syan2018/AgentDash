@@ -1,3 +1,4 @@
+mod agent_call;
 pub mod compiler;
 pub mod executor_launcher;
 mod function_node_runner;
@@ -6,14 +7,20 @@ mod ready_node;
 pub mod runtime;
 pub mod script_compiler;
 
+pub use agent_call::{
+    WORKFLOW_AGENT_CALL_INPUT_PORT_SCHEMA_V1, WorkflowAgentCallContentBlock,
+    WorkflowAgentCallDispatchError, WorkflowAgentCallDispatchOutcome,
+    WorkflowAgentCallDispatchPort, WorkflowAgentCallIdentity, WorkflowAgentCallMailboxState,
+    WorkflowAgentCallRequest, WorkflowAgentCallTargetIntent,
+};
 pub use compiler::{
     WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION, WorkflowGraphCompileDiagnostic,
     WorkflowGraphCompileInput, WorkflowGraphCompileMode, WorkflowGraphCompileOutput,
     WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler, compile_workflow_graph,
 };
 pub use executor_launcher::{
-    OpenedHumanGate, OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher,
-    SubmitHumanGateDecisionInput, SubmitHumanGateDecisionResult,
+    LaunchedAgentNode, OpenedHumanGate, OrchestrationExecutorDrainResult,
+    OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput, SubmitHumanGateDecisionResult,
 };
 pub use runtime::{
     OrchestrationActivationInput, OrchestrationRuntimeApplyOutcome, OrchestrationRuntimeDiagnostic,

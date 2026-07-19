@@ -67,7 +67,7 @@ pub enum LifecycleExecutionEventKindView {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExecutorRunRefView {
-    RuntimeSession { session_id: String },
+    AgentRun { run_id: String, agent_id: String },
     FunctionRun { run_id: String },
     HumanDecision { decision_id: String },
 }

@@ -85,6 +85,7 @@ impl RepositorySet {
         WorkflowRepositorySet {
             lifecycle_run_repo: self.lifecycle_run_repo.clone(),
             lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
+            agent_procedure_repo: self.agent_procedure_repo.clone(),
         }
     }
 

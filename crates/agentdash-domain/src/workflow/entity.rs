@@ -937,6 +937,7 @@ mod tests {
             inputs: Vec::new(),
             outputs: Vec::new(),
             executor_run_ref: None,
+            agent_call: None,
             children: Vec::new(),
             phase_path: Vec::new(),
             started_at: None,

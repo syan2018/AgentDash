@@ -336,7 +336,8 @@ pub(crate) fn required_user_input(
 ) -> Result<Vec<agentdash_agent_protocol::UserInputBlock>, PlatformRuntimeError> {
     input
         .input
-        .clone()
+        .as_ref()
+        .map(agentdash_agent_protocol::text_user_input_blocks)
         .ok_or_else(|| PlatformRuntimeError::InvalidConfig("必须提供 input".to_string()))
 }
 
@@ -381,7 +382,11 @@ pub(crate) fn build_envelope_from_frame(
         });
     }
 
-    let mut input = command.prompt().input.clone();
+    let mut input = command
+        .prompt()
+        .input
+        .as_ref()
+        .map(agentdash_agent_protocol::text_user_input_blocks);
     let mut environment_variables = command.prompt().environment_variables.clone();
 
     if let Some(extras) = extras {

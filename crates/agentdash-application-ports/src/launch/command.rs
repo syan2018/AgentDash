@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use agentdash_agent_protocol::{UserInputBlock, text_user_input_blocks};
 use agentdash_domain::common::AgentBackendRequirement;
 use agentdash_platform_spi::{AgentConfig, AuthIdentity};
 use serde::{Deserialize, Serialize};
@@ -22,7 +21,7 @@ pub enum LaunchSource {
 
 #[derive(Debug, Clone, Default)]
 pub struct LaunchPromptInput {
-    pub input: Option<Vec<UserInputBlock>>,
+    pub input: Option<String>,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: Option<AgentConfig>,
 }
@@ -30,7 +29,7 @@ pub struct LaunchPromptInput {
 impl LaunchPromptInput {
     pub fn from_text(text: impl AsRef<str>) -> Self {
         Self {
-            input: Some(text_user_input_blocks(text.as_ref().trim())),
+            input: Some(text.as_ref().trim().to_owned()),
             environment_variables: HashMap::new(),
             executor_config: None,
         }

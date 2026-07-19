@@ -1443,7 +1443,7 @@ mod tests {
             env.insert("PATH".to_string(), "/usr/bin".to_string());
 
             let input = LaunchPromptInput {
-                input: Some(agentdash_agent_protocol::text_user_input_blocks("hi")),
+                input: Some("hi".to_owned()),
                 environment_variables: env,
                 executor_config: None,
             };

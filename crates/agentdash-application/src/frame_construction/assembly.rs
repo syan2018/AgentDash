@@ -177,8 +177,8 @@ impl FrameAssemblyBuilder {
     /// 便于 entry 把"用户原始输入"集中交给 builder，compose 阶段如需要再
     /// 通过独立 `with_*` 方法覆盖个别字段（compose 产出优先）。
     pub(super) fn with_user_input(mut self, input: LaunchPromptInput) -> Self {
-        if let Some(blocks) = input.input {
-            self.input = Some(blocks);
+        if let Some(text) = input.input {
+            self.input = Some(agentdash_agent_protocol::text_user_input_blocks(text));
         }
         if let Some(cfg) = input.executor_config {
             self.executor_config = Some(cfg);

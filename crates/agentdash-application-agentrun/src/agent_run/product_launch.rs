@@ -6,6 +6,7 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeOperationReceipt, ManagedRuntimeReadRequest, RuntimeIdempotencyKey,
     RuntimeOperationId,
 };
+use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use super::{
@@ -61,6 +62,14 @@ pub struct AgentRunProductLaunchService {
     bindings: Arc<dyn AgentRunProductRuntimeBindingStore>,
     resources: Arc<dyn AgentRunAppliedResourceSurfaceMaterializationPort>,
     resource_query: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
+}
+
+#[async_trait]
+pub trait AgentRunProductLaunchPort: Send + Sync {
+    async fn launch(
+        &self,
+        request: AgentRunProductLaunchRequest,
+    ) -> Result<AgentRunProductLaunchOutcome, AgentRunProductLaunchError>;
 }
 
 impl AgentRunProductLaunchService {
@@ -384,6 +393,16 @@ impl AgentRunProductLaunchService {
             activate_receipt,
             input_receipt,
         })
+    }
+}
+
+#[async_trait]
+impl AgentRunProductLaunchPort for AgentRunProductLaunchService {
+    async fn launch(
+        &self,
+        request: AgentRunProductLaunchRequest,
+    ) -> Result<AgentRunProductLaunchOutcome, AgentRunProductLaunchError> {
+        AgentRunProductLaunchService::launch(self, request).await
     }
 }
 

@@ -1,12 +1,23 @@
 use std::sync::Arc;
 
+use agentdash_application::project_agent_run_start::{
+    ProjectAgentRunStartCommand, ProjectAgentRunStartResult as ApplicationStartResult,
+};
 use agentdash_contracts::{
+    agent_run_mailbox::{
+        AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandOutcome,
+        AgentRunMessageCommandResponse,
+    },
     common_response::DeletedFlagResponse,
     project_agent::{
-        CreateProjectAgentRequest, ProjectAgent as ProjectAgentResponse, ProjectAgentExecutor,
+        CreateProjectAgentRequest, CreateProjectAgentRunRequest,
+        ProjectAgent as ProjectAgentResponse, ProjectAgentExecutor, ProjectAgentRunStartResult,
         ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
     },
-    workflow::{ConversationEffectiveExecutorConfigView, ConversationModelConfigSource},
+    workflow::{
+        AgentFrameRefDto, AgentRunRefDto, ConversationEffectiveExecutorConfigView,
+        ConversationModelConfigSource, LifecycleRunRefDto, SubjectRefDto,
+    },
 };
 use agentdash_domain::{
     agent::ProjectAgent, common::AgentPresetConfig, inline_file::InlineFileOwnerKind,
@@ -37,6 +48,163 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/projects/{id}/agents/{project_agent_id}",
             axum::routing::put(update_project_agent).delete(delete_project_agent),
         )
+        .route(
+            "/projects/{id}/agents/{project_agent_id}/agent-runs",
+            axum::routing::post(create_project_agent_run),
+        )
+}
+
+pub async fn create_project_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, project_agent_id)): Path<(String, String)>,
+    Json(request): Json<CreateProjectAgentRunRequest>,
+) -> Result<Json<ProjectAgentRunStartResult>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let project_agent_id = parse_project_agent_id(&project_agent_id)?;
+    let executor_config = request
+        .executor_config
+        .map(serde_json::from_value::<agentdash_platform_spi::AgentConfig>)
+        .transpose()
+        .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
+    let subject_ref = request
+        .subject_ref
+        .map(|subject| {
+            let id = Uuid::parse_str(&subject.id)
+                .map_err(|_| ApiError::BadRequest("subject_ref.id 无效".to_owned()))?;
+            Ok::<_, ApiError>(agentdash_domain::workflow::SubjectRef::new(
+                subject.kind,
+                id,
+            ))
+        })
+        .transpose()?;
+    let backend_selection = request
+        .backend_selection
+        .map(|selection| serde_json::to_value(selection).expect("contract DTO is serializable"));
+    let result = state
+        .services
+        .project_agent_run_start
+        .start(ProjectAgentRunStartCommand {
+            project_id,
+            project_agent_id,
+            input: request.input,
+            client_command_id: request.client_command_id,
+            executor_config,
+            backend_selection,
+            subject_ref,
+            identity: current_user,
+        })
+        .await?;
+    Ok(Json(project_agent_run_start_contract(result)?))
+}
+
+fn project_agent_run_start_contract(
+    result: ApplicationStartResult,
+) -> Result<ProjectAgentRunStartResult, ApiError> {
+    let outcome = result.outcome;
+    let run_ref = LifecycleRunRefDto {
+        run_id: outcome.run_id.to_string(),
+    };
+    let agent_ref = AgentRunRefDto {
+        run_id: outcome.run_id.to_string(),
+        agent_id: outcome.agent_id.to_string(),
+    };
+    let frame_ref = AgentFrameRefDto {
+        agent_id: outcome.agent_id.to_string(),
+        frame_id: outcome.frame_id.to_string(),
+        revision: Some(outcome.frame_revision),
+    };
+    let receipt = AgentRunCommandReceipt {
+        client_command_id: outcome.client_command_id.clone(),
+        status: if outcome.queued { "queued" } else { "accepted" }.to_owned(),
+        duplicate: result.duplicate,
+        message: None,
+    };
+    let source = match outcome.effective_executor.source.as_str() {
+        "project_agent_preset" => ConversationModelConfigSource::ProjectAgentPreset,
+        "frame_execution_profile" => ConversationModelConfigSource::FrameExecutionProfile,
+        "user_override" => ConversationModelConfigSource::UserOverride,
+        "executor_discovery_default" => ConversationModelConfigSource::ExecutorDiscoveryDefault,
+        _ => ConversationModelConfigSource::Unspecified,
+    };
+    let effective_executor_config = ConversationEffectiveExecutorConfigView {
+        executor: outcome.effective_executor.executor.clone(),
+        provider_id: outcome.effective_executor.provider_id.clone(),
+        model_id: outcome.effective_executor.model_id.clone(),
+        agent_id: outcome.effective_executor.agent_id.clone(),
+        thinking_level: outcome.effective_executor.thinking_level.clone(),
+        source,
+    };
+    let thinking_level = outcome
+        .effective_executor
+        .thinking_level
+        .as_deref()
+        .map(contract_thinking_level)
+        .transpose()?;
+    Ok(ProjectAgentRunStartResult {
+        command_receipt: receipt.clone(),
+        accepted_refs: AgentRunAcceptedRefs {
+            run_ref: run_ref.clone(),
+            agent_ref: agent_ref.clone(),
+            frame_ref: Some(frame_ref.clone()),
+            turn_id: None,
+        },
+        initial_message: AgentRunMessageCommandResponse {
+            command_receipt: receipt,
+            outcome: if outcome.queued {
+                AgentRunMessageCommandOutcome::Queued
+            } else {
+                AgentRunMessageCommandOutcome::Launched
+            },
+            mailbox_message: None,
+            accepted_refs: None,
+            fork: None,
+        },
+        effective_executor_config: Some(effective_executor_config.clone()),
+        agent: ProjectAgentSummary {
+            key: outcome.agent_summary.key,
+            display_name: outcome.agent_summary.display_name,
+            description: outcome.agent_summary.description,
+            executor: ProjectAgentExecutor {
+                executor: effective_executor_config.executor.clone(),
+                provider_id: effective_executor_config.provider_id.clone(),
+                model_id: effective_executor_config.model_id.clone(),
+                agent_id: effective_executor_config.agent_id.clone(),
+                thinking_level,
+            },
+            effective_executor_config: Some(effective_executor_config),
+            preset_name: outcome.agent_summary.preset_name,
+            source: outcome.agent_summary.source,
+        },
+        run_ref,
+        agent_ref,
+        frame_ref,
+        subject_ref: Some(SubjectRefDto {
+            kind: outcome.subject_kind,
+            id: outcome.subject_id.to_string(),
+        }),
+    })
+}
+
+fn contract_thinking_level(value: &str) -> Result<ThinkingLevel, ApiError> {
+    match value {
+        "off" => Ok(ThinkingLevel::Off),
+        "minimal" => Ok(ThinkingLevel::Minimal),
+        "low" => Ok(ThinkingLevel::Low),
+        "medium" => Ok(ThinkingLevel::Medium),
+        "high" => Ok(ThinkingLevel::High),
+        "xhigh" => Ok(ThinkingLevel::Xhigh),
+        other => Err(ApiError::Internal(format!(
+            "Product start persisted unknown thinking level `{other}`"
+        ))),
+    }
 }
 
 pub async fn list_project_agents(

@@ -59,9 +59,12 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         let frame_id = match self.frame_repo.get_latest(agent.id).await? {
             Some(frame) if plan.stable_agent_id.is_some() => {
                 if frame.created_by_id.as_deref() != Some(delivery_runtime_ref.to_string().as_str())
+                    || plan
+                        .stable_frame_id
+                        .is_some_and(|stable_frame_id| stable_frame_id != frame.id)
                 {
                     return Err(WorkflowApplicationError::Conflict(format!(
-                        "stable LifecycleAgent {} 已绑定不同 delivery runtime",
+                        "stable LifecycleAgent {} 已绑定不同 frame/runtime identity",
                         agent.id
                     )));
                 }
@@ -260,7 +263,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                 agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
                     run_id: agent.run_id,
                     agent_id: agent.id,
-                    target_frame_id: None,
+                    target_frame_id: plan.stable_frame_id,
                     subject_ref: plan.subject_ref.clone(),
                     runtime_thread_id: Some(delivery_runtime_ref.to_string()),
                     created_by_id: Some(delivery_runtime_ref.to_string()),

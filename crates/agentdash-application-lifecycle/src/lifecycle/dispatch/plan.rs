@@ -26,6 +26,7 @@ pub(crate) struct DispatchPlan {
     pub(crate) gate_policy: Option<GatePolicy>,
     pub(crate) stable_run_id: Option<Uuid>,
     pub(crate) stable_agent_id: Option<Uuid>,
+    pub(crate) stable_frame_id: Option<Uuid>,
     pub(crate) stable_delivery_runtime_ref: Option<Uuid>,
 }
 
@@ -71,6 +72,7 @@ impl From<&AgentLaunchIntent> for DispatchPlan {
             gate_policy: None,
             stable_run_id: None,
             stable_agent_id: None,
+            stable_frame_id: None,
             stable_delivery_runtime_ref: None,
         }
     }
@@ -93,6 +95,7 @@ impl From<&SubjectExecutionIntent> for DispatchPlan {
             gate_policy: None,
             stable_run_id: None,
             stable_agent_id: None,
+            stable_frame_id: None,
             stable_delivery_runtime_ref: None,
         }
     }
@@ -115,6 +118,7 @@ impl From<&InteractionDispatchIntent> for DispatchPlan {
             gate_policy: Some(intent.gate_policy.clone()),
             stable_run_id: None,
             stable_agent_id: None,
+            stable_frame_id: None,
             stable_delivery_runtime_ref: None,
         }
     }

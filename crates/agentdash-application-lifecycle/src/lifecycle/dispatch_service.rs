@@ -179,6 +179,30 @@ impl<'a> LifecycleDispatchService<'a> {
         })
     }
 
+    /// 以 Product 预分配的完整 identity 集合幂等 materialize AgentRun launch graph。
+    ///
+    /// 这些 identity 在任何 Runtime side effect 之前由 Product command saga 固定；
+    /// 重试必须重新观察并验证同一 run/agent/frame/runtime owner evidence。
+    pub async fn launch_agent_with_stable_product_identities(
+        &self,
+        intent: &AgentLaunchIntent,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+        frame_id: uuid::Uuid,
+        delivery_runtime_ref: uuid::Uuid,
+    ) -> Result<AgentLaunchDispatchResult, WorkflowApplicationError> {
+        let mut plan = DispatchPlan::from(intent);
+        plan.stable_run_id = Some(run_id);
+        plan.stable_agent_id = Some(agent_id);
+        plan.stable_frame_id = Some(frame_id);
+        plan.stable_delivery_runtime_ref = Some(delivery_runtime_ref);
+        let facts = self.dispatch_common(plan).await?;
+        Ok(AgentLaunchDispatchResult {
+            runtime_refs: facts.runtime_refs,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
+        })
+    }
+
     pub async fn execute_subject(
         &self,
         intent: &SubjectExecutionIntent,

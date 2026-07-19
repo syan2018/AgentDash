@@ -27,6 +27,9 @@ use agentdash_application::product_runtime_surface::{
     ProductAgentRunAppliedResourceSurfaceCompiler, ProductAgentRunFactsResolver,
 };
 use agentdash_application::product_runtime_surface_update::ProductAgentRunRuntimeSurfaceUpdateService;
+use agentdash_application::project_agent_run_start::{
+    ProjectAgentRunStartDeps, ProjectAgentRunStartService,
+};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::{RoutineExecutor, RoutineRuntimeTurnTerminalObserver};
 use agentdash_application::runtime_tools::RuntimeThreadToolServices;
@@ -187,6 +190,7 @@ pub struct ServiceSet {
     pub companion_continuations: Arc<dyn CompanionContinuationSagaRepository>,
     pub companion_continuation_effects: Arc<dyn CompanionContinuationEffectPort>,
     pub agent_run_product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
+    pub project_agent_run_start: Arc<ProjectAgentRunStartService>,
     pub agent_run_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     pub hook_provider: Arc<AppExecutionHookProvider>,
     pub cron_scheduler: CronSchedulerHandle,
@@ -567,6 +571,21 @@ impl AppState {
                 product_runtime_bindings: product.runtime_bindings.clone(),
             },
         ));
+        let project_agent_run_start =
+            Arc::new(ProjectAgentRunStartService::new(ProjectAgentRunStartDeps {
+                project_agents: repos.project_agent_repo.clone(),
+                lifecycle_runs: repos.lifecycle_run_repo.clone(),
+                workflow_graphs: repos.workflow_graph_repo.clone(),
+                lifecycle_agents: repos.lifecycle_agent_repo.clone(),
+                frames: repos.agent_frame_repo.clone(),
+                subject_associations: repos.lifecycle_subject_association_repo.clone(),
+                lifecycle_gates: repos.lifecycle_gate_repo.clone(),
+                agent_lineage: repos.agent_lineage_repo.clone(),
+                receipts: repos.agent_run_command_receipt_repo.clone(),
+                frame_construction: frame_construction.clone(),
+                product_launch: product_launch.clone(),
+                product_input: product_input_delivery.clone(),
+            }));
         let agent_run_product_protocol = Arc::new(AgentRunProductProtocolPorts::new(
             Arc::new(PostgresAgentRunForkSagaRepository::new(pool.clone())),
             Arc::new(ProductAgentRunForkRuntimeAdapter::with_product_launch(
@@ -816,6 +835,7 @@ impl AppState {
                 companion_continuations,
                 companion_continuation_effects,
                 agent_run_product_input_delivery: product_input_delivery,
+                project_agent_run_start,
                 agent_run_frame_construction: frame_construction,
                 hook_provider,
                 cron_scheduler,

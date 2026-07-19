@@ -25,6 +25,7 @@ pub mod platform_config;
 pub mod product_runtime_surface;
 pub mod product_runtime_surface_update;
 pub mod project;
+pub mod project_agent_run_start;
 pub mod repository_set;
 pub mod routine;
 pub mod runtime;

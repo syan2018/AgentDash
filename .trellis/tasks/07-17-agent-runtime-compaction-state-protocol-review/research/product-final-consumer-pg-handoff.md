@@ -14,7 +14,9 @@ keyed by `(target_run_id, target_agent_id, client_command_id)` with:
 
 `load` and `claim` return `ProductRuntimeCommandClaimError`, not storage strings. A digest mismatch
 maps to `RequestDigestConflict { target, client_command_id }`; infrastructure failures map to
-`Storage { message }`. The adapter must not encode domain outcomes in message prefixes.
+`Storage { message }`. The facade preserves the latter as
+`AgentRunProductCommandError::ClaimPersistence { source }`; claim persistence failures are not
+binding-repository failures. The adapter must not encode domain outcomes in message prefixes.
 
 `load` must reject a different digest. `claim` must insert once and return the already committed
 envelope on a uniqueness race. A retry checks this claim before reading the latest Runtime
@@ -54,14 +56,22 @@ snapshot must expose the same `ProductMailboxSnapshotDigest` and commit evidence
 transaction. Changes are never inferred from `MAX(updated_at)`; deletions and equal timestamps
 therefore cannot regress or collapse a cursor.
 
-The `changes(after, limit)` contract is strictly ordered and reconnect-safe: sequences are
-contiguous from `after + 1`, revisions never regress, and the returned cursor matches the last
-change. If W8 applies bounded retention, it returns `ProductMailboxChangeGap` with
+The `changes(after, limit)` contract is strictly ordered and reconnect-safe. Every page carries the
+current `head: ProductMailboxCursor` and `head_commit: ProductMailboxCommitEvidence` from the same
+transactional reconcile/read. Sequences are contiguous from `after + 1`, revisions never regress,
+the returned cursor matches the last change, and a final change that reaches the head has the exact
+head revision and commit evidence. A repository must not return an empty non-gap page while the
+head is newer than `after`, or accept a future cursor.
+
+If W8 applies bounded retention, it returns `ProductMailboxChangeGap` with
 requested/earliest/latest sequence, current snapshot revision, current snapshot digest, and typed
-detection time; without retention, absence of a gap is mechanically guaranteed. External
-Companion/Workflow mailbox mutations are reconciled by the same transactional snapshot boundary
-and therefore advance exactly one Product change for the complete state actually observed, never
-for a facade-assembled hybrid.
+detection time. A valid gap proves `after + 1 < earliest <= latest`, `latest == page.next ==
+page.head.latest_change_sequence`, and its snapshot revision/digest match `page.head` and
+`page.head_commit`. The facade rejects revision rollback as typed `RevisionRegression` and rejects
+pseudo, incomplete, or head-inconsistent gap evidence as `InvalidContinuity`. Without retention,
+absence of a gap is mechanically guaranteed. External Companion/Workflow mailbox mutations are
+reconciled by the same transactional snapshot boundary and therefore advance exactly one Product
+change for the complete state actually observed, never for a facade-assembled hybrid.
 
 The canonical digest is defined by `canonical_product_mailbox_digest`: schema tag plus the ordered
 complete mailbox messages and mailbox state, serialized as deterministic JSON and hashed with
@@ -71,8 +81,9 @@ must map its transaction-local rows into the same domain values and call that fu
 depending on query order or inventing a SQL/debug-string digest.
 
 All read-port failures are `ProductMailboxReadError` variants (`TargetMismatch`,
-`MessageNotFound`, `InvalidContinuity`, or `Storage`). Infrastructure adapters must preserve these
-categories directly instead of relying on storage-message prefix inspection.
+`MessageNotFound`, `InvalidContinuity`, `RevisionRegression`, or `Storage`). Infrastructure
+adapters must preserve these categories directly instead of relying on storage-message prefix
+inspection.
 
 ## Mailbox command transaction
 
@@ -89,7 +100,13 @@ transaction it must:
 7. commit mutation, projection change, and terminal receipt together.
 
 A non-terminal receipt must never trigger blind side-effect replay. Transaction rollback is the
-crash recovery mechanism before commit; after commit the terminal receipt is returned verbatim.
+crash recovery mechanism before commit; after commit the durable
+`ProductMailboxCommandReceipt` is returned verbatim inside
+`ProductMailboxCommandOutcome { receipt, replayed }`. `replayed` describes only the current
+repository call and is never persisted into or used to rewrite the receipt. The durable command
+stores only `ProductMailboxCommand`; its typed origin kind is derived once through
+`ProductMailboxCommand::kind()` inside the transaction, so the adapter cannot persist a
+contradictory command/kind pair.
 Delete and Move must validate message and anchor target ownership before issuing any update, so a
 cross-target ID can never mutate state and be rejected afterward. Command-port failures are typed
 as `RequestDigestConflict`, `TargetMismatch`, `MessageNotFound`, `NonTerminalReceipt`, or `Storage`;
@@ -99,8 +116,10 @@ W8's real PostgreSQL behavior fixture must execute Promote/Delete/Move/Resume an
 canonical mutation, head, ordered change, and terminal receipt commit as one unit. It must also
 cover injected failure before commit with complete rollback, restart replay, same-client digest
 conflict with zero mutation, cross-target message/anchor rejection with zero mutation, external
-canonical mutation reconciliation, strict sequence paging, retention-gap evidence, and concurrent
-claim/reconcile behavior.
+canonical mutation reconciliation, normal and partial sequence paging, revision-regression
+rejection, pseudo/incomplete/head-inconsistent retention-gap evidence, and concurrent
+claim/reconcile behavior. Exact replay must assert byte-equivalent durable receipt equality while
+the outer outcome changes from `replayed=false` to `replayed=true`.
 
 ## Composition
 

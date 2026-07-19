@@ -98,6 +98,11 @@ pub enum AgentRunProductCommandError {
     InvalidClientCommandId,
     #[error("client command id is already bound to a different Product command")]
     ClientCommandConflict,
+    #[error("Product Runtime command claim persistence failed")]
+    ClaimPersistence {
+        #[source]
+        source: ProductRuntimeCommandClaimError,
+    },
     #[error("Managed Runtime command {kind:?} is unavailable: {reason:?}")]
     CommandUnavailable {
         kind: ManagedRuntimeCommandKind,
@@ -209,7 +214,7 @@ impl AgentRunProductCommandFacade {
         if let ManagedRuntimeCommandAvailability::Unavailable { reason, .. } = availability {
             return Err(AgentRunProductCommandError::CommandUnavailable {
                 kind: runtime_kind,
-                reason: Some(reason.clone()),
+                reason: Some(*reason),
             });
         }
         let command = match request.command {
@@ -280,8 +285,8 @@ fn product_command_claim_error(
         ProductRuntimeCommandClaimError::RequestDigestConflict { .. } => {
             AgentRunProductCommandError::ClientCommandConflict
         }
-        ProductRuntimeCommandClaimError::Storage { message } => {
-            AgentRunProductCommandError::Binding(message)
+        source @ ProductRuntimeCommandClaimError::Storage { .. } => {
+            AgentRunProductCommandError::ClaimPersistence { source }
         }
     }
 }
@@ -384,6 +389,32 @@ mod tests {
             }
             claims.insert(key, (request.request_digest, request.envelope.clone()));
             Ok(request.envelope)
+        }
+    }
+
+    struct FailingRuntimeCommandClaims;
+
+    #[async_trait]
+    impl ProductRuntimeCommandClaimRepository for FailingRuntimeCommandClaims {
+        async fn load(
+            &self,
+            _target: &AgentRunTarget,
+            _client_command_id: &str,
+            _request_digest: &str,
+        ) -> Result<Option<ManagedRuntimeCommandEnvelope>, ProductRuntimeCommandClaimError>
+        {
+            Err(ProductRuntimeCommandClaimError::Storage {
+                message: "claim store unavailable".to_owned(),
+            })
+        }
+
+        async fn claim(
+            &self,
+            _request: ProductRuntimeCommandClaimRequest,
+        ) -> Result<ManagedRuntimeCommandEnvelope, ProductRuntimeCommandClaimError> {
+            Err(ProductRuntimeCommandClaimError::Storage {
+                message: "claim store unavailable".to_owned(),
+            })
         }
     }
 
@@ -677,6 +708,36 @@ mod tests {
             AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Conflict {
                 actual: RuntimeProjectionRevision(7)
             })
+        ));
+    }
+
+    #[tokio::test]
+    async fn preserves_claim_persistence_error_category_and_source() {
+        let (target, binding, snapshot) = fixture(false);
+        let runtime = Arc::new(IdempotentRuntime {
+            snapshot,
+            accepted: Mutex::new(HashMap::new()),
+            observed: Mutex::new(Vec::new()),
+        });
+        let facade = AgentRunProductCommandFacade::new(
+            Arc::new(BindingRepository { binding }),
+            runtime,
+            Arc::new(FailingRuntimeCommandClaims),
+        );
+
+        let error = facade
+            .execute(request(
+                target,
+                "claim-storage-failure",
+                AgentRunProductCommand::RequestCompaction,
+            ))
+            .await
+            .expect_err("claim persistence failure");
+        assert!(matches!(
+            error,
+            AgentRunProductCommandError::ClaimPersistence {
+                source: ProductRuntimeCommandClaimError::Storage { ref message },
+            } if message == "claim store unavailable"
         ));
     }
 

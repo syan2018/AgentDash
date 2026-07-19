@@ -77,6 +77,8 @@ pub struct ProductMailboxChangePage {
     pub target: AgentRunTarget,
     pub changes: Vec<ProductMailboxChange>,
     pub next: u64,
+    pub head: ProductMailboxCursor,
+    pub head_commit: ProductMailboxCommitEvidence,
     pub gap: Option<ProductMailboxChangeGap>,
 }
 
@@ -113,6 +115,14 @@ pub enum ProductMailboxReadError {
     },
     #[error("Product mailbox change continuity is invalid: {message}")]
     InvalidContinuity { message: String },
+    #[error(
+        "Product mailbox change revision regressed at sequence {sequence}: previous {previous_revision}, observed {observed_revision}"
+    )]
+    RevisionRegression {
+        sequence: u64,
+        previous_revision: u64,
+        observed_revision: u64,
+    },
     #[error("Product mailbox read storage failed: {message}")]
     Storage { message: String },
 }
@@ -165,7 +175,7 @@ pub enum ProductMailboxCommandKind {
 }
 
 impl ProductMailboxCommand {
-    fn receipt_kind(&self) -> ProductMailboxCommandKind {
+    pub fn kind(&self) -> ProductMailboxCommandKind {
         match self {
             Self::Promote { .. } => ProductMailboxCommandKind::Promote,
             Self::Delete { .. } => ProductMailboxCommandKind::Delete,
@@ -186,10 +196,15 @@ pub struct ProductMailboxCommandRequest {
 pub struct ProductMailboxCommandReceipt {
     pub target: AgentRunTarget,
     pub client_command_id: String,
-    pub duplicate: bool,
     pub revision: u64,
     pub latest_change_sequence: u64,
     pub commit: ProductMailboxCommitEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductMailboxCommandOutcome {
+    pub receipt: ProductMailboxCommandReceipt,
+    pub replayed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -197,7 +212,6 @@ pub struct ProductMailboxDurableCommand {
     pub target: AgentRunTarget,
     pub client_command_id: String,
     pub request_digest: String,
-    pub command_kind: ProductMailboxCommandKind,
     pub command: ProductMailboxCommand,
 }
 
@@ -234,7 +248,7 @@ pub trait ProductMailboxCommandRepository: Send + Sync {
     async fn execute(
         &self,
         command: ProductMailboxDurableCommand,
-    ) -> Result<ProductMailboxCommandReceipt, ProductMailboxCommandRepositoryError>;
+    ) -> Result<ProductMailboxCommandOutcome, ProductMailboxCommandRepositoryError>;
 }
 
 #[derive(Debug, Error)]
@@ -311,7 +325,7 @@ impl ProductMailboxFacade {
     pub async fn execute(
         &self,
         request: ProductMailboxCommandRequest,
-    ) -> Result<ProductMailboxCommandReceipt, ProductMailboxError> {
+    ) -> Result<ProductMailboxCommandOutcome, ProductMailboxError> {
         let client_command_id = request.client_command_id.trim();
         if client_command_id.is_empty() || client_command_id.len() > 256 {
             return Err(ProductMailboxError::Invalid(
@@ -330,24 +344,23 @@ impl ProductMailboxFacade {
                 .expect("Product mailbox command is serializable")
             )
         );
-        let receipt = self
+        let outcome = self
             .commands
             .execute(ProductMailboxDurableCommand {
                 target: request.target.clone(),
                 client_command_id: client_command_id.to_owned(),
                 request_digest,
-                command_kind: request.command.receipt_kind(),
                 command: request.command,
             })
             .await?;
-        if receipt.target != request.target {
+        if outcome.receipt.target != request.target {
             return Err(ProductMailboxCommandRepositoryError::TargetMismatch {
                 expected: request.target,
-                observed: receipt.target,
+                observed: outcome.receipt.target,
             }
             .into());
         }
-        Ok(receipt)
+        Ok(outcome)
     }
 
     async fn require_binding(&self, target: &AgentRunTarget) -> Result<(), ProductMailboxError> {
@@ -421,11 +434,31 @@ fn validate_change_page(
         }
         .into());
     }
+    if after > page.head.latest_change_sequence {
+        return Err(ProductMailboxReadError::InvalidContinuity {
+            message: format!(
+                "requested cursor {after} is ahead of Product mailbox head {}",
+                page.head.latest_change_sequence
+            ),
+        }
+        .into());
+    }
     if let Some(gap) = &page.gap {
+        let first_requested =
+            after
+                .checked_add(1)
+                .ok_or_else(|| ProductMailboxReadError::InvalidContinuity {
+                    message: "requested cursor overflow".to_owned(),
+                })?;
         if gap.requested_after != after
+            || gap.earliest_available <= first_requested
             || gap.earliest_available > gap.latest_available
             || !page.changes.is_empty()
             || page.next != gap.latest_available
+            || gap.latest_available != page.head.latest_change_sequence
+            || gap.snapshot_revision != page.head.revision
+            || gap.snapshot_digest != page.head_commit.snapshot_digest
+            || gap.detected_at_ms < page.head_commit.committed_at_ms
         {
             return Err(ProductMailboxReadError::InvalidContinuity {
                 message: "gap page evidence is inconsistent".to_owned(),
@@ -434,12 +467,19 @@ fn validate_change_page(
         }
         return Ok(());
     }
+    if page.changes.is_empty() && after < page.head.latest_change_sequence {
+        return Err(ProductMailboxReadError::InvalidContinuity {
+            message: "change page omitted retained changes or required gap evidence".to_owned(),
+        }
+        .into());
+    }
     let mut expected =
         after
             .checked_add(1)
             .ok_or_else(|| ProductMailboxReadError::InvalidContinuity {
                 message: "requested cursor overflow".to_owned(),
             })?;
+    let mut previous_revision = None;
     for change in &page.changes {
         if change.target != *target || change.sequence != expected {
             return Err(ProductMailboxReadError::InvalidContinuity {
@@ -447,6 +487,26 @@ fn validate_change_page(
             }
             .into());
         }
+        if let Some(previous_revision) = previous_revision
+            && change.revision < previous_revision
+        {
+            return Err(ProductMailboxReadError::RevisionRegression {
+                sequence: change.sequence,
+                previous_revision,
+                observed_revision: change.revision,
+            }
+            .into());
+        }
+        if change.revision > page.head.revision {
+            return Err(ProductMailboxReadError::InvalidContinuity {
+                message: format!(
+                    "change revision {} exceeds Product mailbox head revision {}",
+                    change.revision, page.head.revision
+                ),
+            }
+            .into());
+        }
+        previous_revision = Some(change.revision);
         expected =
             expected
                 .checked_add(1)
@@ -462,6 +522,21 @@ fn validate_change_page(
     if page.next != expected_next {
         return Err(ProductMailboxReadError::InvalidContinuity {
             message: "page next cursor does not match the final change".to_owned(),
+        }
+        .into());
+    }
+    if page.next > page.head.latest_change_sequence {
+        return Err(ProductMailboxReadError::InvalidContinuity {
+            message: "page cursor exceeds Product mailbox head".to_owned(),
+        }
+        .into());
+    }
+    if page.next == page.head.latest_change_sequence
+        && let Some(change) = page.changes.last()
+        && (change.revision != page.head.revision || change.commit != page.head_commit)
+    {
+        return Err(ProductMailboxReadError::InvalidContinuity {
+            message: "final change does not match Product mailbox head evidence".to_owned(),
         }
         .into());
     }
@@ -695,6 +770,8 @@ mod tests {
                     target: target.clone(),
                     changes: Vec::new(),
                     next: state.cursor.latest_change_sequence,
+                    head: state.cursor,
+                    head_commit: head.clone(),
                     gap: Some(ProductMailboxChangeGap {
                         requested_after: after,
                         earliest_available: earliest,
@@ -719,6 +796,8 @@ mod tests {
                     .map(|change| change.sequence)
                     .unwrap_or(after),
                 changes,
+                head: state.cursor,
+                head_commit: state.head.clone().expect("reconciled head"),
                 gap: None,
             })
         }
@@ -756,7 +835,7 @@ mod tests {
         async fn execute(
             &self,
             command: ProductMailboxDurableCommand,
-        ) -> Result<ProductMailboxCommandReceipt, ProductMailboxCommandRepositoryError> {
+        ) -> Result<ProductMailboxCommandOutcome, ProductMailboxCommandRepositoryError> {
             let mut locked = self.state.lock().await;
             let key = format!(
                 "{}:{}:{}",
@@ -771,9 +850,9 @@ mod tests {
                         },
                     );
                 }
-                return Ok(ProductMailboxCommandReceipt {
-                    duplicate: true,
-                    ..stored.receipt.clone()
+                return Ok(ProductMailboxCommandOutcome {
+                    receipt: stored.receipt.clone(),
+                    replayed: true,
                 });
             }
 
@@ -786,7 +865,7 @@ mod tests {
                 &command.target,
                 ProductMailboxChangeOrigin::Command {
                     client_command_id: command.client_command_id.clone(),
-                    command_kind: command.command_kind,
+                    command_kind: command.command.kind(),
                 },
             )
             .map_err(read_to_command_error)?;
@@ -794,7 +873,6 @@ mod tests {
             let receipt = ProductMailboxCommandReceipt {
                 target: command.target.clone(),
                 client_command_id: command.client_command_id.clone(),
-                duplicate: false,
                 revision: working.cursor.revision,
                 latest_change_sequence: working.cursor.latest_change_sequence,
                 commit: head,
@@ -812,7 +890,10 @@ mod tests {
                 });
             }
             *locked = working;
-            Ok(receipt)
+            Ok(ProductMailboxCommandOutcome {
+                receipt,
+                replayed: false,
+            })
         }
     }
 
@@ -1037,6 +1118,15 @@ mod tests {
             | ProductMailboxReadError::Storage { message } => {
                 ProductMailboxCommandRepositoryError::Storage { message }
             }
+            ProductMailboxReadError::RevisionRegression {
+                sequence,
+                previous_revision,
+                observed_revision,
+            } => ProductMailboxCommandRepositoryError::Storage {
+                message: format!(
+                    "change revision regressed at sequence {sequence}: previous {previous_revision}, observed {observed_revision}"
+                ),
+            },
         }
     }
 
@@ -1138,6 +1228,33 @@ mod tests {
         ProductMailboxCommittedAtMs(u64::try_from(ms).expect("non-negative fixture clock"))
     }
 
+    fn commit_evidence(hex: char, ms: i64) -> ProductMailboxCommitEvidence {
+        ProductMailboxCommitEvidence {
+            snapshot_digest: ProductMailboxSnapshotDigest::new(format!(
+                "sha256:{}",
+                hex.to_string().repeat(64)
+            ))
+            .expect("fixture digest"),
+            committed_at_ms: committed_at(ms),
+        }
+    }
+
+    fn change(
+        target: &AgentRunTarget,
+        sequence: u64,
+        revision: u64,
+        commit: ProductMailboxCommitEvidence,
+    ) -> ProductMailboxChange {
+        ProductMailboxChange {
+            change_id: Uuid::from_u128(u128::from(sequence)),
+            target: target.clone(),
+            sequence,
+            revision,
+            origin: ProductMailboxChangeOrigin::CanonicalReconcile,
+            commit,
+        }
+    }
+
     fn product_mailbox_order(
         left: &AgentRunMailboxMessage,
         right: &AgentRunMailboxMessage,
@@ -1168,7 +1285,7 @@ mod tests {
         let promoted = facade.snapshot(target.clone()).await.expect("promoted");
         assert_eq!(promoted.messages[0].id, Uuid::from_u128(2));
         assert_eq!(
-            promote.commit.snapshot_digest,
+            promote.receipt.commit.snapshot_digest,
             promoted.commit.snapshot_digest
         );
 
@@ -1196,7 +1313,7 @@ mod tests {
             Uuid::from_u128(3)
         );
         assert_eq!(
-            moved.commit.snapshot_digest,
+            moved.receipt.commit.snapshot_digest,
             after_move.commit.snapshot_digest
         );
 
@@ -1219,7 +1336,7 @@ mod tests {
         assert_eq!(deleted_message.status, MailboxMessageStatus::Deleted);
         assert!(deleted_message.payload_json.is_none());
         assert_eq!(
-            deleted.commit.snapshot_digest,
+            deleted.receipt.commit.snapshot_digest,
             after_delete.commit.snapshot_digest
         );
 
@@ -1230,7 +1347,7 @@ mod tests {
         let after_resume = facade.snapshot(target.clone()).await.expect("after resume");
         assert!(!after_resume.state.as_ref().expect("state").paused);
         assert_eq!(
-            resumed.commit.snapshot_digest,
+            resumed.receipt.commit.snapshot_digest,
             after_resume.commit.snapshot_digest
         );
 
@@ -1284,9 +1401,9 @@ mod tests {
 
         let accepted = facade.execute(command.clone()).await.expect("retry");
         let replay = facade.execute(command).await.expect("replay");
-        assert!(!accepted.duplicate);
-        assert!(replay.duplicate);
-        assert_eq!(accepted.commit, replay.commit);
+        assert!(!accepted.replayed);
+        assert!(replay.replayed);
+        assert_eq!(accepted.receipt, replay.receipt);
     }
 
     #[tokio::test]
@@ -1423,6 +1540,144 @@ mod tests {
         assert_eq!(page.changes.len(), 2);
         assert_eq!(page.changes[1].sequence, page.changes[0].sequence + 1);
         assert_eq!(page.next, page.changes[1].sequence);
+    }
+
+    #[test]
+    fn validates_normal_page_revision_and_head_evidence() {
+        let target = AgentRunTarget {
+            run_id: Uuid::from_u128(400),
+            agent_id: Uuid::from_u128(401),
+        };
+        let first_commit = commit_evidence('a', 10);
+        let head_commit = commit_evidence('b', 11);
+        let page = ProductMailboxChangePage {
+            target: target.clone(),
+            changes: vec![
+                change(&target, 5, 7, first_commit),
+                change(&target, 6, 8, head_commit.clone()),
+            ],
+            next: 6,
+            head: ProductMailboxCursor {
+                revision: 8,
+                latest_change_sequence: 6,
+            },
+            head_commit,
+            gap: None,
+        };
+
+        validate_change_page(&target, 4, &page).expect("valid page");
+    }
+
+    #[test]
+    fn rejects_revision_regression_with_typed_error() {
+        let target = AgentRunTarget {
+            run_id: Uuid::from_u128(410),
+            agent_id: Uuid::from_u128(411),
+        };
+        let head_commit = commit_evidence('c', 12);
+        let page = ProductMailboxChangePage {
+            target: target.clone(),
+            changes: vec![
+                change(&target, 5, 8, commit_evidence('b', 11)),
+                change(&target, 6, 7, head_commit.clone()),
+            ],
+            next: 6,
+            head: ProductMailboxCursor {
+                revision: 8,
+                latest_change_sequence: 6,
+            },
+            head_commit,
+            gap: None,
+        };
+
+        assert!(matches!(
+            validate_change_page(&target, 4, &page),
+            Err(ProductMailboxError::Read(
+                ProductMailboxReadError::RevisionRegression {
+                    sequence: 6,
+                    previous_revision: 8,
+                    observed_revision: 7,
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn rejects_pseudo_gap_and_gap_that_disagrees_with_head() {
+        let target = AgentRunTarget {
+            run_id: Uuid::from_u128(420),
+            agent_id: Uuid::from_u128(421),
+        };
+        let head_commit = commit_evidence('d', 20);
+        let head = ProductMailboxCursor {
+            revision: 20,
+            latest_change_sequence: 10,
+        };
+        let pseudo_gap = ProductMailboxChangePage {
+            target: target.clone(),
+            changes: Vec::new(),
+            next: 10,
+            head,
+            head_commit: head_commit.clone(),
+            gap: Some(ProductMailboxChangeGap {
+                requested_after: 8,
+                earliest_available: 9,
+                latest_available: 10,
+                snapshot_revision: 20,
+                snapshot_digest: head_commit.snapshot_digest.clone(),
+                detected_at_ms: committed_at(20),
+            }),
+        };
+        assert!(matches!(
+            validate_change_page(&target, 8, &pseudo_gap),
+            Err(ProductMailboxError::Read(
+                ProductMailboxReadError::InvalidContinuity { .. }
+            ))
+        ));
+
+        let mismatched_head = ProductMailboxChangePage {
+            gap: Some(ProductMailboxChangeGap {
+                requested_after: 7,
+                earliest_available: 9,
+                latest_available: 10,
+                snapshot_revision: 19,
+                snapshot_digest: head_commit.snapshot_digest.clone(),
+                detected_at_ms: committed_at(20),
+            }),
+            ..pseudo_gap
+        };
+        assert!(matches!(
+            validate_change_page(&target, 7, &mismatched_head),
+            Err(ProductMailboxError::Read(
+                ProductMailboxReadError::InvalidContinuity { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn rejects_page_that_omits_required_gap_evidence() {
+        let target = AgentRunTarget {
+            run_id: Uuid::from_u128(430),
+            agent_id: Uuid::from_u128(431),
+        };
+        let page = ProductMailboxChangePage {
+            target: target.clone(),
+            changes: Vec::new(),
+            next: 5,
+            head: ProductMailboxCursor {
+                revision: 10,
+                latest_change_sequence: 10,
+            },
+            head_commit: commit_evidence('e', 30),
+            gap: None,
+        };
+
+        assert!(matches!(
+            validate_change_page(&target, 5, &page),
+            Err(ProductMailboxError::Read(
+                ProductMailboxReadError::InvalidContinuity { .. }
+            ))
+        ));
     }
 
     #[test]

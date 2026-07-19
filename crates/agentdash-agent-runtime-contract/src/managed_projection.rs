@@ -6,6 +6,8 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::{
+    ManagedRuntimeInteractionRequest, ManagedRuntimeInteractionResolution,
+    ManagedRuntimeInteractionStatus, ManagedRuntimeItemPresentation, ManagedRuntimeItemTransition,
     RuntimeChangeSequence, RuntimeContextContributionId, RuntimeContextPackageId,
     RuntimeContextSourceRef, RuntimeContextSourceRevision, RuntimeInteractionId, RuntimeItemId,
     RuntimeOperationId, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeSourceRef,
@@ -65,6 +67,7 @@ pub enum ManagedRuntimeEntityStatus {
     Lost,
 }
 
+/// Application command input blocks are intentionally narrower than presentation blocks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ManagedRuntimeContentBlock {
@@ -88,35 +91,6 @@ pub enum ManagedRuntimeContentBlock {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ManagedRuntimeItemContent {
-    UserInput {
-        content: Vec<ManagedRuntimeContentBlock>,
-    },
-    AgentOutput {
-        content: Vec<ManagedRuntimeContentBlock>,
-    },
-    ToolCall {
-        name: String,
-        arguments: Value,
-    },
-    ToolResult {
-        name: String,
-        result: Value,
-    },
-    ContextCompaction,
-    Error {
-        code: String,
-        message: String,
-    },
-    Extension {
-        namespace: String,
-        schema: String,
-        value: Value,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ManagedRuntimeTurn {
     pub id: RuntimeTurnId,
@@ -130,24 +104,7 @@ pub struct ManagedRuntimeItem {
     pub id: RuntimeItemId,
     pub turn_id: RuntimeTurnId,
     pub status: ManagedRuntimeEntityStatus,
-    pub content: ManagedRuntimeItemContent,
-    pub content_digest: RuntimePayloadDigest,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum ManagedRuntimeInteractionKind {
-    Approval,
-    UserInput,
-    McpElicitation,
-    DynamicTool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum ManagedRuntimeInteractionStatus {
-    Pending,
-    Resolved,
+    pub presentation: ManagedRuntimeItemPresentation,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -156,9 +113,31 @@ pub struct ManagedRuntimeInteraction {
     pub id: RuntimeInteractionId,
     pub turn_id: RuntimeTurnId,
     pub item_id: Option<RuntimeItemId>,
-    pub kind: ManagedRuntimeInteractionKind,
-    pub prompt: String,
+    pub request: ManagedRuntimeInteractionRequest,
     pub status: ManagedRuntimeInteractionStatus,
+    pub resolution: Option<ManagedRuntimeInteractionResolution>,
+}
+
+impl ManagedRuntimeInteraction {
+    pub fn validate(&self) -> bool {
+        matches!(
+            (&self.status, &self.resolution),
+            (ManagedRuntimeInteractionStatus::Pending, None)
+                | (ManagedRuntimeInteractionStatus::Resolved, Some(_))
+                | (
+                    ManagedRuntimeInteractionStatus::Cancelled,
+                    Some(ManagedRuntimeInteractionResolution::Cancelled { .. })
+                )
+                | (
+                    ManagedRuntimeInteractionStatus::Expired,
+                    Some(ManagedRuntimeInteractionResolution::Expired)
+                )
+                | (
+                    ManagedRuntimeInteractionStatus::Lost,
+                    Some(ManagedRuntimeInteractionResolution::Lost { .. })
+                )
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -428,6 +407,10 @@ pub enum ManagedRuntimeSourceProjectionDelta {
     ItemsChanged {
         items: Vec<ManagedRuntimeItem>,
     },
+    ItemTransitioned {
+        item_id: RuntimeItemId,
+        transition: ManagedRuntimeItemTransition,
+    },
     InteractionsChanged {
         interactions: Vec<ManagedRuntimeInteraction>,
     },
@@ -575,8 +558,16 @@ mod tests {
                     id: item_id,
                     turn_id,
                     status: ManagedRuntimeEntityStatus::Running,
-                    content: ManagedRuntimeItemContent::ContextCompaction,
-                    content_digest: id("sha256:item", RuntimePayloadDigest::new),
+                    presentation: ManagedRuntimeItemPresentation::new(
+                        crate::ManagedRuntimeItemBody::ContextCompaction {
+                            summary: None,
+                            source_digest: None,
+                        },
+                        Some(40),
+                        Some(42),
+                        None,
+                    )
+                    .expect("valid compaction presentation"),
                 }],
                 interactions: Vec::new(),
                 thread_name: None,

@@ -8,6 +8,7 @@
 pub mod command;
 pub mod context;
 pub mod ids;
+pub mod presentation;
 pub mod profile;
 pub mod service;
 pub mod snapshot;
@@ -17,6 +18,7 @@ pub mod wire_u64;
 pub use command::*;
 pub use context::*;
 pub use ids::*;
+pub use presentation::*;
 pub use profile::*;
 pub use service::*;
 pub use snapshot::*;

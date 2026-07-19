@@ -411,6 +411,7 @@
       ]
     },
     "ManagedRuntimeContentBlock": {
+      "description": "Application command input blocks are intentionally narrower than presentation blocks.",
       "oneOf": [
         {
           "type": "object",
@@ -1263,22 +1264,67 @@
         "status": {
           "$ref": "#/$defs/ManagedRuntimeEntityStatus"
         },
-        "content": {
-          "$ref": "#/$defs/ManagedRuntimeItemContent"
-        },
-        "content_digest": {
-          "type": "string"
+        "presentation": {
+          "$ref": "#/$defs/ManagedRuntimeItemPresentation"
         }
       },
       "required": [
         "id",
         "turn_id",
         "status",
-        "content",
-        "content_digest"
+        "presentation"
       ]
     },
-    "ManagedRuntimeItemContent": {
+    "ManagedRuntimeItemPresentation": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ManagedRuntimeItemBody"
+        },
+        "started_at_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updated_at_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ManagedRuntimeItemTerminalEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "body_digest": {
+          "type": "string"
+        },
+        "presentation_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "body_digest",
+        "presentation_digest"
+      ]
+    },
+    "ManagedRuntimeItemBody": {
       "oneOf": [
         {
           "type": "object",
@@ -1286,16 +1332,39 @@
             "content": {
               "type": "array",
               "items": {
-                "$ref": "#/$defs/ManagedRuntimeContentBlock"
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
               }
             },
             "kind": {
               "type": "string",
-              "const": "user_input"
+              "const": "user_message"
             }
           },
           "required": [
             "kind",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hook_point": {
+              "type": "string"
+            },
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "hook_prompt"
+            }
+          },
+          "required": [
+            "kind",
+            "hook_point",
             "content"
           ]
         },
@@ -1305,12 +1374,18 @@
             "content": {
               "type": "array",
               "items": {
-                "$ref": "#/$defs/ManagedRuntimeContentBlock"
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
               }
+            },
+            "phase": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "kind": {
               "type": "string",
-              "const": "agent_output"
+              "const": "agent_message"
             }
           },
           "required": [
@@ -1321,42 +1396,474 @@
         {
           "type": "object",
           "properties": {
-            "name": {
-              "type": "string"
+            "summary": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
             },
-            "arguments": true,
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
             "kind": {
               "type": "string",
-              "const": "tool_call"
+              "const": "reasoning"
             }
           },
           "required": [
             "kind",
-            "name",
-            "arguments"
+            "summary",
+            "content"
           ]
         },
         {
           "type": "object",
           "properties": {
-            "name": {
-              "type": "string"
+            "explanation": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
-            "result": true,
+            "steps": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePlanStep"
+              }
+            },
             "kind": {
               "type": "string",
-              "const": "tool_result"
+              "const": "plan"
             }
           },
           "required": [
             "kind",
-            "name",
+            "steps"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "output": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimeCommandOutput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "command_execution"
+            }
+          },
+          "required": [
+            "kind",
+            "command",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimeFilePatch"
+              }
+            },
+            "output": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_change"
+            }
+          },
+          "required": [
+            "kind",
+            "changes",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "line_start": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "line_end": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_read"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "$ref": "#/$defs/ManagedRuntimeFileSearchMode"
+            },
+            "query": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "matches": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimeFileSearchMatch"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_search"
+            }
+          },
+          "required": [
+            "kind",
+            "mode",
+            "query",
+            "matches"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "server": {
+              "type": "string"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "arguments": true,
+            "result": true,
+            "progress": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "mcp_tool_call"
+            }
+          },
+          "required": [
+            "kind",
+            "server",
+            "tool",
+            "arguments",
+            "progress"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tool": {
+              "type": "string"
+            },
+            "arguments": true,
+            "result": true,
+            "progress": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "dynamic_tool_call"
+            }
+          },
+          "required": [
+            "kind",
+            "tool",
+            "arguments",
+            "progress"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "target": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "prompt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": true,
+            "kind": {
+              "type": "string",
+              "const": "collaboration_tool_call"
+            }
+          },
+          "required": [
+            "kind",
+            "action"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string"
+            },
+            "task": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "result": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "subagent_activity"
+            }
+          },
+          "required": [
+            "kind",
+            "agent_id",
+            "task",
+            "status",
             "result"
           ]
         },
         {
           "type": "object",
           "properties": {
+            "action": {
+              "type": "string"
+            },
+            "query": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "results": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "web_search"
+            }
+          },
+          "required": [
+            "kind",
+            "action",
+            "results"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "image_view"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string"
+            },
+            "revised_prompt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "outputs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "image_generation"
+            }
+          },
+          "required": [
+            "kind",
+            "prompt",
+            "outputs"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "duration_ms": {
+              "$ref": "#/$defs/RuntimeU64"
+            },
+            "kind": {
+              "type": "string",
+              "const": "sleep"
+            }
+          },
+          "required": [
+            "kind",
+            "duration_ms"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "findings": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimeReviewFinding"
+              }
+            },
+            "summary": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "review"
+            }
+          },
+          "required": [
+            "kind",
+            "findings"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "terminal_id": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string"
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "terminal_control"
+            }
+          },
+          "required": [
+            "kind",
+            "terminal_id",
+            "action"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "source_digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "kind": {
               "type": "string",
               "const": "context_compaction"
@@ -1369,11 +1876,46 @@
         {
           "type": "object",
           "properties": {
+            "name": {
+              "type": "string"
+            },
+            "arguments": true,
+            "result": true,
+            "progress": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "generic_tool_activity"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "arguments",
+            "progress"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "code": {
               "type": "string"
             },
             "message": {
               "type": "string"
+            },
+            "details": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
             },
             "kind": {
               "type": "string",
@@ -1385,29 +1927,451 @@
             "code",
             "message"
           ]
-        },
+        }
+      ]
+    },
+    "ManagedRuntimePresentationContentBlock": {
+      "oneOf": [
         {
           "type": "object",
           "properties": {
-            "namespace": {
+            "text": {
               "type": "string"
             },
-            "schema": {
-              "type": "string"
-            },
-            "value": true,
             "kind": {
               "type": "string",
-              "const": "extension"
+              "const": "text"
             }
           },
           "required": [
             "kind",
-            "namespace",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "media_type": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "digest": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "image"
+            }
+          },
+          "required": [
+            "kind",
+            "media_type",
+            "source",
+            "digest"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "media_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "local_resource"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "media_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "resource_link"
+            }
+          },
+          "required": [
+            "kind",
+            "uri"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "skill_reference"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "reference": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "mention"
+            }
+          },
+          "required": [
+            "kind",
+            "label",
+            "reference"
+          ]
+        },
+        {
+          "description": "AgentDash-owned structured presentation only. `schema_version` makes evolution explicit.",
+          "type": "object",
+          "properties": {
+            "schema": {
+              "type": "string"
+            },
+            "schema_version": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "value": true,
+            "kind": {
+              "type": "string",
+              "const": "structured"
+            }
+          },
+          "required": [
+            "kind",
             "schema",
+            "schema_version",
             "value"
           ]
         }
+      ]
+    },
+    "ManagedRuntimePlanStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ManagedRuntimePlanStepStatus"
+        }
+      },
+      "required": [
+        "text",
+        "status"
+      ]
+    },
+    "ManagedRuntimePlanStepStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed",
+        "failed"
+      ]
+    },
+    "ManagedRuntimeCommandOutput": {
+      "type": "object",
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/ManagedRuntimeCommandOutputStream"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stream",
+        "text"
+      ]
+    },
+    "ManagedRuntimeCommandOutputStream": {
+      "type": "string",
+      "enum": [
+        "stdout",
+        "stderr",
+        "combined"
+      ]
+    },
+    "ManagedRuntimeFilePatch": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "change_kind": {
+          "$ref": "#/$defs/ManagedRuntimeFileChangeKind"
+        },
+        "patch": {
+          "type": "string"
+        },
+        "moved_to": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "change_kind",
+        "patch"
+      ]
+    },
+    "ManagedRuntimeFileChangeKind": {
+      "type": "string",
+      "enum": [
+        "add",
+        "update",
+        "delete",
+        "move"
+      ]
+    },
+    "ManagedRuntimeFileSearchMode": {
+      "type": "string",
+      "enum": [
+        "grep",
+        "glob"
+      ]
+    },
+    "ManagedRuntimeFileSearchMatch": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "column": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "ManagedRuntimeReviewFinding": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "severity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "body"
+      ]
+    },
+    "ManagedRuntimeItemTerminalEvidence": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/ManagedRuntimeTerminalStatus"
+        },
+        "completed_at_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "process_exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ManagedRuntimeProcessExitEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ManagedRuntimePresentationError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "outcome"
+      ]
+    },
+    "ManagedRuntimeTerminalStatus": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "interrupted",
+        "lost"
+      ]
+    },
+    "ManagedRuntimeProcessExitEvidence": {
+      "type": "object",
+      "properties": {
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "signal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "success": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "success"
+      ]
+    },
+    "ManagedRuntimePresentationError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
       ]
     },
     "ManagedRuntimeInteraction": {
@@ -1425,38 +2389,286 @@
             "null"
           ]
         },
-        "kind": {
-          "$ref": "#/$defs/ManagedRuntimeInteractionKind"
-        },
-        "prompt": {
-          "type": "string"
+        "request": {
+          "$ref": "#/$defs/ManagedRuntimeInteractionRequest"
         },
         "status": {
           "$ref": "#/$defs/ManagedRuntimeInteractionStatus"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ManagedRuntimeInteractionResolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "id",
         "turn_id",
-        "kind",
-        "prompt",
+        "request",
         "status"
       ]
     },
-    "ManagedRuntimeInteractionKind": {
-      "type": "string",
-      "enum": [
-        "approval",
-        "user_input",
-        "mcp_elicitation",
-        "dynamic_tool"
+    "ManagedRuntimeInteractionRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "proposed_action": true,
+            "kind": {
+              "type": "string",
+              "const": "approval"
+            }
+          },
+          "required": [
+            "kind",
+            "prompt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string"
+            },
+            "questions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimeInteractionQuestion"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_input"
+            }
+          },
+          "required": [
+            "kind",
+            "prompt",
+            "questions"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "server": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "schema": true,
+            "kind": {
+              "type": "string",
+              "const": "mcp_elicitation"
+            }
+          },
+          "required": [
+            "kind",
+            "server",
+            "prompt",
+            "schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tool": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "arguments": true,
+            "kind": {
+              "type": "string",
+              "const": "dynamic_tool"
+            }
+          },
+          "required": [
+            "kind",
+            "tool",
+            "prompt",
+            "arguments"
+          ]
+        }
+      ]
+    },
+    "ManagedRuntimeInteractionQuestion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allows_free_form": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "prompt",
+        "options",
+        "allows_free_form"
       ]
     },
     "ManagedRuntimeInteractionStatus": {
       "type": "string",
       "enum": [
         "pending",
-        "resolved"
+        "resolved",
+        "cancelled",
+        "expired",
+        "lost"
+      ]
+    },
+    "ManagedRuntimeInteractionResolution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "approved"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "denied"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "answers": true,
+            "kind": {
+              "type": "string",
+              "const": "user_input"
+            }
+          },
+          "required": [
+            "kind",
+            "answers"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "response": true,
+            "kind": {
+              "type": "string",
+              "const": "mcp_elicitation"
+            }
+          },
+          "required": [
+            "kind",
+            "response"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "result": true,
+            "kind": {
+              "type": "string",
+              "const": "dynamic_tool_result"
+            }
+          },
+          "required": [
+            "kind",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "expired"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "lost"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
       ]
     },
     "ManagedRuntimeThreadNameSource": {
@@ -2057,6 +3269,26 @@
         {
           "type": "object",
           "properties": {
+            "item_id": {
+              "type": "string"
+            },
+            "transition": {
+              "$ref": "#/$defs/ManagedRuntimeItemTransition"
+            },
+            "kind": {
+              "type": "string",
+              "const": "item_transitioned"
+            }
+          },
+          "required": [
+            "kind",
+            "item_id",
+            "transition"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "interactions": {
               "type": "array",
               "items": {
@@ -2093,6 +3325,229 @@
           },
           "required": [
             "kind"
+          ]
+        }
+      ]
+    },
+    "ManagedRuntimeItemTransition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "presentation": {
+              "$ref": "#/$defs/ManagedRuntimeItemPresentation"
+            },
+            "kind": {
+              "type": "string",
+              "const": "started"
+            }
+          },
+          "required": [
+            "kind",
+            "presentation"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "update": {
+              "$ref": "#/$defs/ManagedRuntimeItemUpdate"
+            },
+            "presentation": {
+              "$ref": "#/$defs/ManagedRuntimeItemPresentation"
+            },
+            "kind": {
+              "type": "string",
+              "const": "updated"
+            }
+          },
+          "required": [
+            "kind",
+            "update",
+            "presentation"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "presentation": {
+              "$ref": "#/$defs/ManagedRuntimeItemPresentation"
+            },
+            "kind": {
+              "type": "string",
+              "const": "terminal"
+            }
+          },
+          "required": [
+            "kind",
+            "presentation"
+          ]
+        }
+      ]
+    },
+    "ManagedRuntimeItemUpdate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "text_appended"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "reasoning_appended"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "content_appended"
+            }
+          },
+          "required": [
+            "kind",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "output": {
+              "$ref": "#/$defs/ManagedRuntimeCommandOutput"
+            },
+            "kind": {
+              "type": "string",
+              "const": "command_output_appended"
+            }
+          },
+          "required": [
+            "kind",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimeFilePatch"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "patch_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "changes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "explanation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePlanStep"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "plan_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "steps"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ManagedRuntimePresentationContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "tool_progress"
+            }
+          },
+          "required": [
+            "kind",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+            "result": true,
+            "kind": {
+              "type": "string",
+              "const": "collaboration_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/ManagedRuntimeItemBody"
+            },
+            "kind": {
+              "type": "string",
+              "const": "body_replaced"
+            }
+          },
+          "required": [
+            "kind",
+            "body"
           ]
         }
       ]

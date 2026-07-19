@@ -5,15 +5,16 @@ use std::{
 
 use agentdash_agent_runtime_contract::{
     ManagedRuntimeChangeDelta, ManagedRuntimeChangeGap, ManagedRuntimeChangePage,
-    ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind, ManagedRuntimeContentBlock,
-    ManagedRuntimeEntityStatus, ManagedRuntimeInteraction, ManagedRuntimeInteractionKind,
-    ManagedRuntimeInteractionStatus, ManagedRuntimeItem, ManagedRuntimeItemContent,
+    ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind, ManagedRuntimeEntityStatus,
+    ManagedRuntimeInteraction, ManagedRuntimeInteractionRequest,
+    ManagedRuntimeInteractionResolution, ManagedRuntimeInteractionStatus, ManagedRuntimeItem,
+    ManagedRuntimeItemBody, ManagedRuntimeItemPresentation, ManagedRuntimeItemTerminalEvidence,
     ManagedRuntimeLifecycleStatus, ManagedRuntimeOperation, ManagedRuntimePlatformChange,
-    ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
-    ManagedRuntimeProjectionSection, ManagedRuntimeSnapshot, ManagedRuntimeSourceProjectionDelta,
-    ManagedRuntimeThreadNameSource, ManagedRuntimeTurn, RuntimeChangeSequence,
-    RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest, RuntimeProjectionRevision,
-    RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
+    ManagedRuntimePresentationContentBlock, ManagedRuntimeProjectionAuthority,
+    ManagedRuntimeProjectionFidelity, ManagedRuntimeProjectionSection, ManagedRuntimeSnapshot,
+    ManagedRuntimeSourceProjectionDelta, ManagedRuntimeThreadNameSource, ManagedRuntimeTurn,
+    RuntimeChangeSequence, RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest,
+    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_agent_service_api::{
     AgentChangePage, AgentChangePayload, AgentChangesQuery, AgentEntityStatus, AgentInteractionId,
@@ -891,6 +892,33 @@ fn apply_source_change(
                 },
             );
         }
+        AgentChangePayload::ItemTransitioned {
+            turn_id,
+            item_id,
+            transition,
+        } => {
+            let turn = projection.turns.get_mut(turn_id).ok_or_else(|| {
+                CompleteAgentStateError::InvalidChange {
+                    reason: "item transition references an unknown turn".to_owned(),
+                }
+            })?;
+            let previous = projection.items.get(item_id).map(|item| &item.item);
+            let item =
+                AgentItemSnapshot::from_transition(item_id.clone(), previous, transition.clone())
+                    .map_err(|error| CompleteAgentStateError::InvalidChange {
+                    reason: error.to_string(),
+                })?;
+            if !turn.item_ids.contains(item_id) {
+                turn.item_ids.push(item_id.clone());
+            }
+            projection.items.insert(
+                item_id.clone(),
+                NormalizedAgentItem {
+                    turn_id: turn_id.clone(),
+                    item,
+                },
+            );
+        }
         AgentChangePayload::InteractionChanged { interaction } => {
             if !projection.turns.contains_key(&interaction.turn_id) {
                 return Err(CompleteAgentStateError::InvalidChange {
@@ -941,7 +969,7 @@ fn changed_sections(
         {
             sections.insert(ManagedRuntimeProjectionSection::ActiveTurn);
         }
-        AgentChangePayload::ItemChanged { .. } => {
+        AgentChangePayload::ItemChanged { .. } | AgentChangePayload::ItemTransitioned { .. } => {
             if before.turns != after.turns {
                 sections.insert(ManagedRuntimeProjectionSection::Turns);
             }
@@ -2147,9 +2175,7 @@ fn project_item(
         id: identities.runtime_item_id(&item.id, source_turn_id)?,
         turn_id: identities.runtime_turn_id(source_turn_id)?,
         status: project_entity_status(item.status),
-        content: project_item_content(&item.content)?,
-        content_digest: RuntimePayloadDigest::new(item.content_digest.as_str())
-            .map_err(|_| CompleteAgentRuntimeProjectionError::InvalidPayloadDigest)?,
+        presentation: project_item_presentation(&item.presentation)?,
     })
 }
 
@@ -2165,106 +2191,77 @@ fn project_interaction(
             .as_ref()
             .map(|item_id| identities.runtime_item_id(item_id, &interaction.turn_id))
             .transpose()?,
-        kind: match interaction.kind {
-            agentdash_agent_service_api::AgentInteractionKind::Approval => {
-                ManagedRuntimeInteractionKind::Approval
+        request: project_interaction_request(&interaction.request),
+        status: match interaction.status {
+            agentdash_agent_service_api::AgentInteractionStatus::Pending => {
+                ManagedRuntimeInteractionStatus::Pending
             }
-            agentdash_agent_service_api::AgentInteractionKind::UserInput => {
-                ManagedRuntimeInteractionKind::UserInput
+            agentdash_agent_service_api::AgentInteractionStatus::Resolved => {
+                ManagedRuntimeInteractionStatus::Resolved
             }
-            agentdash_agent_service_api::AgentInteractionKind::McpElicitation => {
-                ManagedRuntimeInteractionKind::McpElicitation
+            agentdash_agent_service_api::AgentInteractionStatus::Cancelled => {
+                ManagedRuntimeInteractionStatus::Cancelled
             }
-            agentdash_agent_service_api::AgentInteractionKind::DynamicTool => {
-                ManagedRuntimeInteractionKind::DynamicTool
+            agentdash_agent_service_api::AgentInteractionStatus::Expired => {
+                ManagedRuntimeInteractionStatus::Expired
+            }
+            agentdash_agent_service_api::AgentInteractionStatus::Lost => {
+                ManagedRuntimeInteractionStatus::Lost
             }
         },
-        prompt: interaction.prompt.clone(),
-        status: if interaction.resolved {
-            ManagedRuntimeInteractionStatus::Resolved
-        } else {
-            ManagedRuntimeInteractionStatus::Pending
-        },
+        resolution: interaction
+            .resolution
+            .as_ref()
+            .map(project_interaction_resolution),
     })
 }
 
-fn project_item_content(
-    content: &agentdash_agent_service_api::AgentItemContent,
-) -> Result<ManagedRuntimeItemContent, CompleteAgentRuntimeProjectionError> {
-    Ok(match content {
-        agentdash_agent_service_api::AgentItemContent::UserInput { input } => {
-            ManagedRuntimeItemContent::UserInput {
-                content: input
-                    .content
-                    .iter()
-                    .map(project_content_block)
-                    .collect::<Result<Vec<_>, _>>()?,
-            }
-        }
-        agentdash_agent_service_api::AgentItemContent::AgentOutput { content } => {
-            ManagedRuntimeItemContent::AgentOutput {
-                content: content
-                    .iter()
-                    .map(project_content_block)
-                    .collect::<Result<Vec<_>, _>>()?,
-            }
-        }
-        agentdash_agent_service_api::AgentItemContent::ToolCall { name, arguments } => {
-            ManagedRuntimeItemContent::ToolCall {
-                name: name.to_string(),
-                arguments: arguments.clone(),
-            }
-        }
-        agentdash_agent_service_api::AgentItemContent::ToolResult { name, result } => {
-            ManagedRuntimeItemContent::ToolResult {
-                name: name.to_string(),
-                result: result.clone(),
-            }
-        }
-        agentdash_agent_service_api::AgentItemContent::ContextCompaction => {
-            ManagedRuntimeItemContent::ContextCompaction
-        }
-        agentdash_agent_service_api::AgentItemContent::Error { code, message } => {
-            ManagedRuntimeItemContent::Error {
-                code: code.clone(),
-                message: message.clone(),
-            }
-        }
-        agentdash_agent_service_api::AgentItemContent::Extension {
-            namespace,
-            schema,
-            value,
-        } => ManagedRuntimeItemContent::Extension {
-            namespace: namespace.clone(),
-            schema: schema.clone(),
-            value: value.clone(),
-        },
-    })
+fn project_item_presentation(
+    presentation: &agentdash_agent_service_api::AgentItemPresentation,
+) -> Result<ManagedRuntimeItemPresentation, CompleteAgentRuntimeProjectionError> {
+    let projected = ManagedRuntimeItemPresentation::new(
+        project_item_body(&presentation.body)?,
+        presentation.started_at_ms.map(|value| value.0),
+        presentation.updated_at_ms.map(|value| value.0),
+        presentation
+            .terminal
+            .as_ref()
+            .map(project_terminal_evidence),
+    )
+    .map_err(|_| CompleteAgentRuntimeProjectionError::InvalidPayloadDigest)?;
+    if projected.body_digest.as_str() != presentation.body_digest.as_str()
+        || projected.presentation_digest.as_str() != presentation.presentation_digest.as_str()
+    {
+        return Err(CompleteAgentRuntimeProjectionError::InvalidPayloadDigest);
+    }
+    Ok(projected)
 }
 
 fn project_content_block(
-    content: &agentdash_agent_service_api::AgentInputContent,
-) -> Result<ManagedRuntimeContentBlock, CompleteAgentRuntimeProjectionError> {
+    content: &agentdash_agent_service_api::AgentContentBlock,
+) -> Result<ManagedRuntimePresentationContentBlock, CompleteAgentRuntimeProjectionError> {
     Ok(match content {
-        agentdash_agent_service_api::AgentInputContent::Text { text } => {
-            ManagedRuntimeContentBlock::Text { text: text.clone() }
+        agentdash_agent_service_api::AgentContentBlock::Text { text } => {
+            ManagedRuntimePresentationContentBlock::Text { text: text.clone() }
         }
-        agentdash_agent_service_api::AgentInputContent::Image {
+        agentdash_agent_service_api::AgentContentBlock::Image {
             media_type,
             source,
+            detail,
             digest,
-        } => ManagedRuntimeContentBlock::Image {
+        } => ManagedRuntimePresentationContentBlock::Image {
             media_type: media_type.clone(),
             source: source.clone(),
+            detail: detail.clone(),
             digest: RuntimePayloadDigest::new(digest.as_str())
                 .map_err(|_| CompleteAgentRuntimeProjectionError::InvalidPayloadDigest)?,
         },
-        agentdash_agent_service_api::AgentInputContent::Resource {
-            uri,
+        agentdash_agent_service_api::AgentContentBlock::LocalResource {
+            path,
             media_type,
             digest,
-        } => ManagedRuntimeContentBlock::Resource {
-            uri: uri.clone(),
+        } => ManagedRuntimePresentationContentBlock::LocalResource {
+            path: path.clone(),
             media_type: media_type.clone(),
             digest: digest
                 .as_ref()
@@ -2272,13 +2269,460 @@ fn project_content_block(
                 .transpose()
                 .map_err(|_| CompleteAgentRuntimeProjectionError::InvalidPayloadDigest)?,
         },
-        agentdash_agent_service_api::AgentInputContent::Structured { schema, value } => {
-            ManagedRuntimeContentBlock::Structured {
-                schema: schema.clone(),
-                value: value.clone(),
+        agentdash_agent_service_api::AgentContentBlock::ResourceLink {
+            uri,
+            title,
+            media_type,
+            digest,
+        } => ManagedRuntimePresentationContentBlock::ResourceLink {
+            uri: uri.clone(),
+            title: title.clone(),
+            media_type: media_type.clone(),
+            digest: digest
+                .as_ref()
+                .map(|digest| RuntimePayloadDigest::new(digest.as_str()))
+                .transpose()
+                .map_err(|_| CompleteAgentRuntimeProjectionError::InvalidPayloadDigest)?,
+        },
+        agentdash_agent_service_api::AgentContentBlock::SkillReference { name, path } => {
+            ManagedRuntimePresentationContentBlock::SkillReference {
+                name: name.clone(),
+                path: path.clone(),
             }
         }
+        agentdash_agent_service_api::AgentContentBlock::Mention { label, reference } => {
+            ManagedRuntimePresentationContentBlock::Mention {
+                label: label.clone(),
+                reference: reference.clone(),
+            }
+        }
+        agentdash_agent_service_api::AgentContentBlock::Structured {
+            schema,
+            schema_version,
+            value,
+        } => ManagedRuntimePresentationContentBlock::Structured {
+            schema: schema.clone(),
+            schema_version: *schema_version,
+            value: value.clone(),
+        },
     })
+}
+
+fn project_blocks(
+    content: &[agentdash_agent_service_api::AgentContentBlock],
+) -> Result<Vec<ManagedRuntimePresentationContentBlock>, CompleteAgentRuntimeProjectionError> {
+    content.iter().map(project_content_block).collect()
+}
+
+fn project_item_body(
+    body: &agentdash_agent_service_api::AgentItemBody,
+) -> Result<ManagedRuntimeItemBody, CompleteAgentRuntimeProjectionError> {
+    use agentdash_agent_service_api::AgentItemBody as Source;
+    Ok(match body {
+        Source::UserMessage { content } => ManagedRuntimeItemBody::UserMessage {
+            content: project_blocks(content)?,
+        },
+        Source::HookPrompt {
+            hook_point,
+            content,
+        } => ManagedRuntimeItemBody::HookPrompt {
+            hook_point: hook_point.clone(),
+            content: project_blocks(content)?,
+        },
+        Source::AgentMessage { content, phase } => ManagedRuntimeItemBody::AgentMessage {
+            content: project_blocks(content)?,
+            phase: phase.clone(),
+        },
+        Source::Reasoning { summary, content } => ManagedRuntimeItemBody::Reasoning {
+            summary: project_blocks(summary)?,
+            content: project_blocks(content)?,
+        },
+        Source::Plan { explanation, steps } => ManagedRuntimeItemBody::Plan {
+            explanation: explanation.clone(),
+            steps: steps
+                .iter()
+                .map(|step| agentdash_agent_runtime_contract::ManagedRuntimePlanStep {
+                    id: step.id.clone(),
+                    text: step.text.clone(),
+                    status: match step.status {
+                        agentdash_agent_service_api::AgentPlanStepStatus::Pending => {
+                            agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::Pending
+                        }
+                        agentdash_agent_service_api::AgentPlanStepStatus::InProgress => {
+                            agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::InProgress
+                        }
+                        agentdash_agent_service_api::AgentPlanStepStatus::Completed => {
+                            agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::Completed
+                        }
+                        agentdash_agent_service_api::AgentPlanStepStatus::Failed => {
+                            agentdash_agent_runtime_contract::ManagedRuntimePlanStepStatus::Failed
+                        }
+                    },
+                })
+                .collect(),
+        },
+        Source::CommandExecution {
+            command,
+            cwd,
+            output,
+        } => ManagedRuntimeItemBody::CommandExecution {
+            command: command.clone(),
+            cwd: cwd.clone(),
+            output: output
+                .iter()
+                .map(|output| agentdash_agent_runtime_contract::ManagedRuntimeCommandOutput {
+                    stream: match output.stream {
+                        agentdash_agent_service_api::AgentCommandOutputStream::Stdout => {
+                            agentdash_agent_runtime_contract::ManagedRuntimeCommandOutputStream::Stdout
+                        }
+                        agentdash_agent_service_api::AgentCommandOutputStream::Stderr => {
+                            agentdash_agent_runtime_contract::ManagedRuntimeCommandOutputStream::Stderr
+                        }
+                        agentdash_agent_service_api::AgentCommandOutputStream::Combined => {
+                            agentdash_agent_runtime_contract::ManagedRuntimeCommandOutputStream::Combined
+                        }
+                    },
+                    text: output.text.clone(),
+                })
+                .collect(),
+        },
+        Source::FileChange { changes, output } => ManagedRuntimeItemBody::FileChange {
+            changes: changes
+                .iter()
+                .map(|change| agentdash_agent_runtime_contract::ManagedRuntimeFilePatch {
+                    path: change.path.clone(),
+                    change_kind: match change.change_kind {
+                        agentdash_agent_service_api::AgentFileChangeKind::Add => {
+                            agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Add
+                        }
+                        agentdash_agent_service_api::AgentFileChangeKind::Update => {
+                            agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Update
+                        }
+                        agentdash_agent_service_api::AgentFileChangeKind::Delete => {
+                            agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Delete
+                        }
+                        agentdash_agent_service_api::AgentFileChangeKind::Move => {
+                            agentdash_agent_runtime_contract::ManagedRuntimeFileChangeKind::Move
+                        }
+                    },
+                    patch: change.patch.clone(),
+                    moved_to: change.moved_to.clone(),
+                })
+                .collect(),
+            output: project_blocks(output)?,
+        },
+        Source::FileRead {
+            path,
+            line_start,
+            line_end,
+            content,
+        } => ManagedRuntimeItemBody::FileRead {
+            path: path.clone(),
+            line_start: *line_start,
+            line_end: *line_end,
+            content: project_blocks(content)?,
+        },
+        Source::FileSearch {
+            mode,
+            query,
+            path,
+            matches,
+        } => ManagedRuntimeItemBody::FileSearch {
+            mode: match mode {
+                agentdash_agent_service_api::AgentFileSearchMode::Grep => {
+                    agentdash_agent_runtime_contract::ManagedRuntimeFileSearchMode::Grep
+                }
+                agentdash_agent_service_api::AgentFileSearchMode::Glob => {
+                    agentdash_agent_runtime_contract::ManagedRuntimeFileSearchMode::Glob
+                }
+            },
+            query: query.clone(),
+            path: path.clone(),
+            matches: matches
+                .iter()
+                .map(
+                    |item| agentdash_agent_runtime_contract::ManagedRuntimeFileSearchMatch {
+                        path: item.path.clone(),
+                        line: item.line,
+                        column: item.column,
+                        preview: item.preview.clone(),
+                    },
+                )
+                .collect(),
+        },
+        Source::McpToolCall {
+            server,
+            tool,
+            arguments,
+            result,
+            progress,
+        } => ManagedRuntimeItemBody::McpToolCall {
+            server: server.clone(),
+            tool: tool.clone(),
+            arguments: arguments.clone(),
+            result: result.clone(),
+            progress: project_blocks(progress)?,
+        },
+        Source::DynamicToolCall {
+            namespace,
+            tool,
+            arguments,
+            result,
+            progress,
+        } => ManagedRuntimeItemBody::DynamicToolCall {
+            namespace: namespace.clone(),
+            tool: tool.clone(),
+            arguments: arguments.clone(),
+            result: result.clone(),
+            progress: project_blocks(progress)?,
+        },
+        Source::CollaborationToolCall {
+            action,
+            target,
+            prompt,
+            result,
+        } => ManagedRuntimeItemBody::CollaborationToolCall {
+            action: action.clone(),
+            target: target.clone(),
+            prompt: prompt.clone(),
+            result: result.clone(),
+        },
+        Source::SubagentActivity {
+            agent_id,
+            task,
+            status,
+            result,
+        } => ManagedRuntimeItemBody::SubagentActivity {
+            agent_id: agent_id.clone(),
+            task: task.clone(),
+            status: status.clone(),
+            result: project_blocks(result)?,
+        },
+        Source::WebSearch {
+            action,
+            query,
+            url,
+            results,
+        } => ManagedRuntimeItemBody::WebSearch {
+            action: action.clone(),
+            query: query.clone(),
+            url: url.clone(),
+            results: project_blocks(results)?,
+        },
+        Source::ImageView { path, detail } => ManagedRuntimeItemBody::ImageView {
+            path: path.clone(),
+            detail: detail.clone(),
+        },
+        Source::ImageGeneration {
+            prompt,
+            revised_prompt,
+            outputs,
+        } => ManagedRuntimeItemBody::ImageGeneration {
+            prompt: prompt.clone(),
+            revised_prompt: revised_prompt.clone(),
+            outputs: project_blocks(outputs)?,
+        },
+        Source::Sleep { duration_ms } => ManagedRuntimeItemBody::Sleep {
+            duration_ms: agentdash_agent_runtime_contract::RuntimeU64(duration_ms.0),
+        },
+        Source::Review { findings, summary } => ManagedRuntimeItemBody::Review {
+            findings: findings
+                .iter()
+                .map(
+                    |finding| agentdash_agent_runtime_contract::ManagedRuntimeReviewFinding {
+                        title: finding.title.clone(),
+                        body: finding.body.clone(),
+                        path: finding.path.clone(),
+                        line: finding.line,
+                        severity: finding.severity.clone(),
+                    },
+                )
+                .collect(),
+            summary: summary.clone(),
+        },
+        Source::TerminalControl {
+            terminal_id,
+            action,
+            text,
+        } => ManagedRuntimeItemBody::TerminalControl {
+            terminal_id: terminal_id.clone(),
+            action: action.clone(),
+            text: text.clone(),
+        },
+        Source::ContextCompaction {
+            summary,
+            source_digest,
+        } => ManagedRuntimeItemBody::ContextCompaction {
+            summary: summary
+                .as_ref()
+                .map(|content| project_blocks(content))
+                .transpose()?,
+            source_digest: source_digest
+                .as_ref()
+                .map(|digest| RuntimePayloadDigest::new(digest.as_str()))
+                .transpose()
+                .map_err(|_| CompleteAgentRuntimeProjectionError::InvalidPayloadDigest)?,
+        },
+        Source::GenericToolActivity {
+            name,
+            arguments,
+            result,
+            progress,
+        } => ManagedRuntimeItemBody::GenericToolActivity {
+            name: name.clone(),
+            arguments: arguments.clone(),
+            result: result.clone(),
+            progress: project_blocks(progress)?,
+        },
+        Source::Error {
+            code,
+            message,
+            details,
+        } => ManagedRuntimeItemBody::Error {
+            code: code.clone(),
+            message: message.clone(),
+            details: details
+                .as_ref()
+                .map(|content| project_blocks(content))
+                .transpose()?,
+        },
+    })
+}
+
+fn project_terminal_evidence(
+    terminal: &agentdash_agent_service_api::AgentItemTerminalEvidence,
+) -> ManagedRuntimeItemTerminalEvidence {
+    ManagedRuntimeItemTerminalEvidence {
+        outcome: match terminal.outcome {
+            agentdash_agent_service_api::AgentTerminalStatus::Completed => {
+                agentdash_agent_runtime_contract::ManagedRuntimeTerminalStatus::Completed
+            }
+            agentdash_agent_service_api::AgentTerminalStatus::Failed => {
+                agentdash_agent_runtime_contract::ManagedRuntimeTerminalStatus::Failed
+            }
+            agentdash_agent_service_api::AgentTerminalStatus::Interrupted => {
+                agentdash_agent_runtime_contract::ManagedRuntimeTerminalStatus::Interrupted
+            }
+            agentdash_agent_service_api::AgentTerminalStatus::Lost => {
+                agentdash_agent_runtime_contract::ManagedRuntimeTerminalStatus::Lost
+            }
+        },
+        completed_at_ms: terminal
+            .completed_at_ms
+            .map(|value| agentdash_agent_runtime_contract::RuntimeU64(value.0)),
+        duration_ms: terminal
+            .duration_ms
+            .map(|value| agentdash_agent_runtime_contract::RuntimeU64(value.0)),
+        process_exit: terminal.process_exit.as_ref().map(|value| {
+            agentdash_agent_runtime_contract::ManagedRuntimeProcessExitEvidence {
+                exit_code: value.exit_code,
+                signal: value.signal.clone(),
+                success: value.success,
+            }
+        }),
+        error: terminal.error.as_ref().map(|value| {
+            agentdash_agent_runtime_contract::ManagedRuntimePresentationError {
+                code: value.code.clone(),
+                message: value.message.clone(),
+                retryable: value.retryable,
+            }
+        }),
+    }
+}
+
+fn project_interaction_request(
+    request: &agentdash_agent_service_api::AgentInteractionRequest,
+) -> ManagedRuntimeInteractionRequest {
+    match request {
+        agentdash_agent_service_api::AgentInteractionRequest::Approval {
+            prompt,
+            reason,
+            proposed_action,
+        } => ManagedRuntimeInteractionRequest::Approval {
+            prompt: prompt.clone(),
+            reason: reason.clone(),
+            proposed_action: proposed_action.clone(),
+        },
+        agentdash_agent_service_api::AgentInteractionRequest::UserInput { prompt, questions } => {
+            ManagedRuntimeInteractionRequest::UserInput {
+                prompt: prompt.clone(),
+                questions: questions
+                    .iter()
+                    .map(|question| {
+                        agentdash_agent_runtime_contract::ManagedRuntimeInteractionQuestion {
+                            id: question.id.clone(),
+                            prompt: question.prompt.clone(),
+                            options: question.options.clone(),
+                            allows_free_form: question.allows_free_form,
+                        }
+                    })
+                    .collect(),
+            }
+        }
+        agentdash_agent_service_api::AgentInteractionRequest::McpElicitation {
+            server,
+            prompt,
+            schema,
+        } => ManagedRuntimeInteractionRequest::McpElicitation {
+            server: server.clone(),
+            prompt: prompt.clone(),
+            schema: schema.clone(),
+        },
+        agentdash_agent_service_api::AgentInteractionRequest::DynamicTool {
+            namespace,
+            tool,
+            prompt,
+            arguments,
+        } => ManagedRuntimeInteractionRequest::DynamicTool {
+            namespace: namespace.clone(),
+            tool: tool.clone(),
+            prompt: prompt.clone(),
+            arguments: arguments.clone(),
+        },
+    }
+}
+
+fn project_interaction_resolution(
+    resolution: &agentdash_agent_service_api::AgentInteractionResolution,
+) -> ManagedRuntimeInteractionResolution {
+    match resolution {
+        agentdash_agent_service_api::AgentInteractionResolution::Approved => {
+            ManagedRuntimeInteractionResolution::Approved
+        }
+        agentdash_agent_service_api::AgentInteractionResolution::Denied { reason } => {
+            ManagedRuntimeInteractionResolution::Denied {
+                reason: reason.clone(),
+            }
+        }
+        agentdash_agent_service_api::AgentInteractionResolution::UserInput { answers } => {
+            ManagedRuntimeInteractionResolution::UserInput {
+                answers: answers.clone(),
+            }
+        }
+        agentdash_agent_service_api::AgentInteractionResolution::McpElicitation { response } => {
+            ManagedRuntimeInteractionResolution::McpElicitation {
+                response: response.clone(),
+            }
+        }
+        agentdash_agent_service_api::AgentInteractionResolution::DynamicToolResult { result } => {
+            ManagedRuntimeInteractionResolution::DynamicToolResult {
+                result: result.clone(),
+            }
+        }
+        agentdash_agent_service_api::AgentInteractionResolution::Cancelled { reason } => {
+            ManagedRuntimeInteractionResolution::Cancelled {
+                reason: reason.clone(),
+            }
+        }
+        agentdash_agent_service_api::AgentInteractionResolution::Expired => {
+            ManagedRuntimeInteractionResolution::Expired
+        }
+        agentdash_agent_service_api::AgentInteractionResolution::Lost { reason } => {
+            ManagedRuntimeInteractionResolution::Lost {
+                reason: reason.clone(),
+            }
+        }
+    }
 }
 
 fn project_lifecycle(status: AgentLifecycleStatus) -> ManagedRuntimeLifecycleStatus {
@@ -2342,12 +2786,12 @@ mod tests {
     use agentdash_agent_service_api::{
         AgentCapabilityProfile, AgentCommandEnvelope, AgentCommandReceipt,
         AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
-        AgentForkCapability, AgentItemContent, AgentPayloadDigest, AgentProfileDigest,
-        AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceErrorCode,
-        AgentSnapshotSource, AgentSourceRevision, AgentSurfaceProfile, AgentTurnSnapshot,
-        AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand,
-        ForkAgentReceipt, InitialContextAppliedEvidence, InitialContextProfile, ResumeAgentCommand,
-        RevokeBoundAgentSurface, SemanticFidelity,
+        AgentForkCapability, AgentItemBody, AgentItemPresentation, AgentItemTerminalEvidence,
+        AgentProfileDigest, AgentServiceDefinitionId, AgentServiceDescriptor,
+        AgentServiceErrorCode, AgentSnapshotSource, AgentSourceRevision, AgentSurfaceProfile,
+        AgentTerminalStatus, AgentTurnSnapshot, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface,
+        CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialContextAppliedEvidence,
+        InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
     };
     use async_trait::async_trait;
     use tokio::sync::Mutex;
@@ -3364,9 +3808,16 @@ mod tests {
                         item: AgentItemSnapshot {
                             id: AgentItemId::new("item-1").expect("item"),
                             status: AgentEntityStatus::Running,
-                            content: AgentItemContent::ContextCompaction,
-                            content_digest: AgentPayloadDigest::new("sha256:running")
-                                .expect("digest"),
+                            presentation: AgentItemPresentation::new(
+                                AgentItemBody::ContextCompaction {
+                                    summary: None,
+                                    source_digest: None,
+                                },
+                                None,
+                                None,
+                                None,
+                            )
+                            .expect("presentation"),
                         },
                     }),
                 },
@@ -3817,8 +4268,22 @@ mod tests {
                 items: vec![AgentItemSnapshot {
                     id: AgentItemId::new("item-1").expect("item"),
                     status: AgentEntityStatus::Completed,
-                    content: AgentItemContent::ContextCompaction,
-                    content_digest: AgentPayloadDigest::new("sha256:item").expect("digest"),
+                    presentation: AgentItemPresentation::new(
+                        AgentItemBody::ContextCompaction {
+                            summary: None,
+                            source_digest: None,
+                        },
+                        None,
+                        None,
+                        Some(AgentItemTerminalEvidence {
+                            outcome: AgentTerminalStatus::Completed,
+                            completed_at_ms: None,
+                            duration_ms: None,
+                            process_exit: None,
+                            error: None,
+                        }),
+                    )
+                    .expect("presentation"),
                 }],
             }],
             interactions: Vec::new(),

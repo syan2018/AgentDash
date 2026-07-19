@@ -8,11 +8,13 @@
 pub mod gateway;
 pub mod ids;
 pub mod managed_projection;
+pub mod presentation;
 pub mod wire_u64;
 
 pub use gateway::*;
 pub use ids::*;
 pub use managed_projection::*;
+pub use presentation::*;
 pub use wire_u64::*;
 
 #[cfg(test)]

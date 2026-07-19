@@ -22,7 +22,7 @@ export type AgentChange = { cursor: AgentSourceCursor, source_revision: AgentSou
 
 export type AgentChangePage = { source: AgentSourceCoordinate, changes: Array<AgentChange>, next: AgentSourceCursor | null, gap: boolean, };
 
-export type AgentChangePayload = { "kind": "thread_name_changed", thread_name: string | null, source_info: AgentSnapshotSource, } | { "kind": "lifecycle_changed", status: AgentLifecycleStatus, } | { "kind": "turn_changed", turn: AgentTurnSnapshot, } | { "kind": "active_turn_changed", active_turn_id: AgentTurnId | null, } | { "kind": "item_changed", turn_id: AgentTurnId, item: AgentItemSnapshot, } | { "kind": "interaction_changed", interaction: AgentInteractionSnapshot, } | { "kind": "surface_applied", applied: AppliedAgentSurface, } | { "kind": "snapshot_invalidated", reason: string, };
+export type AgentChangePayload = { "kind": "thread_name_changed", thread_name: string | null, source_info: AgentSnapshotSource, } | { "kind": "lifecycle_changed", status: AgentLifecycleStatus, } | { "kind": "turn_changed", turn: AgentTurnSnapshot, } | { "kind": "active_turn_changed", active_turn_id: AgentTurnId | null, } | { "kind": "item_changed", turn_id: AgentTurnId, item: AgentItemSnapshot, } | { "kind": "item_transitioned", turn_id: AgentTurnId, item_id: AgentItemId, transition: AgentItemTransition, } | { "kind": "interaction_changed", interaction: AgentInteractionSnapshot, } | { "kind": "surface_applied", applied: AppliedAgentSurface, } | { "kind": "snapshot_invalidated", reason: string, };
 
 export type AgentChangesQuery = { source: AgentSourceCoordinate, after: AgentSourceCursor | null, limit: number, };
 
@@ -36,11 +36,17 @@ export type AgentCommandId = string;
 
 export type AgentCommandMeta = { command_id: AgentCommandId, effect_id: AgentEffectIdentity, idempotency_key: AgentIdempotencyKey, binding_generation: AgentBindingGeneration, expected_snapshot_revision: AgentSnapshotRevision | null, };
 
+export type AgentCommandOutput = { stream: AgentCommandOutputStream, text: string, };
+
+export type AgentCommandOutputStream = "stdout" | "stderr" | "combined";
+
 export type AgentCommandReceipt = { command_id: AgentCommandId, effect_id: AgentEffectIdentity, source: AgentSourceCoordinate, state: AgentReceiptState, snapshot_revision: AgentSnapshotRevision | null, initial_context: AppliedInitialContextEvidence | null, };
 
 export type AgentCompactionMode = "agent_owned_native" | "exact_context_revision" | "observed_only";
 
 export type AgentConfigurationBoundary = "static_service" | "binding" | "create" | "turn" | "hot_update";
+
+export type AgentContentBlock = { "kind": "text", text: string, } | { "kind": "image", media_type: string, source: string, detail: string | null, digest: AgentPayloadDigest, } | { "kind": "local_resource", path: string, media_type: string | null, digest: AgentPayloadDigest | null, } | { "kind": "resource_link", uri: string, title: string | null, media_type: string | null, digest: AgentPayloadDigest | null, } | { "kind": "skill_reference", name: string, path: string | null, } | { "kind": "mention", label: string, reference: string, } | { "kind": "structured", schema: string, schema_version: number, value: JsonValue, };
 
 export type AgentContextPackageId = string;
 
@@ -59,6 +65,14 @@ export type AgentEffectInspection = { effect_id: AgentEffectIdentity, command_id
 export type AgentEffectInspectionState = { "kind": "not_applied" } | { "kind": "accepted", source: AgentSourceCoordinate, } | { "kind": "applied", outcome: AgentAppliedEffectOutcome, } | { "kind": "unknown" };
 
 export type AgentEntityStatus = "accepted" | "running" | "completed" | "failed" | "interrupted" | "lost";
+
+export type AgentFileChangeKind = "add" | "update" | "delete" | "move";
+
+export type AgentFilePatch = { path: string, change_kind: AgentFileChangeKind, patch: string, moved_to: string | null, };
+
+export type AgentFileSearchMatch = { path: string, line: number | null, column: number | null, preview: string | null, };
+
+export type AgentFileSearchMode = "grep" | "glob";
 
 export type AgentForkCapability = { cutoffs: { [key in AgentForkCutoffKind]?: SemanticFidelity }, lineage_fidelity: SemanticFidelity, native_durability: SemanticFidelity, };
 
@@ -106,17 +120,31 @@ export type AgentInputContent = { "kind": "text", text: string, } | { "kind": "i
 
 export type AgentInteractionId = string;
 
-export type AgentInteractionKind = "approval" | "user_input" | "mcp_elicitation" | "dynamic_tool";
+export type AgentInteractionQuestion = { id: string, prompt: string, options: Array<string>, allows_free_form: boolean, };
+
+export type AgentInteractionRequest = { "kind": "approval", prompt: string, reason: string | null, proposed_action: JsonValue | null, } | { "kind": "user_input", prompt: string, questions: Array<AgentInteractionQuestion>, } | { "kind": "mcp_elicitation", server: string, prompt: string, schema: JsonValue, } | { "kind": "dynamic_tool", namespace: string | null, tool: string, prompt: string, arguments: JsonValue, };
+
+export type AgentInteractionResolution = { "kind": "approved" } | { "kind": "denied", reason: string | null, } | { "kind": "user_input", answers: JsonValue, } | { "kind": "mcp_elicitation", response: JsonValue, } | { "kind": "dynamic_tool_result", result: JsonValue, } | { "kind": "cancelled", reason: string | null, } | { "kind": "expired" } | { "kind": "lost", reason: string, };
 
 export type AgentInteractionResponse = { "kind": "approved" } | { "kind": "denied", reason: string | null, } | { "kind": "user_input", input: AgentInput, } | { "kind": "dynamic_tool_result", result: JsonValue, } | { "kind": "mcp_elicitation", response: JsonValue, };
 
-export type AgentInteractionSnapshot = { id: AgentInteractionId, turn_id: AgentTurnId, item_id: AgentItemId | null, kind: AgentInteractionKind, prompt: string, resolved: boolean, };
+export type AgentInteractionSnapshot = { id: AgentInteractionId, turn_id: AgentTurnId, item_id: AgentItemId | null, request: AgentInteractionRequest, status: AgentInteractionStatus, resolution: AgentInteractionResolution | null, };
 
-export type AgentItemContent = { "kind": "user_input", input: AgentInput, } | { "kind": "agent_output", content: Array<AgentInputContent>, } | { "kind": "tool_call", name: AgentToolName, arguments: JsonValue, } | { "kind": "tool_result", name: AgentToolName, result: JsonValue, } | { "kind": "context_compaction" } | { "kind": "error", code: string, message: string, } | { "kind": "extension", namespace: string, schema: string, value: JsonValue, };
+export type AgentInteractionStatus = "pending" | "resolved" | "cancelled" | "expired" | "lost";
+
+export type AgentItemBody = { "kind": "user_message", content: Array<AgentContentBlock>, } | { "kind": "hook_prompt", hook_point: string, content: Array<AgentContentBlock>, } | { "kind": "agent_message", content: Array<AgentContentBlock>, phase: string | null, } | { "kind": "reasoning", summary: Array<AgentContentBlock>, content: Array<AgentContentBlock>, } | { "kind": "plan", explanation: string | null, steps: Array<AgentPlanStep>, } | { "kind": "command_execution", command: string, cwd: string | null, output: Array<AgentCommandOutput>, } | { "kind": "file_change", changes: Array<AgentFilePatch>, output: Array<AgentContentBlock>, } | { "kind": "file_read", path: string, line_start: number | null, line_end: number | null, content: Array<AgentContentBlock>, } | { "kind": "file_search", mode: AgentFileSearchMode, query: string, path: string | null, matches: Array<AgentFileSearchMatch>, } | { "kind": "mcp_tool_call", server: string, tool: string, arguments: JsonValue, result: JsonValue | null, progress: Array<AgentContentBlock>, } | { "kind": "dynamic_tool_call", namespace: string | null, tool: string, arguments: JsonValue, result: JsonValue | null, progress: Array<AgentContentBlock>, } | { "kind": "collaboration_tool_call", action: string, target: string | null, prompt: string | null, result: JsonValue | null, } | { "kind": "subagent_activity", agent_id: string, task: string, status: string, result: Array<AgentContentBlock>, } | { "kind": "web_search", action: string, query: string | null, url: string | null, results: Array<AgentContentBlock>, } | { "kind": "image_view", path: string, detail: string | null, } | { "kind": "image_generation", prompt: string, revised_prompt: string | null, outputs: Array<AgentContentBlock>, } | { "kind": "sleep", duration_ms: AgentServiceU64, } | { "kind": "review", findings: Array<AgentReviewFinding>, summary: string | null, } | { "kind": "terminal_control", terminal_id: string, action: string, text: string | null, } | { "kind": "context_compaction", summary: Array<AgentContentBlock> | null, source_digest: AgentPayloadDigest | null, } | { "kind": "generic_tool_activity", name: string, arguments: JsonValue, result: JsonValue | null, progress: Array<AgentContentBlock>, } | { "kind": "error", code: string, message: string, details: Array<AgentContentBlock> | null, };
 
 export type AgentItemId = string;
 
-export type AgentItemSnapshot = { id: AgentItemId, status: AgentEntityStatus, content: AgentItemContent, content_digest: AgentPayloadDigest, };
+export type AgentItemPresentation = { body: AgentItemBody, started_at_ms: AgentServiceU64 | null, updated_at_ms: AgentServiceU64 | null, terminal: AgentItemTerminalEvidence | null, body_digest: AgentPayloadDigest, presentation_digest: AgentPayloadDigest, };
+
+export type AgentItemSnapshot = { id: AgentItemId, status: AgentEntityStatus, presentation: AgentItemPresentation, };
+
+export type AgentItemTerminalEvidence = { outcome: AgentTerminalStatus, completed_at_ms: AgentServiceU64 | null, duration_ms: AgentServiceU64 | null, process_exit: AgentProcessExitEvidence | null, error: AgentPresentationError | null, };
+
+export type AgentItemTransition = { "kind": "started", presentation: AgentItemPresentation, } | { "kind": "updated", update: AgentItemUpdate, presentation: AgentItemPresentation, } | { "kind": "terminal", presentation: AgentItemPresentation, };
+
+export type AgentItemUpdate = { "kind": "text_appended", text: string, } | { "kind": "reasoning_appended", text: string, } | { "kind": "content_appended", content: Array<AgentContentBlock>, } | { "kind": "command_output_appended", output: AgentCommandOutput, } | { "kind": "patch_changed", changes: Array<AgentFilePatch>, } | { "kind": "plan_changed", explanation: string | null, steps: Array<AgentPlanStep>, } | { "kind": "tool_progress", content: Array<AgentContentBlock>, } | { "kind": "collaboration_changed", status: string, result: JsonValue | null, } | { "kind": "body_replaced", body: AgentItemBody, };
 
 export type AgentLifecycleCapability = "create" | "start" | "resume" | "close";
 
@@ -124,11 +152,21 @@ export type AgentLifecycleStatus = "creating" | "active" | "suspended" | "closed
 
 export type AgentPayloadDigest = string;
 
+export type AgentPlanStep = { id: string | null, text: string, status: AgentPlanStepStatus, };
+
+export type AgentPlanStepStatus = "pending" | "in_progress" | "completed" | "failed";
+
+export type AgentPresentationError = { code: string, message: string, retryable: boolean, };
+
+export type AgentProcessExitEvidence = { exit_code: number | null, signal: string | null, success: boolean, };
+
 export type AgentProfileDigest = string;
 
 export type AgentReadQuery = { source: AgentSourceCoordinate, at_revision: AgentSnapshotRevision | null, };
 
 export type AgentReceiptState = { "kind": "accepted" } | { "kind": "rejected", code: string, message: string, } | { "kind": "already_applied", terminal: AgentTerminalOutcome | null, } | { "kind": "terminal", outcome: AgentTerminalOutcome, } | { "kind": "unknown" };
+
+export type AgentReviewFinding = { title: string, body: string, path: string | null, line: number | null, severity: string | null, };
 
 export type AgentRuntimeOffer = { profile_digest: AgentProfileDigest, contributions: Array<AgentSurfaceCapabilityFacet>, };
 
@@ -179,6 +217,8 @@ export type AgentSurfaceSemanticFacet = { "kind": "instruction" } | { "kind": "t
 export type AgentSurfaceSnapshot = { revision: AgentSurfaceRevision, digest: AgentSurfaceDigest, requirements: Array<AgentSurfaceRequirement>, };
 
 export type AgentTerminalOutcome = "succeeded" | "failed" | "interrupted" | "closed" | "lost";
+
+export type AgentTerminalStatus = "completed" | "failed" | "interrupted" | "lost";
 
 export type AgentThreadNameSnapshot = { thread_name: string | null, source_info: AgentSnapshotSource, };
 

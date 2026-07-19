@@ -120,23 +120,39 @@ pub struct ManagedRuntimeInteraction {
 
 impl ManagedRuntimeInteraction {
     pub fn validate(&self) -> bool {
-        matches!(
-            (&self.status, &self.resolution),
-            (ManagedRuntimeInteractionStatus::Pending, None)
-                | (ManagedRuntimeInteractionStatus::Resolved, Some(_))
-                | (
-                    ManagedRuntimeInteractionStatus::Cancelled,
-                    Some(ManagedRuntimeInteractionResolution::Cancelled { .. })
+        match (&self.status, &self.resolution) {
+            (ManagedRuntimeInteractionStatus::Pending, None) => true,
+            (ManagedRuntimeInteractionStatus::Resolved, Some(resolution)) => matches!(
+                (&self.request, resolution),
+                (
+                    ManagedRuntimeInteractionRequest::Approval { .. },
+                    ManagedRuntimeInteractionResolution::Approved
+                        | ManagedRuntimeInteractionResolution::Denied { .. }
+                ) | (
+                    ManagedRuntimeInteractionRequest::UserInput { .. },
+                    ManagedRuntimeInteractionResolution::UserInput { .. }
+                ) | (
+                    ManagedRuntimeInteractionRequest::McpElicitation { .. },
+                    ManagedRuntimeInteractionResolution::McpElicitation { .. }
+                ) | (
+                    ManagedRuntimeInteractionRequest::DynamicTool { .. },
+                    ManagedRuntimeInteractionResolution::DynamicToolResult { .. }
                 )
-                | (
-                    ManagedRuntimeInteractionStatus::Expired,
-                    Some(ManagedRuntimeInteractionResolution::Expired)
-                )
-                | (
-                    ManagedRuntimeInteractionStatus::Lost,
-                    Some(ManagedRuntimeInteractionResolution::Lost { .. })
-                )
-        )
+            ),
+            (
+                ManagedRuntimeInteractionStatus::Cancelled,
+                Some(ManagedRuntimeInteractionResolution::Cancelled { .. }),
+            )
+            | (
+                ManagedRuntimeInteractionStatus::Expired,
+                Some(ManagedRuntimeInteractionResolution::Expired),
+            )
+            | (
+                ManagedRuntimeInteractionStatus::Lost,
+                Some(ManagedRuntimeInteractionResolution::Lost { .. }),
+            ) => true,
+            _ => false,
+        }
     }
 }
 

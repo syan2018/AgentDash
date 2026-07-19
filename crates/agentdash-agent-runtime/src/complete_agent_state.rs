@@ -634,6 +634,11 @@ fn normalize_snapshot(
                 reason: "interaction references an unknown turn".to_owned(),
             });
         }
+        if !interaction.validate() {
+            return Err(CompleteAgentStateError::InvalidSnapshot {
+                reason: "interaction status and resolution evidence do not agree".to_owned(),
+            });
+        }
         if interactions
             .insert(interaction.id.clone(), interaction)
             .is_some()
@@ -699,6 +704,10 @@ fn insert_turn(
     let turn_id = turn.id.clone();
     let mut item_ids = Vec::with_capacity(turn.items.len());
     for item in turn.items {
+        item.validate()
+            .map_err(|error| CompleteAgentStateError::InvalidSnapshot {
+                reason: error.to_string(),
+            })?;
         if items
             .insert(
                 item.id.clone(),
@@ -869,6 +878,10 @@ fn apply_source_change(
             projection.active_turn_id = active_turn_id.clone();
         }
         AgentChangePayload::ItemChanged { turn_id, item } => {
+            item.validate()
+                .map_err(|error| CompleteAgentStateError::InvalidChange {
+                    reason: error.to_string(),
+                })?;
             let turn = projection.turns.get_mut(turn_id).ok_or_else(|| {
                 CompleteAgentStateError::InvalidChange {
                     reason: "item change references an unknown turn".to_owned(),
@@ -923,6 +936,11 @@ fn apply_source_change(
             if !projection.turns.contains_key(&interaction.turn_id) {
                 return Err(CompleteAgentStateError::InvalidChange {
                     reason: "interaction change references an unknown turn".to_owned(),
+                });
+            }
+            if !interaction.validate() {
+                return Err(CompleteAgentStateError::InvalidChange {
+                    reason: "interaction status and resolution evidence do not agree".to_owned(),
                 });
             }
             projection

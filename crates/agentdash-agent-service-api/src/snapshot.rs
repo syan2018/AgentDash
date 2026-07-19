@@ -165,23 +165,33 @@ pub struct AgentInteractionSnapshot {
 
 impl AgentInteractionSnapshot {
     pub fn validate(&self) -> bool {
-        matches!(
-            (&self.status, &self.resolution),
-            (AgentInteractionStatus::Pending, None)
-                | (AgentInteractionStatus::Resolved, Some(_))
-                | (
-                    AgentInteractionStatus::Cancelled,
-                    Some(AgentInteractionResolution::Cancelled { .. })
+        match (&self.status, &self.resolution) {
+            (AgentInteractionStatus::Pending, None) => true,
+            (AgentInteractionStatus::Resolved, Some(resolution)) => matches!(
+                (&self.request, resolution),
+                (
+                    AgentInteractionRequest::Approval { .. },
+                    AgentInteractionResolution::Approved
+                        | AgentInteractionResolution::Denied { .. }
+                ) | (
+                    AgentInteractionRequest::UserInput { .. },
+                    AgentInteractionResolution::UserInput { .. }
+                ) | (
+                    AgentInteractionRequest::McpElicitation { .. },
+                    AgentInteractionResolution::McpElicitation { .. }
+                ) | (
+                    AgentInteractionRequest::DynamicTool { .. },
+                    AgentInteractionResolution::DynamicToolResult { .. }
                 )
-                | (
-                    AgentInteractionStatus::Expired,
-                    Some(AgentInteractionResolution::Expired)
-                )
-                | (
-                    AgentInteractionStatus::Lost,
-                    Some(AgentInteractionResolution::Lost { .. })
-                )
-        )
+            ),
+            (
+                AgentInteractionStatus::Cancelled,
+                Some(AgentInteractionResolution::Cancelled { .. }),
+            )
+            | (AgentInteractionStatus::Expired, Some(AgentInteractionResolution::Expired))
+            | (AgentInteractionStatus::Lost, Some(AgentInteractionResolution::Lost { .. })) => true,
+            _ => false,
+        }
     }
 }
 
@@ -412,5 +422,25 @@ mod tests {
                 serde_json::from_value(encoded).expect("deserialize");
             assert_eq!(decoded, snapshot);
         }
+    }
+
+    #[test]
+    fn resolved_interaction_requires_a_resolution_from_the_same_request_family() {
+        let snapshot = AgentInteractionSnapshot {
+            id: AgentInteractionId::new("interaction-mismatch").expect("interaction id"),
+            turn_id: AgentTurnId::new("turn-1").expect("turn id"),
+            item_id: None,
+            request: AgentInteractionRequest::Approval {
+                prompt: "approve?".to_owned(),
+                reason: None,
+                proposed_action: None,
+            },
+            status: AgentInteractionStatus::Resolved,
+            resolution: Some(AgentInteractionResolution::UserInput {
+                answers: serde_json::json!({"answer": "wrong family"}),
+            }),
+        };
+
+        assert!(!snapshot.validate());
     }
 }

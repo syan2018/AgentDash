@@ -54,7 +54,9 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [ ] 将 collaboration tool contribution 接入最终 Runtime Tool Broker production catalog。
 - [x] 恢复 Companion coordinator/worker、parent mailbox delivery、gate wake、
   adoption/result。
-- [ ] 恢复 Routine executor 与 trigger composition。
+- [x] Routine executor 与 trigger composition 已恢复；trigger 使用稳定 Product target、
+  durable prepared receipt、ProductLaunch、ProductInputDelivery 与 Runtime terminal
+  observer，并由恢复扫描沿同一 identity 续跑。
 - [x] 恢复 Wait service/provider 与 terminal convergence。
 - [x] 恢复 Workspace Module、Canvas、Terminal control/presentation composition。
 - [ ] 将 Lifecycle/Companion/Wait Product Tool contributions 接入最终 typed Broker
@@ -78,7 +80,8 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
   `SubmitInput`。
 - [x] Companion/channel/gate/adoption/result 只写 Product repositories。
 - [ ] Dash collaboration tool 经 Tool Broker 调 Product Companion command。
-- [ ] Routine / Workflow AgentCall 经 AgentRun Product command 调 Runtime。
+- [x] Routine 经 ProductLaunch 与 ProductInputDelivery 调 Runtime。
+- [ ] Workflow AgentCall 经 AgentRun Product command 调 Runtime。
 - [ ] Capability/Runtime Tools 编译为 Runtime Surface / Tool Broker contributions。
 - [x] MCP discovery/executor 与已迁移的静态 Product/VFS tools 共享同一 typed Runtime Tool
   Broker catalog；Surface compiler只引用可执行 tool requirements，Host callback 经
@@ -110,7 +113,7 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] Companion channel、gate、adoption、result、mailbox。
 - [ ] Dash collaboration tool spawn/read/wait/result。
 - [ ] Workflow AgentCall。
-- [ ] Routine trigger → AgentRun → terminal。
+- [x] Routine trigger → AgentRun → terminal，并覆盖 prepared 状态进程重启恢复。
 - [ ] Workspace Module list/describe/operate/invoke/present 与 surface/presentation feed。
 - [ ] Canvas read/write/promotion/diagnostics。
 - [ ] VFS surface read/list/search。

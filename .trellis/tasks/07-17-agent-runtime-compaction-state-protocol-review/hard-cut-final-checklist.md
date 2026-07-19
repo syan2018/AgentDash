@@ -100,10 +100,10 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
   `AgentCoreCallback` / `DriverNative` 的site映射进Agent surface，空计划或无条件Allow
   不能作为required hook evidence。
 - [x] Workspace/Canvas/VFS grants 只读 AppliedResourceSurface。
-- [ ] Product 运行期 surface update 已由 request-scoped target/RuntimeThread 解析当前
-  binding 并写入新的 immutable AgentFrame revision；仍需推进 Product binding 的
-  current frame/source evidence、执行 Managed Runtime Rebind/Activate，并用新 binding
-  digest 重新 materialize AppliedResourceSurface。launch frame 保持不可变证据。
+- [x] Product 运行期 surface update 由 request-scoped target/RuntimeThread 写入新的
+  immutable AgentFrame revision，经 Host 新 generation 与旧 binding fence、stable
+  Runtime Rebind、Product pre-activation binding CAS、exact 新 binding digest
+  materialize、Activate 与 Host/Product pin 完成前向收敛；launch frame 保持不可变证据。
 - [x] Lifecycle VFS mount 进入 AgentRun AppliedResourceSurface materialization。
 - [x] Terminal control与展示只读写 Product terminal projection/control owner。
 - [x] AgentRun workspace/runtime trace 读取 canonical Product/Runtime projection。

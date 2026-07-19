@@ -20,7 +20,7 @@ pub struct TransformContextInput {
 ///
 /// 1. **Bundle 改写** — 此处**不**承载，通过 session runtime 的注入片段存储与
 ///    `ContextAuditBus` 以独立数据面传递（保留 SPI crate 边界，不让
-///    `agentdash-agent-types` 反向依赖 `agentdash-platform-spi`）。
+///    `agentdash-agent` 反向依赖 `agentdash-platform-spi`）。
 /// 2. **Per-turn steering** — `steering_messages`，只承每轮 agent loop 之间的
 ///    user message 级动态内容；静态任务语义应通过 ContextFrame 投递，
 ///    **不应**绕过 frame 直接出现在此字段。

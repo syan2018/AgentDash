@@ -207,8 +207,8 @@ impl AgentTool for FsApplyPatchTool {
     fn parameters_schema(&self) -> serde_json::Value {
         FsApplyPatchExecutor::parameters_schema()
     }
-    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
-        Some(agentdash_agent_types::ToolProtocolProjector::FileChange)
+    fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
+        Some(agentdash_agent::ToolProtocolProjector::FileChange)
     }
     fn protocol_fixture_id(&self) -> Option<String> {
         Some("main_tool_fs_apply_patch_lifecycle".to_string())

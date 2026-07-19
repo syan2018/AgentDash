@@ -1,4 +1,4 @@
-use agentdash_agent_types::{AgentTool, AgentToolError, AgentToolResult, ContentPart};
+use agentdash_agent::{AgentTool, AgentToolError, AgentToolResult, ContentPart};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -31,8 +31,8 @@ impl AgentTool for WaitTool {
     fn parameters_schema(&self) -> Value {
         schema_value(schemars::schema_for!(WaitActivityRequest))
     }
-    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
-        Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
+        Some(agentdash_agent::ToolProtocolProjector::Dynamic { namespace: None })
     }
     fn protocol_fixture_id(&self) -> Option<String> {
         Some("main_tool_wait_activity_dynamic_lifecycle".to_string())
@@ -43,7 +43,7 @@ impl AgentTool for WaitTool {
         _tool_call_id: &str,
         args: Value,
         cancel: CancellationToken,
-        _on_update: Option<agentdash_agent_types::ToolUpdateCallback>,
+        _on_update: Option<agentdash_agent::ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let request: WaitActivityRequest = serde_json::from_value(args)
             .map_err(|error| AgentToolError::InvalidArguments(error.to_string()))?;

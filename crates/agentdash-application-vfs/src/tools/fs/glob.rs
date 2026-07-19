@@ -173,8 +173,8 @@ impl AgentTool for FsGlobTool {
     fn parameters_schema(&self) -> serde_json::Value {
         FsGlobExecutor::parameters_schema()
     }
-    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
-        Some(agentdash_agent_types::ToolProtocolProjector::FsGlob)
+    fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
+        Some(agentdash_agent::ToolProtocolProjector::FsGlob)
     }
     fn protocol_fixture_id(&self) -> Option<String> {
         Some("main_tool_fs_glob_lifecycle".to_string())

@@ -112,8 +112,8 @@ impl AgentTool for MountsListTool {
     fn parameters_schema(&self) -> serde_json::Value {
         MountsListExecutor::parameters_schema()
     }
-    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
-        Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
+        Some(agentdash_agent::ToolProtocolProjector::Dynamic { namespace: None })
     }
     fn protocol_fixture_id(&self) -> Option<String> {
         Some("main_tool_vfs_mounts_dynamic_lifecycle".to_string())

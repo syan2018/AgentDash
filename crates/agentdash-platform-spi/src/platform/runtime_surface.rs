@@ -6,7 +6,7 @@ use std::{
 
 use agentdash_agent_protocol::{ContextDeliveryPlan, ContextFrame};
 use agentdash_agent_runtime_contract::{RuntimeItemId, RuntimeThreadId, RuntimeTurnId};
-use agentdash_agent_types::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
+use agentdash_agent::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
 };
@@ -223,7 +223,7 @@ pub struct ExecutionTurnFrame {
     ///
     /// Managed Runtime 只持有并调用这里的 `DynAgentTool`，不重新持有
     /// `McpServer` 声明，也不自行区分 direct / relay MCP。
-    pub assembled_tools: Vec<agentdash_agent_types::DynAgentTool>,
+    pub assembled_tools: Vec<agentdash_agent::DynAgentTool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -816,14 +816,14 @@ pub enum PromptPayload {
 impl PromptPayload {
     /// 投递路径：把 canonical 输入映射为模型层 `ContentPart`（图片直达 `ContentPart::Image`）。
     /// 连接器统一消费此方法，不再各自拍平。
-    pub fn to_content_parts(&self) -> Vec<agentdash_agent_types::ContentPart> {
+    pub fn to_content_parts(&self) -> Vec<agentdash_agent::ContentPart> {
         match self {
             Self::Text(text) => {
                 let text = text.trim();
                 if text.is_empty() {
                     Vec::new()
                 } else {
-                    vec![agentdash_agent_types::ContentPart::text(text)]
+                    vec![agentdash_agent::ContentPart::text(text)]
                 }
             }
             Self::Input(input) => {
@@ -866,22 +866,22 @@ mod tests {
         assert_eq!(parts.len(), 2);
         assert_eq!(
             parts[0],
-            agentdash_agent_types::ContentPart::text("请分析这张图")
+                agentdash_agent::ContentPart::text("请分析这张图")
         );
         assert!(matches!(
             parts[1],
-            agentdash_agent_types::ContentPart::Image { .. }
+            agentdash_agent::ContentPart::Image { .. }
         ));
         assert_eq!(
             parts[1],
-            agentdash_agent_types::ContentPart::image("image/png", "AAAA")
+            agentdash_agent::ContentPart::image("image/png", "AAAA")
         );
     }
 
     #[test]
     fn prompt_payload_text_to_content_parts() {
         let parts = PromptPayload::Text("  hi  ".to_string()).to_content_parts();
-        assert_eq!(parts, vec![agentdash_agent_types::ContentPart::text("hi")]);
+        assert_eq!(parts, vec![agentdash_agent::ContentPart::text("hi")]);
     }
 
     #[test]
@@ -944,7 +944,7 @@ pub trait RuntimeToolProvider: Send + Sync {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
-    ) -> Result<Vec<agentdash_agent_types::DynAgentTool>, PlatformRuntimeError>;
+    ) -> Result<Vec<agentdash_agent::DynAgentTool>, PlatformRuntimeError>;
 }
 
 #[derive(Debug, Error)]

@@ -20,15 +20,15 @@ use crate::runtime_tool_execution::{
 
 pub(crate) fn legacy_result(
     result: VfsToolExecutionResult,
-) -> agentdash_agent_types::AgentToolResult {
-    agentdash_agent_types::AgentToolResult {
+) -> agentdash_agent::AgentToolResult {
+    agentdash_agent::AgentToolResult {
         content: result
             .content
             .into_iter()
             .map(|part| match part {
-                VfsToolContent::Text { text } => agentdash_agent_types::ContentPart::Text { text },
+                VfsToolContent::Text { text } => agentdash_agent::ContentPart::Text { text },
                 VfsToolContent::Image { mime_type, data } => {
-                    agentdash_agent_types::ContentPart::Image { mime_type, data }
+                    agentdash_agent::ContentPart::Image { mime_type, data }
                 }
             })
             .collect(),
@@ -37,22 +37,22 @@ pub(crate) fn legacy_result(
     }
 }
 
-pub(crate) fn legacy_error(error: VfsToolExecutionError) -> agentdash_agent_types::AgentToolError {
+pub(crate) fn legacy_error(error: VfsToolExecutionError) -> agentdash_agent::AgentToolError {
     match error {
         VfsToolExecutionError::InvalidArguments(message) => {
-            agentdash_agent_types::AgentToolError::InvalidArguments(message)
+            agentdash_agent::AgentToolError::InvalidArguments(message)
         }
         VfsToolExecutionError::ExecutionFailed(message) => {
-            agentdash_agent_types::AgentToolError::ExecutionFailed(message)
+            agentdash_agent::AgentToolError::ExecutionFailed(message)
         }
-        VfsToolExecutionError::Cancelled => agentdash_agent_types::AgentToolError::ExecutionFailed(
+        VfsToolExecutionError::Cancelled => agentdash_agent::AgentToolError::ExecutionFailed(
             "tool execution cancelled".into(),
         ),
     }
 }
 
 pub(crate) fn legacy_update_sink(
-    callback: Option<agentdash_agent_types::ToolUpdateCallback>,
+    callback: Option<agentdash_agent::ToolUpdateCallback>,
 ) -> Option<VfsToolUpdateSink> {
     callback.map(|callback| {
         std::sync::Arc::new(move |update| callback(legacy_result(update))) as VfsToolUpdateSink

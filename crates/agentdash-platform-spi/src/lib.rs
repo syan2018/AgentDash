@@ -7,7 +7,7 @@ pub mod workflow;
 
 // ─── agent-types re-export（保持外部 API 不变）──────────────
 
-pub use agentdash_agent_types::{
+pub use agentdash_agent::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentContextEnvelope, AgentInputMessage, AgentMessage,
     AgentRuntimeDelegateSet, AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput,
@@ -24,7 +24,7 @@ pub use agentdash_agent_types::{
     ToolCallDecision, ToolCallInfo, TransformContextInput, TransformContextOutput,
     TurnControlDecision, now_millis,
 };
-pub use agentdash_agent_types::{
+pub use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
     ToolProtocolProjector, ToolUpdateCallback,
 };

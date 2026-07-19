@@ -1,5 +1,5 @@
 use crate::codex_app_server_protocol as codex;
-use agentdash_agent_types::ContentPart;
+use agentdash_agent::ContentPart;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

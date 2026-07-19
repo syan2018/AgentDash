@@ -131,7 +131,7 @@ pub(crate) fn runtime_session_id_from_context(
 mod tests {
     use std::sync::Arc;
 
-    use agentdash_agent_types::{
+    use agentdash_agent::{
         AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
     };
     use async_trait::async_trait;
@@ -174,8 +174,8 @@ mod tests {
             serde_json::json!({ "type": "object" })
         }
 
-        fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
-            Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
+        fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
+            Some(agentdash_agent::ToolProtocolProjector::Dynamic { namespace: None })
         }
 
         fn protocol_fixture_id(&self) -> Option<String> {

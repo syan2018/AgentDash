@@ -33,7 +33,6 @@ members = [
     "crates/agentdash-api",
 
     "crates/agentdash-mcp",
-    "crates/agentdash-agent-types",
     "crates/agentdash-agent",
     "crates/agentdash-llm-provider",
     "crates/agentdash-relay",
@@ -127,7 +126,6 @@ agentdash-platform-spi = { path = "crates/agentdash-platform-spi" }
 agentdash-first-party-integrations = { path = "crates/agentdash-first-party-integrations" }
 
 agentdash-mcp = { path = "crates/agentdash-mcp" }
-agentdash-agent-types = { path = "crates/agentdash-agent-types" }
 agentdash-agent = { path = "crates/agentdash-agent" }
 agentdash-llm-provider = { path = "crates/agentdash-llm-provider" }
 agentdash-relay = { path = "crates/agentdash-relay" }

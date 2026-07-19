@@ -784,8 +784,8 @@ impl AgentTool for ShellExecTool {
         ShellExecExecutor::parameters_schema()
     }
 
-    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
-        Some(agentdash_agent_types::ToolProtocolProjector::Command)
+    fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
+        Some(agentdash_agent::ToolProtocolProjector::Command)
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -798,7 +798,7 @@ impl AgentTool for ShellExecTool {
         args: serde_json::Value,
         cancel: CancellationToken,
         on_update: Option<ToolUpdateCallback>,
-    ) -> Result<agentdash_agent_types::AgentToolResult, agentdash_agent_types::AgentToolError> {
+    ) -> Result<agentdash_agent::AgentToolResult, agentdash_agent::AgentToolError> {
         self.executor
             .execute(tool_call_id, args, cancel, legacy_update_sink(on_update))
             .await

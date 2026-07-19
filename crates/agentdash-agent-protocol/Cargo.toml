@@ -8,7 +8,7 @@ edition.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-agentdash-agent-types = { workspace = true }
+agentdash-agent = { workspace = true }
 agent-client-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

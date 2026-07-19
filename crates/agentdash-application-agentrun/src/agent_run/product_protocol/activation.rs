@@ -247,7 +247,7 @@ pub const AGENT_RUN_TARGET_S5_ACTIVATION_GATES: &[AgentRunS5ActivationGate] = &[
         prerequisite: AgentRunS5Prerequisite::W8LegacyDeletionAndSchema,
         owner: AgentRunActivationOwner::LegacyDeletion,
         evidence: "nine-consumer closure, final migration, crate DAG, and composition gates",
-        negative_gate: Some("agentdash-agent-types direct consumer count is zero"),
+        negative_gate: Some("Complete Agent is the only owner of Agent model and tool types"),
     },
 ];
 

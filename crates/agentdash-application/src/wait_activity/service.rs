@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agentdash_agent_types::AgentToolError;
+use agentdash_agent::AgentToolError;
 use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
 use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;

@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 agentdash-agent-runtime-contract = { workspace = true }
-agentdash-agent-types = { workspace = true }
+agentdash-agent = { workspace = true }
 agentdash-domain = { workspace = true }
 uuid = { workspace = true }
 serde = { workspace = true }

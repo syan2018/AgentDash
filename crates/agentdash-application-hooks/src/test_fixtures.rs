@@ -55,7 +55,7 @@ pub fn snapshot_with_workflow_ports(
         Some(fulfilled_port_keys.iter().map(|k| k.to_string()).collect())
     };
     AgentFrameHookSnapshot {
-        runtime_adapter_session_id: "sess-test".to_string(),
+        runtime_adapter_runtime_thread_id: "sess-test".to_string(),
         sources: vec![workflow_source],
         metadata: Some(SessionSnapshotMetadata {
             active_workflow: Some(ActiveWorkflowMeta {

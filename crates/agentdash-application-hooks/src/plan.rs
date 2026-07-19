@@ -7,9 +7,7 @@ use agentdash_application_ports::agent_frame_hook_plan::{
     SemanticStrength,
 };
 use agentdash_domain::workflow::{WorkflowHookRuleSpec, WorkflowHookTrigger};
-use agentdash_platform_spi::{
-    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ExecutionHookProvider,
-};
+use agentdash_platform_spi::{AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery};
 use async_trait::async_trait;
 
 use crate::AppExecutionHookProvider;
@@ -22,7 +20,7 @@ impl AgentFrameHookPlanCompiler for AppExecutionHookProvider {
         query: AgentFrameHookPlanCompileQuery,
     ) -> Result<AgentFrameHookPlan, AgentFrameHookPlanCompileError> {
         let snapshot = self
-            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+            .load_product_hook_snapshot(AgentFrameHookSnapshotQuery {
                 target: query.target,
                 provenance: query.provenance,
             })

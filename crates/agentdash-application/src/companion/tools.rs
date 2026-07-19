@@ -3678,7 +3678,7 @@ mod companion_tests {
         let task_id = Uuid::new_v4();
         let project_id = Uuid::new_v4();
         let snapshot = agentdash_platform_spi::AgentFrameHookSnapshot {
-            runtime_adapter_session_id: "sess-test".to_string(),
+            runtime_adapter_runtime_thread_id: "sess-test".to_string(),
             run_context: Some(agentdash_platform_spi::hooks::SubjectRunContext {
                 project_id,
                 story_id: Some(story_id),
@@ -4139,7 +4139,7 @@ mod companion_tests {
     #[test]
     fn compact_companion_slice_keeps_owner_summary_and_limits_payload() {
         let snapshot = agentdash_platform_spi::AgentFrameHookSnapshot {
-            runtime_adapter_session_id: "sess-parent".to_string(),
+            runtime_adapter_runtime_thread_id: "sess-parent".to_string(),
             run_context: Some(agentdash_platform_spi::hooks::SubjectRunContext {
                 project_id: Uuid::new_v4(),
                 story_id: None,

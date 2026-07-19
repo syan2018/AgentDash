@@ -94,8 +94,7 @@ pub struct HookDiagnosticEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentFrameHookSnapshot {
-    #[serde(alias = "session_id")]
-    pub runtime_adapter_session_id: String,
+    pub runtime_adapter_runtime_thread_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_context: Option<SubjectRunContext>,
     /// 溯源标签集（如 `["builtin:runtime_trace", "workflow:trellis_dev_task:implement"]`）
@@ -180,8 +179,7 @@ pub struct ActiveWorkflowMeta {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentFrameRuntimeSnapshot {
-    #[serde(alias = "session_id")]
-    pub runtime_adapter_session_id: String,
+    pub runtime_adapter_runtime_thread_id: String,
     pub revision: u64,
     pub snapshot: AgentFrameHookSnapshot,
     #[serde(default)]
@@ -857,7 +855,10 @@ impl ExecutionHookProvider for NoopExecutionHookProvider {
         query: AgentFrameHookSnapshotQuery,
     ) -> Result<AgentFrameHookSnapshot, HookError> {
         Ok(AgentFrameHookSnapshot {
-            runtime_adapter_session_id: query.provenance.runtime_thread_id.unwrap_or_default(),
+            runtime_adapter_runtime_thread_id: query
+                .provenance
+                .runtime_thread_id
+                .unwrap_or_default(),
             ..AgentFrameHookSnapshot::default()
         })
     }

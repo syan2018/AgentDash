@@ -10,10 +10,10 @@ import {
 import type { AgentFrameHookRuntimeInfo } from "../types";
 
 const hookRuntime: AgentFrameHookRuntimeInfo = {
-  runtime_adapter_session_id: "sess-hook-test",
+  runtime_adapter_runtime_thread_id: "sess-hook-test",
   revision: 7,
   snapshot: {
-    runtime_adapter_session_id: "sess-hook-test",
+    runtime_adapter_runtime_thread_id: "sess-hook-test",
     sources: [
       "builtin:global",
       "workflow:demo_lifecycle:check",

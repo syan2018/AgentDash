@@ -352,7 +352,7 @@ mod tests {
 
     fn base_ctx() -> (AgentFrameHookSnapshot, HookRuleEvaluationQuery) {
         let snapshot = AgentFrameHookSnapshot {
-            runtime_adapter_session_id: "sess-test".to_string(),
+            runtime_adapter_runtime_thread_id: "sess-test".to_string(),
             ..AgentFrameHookSnapshot::default()
         };
         let query = HookRuleEvaluationQuery::from_session_query(HookEvaluationQuery {
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn context_carries_frame_target_and_runtime_provenance() {
         let snapshot = AgentFrameHookSnapshot {
-            runtime_adapter_session_id: "sess-frame".to_string(),
+            runtime_adapter_runtime_thread_id: "sess-frame".to_string(),
             ..AgentFrameHookSnapshot::default()
         };
         let target = HookControlTarget {

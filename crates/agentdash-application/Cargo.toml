@@ -9,6 +9,7 @@ agentdash-agent-runtime-contract.workspace = true
 agentdash-agent-protocol.workspace = true
 agentdash-agent = { workspace = true }
 agentdash-application-agentrun = { workspace = true }
+agentdash-application-hooks = { workspace = true }
 agentdash-application-lifecycle = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-application-extension-gateway = { workspace = true }

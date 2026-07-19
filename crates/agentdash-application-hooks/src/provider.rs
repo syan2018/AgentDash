@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
 use agentdash_application_ports::hook_workflow_projection::{
     HookActiveWorkflowFacts, HookExecutionLogAppendCommand, HookWorkflowProjection,
     HookWorkflowProjectionError, HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
@@ -82,7 +83,7 @@ impl AppExecutionHookProvider {
         let snapshot = match query.snapshot.clone() {
             Some(snapshot) => snapshot,
             None => {
-                self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                self.load_product_hook_snapshot(AgentFrameHookSnapshotQuery {
                     target: query.target.clone(),
                     provenance: query.provenance.clone(),
                 })
@@ -104,6 +105,62 @@ impl AppExecutionHookProvider {
         Ok(resolution)
     }
 
+    /// Evaluates one typed Product-owned event against the immutable requirements selected for
+    /// the current AgentFrame.
+    ///
+    /// Tool Broker and Managed Runtime events are Product boundaries, not Agent callbacks. Their
+    /// caller supplies the requirements pinned in the frame HookPlan; this owner resolves and
+    /// executes only definitions whose exact Product trigger matches the event.
+    pub async fn evaluate_product_hook_event(
+        &self,
+        requirements: &[AgentFrameHookRequirement],
+        query: AgentFrameHookEvaluationQuery,
+    ) -> Result<HookResolution, HookError> {
+        let snapshot = match query.snapshot.clone() {
+            Some(snapshot) => snapshot,
+            None => {
+                self.load_product_hook_snapshot(AgentFrameHookSnapshotQuery {
+                    target: query.target.clone(),
+                    provenance: query.provenance.clone(),
+                })
+                .await?
+            }
+        };
+        let query = HookRuleEvaluationQuery::from_frame_query(query);
+        let mut resolution = HookResolution::default();
+        apply_product_hook_event_requirements(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            requirements,
+            &mut resolution,
+            &self.script_engine,
+        )
+        .map_err(HookError::Runtime)?;
+        Ok(resolution)
+    }
+
+    pub(crate) async fn load_product_hook_snapshot(
+        &self,
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
+        let projection = self
+            .workflow_projection
+            .load_hook_workflow_projection(HookWorkflowProjectionQuery {
+                target: query.target,
+                provenance: query.provenance.clone(),
+            })
+            .await
+            .map_err(map_projection_error)?;
+        self.build_snapshot_from_workflow(
+            query.provenance.runtime_thread_id.unwrap_or_default(),
+            query.provenance.turn_id,
+            projection,
+        )
+        .await
+    }
+
     async fn build_snapshot_from_workflow(
         &self,
         runtime_thread_id: String,
@@ -111,7 +168,7 @@ impl AppExecutionHookProvider {
         projection: HookWorkflowProjection,
     ) -> Result<AgentFrameHookSnapshot, HookError> {
         let mut snapshot = AgentFrameHookSnapshot {
-            runtime_adapter_session_id: runtime_thread_id,
+            runtime_adapter_runtime_thread_id: runtime_thread_id,
             run_context: projection.run_context,
             sources: Vec::new(),
             tags: Vec::new(),
@@ -259,20 +316,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         &self,
         query: AgentFrameHookSnapshotQuery,
     ) -> Result<AgentFrameHookSnapshot, HookError> {
-        let projection = self
-            .workflow_projection
-            .load_hook_workflow_projection(HookWorkflowProjectionQuery {
-                target: query.target,
-                provenance: query.provenance.clone(),
-            })
-            .await
-            .map_err(map_projection_error)?;
-        self.build_snapshot_from_workflow(
-            query.provenance.runtime_thread_id.unwrap_or_default(),
-            query.provenance.turn_id,
-            projection,
-        )
-        .await
+        self.load_product_hook_snapshot(query).await
     }
 
     async fn refresh_frame_snapshot(
@@ -452,19 +496,72 @@ fn seed_snapshot_injections_for_trigger(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::sync::Arc;
 
+    use agentdash_application_ports::agent_frame_hook_plan::{
+        AgentFrameHookRequirement, HookAction, HookDefinitionId, HookExecutionSite,
+        HookFailurePolicy, HookPoint, HookRequirement, SemanticStrength,
+    };
+    use agentdash_application_ports::hook_workflow_projection::{
+        HookExecutionLogAppendCommand, HookWorkflowProjection, HookWorkflowProjectionError,
+        HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
+    };
+    use agentdash_domain::workflow::{
+        EffectiveSessionContract, WorkflowHookRuleSpec, WorkflowHookTrigger,
+    };
     use agentdash_platform_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
         AgentFrameHookSnapshotQuery, HookControlTarget, HookResolution, RuntimeAdapterProvenance,
     };
-    use agentdash_platform_spi::{ExecutionHookProvider, HookError, HookTrigger};
+    use agentdash_platform_spi::{
+        ActiveWorkflowMeta, ExecutionHookProvider, HookError, HookTrigger,
+    };
     use async_trait::async_trait;
 
     use super::super::rules::{HookEvaluationContext, HookRuleEvaluationQuery, apply_hook_rules};
     use super::super::script_engine::HookScriptEngine;
     use super::super::test_fixtures::snapshot_with_workflow;
     use super::super::test_script_evaluator::TestHookScriptEvaluator;
+    use super::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
+
+    struct UnusedProjection;
+
+    #[async_trait]
+    impl HookWorkflowProjectionPort for UnusedProjection {
+        async fn load_hook_workflow_projection(
+            &self,
+            _query: HookWorkflowProjectionQuery,
+        ) -> Result<HookWorkflowProjection, HookWorkflowProjectionError> {
+            panic!("typed Product hook test supplies its immutable snapshot")
+        }
+
+        async fn append_execution_log(
+            &self,
+            _command: HookExecutionLogAppendCommand,
+        ) -> Result<(), HookWorkflowProjectionError> {
+            panic!("typed Product hook test does not append aggregate execution logs")
+        }
+    }
+
+    fn tool_broker_requirement(key: &str) -> AgentFrameHookRequirement {
+        AgentFrameHookRequirement {
+            definition_id: HookDefinitionId::new(format!("workflow-hook:{key}")).unwrap(),
+            requirement: HookRequirement {
+                point: HookPoint::AfterTool,
+                actions: BTreeSet::from([
+                    HookAction::Observe,
+                    HookAction::AddContext,
+                    HookAction::ContinueTurn,
+                    HookAction::EmitEffect,
+                ]),
+                minimum_strength: SemanticStrength::ExactDurableBoundary,
+                failure_policy: HookFailurePolicy::FailOpenWithDiagnostic,
+                required: true,
+            },
+            site: HookExecutionSite::ToolBroker,
+        }
+    }
 
     #[test]
     fn session_start_includes_snapshot_injections() {
@@ -474,7 +571,7 @@ mod tests {
             source: "workflow:builtin_workflow_admin_apply:apply".to_string(),
         };
         let snapshot = AgentFrameHookSnapshot {
-            runtime_adapter_session_id: "session-1".to_string(),
+            runtime_adapter_runtime_thread_id: "session-1".to_string(),
             injections: vec![injection.clone()],
             ..AgentFrameHookSnapshot::default()
         };
@@ -560,7 +657,7 @@ mod tests {
                     frame_id: uuid::Uuid::new_v4(),
                 },
                 provenance: RuntimeAdapterProvenance::runtime_thread(
-                    snapshot.runtime_adapter_session_id.clone(),
+                    snapshot.runtime_adapter_runtime_thread_id.clone(),
                     None,
                     "provider_test",
                 ),
@@ -593,6 +690,97 @@ mod tests {
             resolution
                 .matched_rule_keys
                 .contains(&"tool:shell_exec:rewrite_absolute_cwd".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_product_event_executes_only_the_pinned_exact_trigger() {
+        let snapshot = AgentFrameHookSnapshot {
+            runtime_adapter_runtime_thread_id: "runtime-thread-parent".to_owned(),
+            metadata: Some(agentdash_platform_spi::SessionSnapshotMetadata {
+                active_workflow: Some(ActiveWorkflowMeta {
+                    effective_contract: Some(EffectiveSessionContract {
+                        hook_rules: vec![
+                            WorkflowHookRuleSpec {
+                                key: "after_dispatch".to_owned(),
+                                trigger: WorkflowHookTrigger::AfterSubagentDispatch,
+                                description: "after dispatch".to_owned(),
+                                preset: None,
+                                params: None,
+                                script: Some(
+                                    "make_injection(\"constraint\", \"请先完成 lint\", \"test:src\")"
+                                        .to_owned(),
+                                ),
+                                enabled: true,
+                            },
+                            WorkflowHookRuleSpec {
+                                key: "companion_result".to_owned(),
+                                trigger: WorkflowHookTrigger::CompanionResult,
+                                description: "companion result".to_owned(),
+                                preset: None,
+                                params: None,
+                                script: Some(
+                                    "inject(\"workflow\", \"content\", \"src\")".to_owned(),
+                                ),
+                                enabled: true,
+                            },
+                        ],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..AgentFrameHookSnapshot::default()
+        };
+        let provider = AppExecutionHookProvider::new(AppExecutionHookProviderDeps {
+            workflow_projection: Arc::new(UnusedProjection),
+            script_evaluator: Arc::new(TestHookScriptEvaluator::new(&[])),
+        });
+        let requirements = vec![
+            tool_broker_requirement("after_dispatch"),
+            tool_broker_requirement("companion_result"),
+        ];
+
+        let resolution = provider
+            .evaluate_product_hook_event(
+                &requirements,
+                AgentFrameHookEvaluationQuery {
+                    target: HookControlTarget {
+                        run_id: uuid::Uuid::new_v4(),
+                        agent_id: uuid::Uuid::new_v4(),
+                        frame_id: uuid::Uuid::new_v4(),
+                    },
+                    provenance: RuntimeAdapterProvenance::runtime_thread(
+                        "runtime-thread-parent",
+                        Some("turn-parent".to_owned()),
+                        "companion_after_dispatch",
+                    ),
+                    trigger: HookTrigger::AfterSubagentDispatch,
+                    tool_name: None,
+                    tool_call_id: None,
+                    subagent_type: Some("reviewer".to_owned()),
+                    snapshot: Some(snapshot),
+                    payload: Some(serde_json::json!({"effect_id": "effect-1"})),
+                    token_stats: None,
+                },
+            )
+            .await
+            .expect("typed Product event");
+
+        assert_eq!(resolution.injections.len(), 1);
+        assert_eq!(resolution.injections[0].slot, "constraint");
+        assert!(
+            resolution
+                .matched_rule_keys
+                .iter()
+                .any(|key| key.contains("after_dispatch"))
+        );
+        assert!(
+            resolution
+                .matched_rule_keys
+                .iter()
+                .all(|key| !key.contains("companion_result"))
         );
     }
 }

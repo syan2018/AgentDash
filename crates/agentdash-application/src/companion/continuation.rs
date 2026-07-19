@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
 use agentdash_application_agentrun::agent_run::{
-    AgentRunForkRequestId, AgentRunForkSagaPhase, AgentRunProductInputDeliveryPort,
-    AgentRunProductInputPreparation, AgentRunProductProtocolPorts,
-    CompanionAfterDispatchHookEvidence, CompanionChannelEvidence,
+    AgentFrameSurfaceExt, AgentRunForkRequestId, AgentRunForkSagaPhase,
+    AgentRunProductInputDeliveryPort, AgentRunProductInputPreparation,
+    AgentRunProductProtocolPorts, CompanionAfterDispatchHookEvidence, CompanionChannelEvidence,
     CompanionContinuationEffectIdentity, CompanionContinuationEffectPort,
     CompanionContinuationRuntimeProtocol, CompanionContinuationSaga, CompanionEffectProgress,
     CompanionFirstInputEvidence, CompanionFreshPhase, CompanionFreshRequestId,
     CompanionGateEvidence, CompanionPreparedFirstInputEvidence, CompanionRuntimeReadiness,
     CompanionRuntimeReadyEvidence, CompanionTaskEvidence, DeliverAgentRunProductInput,
 };
+use agentdash_application_hooks::AppExecutionHookProvider;
+use agentdash_application_ports::agent_frame_hook_plan::{HookExecutionSite, HookPoint};
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
@@ -20,8 +22,7 @@ use agentdash_domain::channel::{
 };
 use agentdash_domain::workflow::LifecycleTaskPlanItemPatch;
 use agentdash_platform_spi::{
-    AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, ExecutionHookProvider,
-    HookControlTarget, HookTrigger, RuntimeAdapterProvenance,
+    AgentFrameHookEvaluationQuery, HookControlTarget, HookTrigger, RuntimeAdapterProvenance,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -42,7 +43,7 @@ pub struct ApplicationCompanionContinuationEffects {
     protocols: Arc<AgentRunProductProtocolPorts>,
     product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
     frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
-    hook_provider: Arc<dyn ExecutionHookProvider>,
+    hook_provider: Arc<AppExecutionHookProvider>,
 }
 
 impl ApplicationCompanionContinuationEffects {
@@ -51,7 +52,7 @@ impl ApplicationCompanionContinuationEffects {
         protocols: Arc<AgentRunProductProtocolPorts>,
         product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
         frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
-        hook_provider: Arc<dyn ExecutionHookProvider>,
+        hook_provider: Arc<AppExecutionHookProvider>,
     ) -> Self {
         Self {
             repos,
@@ -446,48 +447,57 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
             agent_id: request.parent_agent_id,
             frame_id: request.parent_frame_id,
         };
+        let parent_frame = self
+            .repos
+            .agent_frame_repo
+            .get(request.parent_frame_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "Companion parent AgentFrame is missing".to_owned())?;
+        if parent_frame.agent_id != request.parent_agent_id {
+            return Err("Companion parent AgentFrame owner drifted".to_owned());
+        }
+        let hook_plan = parent_frame.validated_hook_plan()?;
+        let requirements = hook_plan
+            .requirements
+            .into_iter()
+            .filter(|requirement| {
+                requirement.site == HookExecutionSite::ToolBroker
+                    && requirement.requirement.point == HookPoint::AfterTool
+            })
+            .collect::<Vec<_>>();
         let resolution = self
             .hook_provider
-            .evaluate_frame_hook(AgentFrameHookEvaluationQuery {
-                target: target.clone(),
-                provenance: provenance.clone(),
-                trigger: HookTrigger::AfterSubagentDispatch,
-                tool_name: None,
-                tool_call_id: None,
-                subagent_type: Some(request.companion_label.clone()),
-                snapshot: None,
-                payload: Some(serde_json::json!({
-                    "effect_id": identity.effect_id,
-                    "idempotency_key": identity.idempotency_key,
-                    "dispatch_id": request.dispatch_id,
-                    "agent_ref": request.child_agent_id,
-                    "frame_ref": runtime.child_frame_id,
-                    "gate_ref": gate.gate_id,
-                    "runtime_thread_id": runtime.child_runtime_thread_id,
-                    "runtime_operation_id": first_input.runtime_operation_id,
-                    "mailbox_message_id": first_input.mailbox_message_id,
-                    "mailbox_outcome": "dispatched",
-                    "slice_mode": request.slice_mode,
-                    "adoption_mode": request.adoption_mode,
-                    "task_id": request.task_id,
-                })),
-                token_stats: None,
-            })
+            .evaluate_product_hook_event(
+                &requirements,
+                AgentFrameHookEvaluationQuery {
+                    target: target.clone(),
+                    provenance: provenance.clone(),
+                    trigger: HookTrigger::AfterSubagentDispatch,
+                    tool_name: None,
+                    tool_call_id: None,
+                    subagent_type: Some(request.companion_label.clone()),
+                    snapshot: None,
+                    payload: Some(serde_json::json!({
+                        "effect_id": identity.effect_id,
+                        "idempotency_key": identity.idempotency_key,
+                        "dispatch_id": request.dispatch_id,
+                        "agent_ref": request.child_agent_id,
+                        "frame_ref": runtime.child_frame_id,
+                        "gate_ref": gate.gate_id,
+                        "runtime_thread_id": runtime.child_runtime_thread_id,
+                        "runtime_operation_id": first_input.runtime_operation_id,
+                        "mailbox_message_id": first_input.mailbox_message_id,
+                        "mailbox_outcome": "dispatched",
+                        "slice_mode": request.slice_mode,
+                        "adoption_mode": request.adoption_mode,
+                        "task_id": request.task_id,
+                    })),
+                    token_stats: None,
+                },
+            )
             .await
             .map_err(|error| error.to_string())?;
-        if resolution.refresh_snapshot {
-            self.hook_provider
-                .refresh_frame_snapshot(AgentFrameHookRefreshQuery {
-                    target,
-                    provenance,
-                    reason: Some(format!(
-                        "trigger:AfterSubagentDispatch:{}",
-                        request.companion_label
-                    )),
-                })
-                .await
-                .map_err(|error| error.to_string())?;
-        }
         Ok(CompanionEffectProgress::Applied(
             CompanionAfterDispatchHookEvidence {
                 effect: identity.clone(),

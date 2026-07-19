@@ -85,7 +85,9 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] Companion/channel/gate/adoption/result 只写 Product repositories。
 - [ ] Dash collaboration tool 经 Tool Broker 调 Product Companion command。
 - [x] Routine 经 ProductLaunch 与 ProductInputDelivery 调 Runtime。
-- [ ] Workflow AgentCall 经 AgentRun Product command 调 Runtime。
+- [x] Workflow AgentCall 以稳定 LifecycleAgent/AgentFrame 经 ProductLaunch、canonical
+  binding/resource convergence 与 Product mailbox command 调 Runtime，并由 Runtime
+  terminal observer 回写 Workflow。
 - [ ] Capability/Runtime Tools 编译为 Runtime Surface / Tool Broker contributions。
 - [x] MCP discovery/executor 与已迁移的静态 Product/VFS tools 共享同一 typed Runtime Tool
   Broker catalog；Surface compiler只引用可执行 tool requirements，Host callback 经
@@ -116,7 +118,7 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] Companion Compact / WorkflowOnly / ConstraintsOnly fresh create。
 - [x] Companion channel、gate、adoption、result、mailbox。
 - [ ] Dash collaboration tool spawn/read/wait/result。
-- [ ] Workflow AgentCall。
+- [x] Workflow AgentCall，并覆盖重启 inspect 后补齐 Product convergence。
 - [x] Routine trigger → AgentRun → terminal，并覆盖 prepared 状态进程重启恢复。
 - [ ] Workspace Module list/describe/operate/invoke/present 与 surface/presentation feed。
 - [ ] Canvas read/write/promotion/diagnostics。

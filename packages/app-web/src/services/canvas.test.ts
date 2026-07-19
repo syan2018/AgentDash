@@ -205,7 +205,7 @@ describe("canvas service", () => {
     expect(mocks.post).toHaveBeenCalledWith(
       "/agent-runs/run%201/agents/agent%201/canvases/cvs-dashboard/agent-input-submit",
       {
-        input: [{ type: "text", text: "分析当前选择", text_elements: [] }],
+        input: [{ kind: "text", text: "分析当前选择" }],
         delivery_intent: "queue",
         client_command_id: "cmd-1",
       },
@@ -219,7 +219,7 @@ describe("canvas service", () => {
     mocks.post.mockResolvedValueOnce(response);
 
     await submitCanvasAgentInput(bridge, {
-      input: [{ type: "text", text: "处理当前状态", text_elements: [] }],
+      input: [{ kind: "text", text: "处理当前状态" }],
       delivery_intent: "steer",
       client_command_id: "cmd-refs",
       interaction_snapshot_id: "snapshot-1",
@@ -229,7 +229,7 @@ describe("canvas service", () => {
     expect(mocks.post).toHaveBeenCalledWith(
       "/agent-runs/run%201/agents/agent%201/canvases/cvs-dashboard/agent-input-submit",
       {
-        input: [{ type: "text", text: "处理当前状态", text_elements: [] }],
+        input: [{ kind: "text", text: "处理当前状态" }],
         delivery_intent: "steer",
         client_command_id: "cmd-refs",
         interaction_snapshot_id: "snapshot-1",

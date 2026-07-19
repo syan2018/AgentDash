@@ -532,6 +532,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
+ "agentdash-agent-service-api",
  "agentdash-application-ports",
  "agentdash-domain",
  "agentdash-platform-spi",

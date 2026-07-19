@@ -61,7 +61,7 @@ describe("lifecycle message service", () => {
 
   it("submits composer input through the AgentRun composer endpoint", async () => {
     await submitAgentRunComposerInput("run/1", "agent/1", {
-      input: [{ type: "text", text: "follow up", text_elements: [] }],
+      input: [{ kind: "text", text: "follow up" }],
       client_command_id: "command-composer",
       command: command("submit_message"),
       executor_config: { model_id: "gpt-test" },
@@ -70,7 +70,7 @@ describe("lifecycle message service", () => {
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/composer-submit",
       {
-        input: [{ type: "text", text: "follow up", text_elements: [] }],
+        input: [{ kind: "text", text: "follow up" }],
         client_command_id: "command-composer",
         command: command("submit_message"),
         executor_config: { model_id: "gpt-test" },
@@ -95,7 +95,7 @@ describe("lifecycle message service", () => {
 
   it("submits fork input through the AgentRun fork-submit endpoint", async () => {
     await submitAgentRunForkInput("run/1", "agent/1", {
-      input: [{ type: "text", text: "branch follow up", text_elements: [] }],
+      input: [{ kind: "text", text: "branch follow up" }],
       client_command_id: "command-fork-submit",
       fork_point_ref: { turn_id: "turn-1", entry_index: 3 },
     });
@@ -103,7 +103,7 @@ describe("lifecycle message service", () => {
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/fork-submit",
       {
-        input: [{ type: "text", text: "branch follow up", text_elements: [] }],
+        input: [{ kind: "text", text: "branch follow up" }],
         client_command_id: "command-fork-submit",
         fork_point_ref: { turn_id: "turn-1", entry_index: 3 },
       },

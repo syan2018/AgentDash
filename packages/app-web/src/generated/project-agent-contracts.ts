@@ -2,8 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse, AgentRunRefDto, BackendSelectionRequestDto, LifecycleRunRefDto } from "./agent-run-mailbox-contracts";
-import type { UserInput } from "./backbone-protocol";
+import type { AgentFrameRefDto, AgentInputContent, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse, AgentRunRefDto, BackendSelectionRequestDto, LifecycleRunRefDto } from "./agent-run-mailbox-contracts";
 
 export type AgentRunModelSelectionRequest = { provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, };
 
@@ -17,7 +16,7 @@ export type CreateProjectAgentRunRequest = {
 /**
  * canonical 用户输入，与 steer / lifecycle message 同形。
  */
-input: Array<UserInput>, client_command_id: string, executor_config?: JsonValue, subject_ref?: SubjectRefDto, backend_selection?: BackendSelectionRequestDto, };
+input: Array<AgentInputContent>, client_command_id: string, executor_config?: JsonValue, subject_ref?: SubjectRefDto, backend_selection?: BackendSelectionRequestDto, };
 
 export type ExecutionProfileAgentDto = { id: string, label: string, description?: string, is_default: boolean, };
 

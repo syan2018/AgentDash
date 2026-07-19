@@ -2,8 +2,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use agentdash_agent_protocol::BackboneEnvelope;
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionEventResponse {
@@ -24,8 +22,8 @@ pub struct SessionEventResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub tool_call_id: Option<String>,
-    #[ts(type = "BackboneEnvelope")]
-    pub notification: BackboneEnvelope,
+    #[ts(type = "JsonValue")]
+    pub notification: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

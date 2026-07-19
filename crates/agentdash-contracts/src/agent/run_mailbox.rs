@@ -1,4 +1,4 @@
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_service_api::AgentInputContent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
@@ -206,7 +206,7 @@ pub struct AgentRunAcceptedRefs {
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunComposerSubmitRequest {
     /// canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
-    pub input: Vec<codex::UserInput>,
+    pub input: Vec<AgentInputContent>,
     pub client_command_id: String,
     pub command: AgentRunCommandPreconditionView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -323,7 +323,7 @@ pub struct AgentRunForkRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunForkSubmitRequest {
-    pub input: Vec<codex::UserInput>,
+    pub input: Vec<AgentInputContent>,
     pub client_command_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn composer_submit_preserves_existing_run_execution_override() {
         let payload = serde_json::json!({
-            "input": [{ "type": "text", "text": "hello", "text_elements": [] }],
+            "input": [{ "kind": "text", "text": "hello" }],
             "client_command_id": "command-1",
             "executor_config": { "model_id": "other-model" }
         });
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn composer_submit_accepts_enqueue_delivery_intent() {
         let payload = serde_json::json!({
-            "input": [{ "type": "text", "text": "hello", "text_elements": [] }],
+            "input": [{ "kind": "text", "text": "hello" }],
             "client_command_id": "command-1",
             "delivery_intent": "enqueue"
         });

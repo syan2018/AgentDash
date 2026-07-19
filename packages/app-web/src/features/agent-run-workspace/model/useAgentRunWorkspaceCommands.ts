@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 
+import type { AgentInputContent } from "../../../generated/agent-service-api";
 import type { JsonValue } from "../../../generated/common-contracts";
-import type { UserInput } from "../../../generated/backbone-protocol";
+import { sha256OfBlob } from "../../../utils/sha256";
 import type {
   ConversationCommandView,
   ConversationMailboxSnapshotView,
@@ -245,13 +246,18 @@ export function useAgentRunWorkspaceCommands(
       throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该命令。");
     }
 
-    const inputBlocks: UserInput[] = [];
+    const inputBlocks: AgentInputContent[] = [];
     if (trimmed) {
-      inputBlocks.push({ type: "text", text: trimmed, text_elements: [] });
+      inputBlocks.push({ kind: "text", text: trimmed });
     }
     if (imageAttachments) {
       for (const img of imageAttachments) {
-        inputBlocks.push({ type: "image", url: img.dataUrl });
+        inputBlocks.push({
+          kind: "image",
+          media_type: img.file.type,
+          source: img.dataUrl,
+          digest: await sha256OfBlob(img.file),
+        });
       }
     }
 

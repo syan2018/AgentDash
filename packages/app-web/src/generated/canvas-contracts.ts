@@ -2,11 +2,11 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { UserInput } from "./backbone-protocol";
+import type { AgentInputContent } from "./agent-run-mailbox-contracts";
 
 export type CanvasAccessDto = { can_view: boolean, can_edit_source: boolean, can_publish: boolean, can_manage_shared: boolean, can_copy: boolean, runtime_write_allowed: boolean, };
 
-export type CanvasAgentInputSubmitRequest = { input: Array<UserInput>, client_command_id: string, delivery_intent?: string, interaction_snapshot_id?: string, render_observation_id?: string, };
+export type CanvasAgentInputSubmitRequest = { input: Array<AgentInputContent>, client_command_id: string, delivery_intent?: string, interaction_snapshot_id?: string, render_observation_id?: string, };
 
 export type CanvasAgentRunRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasRuntimeBridgeSnapshotDto, };
 

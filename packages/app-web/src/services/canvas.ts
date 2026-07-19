@@ -1,6 +1,6 @@
 import { api } from "../api/client";
 import type { AgentRunMessageCommandResponse } from "../generated/agent-run-mailbox-contracts";
-import type { UserInput } from "../generated/backbone-protocol";
+import type { AgentInputContent } from "../generated/agent-service-api";
 import type { JsonValue } from "../generated/common-contracts";
 import type {
   CanvasAgentInputSubmitRequest,
@@ -45,7 +45,7 @@ export type UploadCanvasInteractionSnapshotInput = CanvasInteractionSnapshotUpse
 
 export interface SubmitCanvasAgentInput {
   text?: string;
-  input?: UserInput[];
+  input?: AgentInputContent[];
   include_interaction_state?: boolean;
   include_render_observation?: boolean;
   delivery_intent?: "queue" | "steer";
@@ -249,7 +249,7 @@ function toCanvasAgentInputSubmitRequest(input: SubmitCanvasAgentInput): CanvasA
   };
 }
 
-function normalizeCanvasAgentInput(input: SubmitCanvasAgentInput): UserInput[] {
+function normalizeCanvasAgentInput(input: SubmitCanvasAgentInput): AgentInputContent[] {
   if (input.input && input.input.length > 0) {
     return input.input;
   }
@@ -257,7 +257,7 @@ function normalizeCanvasAgentInput(input: SubmitCanvasAgentInput): UserInput[] {
   if (!text) {
     return [];
   }
-  return [{ type: "text", text, text_elements: [] }];
+  return [{ kind: "text", text }];
 }
 
 function createCanvasClientCommandId(): string {

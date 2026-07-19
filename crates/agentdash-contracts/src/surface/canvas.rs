@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_service_api::AgentInputContent;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -389,7 +389,7 @@ pub struct CanvasInteractionSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct CanvasAgentInputSubmitRequest {
-    pub input: Vec<codex::UserInput>,
+    pub input: Vec<AgentInputContent>,
     pub client_command_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

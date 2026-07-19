@@ -143,6 +143,49 @@ Negative evidence:
   conversation owner；迁移完成后不保留同义 SPI 外壳。
 - [ ] 旧 schema tables/fields/indexes。
 
+### 当前只读 readiness manifest
+
+以下清单只冻结候选，不授权提前删除。所有条目仍需等待 C3/C4 Product tracers 通过，
+并在删除提交中补齐 behavior tracer 与最终 negative evidence。
+
+#### 零生产消费者的旧 Runtime/journal 段
+
+- [ ] `agentdash-platform-spi::session_persistence` 中仅定义/re-export 的旧
+  journal/read-model 类型：`SessionMeta`、`ExecutionStatus`、
+  `PersistedSessionEvent`、`SessionEventBacklog/Page`、`SessionCompaction*`、
+  `SessionProjection*`、`SessionLineage*`、`NewCompactionProjectionCommit`、
+  `CompactionProjectionCommitResult` 与 `SESSION_PROJECTION_KIND_*`。
+- [ ] `agentdash-api::dto::session` 中零 caller 的
+  `AgentRunJournalStreamQuery` / `AgentRunJournalEventsQuery`；同文件仍被 Product
+  使用的 ContextAudit DTO 保留。
+- [ ] `agentdash-agent-protocol::PlatformEvent::ExecutorSessionBound`；确认无
+  producer/consumer 后同步 canonical generated TypeScript 与 freshness。
+- [ ] 将 `agentdash-agent::model::message` 中仅存的
+  `PersistedSessionEvent` 历史注释改为 Agent history entry coordinate。
+
+#### 需要先完成 seam cut 的旧 execution 壳
+
+- [ ] `agentdash-application-hooks` 保留 Product presets/rules/script/effects、
+  `evaluate_complete_agent_hook` 与 plan compiler。只有在 production hook tracer
+  通过后，才移出 `load_frame_snapshot` 的 Product loader，并删除仅 self/tests 消费的
+  aggregate `ExecutionHookProvider::evaluate_frame_hook/refresh_frame_snapshot`、
+  `NoopExecutionHookProvider`、`HookEvaluationQuery` 与相应 SPI re-export。
+- [ ] `session_persistence` 中仍被 Product 使用的 capability transition、
+  `RuntimeCommandRecord`、`SessionStoreError` 先迁到 AgentRun/Application owner；
+  在消费者归零前不删除 module。
+- [ ] `RuntimeToolProvider` / AgentTool wrappers 当前仍有 Product caller；等待 final
+  Product callback/catalog tracer 后，只删除 SPI provider/re-export 壳，不删除
+  Companion、Workflow、Wait、VFS 或其它 Product 工具业务。
+
+#### 明确保留
+
+- [x] `agentdash-agent-protocol` 保留为 canonical App Server extension +
+  conversation carrier；它不是 universal journal。
+- [x] `agentdash-application-hooks` crate 保留 Product hook ownership。
+- [x] `BackboneEnvelope` 不按名称判定为旧 journal，按真实 producer/consumer 审计。
+- [x] Companion、Frame、Routine、Workflow、Workspace、Canvas、Terminal、Wait、
+  Lifecycle 不进入 Runtime deletion manifest。
+
 ## RuntimeThread semantic cut
 
 平台 Runtime 只用 `RuntimeThread` 表达 Complete Agent 的运行实例坐标。这个语义从

@@ -136,21 +136,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentdash-agent-protocol-codegen"
-version = "0.1.0"
-dependencies = [
- "agentdash-agent-protocol",
- "anyhow",
- "codex-app-server-protocol",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "typify",
-]
-
-[[package]]
 name = "agentdash-agent-runtime"
 version = "0.1.0"
 dependencies = [

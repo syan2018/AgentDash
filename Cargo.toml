@@ -39,7 +39,6 @@ members = [
     "crates/agentdash-local",
     "crates/agentdash-local-tauri",
     "crates/agentdash-agent-protocol",
-    "crates/agentdash-agent-protocol-codegen",
 ]
 [workspace.package]
 version = "0.1.0"

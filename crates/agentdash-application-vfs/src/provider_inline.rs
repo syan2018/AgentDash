@@ -19,7 +19,7 @@ use agentdash_domain::common::Mount;
 use agentdash_domain::inline_file::{
     InlineFile, InlineFileContent, InlineFileContentKind, InlineFileRepository,
 };
-use agentdash_spi::platform::mount::RuntimeFileEntry;
+use agentdash_platform_spi::platform::mount::RuntimeFileEntry;
 
 fn map_mount_err(e: String) -> MountError {
     MountError::OperationFailed(e)

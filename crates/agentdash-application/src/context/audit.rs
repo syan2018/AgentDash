@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
-use agentdash_spi::{ContextFragment, FragmentScope, SessionContextBundle};
+use agentdash_platform_spi::{ContextFragment, FragmentScope, SessionContextBundle};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

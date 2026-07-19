@@ -16,7 +16,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef};
-use agentdash_spi::PersistedSessionEvent;
+use agentdash_platform_spi::PersistedSessionEvent;
 use async_trait::async_trait;
 
 pub mod session_items;

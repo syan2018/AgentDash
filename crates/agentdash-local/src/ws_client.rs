@@ -15,7 +15,7 @@ use chrono::Utc;
 use serde::Serialize;
 
 use crate::LocalExtensionHostManager;
-use crate::handlers::{CommandExecutionMode, LocalCommandRouter, RuntimeWireCommandHandler};
+use crate::handlers::{CommandExecutionMode, LocalCommandRouter};
 use crate::mcp_client_manager::McpClientManager;
 use crate::runner_redaction::redact_secret;
 use crate::runner_status::RunnerStatusReporter;
@@ -36,7 +36,6 @@ pub struct Config {
     pub extension_artifact_cache_root: PathBuf,
     pub runner_status: Option<RunnerStatusReporter>,
     pub relay_status_tx: Option<watch::Sender<RelayConnectionStatus>>,
-    pub runtime_wire: Arc<RuntimeWireCommandHandler>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -290,7 +289,6 @@ async fn run_session(
 
     // 创建事件通道（domain handlers 通过此通道推送异步事件）
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<RelayMessage>();
-    config.runtime_wire.attach_outbound(event_tx.clone());
 
     let handler = LocalCommandRouter::new(crate::handlers::LocalCommandRouterConfig {
         backend_id: config.backend_id.clone(),
@@ -302,11 +300,10 @@ async fn run_session(
         extension_artifact_access_token: config.token.clone(),
         extension_artifact_cache_root: config.extension_artifact_cache_root.clone(),
         event_tx,
-        runtime_wire: config.runtime_wire.clone(),
     });
 
     // 第一步：发送注册消息
-    let mut last_capabilities = build_capabilities(&handler, &config.mcp_manager).await;
+    let mut last_capabilities = build_capabilities(&config.mcp_manager).await;
     let register_msg = RelayMessage::Register {
         id: RelayMessage::new_id("reg"),
         payload: RegisterPayload {
@@ -468,7 +465,7 @@ async fn run_session(
                 // 本机侧不主动发 ping，只响应云端的 ping
             }
             _ = capability_interval.tick() => {
-                let next_capabilities = build_capabilities(&handler, &config.mcp_manager).await;
+                let next_capabilities = build_capabilities(&config.mcp_manager).await;
                 if next_capabilities != last_capabilities {
                     last_capabilities = next_capabilities.clone();
                     let relay_msg = RelayMessage::EventCapabilitiesChanged {
@@ -581,10 +578,7 @@ fn report_relay_status(config: &Config, status: RelayConnectionStatus) {
     }
 }
 
-async fn build_capabilities(
-    handler: &LocalCommandRouter,
-    mcp_manager: &Option<Arc<McpClientManager>>,
-) -> CapabilitiesPayload {
+async fn build_capabilities(mcp_manager: &Option<Arc<McpClientManager>>) -> CapabilitiesPayload {
     let executors = Vec::new();
     let mcp_servers = mcp_manager
         .as_ref()
@@ -613,17 +607,12 @@ async fn build_capabilities(
             .collect(),
         None => Vec::new(),
     };
-    let agent_runtime_offers = handler
-        .advertised_runtime_offers()
-        .await
-        .unwrap_or_default();
     CapabilitiesPayload {
         executors,
         supports_cancel: true,
         supports_discover_options: false,
         mcp_servers,
         capability_health,
-        agent_runtime_offers,
     }
 }
 

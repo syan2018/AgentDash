@@ -1,6 +1,6 @@
 use agentdash_domain::canvas::{Canvas, CanvasScope, canvas_access_projection};
 use agentdash_domain::project::{ProjectAuthorization, ProjectAuthorizationContext};
-use agentdash_spi::AuthIdentity;
+use agentdash_platform_spi::AuthIdentity;
 
 use crate::canvas::CanvasMountAccess;
 
@@ -39,7 +39,7 @@ pub fn canvas_runtime_mount_access(
 mod tests {
     use super::*;
 
-    use agentdash_spi::AuthMode;
+    use agentdash_platform_spi::AuthMode;
     use uuid::Uuid;
 
     fn identity(user_id: &str) -> AuthIdentity {

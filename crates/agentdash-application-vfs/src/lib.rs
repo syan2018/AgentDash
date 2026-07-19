@@ -18,6 +18,8 @@ pub(crate) mod provider_inline;
 pub(crate) mod provider_routine;
 pub(crate) mod provider_skill_asset;
 pub mod rewrite;
+pub mod runtime_tool_execution;
+pub mod runtime_tools;
 pub mod search;
 pub mod service;
 pub mod surface;
@@ -32,7 +34,7 @@ pub use access_policy::{
 };
 pub use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
 pub use agentdash_application_ports::vfs_surface_runtime::VfsSurfaceRuntimeProjection;
-pub use agentdash_spi::{
+pub use agentdash_platform_spi::{
     RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
     RuntimeVfsPathPattern,
 };
@@ -90,6 +92,11 @@ pub use provider::{
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_routine::RoutineMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
+pub use runtime_tools::{
+    AppliedVfsRuntimeToolService, AppliedVfsToolKind, AppliedVfsToolMount, AppliedVfsToolOperation,
+    AppliedVfsToolOutcome, AppliedVfsToolOwner, AppliedVfsToolPathScope, AppliedVfsToolRequest,
+    AppliedVfsToolSurface,
+};
 pub use search::TextSearchParams;
 pub use service::{BasicTextSearchRequest, VfsService};
 pub use surface::{

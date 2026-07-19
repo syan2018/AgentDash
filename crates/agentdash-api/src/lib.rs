@@ -1,5 +1,3 @@
-pub mod agent_run_runtime_surface;
-mod agent_run_terminal_control;
 pub mod app_state;
 pub mod auth;
 pub mod bootstrap;
@@ -14,8 +12,6 @@ pub mod routes;
 pub mod rpc;
 pub mod runtime_bridge;
 pub mod stream;
-#[cfg(test)]
-mod vfs_access;
 pub mod vfs_materialization;
 mod vfs_surface_runtime;
 pub mod workspace_placement_runtime;

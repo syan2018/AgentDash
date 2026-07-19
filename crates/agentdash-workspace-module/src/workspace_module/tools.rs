@@ -23,8 +23,8 @@ use agentdash_domain::canvas::CanvasScope;
 use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::project::{ProjectAuthorizationContext, ProjectRepository};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -159,8 +159,8 @@ impl AgentTool for WorkspaceModuleListTool {
             "additionalProperties": false
         })
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -305,8 +305,8 @@ impl AgentTool for WorkspaceModuleDescribeTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<WorkspaceModuleDescribeParams>()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -440,8 +440,8 @@ impl AgentTool for WorkspaceModuleOperateTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<WorkspaceModuleOperateParams>()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -844,8 +844,8 @@ impl AgentTool for WorkspaceModuleInvokeTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<WorkspaceModuleInvokeParams>()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -1012,8 +1012,8 @@ impl AgentTool for WorkspaceModulePresentTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<WorkspaceModulePresentParams>()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -1115,9 +1115,9 @@ mod tests {
         ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
         ProjectExtensionInstallation, ProjectExtensionInstallationRepository,
     };
-    use agentdash_spi::connector::RuntimeToolProvider;
-    use agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
-    use agentdash_spi::{
+    use agentdash_platform_spi::RuntimeToolProvider;
+    use agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
+    use agentdash_platform_spi::{
         AgentConfig, CapabilityState, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame,
         RuntimeVfsAccessPolicy, ToolCapability, ToolCluster, ToolDefinition, Vfs,
         WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
@@ -1929,7 +1929,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let project_repo = fake_project_repo(project_id).await;
         let canvas_repo = Arc::new(FixtureCanvasRepo::default());
-        let shared_vfs = SharedRuntimeVfs::new(agentdash_spi::Vfs::default());
+        let shared_vfs = SharedRuntimeVfs::new(agentdash_platform_spi::Vfs::default());
         let tool = WorkspaceModuleOperateTool::new(
             project_repo,
             canvas_repo,
@@ -1991,7 +1991,7 @@ mod tests {
             project_repo,
             canvas_repo.clone(),
             project_id,
-            SharedRuntimeVfs::new(agentdash_spi::Vfs::default()),
+            SharedRuntimeVfs::new(agentdash_platform_spi::Vfs::default()),
             bridge_handle,
             Some("delivery-session-1".to_string()),
         )
@@ -2290,7 +2290,7 @@ mod tests {
                 identity: None,
             },
             turn: ExecutionTurnFrame {
-                platform_tool_execution: Some(agentdash_spi::PlatformToolExecutionContext {
+                platform_tool_execution: Some(agentdash_platform_spi::PlatformToolExecutionContext {
                     run_id: Uuid::new_v4(),
                     project_id,
                     agent_id: Uuid::new_v4(),

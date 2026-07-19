@@ -1,6 +1,6 @@
 #![allow(clippy::items_after_test_module)]
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     Json,
@@ -9,38 +9,24 @@ use axum::{
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use agentdash_application::capability::tool_catalog::{
-    CapabilityCatalog as ApplicationCapabilityCatalog,
-    CapabilityCatalogEntry as ApplicationCapabilityCatalogEntry,
-    CapabilityCatalogScope as ApplicationCapabilityCatalogScope,
-    ToolCatalogCluster as ApplicationToolCatalogCluster,
-    ToolCatalogDescriptor as ApplicationToolCatalogDescriptor,
-    ToolCatalogPlatformMcpScope as ApplicationToolCatalogPlatformMcpScope,
-    ToolCatalogSource as ApplicationToolCatalogSource,
-};
-use agentdash_application_hooks::{HookRulePreset, hook_rule_preset_registry};
 use agentdash_application_lifecycle::{
-    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
-    run_view_builder,
+    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandDeps,
+    LifecycleRunCommandService,
 };
 use agentdash_application_workflow::{
-    ActivityLifecycleCatalogService, OrchestrationExecutorDrainResult,
-    OrchestrationExecutorLauncher, ScriptCompiler, SubmitHumanGateDecisionInput,
-    WorkflowScriptPreflightInput, WorkflowScriptPreflightService,
+    ActivityLifecycleCatalogService, OrchestrationExecutorDrainResult, ScriptCompiler,
+    SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput, WorkflowScriptPreflightService,
 };
 use agentdash_contracts::workflow::{
-    AgentProcedureResponse, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
-    CapabilityScopeDto, ContinueLifecycleRunResponse, DeleteAgentProcedureResponse,
-    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, HookPresetResponse, HookPresetsResponse,
-    LaunchedAgentNodeDto, LifecycleRunView, OpenedHumanGateDto,
-    OrchestrationExecutorDrainResultDto, PlatformMcpScopeDto, PreflightWorkflowScriptRequest,
-    PreflightWorkflowScriptResponse, RegisterHookPresetResponse,
-    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
-    ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse,
-    ValidationSeverity as ContractValidationSeverity, WorkflowGraphResponse,
-    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
-    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
-    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
+    AgentProcedureResponse, ContinueLifecycleRunResponse, DeleteAgentProcedureResponse,
+    DeleteWorkflowGraphResponse, LaunchedAgentNodeDto, LifecycleRunView, OpenedHumanGateDto,
+    OrchestrationExecutorDrainResultDto, PreflightWorkflowScriptRequest,
+    PreflightWorkflowScriptResponse, SubmitOrchestrationHumanDecisionRequest,
+    SubmitOrchestrationHumanDecisionResponse, ValidationSeverity as ContractValidationSeverity,
+    WorkflowGraphResponse, WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto,
+    WorkflowScriptCapabilitySummaryDto, WorkflowScriptHumanGateCapabilityDto,
+    WorkflowScriptPlanPreviewDto, WorkflowScriptPlanPreviewNodeDto,
+    WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, AgentProcedure, DefinitionSource, ExecutionSource, LifecycleRun,
@@ -49,14 +35,13 @@ use agentdash_domain::workflow::{
     WorkflowScriptProvenanceSource, workflow_script_source_digest,
 };
 
-use super::lifecycle_contracts::lifecycle_run_view_to_contract;
+use super::lifecycle_contracts::{lifecycle_run_view_query_error, lifecycle_run_view_to_contract};
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
     CreateAgentProcedureRequest, CreateWorkflowGraphRequest, ListWorkflowsQuery,
-    RegisterPresetRequest, StartWorkflowRunRequest, ToolCatalogQuery, UpdateAgentProcedureRequest,
-    UpdateWorkflowGraphRequest, ValidateAgentProcedureRequest, ValidateScriptRequest,
-    ValidateWorkflowGraphRequest, WorkflowValidationResponse,
+    StartWorkflowRunRequest, UpdateAgentProcedureRequest, UpdateWorkflowGraphRequest,
+    ValidateAgentProcedureRequest, ValidateWorkflowGraphRequest, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
 
@@ -119,20 +104,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(get_workflow_graph)
                 .put(update_workflow_graph)
                 .delete(delete_workflow_graph),
-        )
-        .route("/tool-catalog", axum::routing::get(query_tool_catalog))
-        .route("/hook-presets", axum::routing::get(list_hook_presets))
-        .route(
-            "/hook-scripts/validate",
-            axum::routing::post(validate_hook_script),
-        )
-        .route(
-            "/hook-presets/custom",
-            axum::routing::post(register_hook_preset),
-        )
-        .route(
-            "/hook-presets/custom/{key}",
-            axum::routing::delete(delete_hook_preset),
         )
         .route("/lifecycle-runs", axum::routing::post(create_lifecycle_run))
         .route(
@@ -541,10 +512,9 @@ pub async fn submit_orchestration_human_decision(
     )
     .await?;
 
-    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
-    let launcher = OrchestrationExecutorLauncher::new(state.repos.to_workflow_repository_set())
-        .with_function_runner(state.services.function_runner.clone());
-    let result = launcher
+    let result = state
+        .services
+        .orchestration_executor_launcher
         .submit_human_gate_decision(SubmitHumanGateDecisionInput {
             run_id,
             orchestration_id,
@@ -556,7 +526,12 @@ pub async fn submit_orchestration_human_decision(
                 .unwrap_or_else(|| current_user.user_id.to_string()),
         })
         .await?;
-    let view = run_view_builder::build_lifecycle_run_view(&lifecycle_repos, &result.run).await?;
+    let view = state
+        .services
+        .lifecycle_run_views
+        .lifecycle_run_view(result.run.id)
+        .await
+        .map_err(lifecycle_run_view_query_error)?;
     Ok(Json(SubmitOrchestrationHumanDecisionResponse {
         run: lifecycle_run_view_to_contract(view),
         gate_id: result.gate_id.to_string(),
@@ -856,19 +831,29 @@ async fn lifecycle_run_to_contract_view(
     state: &Arc<AppState>,
     run: &LifecycleRun,
 ) -> Result<LifecycleRunView, ApiError> {
-    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
-    run_view_builder::build_lifecycle_run_view(&lifecycle_repos, run)
+    state
+        .services
+        .lifecycle_run_views
+        .lifecycle_run_view(run.id)
         .await
         .map(lifecycle_run_view_to_contract)
-        .map_err(ApiError::from)
+        .map_err(lifecycle_run_view_query_error)
 }
 
 fn lifecycle_command_service(state: &Arc<AppState>) -> LifecycleRunCommandService {
     LifecycleRunCommandService::new(
-        state.repos.lifecycle_run_command_deps(),
+        LifecycleRunCommandDeps {
+            run_repo: state.repos.lifecycle_run_repo.clone(),
+            workflow_graph_repo: state.repos.workflow_graph_repo.clone(),
+            agent_repo: state.repos.lifecycle_agent_repo.clone(),
+            frame_repo: state.repos.agent_frame_repo.clone(),
+            association_repo: state.repos.lifecycle_subject_association_repo.clone(),
+            gate_repo: state.repos.lifecycle_gate_repo.clone(),
+            lineage_repo: state.repos.agent_lineage_repo.clone(),
+            orchestration_launcher: state.services.orchestration_executor_launcher.clone(),
+        },
         lifecycle_platform_config(state),
     )
-    .with_function_runner(state.services.function_runner.clone())
 }
 
 fn lifecycle_platform_config(
@@ -898,10 +883,11 @@ fn orchestration_drain_result_to_contract(
             .into_iter()
             .map(|node| LaunchedAgentNodeDto {
                 run_id: node.run_id.to_string(),
+                agent_id: node.agent_id.to_string(),
                 orchestration_id: node.orchestration_id.to_string(),
                 node_path: node.node_path,
                 attempt: node.attempt,
-                runtime_session_id: node.runtime_session_id,
+                runtime_thread_id: node.runtime_thread_id,
             })
             .collect(),
         opened_human_gates: result
@@ -1075,279 +1061,5 @@ fn workflow_graph_ref_from_start_request(
         )),
         (Some(id), None) => Ok(WorkflowGraphRef::ById(id)),
         (None, Some(key)) => Ok(WorkflowGraphRef::ByKey { project_id, key }),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn capability_catalog_mapper_preserves_read_model_shape() {
-        let catalog = ApplicationCapabilityCatalog {
-            capabilities: vec![ApplicationCapabilityCatalogEntry {
-                key: "workspace_module".to_string(),
-                label: "Workspace Module".to_string(),
-                description: "模块创建、调用与展示，包含 Canvas".to_string(),
-                allowed_scopes: vec![
-                    ApplicationCapabilityCatalogScope::Project,
-                    ApplicationCapabilityCatalogScope::Story,
-                    ApplicationCapabilityCatalogScope::Task,
-                ],
-                auto_granted: true,
-                agent_can_grant: false,
-                workflow_can_grant: false,
-                tools: vec![
-                    ApplicationToolCatalogDescriptor {
-                        name: "workspace_module_present".to_string(),
-                        display_name: "Present workspace module".to_string(),
-                        description: "展示 workspace module UI".to_string(),
-                        source: ApplicationToolCatalogSource::Platform {
-                            cluster: ApplicationToolCatalogCluster::WorkspaceModule,
-                        },
-                        capability_key: "workspace_module".to_string(),
-                    },
-                    ApplicationToolCatalogDescriptor {
-                        name: "list_workflows".to_string(),
-                        display_name: "List workflows".to_string(),
-                        description: "列出 workflow".to_string(),
-                        source: ApplicationToolCatalogSource::PlatformMcp {
-                            scope: ApplicationToolCatalogPlatformMcpScope::Workflow,
-                        },
-                        capability_key: "workflow_management".to_string(),
-                    },
-                    ApplicationToolCatalogDescriptor {
-                        name: "mcp:code_analyzer".to_string(),
-                        display_name: "MCP: code_analyzer".to_string(),
-                        description: "运行时发现".to_string(),
-                        source: ApplicationToolCatalogSource::Mcp {
-                            server_name: "code_analyzer".to_string(),
-                        },
-                        capability_key: "mcp:code_analyzer".to_string(),
-                    },
-                ],
-            }],
-        };
-
-        let response = capability_catalog_to_contract(catalog);
-        let entry = response.capabilities.first().expect("catalog entry");
-        assert_eq!(entry.key, "workspace_module");
-        assert_eq!(
-            entry.allowed_scopes,
-            vec![
-                CapabilityScopeDto::Project,
-                CapabilityScopeDto::Story,
-                CapabilityScopeDto::Task,
-            ]
-        );
-        assert_eq!(entry.tools.len(), 3);
-        assert!(matches!(
-            &entry.tools[0].source,
-            ToolSourceDto::Platform {
-                cluster: ToolClusterDto::WorkspaceModule
-            }
-        ));
-        assert!(matches!(
-            &entry.tools[1].source,
-            ToolSourceDto::PlatformMcp {
-                scope: PlatformMcpScopeDto::Workflow
-            }
-        ));
-        assert!(matches!(
-            &entry.tools[2].source,
-            ToolSourceDto::Mcp { server_name } if server_name == "code_analyzer"
-        ));
-    }
-}
-
-pub async fn list_hook_presets() -> Result<Json<HookPresetsResponse>, ApiError> {
-    let presets = hook_rule_preset_registry();
-    let grouped = group_presets_by_trigger(presets)?;
-    Ok(Json(HookPresetsResponse { presets: grouped }))
-}
-
-fn group_presets_by_trigger(
-    presets: &[HookRulePreset],
-) -> Result<BTreeMap<String, Vec<HookPresetResponse>>, ApiError> {
-    let mut groups: BTreeMap<String, Vec<HookPresetResponse>> = BTreeMap::new();
-    for preset in presets {
-        let trigger = serde_json::to_value(preset.trigger).map_err(|error| {
-            ApiError::Internal(format!(
-                "序列化 hook preset trigger 失败: key={}, error={error}",
-                preset.key
-            ))
-        })?;
-        let trigger_key = trigger.as_str().map(ToString::to_string).ok_or_else(|| {
-            ApiError::Internal(format!(
-                "hook preset trigger 不是字符串: key={}",
-                preset.key
-            ))
-        })?;
-        let source = serde_json::to_value(preset.source).map_err(|error| {
-            ApiError::Internal(format!(
-                "序列化 hook preset source 失败: key={}, error={error}",
-                preset.key
-            ))
-        })?;
-        let source = source.as_str().map(ToString::to_string).ok_or_else(|| {
-            ApiError::Internal(format!("hook preset source 不是字符串: key={}", preset.key))
-        })?;
-        groups
-            .entry(trigger_key)
-            .or_default()
-            .push(HookPresetResponse {
-                key: preset.key.to_string(),
-                trigger,
-                label: preset.label.to_string(),
-                description: preset.description.to_string(),
-                param_schema: preset
-                    .param_schema
-                    .clone()
-                    .unwrap_or(serde_json::Value::Null),
-                script: preset.script.to_string(),
-                source,
-            });
-    }
-    Ok(groups)
-}
-
-pub async fn validate_hook_script(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<ValidateScriptRequest>,
-) -> Json<ValidateHookScriptResponse> {
-    match state.services.hook_provider.validate_script(&req.script) {
-        Ok(()) => Json(ValidateHookScriptResponse {
-            valid: true,
-            errors: None,
-        }),
-        Err(errors) => Json(ValidateHookScriptResponse {
-            valid: false,
-            errors: Some(errors),
-        }),
-    }
-}
-
-pub async fn register_hook_preset(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<RegisterPresetRequest>,
-) -> Result<Json<RegisterHookPresetResponse>, ApiError> {
-    state
-        .services
-        .hook_provider
-        .register_preset(&req.key, &req.script)
-        .map_err(|e| ApiError::BadRequest(format!("脚本编译失败: {e}")))?;
-    Ok(Json(RegisterHookPresetResponse {
-        registered: true,
-        key: req.key,
-    }))
-}
-
-pub async fn delete_hook_preset(
-    State(state): State<Arc<AppState>>,
-    Path(key): Path<String>,
-) -> Json<DeleteHookPresetResponse> {
-    let removed = state.services.hook_provider.remove_preset(&key);
-    Json(DeleteHookPresetResponse { removed, key })
-}
-
-// ── Tool Catalog ──
-
-pub async fn query_tool_catalog(
-    Query(query): Query<ToolCatalogQuery>,
-) -> Json<CapabilityCatalogResponse> {
-    let keys = query.capabilities.as_deref().map(|raw| {
-        raw.split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-    });
-    let catalog = agentdash_application::capability::query_capability_catalog(keys.as_deref());
-    Json(capability_catalog_to_contract(catalog))
-}
-
-fn capability_catalog_to_contract(
-    catalog: ApplicationCapabilityCatalog,
-) -> CapabilityCatalogResponse {
-    CapabilityCatalogResponse {
-        capabilities: catalog
-            .capabilities
-            .into_iter()
-            .map(capability_catalog_entry_to_contract)
-            .collect(),
-    }
-}
-
-fn capability_catalog_entry_to_contract(
-    entry: ApplicationCapabilityCatalogEntry,
-) -> CapabilityCatalogEntryDto {
-    CapabilityCatalogEntryDto {
-        key: entry.key,
-        label: entry.label,
-        description: entry.description,
-        allowed_scopes: entry
-            .allowed_scopes
-            .into_iter()
-            .map(capability_scope_to_contract)
-            .collect(),
-        auto_granted: entry.auto_granted,
-        agent_can_grant: entry.agent_can_grant,
-        workflow_can_grant: entry.workflow_can_grant,
-        tools: entry
-            .tools
-            .into_iter()
-            .map(tool_descriptor_to_contract)
-            .collect(),
-    }
-}
-
-fn tool_descriptor_to_contract(descriptor: ApplicationToolCatalogDescriptor) -> ToolDescriptorDto {
-    ToolDescriptorDto {
-        name: descriptor.name,
-        display_name: descriptor.display_name,
-        description: descriptor.description,
-        source: tool_source_to_contract(descriptor.source),
-        capability_key: descriptor.capability_key,
-    }
-}
-
-fn tool_source_to_contract(source: ApplicationToolCatalogSource) -> ToolSourceDto {
-    match source {
-        ApplicationToolCatalogSource::Platform { cluster } => ToolSourceDto::Platform {
-            cluster: tool_cluster_to_contract(cluster),
-        },
-        ApplicationToolCatalogSource::PlatformMcp { scope } => ToolSourceDto::PlatformMcp {
-            scope: platform_mcp_scope_to_contract(scope),
-        },
-        ApplicationToolCatalogSource::Mcp { server_name } => ToolSourceDto::Mcp { server_name },
-    }
-}
-
-fn capability_scope_to_contract(scope: ApplicationCapabilityCatalogScope) -> CapabilityScopeDto {
-    match scope {
-        ApplicationCapabilityCatalogScope::Project => CapabilityScopeDto::Project,
-        ApplicationCapabilityCatalogScope::Story => CapabilityScopeDto::Story,
-        ApplicationCapabilityCatalogScope::Task => CapabilityScopeDto::Task,
-    }
-}
-
-fn tool_cluster_to_contract(cluster: ApplicationToolCatalogCluster) -> ToolClusterDto {
-    match cluster {
-        ApplicationToolCatalogCluster::Read => ToolClusterDto::Read,
-        ApplicationToolCatalogCluster::Write => ToolClusterDto::Write,
-        ApplicationToolCatalogCluster::Execute => ToolClusterDto::Execute,
-        ApplicationToolCatalogCluster::Workflow => ToolClusterDto::Workflow,
-        ApplicationToolCatalogCluster::Collaboration => ToolClusterDto::Collaboration,
-        ApplicationToolCatalogCluster::Task => ToolClusterDto::Task,
-        ApplicationToolCatalogCluster::WorkspaceModule => ToolClusterDto::WorkspaceModule,
-    }
-}
-
-fn platform_mcp_scope_to_contract(
-    scope: ApplicationToolCatalogPlatformMcpScope,
-) -> PlatformMcpScopeDto {
-    match scope {
-        ApplicationToolCatalogPlatformMcpScope::Relay => PlatformMcpScopeDto::Relay,
-        ApplicationToolCatalogPlatformMcpScope::Story => PlatformMcpScopeDto::Story,
-        ApplicationToolCatalogPlatformMcpScope::Workflow => PlatformMcpScopeDto::Workflow,
     }
 }

@@ -5,27 +5,34 @@
 //! and reverse Host callbacks. It deliberately has no Product, Runtime repository,
 //! transport, infrastructure, or vendor dependencies.
 
+pub mod canonical_json;
 pub mod command;
 pub mod context;
 pub mod ids;
+pub mod presentation;
 pub mod profile;
 pub mod service;
 pub mod snapshot;
 pub mod surface;
+pub mod wire_u64;
 
+pub use canonical_json::*;
 pub use command::*;
 pub use context::*;
 pub use ids::*;
+pub use presentation::*;
 pub use profile::*;
 pub use service::*;
 pub use snapshot::*;
 pub use surface::*;
+pub use wire_u64::*;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// Schema root covering every public Complete Agent contract family.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentServiceApiSchema {
     pub descriptor: AgentServiceDescriptor,
@@ -35,12 +42,15 @@ pub struct AgentServiceApiSchema {
     pub execute: AgentCommandEnvelope,
     pub receipt: AgentCommandReceipt,
     pub fork_receipt: ForkAgentReceipt,
+    pub create_evidence: AgentCreateEvidence,
     pub read: AgentReadQuery,
     pub snapshot: AgentSnapshot,
     pub changes: AgentChangesQuery,
     pub change_page: AgentChangePage,
     pub inspection: AgentEffectInspection,
+    pub applied_effect_outcome: AgentAppliedEffectOutcome,
     pub desired_surface: AgentSurfaceSnapshot,
+    pub surface_contribution_kind: AgentSurfaceContributionKind,
     pub offer: AgentRuntimeOffer,
     pub bound_surface: BoundAgentSurface,
     pub applied_surface: AppliedAgentSurface,
@@ -55,6 +65,10 @@ pub struct AgentServiceApiSchema {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::Path};
+
+    use ts_rs::TS;
+
     use super::*;
 
     #[test]
@@ -73,12 +87,15 @@ mod tests {
             "execute",
             "receipt",
             "fork_receipt",
+            "create_evidence",
             "read",
             "snapshot",
             "changes",
             "change_page",
             "inspection",
+            "applied_effect_outcome",
             "desired_surface",
+            "surface_contribution_kind",
             "offer",
             "bound_surface",
             "applied_surface",
@@ -92,5 +109,57 @@ mod tests {
         ] {
             assert!(properties.contains_key(family), "missing {family}");
         }
+    }
+
+    #[test]
+    fn complete_agent_typescript_root_exports_lossless_decimal_wire_scalars() {
+        let temp = tempfile::tempdir().expect("create TypeScript export directory");
+        AgentServiceApiSchema::export_all_to(temp.path())
+            .expect("export Complete Agent service types");
+        AgentServiceU64::export_all_to(temp.path()).expect("export Service u64");
+        let typescript = read_typescript(temp.path());
+
+        for contract in [
+            "AgentServiceApiSchema",
+            "AgentAppliedEffectOutcome",
+            "AgentHostCallbackMeta",
+            "AgentChange",
+            "AgentThreadNameSnapshot",
+            "AgentHostCallbackBinding",
+            "AgentCreateEvidence",
+            "AgentSurfaceContributionKind",
+        ] {
+            assert!(typescript.contains(contract), "missing {contract}");
+        }
+        for outcome in [
+            "\"create\"",
+            "\"resume\"",
+            "\"fork\"",
+            "\"command\"",
+            "\"surface_apply\"",
+            "\"surface_revoke\"",
+        ] {
+            assert!(typescript.contains(outcome), "missing outcome {outcome}");
+        }
+        assert!(!typescript.contains("bigint"));
+        assert!(typescript.contains(
+            "export type AgentServiceU64 = string & { readonly __agent_service_u64: \"canonical_unsigned_decimal\" };"
+        ));
+        assert!(typescript.contains("deadline_at_ms: AgentServiceU64"));
+        assert!(typescript.contains("occurred_at_ms: AgentServiceU64"));
+        assert!(typescript.contains("\"thread_name_changed\""));
+    }
+
+    fn read_typescript(directory: &Path) -> String {
+        let mut output = String::new();
+        for entry in fs::read_dir(directory).expect("read TypeScript export directory") {
+            let path = entry.expect("read TypeScript export entry").path();
+            if path.is_dir() {
+                output.push_str(&read_typescript(&path));
+            } else if path.extension().is_some_and(|extension| extension == "ts") {
+                output.push_str(&fs::read_to_string(path).expect("read TypeScript export"));
+            }
+        }
+        output
     }
 }

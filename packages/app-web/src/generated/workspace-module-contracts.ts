@@ -58,7 +58,7 @@ export type WorkspaceModuleOperationReadiness = { kind: WorkspaceModuleOperation
  * Operation 调用就绪状态；它只描述当前 operation 是否可调用，
  * 与 module 可见性和 renderer loadability 分层。
  */
-export type WorkspaceModuleOperationReadinessKind = "ready" | "missing_runtime_gateway" | "missing_channel_transport" | "missing_runtime_backend_anchor" | "backend_unavailable" | "runtime_action_unavailable" | "backend_service_unavailable";
+export type WorkspaceModuleOperationReadinessKind = "ready" | "missing_extension_gateway" | "missing_channel_transport" | "missing_runtime_backend_anchor" | "backend_unavailable" | "runtime_action_unavailable" | "backend_service_unavailable";
 
 /**
  * Operation exposure target.

@@ -29,8 +29,8 @@ use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedureContract, LifecycleRun, WorkflowGraph,
 };
-use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
-use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
+use agentdash_platform_spi::{CapabilityScope, CapabilityScopeCtx};
+use agentdash_platform_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -529,7 +529,7 @@ async fn compose_lifecycle_node_with_audit(
         SessionContextConfig {
             session_id: Uuid::new_v4(),
             phase: ContextBuildPhase::LifecycleNode,
-            default_scope: agentdash_spi::ContextFragment::default_scope(),
+            default_scope: agentdash_platform_spi::ContextFragment::default_scope(),
         },
         vec![
             contribute_lifecycle_context(&spec, &activation, &ready_port_keys),
@@ -603,12 +603,12 @@ fn contribute_lifecycle_context(
         ));
     }
 
-    fragments.push(agentdash_spi::ContextFragment {
+    fragments.push(agentdash_platform_spi::ContextFragment {
         slot: "workflow_context".to_string(),
         label: "lifecycle_node_context".to_string(),
         order: 80,
-        strategy: agentdash_spi::MergeStrategy::Append,
-        scope: agentdash_spi::ContextFragment::default_scope(),
+        strategy: agentdash_platform_spi::MergeStrategy::Append,
+        scope: agentdash_platform_spi::ContextFragment::default_scope(),
         source: "lifecycle:activation".to_string(),
         content: format!("## Lifecycle Node\n{}", lifecycle_lines.join("\n")),
     });
@@ -619,12 +619,12 @@ fn contribute_lifecycle_context(
             crate::context::rendering::WorkflowInjectionMode::Declarative,
         )
     {
-        fragments.push(agentdash_spi::ContextFragment {
+        fragments.push(agentdash_platform_spi::ContextFragment {
             slot: "workflow_context".to_string(),
             label: "lifecycle_workflow_injection".to_string(),
             order: 83,
-            strategy: agentdash_spi::MergeStrategy::Append,
-            scope: agentdash_spi::ContextFragment::default_scope(),
+            strategy: agentdash_platform_spi::MergeStrategy::Append,
+            scope: agentdash_platform_spi::ContextFragment::default_scope(),
             source: "lifecycle:workflow_injection".to_string(),
             content,
         });
@@ -640,12 +640,12 @@ fn contribute_lifecycle_context(
     if !activation.kickoff_prompt.input_section.trim().is_empty() {
         delivery_parts.push(activation.kickoff_prompt.input_section.trim().to_string());
     }
-    fragments.push(agentdash_spi::ContextFragment {
+    fragments.push(agentdash_platform_spi::ContextFragment {
         slot: "workflow_context".to_string(),
         label: "lifecycle_delivery_contract".to_string(),
         order: 84,
-        strategy: agentdash_spi::MergeStrategy::Append,
-        scope: agentdash_spi::ContextFragment::default_scope(),
+        strategy: agentdash_platform_spi::MergeStrategy::Append,
+        scope: agentdash_platform_spi::ContextFragment::default_scope(),
         source: "lifecycle:delivery_contract".to_string(),
         content: delivery_parts.join("\n\n"),
     });
@@ -659,8 +659,8 @@ fn contribute_lifecycle_context(
 /// 该 fragment 会被 `preparation.rs::find_agent_identity_markdown` 拾取，
 /// 最终渲染进 Identity Frame 的 "## Agent Identity" section。
 fn inject_companion_role_fragment(prepared: &mut FrameAssemblyBuilder, child_session_id: &str) {
-    use agentdash_spi::context::bundle::SessionContextBundle;
-    use agentdash_spi::context::injection::{ContextFragment, MergeStrategy};
+    use agentdash_platform_spi::context::bundle::SessionContextBundle;
+    use agentdash_platform_spi::context::injection::{ContextFragment, MergeStrategy};
 
     let role_content = "\
 ## Agent Identity
@@ -706,7 +706,7 @@ fn compose_companion(spec: CompanionSpec<'_>) -> Result<FrameAssemblyBuilder, St
         .build())
 }
 
-fn dedupe_runtime_mcp_servers(servers: &mut Vec<agentdash_spi::RuntimeMcpServer>) {
+fn dedupe_runtime_mcp_servers(servers: &mut Vec<agentdash_platform_spi::RuntimeMcpServer>) {
     let mut seen = BTreeSet::<String>::new();
     servers.retain(|server| seen.insert(server.name.clone()));
 }
@@ -752,7 +752,7 @@ pub struct LifecycleNodeSpec<'a> {
 /// Companion compose 输入。
 pub struct CompanionSpec<'a> {
     pub parent_vfs: Option<&'a Vfs>,
-    pub parent_mcp_servers: &'a [agentdash_spi::RuntimeMcpServer],
+    pub parent_mcp_servers: &'a [agentdash_platform_spi::RuntimeMcpServer],
     /// 父 session 的结构化上下文 Bundle，companion 直接继承（按 slice_mode 过滤）。
     pub parent_context_bundle: Option<&'a SessionContextBundle>,
     pub slice_mode: CompanionSliceMode,
@@ -784,7 +784,7 @@ pub struct CompanionParentWorkflowSpec<'a> {
 
 pub(crate) struct CompanionParentFacts {
     pub(crate) parent_vfs: Option<Vfs>,
-    pub(crate) parent_mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
+    pub(crate) parent_mcp_servers: Vec<agentdash_platform_spi::RuntimeMcpServer>,
     pub(crate) parent_context_bundle: Option<SessionContextBundle>,
 }
 
@@ -930,19 +930,19 @@ async fn compose_companion_with_workflow(
             crate::context::rendering::WorkflowInjectionMode::SummaryOnly,
         )
     {
-        let workflow_fragment = agentdash_spi::ContextFragment {
+        let workflow_fragment = agentdash_platform_spi::ContextFragment {
             slot: "workflow_context".to_string(),
             label: "companion_workflow_injection".to_string(),
             order: 83,
-            strategy: agentdash_spi::MergeStrategy::Append,
-            scope: agentdash_spi::ContextFragment::default_scope(),
+            strategy: agentdash_platform_spi::MergeStrategy::Append,
+            scope: agentdash_platform_spi::ContextFragment::default_scope(),
             source: "companion:workflow_injection".to_string(),
             content: workflow_content,
         };
         match merged_bundle.as_mut() {
             Some(bundle) => bundle.upsert_by_slot(workflow_fragment),
             None => {
-                let mut bundle = agentdash_spi::SessionContextBundle::new(
+                let mut bundle = agentdash_platform_spi::SessionContextBundle::new(
                     Uuid::new_v4(),
                     ContextBuildPhase::Companion.as_tag(),
                 );
@@ -1062,18 +1062,18 @@ mod tests {
         );
     }
 
-    fn bundle_with_slots(slots: &[&str]) -> agentdash_spi::SessionContextBundle {
-        let mut bundle = agentdash_spi::SessionContextBundle::new(
+    fn bundle_with_slots(slots: &[&str]) -> agentdash_platform_spi::SessionContextBundle {
+        let mut bundle = agentdash_platform_spi::SessionContextBundle::new(
             Uuid::new_v4(),
             ContextBuildPhase::StoryOwner.as_tag(),
         );
         for (idx, slot) in slots.iter().enumerate() {
-            bundle.upsert_by_slot(agentdash_spi::ContextFragment {
+            bundle.upsert_by_slot(agentdash_platform_spi::ContextFragment {
                 slot: (*slot).to_string(),
                 label: format!("label_{slot}"),
                 order: 10 + idx as i32,
-                strategy: agentdash_spi::MergeStrategy::Append,
-                scope: agentdash_spi::ContextFragment::default_scope(),
+                strategy: agentdash_platform_spi::MergeStrategy::Append,
+                scope: agentdash_platform_spi::ContextFragment::default_scope(),
                 source: "test".to_string(),
                 content: format!("body_{slot}"),
             });
@@ -1088,7 +1088,7 @@ mod tests {
             key: project_agent.id.to_string(),
             display_name: name.to_string(),
             description: String::new(),
-            executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            executor_config: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
             preset_config: AgentPresetConfig::default(),
             preset_name: Some(name.to_string()),
             source: "test".to_string(),
@@ -1106,7 +1106,7 @@ mod tests {
         assert!(validate_selected_agent_key_snapshot(&context, Some("planner")).is_err());
     }
 
-    fn slot_set(bundle: &agentdash_spi::SessionContextBundle) -> std::collections::HashSet<String> {
+    fn slot_set(bundle: &agentdash_platform_spi::SessionContextBundle) -> std::collections::HashSet<String> {
         bundle
             .bootstrap_fragments
             .iter()
@@ -1390,12 +1390,12 @@ mod tests {
             SessionContextConfig {
                 session_id: Uuid::new_v4(),
                 phase: ContextBuildPhase::LifecycleNode,
-                default_scope: agentdash_spi::ContextFragment::default_scope(),
+                default_scope: agentdash_platform_spi::ContextFragment::default_scope(),
             },
             vec![contribution],
         );
         let relevant_content: String = bundle
-            .filter_for(agentdash_spi::FragmentScope::RuntimeAgent)
+            .filter_for(agentdash_platform_spi::FragmentScope::RuntimeAgent)
             .filter(|f| f.slot == "workflow_context")
             .map(|f| f.content.clone())
             .collect::<Vec<_>>()
@@ -1409,7 +1409,7 @@ mod tests {
         assert!(!relevant_content.contains("workflow_management"));
         assert!(
             !bundle
-                .filter_for(agentdash_spi::FragmentScope::RuntimeAgent)
+                .filter_for(agentdash_platform_spi::FragmentScope::RuntimeAgent)
                 .any(|f| f.slot == "runtime_policy")
         );
     }
@@ -1421,7 +1421,7 @@ mod tests {
         #[test]
         fn system_routine_identity_shape() {
             // 固化 AuthIdentity::system_routine 产出形状（E1 契约）。
-            let id = agentdash_spi::platform::auth::AuthIdentity::system_routine("r-abc");
+            let id = agentdash_platform_spi::platform::auth::AuthIdentity::system_routine("r-abc");
             assert_eq!(id.user_id, "system:routine:r-abc");
             assert_eq!(id.subject, "system:routine:r-abc");
             assert_eq!(id.provider.as_deref(), Some("system.routine"));
@@ -1431,7 +1431,7 @@ mod tests {
             // auth_mode = Personal 避免匹配企业级 admin 策略
             assert!(matches!(
                 id.auth_mode,
-                agentdash_spi::platform::auth::AuthMode::Personal
+                agentdash_platform_spi::platform::auth::AuthMode::Personal
             ));
         }
 

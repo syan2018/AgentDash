@@ -1,7 +1,7 @@
 use agentdash_application_ports::agent_run_fork::{AgentRunForkGraph, AgentRunForkGraphStore};
 use agentdash_domain::workflow::{LifecycleRunStatus, LifecycleRunTopology};
 use async_trait::async_trait;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
 pub struct PostgresAgentRunForkGraphStore {
     pool: PgPool,
@@ -17,98 +17,7 @@ impl PostgresAgentRunForkGraphStore {
 impl AgentRunForkGraphStore for PostgresAgentRunForkGraphStore {
     async fn create_graph(&self, graph: &AgentRunForkGraph) -> Result<(), String> {
         let mut tx = self.pool.begin().await.map_err(|error| error.to_string())?;
-        let run = &graph.child_run;
-        sqlx::query(
-            "INSERT INTO lifecycle_runs \
-             (id,project_id,created_by_user_id,topology,orchestrations,tasks,status,execution_log,channel_registry,created_at,updated_at,last_activity_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-        )
-        .bind(run.id.to_string())
-        .bind(run.project_id.to_string())
-        .bind(&run.created_by_user_id)
-        .bind(topology(run.topology))
-        .bind(serde_json::to_value(&run.orchestrations).map_err(|error| error.to_string())?)
-        .bind(serde_json::to_value(&run.tasks).map_err(|error| error.to_string())?)
-        .bind(status(run.status))
-        .bind(serde_json::to_value(&run.execution_log).map_err(|error| error.to_string())?)
-        .bind(serde_json::to_value(&run.channel_registry).map_err(|error| error.to_string())?)
-        .bind(run.created_at)
-        .bind(run.updated_at)
-        .bind(run.last_activity_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
-
-        let agent = &graph.child_agent;
-        sqlx::query(
-            "INSERT INTO lifecycle_agents \
-             (id,run_id,project_id,created_by_user_id,source,project_agent_id,status,bootstrap_status,workspace_title,workspace_title_source,created_at,updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-        )
-        .bind(agent.id.to_string())
-        .bind(agent.run_id.to_string())
-        .bind(agent.project_id.to_string())
-        .bind(&agent.created_by_user_id)
-        .bind(agent.source.as_str())
-        .bind(agent.project_agent_id.map(|id| id.to_string()))
-        .bind(&agent.status)
-        .bind(&agent.bootstrap_status)
-        .bind(&agent.workspace_title)
-        .bind(&agent.workspace_title_source)
-        .bind(agent.created_at)
-        .bind(agent.updated_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
-
-        let frame = &graph.child_frame;
-        let surface = frame.surface_document();
-        sqlx::query(
-            "INSERT INTO agent_frames \
-             (id,agent_id,revision,surface,effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,execution_profile_json,hook_plan,created_by_kind,created_by_id,created_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
-        )
-        .bind(frame.id.to_string())
-        .bind(frame.agent_id.to_string())
-        .bind(frame.revision)
-        .bind(serde_json::to_value(&surface).map_err(|error| error.to_string())?)
-        .bind(surface.capability_state)
-        .bind(surface.context_slice)
-        .bind(surface.vfs_surface)
-        .bind(surface.mcp_surface)
-        .bind(surface.execution_profile)
-        .bind(surface.hook_plan)
-        .bind(&frame.created_by_kind)
-        .bind(&frame.created_by_id)
-        .bind(frame.created_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
-
-        let lineage = &graph.lineage;
-        sqlx::query(
-            "INSERT INTO agent_run_lineages \
-             (id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,parent_frame_id,parent_frame_revision,child_frame_id,child_frame_revision,fork_point_event_seq,fork_point_ref,forked_by_user_id,metadata,created_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
-        )
-        .bind(lineage.id.to_string())
-        .bind(lineage.parent_run_id.to_string())
-        .bind(lineage.parent_agent_id.to_string())
-        .bind(lineage.child_run_id.to_string())
-        .bind(lineage.child_agent_id.to_string())
-        .bind(&lineage.relation_kind)
-        .bind(lineage.parent_frame_id.map(|id| id.to_string()))
-        .bind(lineage.parent_frame_revision)
-        .bind(lineage.child_frame_id.map(|id| id.to_string()))
-        .bind(lineage.child_frame_revision)
-        .bind(lineage.fork_point_event_seq.map(|value| value as i64))
-        .bind(&lineage.fork_point_ref_json)
-        .bind(&lineage.forked_by_user_id)
-        .bind(&lineage.metadata_json)
-        .bind(lineage.created_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
+        insert_agent_run_fork_graph(&mut tx, graph).await?;
         tx.commit().await.map_err(|error| error.to_string())
     }
 
@@ -120,6 +29,105 @@ impl AgentRunForkGraphStore for PostgresAgentRunForkGraphStore {
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
+}
+
+pub(super) async fn insert_agent_run_fork_graph(
+    tx: &mut Transaction<'_, Postgres>,
+    graph: &AgentRunForkGraph,
+) -> Result<(), String> {
+    let run = &graph.child_run;
+    sqlx::query(
+        "INSERT INTO lifecycle_runs \
+         (id,project_id,created_by_user_id,topology,orchestrations,tasks,status,execution_log,channel_registry,created_at,updated_at,last_activity_at) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+    )
+    .bind(run.id.to_string())
+    .bind(run.project_id.to_string())
+    .bind(&run.created_by_user_id)
+    .bind(topology(run.topology))
+    .bind(serde_json::to_value(&run.orchestrations).map_err(|error| error.to_string())?)
+    .bind(serde_json::to_value(&run.tasks).map_err(|error| error.to_string())?)
+    .bind(status(run.status))
+    .bind(serde_json::to_value(&run.execution_log).map_err(|error| error.to_string())?)
+    .bind(serde_json::to_value(&run.channel_registry).map_err(|error| error.to_string())?)
+    .bind(run.created_at)
+    .bind(run.updated_at)
+    .bind(run.last_activity_at)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    let agent = &graph.child_agent;
+    sqlx::query(
+        "INSERT INTO lifecycle_agents \
+         (id,run_id,project_id,created_by_user_id,source,project_agent_id,status,bootstrap_status,workspace_title,workspace_title_source,created_at,updated_at) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+    )
+    .bind(agent.id.to_string())
+    .bind(agent.run_id.to_string())
+    .bind(agent.project_id.to_string())
+    .bind(&agent.created_by_user_id)
+    .bind(agent.source.as_str())
+    .bind(agent.project_agent_id.map(|id| id.to_string()))
+    .bind(&agent.status)
+    .bind(&agent.bootstrap_status)
+    .bind(&agent.workspace_title)
+    .bind(&agent.workspace_title_source)
+    .bind(agent.created_at)
+    .bind(agent.updated_at)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    let frame = &graph.child_frame;
+    let surface = frame.surface_document();
+    sqlx::query(
+        "INSERT INTO agent_frames \
+         (id,agent_id,revision,surface,effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,execution_profile_json,hook_plan,created_by_kind,created_by_id,created_at) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+    )
+    .bind(frame.id.to_string())
+    .bind(frame.agent_id.to_string())
+    .bind(frame.revision)
+    .bind(serde_json::to_value(&surface).map_err(|error| error.to_string())?)
+    .bind(surface.capability_state)
+    .bind(surface.context_slice)
+    .bind(surface.vfs_surface)
+    .bind(surface.mcp_surface)
+    .bind(surface.execution_profile)
+    .bind(surface.hook_plan)
+    .bind(&frame.created_by_kind)
+    .bind(&frame.created_by_id)
+    .bind(frame.created_at)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    let lineage = &graph.lineage;
+    sqlx::query(
+        "INSERT INTO agent_run_lineages \
+         (id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,parent_frame_id,parent_frame_revision,child_frame_id,child_frame_revision,fork_point_event_seq,fork_point_ref,forked_by_user_id,metadata,created_at) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
+    )
+    .bind(lineage.id.to_string())
+    .bind(lineage.parent_run_id.to_string())
+    .bind(lineage.parent_agent_id.to_string())
+    .bind(lineage.child_run_id.to_string())
+    .bind(lineage.child_agent_id.to_string())
+    .bind(&lineage.relation_kind)
+    .bind(lineage.parent_frame_id.map(|id| id.to_string()))
+    .bind(lineage.parent_frame_revision)
+    .bind(lineage.child_frame_id.map(|id| id.to_string()))
+    .bind(lineage.child_frame_revision)
+    .bind(lineage.fork_point_event_seq.map(|value| value as i64))
+    .bind(&lineage.fork_point_ref_json)
+    .bind(&lineage.forked_by_user_id)
+    .bind(&lineage.metadata_json)
+    .bind(lineage.created_at)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn topology(value: LifecycleRunTopology) -> &'static str {

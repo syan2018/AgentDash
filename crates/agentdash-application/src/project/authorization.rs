@@ -1,4 +1,4 @@
-use agentdash_spi::platform::auth::AuthIdentity;
+use agentdash_platform_spi::platform::auth::AuthIdentity;
 
 pub use agentdash_domain::project::{
     ProjectAuthorization, ProjectAuthorizationContext, ProjectAuthorizationService,

@@ -10,7 +10,7 @@ use agentdash_application_ports::agent_frame_materialization::{
 use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
 use agentdash_application_vfs::{VfsService, validate_vfs};
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{AgentConfig, HookControlTarget, RuntimeAdapterProvenance};
+use agentdash_platform_spi::{AgentConfig, HookControlTarget, RuntimeAdapterProvenance};
 
 use crate::agent_run::frame::{
     AgentFrameBuilder, AgentFrameSurfaceExt, runtime_backend_anchor_from_vfs,

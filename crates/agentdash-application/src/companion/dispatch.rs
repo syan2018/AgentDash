@@ -5,8 +5,8 @@ use agentdash_domain::workflow::{
     GateWaitPolicyTemplate, InteractionDispatchIntent, LifecycleTaskPlanItemPatch, RunPolicy,
     RuntimePolicy, WaitExpectedResult, WaitTerminalOutcome, WaitTerminalPolicy, WaitWakeTarget,
 };
-use agentdash_spi::AgentConfig;
-use agentdash_spi::action_type as at;
+use agentdash_platform_spi::AgentConfig;
+use agentdash_platform_spi::action_type as at;
 
 use super::tools::CompanionAdoptionMode;
 use crate::lifecycle::LifecycleDispatchService;
@@ -21,7 +21,7 @@ pub(crate) struct CompanionChildDispatchRequest {
     pub parent_agent_id: Uuid,
     pub parent_frame_id: Uuid,
     pub wait: bool,
-    pub slice_mode: agentdash_spi::CompanionSliceMode,
+    pub slice_mode: agentdash_platform_spi::CompanionSliceMode,
     pub adoption_mode: CompanionAdoptionMode,
     pub dispatch_id: String,
     pub companion_label: String,
@@ -55,9 +55,9 @@ impl<'a> CompanionChildDispatchService<'a> {
     pub(crate) async fn dispatch_child(
         &self,
         request: CompanionChildDispatchRequest,
-    ) -> Result<CompanionChildDispatchOutcome, agentdash_spi::AgentToolError> {
+    ) -> Result<CompanionChildDispatchOutcome, agentdash_platform_spi::AgentToolError> {
         let context_policy = match request.slice_mode {
-            agentdash_spi::CompanionSliceMode::Full => ContextPolicy::Inherit,
+            agentdash_platform_spi::CompanionSliceMode::Full => ContextPolicy::Inherit,
             _ => ContextPolicy::Slice,
         };
         let dispatch_service = self.lifecycle_dispatch_service();
@@ -92,7 +92,7 @@ impl<'a> CompanionChildDispatchService<'a> {
                 })
                 .await
                 .map_err(|error| {
-                    agentdash_spi::AgentToolError::ExecutionFailed(format!(
+                    agentdash_platform_spi::AgentToolError::ExecutionFailed(format!(
                         "dispatch 失败: {error}"
                     ))
                 })?;
@@ -127,7 +127,7 @@ impl<'a> CompanionChildDispatchService<'a> {
                 })
                 .await
                 .map_err(|error| {
-                    agentdash_spi::AgentToolError::ExecutionFailed(format!(
+                    agentdash_platform_spi::AgentToolError::ExecutionFailed(format!(
                         "dispatch 失败: {error}"
                     ))
                 })?;
@@ -155,7 +155,7 @@ impl<'a> CompanionChildDispatchService<'a> {
             )
             .await
             .map_err(|error| {
-                agentdash_spi::AgentToolError::ExecutionFailed(format!(
+                agentdash_platform_spi::AgentToolError::ExecutionFailed(format!(
                     "Companion 已创建但 Task 指派关系写回失败: {error}"
                 ))
             })?;
@@ -185,15 +185,15 @@ impl<'a> CompanionChildDispatchService<'a> {
         &self,
         lifecycle_agent_id: Uuid,
         project_agent_id: Uuid,
-    ) -> Result<(), agentdash_spi::AgentToolError> {
+    ) -> Result<(), agentdash_platform_spi::AgentToolError> {
         let Some(mut lifecycle_agent) = self
             .repos
             .lifecycle_agent_repo
             .get(lifecycle_agent_id)
             .await
-            .map_err(|error| agentdash_spi::AgentToolError::ExecutionFailed(error.to_string()))?
+            .map_err(|error| agentdash_platform_spi::AgentToolError::ExecutionFailed(error.to_string()))?
         else {
-            return Err(agentdash_spi::AgentToolError::ExecutionFailed(format!(
+            return Err(agentdash_platform_spi::AgentToolError::ExecutionFailed(format!(
                 "LifecycleAgent {lifecycle_agent_id} 不存在，无法绑定 selected companion ProjectAgent"
             )));
         };
@@ -202,7 +202,7 @@ impl<'a> CompanionChildDispatchService<'a> {
             .lifecycle_agent_repo
             .update(&lifecycle_agent)
             .await
-            .map_err(|error| agentdash_spi::AgentToolError::ExecutionFailed(error.to_string()))?;
+            .map_err(|error| agentdash_platform_spi::AgentToolError::ExecutionFailed(error.to_string()))?;
         Ok(())
     }
 
@@ -210,7 +210,7 @@ impl<'a> CompanionChildDispatchService<'a> {
         &self,
         refs: &agentdash_domain::workflow::AgentRuntimeRefs,
         delivery_runtime_ref: Uuid,
-    ) -> Result<agentdash_agent_runtime_contract::PresentationThreadId, agentdash_spi::AgentToolError>
+    ) -> Result<agentdash_agent_runtime_contract::PresentationThreadId, agentdash_platform_spi::AgentToolError>
     {
         use agentdash_agent_runtime_contract::PresentationThreadId;
         use agentdash_application_ports::agent_run_runtime::{
@@ -233,7 +233,7 @@ impl<'a> CompanionChildDispatchService<'a> {
             .await
             .map(|binding| binding.presentation_thread_id)
             .map_err(|error| {
-                agentdash_spi::AgentToolError::ExecutionFailed(format!(
+                agentdash_platform_spi::AgentToolError::ExecutionFailed(format!(
                     "AgentRun Runtime provision 失败: {error}"
                 ))
             })

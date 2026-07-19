@@ -39,6 +39,7 @@ impl AgentRuntimeHost {
 - Runtime-owned `BoundAgentSurface`由Business Surface/admission编译；Host只保存`BoundAgentSurfaceReference`、apply evidence、Hook plan/artifact digest与per-point ack，不复制Capability Pack/ToolCatalog/Hook rules。
 - RuntimeBinding固定exact offer digest、instance revision、generation、profile digest和surface ref。新binding只能使用仍available且current instance仍Active/healthy的offer；已durable Pending binding可以依靠immutable旧activation snapshot恢复。
 - Driver bind intent先durable Pending，再执行幂等driver.bind，最后原子写Active binding与source coordinates。崩溃后`recover_pending_bindings`用同一identity恢复；失败显式收敛Failed/Lost，不产生无owner native session。
+- Complete Agent Create、Resume、Fork 与 surface apply 都先持久化稳定 effect intent。Agent 已返回 applied outcome 后，binding/target provision、surface receipt 或 lifecycle outcome 的 Host commit 失败只进入 `InspectionRequired/Unknown`，原因是外部副作用已经可能成立，不能据平台持久化失败宣称业务失败。重启后 Host 以同一 effect inspect 并幂等完成 provision/settlement；Fork 已知 child source/history 时，Runtime 先持久化 `ChildKnown` evidence，再单调升级为 `Provisioned`，不得更换 effect identity 或丢失已知 child。
 - DriverLease使用数据库时钟、owner/token/epoch/generation。相同owner+generation在未过期时幂等返回原lease；不同owner冲突；到期takeover产生新token/epoch并fence旧owner。
 - Source coordinates按binding/generation维护canonical与driver ID双向唯一。Dispatch前校验lease，event sink对每个event再次校验binding、generation、source coordinate、owner/token和DB lease，防止dispatch期间takeover后的late event推进Runtime。
 - `DriverError::Terminalized`当前只表达Managed Runtime event sink已提交critical terminal后的pump flow-control，不授予Driver声明canonical终态的权力。Host/outbox consumer必须回读durable Operation/Thread/binding后决定ack或release；只有canonical已terminal/obsolete才可ack。
@@ -68,6 +69,8 @@ impl AgentRuntimeHost {
 | lease过期takeover后旧token dispatch/event | stale generation/lease reject |
 | turn结束且命令lease已释放后driver报告BindingLost | 接受Lost，Runtime与Host binding均收敛Lost |
 | Driver返回`Terminalized`但canonical Operation仍active | outbox release/no-ack；不得把adapter错误当作canonical终态 |
+| Create/Resume applied 后 Host binding、surface 或 lifecycle settlement commit失败 | 保持同一effect `InspectionRequired`；重启inspect/reconcile，不终结为Failed |
+| Fork applied且child已知后target/binding/final settlement commit失败 | 保持Running与`ChildKnown` evidence；同一effect恢复后单调升级`Provisioned` |
 | Lost envelope的binding/generation/source不匹配 | stale generation reject，不改变Runtime或Host |
 | required Hook未ack或artifact digest不符 | Turn dispatch gate拒绝 |
 | 新activation offer不满足当前workspace/hook surface | `ensure_offer`返回typed unavailable，不进入Host bind |
@@ -88,6 +91,7 @@ impl AgentRuntimeHost {
 - Registry/Integration测试覆盖多definition、多instance、duplicate/factory/schema/protocol/credential定义与immutable collect。
 - Instance/activation测试覆盖config/credential preflight、secret隐藏、revision CAS/history、deactivate/reactivate/unhealthy、evidence-backed profile intersection。
 - Binding测试覆盖sticky/idempotent bind、stale offer、Pending recovery、orphan failure、surface/hook apply gate和configuration boundary。
+- lifecycle failpoint测试覆盖Create binding provision、surface receipt settlement、Create/Resume outcome settlement与Fork child target provision；逐项断言Agent applied后不产生确定Failed，重建Host后通过同一effect inspect收敛，Fork保留child source/history并升级provisioning evidence。
 - Provision测试分别覆盖既有offer与新activation offer，断言二者调用同一Surface admission；Native profile测试逐项满足实际platform Driver hook binding与VFS workspace requirements。
 - Lease/source/router行为覆盖same-owner replay、DB-clock takeover、stale token、dispatch期间takeover、source双向唯一与old-generation event fencing。
 - Binding生命周期测试覆盖“命令lease已释放后的BindingLost仍被接受”、Lost提交后Host binding为Lost且lease失效，以及错误binding/generation/source的Lost被fence。

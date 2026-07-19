@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "code_tip": "ce46985701e40db72a40a6b2e68d69f831f005a6",
+  "lock_verification": {
+    "clean_component_tip": {
+      "base": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
+      "sha256": "B6FB7AF8BA1927A93E9D20DB57BDFD77A2C55131A815D1619B1696FD0E5599A0",
+      "diff_from_base": "no diff",
+      "standalone_locked_gate": "expected failure because component manifests require a different resolution while W8 owns the committed activation lock"
+    },
+    "temporary_component_resolution": {
+      "generation_command": "cargo test -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent --no-run",
+      "sha256": "30870EAA208B99E393A5815C09CC46373757CBF658F7D990385221DF8B0D190C",
+      "diff_from_clean_tip": {
+        "insertions": 0,
+        "deletions": 21
+      },
+      "purpose": "run component tests and clippy with --locked against the manifests under review",
+      "committed": false,
+      "restored_to_clean_tip_after_verification": true
+    },
+    "w8_combined_gate": "W8 regenerates and commits Cargo.lock from all combined final manifests, then runs the final combined --locked gates"
+  },
+  "results": [
+    {
+      "command": "cargo test -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent --no-run",
+      "result": "pass",
+      "context": "temporarily resolve the component manifests before locked verification"
+    },
+    {
+      "command": "cargo test --locked -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent",
+      "result": "pass",
+      "lock_sha256": "30870EAA208B99E393A5815C09CC46373757CBF658F7D990385221DF8B0D190C",
+      "counts": {
+        "agentdash-agent-core": 2,
+        "agentdash-agent": 73,
+        "agentdash-integration-native-agent": 23
+      }
+    },
+    {
+      "command": "cargo clippy --locked -p agentdash-agent-core -p agentdash-agent -p agentdash-integration-native-agent --all-targets --no-deps -- -D warnings",
+      "result": "pass",
+      "lock_sha256": "30870EAA208B99E393A5815C09CC46373757CBF658F7D990385221DF8B0D190C"
+    },
+    {
+      "command": "cargo test --locked -p agentdash-application-agentrun fork_",
+      "result": "pass",
+      "lock_sha256": "30870EAA208B99E393A5815C09CC46373757CBF658F7D990385221DF8B0D190C",
+      "counts": {
+        "fork_regressions": 18
+      }
+    },
+    {
+      "command": "pnpm test-support:guard",
+      "result": "owned scope pass; workspace blocked outside W2/W5",
+      "remaining": [
+        "crates/agentdash-agent-runtime/src/complete_agent_state.rs: InMemoryCompleteAgentStateRepository"
+      ]
+    },
+    {
+      "command": "GIT_INDEX_FILE=<temp> git read-tree <base>; git apply --cached --check --whitespace=error-all <patch>; git apply --cached --whitespace=error-all <patch>; git write-tree",
+      "result": "pass",
+      "tree": "30dd2e56433811b735b61230c107cc7ad469537f"
+    },
+    {
+      "command": "rg Cargo.lock 0001-refactor-agent-runtime-Dash-Core.patch",
+      "result": "no matches"
+    },
+    {
+      "command": "rg -n \"NativeAgentDriver|NativeAgentRuntimeIntegration|project_native_core|native_runtime_profile|native_w5_scenarios_match_main_oracle_golden_strictly|main-oracle-presentation.json\" crates/agentdash-integration-native-agent",
+      "result": "no matches"
+    },
+    {
+      "command": "git diff fc26d3ffb951461d8e9214b6b4639b88c18d533d..HEAD -- Cargo.lock",
+      "result": "no diff"
+    }
+  ],
+  "behavior_evidence": [
+    "two Complete Agent service instances reopen the same durable source and read ordered changes",
+    "fork child recovers independently and does not mutate the parent revision",
+    "initial context package evidence survives restart",
+    "BeforeTool and AfterTool run exactly once with typed allow/deny/rewrite decisions",
+    "stale generation and deadline callback errors cross the typed boundary",
+    "duplicate execute effects do not retrigger provider/tool/hooks",
+    "surface apply/revoke receipts replay and inspect across service restart",
+    "same-service apply response loss immediately materializes the committed newer binding generation before replay or execute",
+    "same-service revoke response loss immediately restores base callbacks; replay and reopen cannot resurrect the revoked callback",
+    "create/fork/apply/revoke commit success with lost response reopens as Applied and replay does not duplicate source/child/surface mutation",
+    "same command/effect identity with different initial context、fork child、surface digest or revoke revision conflicts by durable request fingerprint",
+    "execute Accepted reservation survives lost response; Dash history mutation followed by a failed Complete terminal commit reconciles after reopen without a duplicate turn",
+    "Native legacy driver、journal/context projector、presentation/tool route、native_driver regression and Main oracle fixture are physically absent"
+  ],
+  "atomic_staging_dependencies": [
+    "W7 must remove Infrastructure worker and Product/API consumers of deleted Native legacy symbols",
+    "W8 must implement the PostgreSQL DashCompleteAtomicCommit transaction, compose native_complete_agent_registration and delete zero-consumer Native references from the three session-parity manifests",
+    "Cargo.lock remains owned by W8: component verification uses and discards a temporary resolution; final combined manifests produce the only committed activation lock and final --locked gate"
+  ]
+}

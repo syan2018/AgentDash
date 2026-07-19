@@ -829,7 +829,7 @@ mod tests {
         }];
         let output = CapabilityResolver::resolve(
             &CapabilityResolverInput {
-                owner_ctx: agentdash_spi::CapabilityScopeCtx::Project { project_id },
+                owner_ctx: agentdash_platform_spi::CapabilityScopeCtx::Project { project_id },
                 contributions,
                 mcp_candidates: Default::default(),
                 mcp_runtime_context: None,
@@ -853,7 +853,7 @@ mod tests {
         assert!(
             output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
-                agentdash_spi::McpTransportConfig::Http { url, .. }
+                agentdash_platform_spi::McpTransportConfig::Http { url, .. }
                     if url.contains("/mcp/workflow/")
             )),
             "应注入 WorkflowMcpServer"

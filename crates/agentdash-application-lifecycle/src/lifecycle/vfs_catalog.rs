@@ -254,4 +254,4 @@ mod tests {
         assert_eq!(paths.len(), LIFECYCLE_PATH_CATALOG.len());
     }
 }
-use agentdash_spi::platform::mount::RuntimeFileEntry;
+use agentdash_platform_spi::platform::mount::RuntimeFileEntry;

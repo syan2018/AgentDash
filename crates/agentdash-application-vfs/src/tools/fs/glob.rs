@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -9,8 +9,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ListOptions;
 use crate::inline_persistence::InlineContentOverlay;
+use crate::runtime_tool_execution::{VfsToolExecutionError, VfsToolExecutionResult};
 use crate::service::{VfsService, is_vcs_path};
-use crate::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
+use crate::tools::common::{SharedRuntimeVfs, resolve_uri_path};
+use crate::tools::{legacy_error, legacy_result};
 
 // ---------------------------------------------------------------------------
 // fs_glob — aligned with Claude Code GlobTool
@@ -20,24 +22,121 @@ use crate::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
 const DEFAULT_MAX_RESULTS: usize = 100;
 
 #[derive(Clone)]
-pub struct FsGlobTool {
+pub struct FsGlobExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
 }
-impl FsGlobTool {
+impl FsGlobExecutor {
     pub fn new(
         service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
             vfs,
             overlay,
             identity,
+        }
+    }
+
+    pub fn parameters_schema() -> serde_json::Value {
+        schema_value::<FsGlobParams>()
+    }
+
+    pub async fn execute(
+        &self,
+        args: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
+        let params: FsGlobParams = serde_json::from_value(args).map_err(|error| {
+            VfsToolExecutionError::InvalidArguments(format!("invalid arguments: {error}"))
+        })?;
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
+        let target = resolve_uri_path(&vfs, params.path.as_deref().unwrap_or("."))
+            .map_err(VfsToolExecutionError::ExecutionFailed)?;
+
+        let recursive = params.pattern.contains("**");
+        let result = tokio::select! {
+            _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+            result = self.service.list_with_policy(
+                &vfs,
+                Some(&access_policy),
+                &target.mount_id,
+                ListOptions {
+                    path: if target.path.is_empty() {
+                        ".".to_string()
+                    } else {
+                        target.path
+                    },
+                    pattern: Some(params.pattern.clone()),
+                    recursive,
+                },
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
+                self.identity.as_ref(),
+            ) => result.map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string()))?,
+        };
+
+        let mut entries: Vec<_> = result
+            .entries
+            .into_iter()
+            .filter(|entry| !is_vcs_path(&entry.path))
+            .collect();
+        entries.sort_by(|a, b| {
+            let a_m = a.modified_at.unwrap_or(0);
+            let b_m = b.modified_at.unwrap_or(0);
+            b_m.cmp(&a_m).then_with(|| a.path.cmp(&b.path))
+        });
+
+        let cap = DEFAULT_MAX_RESULTS;
+        let total = entries.len();
+        let truncated = total > cap;
+        entries.truncate(cap);
+        let mut output = if entries.is_empty() {
+            "(no matches)".to_string()
+        } else {
+            entries
+                .iter()
+                .map(|entry| {
+                    let path = entry.path.replace('\\', "/");
+                    if entry.is_dir {
+                        format!("{path}/")
+                    } else {
+                        path
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if truncated {
+            output.push_str(&format!(
+                "\n({} more entries; refine the pattern to see more)",
+                total - cap
+            ));
+        }
+        Ok(VfsToolExecutionResult::text(output))
+    }
+}
+
+#[derive(Clone)]
+pub struct FsGlobTool {
+    executor: FsGlobExecutor,
+}
+
+impl FsGlobTool {
+    pub fn new(
+        service: Arc<VfsService>,
+        vfs: SharedRuntimeVfs,
+        overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    ) -> Self {
+        Self {
+            executor: FsGlobExecutor::new(service, vfs, overlay, identity),
         }
     }
 }
@@ -72,7 +171,7 @@ impl AgentTool for FsGlobTool {
          - For text content search, use fs_grep instead."
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<FsGlobParams>()
+        FsGlobExecutor::parameters_schema()
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::FsGlob)
@@ -84,78 +183,14 @@ impl AgentTool for FsGlobTool {
         &self,
         _: &str,
         args: serde_json::Value,
-        _: CancellationToken,
+        cancel: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: FsGlobParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let state = self.vfs.snapshot_state().await;
-        let vfs = state.vfs;
-        let access_policy = state.access_policy;
-        let target = resolve_uri_path(&vfs, params.path.as_deref().unwrap_or("."))
-            .map_err(AgentToolError::ExecutionFailed)?;
-
-        // pattern 含 `**` ⇒ 递归扫描；否则只列当前目录。
-        let recursive = params.pattern.contains("**");
-        let result = self
-            .service
-            .list_with_policy(
-                &vfs,
-                Some(&access_policy),
-                &target.mount_id,
-                ListOptions {
-                    path: if target.path.is_empty() {
-                        ".".to_string()
-                    } else {
-                        target.path
-                    },
-                    pattern: Some(params.pattern.clone()),
-                    recursive,
-                },
-                self.overlay.as_ref().map(|arc| arc.as_ref()),
-                self.identity.as_ref(),
-            )
+        self.executor
+            .execute(args, cancel)
             .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-
-        // VCS 过滤
-        let mut entries: Vec<_> = result
-            .entries
-            .into_iter()
-            .filter(|e| !is_vcs_path(&e.path))
-            .collect();
-
-        // mtime desc + path asc as stable tie-breaker.
-        entries.sort_by(|a, b| {
-            let a_m = a.modified_at.unwrap_or(0);
-            let b_m = b.modified_at.unwrap_or(0);
-            b_m.cmp(&a_m).then_with(|| a.path.cmp(&b.path))
-        });
-
-        let cap = DEFAULT_MAX_RESULTS;
-        let total = entries.len();
-        let truncated = total > cap;
-        entries.truncate(cap);
-
-        let mut output = if entries.is_empty() {
-            "(no matches)".to_string()
-        } else {
-            entries
-                .iter()
-                .map(|e| {
-                    let path = e.path.replace('\\', "/");
-                    if e.is_dir { format!("{path}/") } else { path }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        if truncated {
-            output.push_str(&format!(
-                "\n({} more entries; refine the pattern to see more)",
-                total - cap
-            ));
-        }
-        Ok(ok_text(output))
+            .map(legacy_result)
+            .map_err(legacy_error)
     }
 }
 
@@ -166,7 +201,7 @@ mod fs_glob_tests {
     use crate::mount::PROVIDER_INLINE_FS;
     use crate::provider_inline::InlineFsMountProvider;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
-    use agentdash_spi::{Mount, MountCapability, Vfs};
+    use agentdash_platform_spi::{Mount, MountCapability, Vfs};
     use agentdash_test_support::inline_file::MemoryInlineFileRepository;
     use chrono::{DateTime, Duration, Utc};
     use serde_json::json;

@@ -9,8 +9,8 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::VecDeque;
 
-use agentdash_spi::{AuthIdentity, MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule};
-use agentdash_spi::{Mount, MountCapability, Vfs};
+use agentdash_platform_spi::{AuthIdentity, MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule};
+use agentdash_platform_spi::{Mount, MountCapability, Vfs};
 
 use crate::mount::{
     PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
@@ -647,7 +647,7 @@ mod tests {
     use crate::provider::MountProviderRegistry;
     use crate::service::VfsService;
     use crate::types::{ListResult, ReadResult};
-    use agentdash_spi::platform::mount::{
+    use agentdash_platform_spi::platform::mount::{
         MountError, MountOperationContext, MountProvider, SearchQuery, SearchResult,
     };
     use std::collections::HashMap;

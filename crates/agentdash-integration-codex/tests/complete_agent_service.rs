@@ -4,23 +4,23 @@ use std::{
 };
 
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentChangesQuery, AgentCommand, AgentCommandEnvelope, AgentCommandId,
-    AgentCommandMeta, AgentContextPackageId, AgentContextSchemaVersion,
-    AgentContextSourceCoordinate, AgentContextSourceRevision, AgentEffectIdentity,
-    AgentEffectInspectionState, AgentForkCutoffKind, AgentForkPoint, AgentIdempotencyKey,
-    AgentInput, AgentInputContent, AgentPayloadDigest, AgentReadQuery, AgentReceiptState,
-    AgentServiceDefinitionId, AgentServiceErrorCode, AgentSourceCoordinate, AgentSurfaceDigest,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentToolDelivery, AgentToolName,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnId, AppliedInitialContextEvidence,
-    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind,
-    ContextProvenance, CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
-    InitialContextContribution, InitialContextDeliveryFidelity, InitialContextMode,
-    RevokeBoundAgentSurface, SemanticFidelity,
+    AgentAppliedEffectOutcome, AgentBindingGeneration, AgentChangesQuery, AgentCommand,
+    AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentContextPackageId,
+    AgentContextSchemaVersion, AgentContextSourceCoordinate, AgentContextSourceRevision,
+    AgentEffectIdentity, AgentEffectInspectionState, AgentForkCutoffKind, AgentForkPoint,
+    AgentIdempotencyKey, AgentInput, AgentInputContent, AgentPayloadDigest, AgentReadQuery,
+    AgentReceiptState, AgentServiceDefinitionId, AgentServiceErrorCode, AgentServiceInstanceId,
+    AgentSourceCoordinate, AgentSurfaceDigest, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
+    AgentToolDelivery, AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    AgentTurnId, AppliedInitialContextEvidence, BoundAgentSurface, BoundAgentSurfaceContribution,
+    CompleteAgentService, ContextAuthorityKind, ContextProvenance, CreateAgentCommand,
+    ForkAgentCommand, InitialAgentContextPackage, InitialContextContribution,
+    InitialContextDeliveryFidelity, InitialContextMode, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_codex::{
     CODEX_INITIAL_CONTEXT_RENDERER_VERSION, CodexAppServerObservation,
     CodexAppServerObservationPage, CodexAppServerTransport, CodexCompleteAgentConfig,
-    CodexCompleteAgentService, CodexCompleteAgentTransportError,
+    CodexCompleteAgentRegistration, CodexCompleteAgentTransportError,
 };
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -33,6 +33,7 @@ struct RecordingTransport {
     observations: Mutex<VecDeque<CodexAppServerObservationPage>>,
     responses_to_server: Mutex<Vec<(Value, Value)>>,
     server_response_results: Mutex<VecDeque<Result<(), CodexCompleteAgentTransportError>>>,
+    notifications: Mutex<Vec<(String, Option<Value>)>>,
 }
 
 impl RecordingTransport {
@@ -101,6 +102,18 @@ impl CodexAppServerTransport for RecordingTransport {
             .unwrap_or(Ok(()))
     }
 
+    async fn notify(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<(), CodexCompleteAgentTransportError> {
+        self.notifications
+            .lock()
+            .await
+            .push((method.to_owned(), params));
+        Ok(())
+    }
+
     async fn observations(
         &self,
         _: &str,
@@ -120,8 +133,18 @@ impl CodexAppServerTransport for RecordingTransport {
     }
 }
 
-fn service(transport: Arc<RecordingTransport>) -> CodexCompleteAgentService {
-    CodexCompleteAgentService::new(
+async fn service(transport: Arc<RecordingTransport>) -> Arc<dyn CompleteAgentService> {
+    transport.responses.lock().await.push_front((
+        "initialize".to_owned(),
+        Ok(json!({
+            "userAgent": "codex-test",
+            "codexHome": std::env::current_dir().expect("cwd"),
+            "platformFamily": "windows",
+            "platformOs": "windows"
+        })),
+    ));
+    let registration = CodexCompleteAgentRegistration::new(
+        AgentServiceInstanceId::new("codex-test-instance").expect("instance"),
         CodexCompleteAgentConfig {
             definition_id: AgentServiceDefinitionId::new("codex").expect("definition"),
             title: "Codex".to_owned(),
@@ -132,9 +155,62 @@ fn service(transport: Arc<RecordingTransport>) -> CodexCompleteAgentService {
             developer_instructions: Some("developer".to_owned()),
             runtime_workspace_roots: vec![std::env::current_dir().expect("root")],
         },
-        transport,
+        transport.clone(),
     )
-    .expect("service")
+    .await
+    .expect("registration");
+    transport.requests.lock().await.clear();
+    registration.service()
+}
+
+#[tokio::test]
+async fn registration_exposes_one_complete_agent_instance_without_driver_contribution() {
+    let transport = Arc::new(RecordingTransport::default());
+    transport
+        .push_response(
+            "initialize",
+            json!({
+                "userAgent": "codex-test",
+                "codexHome": std::env::current_dir().expect("cwd"),
+                "platformFamily": "windows",
+                "platformOs": "windows"
+            }),
+        )
+        .await;
+    let registration = CodexCompleteAgentRegistration::new(
+        AgentServiceInstanceId::new("codex-instance").expect("instance"),
+        CodexCompleteAgentConfig {
+            definition_id: AgentServiceDefinitionId::new("codex").expect("definition"),
+            title: "Codex".to_owned(),
+            cwd: std::env::current_dir().expect("cwd"),
+            model: None,
+            model_provider: None,
+            base_instructions: None,
+            developer_instructions: None,
+            runtime_workspace_roots: vec![std::env::current_dir().expect("root")],
+        },
+        transport.clone(),
+    )
+    .await
+    .expect("registration");
+
+    assert_eq!(transport.methods().await, vec!["initialize"]);
+    assert_eq!(
+        transport.notifications.lock().await.as_slice(),
+        &[("initialized".to_owned(), None)]
+    );
+    assert_eq!(registration.instance_id().as_str(), "codex-instance");
+    let (instance_id, service) = registration.into_parts();
+    assert_eq!(instance_id.as_str(), "codex-instance");
+    assert_eq!(
+        service
+            .describe()
+            .await
+            .expect("descriptor")
+            .definition_id
+            .as_str(),
+        "codex"
+    );
 }
 
 fn meta(id: &str) -> AgentCommandMeta {
@@ -173,7 +249,7 @@ fn initial_package() -> InitialAgentContextPackage {
 }
 
 async fn immutable_surface_command(
-    service: &CodexCompleteAgentService,
+    service: &dyn CompleteAgentService,
     source: AgentSourceCoordinate,
     id: &str,
 ) -> agentdash_agent_service_api::ApplyBoundAgentSurface {
@@ -214,7 +290,7 @@ async fn immutable_surface_command(
 }
 
 async fn create_source(
-    service: &CodexCompleteAgentService,
+    service: &dyn CompleteAgentService,
     transport: &RecordingTransport,
 ) -> AgentSourceCoordinate {
     transport
@@ -233,7 +309,7 @@ async fn create_source(
 
 #[tokio::test]
 async fn descriptor_is_truthful_about_codex_context_change_and_surface_boundaries() {
-    let service = service(Arc::new(RecordingTransport::default()));
+    let service = service(Arc::new(RecordingTransport::default())).await;
     let descriptor = service.describe().await.expect("descriptor");
 
     assert_eq!(
@@ -274,7 +350,7 @@ async fn create_installs_initial_package_as_rendered_configuration_before_first_
     transport
         .push_response("thread/start", json!({"thread": {"id": "thread-1"}}))
         .await;
-    let service = service(transport.clone());
+    let service = service(transport.clone()).await;
     let package = initial_package();
 
     let receipt = service
@@ -285,6 +361,17 @@ async fn create_installs_initial_package_as_rendered_configuration_before_first_
         })
         .await
         .expect("create");
+    let create_inspection = service
+        .inspect(receipt.effect_id.clone())
+        .await
+        .expect("inspect create");
+    assert!(create_inspection.validate());
+    assert!(matches!(
+        create_inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Create { .. }
+        }
+    ));
     let evidence = receipt.initial_context.expect("context evidence");
     assert_eq!(evidence.package_digest, package.digest);
     assert_eq!(
@@ -300,9 +387,11 @@ async fn create_installs_initial_package_as_rendered_configuration_before_first_
     transport
         .push_response("turn/start", json!({"turn": {"id": "turn-1"}}))
         .await;
+    let input_meta = meta("input");
+    let input_effect = input_meta.effect_id.clone();
     service
         .execute(AgentCommandEnvelope {
-            meta: meta("input"),
+            meta: input_meta,
             source: receipt.source,
             command: AgentCommand::SubmitInput {
                 input: AgentInput {
@@ -314,6 +403,17 @@ async fn create_installs_initial_package_as_rendered_configuration_before_first_
         })
         .await
         .expect("submit");
+    let command_inspection = service
+        .inspect(input_effect)
+        .await
+        .expect("inspect command");
+    assert!(command_inspection.validate());
+    assert!(matches!(
+        command_inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Command { .. }
+        }
+    ));
 
     let requests = transport.requests.lock().await;
     assert_eq!(requests[0].0, "thread/start");
@@ -330,15 +430,20 @@ async fn create_installs_initial_package_as_rendered_configuration_before_first_
 #[tokio::test]
 async fn completed_turn_fork_uses_last_turn_id_and_verifies_the_child_with_thread_read() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .push_response("thread/fork", json!({"thread": {"id": "thread-child"}}))
         .await;
     transport
         .push_response(
             "thread/read",
-            json!({"thread": {"id": "thread-child", "turns": []}}),
+            json!({
+                "thread": {
+                    "id": "thread-child",
+                    "turns": [{"id": "turn-7", "status": "completed"}]
+                }
+            }),
         )
         .await;
 
@@ -361,7 +466,25 @@ async fn completed_turn_fork_uses_last_turn_id_and_verifies_the_child_with_threa
             .map(AgentSourceCoordinate::as_str),
         Some("thread-child")
     );
-    assert!(receipt.child_history_digest.is_none());
+    assert!(receipt.child_history_digest.is_some());
+    let inspection = service
+        .inspect(receipt.effect_id.clone())
+        .await
+        .expect("inspect fork");
+    assert!(inspection.validate());
+    match inspection.state {
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Fork { receipt: applied },
+        } => {
+            assert_eq!(applied.child_source.as_str(), "thread-child");
+            assert_eq!(applied.cutoff, receipt.cutoff);
+            assert_eq!(
+                Some(&applied.child_history_digest),
+                receipt.child_history_digest.as_ref()
+            );
+        }
+        other => panic!("unexpected fork inspection: {other:?}"),
+    }
     let requests = transport.requests.lock().await;
     assert_eq!(requests[1].0, "thread/fork");
     assert_eq!(requests[1].1["lastTurnId"], "turn-7");
@@ -371,8 +494,8 @@ async fn completed_turn_fork_uses_last_turn_id_and_verifies_the_child_with_threa
 #[tokio::test]
 async fn fork_child_verification_mismatch_becomes_unknown_and_is_not_retried() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .push_response("thread/fork", json!({"thread": {"id": "thread-child"}}))
         .await;
@@ -410,10 +533,106 @@ async fn fork_child_verification_mismatch_becomes_unknown_and_is_not_retried() {
 }
 
 #[tokio::test]
+async fn fork_cutoff_verification_mismatch_becomes_unknown_and_is_not_retried() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport
+        .push_response("thread/fork", json!({"thread": {"id": "thread-child"}}))
+        .await;
+    transport
+        .push_response(
+            "thread/read",
+            json!({
+                "thread": {
+                    "id": "thread-child",
+                    "turns": [{"id": "turn-6", "status": "completed"}]
+                }
+            }),
+        )
+        .await;
+    let command = ForkAgentCommand {
+        meta: meta("fork-cutoff-unknown"),
+        source,
+        requested_child_source: None,
+        cutoff: AgentForkPoint::CompletedTurn {
+            turn_id: AgentTurnId::new("turn-7").expect("turn"),
+        },
+    };
+    let effect_id = command.meta.effect_id.clone();
+
+    let error = service
+        .fork(command.clone())
+        .await
+        .expect_err("child cutoff mismatch");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+    assert!(matches!(
+        service.inspect(effect_id).await.expect("inspect").state,
+        AgentEffectInspectionState::Unknown
+    ));
+    service
+        .fork(command)
+        .await
+        .expect_err("unknown fork effect must not be retried");
+    assert_eq!(
+        transport.methods().await,
+        vec!["thread/start", "thread/fork", "thread/read"]
+    );
+}
+
+#[tokio::test]
+async fn fork_cutoff_with_matching_id_but_non_completed_status_stays_unknown() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport
+        .push_response("thread/fork", json!({"thread": {"id": "thread-child"}}))
+        .await;
+    transport
+        .push_response(
+            "thread/read",
+            json!({
+                "thread": {
+                    "id": "thread-child",
+                    "turns": [{"id": "turn-7", "status": "inProgress"}]
+                }
+            }),
+        )
+        .await;
+    let command = ForkAgentCommand {
+        meta: meta("fork-running-cutoff"),
+        source,
+        requested_child_source: None,
+        cutoff: AgentForkPoint::CompletedTurn {
+            turn_id: AgentTurnId::new("turn-7").expect("turn"),
+        },
+    };
+    let effect_id = command.meta.effect_id.clone();
+
+    let error = service
+        .fork(command.clone())
+        .await
+        .expect_err("running cutoff cannot prove a completed-turn fork");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+    assert!(matches!(
+        service.inspect(effect_id).await.expect("inspect").state,
+        AgentEffectInspectionState::Unknown
+    ));
+    service
+        .fork(command)
+        .await
+        .expect_err("unknown fork effect must not be retried");
+    assert_eq!(
+        transport.methods().await,
+        vec!["thread/start", "thread/fork", "thread/read"]
+    );
+}
+
+#[tokio::test]
 async fn snapshot_is_observed_and_live_gap_requires_thread_read_reconciliation() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .push_response(
             "thread/read",
@@ -473,24 +692,30 @@ async fn snapshot_is_observed_and_live_gap_requires_thread_read_reconciliation()
 #[tokio::test]
 async fn live_server_request_maps_to_interaction_and_resolves_through_the_same_rpc_request() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .observations
         .lock()
         .await
         .push_back(CodexAppServerObservationPage {
-            observations: vec![CodexAppServerObservation::ServerRequest {
-                sequence: 3,
-                request_id: json!(44),
-                method: "item/commandExecution/requestApproval".to_owned(),
-                params: json!({
-                    "requestId": "approval-1",
-                    "turnId": "turn-1",
-                    "itemId": "item-1",
-                    "prompt": "approve?"
-                }),
-            }],
+            observations: vec![
+                CodexAppServerObservation::server_request(
+                    3,
+                    json!(44),
+                    "item/commandExecution/requestApproval",
+                    json!({
+                        "approvalId": "approval-1",
+                        "threadId": "thread-parent",
+                        "turnId": "turn-1",
+                        "itemId": "item-1",
+                        "startedAtMs": 1,
+                        "command": "echo hi",
+                        "reason": "approve?"
+                    }),
+                )
+                .expect("typed command approval"),
+            ],
             next_sequence: Some(3),
             gap: false,
         });
@@ -546,9 +771,129 @@ async fn live_server_request_maps_to_interaction_and_resolves_through_the_same_r
 }
 
 #[tokio::test]
+async fn thread_read_and_name_notifications_map_source_authoritative_set_and_clear() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport
+        .push_response(
+            "thread/read",
+            json!({
+                "thread": {
+                    "id": "thread-parent",
+                    "name": "Codex 标题",
+                    "turns": []
+                }
+            }),
+        )
+        .await;
+
+    let snapshot = service
+        .read(AgentReadQuery {
+            source: source.clone(),
+            at_revision: None,
+        })
+        .await
+        .expect("thread/read");
+    let name = snapshot.thread_name.expect("Codex name section");
+    assert_eq!(name.thread_name.as_deref(), Some("Codex 标题"));
+    assert_eq!(
+        name.source_info.authority,
+        agentdash_agent_service_api::AgentSnapshotAuthority::AgentAuthoritative
+    );
+    assert_eq!(name.source_info.fidelity, SemanticFidelity::Exact);
+
+    transport
+        .observations
+        .lock()
+        .await
+        .push_back(CodexAppServerObservationPage {
+            observations: vec![
+                CodexAppServerObservation::notification(
+                    4,
+                    "thread/name/updated",
+                    json!({
+                        "threadId": "thread-parent",
+                        "threadName": "更新标题"
+                    }),
+                )
+                .expect("typed name notification"),
+                CodexAppServerObservation::notification(
+                    5,
+                    "thread/name/updated",
+                    json!({
+                        "threadId": "thread-parent",
+                        "threadName": null
+                    }),
+                )
+                .expect("typed cleared name notification"),
+            ],
+            next_sequence: Some(5),
+            gap: false,
+        });
+    let changes = service
+        .changes(AgentChangesQuery {
+            source,
+            after: None,
+            limit: 16,
+        })
+        .await
+        .expect("name changes");
+    assert!(matches!(
+        &changes.changes[0].payload,
+        agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+            thread_name: Some(value),
+            ..
+        } if value == "更新标题"
+    ));
+    assert!(matches!(
+        &changes.changes[1].payload,
+        agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+            thread_name: None,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn thread_name_notification_for_another_source_is_rejected() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport
+        .observations
+        .lock()
+        .await
+        .push_back(CodexAppServerObservationPage {
+            observations: vec![
+                CodexAppServerObservation::notification(
+                    4,
+                    "thread/name/updated",
+                    json!({
+                        "threadId": "another-thread",
+                        "threadName": "错误来源"
+                    }),
+                )
+                .expect("typed wrong-source name notification"),
+            ],
+            next_sequence: Some(4),
+            gap: false,
+        });
+    let error = service
+        .changes(AgentChangesQuery {
+            source,
+            after: None,
+            limit: 16,
+        })
+        .await
+        .expect_err("wrong source name");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+}
+
+#[tokio::test]
 async fn historical_snapshot_revision_is_rejected_before_app_server_read() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
+    let service = service(transport.clone()).await;
     let error = service
         .read(AgentReadQuery {
             source: AgentSourceCoordinate::new("thread-1").expect("source"),
@@ -564,19 +909,32 @@ async fn historical_snapshot_revision_is_rejected_before_app_server_read() {
 #[tokio::test]
 async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agent_surface() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
 
     transport
         .push_response("thread/resume", json!({"thread": {"id": "thread-parent"}}))
         .await;
+    let resume_meta = meta("resume");
+    let resume_effect = resume_meta.effect_id.clone();
     service
         .resume(agentdash_agent_service_api::ResumeAgentCommand {
-            meta: meta("resume"),
+            meta: resume_meta,
             source: source.clone(),
         })
         .await
         .expect("resume");
+    let resume_inspection = service
+        .inspect(resume_effect)
+        .await
+        .expect("inspect resume");
+    assert!(resume_inspection.validate());
+    assert!(matches!(
+        resume_inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Resume { .. }
+        }
+    ));
 
     for (id, method, command) in [
         (
@@ -658,14 +1016,26 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
     assert!(applied.applied.contributions.iter().all(|contribution| {
         contribution.status == agentdash_agent_service_api::AppliedContributionStatus::Applied
     }));
+    let apply_inspection = service
+        .inspect(applied.effect_id.clone())
+        .await
+        .expect("inspect surface apply");
+    assert!(apply_inspection.validate());
+    assert!(matches!(
+        apply_inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::SurfaceApply { .. }
+        }
+    ));
 
     transport
         .push_response("thread/resume", json!({"thread": {"id": "thread-parent"}}))
         .await;
+    let revoke_effect = AgentEffectIdentity::new("revoke-effect").expect("effect");
     service
         .revoke_surface(RevokeBoundAgentSurface {
             command_id: AgentCommandId::new("revoke-command").expect("command"),
-            effect_id: AgentEffectIdentity::new("revoke-effect").expect("effect"),
+            effect_id: revoke_effect.clone(),
             idempotency_key: AgentIdempotencyKey::new("revoke-idem").expect("idempotency"),
             binding_generation: AgentBindingGeneration(7),
             source: source.clone(),
@@ -673,6 +1043,17 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
         })
         .await
         .expect("revoke surface");
+    let revoke_inspection = service
+        .inspect(revoke_effect)
+        .await
+        .expect("inspect surface revoke");
+    assert!(revoke_inspection.validate());
+    assert!(matches!(
+        revoke_inspection.state,
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::SurfaceRevoke { .. }
+        }
+    ));
 
     transport.push_response("thread/archive", json!({})).await;
     let closed = service
@@ -694,8 +1075,8 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
 #[tokio::test]
 async fn apply_surface_rejects_unadvertised_dynamic_tools_before_side_effect() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     let descriptor = service.describe().await.expect("descriptor");
     let payload_digest = AgentPayloadDigest::new("sha256:tool").expect("digest");
     let command = agentdash_agent_service_api::ApplyBoundAgentSurface {
@@ -752,7 +1133,7 @@ async fn unknown_create_outcome_is_inspectable_and_never_retried_with_same_effec
             CodexCompleteAgentTransportError::unavailable("response lost", true),
         )
         .await;
-    let service = service(transport.clone());
+    let service = service(transport.clone()).await;
     let command = CreateAgentCommand {
         meta: meta("unknown"),
         requested_source: None,
@@ -775,12 +1156,66 @@ async fn unknown_create_outcome_is_inspectable_and_never_retried_with_same_effec
 }
 
 #[tokio::test]
+async fn missing_local_effect_after_adapter_restart_is_unknown_not_not_applied() {
+    let transport = Arc::new(RecordingTransport::default());
+    let restarted_service = service(transport.clone()).await;
+    let inspection = restarted_service
+        .inspect(AgentEffectIdentity::new("pre-restart-effect").expect("effect"))
+        .await
+        .expect("inspect after restart");
+
+    assert!(matches!(
+        inspection.state,
+        AgentEffectInspectionState::Unknown
+    ));
+    assert!(
+        transport.methods().await.is_empty(),
+        "inspection must not redispatch a vendor command"
+    );
+}
+
+#[tokio::test]
+async fn reused_effect_rejects_a_different_command_or_source_without_dispatch() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport.push_response("turn/start", json!({})).await;
+    let first = AgentCommandEnvelope {
+        meta: meta("effect-coordinate"),
+        source: source.clone(),
+        command: AgentCommand::SubmitInput {
+            input: AgentInput {
+                content: vec![AgentInputContent::Text {
+                    text: "first".to_owned(),
+                }],
+            },
+        },
+    };
+    service.execute(first.clone()).await.expect("first command");
+
+    let mut conflicting = first;
+    conflicting.meta.command_id =
+        AgentCommandId::new("different-command").expect("command identity");
+    conflicting.source = AgentSourceCoordinate::new("different-source").expect("source");
+    let error = service
+        .execute(conflicting)
+        .await
+        .expect_err("effect identity cannot move to another command/source");
+
+    assert_eq!(error.code, AgentServiceErrorCode::Conflict);
+    assert_eq!(
+        transport.methods().await,
+        vec!["thread/start", "turn/start"]
+    );
+}
+
+#[tokio::test]
 async fn malformed_create_and_fork_success_payloads_settle_unknown_without_retry() {
     let create_transport = Arc::new(RecordingTransport::default());
     create_transport
         .push_response("thread/start", json!({}))
         .await;
-    let create_service = service(create_transport.clone());
+    let create_service = service(create_transport.clone()).await;
     let create = CreateAgentCommand {
         meta: meta("malformed-create"),
         requested_source: None,
@@ -808,8 +1243,8 @@ async fn malformed_create_and_fork_success_payloads_settle_unknown_without_retry
     assert_eq!(create_transport.methods().await, vec!["thread/start"]);
 
     let fork_transport = Arc::new(RecordingTransport::default());
-    let fork_service = service(fork_transport.clone());
-    let parent = create_source(&fork_service, &fork_transport).await;
+    let fork_service = service(fork_transport.clone()).await;
+    let parent = create_source(fork_service.as_ref(), &fork_transport).await;
     fork_transport.push_response("thread/fork", json!({})).await;
     let fork = ForkAgentCommand {
         meta: meta("malformed-fork"),
@@ -845,9 +1280,10 @@ async fn malformed_create_and_fork_success_payloads_settle_unknown_without_retry
 #[tokio::test]
 async fn malformed_surface_apply_and_revoke_settle_unknown_without_retry() {
     let apply_transport = Arc::new(RecordingTransport::default());
-    let apply_service = service(apply_transport.clone());
-    let apply_source = create_source(&apply_service, &apply_transport).await;
-    let apply = immutable_surface_command(&apply_service, apply_source, "malformed-apply").await;
+    let apply_service = service(apply_transport.clone()).await;
+    let apply_source = create_source(apply_service.as_ref(), &apply_transport).await;
+    let apply =
+        immutable_surface_command(apply_service.as_ref(), apply_source, "malformed-apply").await;
     let apply_effect = apply.effect_id.clone();
     apply_transport
         .push_response("thread/resume", json!({}))
@@ -876,10 +1312,14 @@ async fn malformed_surface_apply_and_revoke_settle_unknown_without_retry() {
     );
 
     let revoke_transport = Arc::new(RecordingTransport::default());
-    let revoke_service = service(revoke_transport.clone());
-    let revoke_source = create_source(&revoke_service, &revoke_transport).await;
-    let apply =
-        immutable_surface_command(&revoke_service, revoke_source.clone(), "before-revoke").await;
+    let revoke_service = service(revoke_transport.clone()).await;
+    let revoke_source = create_source(revoke_service.as_ref(), &revoke_transport).await;
+    let apply = immutable_surface_command(
+        revoke_service.as_ref(),
+        revoke_source.clone(),
+        "before-revoke",
+    )
+    .await;
     revoke_transport
         .push_response("thread/resume", json!({"thread": {"id": "thread-parent"}}))
         .await;
@@ -926,24 +1366,30 @@ async fn malformed_surface_apply_and_revoke_settle_unknown_without_retry() {
 #[tokio::test]
 async fn unknown_interaction_response_outcome_enters_effect_ledger_and_is_not_retried() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .observations
         .lock()
         .await
         .push_back(CodexAppServerObservationPage {
-            observations: vec![CodexAppServerObservation::ServerRequest {
-                sequence: 3,
-                request_id: json!(44),
-                method: "item/commandExecution/requestApproval".to_owned(),
-                params: json!({
-                    "requestId": "approval-unknown",
-                    "turnId": "turn-1",
-                    "itemId": "item-1",
-                    "prompt": "approve?"
-                }),
-            }],
+            observations: vec![
+                CodexAppServerObservation::server_request(
+                    3,
+                    json!(44),
+                    "item/commandExecution/requestApproval",
+                    json!({
+                        "approvalId": "approval-unknown",
+                        "threadId": "thread-parent",
+                        "turnId": "turn-1",
+                        "itemId": "item-1",
+                        "startedAtMs": 1,
+                        "command": "echo hi",
+                        "reason": "approve?"
+                    }),
+                )
+                .expect("typed command approval"),
+            ],
             next_sequence: Some(3),
             gap: false,
         });
@@ -992,8 +1438,8 @@ async fn unknown_interaction_response_outcome_enters_effect_ledger_and_is_not_re
 #[tokio::test]
 async fn missing_and_unknown_vendor_statuses_never_project_as_terminal() {
     let transport = Arc::new(RecordingTransport::default());
-    let service = service(transport.clone());
-    let source = create_source(&service, &transport).await;
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
     transport
         .push_response(
             "thread/read",

@@ -9,11 +9,7 @@ mod desktop_settings;
 mod extensions;
 mod file_discovery_policy;
 mod handlers;
-pub use handlers::{
-    HostRuntimeDriverEndpointResolver, RuntimeDriverEndpointResolver, RuntimeWireCommandHandler,
-    browse_directory,
-};
-mod agent_runtime_host;
+pub use handlers::browse_directory;
 pub mod local_backend_config;
 mod machine_identity;
 mod materialization;
@@ -71,11 +67,10 @@ pub use extensions::{
 };
 
 pub use runtime::{
-    LocalAgentRuntimeInstanceConfig, LocalLogEvent, LocalRuntimeConfig, LocalRuntimeHandle,
-    LocalRuntimeManager, LocalRuntimeSnapshot, LocalRuntimeState, LocalRuntimeStatus,
-    McpProbeResult, StopReason, canonicalize_workspace_roots, load_mcp_servers_for_root,
-    probe_mcp_server, run_standalone, run_standalone_with_status,
-    run_standalone_with_status_and_shutdown, save_mcp_servers_for_root,
+    LocalLogEvent, LocalRuntimeConfig, LocalRuntimeHandle, LocalRuntimeManager,
+    LocalRuntimeSnapshot, LocalRuntimeState, LocalRuntimeStatus, McpProbeResult, StopReason,
+    canonicalize_workspace_roots, load_mcp_servers_for_root, probe_mcp_server, run_standalone,
+    run_standalone_with_status, run_standalone_with_status_and_shutdown, save_mcp_servers_for_root,
 };
 
 pub use machine_identity::{LocalMachineIdentity, load_or_create_machine_identity};

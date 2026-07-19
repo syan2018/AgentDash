@@ -1,35 +1,34 @@
-//! AgentDash-owned transport-neutral Runtime Wire frames.
+//! Canonical cross-process framing for Managed Runtime and Complete Agent traffic.
 
 mod complete_agent;
+pub mod wire_u64;
 
 pub use complete_agent::*;
+pub use wire_u64::*;
 
 use agentdash_agent_runtime_contract::{
-    DriverBindRequest, DriverBinding, DriverCommandEnvelope, DriverDescribeRequest,
-    DriverDispatchReceipt, DriverError, DriverEventEnvelope, DriverInspection,
-    DriverInspectionQuery, OperationReceipt, RuntimeCommandEnvelope, RuntimeDescriptor,
-    RuntimeEventEnvelope, RuntimeEventSubscription, RuntimeExecuteError, RuntimeJournalRecord,
-    RuntimeSnapshot, RuntimeSnapshotError, RuntimeSnapshotQuery, RuntimeSubscribeError,
-};
-use agentdash_integration_api::{
-    DriverCompactionActivationRequest, DriverContextActivation, DriverContextCheckpointRequest,
-    DriverHookDecision, DriverHookInvocation, DriverSurfaceRequest, DriverToolInvocation,
-    DriverToolOutcome, DriverToolSurface, DriverTranscript, DriverTranscriptRequest,
-    MaterializedDriverSurface,
+    ManagedRuntimeChangePage, ManagedRuntimeChangesRequest, ManagedRuntimeCommandEnvelope,
+    ManagedRuntimeGatewayError, ManagedRuntimeOperationReceipt, ManagedRuntimePlatformChange,
+    ManagedRuntimeReadRequest, ManagedRuntimeSnapshot,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 3;
+pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 4;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(transparent)]
 #[schemars(transparent)]
-pub struct RuntimeWireFrameId(pub u64);
+#[ts(type = "RuntimeWireU64")]
+pub struct RuntimeWireFrameId(
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::RuntimeWireU64")]
+    pub u64,
+);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -55,124 +54,48 @@ pub enum RuntimeWireFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum RuntimeWireRequest {
-    Execute(RuntimeCommandEnvelope),
-    Snapshot(RuntimeSnapshotQuery),
-    Events(RuntimeEventSubscription),
-    DriverDescribe(DriverDescribeRequest),
-    DriverBind(DriverBindRequest),
-    DriverDispatch(DriverCommandEnvelope),
-    DriverInspect(DriverInspectionQuery),
-    HostPort(Box<RuntimeWireHostPortRequest>),
-    #[schemars(skip)]
-    #[ts(skip)]
+    RuntimeExecute(ManagedRuntimeCommandEnvelope),
+    RuntimeRead(ManagedRuntimeReadRequest),
+    RuntimeChanges(ManagedRuntimeChangesRequest),
     AgentService(Box<RuntimeWireAgentServiceRequest>),
-    #[schemars(skip)]
-    #[ts(skip)]
     AgentHostCallback(Box<RuntimeWireAgentHostCallbackRequest>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "result", rename_all = "snake_case")]
 pub enum RuntimeWireResponse {
-    Execute(RuntimeWireExecuteResult),
-    Snapshot(RuntimeWireSnapshotResult),
-    Events(RuntimeWireSubscribeResult),
-    DriverDescribe(RuntimeWireDriverDescribeResult),
-    DriverBind(RuntimeWireDriverBindResult),
-    DriverDispatch(RuntimeWireDriverDispatchResult),
-    DriverInspect(RuntimeWireDriverInspectResult),
-    HostPort(RuntimeWireHostPortResponse),
-    #[schemars(skip)]
-    #[ts(skip)]
+    RuntimeExecute(Box<RuntimeWireExecuteResult>),
+    RuntimeRead(RuntimeWireReadResult),
+    RuntimeChanges(RuntimeWireChangesResult),
     AgentService(RuntimeWireAgentServiceResponse),
-    #[schemars(skip)]
-    #[ts(skip)]
     AgentHostCallback(RuntimeWireAgentHostCallbackResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "port", content = "request", rename_all = "snake_case")]
-pub enum RuntimeWireHostPortRequest {
-    Transcript(DriverTranscriptRequest),
-    SurfaceMaterialize(DriverSurfaceRequest),
-    ToolSetMaterialize {
-        binding_id: agentdash_agent_runtime_contract::RuntimeBindingId,
-        revision: agentdash_agent_runtime_contract::ToolSetRevision,
-        digest: String,
-    },
-    ContextCheckpoint(DriverContextCheckpointRequest),
-    CompactionActivation(DriverCompactionActivationRequest),
-    ToolInvoke(DriverToolInvocation),
-    HookExecute(DriverHookInvocation),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct RuntimeWireHostPortError {
-    pub reason: String,
-    pub retryable: bool,
-    pub stale: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "port", content = "result", rename_all = "snake_case")]
-pub enum RuntimeWireHostPortResponse {
-    Transcript(Result<Box<DriverTranscript>, RuntimeWireHostPortError>),
-    SurfaceMaterialize(Result<Box<MaterializedDriverSurface>, RuntimeWireHostPortError>),
-    ToolSetMaterialize(Result<Box<DriverToolSurface>, RuntimeWireHostPortError>),
-    ContextCheckpoint(Result<Box<DriverContextActivation>, RuntimeWireHostPortError>),
-    CompactionActivation(Result<Box<DriverContextActivation>, RuntimeWireHostPortError>),
-    ToolInvoke(Result<Box<DriverToolOutcome>, RuntimeWireHostPortError>),
-    HookExecute(Result<Box<DriverHookDecision>, RuntimeWireHostPortError>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "status", content = "value", rename_all = "snake_case")]
 pub enum RuntimeWireExecuteResult {
-    Ok(OperationReceipt),
-    Error(RuntimeExecuteError),
+    Ok(Box<ManagedRuntimeOperationReceipt>),
+    Error(ManagedRuntimeGatewayError),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "status", content = "value", rename_all = "snake_case")]
-pub enum RuntimeWireSnapshotResult {
-    Ok(Box<RuntimeSnapshot>),
-    Error(RuntimeSnapshotError),
+pub enum RuntimeWireReadResult {
+    Ok(Box<ManagedRuntimeSnapshot>),
+    Error(ManagedRuntimeGatewayError),
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "status", content = "value", rename_all = "snake_case")]
-pub enum RuntimeWireSubscribeResult {
-    Ok { accepted_cursor: u64 },
-    Error(RuntimeSubscribeError),
-}
-
-macro_rules! driver_result {
-    ($name:ident, $value:ty) => {
-        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-        #[serde(tag = "status", content = "value", rename_all = "snake_case")]
-        pub enum $name {
-            Ok(Box<$value>),
-            Error(DriverError),
-        }
-    };
-}
-
-driver_result!(RuntimeWireDriverDescribeResult, RuntimeDescriptor);
-driver_result!(RuntimeWireDriverBindResult, DriverBinding);
-driver_result!(RuntimeWireDriverDispatchResult, DriverDispatchReceipt);
-driver_result!(RuntimeWireDriverInspectResult, DriverInspection);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "method", content = "params", rename_all = "snake_case")]
+#[serde(tag = "status", content = "value", rename_all = "snake_case")]
+pub enum RuntimeWireChangesResult {
+    Ok(Box<ManagedRuntimeChangePage>),
+    Error(ManagedRuntimeGatewayError),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum RuntimeWireNotification {
-    JournalFact(RuntimeJournalRecord),
-    /// Runtime-only state/audit events. Session presentation consumers must use
-    /// `journal_fact` and filter for `RuntimeJournalFact::Presentation`.
-    RuntimeEvent(RuntimeEventEnvelope),
-    DriverEvent(DriverEventEnvelope),
-    #[schemars(skip)]
-    #[ts(skip)]
+    RuntimeChange(Box<ManagedRuntimePlatformChange>),
     AgentChange(Box<RuntimeWireAgentChangeNotification>),
     Heartbeat {
         last_received_frame_id: RuntimeWireFrameId,
@@ -201,10 +124,10 @@ pub enum RuntimeProtocolViolation {
     MalformedJson { message: String },
     #[error("runtime wire envelope is malformed: {message}")]
     MalformedEnvelope { message: String },
-    #[error("runtime wire protocol revision {received} is unsupported")]
-    UnsupportedRevision { received: u32, supported: u32 },
     #[error("unknown critical runtime wire frame: {frame_kind}")]
     UnknownCriticalFrame { frame_kind: String },
+    #[error("runtime wire protocol revision {received} is unsupported")]
+    UnsupportedRevision { received: u32, supported: u32 },
 }
 
 pub fn decode_frame(bytes: &[u8]) -> Result<DecodedRuntimeWireFrame, RuntimeProtocolViolation> {
@@ -216,7 +139,7 @@ pub fn decode_frame(bytes: &[u8]) -> Result<DecodedRuntimeWireFrame, RuntimeProt
         .get("protocol_revision")
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| RuntimeProtocolViolation::MalformedEnvelope {
-            message: "protocol_revision is required".to_string(),
+            message: "protocol_revision is required".to_owned(),
         })? as u32;
     if revision != RUNTIME_WIRE_PROTOCOL_REVISION {
         return Err(RuntimeProtocolViolation::UnsupportedRevision {
@@ -225,116 +148,138 @@ pub fn decode_frame(bytes: &[u8]) -> Result<DecodedRuntimeWireFrame, RuntimeProt
         });
     }
 
-    let frame_kind = value
-        .pointer("/frame/kind")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| RuntimeProtocolViolation::MalformedEnvelope {
-            message: "frame.kind is required".to_string(),
-        })?;
-    let known = matches!(frame_kind, "request" | "response" | "notification" | "ack");
-    if !known {
-        if value
-            .get("critical")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
-        {
-            return Err(RuntimeProtocolViolation::UnknownCriticalFrame {
-                frame_kind: frame_kind.to_string(),
-            });
+    match serde_json::from_value(value.clone()) {
+        Ok(envelope) => Ok(DecodedRuntimeWireFrame::Known(Box::new(envelope))),
+        Err(_error) => {
+            let kind = value
+                .pointer("/frame/kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown")
+                .to_owned();
+            let critical = value
+                .get("critical")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true);
+            if critical {
+                return Err(RuntimeProtocolViolation::UnknownCriticalFrame { frame_kind: kind });
+            }
+            Ok(DecodedRuntimeWireFrame::IgnoredUnknown {
+                kind,
+                frame_id: value
+                    .get("frame_id")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|value| crate::wire_u64::parse(value).ok())
+                    .map(RuntimeWireFrameId),
+            })
         }
-        return Ok(DecodedRuntimeWireFrame::IgnoredUnknown {
-            kind: frame_kind.to_string(),
-            frame_id: value
-                .get("frame_id")
-                .and_then(serde_json::Value::as_u64)
-                .map(RuntimeWireFrameId),
-        });
     }
-
-    serde_json::from_value(value)
-        .map(Box::new)
-        .map(DecodedRuntimeWireFrame::Known)
-        .map_err(|error| RuntimeProtocolViolation::MalformedEnvelope {
-            message: error.to_string(),
-        })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::Path};
+
+    use ts_rs::TS;
+
     use super::*;
 
     #[test]
-    fn unknown_critical_frame_is_a_protocol_violation() {
-        let error = decode_frame(
-            br#"{"protocol_revision":3,"frame_id":7,"critical":true,"frame":{"kind":"future_control","payload":{}}}"#,
-        )
-        .expect_err("critical frame must fail");
+    fn revision_four_is_the_only_accepted_revision() {
+        let bytes = serde_json::to_vec(&RuntimeWireEnvelope {
+            protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+            frame_id: RuntimeWireFrameId(1),
+            critical: true,
+            frame: RuntimeWireFrame::Ack(RuntimeWireAck {
+                through_frame_id: RuntimeWireFrameId(0),
+            }),
+        })
+        .expect("encode frame");
         assert!(matches!(
-            error,
-            RuntimeProtocolViolation::UnknownCriticalFrame { .. }
+            decode_frame(&bytes),
+            Ok(DecodedRuntimeWireFrame::Known(_))
         ));
+
+        let mut old: serde_json::Value = serde_json::from_slice(&bytes).expect("decode test frame");
+        old["protocol_revision"] = serde_json::json!(3);
+        assert_eq!(
+            decode_frame(&serde_json::to_vec(&old).expect("encode old frame")),
+            Err(RuntimeProtocolViolation::UnsupportedRevision {
+                received: 3,
+                supported: 4,
+            })
+        );
     }
 
     #[test]
-    fn unknown_non_critical_frame_can_be_ignored() {
-        let decoded = decode_frame(
-            br#"{"protocol_revision":3,"frame_id":7,"critical":false,"frame":{"kind":"future_hint","payload":{}}}"#,
-        )
-        .expect("non-critical frame may be ignored");
-        assert!(matches!(
-            decoded,
-            DecodedRuntimeWireFrame::IgnoredUnknown { .. }
-        ));
+    fn schema_contains_runtime_and_complete_agent_business_frames() {
+        let schema = schemars::schema_for!(RuntimeWireEnvelope);
+        let schema = serde_json::to_string(&schema).expect("serialize wire schema");
+        for family in [
+            "runtime_execute",
+            "runtime_read",
+            "runtime_changes",
+            "agent_service",
+            "agent_host_callback",
+            "agent_change",
+            "runtime_change",
+        ] {
+            assert!(schema.contains(family), "missing {family}");
+        }
+        assert!(!schema.contains("driver_dispatch"));
+        assert!(!schema.contains("journal_fact"));
+        assert!(!schema.contains("host_port"));
     }
 
     #[test]
-    fn concurrent_same_method_responses_keep_distinct_request_correlation() {
-        fn response(frame_id: u64, request_frame_id: u64) -> RuntimeWireEnvelope {
-            RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
-                frame_id: RuntimeWireFrameId(frame_id),
-                critical: true,
-                frame: RuntimeWireFrame::Response {
-                    request_frame_id: RuntimeWireFrameId(request_frame_id),
-                    response: RuntimeWireResponse::Snapshot(RuntimeWireSnapshotResult::Error(
-                        RuntimeSnapshotError::NotFound,
-                    )),
-                },
+    fn rev4_typescript_root_exports_lossless_decimal_frame_ids() {
+        let temp = tempfile::tempdir().expect("create TypeScript export directory");
+        RuntimeWireEnvelope::export_all_to(temp.path()).expect("export Runtime Wire contracts");
+        RuntimeWireU64::export_all_to(temp.path()).expect("export Wire u64");
+        let typescript = read_typescript(temp.path());
+
+        assert!(!typescript.contains("bigint"));
+        for contract in [
+            "RuntimeWireFrameId",
+            "RuntimeWireAgentServiceRequest",
+            "RuntimeWireAgentServiceResponse",
+            "RuntimeWireAgentHostCallbackRequest",
+            "RuntimeWireAgentHostCallbackResponse",
+            "RuntimeWireAgentChangeNotification",
+            "AgentAppliedEffectOutcome",
+            "AgentEffectInspection",
+        ] {
+            assert!(typescript.contains(contract), "missing {contract}");
+        }
+        for variant in [
+            "\"agent_service\"",
+            "\"agent_host_callback\"",
+            "\"agent_change\"",
+            "\"inspect\"",
+            "\"create\"",
+            "\"resume\"",
+            "\"fork\"",
+            "\"command\"",
+            "\"surface_apply\"",
+            "\"surface_revoke\"",
+        ] {
+            assert!(typescript.contains(variant), "missing variant {variant}");
+        }
+        assert!(typescript.contains(
+            "export type RuntimeWireU64 = string & { readonly __runtime_wire_u64: \"canonical_unsigned_decimal\" };"
+        ));
+        assert!(typescript.contains("export type RuntimeWireFrameId = RuntimeWireU64;"));
+    }
+
+    fn read_typescript(directory: &Path) -> String {
+        let mut output = String::new();
+        for entry in fs::read_dir(directory).expect("read TypeScript export directory") {
+            let path = entry.expect("read TypeScript export entry").path();
+            if path.is_dir() {
+                output.push_str(&read_typescript(&path));
+            } else if path.extension().is_some_and(|extension| extension == "ts") {
+                output.push_str(&fs::read_to_string(path).expect("read TypeScript export"));
             }
         }
-
-        let first = serde_json::to_value(response(101, 11)).expect("serialize first response");
-        let second = serde_json::to_value(response(102, 12)).expect("serialize second response");
-        assert_eq!(
-            first
-                .pointer("/frame/payload/request_frame_id")
-                .and_then(serde_json::Value::as_u64),
-            Some(11)
-        );
-        assert_eq!(
-            second
-                .pointer("/frame/payload/request_frame_id")
-                .and_then(serde_json::Value::as_u64),
-            Some(12)
-        );
-        assert_ne!(
-            first.pointer("/frame/payload/request_frame_id"),
-            second.pointer("/frame/payload/request_frame_id")
-        );
-
-        let schema = schemars::schema_for!(RuntimeWireEnvelope);
-        let schema = serde_json::to_value(schema).expect("serialize Runtime Wire schema");
-        assert!(schema.to_string().contains("request_frame_id"));
-    }
-
-    #[test]
-    fn journal_fact_wire_schema_keeps_the_typed_backbone_union() {
-        let schema = schemars::schema_for!(RuntimeWireEnvelope);
-        let schema = serde_json::to_value(schema).expect("serialize Runtime Wire schema");
-        let schema = schema.to_string();
-        assert!(schema.contains("journal_fact"));
-        assert!(schema.contains("BackboneEvent"));
-        assert!(schema.contains("item_completed"));
-        assert!(schema.contains("platform"));
+        output
     }
 }

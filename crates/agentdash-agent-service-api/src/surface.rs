@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentConfigurationBoundary,
@@ -11,7 +12,7 @@ use crate::{
 };
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSurfaceContributionKind {
@@ -23,7 +24,7 @@ pub enum AgentSurfaceContributionKind {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSurfaceRoute {
@@ -36,7 +37,7 @@ pub enum AgentSurfaceRoute {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHookPoint {
@@ -52,7 +53,7 @@ pub enum AgentHookPoint {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHookTiming {
@@ -61,7 +62,7 @@ pub enum AgentHookTiming {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHookAction {
@@ -74,7 +75,7 @@ pub enum AgentHookAction {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentToolDelivery {
@@ -96,7 +97,7 @@ impl AgentToolDelivery {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentToolUpdateSemantics {
@@ -105,7 +106,7 @@ pub enum AgentToolUpdateSemantics {
     HotUpdate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentToolSemanticFacet {
     pub delivery: AgentToolDelivery,
@@ -121,7 +122,7 @@ impl AgentToolSemanticFacet {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentHookBlockingSemantics {
     NonBlocking,
@@ -145,7 +146,7 @@ impl AgentHookBlockingSemantics {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHookMutationKind {
@@ -155,14 +156,14 @@ pub enum AgentHookMutationKind {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHookEffectKind {
     EmitEffect,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentHookSemanticFacet {
     pub point: AgentHookPoint,
@@ -197,7 +198,7 @@ fn map_satisfies<K: Ord>(
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", content = "facet", rename_all = "snake_case")]
 pub enum AgentSurfaceSemanticFacet {
     Instruction,
@@ -283,7 +284,7 @@ impl AgentSurfaceSemanticFacet {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentSurfaceContributionPayload {
     Instruction {
@@ -301,6 +302,9 @@ pub enum AgentSurfaceContributionPayload {
         point: AgentHookPoint,
         timing: AgentHookTiming,
         actions: BTreeSet<AgentHookAction>,
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+        #[ts(type = "AgentServiceU64")]
         deadline_ms: u64,
     },
     Workspace {
@@ -323,7 +327,7 @@ impl AgentSurfaceContributionPayload {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentSurfaceRequirement {
     pub key: String,
@@ -335,7 +339,7 @@ pub struct AgentSurfaceRequirement {
     pub payload_digest: AgentPayloadDigest,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentSurfaceSnapshot {
     pub revision: AgentSurfaceRevision,
@@ -343,7 +347,7 @@ pub struct AgentSurfaceSnapshot {
     pub requirements: Vec<AgentSurfaceRequirement>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentSurfaceCapabilityFacet {
     pub semantics: AgentSurfaceSemanticFacet,
@@ -352,14 +356,14 @@ pub struct AgentSurfaceCapabilityFacet {
     pub configuration_boundary: AgentConfigurationBoundary,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeOffer {
     pub profile_digest: crate::AgentProfileDigest,
     pub contributions: Vec<AgentSurfaceCapabilityFacet>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct BoundAgentSurfaceContribution {
     pub key: String,
@@ -371,7 +375,7 @@ pub struct BoundAgentSurfaceContribution {
     pub payload_digest: AgentPayloadDigest,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct BoundAgentSurface {
     pub revision: AgentSurfaceRevision,
@@ -381,7 +385,7 @@ pub struct BoundAgentSurface {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AppliedContributionStatus {
@@ -390,7 +394,7 @@ pub enum AppliedContributionStatus {
     Revoked,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AppliedAgentSurfaceContribution {
     pub key: String,
@@ -402,7 +406,7 @@ pub struct AppliedAgentSurfaceContribution {
     pub evidence: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AppliedAgentSurface {
     pub revision: AgentSurfaceRevision,
@@ -428,16 +432,19 @@ impl BoundAgentSurface {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentHostCallbackBinding {
     pub route_id: AgentCallbackRouteId,
     pub binding_generation: AgentBindingGeneration,
     pub delivery: AgentSurfaceRoute,
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+    #[ts(type = "AgentServiceU64")]
     pub default_deadline_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ApplyBoundAgentSurface {
     pub command_id: crate::AgentCommandId,
@@ -448,7 +455,7 @@ pub struct ApplyBoundAgentSurface {
     pub callbacks: AgentHostCallbackBinding,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RevokeBoundAgentSurface {
     pub command_id: crate::AgentCommandId,
@@ -459,7 +466,7 @@ pub struct RevokeBoundAgentSurface {
     pub expected_revision: AgentSurfaceRevision,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AppliedAgentSurfaceReceipt {
     pub command_id: crate::AgentCommandId,

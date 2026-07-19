@@ -8,7 +8,7 @@ import type {
   RuntimeNodeView,
   SubjectExecutionView,
 } from "../types";
-import { subjectExecutionKey } from "../types";
+import { lifecycleRuntimeTraceSummaries, subjectExecutionKey } from "../types";
 import { useLifecycleStore } from "../stores/lifecycleStore";
 import { agentRunWorkspacePath } from "../features/agent/agent-run-paths";
 import { agentSourceLabel } from "../lib/agent-source";
@@ -91,6 +91,7 @@ function OrchestrationSummary({ orchestration }: { orchestration: OrchestrationI
 
 function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
   const navigate = useNavigate();
+  const runtimeTraces = lifecycleRuntimeTraceSummaries(lifecycleRun);
   return (
     <div className="space-y-4">
       <Section title="Run">
@@ -130,7 +131,7 @@ function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
           <EmptyHint message="暂无 agent" />
         ) : (
           <div className="space-y-2">
-            {lifecycleRun.agents.map((agent) => (
+            {lifecycleRun.agents.map(({ agent }) => (
               <button
                 key={agent.agent_ref.agent_id}
                 type="button"
@@ -152,20 +153,24 @@ function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
       </Section>
 
       <Section title="Runtime Traces">
-        {lifecycleRun.runtime_trace_refs.length === 0 ? (
+        {runtimeTraces.length === 0 ? (
           <EmptyHint message="暂无 runtime trace" />
         ) : (
           <div className="flex flex-wrap gap-2">
-            {lifecycleRun.runtime_trace_refs.map((ref) => (
-              <button
-                key={ref.runtime_session_id}
-                type="button"
-                onClick={() => {}}
-                className="rounded-[6px] border border-border bg-secondary/40 px-2 py-1 font-mono text-xs text-muted-foreground hover:text-foreground"
-              >
-                trace {ref.runtime_session_id}
-              </button>
-            ))}
+            {runtimeTraces.map((trace) => {
+              const label = trace.runtimeThreadId
+                ? `trace ${trace.runtimeThreadId}`
+                : `agent ${trace.agent.agent_ref.agent_id.slice(0, 8)}`;
+              return (
+                <span
+                  key={trace.agent.agent_ref.agent_id}
+                  className="rounded-[6px] border border-border bg-secondary/40 px-2 py-1 font-mono text-xs text-muted-foreground"
+                >
+                  {label} · {trace.state}
+                  {trace.reason ? ` · ${trace.reason}` : ""}
+                </span>
+              );
+            })}
           </div>
         )}
       </Section>
@@ -191,12 +196,12 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView }) {
         <Section title="Current Agent">
           <button
             type="button"
-            onClick={() => navigate(`/agent/${view.current_agent?.agent_ref.agent_id}`, {
-              state: { run_id: view.current_agent?.agent_ref.run_id },
+            onClick={() => navigate(`/agent/${view.current_agent?.agent.agent_ref.agent_id}`, {
+              state: { run_id: view.current_agent?.agent.agent_ref.run_id },
             })}
             className="font-mono text-sm text-primary hover:underline"
           >
-            {view.current_agent.agent_ref.agent_id}
+            {view.current_agent.agent.agent_ref.agent_id}
           </button>
         </Section>
       )}

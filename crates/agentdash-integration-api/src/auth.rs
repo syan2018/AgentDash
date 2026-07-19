@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-pub use agentdash_spi::platform::auth::{AuthGroup, AuthIdentity, AuthMode};
+pub use agentdash_platform_spi::platform::auth::{AuthGroup, AuthIdentity, AuthMode};
 
 /// 认证错误
 #[derive(Debug, thiserror::Error)]

@@ -1,40 +1,22 @@
 [package]
 name = "agentdash-agent"
-description = "Pi Agent 框架 — 纯净 Agent Loop 引擎"
+description = "Dash Agent 的 history、lifecycle、fork 与 compaction 中层"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 agentdash-agent-core = { workspace = true }
-# Agent 领域核心类型
-agentdash-agent-types = { workspace = true }
-# 异步运行时
-tokio = { workspace = true }
+agentdash-diagnostics = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
 futures = { workspace = true }
-async-trait = "0.1"
-tokio-stream = { version = "0.1", features = ["sync"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-
-# 序列化
+jsonschema = "0.30"
+schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-# 错误处理
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-
-# 日志
-agentdash-diagnostics = { workspace = true }
-tracing = { workspace = true }
-
-# 通用
-uuid = { workspace = true }
-schemars = { workspace = true }
-walkdir = "2.5"
-regex = "1.11"
-globset = "0.4"
-jsonschema = "0.30"
 sha2 = { workspace = true }
-
-[dev-dependencies]
-tempfile = "3.18"
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { workspace = true }

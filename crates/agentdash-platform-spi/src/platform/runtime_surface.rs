@@ -1,0 +1,964 @@
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    path::PathBuf,
+    sync::Arc,
+};
+
+use agentdash_agent_protocol::{ContextDeliveryPlan, ContextFrame};
+use agentdash_agent_runtime_contract::{RuntimeItemId, RuntimeThreadId, RuntimeTurnId};
+use agentdash_agent_types::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
+use agentdash_domain::backend::{
+    BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
+};
+use agentdash_domain::channel::ChannelCapabilityRef;
+use agentdash_domain::common::{AgentConfig, MountCapability, Vfs};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+pub use super::capability_delta::{
+    CapabilityStateDelta, DefaultMountDelta, McpServerReadinessSummary, NamedEntityDelta, SetDelta,
+    VfsSurfaceDelta, compute_capability_state_delta,
+};
+use crate::context::capability::SkillEntry;
+use crate::hooks::HookRuntimeAccess;
+use crate::platform::memory_discovery::MemoryDiscoveryOutput;
+
+/// Session 级执行上下文（Who + Where）。
+///
+/// 在当前 turn 内语义上不可变：它是 session 启动时拍下的"身份 + 执行环境"快照。
+/// 下一 turn 若有改动则重新组装，不在 turn 内 mutate 这里的字段。
+#[derive(Clone)]
+pub struct ExecutionSessionFrame {
+    pub turn_id: String,
+    pub working_directory: PathBuf,
+    pub environment_variables: HashMap<String, String>,
+    pub executor_config: AgentConfig,
+    /// 本轮完整 MCP 声明（内部类型，带 relay 标记）。
+    ///
+    /// 云端 Managed Runtime 不自行处理这里的 MCP，而是消费 Application 已经预构建好的
+    /// `turn.assembled_tools`。Relay transport 可将该结构原样下发给
+    /// 远端 agent，由远端 agent 自行建联。
+    pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub vfs: Option<Vfs>,
+    pub vfs_access_policy: Option<RuntimeVfsAccessPolicy>,
+    /// Relay/backend execution placement resolved during session launch.
+    ///
+    /// This field is set only for remote backend executions. It is the runtime-facing
+    /// projection of the already claimed backend execution lease.
+    pub backend_execution: Option<ExecutionBackendPlacement>,
+    /// Lifecycle / AgentRun 生成的运行期 backend anchor。
+    ///
+    /// 这是 runtime backend identity 的唯一事实源；下游 runtime 组件只能消费该值，
+    /// 不得从 session route、VFS mount 或 online backend 列表重新推导 backend。
+    pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
+    /// 发起本次执行的用户身份（由 HTTP 层注入）。
+    pub identity: Option<crate::platform::auth::AuthIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionBackendPlacement {
+    pub backend_id: String,
+    pub lease_id: uuid::Uuid,
+    pub selection_mode: BackendExecutionSelectionMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeVfsOperation {
+    Read,
+    List,
+    Search,
+    Write,
+    Exec,
+    ApplyPatch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeVfsPathPattern {
+    All,
+    Exact(String),
+    Prefix(String),
+}
+
+impl RuntimeVfsPathPattern {
+    pub fn matches_normalized_path(&self, normalized_path: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Exact(path) => normalized_path == path,
+            Self::Prefix(prefix) if prefix.is_empty() => true,
+            Self::Prefix(prefix) => {
+                normalized_path == prefix
+                    || normalized_path
+                        .strip_prefix(prefix)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeVfsAccessSource {
+    ProjectPreset,
+    SystemRuntimeProjection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeVfsAccessRule {
+    pub mount_id: String,
+    pub path_pattern: RuntimeVfsPathPattern,
+    pub operations: BTreeSet<RuntimeVfsOperation>,
+    pub source: RuntimeVfsAccessSource,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeVfsAccessPolicy {
+    pub rules: Vec<RuntimeVfsAccessRule>,
+}
+
+impl RuntimeVfsAccessPolicy {
+    pub fn whole_mounts_from_vfs(vfs: &Vfs) -> Self {
+        Self::whole_mounts_from_vfs_with_source(
+            vfs,
+            RuntimeVfsAccessSource::SystemRuntimeProjection,
+        )
+    }
+
+    pub fn whole_mounts_from_vfs_with_source(vfs: &Vfs, source: RuntimeVfsAccessSource) -> Self {
+        let rules = vfs
+            .mounts
+            .iter()
+            .filter_map(|mount| {
+                let operations = operations_for_mount_capabilities(&mount.capabilities);
+                if operations.is_empty() {
+                    return None;
+                }
+                Some(RuntimeVfsAccessRule {
+                    mount_id: mount.id.clone(),
+                    path_pattern: RuntimeVfsPathPattern::All,
+                    operations,
+                    source,
+                })
+            })
+            .collect();
+        Self { rules }
+    }
+
+    pub fn admits(
+        &self,
+        mount_id: &str,
+        normalized_path: &str,
+        operation: RuntimeVfsOperation,
+    ) -> bool {
+        self.rules.iter().any(|rule| {
+            rule.mount_id == mount_id
+                && rule.operations.contains(&operation)
+                && rule.path_pattern.matches_normalized_path(normalized_path)
+        })
+    }
+}
+
+fn operations_for_mount_capabilities(
+    capabilities: &[MountCapability],
+) -> BTreeSet<RuntimeVfsOperation> {
+    let mut operations = BTreeSet::new();
+    for capability in capabilities {
+        match capability {
+            MountCapability::Read => {
+                operations.insert(RuntimeVfsOperation::Read);
+            }
+            MountCapability::List => {
+                operations.insert(RuntimeVfsOperation::List);
+            }
+            MountCapability::Search => {
+                operations.insert(RuntimeVfsOperation::Search);
+            }
+            MountCapability::Write => {
+                operations.insert(RuntimeVfsOperation::Write);
+                operations.insert(RuntimeVfsOperation::ApplyPatch);
+            }
+            MountCapability::Exec => {
+                operations.insert(RuntimeVfsOperation::Exec);
+            }
+            MountCapability::Watch => {}
+        }
+    }
+    operations
+}
+
+/// Turn 级执行上下文（How + 运行时控制面）。
+///
+/// per-turn 动态：工具集、hook runtime、runtime delegate facets、系统 prompt 产出等；
+/// 会随 session hot-update 或 hook 触发而重建。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionTurnMode {
+    #[default]
+    AssistantResponse,
+    ContextCompaction,
+}
+
+#[derive(Clone, Default)]
+pub struct ExecutionTurnFrame {
+    pub mode: ExecutionTurnMode,
+    pub hook_runtime: Option<Arc<dyn HookRuntimeAccess>>,
+    /// Canonical owner coordinates for a single Platform Tool invocation.
+    ///
+    /// Business tool providers consume this typed scope directly. HookRuntime remains the Hook
+    /// evaluator and must not be used to infer session/run/frame ownership.
+    pub platform_tool_execution: Option<PlatformToolExecutionContext>,
+    pub capability_state: CapabilityState,
+    pub runtime_delegates: AgentRuntimeDelegateSet,
+    /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
+    /// 会把重建出的消息历史放在这里，供 Managed Runtime 恢复连续会话。
+    pub restored_session_state: Option<RestoredSessionState>,
+    /// 本轮可见的 ContextFrame 列表（含 identity / mission / capability / pending_action...）。
+    pub context_frames: Vec<ContextFrame>,
+    /// 本轮 ContextFrame 的正式投递计划。Managed Runtime 和前端应优先消费该计划表达的
+    /// phase/order/cache/channel/agent consumption，而不是从 frame 到达顺序推断。
+    pub context_delivery_plan: Option<ContextDeliveryPlan>,
+    /// Application 层预构建的工具列表（runtime + direct MCP + relay MCP）。
+    ///
+    /// Managed Runtime 只持有并调用这里的 `DynAgentTool`，不重新持有
+    /// `McpServer` 声明，也不自行区分 direct / relay MCP。
+    pub assembled_tools: Vec<agentdash_agent_types::DynAgentTool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformToolExecutionContext {
+    pub run_id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub agent_id: uuid::Uuid,
+    pub frame_id: uuid::Uuid,
+    /// Canonical runtime/control-plane thread owned by the Agent Runtime binding.
+    pub runtime_thread_id: RuntimeThreadId,
+    /// Present only for a callable invocation. Definition/schema materialization retains the
+    /// exact owner surface but has no fabricated per-call coordinates.
+    pub invocation: Option<PlatformToolInvocationCoordinates>,
+    pub launch_evidence_frame_id: uuid::Uuid,
+    pub current_surface_frame_id: uuid::Uuid,
+    pub orchestration_id: Option<uuid::Uuid>,
+    pub node_path: Option<String>,
+    pub node_attempt: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformToolInvocationCoordinates {
+    pub runtime_turn_id: RuntimeTurnId,
+    pub runtime_item_id: RuntimeItemId,
+}
+
+/// 连接器拿到的一次 `prompt(...)` 调用上下文。
+///
+/// 拆分为 `session`（Who/Where，不可变）与 `turn`（How，可变）两层，让 Managed Runtime
+/// 能清晰区分"身份 + 执行环境"与"本轮工具 + 运行时控制面"。
+#[derive(Clone)]
+pub struct ExecutionContext {
+    pub session: ExecutionSessionFrame,
+    pub turn: ExecutionTurnFrame,
+}
+
+impl ExecutionSessionFrame {
+    pub fn require_runtime_backend_anchor(
+        &self,
+        component: impl Into<String>,
+        session_id: Option<&str>,
+    ) -> Result<&RuntimeBackendAnchor, RuntimeBackendAnchorError> {
+        self.runtime_backend_anchor
+            .as_ref()
+            .ok_or_else(|| RuntimeBackendAnchorError::Missing {
+                component: component.into(),
+                session_id: session_id.map(str::to_string),
+                turn_id: Some(self.turn_id.clone()),
+            })
+    }
+}
+
+/// VFS 中发现的项目级指导文件。
+#[derive(Debug, Clone)]
+pub struct DiscoveredGuideline {
+    /// 文件名（如 `AGENTS.md`）。
+    pub file_name: String,
+    /// 所属 mount 标识。
+    pub mount_id: String,
+    /// 相对于 mount 根的路径（如 `AGENTS.md` 或 `packages/foo/AGENTS.md`）。
+    pub path: String,
+    /// 文件全文内容。
+    pub content: String,
+}
+
+impl std::fmt::Debug for ExecutionContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecutionContext")
+            .field("turn_id", &self.session.turn_id)
+            .field("executor_config", &self.session.executor_config)
+            .field("hook_runtime", &self.turn.hook_runtime)
+            .field(
+                "runtime_delegates",
+                &[
+                    self.turn.runtime_delegates.context_transform.is_some(),
+                    self.turn.runtime_delegates.tool_policy.is_some(),
+                    self.turn.runtime_delegates.turn_boundary.is_some(),
+                    self.turn.runtime_delegates.provider_observer.is_some(),
+                ],
+            )
+            .field(
+                "restored_session_state",
+                &self
+                    .turn
+                    .restored_session_state
+                    .as_ref()
+                    .map(|state| state.messages.len()),
+            )
+            .field("context_frames", &self.turn.context_frames.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// 从 `ExecutionContext.session.vfs` 的 default mount 解析工作区路径（`root_ref` 按本地路径处理）。
+pub fn workspace_path_from_context(
+    context: &ExecutionContext,
+) -> Result<PathBuf, PlatformRuntimeError> {
+    let space = context.session.vfs.as_ref().ok_or_else(|| {
+        PlatformRuntimeError::InvalidConfig("ExecutionContext 缺少 vfs".to_string())
+    })?;
+    let mount = space
+        .default_mount()
+        .ok_or_else(|| PlatformRuntimeError::InvalidConfig("vfs 缺少 default_mount".to_string()))?;
+    let path = PathBuf::from(mount.root_ref.trim());
+    if path.as_os_str().is_empty() {
+        return Err(PlatformRuntimeError::InvalidConfig(
+            "default mount 的 root_ref 为空".to_string(),
+        ));
+    }
+    Ok(path)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DiscoveryContext {
+    pub working_dir: Option<PathBuf>,
+    pub identity: Option<crate::platform::auth::AuthIdentity>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RestoredSessionState {
+    pub messages: Vec<AgentMessage>,
+    pub message_refs: Vec<Option<MessageRef>>,
+}
+
+/// 工具簇标识 — 每个簇控制一组相关工具的注入。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCluster {
+    /// Read-only access: mounts_list, fs_read, fs_glob, fs_grep
+    Read,
+    /// File editing: fs_apply_patch
+    Write,
+    /// 命令执行：shell_exec
+    Execute,
+    /// Workflow 节点终结：complete_lifecycle_node
+    Workflow,
+    /// 协作与交互：companion_request, companion_respond
+    Collaboration,
+    /// Task 清单读写：task_read, task_write
+    Task,
+    /// Workspace module：workspace_module_list, workspace_module_describe,
+    /// workspace_module_operate, workspace_module_invoke, workspace_module_present
+    WorkspaceModule,
+}
+
+/// 单个 capability 下的工具级过滤规则。
+///
+/// 这是 `ToolCapabilityDirective` 归约后的运行态权威表示；directive 只存在于配置层。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCapabilityFilter {
+    /// 非空时，该 capability 只允许这些工具。
+    pub include_only: BTreeSet<String>,
+    /// 明确屏蔽的工具。
+    pub exclude: BTreeSet<String>,
+}
+
+impl ToolCapabilityFilter {
+    pub fn is_empty(&self) -> bool {
+        self.include_only.is_empty() && self.exclude.is_empty()
+    }
+
+    pub fn allows(&self, tool_name: &str) -> bool {
+        if !self.include_only.is_empty() && !self.include_only.contains(tool_name) {
+            return false;
+        }
+        !self.exclude.contains(tool_name)
+    }
+}
+
+/// 工具 + MCP 维度的运行态投影。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolDimension {
+    /// 最终生效的能力全集（well-known + custom MCP）。
+    pub capabilities: BTreeSet<crate::ToolCapability>,
+    /// capability 展开后的运行态工具簇集合。
+    pub enabled_clusters: BTreeSet<ToolCluster>,
+    /// 运行态唯一工具级过滤表；key 是 capability key，value 是该 capability 下的工具策略。
+    pub tool_policy: BTreeMap<String, ToolCapabilityFilter>,
+    /// MCP server 的 capability/draft 投影。
+    ///
+    /// AgentRun 当前可执行 MCP surface 的权威来源是 AgentFrame revision；
+    /// 此列表服务 capability replay、tool policy 关联和 runtime 工具装配快照。
+    pub mcp_servers: Vec<RuntimeMcpServer>,
+}
+
+/// Companion 维度的运行态。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompanionDimension {
+    /// 当前 session 可调用的 companion agent 列表。
+    pub agents: Vec<crate::context::capability::CompanionAgentEntry>,
+}
+
+/// Channel 维度的运行态。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelDimension {
+    /// 当前 AgentFrame 可见且可操作的 channel refs。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub visible_channels: Vec<ChannelCapabilityRef>,
+}
+
+/// VFS 维度的运行态。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VfsDimension {
+    /// 运行态文件/上下文访问状态。
+    pub active: Option<Vfs>,
+}
+
+/// Skill 维度的运行态。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillDimension {
+    /// 当前 session 可见的 skills（由 workspace 发现链路产出）。
+    pub skills: Vec<SkillEntry>,
+    /// Provider cluster 元数据——用于按 provider 分组渲染给 model。
+    /// 顺序即 provider 注册顺序，渲染时应保留。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cluster_meta: Vec<SkillClusterMeta>,
+}
+
+/// Skill provider cluster 的轻量元数据（仅用于 model context 分组渲染）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillClusterMeta {
+    pub provider_key: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_summary: Option<String>,
+}
+
+/// Workspace module 可见性裁切模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceModuleVisibilityMode {
+    /// 全集 = Project enabled extension + project visible canvas。
+    All,
+    /// 仅 `allowed_module_ids` 列出的 module 可见。
+    Allowlist,
+}
+
+/// Workspace module 维度的运行态——可见性裁切的唯一权威来源。
+///
+/// 声明式可见性的唯一 upstream 是 ProjectAgent preset 的 `visible_workspace_module_refs`，
+/// 经 base `CapabilityState.workspace_module` 投影（`effective_capability_json`）流转。
+/// 工具在返回 projection 前按此维度过滤。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceModuleDimension {
+    pub mode: WorkspaceModuleVisibilityMode,
+    #[serde(default)]
+    pub allowed_module_ids: Vec<String>,
+}
+
+impl Default for WorkspaceModuleDimension {
+    fn default() -> Self {
+        Self {
+            mode: WorkspaceModuleVisibilityMode::Allowlist,
+            allowed_module_ids: Vec::new(),
+        }
+    }
+}
+
+impl WorkspaceModuleDimension {
+    pub fn all() -> Self {
+        Self {
+            mode: WorkspaceModuleVisibilityMode::All,
+            allowed_module_ids: Vec::new(),
+        }
+    }
+
+    /// 判断给定 module_id 是否对当前 session 可见。
+    pub fn allows(&self, module_id: &str) -> bool {
+        match self.mode {
+            WorkspaceModuleVisibilityMode::All => true,
+            WorkspaceModuleVisibilityMode::Allowlist => {
+                self.allowed_module_ids.iter().any(|id| id == module_id)
+            }
+        }
+    }
+}
+
+/// 解析后的能力运行态——AgentFrame revision 的只读投影。
+///
+/// **数据流向**：
+/// - **写入**：所有写入通过 `AgentFrameBuilder::with_capability_state` →
+///   AgentFrame revision（持久化权威源）→ 内存缓存同步。
+/// - **读取**：运行时读取来自内存缓存（`SessionProfile.capability_state` /
+///   `TurnExecution.capability_state`），缓存内容与最新 frame revision 保持一致。
+/// - **投影**：`project_capability_state_from_frame` 从 AgentFrame JSON 反序列化出此结构。
+///
+/// 保留此结构体用于序列化、事件 payload（`CapabilityStateDelta`）、
+/// 以及各层消费者的只读查询。直接对字段赋值仅限于 diff 应用路径
+/// （`replay_effect` 等纯函数在 clone 副本上操作）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityState {
+    /// 工具 + MCP 维度。
+    pub tool: ToolDimension,
+    /// Companion 维度。
+    pub companion: CompanionDimension,
+    /// Channel 维度。
+    #[serde(default)]
+    pub channel: ChannelDimension,
+    /// VFS 维度。
+    pub vfs: VfsDimension,
+    /// Skill 维度。
+    #[serde(default)]
+    pub skill: SkillDimension,
+    /// Memory 维度。
+    #[serde(default)]
+    pub memory: MemoryDimension,
+    /// Workspace module 可见性维度。
+    pub workspace_module: WorkspaceModuleDimension,
+}
+
+impl CapabilityState {
+    /// 全量簇 — 适用于 Story session 等需要全部工具的场景。
+    pub fn all() -> Self {
+        Self {
+            tool: ToolDimension {
+                enabled_clusters: BTreeSet::from([
+                    ToolCluster::Read,
+                    ToolCluster::Write,
+                    ToolCluster::Execute,
+                    ToolCluster::Workflow,
+                    ToolCluster::Collaboration,
+                    ToolCluster::Task,
+                    ToolCluster::WorkspaceModule,
+                ]),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// 检查指定簇是否启用。
+    pub fn has(&self, cluster: ToolCluster) -> bool {
+        self.tool.enabled_clusters.contains(&cluster)
+    }
+
+    /// 检查指定工具是否可用（cluster 启用）。
+    ///
+    /// 该方法仅服务尚未接入 capability 维度的调用点；优先使用
+    /// `is_capability_tool_enabled`。
+    pub fn is_tool_enabled(&self, tool_name: &str, cluster: ToolCluster) -> bool {
+        let _ = tool_name;
+        self.has(cluster)
+    }
+
+    /// 检查指定 capability 下的工具是否可用。
+    pub fn is_capability_tool_enabled(
+        &self,
+        capability_key: &str,
+        tool_name: &str,
+        cluster: Option<ToolCluster>,
+    ) -> bool {
+        if let Some(cluster) = cluster
+            && !self.has(cluster)
+        {
+            return false;
+        }
+
+        let capability_granted = self
+            .tool
+            .capabilities
+            .contains(&crate::ToolCapability::new(capability_key));
+        if cluster.is_none() && !capability_granted {
+            return false;
+        }
+        if !self.tool.capabilities.is_empty() && !capability_granted {
+            return false;
+        }
+
+        self.tool
+            .tool_policy
+            .get(capability_key)
+            .is_none_or(|filter| filter.allows(tool_name))
+    }
+
+    /// 检查 `<capability>::<tool>` 是否被工具级 directive 屏蔽。
+    pub fn is_tool_path_excluded(&self, capability_key: &str, tool_name: &str) -> bool {
+        !self.is_capability_tool_enabled(capability_key, tool_name, None)
+    }
+
+    /// 以 `<capability>::<tool>` 形式导出当前白名单路径，供事件 diff / UI 展示使用。
+    pub fn included_tool_paths(&self) -> BTreeSet<String> {
+        self.tool
+            .tool_policy
+            .iter()
+            .flat_map(|(capability, filter)| {
+                filter
+                    .include_only
+                    .iter()
+                    .map(move |tool| format!("{capability}::{tool}"))
+            })
+            .collect()
+    }
+
+    /// 以 `<capability>::<tool>` 形式导出当前屏蔽路径，供事件 diff / UI 展示使用。
+    pub fn excluded_tool_paths(&self) -> BTreeSet<String> {
+        self.tool
+            .tool_policy
+            .iter()
+            .flat_map(|(capability, filter)| {
+                filter
+                    .exclude
+                    .iter()
+                    .map(move |tool| format!("{capability}::{tool}"))
+            })
+            .collect()
+    }
+
+    /// 从簇数组构造。
+    pub fn from_clusters(clusters: impl IntoIterator<Item = ToolCluster>) -> Self {
+        Self {
+            tool: ToolDimension {
+                enabled_clusters: clusters.into_iter().collect(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// 已解析能力全集的 string key 视图——供 hook runtime 初始化使用。
+    pub fn capability_keys(&self) -> BTreeSet<String> {
+        self.tool
+            .capabilities
+            .iter()
+            .map(|c| c.key().to_string())
+            .collect()
+    }
+
+    /// 与另一个 CapabilityState 做交集（用于 agent 级配置裁剪）。
+    pub fn intersect(&self, other: &CapabilityState) -> Self {
+        Self {
+            tool: ToolDimension {
+                capabilities: self
+                    .tool
+                    .capabilities
+                    .intersection(&other.tool.capabilities)
+                    .cloned()
+                    .collect(),
+                enabled_clusters: self
+                    .tool
+                    .enabled_clusters
+                    .intersection(&other.tool.enabled_clusters)
+                    .copied()
+                    .collect(),
+                tool_policy: merge_tool_policy_for_intersection(
+                    &self.tool.tool_policy,
+                    &other.tool.tool_policy,
+                ),
+                mcp_servers: self.tool.mcp_servers.clone(),
+            },
+            companion: self.companion.clone(),
+            channel: self.channel.clone(),
+            vfs: self.vfs.clone(),
+            // skill 不参与 capability 交集裁剪，保持调用方当前会话可见技能面。
+            skill: self.skill.clone(),
+            // memory 不参与 capability 交集裁剪，保持当前会话可见发现面。
+            memory: self.memory.clone(),
+            // workspace module 可见性不参与 capability 交集裁剪，保持当前会话可见面。
+            workspace_module: self.workspace_module.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MemoryDimension {
+    #[serde(default)]
+    pub inventory: MemoryDiscoveryOutput,
+}
+
+fn merge_tool_policy_for_intersection(
+    left: &BTreeMap<String, ToolCapabilityFilter>,
+    right: &BTreeMap<String, ToolCapabilityFilter>,
+) -> BTreeMap<String, ToolCapabilityFilter> {
+    let mut merged = left.clone();
+    for (capability, filter) in right {
+        let entry = merged.entry(capability.clone()).or_default();
+        if entry.include_only.is_empty() {
+            entry.include_only = filter.include_only.clone();
+        } else if !filter.include_only.is_empty() {
+            entry.include_only = entry
+                .include_only
+                .intersection(&filter.include_only)
+                .cloned()
+                .collect();
+        }
+        entry.exclude.extend(filter.exclude.iter().cloned());
+    }
+    merged.retain(|_, filter| !filter.is_empty());
+    merged
+}
+
+// ── Runtime MCP Server ──────────────────────────────────────
+
+/// Runtime MCP source 的工具发现就绪状态。
+///
+/// 状态属于具体 MCP source，而不是 `ToolDimension` 的旁路字段。这样执行面、
+/// capability delta 与上下文帧都能从同一个 source 投影当前可用性。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RuntimeMcpSourceReadiness {
+    #[default]
+    Pending,
+    Ready {
+        tool_count: usize,
+    },
+    Unavailable {
+        reason_code: String,
+        message: String,
+    },
+}
+
+impl RuntimeMcpSourceReadiness {
+    pub fn ready(tool_count: usize) -> Self {
+        Self::Ready { tool_count }
+    }
+
+    pub fn unavailable(reason_code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Unavailable {
+            reason_code: reason_code.into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
+    }
+
+    pub fn is_unavailable(&self) -> bool {
+        matches!(self, Self::Unavailable { .. })
+    }
+}
+
+/// Runtime-resolved MCP server for the executable surface.
+///
+/// relay 标记是 server 的内禀属性，不应作为独立的 `HashSet<String>` 旁路传递。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeMcpServer {
+    pub name: String,
+    pub transport: McpTransportConfig,
+    /// 是否通过 relay backend 代理而非云端直连。
+    pub uses_relay: bool,
+    /// 工具发现阶段对该 source 的结构化就绪状态。
+    #[serde(default, skip_serializing_if = "RuntimeMcpSourceReadiness::is_pending")]
+    pub readiness: RuntimeMcpSourceReadiness,
+}
+
+// MCP transport 配置统一归 domain，spi 直接复用，避免领域/SPI 两份等价定义漂移。
+pub use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader, McpTransportConfig};
+
+impl RuntimeMcpServer {
+    pub fn new(name: String, transport: McpTransportConfig, uses_relay: bool) -> Self {
+        Self {
+            name,
+            transport,
+            uses_relay,
+            readiness: RuntimeMcpSourceReadiness::Pending,
+        }
+    }
+
+    pub fn with_readiness(mut self, readiness: RuntimeMcpSourceReadiness) -> Self {
+        self.readiness = readiness;
+        self
+    }
+}
+
+/// 按 relay 标记分组：返回 (relay_servers, direct_servers)。
+pub fn partition_runtime_mcp_servers(
+    servers: &[RuntimeMcpServer],
+) -> (Vec<RuntimeMcpServer>, Vec<RuntimeMcpServer>) {
+    let mut relay = Vec::new();
+    let mut direct = Vec::new();
+    for s in servers {
+        if s.uses_relay {
+            relay.push(s.clone());
+        } else {
+            direct.push(s.clone());
+        }
+    }
+    (relay, direct)
+}
+
+#[derive(Debug, Clone)]
+pub enum PromptPayload {
+    Text(String),
+    /// canonical 用户输入：贯穿 API -> 应用 -> 连接器 -> AgentMessage 的结构化输入单元。
+    /// 以结构化输入表达图片等多模态内容，让它们直达模型而不拍平。
+    Input(Vec<agentdash_agent_protocol::UserInputBlock>),
+}
+
+impl PromptPayload {
+    /// 投递路径：把 canonical 输入映射为模型层 `ContentPart`（图片直达 `ContentPart::Image`）。
+    /// 连接器统一消费此方法，不再各自拍平。
+    pub fn to_content_parts(&self) -> Vec<agentdash_agent_types::ContentPart> {
+        match self {
+            Self::Text(text) => {
+                let text = text.trim();
+                if text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![agentdash_agent_types::ContentPart::text(text)]
+                }
+            }
+            Self::Input(input) => {
+                agentdash_agent_protocol::user_input_blocks_to_content_parts(input)
+            }
+        }
+    }
+
+    /// 文本摘要：仅供标题提示 / trace 元信息，**不是**投递路径。
+    pub fn to_fallback_text(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Input(input) => {
+                agentdash_agent_protocol::codex_user_input_to_text(input).unwrap_or_default()
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
+
+    use super::*;
+
+    #[test]
+    fn prompt_payload_input_to_content_parts_keeps_image_structured() {
+        // 投递路径：canonical 输入经唯一映射，图片真出 ContentPart::Image，不再拍平成占位文本。
+        let input = vec![
+            codex::UserInput::Text {
+                text: "请分析这张图".to_string(),
+                text_elements: Vec::new(),
+            },
+            codex::UserInput::Image {
+                detail: None,
+                url: "data:image/png;base64,AAAA".to_string(),
+            },
+        ];
+        let parts = PromptPayload::Input(input).to_content_parts();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(
+            parts[0],
+            agentdash_agent_types::ContentPart::text("请分析这张图")
+        );
+        assert!(matches!(
+            parts[1],
+            agentdash_agent_types::ContentPart::Image { .. }
+        ));
+        assert_eq!(
+            parts[1],
+            agentdash_agent_types::ContentPart::image("image/png", "AAAA")
+        );
+    }
+
+    #[test]
+    fn prompt_payload_text_to_content_parts() {
+        let parts = PromptPayload::Text("  hi  ".to_string()).to_content_parts();
+        assert_eq!(parts, vec![agentdash_agent_types::ContentPart::text("hi")]);
+    }
+
+    #[test]
+    fn capability_tool_filter_excludes_and_whitelists_by_capability_key() {
+        let mut flow = CapabilityState::from_clusters([ToolCluster::Read]);
+        flow.tool
+            .capabilities
+            .insert(crate::ToolCapability::new("file_read"));
+        flow.tool
+            .tool_policy
+            .entry("file_read".to_string())
+            .or_default()
+            .exclude
+            .insert("fs_grep".to_string());
+
+        assert!(flow.is_capability_tool_enabled("file_read", "fs_read", Some(ToolCluster::Read)));
+        assert!(!flow.is_capability_tool_enabled("file_read", "fs_grep", Some(ToolCluster::Read)));
+
+        let filter = flow
+            .tool
+            .tool_policy
+            .entry("file_read".to_string())
+            .or_default();
+        filter.include_only.insert("fs_read".to_string());
+
+        assert!(flow.is_capability_tool_enabled("file_read", "fs_read", Some(ToolCluster::Read)));
+        assert!(!flow.is_capability_tool_enabled(
+            "file_read",
+            "mounts_list",
+            Some(ToolCluster::Read)
+        ));
+    }
+
+    #[test]
+    fn capability_tool_filter_respects_capabilities_when_present() {
+        let mut flow = CapabilityState::default();
+        flow.tool
+            .capabilities
+            .insert(crate::ToolCapability::new("workflow_management"));
+
+        assert!(flow.is_capability_tool_enabled("workflow_management", "get_workflow", None));
+        assert!(!flow.is_capability_tool_enabled("story_management", "get_story_context", None));
+    }
+
+    #[test]
+    fn capability_tool_filter_denies_mcp_tools_when_capability_state_is_empty() {
+        let flow = CapabilityState::default();
+
+        assert!(
+            !flow.is_capability_tool_enabled("workflow_management", "upsert_workflow_tool", None),
+            "MCP 工具必须先由 canonical CapabilityState 授予 capability"
+        );
+    }
+}
+
+/// 运行时工具构建 SPI。
+/// 由 application 层持有，executor 层提供具体实现。
+#[async_trait]
+pub trait RuntimeToolProvider: Send + Sync {
+    async fn build_tools(
+        &self,
+        context: &ExecutionContext,
+    ) -> Result<Vec<agentdash_agent_types::DynAgentTool>, PlatformRuntimeError>;
+}
+
+#[derive(Debug, Error)]
+pub enum PlatformRuntimeError {
+    #[error("执行器配置无效: {0}")]
+    InvalidConfig(String),
+    #[error("执行器启动失败: {0}")]
+    SpawnFailed(String),
+    #[error("执行器运行错误: {0}")]
+    Runtime(String),
+    #[error("连接失败: {0}")]
+    ConnectionFailed(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+}

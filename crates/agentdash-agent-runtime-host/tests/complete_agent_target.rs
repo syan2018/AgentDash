@@ -7,27 +7,154 @@ use std::{
 };
 
 use agentdash_agent_runtime::{
-    CompleteAgentStateReconciler, CompleteAgentStateRepository,
-    InMemoryCompleteAgentStateRepository, bind_complete_agent_surface,
+    CompleteAgentRuntimeIdentityMap, CompleteAgentStateReconciler, ManagedRuntimeStateCommit,
+    ManagedRuntimeStateRepository, ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError,
+    apply_managed_runtime_state_commit, bind_complete_agent_surface,
+};
+use agentdash_agent_runtime_contract::{
+    ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
+    ManagedRuntimeCommandKind, RuntimeProjectionRevision, RuntimeThreadId, SurfaceRevision,
 };
 use agentdash_agent_runtime_host::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingState,
-    CompleteAgentCallbackBroker, CompleteAgentCallbackRoute, CompleteAgentHookHandler,
-    CompleteAgentHost, CompleteAgentToolHandler,
+    CompleteAgentCallbackBroker, CompleteAgentCallbackCommit, CompleteAgentCallbackRepository,
+    CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError, CompleteAgentHookHandler,
+    CompleteAgentHost, CompleteAgentHostCommit, CompleteAgentHostRepository,
+    CompleteAgentHostSnapshot, CompleteAgentHostStoreError, CompleteAgentPlacement,
+    CompleteAgentRuntimeTarget, CompleteAgentServiceRegistry, CompleteAgentServiceVerification,
+    CompleteAgentToolHandler, CompleteAgentVerificationMethod, CompleteAgentVerifiedBuildEvidence,
+    CompleteAgentVerifiedServiceRegistration, ResolvedCompleteAgentHookCallback,
+    ResolvedCompleteAgentToolCallback, apply_complete_agent_callback_commit,
+    apply_complete_agent_host_commit,
 };
 use agentdash_agent_service_api::*;
 use async_trait::async_trait;
 use serde_json::json;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
+
+#[derive(Default)]
+struct FixtureHostRepository {
+    snapshot: Mutex<CompleteAgentHostSnapshot>,
+}
+
+#[async_trait]
+impl CompleteAgentHostRepository for FixtureHostRepository {
+    async fn load(&self) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+        Ok(self.snapshot.lock().await.clone())
+    }
+
+    async fn commit(
+        &self,
+        commit: CompleteAgentHostCommit,
+    ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+        let mut snapshot = self.snapshot.lock().await;
+        apply_complete_agent_host_commit(&mut snapshot, commit)
+    }
+}
+
+#[derive(Default)]
+struct FixtureServiceRegistry {
+    handles: RwLock<BTreeMap<AgentServiceInstanceId, Arc<dyn CompleteAgentService>>>,
+}
+
+#[async_trait]
+impl CompleteAgentServiceRegistry for FixtureServiceRegistry {
+    async fn attach(
+        &self,
+        instance_id: AgentServiceInstanceId,
+        service: Arc<dyn CompleteAgentService>,
+    ) {
+        self.handles.write().await.insert(instance_id, service);
+    }
+
+    async fn resolve(
+        &self,
+        instance_id: &AgentServiceInstanceId,
+    ) -> Option<Arc<dyn CompleteAgentService>> {
+        self.handles.read().await.get(instance_id).cloned()
+    }
+}
+
+#[derive(Default)]
+struct FixtureManagedRuntimeStateRepository {
+    snapshot: Mutex<ManagedRuntimeStateSnapshot>,
+}
+
+#[async_trait]
+impl ManagedRuntimeStateRepository for FixtureManagedRuntimeStateRepository {
+    async fn load(
+        &self,
+        _thread_id: &RuntimeThreadId,
+    ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+        Ok(self.snapshot.lock().await.clone())
+    }
+
+    async fn commit(
+        &self,
+        commit: ManagedRuntimeStateCommit,
+    ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+        let mut snapshot = self.snapshot.lock().await;
+        apply_managed_runtime_state_commit(&mut snapshot, commit)
+    }
+}
+
+#[derive(Default)]
+struct FixtureCallbackRepository {
+    snapshot: Mutex<CompleteAgentCallbackSnapshot>,
+}
+
+#[async_trait]
+impl CompleteAgentCallbackRepository for FixtureCallbackRepository {
+    async fn load(&self) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
+        Ok(self.snapshot.lock().await.clone())
+    }
+
+    async fn commit(
+        &self,
+        commit: CompleteAgentCallbackCommit,
+    ) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
+        let mut snapshot = self.snapshot.lock().await;
+        apply_complete_agent_callback_commit(&mut snapshot, commit)
+    }
+}
 
 #[tokio::test]
 async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
     let source = AgentSourceCoordinate::new("source-1").expect("source");
     let service = Arc::new(FixtureService::new(source.clone()));
     let service_id = AgentServiceInstanceId::new("service-1").expect("service");
-    let host = CompleteAgentHost::new();
+    let host_repository = Arc::new(FixtureHostRepository::default());
+    let host = CompleteAgentHost::new(
+        host_repository.clone(),
+        Arc::new(FixtureServiceRegistry::default()),
+    );
     let descriptor = host
-        .register_service(service_id.clone(), service.clone())
+        .register_verified_service(
+            CompleteAgentVerifiedServiceRegistration {
+                instance_id: service_id.clone(),
+                placement: CompleteAgentPlacement::InProcess {
+                    host_incarnation_id: "fixture-host".to_owned(),
+                },
+                verification: CompleteAgentServiceVerification {
+                    service_instance_id: service_id.clone(),
+                    publisher_integration: "fixture-integration".to_owned(),
+                    service_version: "fixture-version".to_owned(),
+                    verifier_identity: "fixture-verifier".to_owned(),
+                    verifier_revision: "fixture-verifier-revision".to_owned(),
+                    method: CompleteAgentVerificationMethod::PinnedBuiltin,
+                    verified_profile_digest: service.descriptor.profile_digest.clone(),
+                    claimed_conformance_suite_revision: "fixture-conformance".to_owned(),
+                    verified_build: CompleteAgentVerifiedBuildEvidence {
+                        claimed_build_digest: AgentPayloadDigest::new("fixture-build")
+                            .expect("build digest"),
+                        evidence_digest: AgentPayloadDigest::new("fixture-evidence")
+                            .expect("evidence digest"),
+                    },
+                },
+                remote_binding: None,
+            },
+            service.clone(),
+        )
         .await
         .expect("register service");
     let offer = host
@@ -40,10 +167,10 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
     let binding_id = CompleteAgentBindingId::new("binding-1").expect("binding");
     host.register_binding(CompleteAgentBinding {
         id: binding_id.clone(),
-        service_instance_id: service_id,
+        service_instance_id: service_id.clone(),
         generation: AgentBindingGeneration(1),
         source: source.clone(),
-        profile_digest: descriptor.profile_digest,
+        profile_digest: descriptor.profile_digest.clone(),
         bound_surface: bound.clone(),
         applied_surface: None,
         state: CompleteAgentBindingState::PendingSurface,
@@ -66,6 +193,17 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         delivery: AgentSurfaceRoute::AgentNativeCallback,
         default_deadline_ms: u64::MAX,
     };
+    let runtime_thread_id = RuntimeThreadId::new("runtime-thread").expect("runtime thread");
+    host.register_runtime_target(CompleteAgentRuntimeTarget {
+        runtime_thread_id: runtime_thread_id.clone(),
+        service_instance_id: service_id,
+        generation: AgentBindingGeneration(1),
+        profile_digest: descriptor.profile_digest.clone(),
+        bound_surface: bound.clone(),
+        callbacks: callback_binding.clone(),
+    })
+    .await
+    .expect("register Runtime target");
     let apply = ApplyBoundAgentSurface {
         command_id: AgentCommandId::new("apply-command").expect("command"),
         effect_id: AgentEffectIdentity::new("apply-effect").expect("effect"),
@@ -80,8 +218,33 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         .expect("apply surface");
     assert!(bound.accepts_applied(&applied.applied));
     assert_eq!(
-        host.binding(&binding_id).await.expect("binding").state,
+        host.binding(&binding_id)
+            .await
+            .expect("read binding")
+            .expect("binding")
+            .state,
         CompleteAgentBindingState::Available
+    );
+    let applied_host_snapshot = host_repository
+        .load()
+        .await
+        .expect("Host snapshot after apply");
+    let persisted_route = applied_host_snapshot
+        .facts
+        .callback_routes
+        .get(&callback_binding.route_id)
+        .expect("atomic callback route");
+    assert_eq!(persisted_route.binding_id, binding_id);
+    assert_eq!(
+        persisted_route.generation,
+        callback_binding.binding_generation
+    );
+    assert_eq!(persisted_route.bound_surface.digest, bound.digest);
+    assert!(
+        !applied_host_snapshot
+            .facts
+            .revoked_callback_routes
+            .contains(&callback_binding.route_id)
     );
 
     let receipt = host
@@ -113,39 +276,66 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         AgentReceiptState::AlreadyApplied { .. }
     ));
 
-    let state_repository = Arc::new(InMemoryCompleteAgentStateRepository::new());
-    let reconciler = CompleteAgentStateReconciler::new(state_repository.clone());
+    let state_repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
+    let mut identities =
+        CompleteAgentRuntimeIdentityMap::new(source.clone(), runtime_thread_id.clone());
+    identities
+        .bind_surface_revision(AgentSurfaceRevision(1), SurfaceRevision(1))
+        .expect("surface identity");
+    let command_availability = ManagedRuntimeCommandKind::ALL
+        .into_iter()
+        .map(|command| {
+            (
+                command,
+                ManagedRuntimeCommandAvailability::Available {
+                    evidence: ManagedRuntimeAvailabilityEvidence {
+                        decided_at_revision: RuntimeProjectionRevision(1),
+                        blocking_operation_id: None,
+                        bound_surface_revision: Some(SurfaceRevision(1)),
+                        applied_surface_revision: Some(SurfaceRevision(1)),
+                    },
+                },
+            )
+        })
+        .collect();
+    let reconciler = CompleteAgentStateReconciler::new(
+        state_repository.clone(),
+        identities,
+        command_availability,
+    );
     let sync = reconciler
         .synchronize_source(service.as_ref(), source.clone(), 32)
         .await
         .expect("source sync");
     assert!(sync.reloaded_snapshot);
-    assert_eq!(sync.projection.applied_surface, Some(applied.applied));
+    assert_eq!(
+        sync.projection.applied_surface,
+        Some(applied.applied.clone())
+    );
     assert_eq!(
         state_repository
-            .platform_changes(&source, 0, 32)
+            .load(&runtime_thread_id)
             .await
-            .expect("platform changes")
-            .changes
+            .expect("managed Runtime state")
+            .facts
+            .source_changes
             .len(),
         1
     );
 
     let tool_handler = Arc::new(CountingToolHandler::default());
-    let callback_broker =
-        CompleteAgentCallbackBroker::new(tool_handler.clone(), Arc::new(AllowHookHandler));
-    callback_broker
-        .register_route(
-            CompleteAgentCallbackRoute::from_binding(callback_binding, source.clone(), bound)
-                .expect("callback route"),
-        )
-        .await
-        .expect("register callback route");
+    let callback_repository = Arc::new(FixtureCallbackRepository::default());
+    let callback_broker = CompleteAgentCallbackBroker::new(
+        tool_handler.clone(),
+        Arc::new(AllowHookHandler),
+        host_repository.clone(),
+        callback_repository.clone(),
+    );
     let tool_call = AgentToolInvocation {
         meta: AgentHostCallbackMeta {
             route_id: AgentCallbackRouteId::new("callback-1").expect("route"),
             binding_generation: AgentBindingGeneration(1),
-            source,
+            source: source.clone(),
             turn_id: AgentTurnId::new("turn-1").expect("turn"),
             item_id: Some(AgentItemId::new("item-1").expect("item")),
             interaction_id: None,
@@ -161,21 +351,97 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         .await
         .expect("tool callback");
     let replay = callback_broker
-        .invoke_tool(tool_call)
+        .invoke_tool(tool_call.clone())
         .await
         .expect("tool callback replay");
     assert_eq!(first, replay);
+    assert_eq!(tool_handler.calls.load(Ordering::SeqCst), 1);
+    let callbacks = tool_handler.callbacks.lock().await;
+    assert_eq!(callbacks.len(), 1);
+    assert_eq!(callbacks[0].context.runtime_thread_id, runtime_thread_id);
+    assert_eq!(callbacks[0].context.binding_id, binding_id);
+    assert_eq!(
+        callbacks[0].context.binding_generation,
+        AgentBindingGeneration(1)
+    );
+    assert_eq!(callbacks[0].context.source, source);
+    assert_eq!(
+        callbacks[0].context.service_instance_id,
+        AgentServiceInstanceId::new("service-1").expect("service")
+    );
+    assert_eq!(
+        callbacks[0].context.profile_digest,
+        descriptor.profile_digest
+    );
+    assert_eq!(callbacks[0].context.bound_surface_revision, bound.revision);
+    assert_eq!(callbacks[0].context.bound_surface_digest, bound.digest);
+    assert_eq!(
+        callbacks[0].context.applied_surface_revision,
+        applied.applied.revision
+    );
+    assert_eq!(
+        callbacks[0].context.applied_surface_digest,
+        applied.applied.digest
+    );
+    drop(callbacks);
+
+    host.revoke_bound_surface(
+        &lease,
+        &binding_id,
+        RevokeBoundAgentSurface {
+            command_id: AgentCommandId::new("revoke-command").expect("command"),
+            effect_id: AgentEffectIdentity::new("revoke-effect").expect("effect"),
+            idempotency_key: AgentIdempotencyKey::new("revoke-idem").expect("idempotency"),
+            binding_generation: AgentBindingGeneration(1),
+            source,
+            expected_revision: bound.revision,
+        },
+    )
+    .await
+    .expect("revoke surface");
+    let revoked_host_snapshot = host_repository
+        .load()
+        .await
+        .expect("Host snapshot after revoke");
+    assert!(
+        revoked_host_snapshot
+            .facts
+            .callback_routes
+            .contains_key(&callback_binding.route_id),
+        "the immutable route fence remains durable"
+    );
+    assert!(
+        revoked_host_snapshot
+            .facts
+            .revoked_callback_routes
+            .contains(&callback_binding.route_id),
+        "revoke atomically tombstones the route"
+    );
+
+    let restarted_broker = CompleteAgentCallbackBroker::new(
+        tool_handler.clone(),
+        Arc::new(AllowHookHandler),
+        host_repository,
+        callback_repository,
+    );
+    let rejected = restarted_broker
+        .invoke_tool(tool_call)
+        .await
+        .expect_err("old callback after revoke");
+    assert_eq!(
+        rejected.code,
+        AgentHostCallbackErrorCode::StaleBindingGeneration
+    );
     assert_eq!(tool_handler.calls.load(Ordering::SeqCst), 1);
 }
 
 struct FixtureService {
     descriptor: AgentServiceDescriptor,
-    source: AgentSourceCoordinate,
     applied_surface: Mutex<Option<AppliedAgentSurface>>,
 }
 
 impl FixtureService {
-    fn new(source: AgentSourceCoordinate) -> Self {
+    fn new(_source: AgentSourceCoordinate) -> Self {
         let tool = AgentToolSemanticFacet {
             delivery: AgentToolDelivery::AgentNativeCallback,
             invocation: SemanticFidelity::Exact,
@@ -217,7 +483,6 @@ impl FixtureService {
                 profile_digest: AgentProfileDigest::new("profile-1").expect("profile"),
                 configuration_boundary: AgentConfigurationBoundary::Binding,
             },
-            source,
             applied_surface: Mutex::new(None),
         }
     }
@@ -272,6 +537,7 @@ impl CompleteAgentService for FixtureService {
             active_turn_id: None,
             turns: Vec::new(),
             interactions: Vec::new(),
+            thread_name: None,
             source_info: AgentSnapshotSource {
                 authority: AgentSnapshotAuthority::AgentAuthoritative,
                 source_revision: Some(
@@ -299,12 +565,7 @@ impl CompleteAgentService for FixtureService {
         Ok(AgentEffectInspection {
             effect_id: identity,
             command_id: None,
-            state: AgentEffectInspectionState::Applied {
-                source: self.source.clone(),
-                terminal: None,
-                initial_context: None,
-                child_source: None,
-            },
+            state: AgentEffectInspectionState::Unknown,
         })
     }
 
@@ -341,9 +602,17 @@ impl CompleteAgentService for FixtureService {
 
     async fn revoke_surface(
         &self,
-        _command: RevokeBoundAgentSurface,
+        command: RevokeBoundAgentSurface,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        Err(unsupported())
+        *self.applied_surface.lock().await = None;
+        Ok(AgentCommandReceipt {
+            command_id: command.command_id,
+            effect_id: command.effect_id,
+            source: command.source,
+            state: AgentReceiptState::AlreadyApplied { terminal: None },
+            snapshot_revision: None,
+            initial_context: None,
+        })
     }
 }
 
@@ -375,17 +644,19 @@ fn desired_surface() -> AgentSurfaceSnapshot {
 #[derive(Default)]
 struct CountingToolHandler {
     calls: AtomicUsize,
+    callbacks: Mutex<Vec<ResolvedCompleteAgentToolCallback>>,
 }
 
 #[async_trait]
 impl CompleteAgentToolHandler for CountingToolHandler {
     async fn invoke(
         &self,
-        invocation: AgentToolInvocation,
+        callback: ResolvedCompleteAgentToolCallback,
     ) -> Result<AgentToolResult, AgentHostCallbackError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.callbacks.lock().await.push(callback.clone());
         Ok(AgentToolResult::Completed {
-            output: invocation.arguments,
+            output: callback.invocation.arguments,
         })
     }
 }
@@ -396,7 +667,7 @@ struct AllowHookHandler;
 impl CompleteAgentHookHandler for AllowHookHandler {
     async fn invoke(
         &self,
-        _invocation: AgentHookInvocation,
+        _callback: ResolvedCompleteAgentHookCallback,
     ) -> Result<AgentHookDecision, AgentHostCallbackError> {
         Ok(AgentHookDecision::Allow)
     }

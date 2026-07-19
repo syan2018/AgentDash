@@ -2,12 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_domain::context_source::ContextSourceKind;
-use agentdash_spi::MarketplaceSourceProvider;
-use agentdash_spi::MemoryDiscoveryProvider;
-use agentdash_spi::RoutineTriggerProvider;
-use agentdash_spi::SkillDiscoveryProvider;
-use agentdash_spi::platform::mount::MountProvider;
-use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
+use agentdash_platform_spi::MarketplaceSourceProvider;
+use agentdash_platform_spi::MemoryDiscoveryProvider;
+use agentdash_platform_spi::RoutineTriggerProvider;
+use agentdash_platform_spi::SkillDiscoveryProvider;
+use agentdash_platform_spi::platform::mount::MountProvider;
+use agentdash_platform_spi::{SourceResolver, VfsDiscoveryProvider};
 
 use crate::auth::AuthProvider;
 use crate::directory::IdentityDirectoryProvider;
@@ -51,16 +51,12 @@ pub trait AgentDashIntegration: Send + Sync {
     /// 集成名称（用于日志和诊断）
     fn name(&self) -> &str;
 
-    /// 贡献受信、编译期绑定的 Agent service definition 与 driver factory。
-    fn agent_runtime_drivers(&self) -> Vec<crate::AgentRuntimeDriverContribution> {
-        vec![]
-    }
-
-    /// 声明与 `agent_runtime_drivers` 一一对应的编译期信任清单。
+    /// 贡献 Complete Agent 声明、instance、placement requirement 与 factory。
     ///
-    /// 宿主只会激活同时拥有 driver contribution 与清单的 definition；清单中的 profile
-    /// 是集成完成 conformance 验证后的能力上界，而不是运行时自报能力。
-    fn agent_runtime_trust_manifests(&self) -> Vec<crate::AgentRuntimeTrustManifest> {
+    /// Factory 只产出最终 `CompleteAgentService` 边界；Host 在 composition root 中独立
+    /// 验证 descriptor/build/conformance claim，并归一 placement、health、credential 与
+    /// offer evidence。集成不能自签 verified evidence，也不能声明默认成功或 fallback。
+    fn complete_agent_registrations(&self) -> Vec<crate::CompleteAgentRegistrationContribution> {
         vec![]
     }
 

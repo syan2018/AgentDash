@@ -1,7 +1,7 @@
 import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { SessionDisplayEntry } from "./types";
-import type { TurnSegment } from "./useSessionFeed";
+import type { AgentRunRuntimeTurnSegment } from "../../agent-run-runtime";
 
 export interface RoundActionModel {
   copyLastAgentReply: {
@@ -27,14 +27,14 @@ function isAgentMessageEntry(value: unknown): value is AgentMessageDisplayEntry 
   );
 }
 
-export function lastAgentReplyText(segment: TurnSegment): string {
+export function lastAgentReplyText(segment: AgentRunRuntimeTurnSegment): string {
   const output = segment.finalOutput;
   if (!isAgentMessageEntry(output)) return "";
   return (output.accumulatedText ?? output.event.payload.delta ?? "").trim();
 }
 
 export function forkPointRefFromFinalAgentReply(
-  segment: TurnSegment,
+  segment: AgentRunRuntimeTurnSegment,
 ): SessionMessageRefDto | undefined {
   const output = segment.finalOutput;
   if (!isAgentMessageEntry(output)) return undefined;
@@ -44,7 +44,7 @@ export function forkPointRefFromFinalAgentReply(
   return { turn_id: turnId, entry_index: entryIndex };
 }
 
-export function buildRoundActionModel(segment: TurnSegment): RoundActionModel {
+export function buildRoundActionModel(segment: AgentRunRuntimeTurnSegment): RoundActionModel {
   const text = lastAgentReplyText(segment);
   const forkPointRef = forkPointRefFromFinalAgentReply(segment);
 

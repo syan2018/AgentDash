@@ -1,4 +1,4 @@
-pub use agentdash_spi::platform::mount::{
+pub use agentdash_platform_spi::platform::mount::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, ListOptions,
     ListResult, ReadResult, RuntimeFileEntry, ShellSessionOutputChunk, ShellSessionReadRequest,
     ShellSessionResizeRequest, ShellSessionSnapshot, ShellSessionTerminateRequest,

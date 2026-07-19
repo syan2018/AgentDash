@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
+import { acknowledgeWorkspacePresentation } from "../../../services/agentRunProductProjections";
 import type { ExecutorConfig } from "../../../services/executor";
+import { subscribeProjectEvents } from "../../../stores/eventStore";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import type {
@@ -11,14 +13,23 @@ import type {
   ProjectAgentSummary,
 } from "../../../types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
+import {
+  connectAgentRunTerminalFeed,
+  connectWorkspacePresentationFeed,
+  projectAgentRunTerminalChanges,
+  projectAgentRunTerminalSnapshot,
+  WorkspacePresentationPendingConsumer,
+} from "../../agent-run-product-projections";
 import type {
   AgentRunWorkspaceState,
 } from "../../workspace-panel/model/useAgentRunWorkspaceState";
 import { isWorkspaceModulePresentationCurrent } from "../../workspace-module/model/presentation";
 import {
-  planAgentRunLiveEvent,
   planAgentRunMessageSent,
+  planAgentRunProjectEvent,
+  planAgentRunRuntimeChanges,
   planAgentRunWorkspaceModuleOpened,
+  planWorkspaceModulePresentationIntent,
   resolveAgentRunSubmitCommand,
   type AgentRunControlPlaneEffectPlan,
   type AgentRunWorkspacePanelTarget,
@@ -67,7 +78,7 @@ interface UseAgentRunWorkspaceControlPlaneResult {
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
   refreshAgentRunHookRuntime: () => Promise<unknown>;
   handleMessageSent: () => void;
-  handleLiveEvent: (event: BackboneEvent) => void;
+  handleRuntimeChanges: (changes: readonly ManagedRuntimePlatformChange[]) => void;
   handleWorkspaceModuleOpened: () => void;
 }
 
@@ -76,6 +87,8 @@ export interface AgentRunControlPlaneEffectExecutor {
   openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
   scheduleHookRuntimeRefresh: (reason: string, immediate?: boolean) => void;
   refreshAgentRunList: (reason: string) => void;
+  workspacePanelOpened?: () => void;
+  workspacePanelOpenFailed?: (error: Error) => void;
 }
 
 export function applyAgentRunControlPlaneEffectPlan(
@@ -85,10 +98,14 @@ export function applyAgentRunControlPlaneEffectPlan(
   const openPlan = plan.openWorkspacePanel;
   if (openPlan?.afterWorkspaceRefresh) {
     void (async () => {
-      let workspace: AgentRunWorkspaceView | null = null;
-      if (plan.refreshWorkspaceState) {
-        workspace = await executor.refreshAgentRunWorkspaceState().catch(() => null);
-      }
+      const workspace = plan.refreshWorkspaceState
+        ? await executor.refreshAgentRunWorkspaceState().catch((error: unknown) => {
+            executor.workspacePanelOpenFailed?.(
+              error instanceof Error ? error : new Error("Workspace 刷新失败"),
+            );
+            return null;
+          })
+        : null;
       if (
         !workspace
         || !isWorkspaceModulePresentationCurrent(
@@ -96,9 +113,21 @@ export function applyAgentRunControlPlaneEffectPlan(
           workspace.workspace_modules,
         )
       ) {
+        if (workspace) {
+          executor.workspacePanelOpenFailed?.(
+            new Error("Workspace presentation currentness fence 尚未生效"),
+          );
+        }
         return;
       }
-      executor.openWorkspacePanel(openPlan.target);
+      try {
+        executor.openWorkspacePanel(openPlan.target);
+        executor.workspacePanelOpened?.();
+      } catch (error) {
+        executor.workspacePanelOpenFailed?.(
+          error instanceof Error ? error : new Error("Workspace 面板打开失败"),
+        );
+      }
     })();
   } else {
     if (plan.refreshWorkspaceState) {
@@ -106,6 +135,7 @@ export function applyAgentRunControlPlaneEffectPlan(
     }
     if (openPlan) {
       executor.openWorkspacePanel(openPlan.target);
+      executor.workspacePanelOpened?.();
     }
   }
 
@@ -373,12 +403,18 @@ export function useAgentRunWorkspaceControlPlane({
     submitComposer,
   ]);
 
-  const applyControlPlaneEffectPlan = useCallback((plan: AgentRunControlPlaneEffectPlan) => {
+  const applyControlPlaneEffectPlan = useCallback((
+    plan: AgentRunControlPlaneEffectPlan,
+    workspacePanelOpened?: () => void,
+    workspacePanelOpenFailed?: (error: Error) => void,
+  ) => {
     applyAgentRunControlPlaneEffectPlan(plan, {
       refreshAgentRunWorkspaceState,
       openWorkspacePanel,
       scheduleHookRuntimeRefresh,
       refreshAgentRunList,
+      workspacePanelOpened,
+      workspacePanelOpenFailed,
     });
   }, [
     openWorkspacePanel,
@@ -400,13 +436,71 @@ export function useAgentRunWorkspaceControlPlane({
     }
   }, [currentAgentId, currentRunId]);
 
-  const handleLiveEvent = useCallback((event: BackboneEvent) => {
-    const plan = planAgentRunLiveEvent(event);
+  const handleRuntimeChanges = useCallback((
+    changes: readonly ManagedRuntimePlatformChange[],
+  ) => {
+    const plan = planAgentRunRuntimeChanges(changes);
     applyControlPlaneEffectPlan(plan.effects);
     if (plan.refreshTaskPlan) {
       refreshStatusBarTasks();
     }
   }, [applyControlPlaneEffectPlan, refreshStatusBarTasks]);
+
+  useEffect(() => {
+    if (!currentRunId || !currentAgentId) return;
+    return subscribeProjectEvents((event) => {
+      applyControlPlaneEffectPlan(
+        planAgentRunProjectEvent(event, {
+          runId: currentRunId,
+          agentId: currentAgentId,
+        }),
+      );
+    });
+  }, [
+    applyControlPlaneEffectPlan,
+    currentAgentId,
+    currentRunId,
+  ]);
+
+  useEffect(() => {
+    if (!currentRunId || !currentAgentId) return;
+    const target = { runId: currentRunId, agentId: currentAgentId };
+    const pendingPresentationConsumer = new WorkspacePresentationPendingConsumer({
+      fulfill: (intent) =>
+        new Promise<void>((resolve, reject) => {
+          const plan = planWorkspaceModulePresentationIntent(intent);
+          if (!plan.openWorkspacePanel) {
+            reject(new Error("Workspace presentation intent 缺少可打开的 typed target"));
+            return;
+          }
+          applyControlPlaneEffectPlan(plan, resolve, reject);
+        }),
+      acknowledge: (intentId, observedChangeSequence) =>
+        acknowledgeWorkspacePresentation(target, intentId, observedChangeSequence),
+      scheduleRetry: (callback) => window.setTimeout(callback, 500),
+      cancelRetry: (handle) => window.clearTimeout(handle as number),
+      onError: (error) => {
+        console.error("Workspace presentation pending intent retry", error);
+      },
+    });
+    const workspacePresentationFeed = connectWorkspacePresentationFeed(target, {
+      onSnapshot: (snapshot) => pendingPresentationConsumer.consumeSnapshot(snapshot),
+      onChanges: (changes) => pendingPresentationConsumer.consumeChanges(changes),
+    });
+    const terminalFeed = connectAgentRunTerminalFeed(target, {
+      onSnapshot: projectAgentRunTerminalSnapshot,
+      onChanges: projectAgentRunTerminalChanges,
+    });
+    return () => {
+      workspacePresentationFeed.close();
+      terminalFeed.close();
+      pendingPresentationConsumer.close();
+    };
+  }, [
+    applyControlPlaneEffectPlan,
+    currentAgentId,
+    currentRunId,
+  ]);
 
   const handleWorkspaceModuleOpened = useCallback(() => {
     applyControlPlaneEffectPlan(planAgentRunWorkspaceModuleOpened());
@@ -419,7 +513,7 @@ export function useAgentRunWorkspaceControlPlane({
     refreshAgentRunWorkspaceState,
     refreshAgentRunHookRuntime,
     handleMessageSent,
-    handleLiveEvent,
+    handleRuntimeChanges,
     handleWorkspaceModuleOpened,
   };
 }

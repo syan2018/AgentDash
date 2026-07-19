@@ -1,6 +1,6 @@
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
-use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
+use agentdash_platform_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 
 use crate::context::{
     Contribution, resolve_declared_sources, trim_or_dash, workspace_context_fragment,

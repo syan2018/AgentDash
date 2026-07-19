@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agentdash_application_ports::vfs_surface_runtime::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource,
 };
-use agentdash_spi::Vfs;
+use agentdash_platform_spi::Vfs;
 use uuid::Uuid;
 
 use crate::{

@@ -2,12 +2,11 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use agentdash_spi::Vfs;
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::platform::mount::MountError;
-use agentdash_spi::{
-    AgentTool, AgentToolError, AgentToolResult, ContentPart, RuntimeVfsOperation,
-    ToolUpdateCallback,
+use agentdash_platform_spi::Vfs;
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::platform::mount::MountError;
+use agentdash_platform_spi::{
+    AgentTool, AgentToolError, AgentToolResult, RuntimeVfsOperation, ToolUpdateCallback,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -18,8 +17,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ResourceRef;
 use crate::inline_persistence::InlineContentOverlay;
+use crate::runtime_tool_execution::{
+    VfsToolContent, VfsToolExecutionError, VfsToolExecutionResult,
+};
 use crate::service::{VfsService, ensure_runtime_vfs_access};
-use crate::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
+use crate::tools::common::{SharedRuntimeVfs, resolve_uri_path};
+use crate::tools::{legacy_error, legacy_result};
 use crate::types::{runtime_entry_is_binary, runtime_entry_mime_type};
 
 // ---------------------------------------------------------------------------
@@ -30,11 +33,11 @@ use crate::types::{runtime_entry_is_binary, runtime_entry_mime_type};
 const MAX_BYTES: usize = 256 * 1024;
 /// 不带 limit 时的行数阈值。
 const MAX_LINES: usize = 5000;
-/// Per-tool-instance dedup 容量；FsReadTool 在 session/turn 维度构造，
-/// 各 session 自然 LRU 隔离。
+/// Runtime owner-scoped dedup capacity.
 const DEDUP_CAPACITY: usize = 64;
 
 type DedupKey = (
+    String,        /* runtime owner scope */
     String,        /* mount_id */
     String,        /* path */
     Option<usize>, /* offset, 1-based 入参（None = unset） */
@@ -67,26 +70,198 @@ impl DedupCache {
 }
 
 #[derive(Clone)]
-pub struct FsReadTool {
+pub(crate) struct FsReadExecutionState {
+    dedup: DedupCache,
+}
+
+impl Default for FsReadExecutionState {
+    fn default() -> Self {
+        Self {
+            dedup: DedupCache::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct FsReadExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
-    dedup: DedupCache,
+    identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    execution_state: FsReadExecutionState,
+    dedup_scope: String,
 }
-impl FsReadTool {
+impl FsReadExecutor {
     pub fn new(
         service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
             vfs,
             overlay,
             identity,
-            dedup: DedupCache::new(),
+            execution_state: FsReadExecutionState::default(),
+            dedup_scope: "legacy-agent-tool".to_owned(),
+        }
+    }
+
+    pub(crate) fn with_execution_state(
+        mut self,
+        execution_state: FsReadExecutionState,
+        dedup_scope: impl Into<String>,
+    ) -> Self {
+        self.execution_state = execution_state;
+        self.dedup_scope = dedup_scope.into();
+        self
+    }
+
+    pub fn parameters_schema() -> serde_json::Value {
+        schema_value::<FsReadParams>()
+    }
+
+    pub async fn execute(
+        &self,
+        args: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
+        let params: FsReadParams = serde_json::from_value(args).map_err(|error| {
+            VfsToolExecutionError::InvalidArguments(format!("invalid arguments: {error}"))
+        })?;
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
+        let target =
+            resolve_uri_path(&vfs, &params.path).map_err(VfsToolExecutionError::ExecutionFailed)?;
+        ensure_runtime_vfs_access(
+            &access_policy,
+            &target.mount_id,
+            &target.path,
+            RuntimeVfsOperation::Read,
+        )
+        .map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string()))?;
+
+        if let Ok(entry) = tokio::select! {
+            _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+            result = self.service.stat_with_policy(
+                &vfs,
+                Some(&access_policy),
+                &target,
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
+                self.identity.as_ref(),
+            ) => result,
+        } && runtime_entry_is_binary(&entry)
+        {
+            return self
+                .read_binary_entry(&vfs, &access_policy, &target, entry, cancel)
+                .await;
+        }
+
+        let spi_offset = params.offset.map(|n| n.saturating_sub(1)).unwrap_or(0);
+        let result = tokio::select! {
+            _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+            result = self.service.read_text_range_with_policy(
+                &vfs,
+                Some(&access_policy),
+                &target,
+                spi_offset,
+                params.limit,
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
+                self.identity.as_ref(),
+            ) => result,
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(MountError::NotFound(missing)) => {
+                let suggestions = tokio::select! {
+                    _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+                    result = self.service.suggest_paths_with_policy(
+                        &vfs,
+                        Some(&access_policy),
+                        &target,
+                        3,
+                        self.identity.as_ref(),
+                    ) => result.unwrap_or_default(),
+                };
+                let hint = if suggestions.is_empty() {
+                    String::new()
+                } else {
+                    format!(" Did you mean: {}?", suggestions.join(", "))
+                };
+                return Err(VfsToolExecutionError::ExecutionFailed(format!(
+                    "File not found: {missing}.{hint}"
+                )));
+            }
+            Err(error) => {
+                return Err(VfsToolExecutionError::ExecutionFailed(error.to_string()));
+            }
+        };
+
+        if params.limit.is_none() {
+            if result.content.len() > MAX_BYTES {
+                return Ok(too_large_bytes_result(&result.path, result.content.len()));
+            }
+            let line_count = result.content.lines().count();
+            if line_count > MAX_LINES {
+                return Ok(too_many_lines_result(&result.path, line_count));
+            }
+        }
+
+        let dedup_key: DedupKey = (
+            self.dedup_scope.clone(),
+            target.mount_id.clone(),
+            target.path.clone(),
+            params.offset,
+            params.limit,
+        );
+        if let Some(token) = result.version_token.as_deref()
+            && let Some(cached) = self.execution_state.dedup.lookup(&dedup_key)
+            && cached == token
+        {
+            return Ok(unchanged_stub_result(
+                &result.path,
+                params.offset,
+                params.limit,
+            ));
+        }
+        if let Some(token) = result.version_token.as_deref() {
+            self.execution_state.dedup.put(dedup_key, token.to_string());
+        }
+
+        let lines: Vec<&str> = result.content.lines().collect();
+        let formatted = if lines.is_empty() {
+            "   1 | ".to_string()
+        } else {
+            lines
+                .iter()
+                .enumerate()
+                .map(|(index, line)| format!("{:>4} | {}", spi_offset + index + 1, line))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        Ok(VfsToolExecutionResult::text(format!(
+            "file: {}\n{}",
+            result.path, formatted
+        )))
+    }
+}
+
+#[derive(Clone)]
+pub struct FsReadTool {
+    executor: FsReadExecutor,
+}
+
+impl FsReadTool {
+    pub fn new(
+        service: Arc<VfsService>,
+        vfs: SharedRuntimeVfs,
+        overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    ) -> Self {
+        Self {
+            executor: FsReadExecutor::new(service, vfs, overlay, identity),
         }
     }
 }
@@ -121,7 +296,7 @@ impl AgentTool for FsReadTool {
          - This tool reads files only, not directories — use fs_glob for directory listings."
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<FsReadParams>()
+        FsReadExecutor::parameters_schema()
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::FsRead)
@@ -133,135 +308,20 @@ impl AgentTool for FsReadTool {
         &self,
         _: &str,
         args: serde_json::Value,
-        _: CancellationToken,
+        cancel: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: FsReadParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let state = self.vfs.snapshot_state().await;
-        let vfs = state.vfs;
-        let access_policy = state.access_policy;
-        let target =
-            resolve_uri_path(&vfs, &params.path).map_err(AgentToolError::ExecutionFailed)?;
-        ensure_runtime_vfs_access(
-            &access_policy,
-            &target.mount_id,
-            &target.path,
-            RuntimeVfsOperation::Read,
-        )
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-
-        // Binary 文件保留专用路径（image block / unsupported binary 报错）。
-        if let Ok(entry) = self
-            .service
-            .stat_with_policy(
-                &vfs,
-                Some(&access_policy),
-                &target,
-                self.overlay.as_ref().map(|arc| arc.as_ref()),
-                self.identity.as_ref(),
-            )
+        self.executor
+            .execute(args, cancel)
             .await
-            && runtime_entry_is_binary(&entry)
-        {
-            return self
-                .read_binary_entry(&vfs, &access_policy, &target, entry)
-                .await;
-        }
-
-        // 1-based 入参 → 0-based 传给 SPI；offset = None / 0 都视为从开头读。
-        let spi_offset = params.offset.map(|n| n.saturating_sub(1)).unwrap_or(0);
-        let result = match self
-            .service
-            .read_text_range_with_policy(
-                &vfs,
-                Some(&access_policy),
-                &target,
-                spi_offset,
-                params.limit,
-                self.overlay.as_ref().map(|arc| arc.as_ref()),
-                self.identity.as_ref(),
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(MountError::NotFound(missing)) => {
-                let suggestions = self
-                    .service
-                    .suggest_paths_with_policy(
-                        &vfs,
-                        Some(&access_policy),
-                        &target,
-                        3,
-                        self.identity.as_ref(),
-                    )
-                    .await
-                    .unwrap_or_default();
-                let hint = if suggestions.is_empty() {
-                    String::new()
-                } else {
-                    format!(" Did you mean: {}?", suggestions.join(", "))
-                };
-                return Err(AgentToolError::ExecutionFailed(format!(
-                    "File not found: {missing}.{hint}"
-                )));
-            }
-            Err(other) => {
-                return Err(AgentToolError::ExecutionFailed(other.to_string()));
-            }
-        };
-
-        // 上限检查：仅在用户没传 limit 时才生效。
-        if params.limit.is_none() {
-            if result.content.len() > MAX_BYTES {
-                return Ok(too_large_bytes_result(&result.path, result.content.len()));
-            }
-            let line_count = result.content.lines().count();
-            if line_count > MAX_LINES {
-                return Ok(too_many_lines_result(&result.path, line_count));
-            }
-        }
-
-        // Dedup 短桩判定：cache 命中 + token 一致 ⇒ 短桩；其余更新 cache 后走完整路径。
-        let dedup_key: DedupKey = (
-            target.mount_id.clone(),
-            target.path.clone(),
-            params.offset,
-            params.limit,
-        );
-        if let Some(token) = result.version_token.as_deref()
-            && let Some(cached) = self.dedup.lookup(&dedup_key)
-            && cached == token
-        {
-            return Ok(unchanged_stub_result(
-                &result.path,
-                params.offset,
-                params.limit,
-            ));
-        }
-        if let Some(token) = result.version_token.as_deref() {
-            self.dedup.put(dedup_key, token.to_string());
-        }
-
-        // cat -n 输出：行号 = SPI offset + 相对索引 + 1（即 1-based 绝对行号）。
-        let lines: Vec<&str> = result.content.lines().collect();
-        let formatted = if lines.is_empty() {
-            "   1 | ".to_string()
-        } else {
-            lines
-                .iter()
-                .enumerate()
-                .map(|(i, line)| format!("{:>4} | {}", spi_offset + i + 1, line))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        Ok(ok_text(format!("file: {}\n{}", result.path, formatted)))
+            .map(legacy_result)
+            .map_err(legacy_error)
     }
 }
 
-fn too_large_bytes_result(path: &str, size: usize) -> AgentToolResult {
-    AgentToolResult {
-        content: vec![ContentPart::text(format!(
+fn too_large_bytes_result(path: &str, size: usize) -> VfsToolExecutionResult {
+    VfsToolExecutionResult {
+        content: vec![VfsToolContent::text(format!(
             "File too large: {} bytes (max {} bytes without limit). Use offset/limit to read in chunks.",
             size, MAX_BYTES
         ))],
@@ -275,9 +335,9 @@ fn too_large_bytes_result(path: &str, size: usize) -> AgentToolResult {
     }
 }
 
-fn too_many_lines_result(path: &str, line_count: usize) -> AgentToolResult {
-    AgentToolResult {
-        content: vec![ContentPart::text(format!(
+fn too_many_lines_result(path: &str, line_count: usize) -> VfsToolExecutionResult {
+    VfsToolExecutionResult {
+        content: vec![VfsToolContent::text(format!(
             "File too long: {} lines (max {} lines without limit). Use offset/limit to read in chunks.",
             line_count, MAX_LINES
         ))],
@@ -295,15 +355,15 @@ fn unchanged_stub_result(
     path: &str,
     offset: Option<usize>,
     limit: Option<usize>,
-) -> AgentToolResult {
+) -> VfsToolExecutionResult {
     let range_label = match (offset, limit) {
         (Some(o), Some(l)) => format!("L{}-L{}", o, o + l - 1),
         (Some(o), None) => format!("L{}-EOF", o),
         (None, Some(l)) => format!("L1-L{}", l),
         (None, None) => "full file".to_string(),
     };
-    AgentToolResult {
-        content: vec![ContentPart::text(format!(
+    VfsToolExecutionResult {
+        content: vec![VfsToolContent::text(format!(
             "file: {}\n[unchanged since previous read of {}]",
             path, range_label
         ))],
@@ -317,31 +377,32 @@ fn unchanged_stub_result(
     }
 }
 
-impl FsReadTool {
+impl FsReadExecutor {
     async fn read_binary_entry(
         &self,
         vfs: &Vfs,
-        access_policy: &agentdash_spi::RuntimeVfsAccessPolicy,
+        access_policy: &agentdash_platform_spi::RuntimeVfsAccessPolicy,
         target: &ResourceRef,
-        entry: agentdash_spi::platform::mount::RuntimeFileEntry,
-    ) -> Result<AgentToolResult, AgentToolError> {
+        entry: agentdash_platform_spi::platform::mount::RuntimeFileEntry,
+        cancel: CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
         if entry.is_dir {
-            return Err(AgentToolError::ExecutionFailed(format!(
+            return Err(VfsToolExecutionError::ExecutionFailed(format!(
                 "目标是目录，不是文件: {}://{}",
                 target.mount_id, target.path
             )));
         }
         let mime_type = runtime_entry_mime_type(&entry)
             .ok_or_else(|| {
-                AgentToolError::ExecutionFailed(format!(
+                VfsToolExecutionError::ExecutionFailed(format!(
                     "二进制文件缺少 MIME metadata: {}://{}",
                     target.mount_id, target.path
                 ))
             })?
             .to_string();
         if !mime_type.starts_with("image/") {
-            return Ok(AgentToolResult {
-                content: vec![ContentPart::text(format!(
+            return Ok(VfsToolExecutionResult {
+                content: vec![VfsToolContent::text(format!(
                     "file: {}\nunsupported binary content: mime_type={}",
                     entry.path, mime_type
                 ))],
@@ -354,27 +415,26 @@ impl FsReadTool {
             });
         }
 
-        let result = self
-            .service
-            .read_binary_with_policy(
+        let result = tokio::select! {
+            _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+            result = self.service.read_binary_with_policy(
                 vfs,
                 Some(access_policy),
                 target,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
                 self.identity.as_ref(),
-            )
-            .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+            ) => result.map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string()))?,
+        };
         let encoded = base64::engine::general_purpose::STANDARD.encode(&result.data);
-        Ok(AgentToolResult {
+        Ok(VfsToolExecutionResult {
             content: vec![
-                ContentPart::text(format!(
+                VfsToolContent::text(format!(
                     "file: {}\nmime_type: {}\nsize_bytes: {}",
                     result.path,
                     result.mime_type,
                     result.data.len()
                 )),
-                ContentPart::Image {
+                VfsToolContent::Image {
                     mime_type: result.mime_type,
                     data: encoded,
                 },
@@ -395,12 +455,12 @@ mod fs_read_tests {
     use super::*;
     use crate::types::{RUNTIME_FILE_CONTENT_KIND_ATTR, RUNTIME_FILE_MIME_TYPE_ATTR};
     use crate::{BinaryReadResult, ListResult, MountProviderRegistry, ReadResult};
-    use agentdash_spi::platform::mount::{
+    use agentdash_platform_spi::platform::mount::{
         ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions,
         MountEditCapabilities, MountError, MountOperationContext, MountProvider, RuntimeFileEntry,
         SearchQuery, SearchResult,
     };
-    use agentdash_spi::{Mount, MountCapability};
+    use agentdash_platform_spi::{ContentPart, Mount, MountCapability};
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Mutex as StdMutex;
@@ -613,7 +673,11 @@ mod fs_read_tests {
         }
     }
 
-    fn tool_with_provider(provider: Arc<MemoryReadProvider>) -> FsReadTool {
+    fn executor_with_provider(
+        provider: Arc<MemoryReadProvider>,
+        execution_state: FsReadExecutionState,
+        scope: &str,
+    ) -> FsReadExecutor {
         let mut registry = MountProviderRegistry::new();
         registry.register(provider);
         let service = Arc::new(VfsService::new(Arc::new(registry)));
@@ -633,7 +697,18 @@ mod fs_read_tests {
             source_story_id: None,
             links: Vec::new(),
         };
-        FsReadTool::new(service, SharedRuntimeVfs::new(vfs), None, None)
+        FsReadExecutor::new(service, SharedRuntimeVfs::new(vfs), None, None)
+            .with_execution_state(execution_state, scope)
+    }
+
+    fn tool_with_provider(provider: Arc<MemoryReadProvider>) -> FsReadTool {
+        FsReadTool {
+            executor: executor_with_provider(
+                provider,
+                FsReadExecutionState::default(),
+                "legacy-agent-tool",
+            ),
+        }
     }
 
     fn tool() -> FsReadTool {
@@ -642,7 +717,7 @@ mod fs_read_tests {
 
     #[test]
     fn fs_read_schema_only_requires_path() {
-        let schema = tool().parameters_schema();
+        let schema = FsReadExecutor::parameters_schema();
         let required = schema["required"]
             .as_array()
             .expect("required should be array")
@@ -654,6 +729,8 @@ mod fs_read_tests {
         assert!(schema["properties"].get("path").is_some());
         assert!(schema["properties"].get("offset").is_some());
         assert!(schema["properties"].get("limit").is_some());
+        assert_eq!(schema["properties"]["path"]["type"], "string");
+        assert_eq!(schema["additionalProperties"], false);
         assert!(
             !required.contains(&"offset"),
             "offset 应保持可省略，避免短文件读取也被迫传参"
@@ -662,6 +739,11 @@ mod fs_read_tests {
             !required.contains(&"limit"),
             "limit 应保持可省略，避免短文件读取也被迫传参"
         );
+        serde_json::from_value::<FsReadParams>(json!({
+            "path": "note.md",
+            "unexpected": true
+        }))
+        .expect_err("schema-forbidden fields must be rejected by the parser");
     }
 
     // T2 — 1-based offset 转换 + cat -n 格式
@@ -827,6 +909,43 @@ mod fs_read_tests {
         let second_text = second.content[0].extract_text().expect("text");
         assert!(second_text.contains("[unchanged since previous read"));
         assert!(!second_text.contains("alpha"));
+    }
+
+    #[tokio::test]
+    async fn fs_read_dedup_survives_executor_recreation_and_isolates_runtime_owners() {
+        let provider = Arc::new(MemoryReadProvider::with_default_files());
+        let execution_state = FsReadExecutionState::default();
+        let first = executor_with_provider(provider.clone(), execution_state.clone(), "owner-a");
+        let second = executor_with_provider(provider.clone(), execution_state.clone(), "owner-a");
+        let other_owner = executor_with_provider(provider, execution_state, "owner-b");
+        let arguments = json!({ "path": "note.md", "offset": 1, "limit": 2 });
+
+        let first_result = first
+            .execute(arguments.clone(), CancellationToken::new())
+            .await
+            .expect("first read");
+        assert!(matches!(
+            &first_result.content[0],
+            VfsToolContent::Text { text } if text.contains("alpha")
+        ));
+
+        let repeated = second
+            .execute(arguments.clone(), CancellationToken::new())
+            .await
+            .expect("repeat through a fresh executor");
+        assert!(matches!(
+            &repeated.content[0],
+            VfsToolContent::Text { text } if text.contains("[unchanged since previous read")
+        ));
+
+        let isolated = other_owner
+            .execute(arguments, CancellationToken::new())
+            .await
+            .expect("other owner read");
+        assert!(matches!(
+            &isolated.content[0],
+            VfsToolContent::Text { text } if text.contains("alpha")
+        ));
     }
 
     // T7 — dedup 失效：rotate token ⇒ 第二次走完整路径。

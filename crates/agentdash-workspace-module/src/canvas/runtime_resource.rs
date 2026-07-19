@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use agentdash_domain::canvas::Canvas;
-use agentdash_spi::Vfs;
+use agentdash_platform_spi::Vfs;
 
 use agentdash_application_vfs::{ResolvedVfsSurfaceSource, VfsService, parse_mount_uri};
 

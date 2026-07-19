@@ -1,6 +1,6 @@
 [package]
 name = "agentdash-agent-runtime-contract"
-description = "AgentDash-owned canonical Agent Runtime vocabulary and driver contract"
+description = "Application-facing Managed Agent Runtime command and projection contract"
 version.workspace = true
 edition.workspace = true
 
@@ -12,12 +12,11 @@ name = "generate_agent_runtime_contracts"
 path = "src/generate.rs"
 
 [dependencies]
-agentdash-agent-protocol = { workspace = true }
 async-trait = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 ts-rs = { workspace = true }
 tempfile = { workspace = true }
-sha2 = { workspace = true }

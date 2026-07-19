@@ -7,7 +7,7 @@ use std::{
 };
 
 use agentdash_agent_runtime_wire::{
-    RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION, RuntimeWireAck, RuntimeWireAgentBindingTarget,
+    RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAck, RuntimeWireAgentBindingTarget,
     RuntimeWireAgentChangeNotification, RuntimeWireAgentHostCallbackRequest,
     RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentServiceDescribeRequest,
     RuntimeWireAgentServiceRequest, RuntimeWireAgentServiceResponse, RuntimeWireEnvelope,
@@ -25,11 +25,29 @@ use agentdash_agent_service_api::{
     RevokeBoundAgentSurface,
 };
 use async_trait::async_trait;
+use thiserror::Error;
 
 use crate::{RemoteRuntimeTransportError, RuntimeWirePlacement, RuntimeWirePlacementEvent};
 
 type PendingResponse =
     tokio::sync::oneshot::Sender<Result<RuntimeWireAgentServiceResponse, AgentServiceError>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum RuntimeWireFrameAllocationError {
+    #[error("Runtime Wire frame identity space is exhausted")]
+    Exhausted,
+}
+
+fn allocate_frame_id(
+    last_allocated: &AtomicU64,
+) -> Result<RuntimeWireFrameId, RuntimeWireFrameAllocationError> {
+    let previous = last_allocated
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_add(1)
+        })
+        .map_err(|_| RuntimeWireFrameAllocationError::Exhausted)?;
+    Ok(RuntimeWireFrameId(previous + 1))
+}
 
 /// Complete Agent proxy bound to one remote service instance.
 ///
@@ -64,7 +82,7 @@ impl RemoteCompleteAgentService {
             target,
             placement,
             callbacks,
-            next_frame_id: AtomicU64::new(1),
+            next_frame_id: AtomicU64::new(0),
             pending: tokio::sync::Mutex::new(HashMap::new()),
             cached_effects: tokio::sync::Mutex::new(HashMap::new()),
             callback_effects: tokio::sync::Mutex::new(HashMap::new()),
@@ -120,7 +138,7 @@ impl RemoteCompleteAgentService {
         self: &Arc<Self>,
         envelope: RuntimeWireEnvelope,
     ) -> Result<(), AgentServiceError> {
-        if envelope.protocol_revision != RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION {
+        if envelope.protocol_revision != RUNTIME_WIRE_PROTOCOL_REVISION {
             return Err(protocol(
                 "remote Complete Agent used an unsupported Runtime Wire revision",
             ));
@@ -135,11 +153,14 @@ impl RemoteCompleteAgentService {
                 }
                 return Ok(());
             }
-            if envelope.frame_id.0 != previous.0 + 1 {
+            let expected = previous
+                .0
+                .checked_add(1)
+                .ok_or_else(|| protocol(RuntimeWireFrameAllocationError::Exhausted.to_string()))?;
+            if envelope.frame_id.0 != expected {
                 return Err(protocol(format!(
                     "remote Complete Agent frame gap: expected {}, received {}",
-                    previous.0 + 1,
-                    envelope.frame_id.0
+                    expected, envelope.frame_id.0
                 )));
             }
         } else if envelope.frame_id.0 != 1 {
@@ -368,8 +389,9 @@ impl RemoteCompleteAgentService {
     ) -> Result<(), AgentServiceError> {
         self.placement
             .send(RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
-                frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: allocate_frame_id(&self.next_frame_id)
+                    .map_err(frame_allocation_service_error)?,
                 critical,
                 frame,
             })
@@ -390,13 +412,14 @@ impl RemoteCompleteAgentService {
         request
             .validate_generation()
             .map_err(|error| stale_generation(error.to_string()))?;
-        let frame_id = RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed));
+        let frame_id =
+            allocate_frame_id(&self.next_frame_id).map_err(frame_allocation_service_error)?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending.lock().await.insert(frame_id.0, tx);
         if let Err(error) = self
             .placement
             .send(RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
                 frame_id,
                 critical: true,
                 frame: RuntimeWireFrame::Request(Box::new(RuntimeWireRequest::AgentService(
@@ -479,9 +502,18 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::Create(result)) =
             self.cached(&command.meta.effect_id).await
         {
-            return result.map(|value| *value);
+            return result.and_then(|value| {
+                validate_command_receipt(
+                    &command.meta.command_id,
+                    &command.meta.effect_id,
+                    command.requested_source.as_ref(),
+                    *value,
+                )
+            });
         }
         let effect_id = command.meta.effect_id.clone();
+        let command_id = command.meta.command_id.clone();
+        let requested_source = command.requested_source.clone();
         command.meta.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::Create {
@@ -492,7 +524,10 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         let result = match &response {
             RuntimeWireAgentServiceResponse::Create(result) => result.clone().map(|value| *value),
             _ => Err(protocol("create received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| {
+            validate_command_receipt(&command_id, &effect_id, requested_source.as_ref(), receipt)
+        });
         self.cache(effect_id, response).await;
         result
     }
@@ -505,9 +540,18 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::Resume(result)) =
             self.cached(&command.meta.effect_id).await
         {
-            return result.map(|value| *value);
+            return result.and_then(|value| {
+                validate_command_receipt(
+                    &command.meta.command_id,
+                    &command.meta.effect_id,
+                    Some(&command.source),
+                    *value,
+                )
+            });
         }
         let effect_id = command.meta.effect_id.clone();
+        let command_id = command.meta.command_id.clone();
+        let source = command.source.clone();
         command.meta.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::Resume {
@@ -518,7 +562,10 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         let result = match &response {
             RuntimeWireAgentServiceResponse::Resume(result) => result.clone().map(|value| *value),
             _ => Err(protocol("resume received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| {
+            validate_command_receipt(&command_id, &effect_id, Some(&source), receipt)
+        });
         self.cache(effect_id, response).await;
         result
     }
@@ -531,9 +578,12 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::Fork(result)) =
             self.cached(&command.meta.effect_id).await
         {
-            return result.map(|value| *value);
+            return result
+                .map(|value| *value)
+                .and_then(|receipt| validate_fork_receipt(&command, receipt));
         }
         let effect_id = command.meta.effect_id.clone();
+        let expected = command.clone();
         command.meta.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::Fork {
@@ -544,7 +594,8 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         let result = match &response {
             RuntimeWireAgentServiceResponse::Fork(result) => result.clone().map(|value| *value),
             _ => Err(protocol("fork received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| validate_fork_receipt(&expected, receipt));
         self.cache(effect_id, response).await;
         result
     }
@@ -557,9 +608,18 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::Execute(result)) =
             self.cached(&command.meta.effect_id).await
         {
-            return result.map(|value| *value);
+            return result.and_then(|value| {
+                validate_command_receipt(
+                    &command.meta.command_id,
+                    &command.meta.effect_id,
+                    Some(&command.source),
+                    *value,
+                )
+            });
         }
         let effect_id = command.meta.effect_id.clone();
+        let command_id = command.meta.command_id.clone();
+        let source = command.source.clone();
         command.meta.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::Execute {
@@ -570,7 +630,10 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         let result = match &response {
             RuntimeWireAgentServiceResponse::Execute(result) => result.clone().map(|value| *value),
             _ => Err(protocol("execute received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| {
+            validate_command_receipt(&command_id, &effect_id, Some(&source), receipt)
+        });
         self.cache(effect_id, response).await;
         result
     }
@@ -661,16 +724,18 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         &self,
         effect_id: AgentEffectIdentity,
     ) -> Result<AgentEffectInspection, AgentServiceError> {
-        match self
+        let expected_effect_id = effect_id.clone();
+        let inspection = match self
             .request(RuntimeWireAgentServiceRequest::Inspect {
                 target: self.target.clone(),
                 effect_id,
             })
             .await?
         {
-            RuntimeWireAgentServiceResponse::Inspect(result) => result.map(|value| *value),
-            _ => Err(protocol("inspect received a mismatched response")),
-        }
+            RuntimeWireAgentServiceResponse::Inspect(result) => result.map(|value| *value)?,
+            _ => return Err(protocol("inspect received a mismatched response")),
+        };
+        validate_inspection(&expected_effect_id, inspection)
     }
 
     async fn apply_surface(
@@ -681,9 +746,12 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::ApplySurface(result)) =
             self.cached(&command.effect_id).await
         {
-            return result.map(|value| *value);
+            return result
+                .map(|value| *value)
+                .and_then(|receipt| validate_surface_receipt(&command, receipt));
         }
         let effect_id = command.effect_id.clone();
+        let expected = command.clone();
         command.callbacks.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::ApplySurface {
@@ -696,7 +764,8 @@ impl CompleteAgentService for RemoteCompleteAgentService {
                 result.clone().map(|value| *value)
             }
             _ => Err(protocol("apply surface received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| validate_surface_receipt(&expected, receipt));
         self.cache(effect_id, response).await;
         result
     }
@@ -709,9 +778,18 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         if let Some(RuntimeWireAgentServiceResponse::RevokeSurface(result)) =
             self.cached(&command.effect_id).await
         {
-            return result.map(|value| *value);
+            return result.and_then(|value| {
+                validate_command_receipt(
+                    &command.command_id,
+                    &command.effect_id,
+                    Some(&command.source),
+                    *value,
+                )
+            });
         }
         let effect_id = command.effect_id.clone();
+        let command_id = command.command_id.clone();
+        let source = command.source.clone();
         command.binding_generation = self.target.binding_generation;
         let response = self
             .request(RuntimeWireAgentServiceRequest::RevokeSurface {
@@ -724,7 +802,10 @@ impl CompleteAgentService for RemoteCompleteAgentService {
                 result.clone().map(|value| *value)
             }
             _ => Err(protocol("revoke surface received a mismatched response")),
-        };
+        }
+        .and_then(|receipt| {
+            validate_command_receipt(&command_id, &effect_id, Some(&source), receipt)
+        });
         self.cache(effect_id, response).await;
         result
     }
@@ -855,7 +936,8 @@ impl RuntimeWireAgentHostCallbackClient {
         request: RuntimeWireAgentHostCallbackRequest,
     ) -> Result<RuntimeWireAgentHostCallbackResponse, AgentHostCallbackError> {
         let deadline = callback_deadline(&request)?;
-        let frame_id = RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed));
+        let frame_id =
+            allocate_frame_id(&self.next_frame_id).map_err(frame_allocation_callback_error)?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending.lock().await.insert(frame_id.0, tx);
         if self
@@ -863,7 +945,7 @@ impl RuntimeWireAgentHostCallbackClient {
             .read()
             .await
             .send(RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
                 frame_id,
                 critical: true,
                 frame: RuntimeWireFrame::Request(Box::new(RuntimeWireRequest::AgentHostCallback(
@@ -962,7 +1044,7 @@ impl RuntimeWireAgentServiceEndpoint {
             service_instance_id,
             binding_generation,
             service,
-            next_frame_id: Arc::new(AtomicU64::new(1)),
+            next_frame_id: Arc::new(AtomicU64::new(0)),
             pending_callbacks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             callback_effects: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             published_changes: tokio::sync::Mutex::new(HashMap::new()),
@@ -1044,12 +1126,14 @@ impl RuntimeWireAgentServiceEndpoint {
             }
         };
         let cursor = change.cursor.clone();
+        let frame_id =
+            allocate_frame_id(&self.next_frame_id).map_err(frame_allocation_service_error)?;
         self.outbound_tx
             .read()
             .await
             .send(RuntimeWireEnvelope {
-                protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
-                frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id,
                 critical: true,
                 frame: RuntimeWireFrame::Notification(Box::new(
                     RuntimeWireNotification::AgentChange(Box::new(
@@ -1071,16 +1155,16 @@ impl RuntimeWireAgentServiceEndpoint {
         &self,
         request_frame_id: RuntimeWireFrameId,
         response: RuntimeWireAgentServiceResponse,
-    ) -> RuntimeWireEnvelope {
-        RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
-            frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
+    ) -> Result<RuntimeWireEnvelope, RuntimeWireFrameAllocationError> {
+        Ok(RuntimeWireEnvelope {
+            protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+            frame_id: allocate_frame_id(&self.next_frame_id)?,
             critical: true,
             frame: RuntimeWireFrame::Response {
                 request_frame_id,
                 response: RuntimeWireResponse::AgentService(response),
             },
-        }
+        })
     }
 
     fn validate_target(
@@ -1106,7 +1190,7 @@ impl RuntimeWireAgentServiceEndpoint {
 #[async_trait]
 impl RuntimeWirePlacement for RuntimeWireAgentServiceEndpoint {
     async fn send(&self, envelope: RuntimeWireEnvelope) -> Result<(), RemoteRuntimeTransportError> {
-        if envelope.protocol_revision != RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION {
+        if envelope.protocol_revision != RUNTIME_WIRE_PROTOCOL_REVISION {
             return Err(RemoteRuntimeTransportError::Protocol {
                 reason: "unsupported Complete Agent Runtime Wire target revision".to_owned(),
                 critical: true,
@@ -1137,10 +1221,16 @@ impl RuntimeWirePlacement for RuntimeWireAgentServiceEndpoint {
                     });
                 };
                 let response = self.dispatch(*request).await;
+                let response = self.response(envelope.frame_id, response).map_err(|error| {
+                    RemoteRuntimeTransportError::Protocol {
+                        reason: error.to_string(),
+                        critical: true,
+                    }
+                })?;
                 self.outbound_tx
                     .read()
                     .await
-                    .send(self.response(envelope.frame_id, response))
+                    .send(response)
                     .map_err(|_| RemoteRuntimeTransportError::Unavailable {
                         reason: "Complete Agent endpoint receiver is closed".to_owned(),
                         retryable: true,
@@ -1224,9 +1314,14 @@ impl RuntimeWireAgentServiceEndpoint {
                 )
             }
             RuntimeWireAgentServiceRequest::Inspect { effect_id, .. } => {
-                RuntimeWireAgentServiceResponse::Inspect(
-                    self.service.inspect(effect_id).await.map(Box::new),
-                )
+                let expected_effect_id = effect_id.clone();
+                let result = self
+                    .service
+                    .inspect(effect_id)
+                    .await
+                    .and_then(|inspection| validate_inspection(&expected_effect_id, inspection))
+                    .map(Box::new);
+                RuntimeWireAgentServiceResponse::Inspect(result)
             }
             RuntimeWireAgentServiceRequest::ApplySurface { command, .. } => {
                 RuntimeWireAgentServiceResponse::ApplySurface(
@@ -1240,6 +1335,72 @@ impl RuntimeWireAgentServiceEndpoint {
             }
         }
     }
+}
+
+fn validate_inspection(
+    expected_effect_id: &AgentEffectIdentity,
+    inspection: AgentEffectInspection,
+) -> Result<AgentEffectInspection, AgentServiceError> {
+    if &inspection.effect_id != expected_effect_id || !inspection.validate() {
+        return Err(protocol(
+            "remote Complete Agent returned an inconsistent effect inspection",
+        ));
+    }
+    Ok(inspection)
+}
+
+fn validate_command_receipt(
+    expected_command_id: &agentdash_agent_service_api::AgentCommandId,
+    expected_effect_id: &AgentEffectIdentity,
+    expected_source: Option<&AgentSourceCoordinate>,
+    receipt: AgentCommandReceipt,
+) -> Result<AgentCommandReceipt, AgentServiceError> {
+    if &receipt.command_id != expected_command_id
+        || &receipt.effect_id != expected_effect_id
+        || expected_source.is_some_and(|source| source != &receipt.source)
+    {
+        return Err(protocol(
+            "remote Complete Agent returned a command receipt for different coordinates",
+        ));
+    }
+    Ok(receipt)
+}
+
+fn validate_fork_receipt(
+    command: &ForkAgentCommand,
+    receipt: ForkAgentReceipt,
+) -> Result<ForkAgentReceipt, AgentServiceError> {
+    if receipt.command_id != command.meta.command_id
+        || receipt.effect_id != command.meta.effect_id
+        || receipt.parent_source != command.source
+        || receipt.cutoff != command.cutoff
+        || command
+            .requested_child_source
+            .as_ref()
+            .is_some_and(|source| receipt.child_source.as_ref() != Some(source))
+    {
+        return Err(protocol(
+            "remote Complete Agent returned a fork receipt for different coordinates",
+        ));
+    }
+    Ok(receipt)
+}
+
+fn validate_surface_receipt(
+    command: &ApplyBoundAgentSurface,
+    receipt: AppliedAgentSurfaceReceipt,
+) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
+    if receipt.command_id != command.command_id
+        || receipt.effect_id != command.effect_id
+        || receipt.source != command.source
+        || receipt.applied.revision != command.bound_surface.revision
+        || receipt.applied.digest != command.bound_surface.digest
+    {
+        return Err(protocol(
+            "remote Complete Agent returned a surface receipt for different coordinates",
+        ));
+    }
+    Ok(receipt)
 }
 
 fn response_error(
@@ -1335,6 +1496,20 @@ fn callback_duplicate_conflict() -> AgentHostCallbackError {
     )
 }
 
+fn frame_allocation_service_error(error: RuntimeWireFrameAllocationError) -> AgentServiceError {
+    unavailable(error.to_string(), false)
+}
+
+fn frame_allocation_callback_error(
+    error: RuntimeWireFrameAllocationError,
+) -> AgentHostCallbackError {
+    host_callback_error(
+        AgentHostCallbackErrorCode::Unavailable,
+        error.to_string(),
+        false,
+    )
+}
+
 fn callback_error_response(
     request: &RuntimeWireAgentHostCallbackRequest,
     error: AgentHostCallbackError,
@@ -1379,5 +1554,33 @@ fn transport_error(error: RemoteRuntimeTransportError) -> AgentServiceError {
             unavailable(reason, retryable)
         }
         RemoteRuntimeTransportError::Protocol { reason, .. } => protocol(reason),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_allocator_uses_the_full_u64_domain_then_reports_exhaustion() {
+        let allocator = AtomicU64::new(u64::MAX - 1);
+
+        assert_eq!(
+            allocate_frame_id(&allocator),
+            Ok(RuntimeWireFrameId(u64::MAX))
+        );
+        assert_eq!(
+            allocate_frame_id(&allocator),
+            Err(RuntimeWireFrameAllocationError::Exhausted)
+        );
+        assert_eq!(allocator.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn frame_allocator_starts_at_one_without_reserving_a_wire_coordinate() {
+        let allocator = AtomicU64::new(0);
+
+        assert_eq!(allocate_frame_id(&allocator), Ok(RuntimeWireFrameId(1)));
+        assert_eq!(allocate_frame_id(&allocator), Ok(RuntimeWireFrameId(2)));
     }
 }

@@ -3,7 +3,7 @@ use agentdash_domain::backend::{
     BackendConfig, BackendRepository, BackendShareScopeKind, BackendType, BackendVisibility,
     LocalBackendClaim,
 };
-use agentdash_spi::platform::auth::AuthIdentity;
+use agentdash_platform_spi::platform::auth::AuthIdentity;
 use sha2::{Digest, Sha256};
 
 use crate::ApplicationError;

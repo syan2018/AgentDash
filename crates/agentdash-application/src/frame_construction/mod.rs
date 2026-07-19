@@ -26,7 +26,7 @@ use agentdash_application_ports::frame_launch_envelope::{
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput};
 use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{AgentConfig, ConnectorError, MemoryDiscoveryProvider, SkillDiscoveryProvider};
+use agentdash_platform_spi::{AgentConfig, PlatformRuntimeError, MemoryDiscoveryProvider, SkillDiscoveryProvider};
 
 use crate::repository_set::RepositorySet;
 use agentdash_application_vfs::VfsService;
@@ -109,7 +109,7 @@ impl FrameConstructionService {
     pub(crate) async fn construct_launch_envelope(
         &self,
         input: FrameLaunchEnvelopeConstructionInput,
-    ) -> Result<FrameLaunchEnvelope, ConnectorError> {
+    ) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
         let session_id = input.session_id.clone();
         let (_binding, agent, frame) =
             agentdash_application_lifecycle::resolve_current_frame_from_delivery_trace_ref(
@@ -121,7 +121,7 @@ impl FrameConstructionService {
             .await
             .map_err(connector_internal)?
             .ok_or_else(|| {
-                ConnectorError::InvalidConfig(format!(
+                PlatformRuntimeError::InvalidConfig(format!(
                     "RuntimeSession {session_id} 缺少 AgentRunRuntimeBinding 或当前 AgentFrame，拒绝 launch"
                 ))
             })?;
@@ -132,13 +132,13 @@ impl FrameConstructionService {
             .await
             .map_err(connector_internal)?
             .ok_or_else(|| {
-                ConnectorError::InvalidConfig(format!(
+                PlatformRuntimeError::InvalidConfig(format!(
                     "LifecycleAgent {} 指向的 LifecycleRun {} 不存在",
                     agent.id, agent.run_id
                 ))
             })?;
         if agent.run_id != run.id || agent.project_id != run.project_id {
-            return Err(ConnectorError::InvalidConfig(format!(
+            return Err(PlatformRuntimeError::InvalidConfig(format!(
                 "RuntimeSession {session_id} 的 anchor agent/run 不一致"
             )));
         }
@@ -148,7 +148,7 @@ impl FrameConstructionService {
     pub async fn construct_launch_envelope_from_request(
         &self,
         request: FrameLaunchEnvelopeRequest,
-    ) -> Result<FrameLaunchEnvelope, ConnectorError> {
+    ) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
         self.construct_launch_envelope(frame_launch_provider_input_from_request(request)?)
             .await
     }
@@ -187,7 +187,7 @@ impl FrameConstructionService {
         runtime_session_id: &str,
         hook_binding: Option<TerminalHookEffectBinding>,
         requested_runtime_commands: &[RuntimeCommandRecord],
-    ) -> Result<FrameLaunchEnvelope, ConnectorError> {
+    ) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
         let frame = builder
             .build_uncommitted(self.repos.agent_frame_repo.as_ref())
             .await
@@ -217,7 +217,7 @@ impl FrameConstructionService {
     pub(crate) async fn apply_launch_context_discovery(
         &self,
         envelope: &mut FrameLaunchEnvelope,
-        identity: Option<&agentdash_spi::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::AuthIdentity>,
     ) {
         use crate::agent_run::runtime_capability_projection::{
             LaunchContextDiscoveryInput, derive_launch_context_discovery,
@@ -266,7 +266,7 @@ impl FrameConstructionService {
 
 fn frame_launch_provider_input_from_request(
     request: FrameLaunchEnvelopeRequest,
-) -> Result<FrameLaunchEnvelopeConstructionInput, ConnectorError> {
+) -> Result<FrameLaunchEnvelopeConstructionInput, PlatformRuntimeError> {
     Ok(FrameLaunchEnvelopeConstructionInput {
         session_id: request.runtime_session_id,
         command: request.command,
@@ -288,8 +288,8 @@ fn runtime_trace_launch_state_from_ref(
 
 // ─── Free-standing helpers ───
 
-pub(crate) fn connector_internal(error: impl std::fmt::Display) -> ConnectorError {
-    ConnectorError::Runtime(error.to_string())
+pub(crate) fn connector_internal(error: impl std::fmt::Display) -> PlatformRuntimeError {
+    PlatformRuntimeError::Runtime(error.to_string())
 }
 
 /// 检查 frame surface 是否已就绪（executor_config + capability_state + working_directory 齐全）。
@@ -333,18 +333,18 @@ pub(crate) fn merge_user_executor_config(
 
 pub(crate) fn required_user_input(
     input: &LaunchPromptInput,
-) -> Result<Vec<agentdash_agent_protocol::UserInputBlock>, ConnectorError> {
+) -> Result<Vec<agentdash_agent_protocol::UserInputBlock>, PlatformRuntimeError> {
     input
         .input
         .clone()
-        .ok_or_else(|| ConnectorError::InvalidConfig("必须提供 input".to_string()))
+        .ok_or_else(|| PlatformRuntimeError::InvalidConfig("必须提供 input".to_string()))
 }
 
 pub(crate) fn frame_builder_from_existing(
     frame: &AgentFrame,
     runtime_session_id: &str,
     created_by_id: &str,
-) -> Result<AgentFrameBuilder, ConnectorError> {
+) -> Result<AgentFrameBuilder, PlatformRuntimeError> {
     let mut builder = AgentFrameBuilder::new(frame.agent_id)
         .with_runtime_session(runtime_session_id.to_string())
         .with_created_by("session_launch", Some(created_by_id.to_string()));
@@ -364,7 +364,7 @@ pub(crate) fn build_envelope_from_frame(
     hook_binding: Option<TerminalHookEffectBinding>,
     runtime_session_id: &str,
     requested_runtime_commands: &[RuntimeCommandRecord],
-) -> Result<FrameLaunchEnvelope, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
     let surface = FrameRuntimeSurface::from_frame(frame, Some(runtime_session_id.to_string()));
 
     let mut surface_draft = FrameSurfaceDraft::from_frame(frame);
@@ -414,12 +414,12 @@ pub(crate) fn build_envelope_from_frame(
     }
 
     let executor_config = executor_config.ok_or_else(|| {
-        ConnectorError::InvalidConfig(
+        PlatformRuntimeError::InvalidConfig(
             "FrameLaunchEnvelope: executor_config 未在 frame construction 阶段解析".into(),
         )
     })?;
     let capability_state = capability_state.ok_or_else(|| {
-        ConnectorError::InvalidConfig(
+        PlatformRuntimeError::InvalidConfig(
             "FrameLaunchEnvelope: capability_state 未在 frame construction 阶段解析".into(),
         )
     })?;
@@ -436,7 +436,7 @@ pub(crate) fn build_envelope_from_frame(
         .map(|m| PathBuf::from(m.root_ref.trim()))
         .filter(|p| !p.as_os_str().is_empty())
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(
+            PlatformRuntimeError::InvalidConfig(
                 "FrameLaunchEnvelope: working_directory 未在 frame construction 阶段解析".into(),
             )
         })?;
@@ -449,7 +449,7 @@ pub(crate) fn build_envelope_from_frame(
                 .clone()
                 .or_else(|| Some("frame_launch_surface.default_mount".to_string())),
         )
-        .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
+        .map_err(|error| PlatformRuntimeError::InvalidConfig(error.to_string()))?;
 
     Ok(FrameLaunchEnvelope {
         frame: FrameLaunchFrameRef {
@@ -475,7 +475,7 @@ pub(crate) fn build_envelope_from_frame(
             // (`apply_launch_context_discovery`) 在 runtime surface 闭包后统一派生，
             // route / extras 不再手填。
             discovered_guidelines: Vec::new(),
-            discovered_memory: agentdash_spi::MemoryDiscoveryOutput::default(),
+            discovered_memory: agentdash_platform_spi::MemoryDiscoveryOutput::default(),
         },
         diagnostics: FrameLaunchDiagnostics {
             resolution_trace: closed_surface.resolution_trace,
@@ -485,16 +485,16 @@ pub(crate) fn build_envelope_from_frame(
 
 pub(crate) struct ClosedFrameLaunchSurface {
     pub launch_surface: FrameLaunchSurface,
-    pub base_capability_state: Option<agentdash_spi::CapabilityState>,
+    pub base_capability_state: Option<agentdash_platform_spi::CapabilityState>,
     pub resolution_trace: LaunchResolutionTrace,
 }
 
 pub(crate) fn close_frame_launch_surface(
     surface_draft: &mut FrameSurfaceDraft,
     requested_runtime_commands: &[RuntimeCommandRecord],
-) -> Result<ClosedFrameLaunchSurface, ConnectorError> {
+) -> Result<ClosedFrameLaunchSurface, PlatformRuntimeError> {
     let base_launch_surface = FrameLaunchSurface::from_surface_draft(surface_draft)
-        .map_err(|error| ConnectorError::InvalidConfig(format!("FrameLaunchEnvelope: {error}")))?;
+        .map_err(|error| PlatformRuntimeError::InvalidConfig(format!("FrameLaunchEnvelope: {error}")))?;
 
     if requested_runtime_commands.is_empty() {
         return Ok(ClosedFrameLaunchSurface {
@@ -512,7 +512,7 @@ pub(crate) fn close_frame_launch_surface(
     let replay =
         replay_runtime_capability_transitions(&base_capability_state, &requested_transitions)
             .map_err(|error| {
-                ConnectorError::InvalidConfig(format!(
+                PlatformRuntimeError::InvalidConfig(format!(
                     "FrameLaunchEnvelope: pending runtime command closure 失败: {error}"
                 ))
             })?;
@@ -533,7 +533,7 @@ pub(crate) fn close_frame_launch_surface(
         effective_mcp_servers,
         execution_profile,
     )
-    .map_err(|error| ConnectorError::InvalidConfig(format!("FrameLaunchEnvelope: {error}")))?;
+    .map_err(|error| PlatformRuntimeError::InvalidConfig(format!("FrameLaunchEnvelope: {error}")))?;
     launch_surface.write_back_to_surface_draft(surface_draft);
 
     Ok(ClosedFrameLaunchSurface {
@@ -572,7 +572,7 @@ mod existing_surface_discovery_tests {
     };
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
-    use agentdash_spi::{AgentConfig, CapabilityState, ToolCluster, Vfs};
+    use agentdash_platform_spi::{AgentConfig, CapabilityState, ToolCluster, Vfs};
     use uuid::Uuid;
 
     use super::build_envelope_from_frame;

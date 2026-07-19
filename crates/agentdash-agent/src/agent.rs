@@ -8,10 +8,10 @@
 /// - 事件驱动状态同步 — 对齐 Pi `Agent._processLoopEvent`
 /// - Steering / Follow-up 队列（支持 all / one-at-a-time 出队模式）
 /// - prompt / continue 入口
-use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
+use agentdash_diagnostics::{Subsystem, diag};
 use tokio::sync::{Mutex, Notify, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -575,12 +575,10 @@ impl Agent {
                         let mut s = state.lock().await;
                         s.error = Some(error_text.clone());
                     }
-                    let diagnostic_context = DiagnosticErrorContext::new("agent.loop", "run_loop");
-                    diag_error!(
+                    diag!(
                         Error,
                         Subsystem::AgentRun,
-                        context = &diagnostic_context,
-                        error = &error,
+                        error = %error,
                         loop_kind,
                         tool_count,
                         "Agent loop failed"

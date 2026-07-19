@@ -7,7 +7,7 @@ use crate::search::{TextSearchParams, format_search_matches, grep_inline};
 use crate::types::runtime_text_file_attributes;
 use crate::*;
 use agentdash_domain::common::Mount;
-use agentdash_spi::{MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsOperation, Vfs};
+use agentdash_platform_spi::{MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsOperation, Vfs};
 use async_trait::async_trait;
 
 use super::inline_persistence::InlineContentOverlay;
@@ -54,7 +54,7 @@ pub struct BasicTextSearchRequest<'a> {
     pub query: &'a str,
     pub max_results: usize,
     pub overlay: Option<&'a InlineContentOverlay>,
-    pub identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
+    pub identity: Option<&'a agentdash_platform_spi::platform::auth::AuthIdentity>,
 }
 
 #[derive(Clone, Copy)]
@@ -147,7 +147,7 @@ impl VfsService {
         )
     }
 
-    pub fn list_mounts(&self, vfs: &Vfs) -> Vec<agentdash_spi::Mount> {
+    pub fn list_mounts(&self, vfs: &Vfs) -> Vec<agentdash_platform_spi::Mount> {
         vfs.mounts.clone()
     }
 
@@ -161,7 +161,7 @@ impl VfsService {
         operation: RuntimeVfsOperation,
         raw_path: &str,
         allow_empty: bool,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<MountDispatch, MountError> {
         let mount = resolve_mount(vfs, mount_id, capability)
             .map_err(MountError::OperationFailed)?
@@ -208,8 +208,8 @@ impl VfsService {
         offset: usize,
         limit: Option<usize>,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<ReadResult, agentdash_spi::platform::mount::MountError> {
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, agentdash_platform_spi::platform::mount::MountError> {
         self.read_text_range_with_policy(vfs, None, target, offset, limit, overlay, identity)
             .await
     }
@@ -223,8 +223,8 @@ impl VfsService {
         offset: usize,
         limit: Option<usize>,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<ReadResult, agentdash_spi::platform::mount::MountError> {
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, agentdash_platform_spi::platform::mount::MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
             access_policy,
@@ -281,7 +281,7 @@ impl VfsService {
         vfs: &Vfs,
         target: &ResourceRef,
         limit: usize,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<Vec<String>, MountError> {
         self.suggest_paths_with_policy(vfs, None, target, limit, identity)
             .await
@@ -293,7 +293,7 @@ impl VfsService {
         access_policy: Option<&RuntimeVfsAccessPolicy>,
         target: &ResourceRef,
         limit: usize,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<Vec<String>, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
@@ -320,7 +320,7 @@ impl VfsService {
         vfs: &Vfs,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<ReadResult, MountError> {
         self.read_text_with_policy_and_log_mode(
             vfs,
@@ -338,7 +338,7 @@ impl VfsService {
         vfs: &Vfs,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<ReadResult, MountError> {
         self.read_text_with_policy_and_log_mode(
             vfs,
@@ -357,7 +357,7 @@ impl VfsService {
         access_policy: Option<&RuntimeVfsAccessPolicy>,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<ReadResult, MountError> {
         self.read_text_with_policy_and_log_mode(
             vfs,
@@ -376,7 +376,7 @@ impl VfsService {
         access_policy: Option<&RuntimeVfsAccessPolicy>,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
         log_mode: VfsOperationLogMode,
     ) -> Result<ReadResult, MountError> {
         let dispatch = self.resolve_provider_dispatch(
@@ -420,7 +420,7 @@ impl VfsService {
         vfs: &Vfs,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<BinaryReadResult, MountError> {
         self.read_binary_with_policy(vfs, None, target, overlay, identity)
             .await
@@ -432,7 +432,7 @@ impl VfsService {
         access_policy: Option<&RuntimeVfsAccessPolicy>,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<BinaryReadResult, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
@@ -478,7 +478,7 @@ impl VfsService {
         target: &ResourceRef,
         content: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
         self.write_text_with_policy(vfs, None, target, content, overlay, identity)
             .await
@@ -491,7 +491,7 @@ impl VfsService {
         target: &ResourceRef,
         content: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
@@ -538,7 +538,7 @@ impl VfsService {
         target: &ResourceRef,
         content: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
         self.create_text_with_policy(vfs, None, target, content, overlay, identity)
             .await
@@ -551,7 +551,7 @@ impl VfsService {
         target: &ResourceRef,
         content: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
         match self
             .read_text_with_policy(vfs, access_policy, target, overlay, identity)
@@ -576,7 +576,7 @@ impl VfsService {
         vfs: &Vfs,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
         self.delete_text_with_policy(vfs, None, target, overlay, identity)
             .await
@@ -588,7 +588,7 @@ impl VfsService {
         access_policy: Option<&RuntimeVfsAccessPolicy>,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
@@ -648,7 +648,7 @@ impl VfsService {
         from_path: &str,
         to_path: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
         self.rename_text_with_policy(vfs, None, mount_id, from_path, to_path, overlay, identity)
             .await
@@ -663,7 +663,7 @@ impl VfsService {
         from_path: &str,
         to_path: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
@@ -850,7 +850,7 @@ impl VfsService {
         vfs: &Vfs,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<RuntimeFileEntry, MountError> {
         self.stat_with_policy(vfs, None, target, overlay, identity)
             .await
@@ -862,7 +862,7 @@ impl VfsService {
         access_policy: Option<&RuntimeVfsAccessPolicy>,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<RuntimeFileEntry, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
@@ -947,7 +947,7 @@ impl VfsService {
         mount_id: &str,
         patch: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<ApplyPatchResult, MountError> {
         self.apply_patch_with_policy(vfs, None, mount_id, patch, overlay, identity)
             .await
@@ -960,7 +960,7 @@ impl VfsService {
         mount_id: &str,
         patch: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<ApplyPatchResult, MountError> {
         let mount = resolve_mount(vfs, mount_id, MountCapability::Write)
             .map_err(MountError::OperationFailed)?;
@@ -1041,7 +1041,7 @@ impl VfsService {
         vfs: &Vfs,
         patch: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<MultiMountPatchResult, MountError> {
         self.apply_patch_multi_with_policy(vfs, None, patch, overlay, identity)
             .await
@@ -1053,7 +1053,7 @@ impl VfsService {
         access_policy: Option<&RuntimeVfsAccessPolicy>,
         patch: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<MultiMountPatchResult, MountError> {
         let entries = parse_patch_text(patch)
             .map_err(|e| MountError::OperationFailed(format!("patch 解析失败: {e}")))?;
@@ -1140,7 +1140,7 @@ impl VfsService {
         mount_id: &str,
         entries: &[PatchEntry],
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<ApplyPatchAffectedPaths, MountError> {
         let mount = resolve_mount(vfs, mount_id, MountCapability::Write)
             .map_err(MountError::OperationFailed)?;
@@ -1187,7 +1187,7 @@ impl VfsService {
         mount_id: &str,
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<ListResult, MountError> {
         self.list_with_policy_and_log_mode(
             vfs,
@@ -1207,7 +1207,7 @@ impl VfsService {
         mount_id: &str,
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<ListResult, MountError> {
         self.list_with_policy_and_log_mode(
             vfs,
@@ -1228,7 +1228,7 @@ impl VfsService {
         mount_id: &str,
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<ListResult, MountError> {
         self.list_with_policy_and_log_mode(
             vfs,
@@ -1250,7 +1250,7 @@ impl VfsService {
         mount_id: &str,
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
         log_mode: VfsOperationLogMode,
     ) -> Result<ListResult, MountError> {
         let dispatch = self.resolve_provider_dispatch(
@@ -1417,7 +1417,7 @@ impl VfsService {
                 before_lines: 0,
                 after_lines: 0,
                 multiline: false,
-                output_mode: agentdash_spi::platform::mount::SearchOutputMode::Content,
+                output_mode: agentdash_platform_spi::platform::mount::SearchOutputMode::Content,
             },
         )
         .await
@@ -1570,12 +1570,12 @@ impl VfsService {
 }
 
 #[async_trait]
-impl agentdash_spi::platform::mount::MountRuntimeTextResolver for VfsService {
+impl agentdash_platform_spi::platform::mount::MountRuntimeTextResolver for VfsService {
     async fn read_runtime_text(
         &self,
         vfs: &Vfs,
         uri: &str,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<ReadResult, MountError> {
         let target = parse_mount_uri(uri, vfs).map_err(MountError::OperationFailed)?;
         self.read_text(vfs, &target, None, identity).await
@@ -1828,8 +1828,8 @@ impl ApplyPatchTarget for InlineOverlayPatchTarget<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::platform::auth::AuthIdentity;
-    use agentdash_spi::{RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsPathPattern};
+    use agentdash_platform_spi::platform::auth::AuthIdentity;
+    use agentdash_platform_spi::{RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsPathPattern};
     use std::collections::BTreeSet;
     use std::path::PathBuf;
     use tokio::sync::Mutex;

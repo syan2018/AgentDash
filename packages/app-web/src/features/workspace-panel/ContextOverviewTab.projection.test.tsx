@@ -183,7 +183,6 @@ const lifecycleRunView: LifecycleRunView = {
   ],
   agents: [],
   subject_associations: [],
-  runtime_trace_refs: [],
   execution_log: [],
   created_at: "2026-06-02T00:00:00Z",
   updated_at: "2026-06-02T00:00:00Z",

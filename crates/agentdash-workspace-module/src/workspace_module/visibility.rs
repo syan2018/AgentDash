@@ -5,7 +5,7 @@ use agentdash_application_vfs::PROVIDER_CANVAS_FS;
 use agentdash_contracts::workspace_module::{WorkspaceModuleDescriptor, WorkspaceModuleKind};
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
-use agentdash_spi::{Vfs, WorkspaceModuleDimension};
+use agentdash_platform_spi::{Vfs, WorkspaceModuleDimension};
 use uuid::Uuid;
 
 use crate::extension_runtime::extension_runtime_projection_from_installations;
@@ -164,7 +164,7 @@ mod tests {
         ExtensionRuntimeActionKind, ExtensionTemplatePayload, InstalledAssetSource,
         ProjectExtensionInstallation, ProjectExtensionInstallationRepository,
     };
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         CapabilityState, ToolCluster, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
     };
     use uuid::Uuid;

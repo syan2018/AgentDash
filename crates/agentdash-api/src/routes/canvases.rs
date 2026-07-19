@@ -24,7 +24,7 @@ use agentdash_application::extension_package::{
     store_extension_package_archive,
 };
 use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
-use agentdash_application_runtime_gateway::{
+use agentdash_application_extension_gateway::{
     RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeSurface,
 };
@@ -668,7 +668,7 @@ pub async fn invoke_agent_run_canvas_runtime_action(
         req.input,
     );
 
-    let result = state.services.runtime_gateway.invoke(request).await?;
+    let result = state.services.extension_gateway.invoke(request).await?;
     Ok(Json(runtime_invocation_result_to_contract(result)))
 }
 
@@ -942,7 +942,7 @@ fn runtime_surface_to_contract(surface: RuntimeSurface) -> RuntimeSurfaceDto {
 }
 
 fn runtime_action_descriptor_to_contract(
-    action: agentdash_application_runtime_gateway::RuntimeActionDescriptor,
+    action: agentdash_application_extension_gateway::RuntimeActionDescriptor,
 ) -> RuntimeActionDescriptorDto {
     RuntimeActionDescriptorDto {
         action_key: action.action_key.to_string(),
@@ -997,7 +997,7 @@ async fn build_canvas_runtime_bridge_surface(
 ) -> Result<CanvasRuntimeBridgeSnapshot, ApiError> {
     let surface = state
         .services
-        .runtime_gateway
+        .extension_gateway
         .surface_for_actor(
             RuntimeActor::UserCanvas {
                 session_id: session_id.to_string(),

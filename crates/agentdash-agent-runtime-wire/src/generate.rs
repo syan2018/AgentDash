@@ -1,7 +1,9 @@
 use std::{collections::BTreeSet, env, fs, path::Path};
 
-use agentdash_agent_runtime_wire::RuntimeWireEnvelope;
-use agentdash_integration_api::{AuthGroup, AuthIdentity, AuthMode, MaterializedDriverSurface};
+use agentdash_agent_runtime_wire::{
+    RuntimeProtocolViolation, RuntimeWireCompleteAgentSchema, RuntimeWireEnvelope,
+    RuntimeWireGenerationFenceError, RuntimeWireU64,
+};
 use schemars::schema_for;
 use ts_rs::TS;
 
@@ -10,18 +12,22 @@ fn main() {
     ensure_no_implicit_bindings();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let ts_path = root.join("packages/app-web/src/generated/agent-runtime-wire.ts");
+    let codecs_path = root.join("packages/app-web/src/generated/agent-runtime-wire-codecs.ts");
     let contract_ts_path = root.join("packages/app-web/src/generated/agent-runtime-contracts.ts");
+    let service_ts_path = root.join("packages/app-web/src/generated/agent-service-api.ts");
     let schema_path = root.join("schemas/agent-runtime-wire.schema.json");
     let temp = tempfile::tempdir().expect("create generation directory");
     RuntimeWireEnvelope::export_all_to(temp.path()).expect("export Runtime Wire types");
+    RuntimeProtocolViolation::export_all_to(temp.path())
+        .expect("export Runtime Wire protocol errors");
+    RuntimeWireGenerationFenceError::export_all_to(temp.path())
+        .expect("export Runtime Wire generation fence errors");
+    RuntimeWireCompleteAgentSchema::export_all_to(temp.path())
+        .expect("export Complete Agent Runtime Wire schema root");
+    RuntimeWireU64::export_all_to(temp.path()).expect("export canonical Wire u64 scalar");
     let mut declarations = Vec::new();
     collect_typescript(temp.path(), &mut declarations);
-    declarations.extend([
-        format!("export {}", MaterializedDriverSurface::decl()),
-        format!("export {}", AuthIdentity::decl()),
-        format!("export {}", AuthGroup::decl()),
-        format!("export {}", AuthMode::decl()),
-    ]);
+
     let contract_source = fs::read_to_string(&contract_ts_path).unwrap_or_else(|error| {
         panic!(
             "read canonical Runtime contract bindings at {}: {error}; run the contract generator first",
@@ -29,141 +35,177 @@ fn main() {
         )
     });
     let contract_names = exported_type_names(&contract_source);
+    let service_source = fs::read_to_string(&service_ts_path).unwrap_or_else(|error| {
+        panic!(
+            "read canonical Complete Agent Service bindings at {}: {error}; run the Service API generator first",
+            service_ts_path.display()
+        )
+    });
+    let service_names = exported_type_names(&service_source);
     let wire_owned = wire_owned_type_names();
     if let Some(collision) = wire_owned
         .iter()
-        .find(|name| contract_names.contains(*name))
+        .find(|name| contract_names.contains(*name) || service_names.contains(*name))
     {
-        panic!("Runtime Wire type `{collision}` collides with the canonical Runtime contract");
+        panic!("Runtime Wire type `{collision}` collides with a canonical Runtime or Service type");
     }
-    let generated_names = declarations
-        .iter()
-        .filter_map(|declaration| declaration_name(declaration))
-        .collect::<BTreeSet<_>>();
-    let missing = wire_owned
-        .iter()
-        .filter(|name| !generated_names.contains(name.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    assert!(
-        missing.is_empty(),
-        "Runtime Wire owned types were not reachable from RuntimeWireEnvelope: {missing:?}"
-    );
+
     declarations.retain(|declaration| {
         declaration_name(declaration).is_some_and(|name| wire_owned.contains(name))
     });
-    for declaration in &mut declarations {
-        *declaration = declaration
-            .lines()
-            .map(str::trim_end)
-            .collect::<Vec<_>>()
-            .join("\n");
-    }
     declarations.sort();
+    ensure_owned_declarations(&declarations, &wire_owned);
     let wire_source = declarations.join("\n\n");
-    let imports = referenced_contract_names(&wire_source, &contract_names);
-    let import = if imports.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "import type {{ {} }} from \"./agent-runtime-contracts\";\n\n",
-            imports.into_iter().collect::<Vec<_>>().join(", ")
-        )
-    };
+    let runtime_imports = referenced_contract_names(&wire_source, &contract_names);
+    let service_imports = referenced_contract_names(&wire_source, &service_names);
+    if let Some(collision) = runtime_imports
+        .iter()
+        .find(|name| service_imports.contains(*name))
+    {
+        panic!(
+            "Runtime Wire declaration directly references ambiguous canonical Runtime and Service type `{collision}`"
+        );
+    }
+    let import = format_imports(&runtime_imports, &service_imports);
     let typescript = format!(
         "// Generated by `cargo run -p agentdash-agent-runtime-wire --bin generate_agent_runtime_wire`; do not edit.\n\n{import}{wire_source}\n",
     );
+    ensure_no_bigint(&typescript);
     let json_schema = format!(
         "{}\n",
         serde_json::to_string_pretty(&schema_for!(RuntimeWireEnvelope))
             .expect("serialize Runtime Wire JSON Schema")
     );
     check_or_write(&ts_path, &typescript, check);
+    check_or_write(&codecs_path, RUNTIME_WIRE_CODECS, check);
     check_or_write(&schema_path, &json_schema, check);
 }
 
+const RUNTIME_WIRE_CODECS: &str = include_str!("runtime_wire_codecs.ts");
+
 fn wire_owned_type_names() -> BTreeSet<String> {
     [
+        "RuntimeProtocolViolation",
         "RuntimeWireAck",
-        "RuntimeWireDriverBindResult",
-        "RuntimeWireDriverDescribeResult",
-        "RuntimeWireDriverDispatchResult",
-        "RuntimeWireDriverInspectResult",
+        "RuntimeWireAgentBindingTarget",
+        "RuntimeWireAgentChangeNotification",
+        "RuntimeWireAgentHostCallbackRequest",
+        "RuntimeWireAgentHostCallbackResponse",
+        "RuntimeWireAgentServiceDescribeRequest",
+        "RuntimeWireAgentServiceRequest",
+        "RuntimeWireAgentServiceResponse",
+        "RuntimeWireChangesResult",
+        "RuntimeWireCompleteAgentSchema",
         "RuntimeWireEnvelope",
         "RuntimeWireExecuteResult",
         "RuntimeWireFrame",
         "RuntimeWireFrameId",
-        "RuntimeWireHostPortError",
-        "RuntimeWireHostPortRequest",
-        "RuntimeWireHostPortResponse",
         "RuntimeWireNotification",
+        "RuntimeWireReadResult",
         "RuntimeWireRequest",
         "RuntimeWireResponse",
-        "RuntimeWireSnapshotResult",
-        "RuntimeWireSubscribeResult",
-        "AuthGroup",
-        "AuthIdentity",
-        "AuthMode",
-        "DriverCompactionActivationRequest",
-        "DriverContextActivation",
-        "DriverContextCheckpointRequest",
-        "DriverContextSurface",
-        "DriverHookBinding",
-        "DriverHookDecision",
-        "DriverHookInvocation",
-        "DriverHookSurface",
-        "DriverInstructionSet",
-        "DriverTranscript",
-        "DriverTranscriptRequest",
-        "DriverSurfaceRequest",
-        "DriverToolDefinition",
-        "DriverToolInvocation",
-        "DriverToolOutcome",
-        "DriverToolSurface",
-        "DriverWorkspaceSurface",
-        "MaterializedDriverSurface",
-        "PresentationItemId",
+        "RuntimeWireGenerationFenceError",
+        "RuntimeWireU64",
     ]
     .into_iter()
-    .map(str::to_string)
+    .map(str::to_owned)
     .collect()
+}
+
+fn ensure_owned_declarations(declarations: &[String], wire_owned: &BTreeSet<String>) {
+    let emitted = declarations
+        .iter()
+        .filter_map(|declaration| declaration_name(declaration))
+        .collect::<BTreeSet<_>>();
+    let missing = wire_owned
+        .iter()
+        .filter(|name| !emitted.contains(name.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        panic!(
+            "Runtime Wire export closure omitted owned declarations: {}",
+            missing.join(", ")
+        );
+    }
+}
+
+fn format_imports(
+    runtime_imports: &BTreeSet<String>,
+    service_imports: &BTreeSet<String>,
+) -> String {
+    let mut imports = String::new();
+    if !runtime_imports.is_empty() {
+        imports.push_str(&format!(
+            "import type {{ {} }} from \"./agent-runtime-contracts\";\n",
+            runtime_imports
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !service_imports.is_empty() {
+        imports.push_str(&format!(
+            "import type {{ {} }} from \"./agent-service-api\";\n",
+            service_imports
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !imports.is_empty() {
+        imports.push('\n');
+    }
+    imports
+}
+
+fn ensure_no_bigint(source: &str) {
+    if source
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|token| token == "bigint")
+    {
+        panic!("Runtime Wire TypeScript contract must not contain bigint");
+    }
 }
 
 fn exported_type_names(source: &str) -> BTreeSet<String> {
     source
         .lines()
         .filter_map(declaration_name)
-        .map(str::to_string)
+        .map(str::to_owned)
         .collect()
 }
 
 fn declaration_name(declaration: &str) -> Option<&str> {
-    let declaration = declaration.trim_start();
-    let remainder = declaration
-        .strip_prefix("export type ")
-        .or_else(|| declaration.strip_prefix("export interface "))?;
-    remainder
-        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
-        .next()
-        .filter(|name| !name.is_empty())
+    declaration.lines().find_map(|line| {
+        let line = line.trim_start();
+        let remainder = line
+            .strip_prefix("export type ")
+            .or_else(|| line.strip_prefix("export interface "))?;
+        remainder
+            .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+            .next()
+            .filter(|name| !name.is_empty())
+    })
 }
 
 fn referenced_contract_names(source: &str, contract_names: &BTreeSet<String>) -> BTreeSet<String> {
     source
         .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .filter(|token| contract_names.contains(*token))
-        .map(str::to_string)
+        .map(str::to_owned)
         .collect()
 }
 
 fn ensure_no_implicit_bindings() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     if let Some(path) = find_implicit_bindings(&crates) {
-        eprintln!(
+        panic!(
             "{} must not exist; TypeScript contracts are generated only through explicit workspace generators",
             path.display()
         );
-        std::process::exit(1);
     }
 }
 
@@ -195,7 +237,7 @@ fn collect_typescript(directory: &Path, declarations: &mut Vec<String>) {
                 .collect::<Vec<_>>()
                 .join("\n")
                 .trim()
-                .to_string();
+                .to_owned();
             if !declaration.is_empty() {
                 declarations.push(declaration);
             }
@@ -212,7 +254,7 @@ fn check_or_write(path: &Path, expected: &str, check: bool) {
             }
             Ok(_) | Err(_) => {
                 eprintln!(
-                    "{} is out of date; run the Runtime Wire generator",
+                    "{} is out of date; regenerate during the S5 canonical artifact cut",
                     path.display()
                 );
                 std::process::exit(1);
@@ -222,4 +264,57 @@ fn check_or_write(path: &Path, expected: &str, check: bool) {
     fs::create_dir_all(path.parent().expect("generated parent")).expect("create generated parent");
     fs::write(path, expected).expect("write generated contract");
     eprintln!("wrote {}", path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wire_owned_closure_includes_every_complete_agent_frame_family() {
+        let names = wire_owned_type_names();
+        for required in [
+            "RuntimeWireAgentBindingTarget",
+            "RuntimeWireAgentServiceDescribeRequest",
+            "RuntimeWireAgentServiceRequest",
+            "RuntimeWireAgentServiceResponse",
+            "RuntimeWireAgentChangeNotification",
+            "RuntimeWireAgentHostCallbackRequest",
+            "RuntimeWireAgentHostCallbackResponse",
+            "RuntimeWireGenerationFenceError",
+        ] {
+            assert!(names.contains(required), "missing wire-owned {required}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "omitted owned declarations")]
+    fn missing_wire_owned_declaration_is_a_generation_failure() {
+        let declarations = vec!["export type RuntimeWireAck = { ok: boolean };".to_owned()];
+        let required = ["RuntimeWireAck", "RuntimeWireEnvelope"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        ensure_owned_declarations(&declarations, &required);
+    }
+
+    #[test]
+    fn wire_imports_are_partitioned_by_canonical_owner() {
+        let runtime = ["RuntimeThreadId"].into_iter().map(str::to_owned).collect();
+        let service = ["AgentCommandEnvelope"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            format_imports(&runtime, &service),
+            "import type { RuntimeThreadId } from \"./agent-runtime-contracts\";\n\
+             import type { AgentCommandEnvelope } from \"./agent-service-api\";\n\n"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "must not contain bigint")]
+    fn bigint_is_rejected_from_runtime_wire_contract() {
+        ensure_no_bigint("export type RuntimeWireFrameId = bigint;");
+    }
 }

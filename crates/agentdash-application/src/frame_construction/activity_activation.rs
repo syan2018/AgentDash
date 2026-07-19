@@ -8,7 +8,7 @@ use agentdash_domain::inline_file::{InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedureContract, ToolCapabilityDirective,
 };
-use agentdash_spi::{CapabilityScopeCtx, Vfs};
+use agentdash_platform_spi::{CapabilityScopeCtx, Vfs};
 use uuid::Uuid;
 
 use crate::capability::{
@@ -35,7 +35,7 @@ pub(super) struct ActivityActivationInput<'a> {
     pub baseline_override: Option<Vec<ToolCapabilityDirective>>,
     pub tool_directives: &'a [ToolCapabilityDirective],
     pub ready_port_keys: BTreeSet<String>,
-    pub available_companions: Vec<agentdash_spi::context::capability::CompanionAgentEntry>,
+    pub available_companions: Vec<agentdash_platform_spi::context::capability::CompanionAgentEntry>,
 }
 
 pub(super) fn activate_activity_with_platform(
@@ -239,7 +239,7 @@ fn render_input_section(
     )
 }
 
-fn dedupe_runtime_mcp_servers(servers: &mut Vec<agentdash_spi::RuntimeMcpServer>) {
+fn dedupe_runtime_mcp_servers(servers: &mut Vec<agentdash_platform_spi::RuntimeMcpServer>) {
     let mut seen = BTreeSet::<String>::new();
     servers.retain(|server| seen.insert(server.name.clone()));
 }

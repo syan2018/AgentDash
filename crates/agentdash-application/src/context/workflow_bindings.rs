@@ -1,6 +1,6 @@
 use crate::lifecycle::ActiveWorkflowProjection;
 use crate::vfs::ResolveBindingsOutput;
-use agentdash_spi::{ContextFragment, MergeStrategy};
+use agentdash_platform_spi::{ContextFragment, MergeStrategy};
 
 use super::Contribution;
 use super::rendering::{render_resolved_binding_section, render_resolved_binding_warnings};
@@ -134,6 +134,7 @@ mod tests {
                 inputs: Vec::new(),
                 outputs: Vec::new(),
                 executor_run_ref: None,
+                agent_call: None,
                 children: Vec::new(),
                 phase_path: Vec::new(),
                 started_at: None,

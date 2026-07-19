@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use agentdash_spi::connector::RuntimeToolProvider;
-use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext};
+use agentdash_platform_spi::RuntimeToolProvider;
+use agentdash_platform_spi::{PlatformRuntimeError, DynAgentTool, ExecutionContext};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
@@ -60,7 +60,7 @@ impl RuntimeToolProvider for SessionRuntimeToolComposer {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
-    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
+    ) -> Result<Vec<DynAgentTool>, PlatformRuntimeError> {
         let mut tools = Vec::new();
         let mut seen_names: BTreeMap<String, usize> = BTreeMap::new();
         for (provider_index, provider) in self.providers.iter().enumerate() {
@@ -68,7 +68,7 @@ impl RuntimeToolProvider for SessionRuntimeToolComposer {
             for tool in &provider_tools {
                 let name = tool.name().to_string();
                 if tool.protocol_projector().is_none() {
-                    return Err(ConnectorError::InvalidConfig(format!(
+                    return Err(PlatformRuntimeError::InvalidConfig(format!(
                         "runtime callable tool `{name}` 缺少 owner protocol projector"
                     )));
                 }
@@ -76,7 +76,7 @@ impl RuntimeToolProvider for SessionRuntimeToolComposer {
                     .protocol_fixture_id()
                     .is_none_or(|fixture| fixture.trim().is_empty())
                 {
-                    return Err(ConnectorError::InvalidConfig(format!(
+                    return Err(PlatformRuntimeError::InvalidConfig(format!(
                         "runtime callable tool `{name}` 缺少 main parity fixture"
                     )));
                 }
@@ -86,7 +86,7 @@ impl RuntimeToolProvider for SessionRuntimeToolComposer {
                     } else {
                         format!("provider #{first_provider_index} 与 provider #{provider_index}")
                     };
-                    return Err(ConnectorError::InvalidConfig(format!(
+                    return Err(PlatformRuntimeError::InvalidConfig(format!(
                         "runtime callable tool name `{name}` 重复（{duplicate_scope}）"
                     )));
                 }
@@ -100,9 +100,9 @@ impl RuntimeToolProvider for SessionRuntimeToolComposer {
 
 pub(crate) fn shared_runtime_vfs_from_context(
     context: &ExecutionContext,
-) -> Result<SharedRuntimeVfs, ConnectorError> {
+) -> Result<SharedRuntimeVfs, PlatformRuntimeError> {
     let vfs = context.session.vfs.clone().ok_or_else(|| {
-        ConnectorError::InvalidConfig("缺少 vfs，无法构建统一访问工具".to_string())
+        PlatformRuntimeError::InvalidConfig("缺少 vfs，无法构建统一访问工具".to_string())
     })?;
     let access_policy = context
         .session
@@ -114,14 +114,14 @@ pub(crate) fn shared_runtime_vfs_from_context(
 
 pub(crate) fn runtime_session_id_from_context(
     context: &ExecutionContext,
-) -> Result<String, ConnectorError> {
+) -> Result<String, PlatformRuntimeError> {
     context
         .turn
         .platform_tool_execution
         .as_ref()
         .map(|owner| owner.runtime_thread_id.to_string())
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(
+            PlatformRuntimeError::InvalidConfig(
                 "缺少 Platform Tool typed owner context，无法定位 runtime session".to_string(),
             )
         })
@@ -149,7 +149,7 @@ mod tests {
         async fn build_tools(
             &self,
             _context: &ExecutionContext,
-        ) -> Result<Vec<DynAgentTool>, ConnectorError> {
+        ) -> Result<Vec<DynAgentTool>, PlatformRuntimeError> {
             Ok(vec![Arc::new(StubTool {
                 name: self.tool_name,
             })])
@@ -205,11 +205,11 @@ mod tests {
             });
         let composer = SessionRuntimeToolComposer::from_final_catalog_providers(providers);
         let context = ExecutionContext {
-            session: agentdash_spi::ExecutionSessionFrame {
+            session: agentdash_platform_spi::ExecutionSessionFrame {
                 turn_id: "turn-final-catalog".to_string(),
                 working_directory: std::path::PathBuf::from("."),
                 environment_variables: std::collections::HashMap::new(),
-                executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                executor_config: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
                 mcp_servers: Vec::new(),
                 vfs: None,
                 vfs_access_policy: None,
@@ -217,7 +217,7 @@ mod tests {
                 runtime_backend_anchor: None,
                 identity: None,
             },
-            turn: agentdash_spi::ExecutionTurnFrame::default(),
+            turn: agentdash_platform_spi::ExecutionTurnFrame::default(),
         };
         let tools = composer.build_tools(&context).await.expect("final catalog");
         assert_eq!(tools.len(), 6);
@@ -241,11 +241,11 @@ mod tests {
         ]);
 
         let context = ExecutionContext {
-            session: agentdash_spi::ExecutionSessionFrame {
+            session: agentdash_platform_spi::ExecutionSessionFrame {
                 turn_id: "turn-1".to_string(),
                 working_directory: std::path::PathBuf::from("."),
                 environment_variables: std::collections::HashMap::new(),
-                executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                executor_config: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
                 mcp_servers: Vec::new(),
                 vfs: None,
                 vfs_access_policy: None,
@@ -253,7 +253,7 @@ mod tests {
                 runtime_backend_anchor: None,
                 identity: None,
             },
-            turn: agentdash_spi::ExecutionTurnFrame::default(),
+            turn: agentdash_platform_spi::ExecutionTurnFrame::default(),
         };
 
         let error = match composer.build_tools(&context).await {
@@ -262,7 +262,7 @@ mod tests {
         };
 
         match error {
-            ConnectorError::InvalidConfig(message) => {
+            PlatformRuntimeError::InvalidConfig(message) => {
                 assert!(message.contains("same_tool"));
                 assert!(message.contains("provider #0"));
                 assert!(message.contains("provider #1"));

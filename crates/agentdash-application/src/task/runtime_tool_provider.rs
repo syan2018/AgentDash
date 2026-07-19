@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_spi::connector::RuntimeToolProvider;
-use agentdash_spi::platform::tool_capability::CAP_TASK;
-use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext, ToolCluster};
+use agentdash_platform_spi::RuntimeToolProvider;
+use agentdash_platform_spi::platform::tool_capability::CAP_TASK;
+use agentdash_platform_spi::{PlatformRuntimeError, DynAgentTool, ExecutionContext, ToolCluster};
 use async_trait::async_trait;
 
 use crate::task::tools::{TaskReadTool, TaskWriteTool};
@@ -23,7 +23,7 @@ impl RuntimeToolProvider for TaskRuntimeToolProvider {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
-    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
+    ) -> Result<Vec<DynAgentTool>, PlatformRuntimeError> {
         let flow = &context.turn.capability_state;
         if !flow.tool.enabled_clusters.contains(&ToolCluster::Task) {
             return Ok(Vec::new());

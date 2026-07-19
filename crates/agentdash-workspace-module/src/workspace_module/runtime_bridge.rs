@@ -11,7 +11,7 @@ use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
 use agentdash_domain::common::Vfs;
 use agentdash_domain::project::ProjectAuthorizationContext;
-use agentdash_spi::{AuthIdentity, ConnectorError, ExecutionContext};
+use agentdash_platform_spi::{AuthIdentity, PlatformRuntimeError, ExecutionContext};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -129,12 +129,12 @@ pub fn project_authorization_context_from_identity(
 
 pub fn shared_runtime_vfs_from_context(
     context: &ExecutionContext,
-) -> Result<SharedRuntimeVfs, ConnectorError> {
+) -> Result<SharedRuntimeVfs, PlatformRuntimeError> {
     let vfs = context.session.vfs.clone().ok_or_else(|| {
-        ConnectorError::InvalidConfig("缺少 vfs，无法构建统一访问工具".to_string())
+        PlatformRuntimeError::InvalidConfig("缺少 vfs，无法构建统一访问工具".to_string())
     })?;
     let access_policy = context.session.vfs_access_policy.clone().ok_or_else(|| {
-        ConnectorError::InvalidConfig(
+        PlatformRuntimeError::InvalidConfig(
             "缺少 vfs_access_policy，无法构建 workspace module VFS 工具".to_string(),
         )
     })?;
@@ -143,27 +143,27 @@ pub fn shared_runtime_vfs_from_context(
 
 pub fn runtime_thread_id_from_context(
     context: &ExecutionContext,
-) -> Result<String, ConnectorError> {
+) -> Result<String, PlatformRuntimeError> {
     context
         .turn
         .platform_tool_execution
         .as_ref()
         .map(|owner| owner.runtime_thread_id.to_string())
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(
+            PlatformRuntimeError::InvalidConfig(
                 "缺少 Platform Tool typed owner context，无法定位 runtime thread".to_string(),
             )
         })
 }
 
-pub fn project_id_from_context(context: &ExecutionContext) -> Result<Uuid, ConnectorError> {
+pub fn project_id_from_context(context: &ExecutionContext) -> Result<Uuid, PlatformRuntimeError> {
     context
         .turn
         .platform_tool_execution
         .as_ref()
         .map(|owner| owner.project_id)
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(
+            PlatformRuntimeError::InvalidConfig(
                 "缺少 Platform Tool typed owner context，无法定位 project".to_string(),
             )
         })
@@ -171,13 +171,13 @@ pub fn project_id_from_context(context: &ExecutionContext) -> Result<Uuid, Conne
 
 pub fn effective_capability_view_from_context(
     context: &ExecutionContext,
-) -> Result<AgentRunEffectiveCapabilityView, ConnectorError> {
+) -> Result<AgentRunEffectiveCapabilityView, PlatformRuntimeError> {
     let owner = context
         .turn
         .platform_tool_execution
         .as_ref()
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(
+            PlatformRuntimeError::InvalidConfig(
                 "缺少 Platform Tool typed owner context，无法定位 capability surface".to_string(),
             )
         })?;
@@ -347,7 +347,7 @@ mod tests {
     use agentdash_application_ports::agent_frame_materialization::CanvasVisibilityReason;
     use agentdash_application_vfs::tools::RuntimeVfsState;
     use agentdash_domain::canvas::Canvas;
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         AgentConfig, CapabilityState, ExecutionSessionFrame, ExecutionTurnFrame, Mount,
         MountCapability, PlatformToolExecutionContext, RuntimeVfsAccessPolicy,
         RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern,
@@ -423,7 +423,7 @@ mod tests {
         };
 
         assert!(
-            matches!(error, ConnectorError::InvalidConfig(message) if message.contains("vfs_access_policy"))
+            matches!(error, PlatformRuntimeError::InvalidConfig(message) if message.contains("vfs_access_policy"))
         );
     }
 

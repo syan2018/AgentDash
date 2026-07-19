@@ -12,7 +12,7 @@ use agentdash_domain::llm_provider::{
     LlmProviderRepository, LlmSecretCodec, WireProtocol, provider_allows_empty_api_key,
     resolve_effective_credential,
 };
-use agentdash_spi::AuthIdentity;
+use agentdash_platform_spi::AuthIdentity;
 use futures::future::BoxFuture;
 use tokio::sync::RwLock;
 

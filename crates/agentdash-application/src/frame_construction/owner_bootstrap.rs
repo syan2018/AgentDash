@@ -13,8 +13,8 @@ use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::CapabilityScopeCtx;
-use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, Vfs};
+use agentdash_platform_spi::CapabilityScopeCtx;
+use agentdash_platform_spi::{CapabilityState, SessionContextBundle, ToolCapability, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::AgentFrameBuilder;
@@ -115,7 +115,7 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     pub agent_tool_directives: Vec<ToolCapabilityDirective>,
     pub agent_skill_asset_keys: Vec<String>,
     pub project_vfs_mount_exposure_grants: Vec<ProjectVfsMountExposureGrant>,
-    pub request_mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
+    pub request_mcp_servers: Vec<agentdash_platform_spi::RuntimeMcpServer>,
     pub existing_vfs: Option<Vfs>,
     /// ProjectAgent preset 声明的 workspace module 可见性白名单。
     ///
@@ -485,7 +485,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         &self,
         spec: &OwnerBootstrapSpec<'_>,
         vfs: Option<&Vfs>,
-        runtime_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
+        runtime_mcp_servers: &[agentdash_platform_spi::RuntimeMcpServer],
         subject_context_contributions: Vec<Contribution>,
     ) -> Result<SessionContextBundle, String> {
         let runtime_mcp_servers = runtime_mcp_servers_to_summaries(runtime_mcp_servers);
@@ -525,7 +525,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             SessionContextConfig {
                 session_id: Uuid::new_v4(),
                 phase: owner_scope_phase(&spec.owner),
-                default_scope: agentdash_spi::ContextFragment::default_scope(),
+                default_scope: agentdash_platform_spi::ContextFragment::default_scope(),
             },
             contributions,
         ))
@@ -572,7 +572,7 @@ fn resolve_owner_audit_trigger(
 
 fn build_owner_context_contribution(
     owner: &OwnerScope<'_>,
-    workspace_source_fragments: Vec<agentdash_spi::ContextFragment>,
+    workspace_source_fragments: Vec<agentdash_platform_spi::ContextFragment>,
     workspace_source_warnings: Vec<String>,
 ) -> Contribution {
     match owner {
@@ -670,7 +670,7 @@ async fn load_companion_candidates(
     repos: &RepositorySet,
     project_id: Uuid,
     caller_agent_id: Option<Uuid>,
-) -> Result<Vec<agentdash_spi::context::capability::CompanionAgentEntry>, String> {
+) -> Result<Vec<agentdash_platform_spi::context::capability::CompanionAgentEntry>, String> {
     let agents = match repos.project_agent_repo.list_by_project(project_id).await {
         Ok(agents) => agents,
         Err(_) => return Ok(Vec::new()),
@@ -685,7 +685,7 @@ async fn load_companion_candidates(
 fn build_companion_roster_from_project_agents(
     agents: &[ProjectAgent],
     caller_agent_id: Option<Uuid>,
-) -> Result<Vec<agentdash_spi::context::capability::CompanionAgentEntry>, String> {
+) -> Result<Vec<agentdash_platform_spi::context::capability::CompanionAgentEntry>, String> {
     let caller_extra: BTreeSet<String> = if let Some(caller_id) = caller_agent_id {
         if let Some(agent) = agents.iter().find(|item| item.id == caller_id) {
             let preset = agent.preset_config().map_err(|error| error.to_string())?;
@@ -725,7 +725,7 @@ fn build_companion_roster_from_project_agents(
             .filter(|s| !s.is_empty())
             .map(String::from)
             .unwrap_or_else(|| agent_key.clone());
-        entries.push(agentdash_spi::context::capability::CompanionAgentEntry {
+        entries.push(agentdash_platform_spi::context::capability::CompanionAgentEntry {
             name: agent_key,
             executor: agent.agent_type.clone(),
             display_name: display,
@@ -793,9 +793,9 @@ async fn resolve_owner_workflow_tool_directives(
 
 fn normalize_owner_bootstrap_mcp_projection(
     capability_state: &mut CapabilityState,
-    request_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
+    request_mcp_servers: &[agentdash_platform_spi::RuntimeMcpServer],
     include_backend_bound_mcp: bool,
-) -> Vec<agentdash_spi::RuntimeMcpServer> {
+) -> Vec<agentdash_platform_spi::RuntimeMcpServer> {
     let mut servers = Vec::new();
     servers.extend(
         request_mcp_servers
@@ -857,21 +857,21 @@ fn apply_owner_backend_surface_capabilities(
         return;
     }
 
-    capability_state.workspace_module = agentdash_spi::WorkspaceModuleDimension::default();
+    capability_state.workspace_module = agentdash_platform_spi::WorkspaceModuleDimension::default();
     capability_state
         .tool
         .capabilities
         .remove(&ToolCapability::new(
-            agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE,
+            agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE,
         ));
     capability_state
         .tool
         .enabled_clusters
-        .remove(&agentdash_spi::ToolCluster::WorkspaceModule);
+        .remove(&agentdash_platform_spi::ToolCluster::WorkspaceModule);
     capability_state
         .tool
         .tool_policy
-        .remove(agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE);
+        .remove(agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE);
 }
 
 fn vfs_has_runtime_backend_anchor(vfs: Option<&Vfs>) -> bool {
@@ -879,21 +879,21 @@ fn vfs_has_runtime_backend_anchor(vfs: Option<&Vfs>) -> bool {
         .is_some_and(|mount| !mount.backend_id.trim().is_empty())
 }
 
-fn normalize_runtime_mcp_servers(servers: &mut Vec<agentdash_spi::RuntimeMcpServer>) {
+fn normalize_runtime_mcp_servers(servers: &mut Vec<agentdash_platform_spi::RuntimeMcpServer>) {
     let mut seen = BTreeSet::<String>::new();
     servers.retain(|server| seen.insert(server.name.clone()));
 }
 
-fn capability_for_runtime_mcp_server(server: &agentdash_spi::RuntimeMcpServer) -> ToolCapability {
+fn capability_for_runtime_mcp_server(server: &agentdash_platform_spi::RuntimeMcpServer) -> ToolCapability {
     match agent_facing_mcp_server_name(&server.name).as_str() {
         "agentdash-relay-tools" => {
-            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_RELAY_MANAGEMENT)
+            ToolCapability::new(agentdash_platform_spi::platform::tool_capability::CAP_RELAY_MANAGEMENT)
         }
         "agentdash-story-tools" => {
-            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_STORY_MANAGEMENT)
+            ToolCapability::new(agentdash_platform_spi::platform::tool_capability::CAP_STORY_MANAGEMENT)
         }
         "agentdash-workflow-tools" => {
-            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT)
+            ToolCapability::new(agentdash_platform_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT)
         }
         custom => ToolCapability::custom_mcp(custom),
     }
@@ -918,10 +918,10 @@ fn agent_facing_mcp_server_name(server_name: &str) -> String {
 mod tests {
     use super::*;
 
-    fn runtime_mcp_server(name: &str, url: &str) -> agentdash_spi::RuntimeMcpServer {
-        agentdash_spi::RuntimeMcpServer {
+    fn runtime_mcp_server(name: &str, url: &str) -> agentdash_platform_spi::RuntimeMcpServer {
+        agentdash_platform_spi::RuntimeMcpServer {
             name: name.to_string(),
-            transport: agentdash_spi::McpTransportConfig::Http {
+            transport: agentdash_platform_spi::McpTransportConfig::Http {
                 url: url.to_string(),
                 headers: vec![],
             },
@@ -945,9 +945,9 @@ mod tests {
         agent
     }
 
-    fn server_url(server: &agentdash_spi::RuntimeMcpServer) -> &str {
+    fn server_url(server: &agentdash_platform_spi::RuntimeMcpServer) -> &str {
         match &server.transport {
-            agentdash_spi::McpTransportConfig::Http { url, .. } => url.as_str(),
+            agentdash_platform_spi::McpTransportConfig::Http { url, .. } => url.as_str(),
             _ => "",
         }
     }
@@ -1068,7 +1068,7 @@ mod tests {
                 .tool
                 .capabilities
                 .contains(&ToolCapability::new(
-                    agentdash_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT
+                    agentdash_platform_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT
                 ))
         );
         assert!(
@@ -1121,15 +1121,15 @@ mod tests {
     #[test]
     fn owner_bootstrap_backend_surface_removes_workspace_module_without_backend_anchor() {
         let mut capability_state =
-            CapabilityState::from_clusters([agentdash_spi::ToolCluster::WorkspaceModule]);
+            CapabilityState::from_clusters([agentdash_platform_spi::ToolCluster::WorkspaceModule]);
         capability_state
             .tool
             .capabilities
             .insert(ToolCapability::new(
-                agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE,
+                agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE,
             ));
         capability_state.tool.tool_policy.insert(
-            agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE.to_string(),
+            agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE.to_string(),
             Default::default(),
         );
 
@@ -1141,27 +1141,27 @@ mod tests {
 
         assert_eq!(
             capability_state.workspace_module,
-            agentdash_spi::WorkspaceModuleDimension::default()
+            agentdash_platform_spi::WorkspaceModuleDimension::default()
         );
         assert!(
             !capability_state
                 .tool
                 .enabled_clusters
-                .contains(&agentdash_spi::ToolCluster::WorkspaceModule)
+                .contains(&agentdash_platform_spi::ToolCluster::WorkspaceModule)
         );
         assert!(
             !capability_state
                 .tool
                 .capabilities
                 .contains(&ToolCapability::new(
-                    agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE
+                    agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE
                 ))
         );
         assert!(
             !capability_state
                 .tool
                 .tool_policy
-                .contains_key(agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE)
+                .contains_key(agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE)
         );
     }
 

@@ -4,13 +4,13 @@ use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error}
 use async_trait::async_trait;
 
 use agentdash_application::mcp_relay_adapter;
-use agentdash_relay::RelayMessage;
-use agentdash_spi::ConnectorError;
-use agentdash_spi::RuntimeMcpServer;
-use agentdash_spi::platform::mcp_relay::{
+use agentdash_platform_spi::PlatformRuntimeError;
+use agentdash_platform_spi::RuntimeMcpServer;
+use agentdash_platform_spi::platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpListOutcome,
     RelayMcpSourceOutcome, RelayMcpToolInfo, RelayProbeResult, RelayProbeTarget, RelayProbeTool,
 };
+use agentdash_relay::RelayMessage;
 
 use super::registry::{BackendRegistry, relay_message_kind};
 
@@ -169,7 +169,7 @@ impl McpRelayProvider for BackendRegistry {
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
         context: Option<RelayMcpCallContext>,
-    ) -> Result<RelayMcpCallResult, ConnectorError> {
+    ) -> Result<RelayMcpCallResult, PlatformRuntimeError> {
         let server_name = server.name.as_str();
         let backend_id = self
             .resolve_backend_for_relay_mcp(server_name, context.as_ref())
@@ -188,7 +188,7 @@ impl McpRelayProvider for BackendRegistry {
                     tool_name = %tool_name,
                     "relay MCP call_tool 缺少可用 runtime backend anchor"
                 );
-                ConnectorError::ConnectionFailed(format!(
+                PlatformRuntimeError::ConnectionFailed(format!(
                     "无法解析 relay MCP server '{server_name}' 的 runtime backend anchor: {error}"
                 ))
             })?;
@@ -226,7 +226,7 @@ impl McpRelayProvider for BackendRegistry {
                     message_kind = %message_kind,
                     "relay MCP call_tool 通信失败"
                 );
-                ConnectorError::ConnectionFailed(e.to_string())
+                PlatformRuntimeError::ConnectionFailed(e.to_string())
             })?;
 
         match resp {
@@ -262,7 +262,7 @@ impl McpRelayProvider for BackendRegistry {
                     error_code = err.code.as_str(),
                     "relay MCP call_tool 失败"
                 );
-                Err(ConnectorError::Runtime(err.message))
+                Err(PlatformRuntimeError::Runtime(err.message))
             }
             other => {
                 let response_kind = relay_message_kind(&other);
@@ -279,7 +279,7 @@ impl McpRelayProvider for BackendRegistry {
                     response_kind = %response_kind,
                     "relay MCP call_tool 返回意外消息类型"
                 );
-                Err(ConnectorError::Runtime(
+                Err(PlatformRuntimeError::Runtime(
                     "MCP relay 返回意外响应类型".to_string(),
                 ))
             }
@@ -290,7 +290,7 @@ impl McpRelayProvider for BackendRegistry {
         &self,
         transport: &agentdash_domain::mcp_preset::McpTransportConfig,
         target: RelayProbeTarget,
-    ) -> Result<RelayProbeResult, ConnectorError> {
+    ) -> Result<RelayProbeResult, PlatformRuntimeError> {
         let backend_id = target.backend_id;
 
         let cmd = RelayMessage::CommandMcpProbeTransport {
@@ -321,7 +321,7 @@ impl McpRelayProvider for BackendRegistry {
                     message_kind = %message_kind,
                     "relay MCP probe_transport 通信失败"
                 );
-                ConnectorError::ConnectionFailed(e.to_string())
+                PlatformRuntimeError::ConnectionFailed(e.to_string())
             })?;
 
         match resp {
@@ -384,7 +384,7 @@ impl McpRelayProvider for BackendRegistry {
                     response_kind = %response_kind,
                     "relay MCP probe_transport 返回意外消息类型"
                 );
-                Err(ConnectorError::Runtime(
+                Err(PlatformRuntimeError::Runtime(
                     "MCP probe relay 返回意外响应类型".to_string(),
                 ))
             }

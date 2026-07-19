@@ -253,7 +253,6 @@
 - There is no remaining Wave 4 blocker. S5 is not a stable checkpoint until component integration,
   Product caller activation, final deletion/lock generation and both independent cutover checks
   pass on one staging tip.
-
 ## S5 staging progress
 
 - The hard-cut staging branch integrated the four frozen component ranges and the Wave 4 task

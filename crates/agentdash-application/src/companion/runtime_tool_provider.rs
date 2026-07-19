@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_spi::connector::RuntimeToolProvider;
-use agentdash_spi::platform::tool_capability::CAP_COLLABORATION;
-use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext, ToolCluster};
+use agentdash_platform_spi::RuntimeToolProvider;
+use agentdash_platform_spi::platform::tool_capability::CAP_COLLABORATION;
+use agentdash_platform_spi::{PlatformRuntimeError, DynAgentTool, ExecutionContext, ToolCluster};
 use async_trait::async_trait;
 
 use crate::companion::model_preflight::CompanionModelPreflightPort;
@@ -62,7 +62,7 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
-    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
+    ) -> Result<Vec<DynAgentTool>, PlatformRuntimeError> {
         let flow = &context.turn.capability_state;
         if !flow
             .tool
@@ -80,7 +80,7 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
             Some(ToolCluster::Collaboration),
         ) {
             let wait_service = self.wait_service.clone().ok_or_else(|| {
-                ConnectorError::InvalidConfig(
+                PlatformRuntimeError::InvalidConfig(
                     "companion_request 需要 WaitActivityService 才能构建统一等待路径".to_string(),
                 )
             })?;

@@ -6,7 +6,7 @@ use agentdash_domain::backend::{
     ProjectBackendAccessRepository,
 };
 use agentdash_domain::project::ProjectRepository;
-use agentdash_spi::AuthIdentity;
+use agentdash_platform_spi::AuthIdentity;
 
 use super::{
     BackendAuthorizationError, BackendAuthorizationService, BackendPermission,
@@ -163,7 +163,7 @@ mod tests {
         ViewConfig,
     };
     use agentdash_domain::project::{Project, ProjectSubjectGrant, ProjectSubjectType};
-    use agentdash_spi::{AuthMode, platform::auth::AuthGroup};
+    use agentdash_platform_spi::{AuthMode, platform::auth::AuthGroup};
     use chrono::{Duration, Utc};
     use serde_json::json;
     use uuid::Uuid;

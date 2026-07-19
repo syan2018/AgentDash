@@ -6,65 +6,123 @@ use std::{
 use agentdash_agent::dash::{
     ActivityStatus, AgentHistory, AgentHistoryState, AgentItemId as DashItemId, AgentSessionId,
     AgentTurnId as DashTurnId, BranchId, CommandId, CompactionId, CompactionMode, CompactionState,
-    ContextDeliveryFidelity, DashAgentChange, DashAgentChangePayload, DashAgentService,
-    DashChangeCursor, DashCommandRequest, DashCompactionRequest, DashCompactionResult,
-    DashCompactor, DashCoreError, DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies,
-    DashProvider, DashProviderEventStream, DashProviderRequest, DashPublicCommand,
-    DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome, DashToolCall,
-    DashToolCallbacks, DashToolDefinition, DashToolResult, ForkCutoff, HistoryPayload,
+    ContextDeliveryFidelity, DashAgentChange, DashAgentChangePayload, DashAgentRepositoryState,
+    DashAgentRepositoryStore, DashAgentService, DashChangeCursor, DashCommandRequest,
+    DashExecutionDependencies, DashPublicCommand, DashReceiptState, DashServiceError, DashSurface,
+    DashTerminalOutcome, DashToolDefinition, ForkCutoff, HistoryPayload,
     InitialContextContribution, InitialContextInstallation, InitialContextMode,
     InteractionId as DashInteractionId, InteractionState, ItemDetails,
 };
 use agentdash_agent_service_api::{
-    AgentCapabilityProfile, AgentChange, AgentChangePage, AgentChangePayload, AgentChangesQuery,
-    AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
-    AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
-    AgentEffectInspectionState, AgentEntityStatus, AgentForkCapability, AgentForkCutoffKind,
-    AgentForkPoint, AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint,
-    AgentHookSemanticFacet, AgentHookTiming, AgentInput, AgentInputContent, AgentInteractionKind,
-    AgentInteractionSnapshot, AgentItemContent, AgentItemSnapshot, AgentLifecycleCapability,
+    AgentAppliedEffectOutcome, AgentCapabilityProfile, AgentChange, AgentChangePage,
+    AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandCapability,
+    AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
+    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentEntityStatus,
+    AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentHookBlockingSemantics,
+    AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming,
+    AgentHostCallbackBinding, AgentHostCallbacks, AgentInput, AgentInputContent,
+    AgentInteractionRequest, AgentInteractionResolution, AgentInteractionSnapshot,
+    AgentInteractionStatus, AgentItemBody, AgentItemPresentation, AgentItemSnapshot,
+    AgentItemTerminalEvidence, AgentItemTransition, AgentItemUpdate, AgentLifecycleCapability,
     AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
     AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
-    AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
-    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
-    AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolName,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnSnapshot, AppliedAgentSurface,
-    AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
-    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurfaceContribution,
-    CompleteAgentService, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
-    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContributionKind,
-    InitialContextDeliveryFidelity, InitialContextProfile, ResumeAgentCommand,
-    RevokeBoundAgentSurface, SemanticFidelity,
+    AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot, AgentSnapshotAuthority,
+    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
+    AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentTerminalStatus,
+    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnSnapshot,
+    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
+    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
+    BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
+    InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
+    ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+};
+use agentdash_integration_api::{
+    AgentDashIntegration, CompleteAgentPlacementRequirement, CompleteAgentRegistrationClaim,
+    CompleteAgentRegistrationContribution, CompleteAgentServiceFactory,
+    CompleteAgentServiceFactoryError,
 };
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
-use tokio::sync::RwLock;
 
-#[derive(Clone)]
-struct DashSource {
-    service: DashAgentService,
-    applied_surface: Option<AppliedAgentSurface>,
-    dash_surface: Option<DashSurface>,
-    initial_context: Option<AppliedInitialContextEvidence>,
+use crate::DashAgentCoreToolCallbacks;
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DashCompleteSourceMetadata {
+    pub applied_surface: Option<AppliedAgentSurface>,
+    pub initial_context: Option<AppliedInitialContextEvidence>,
+    pub callback_surface: Option<BoundAgentSurface>,
+    pub callback_binding: Option<AgentHostCallbackBinding>,
 }
 
-#[derive(Debug, Clone)]
-struct RecordedEffect {
-    inspection: AgentEffectInspection,
-    receipt: RecordedReceipt,
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DashCompleteEffectRecord {
+    pub request_fingerprint: String,
+    pub inspection: AgentEffectInspection,
+    pub receipt: DashCompleteRecordedReceipt,
 }
 
-#[derive(Debug, Clone)]
-enum RecordedReceipt {
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum DashCompleteRecordedReceipt {
     Command(AgentCommandReceipt),
     Fork(ForkAgentReceipt),
+    ApplySurface(AppliedAgentSurfaceReceipt),
 }
 
-#[derive(Default)]
-struct DashServiceState {
-    sources: BTreeMap<AgentSourceCoordinate, DashSource>,
-    effects: BTreeMap<AgentEffectIdentity, RecordedEffect>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DashCompleteCommandEffectKind {
+    Create,
+    Resume,
+    Command,
+    SurfaceRevoke,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum DashCompleteSourceMutation {
+    Create {
+        source: AgentSourceCoordinate,
+        repository: Box<DashAgentRepositoryState>,
+        metadata: Box<DashCompleteSourceMetadata>,
+    },
+    CompareAndSwap {
+        source: AgentSourceCoordinate,
+        expected_repository: Box<DashAgentRepositoryState>,
+        replacement_repository: Box<DashAgentRepositoryState>,
+        expected_metadata: Box<DashCompleteSourceMetadata>,
+        replacement_metadata: Box<DashCompleteSourceMetadata>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DashCompleteAtomicCommit {
+    pub effect_id: AgentEffectIdentity,
+    pub expected_effect: Option<DashCompleteEffectRecord>,
+    pub replacement_effect: DashCompleteEffectRecord,
+    pub source_mutations: Vec<DashCompleteSourceMutation>,
+}
+
+#[async_trait]
+pub trait DashCompleteAgentStore: Send + Sync {
+    fn repositories(&self) -> &dyn DashAgentRepositoryStore;
+
+    async fn load_source(
+        &self,
+        source: &AgentSourceCoordinate,
+    ) -> Result<Option<DashCompleteSourceMetadata>, AgentServiceError>;
+
+    async fn load_effect(
+        &self,
+        identity: &AgentEffectIdentity,
+    ) -> Result<Option<DashCompleteEffectRecord>, AgentServiceError>;
+
+    /// Atomically compares and replaces the effect record together with every source mutation.
+    ///
+    /// Implementations must expose either the entire replacement or none of it after restart.
+    /// Returning an error is allowed after the durable commit completed; callers recover by
+    /// loading the effect identity and validating its typed receipt.
+    async fn commit(&self, commit: DashCompleteAtomicCommit) -> Result<(), AgentServiceError>;
 }
 
 /// Complete Agent target lane backed by Dash Agent history.
@@ -72,34 +130,39 @@ struct DashServiceState {
 /// S2/S3 tests construct this service directly. Production registration remains on the legacy
 /// driver until the S5 activation set switches every caller and repository together.
 pub struct DashAgentCompleteService {
-    state: RwLock<DashServiceState>,
+    store: Arc<dyn DashCompleteAgentStore>,
     execution: DashExecutionDependencies,
-}
-
-impl Default for DashAgentCompleteService {
-    fn default() -> Self {
-        Self::new()
-    }
+    host_callbacks: Option<Arc<dyn AgentHostCallbacks>>,
+    live_sources: tokio::sync::Mutex<BTreeMap<AgentSourceCoordinate, DashAgentService>>,
 }
 
 impl DashAgentCompleteService {
-    pub fn new() -> Self {
-        Self::with_execution(DashExecutionDependencies {
-            provider: Arc::new(UnavailableDashProvider),
-            tools: Arc::new(NoDashTools),
-            callbacks: Arc::new(NoDashExecutionCallbacks),
-            compactor: Arc::new(NativeDashCompactor),
-        })
-    }
-
-    pub fn with_execution(execution: DashExecutionDependencies) -> Self {
+    pub fn with_store(
+        execution: DashExecutionDependencies,
+        store: Arc<dyn DashCompleteAgentStore>,
+    ) -> Self {
         Self {
-            state: RwLock::new(DashServiceState::default()),
+            store,
             execution,
+            host_callbacks: None,
+            live_sources: tokio::sync::Mutex::new(BTreeMap::new()),
         }
     }
 
-    fn descriptor() -> AgentServiceDescriptor {
+    pub fn with_host_callbacks(
+        execution: DashExecutionDependencies,
+        host_callbacks: Arc<dyn AgentHostCallbacks>,
+        store: Arc<dyn DashCompleteAgentStore>,
+    ) -> Self {
+        Self {
+            store,
+            execution,
+            host_callbacks: Some(host_callbacks),
+            live_sources: tokio::sync::Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    pub fn descriptor() -> AgentServiceDescriptor {
         AgentServiceDescriptor {
             definition_id: AgentServiceDefinitionId::new("dash-agent")
                 .expect("static definition id"),
@@ -123,7 +186,7 @@ impl DashAgentCompleteService {
                     cutoffs: BTreeMap::from([
                         (AgentForkCutoffKind::Head, SemanticFidelity::Exact),
                         (AgentForkCutoffKind::CompletedTurn, SemanticFidelity::Exact),
-                        (AgentForkCutoffKind::Item, SemanticFidelity::Exact),
+                        (AgentForkCutoffKind::Item, SemanticFidelity::Unsupported),
                         (
                             AgentForkCutoffKind::SourceCursor,
                             SemanticFidelity::Unsupported,
@@ -220,71 +283,110 @@ impl DashAgentCompleteService {
                 .expect("effect identity produces a source coordinate")
         })
     }
-}
 
-struct UnavailableDashProvider;
-
-#[async_trait]
-impl DashProvider for UnavailableDashProvider {
-    async fn stream(
+    async fn open_source(
         &self,
-        _: DashProviderRequest,
-    ) -> Result<DashProviderEventStream, DashCoreError> {
-        Err(DashCoreError::Provider {
-            message: "Dash Agent provider is not configured".into(),
-            retryable: true,
-        })
+        source: &AgentSourceCoordinate,
+    ) -> Result<(DashAgentService, DashCompleteSourceMetadata), AgentServiceError> {
+        let metadata = self
+            .store
+            .load_source(source)
+            .await?
+            .ok_or_else(|| not_found("Dash Agent source does not exist"))?;
+        let service = if let Some(service) = self.live_sources.lock().await.get(source).cloned() {
+            service
+        } else {
+            let service = DashAgentService::open_with_store(
+                self.store.repositories(),
+                &AgentSessionId::new(source.as_str()),
+                self.execution.clone(),
+            )
+            .await
+            .map_err(map_dash_error)?
+            .ok_or_else(|| internal("Dash Agent source metadata has no durable repository"))?;
+            self.live_sources
+                .lock()
+                .await
+                .insert(source.clone(), service.clone());
+            service
+        };
+        self.materialize_live_surface(source, &service, &metadata)
+            .await?;
+        Ok((service, metadata))
     }
-}
 
-struct NoDashTools;
-
-#[async_trait]
-impl DashToolCallbacks for NoDashTools {
-    async fn invoke(
+    async fn reconcile_live_surface_from_durable_metadata(
         &self,
-        _: &DashTurnId,
-        _: DashToolCall,
-    ) -> Result<DashToolResult, DashCoreError> {
-        Err(DashCoreError::Tool {
-            message: "Dash Agent tool callback is not configured".into(),
-            retryable: true,
-        })
+        source: &AgentSourceCoordinate,
+        service: &DashAgentService,
+    ) -> Result<DashCompleteSourceMetadata, AgentServiceError> {
+        let metadata = self
+            .store
+            .load_source(source)
+            .await?
+            .ok_or_else(|| not_found("Dash Agent source does not exist"))?;
+        self.materialize_live_surface(source, service, &metadata)
+            .await?;
+        Ok(metadata)
     }
-}
 
-struct NoDashExecutionCallbacks;
-
-#[async_trait]
-impl DashExecutionCallbacks for NoDashExecutionCallbacks {
-    async fn emit(&self, _: DashCoreEvent) -> Result<(), DashCoreError> {
-        Ok(())
-    }
-}
-
-struct NativeDashCompactor;
-
-#[async_trait]
-impl DashCompactor for NativeDashCompactor {
-    async fn compact(
+    async fn materialize_live_surface(
         &self,
-        request: DashCompactionRequest,
-    ) -> Result<DashCompactionResult, DashServiceError> {
-        Ok(DashCompactionResult {
-            revision: agentdash_agent::dash::ContextRevision::new(format!(
-                "context:{}",
-                request.source_digest
+        source: &AgentSourceCoordinate,
+        service: &DashAgentService,
+        metadata: &DashCompleteSourceMetadata,
+    ) -> Result<(), AgentServiceError> {
+        match (
+            &metadata.applied_surface,
+            &metadata.callback_surface,
+            &metadata.callback_binding,
+        ) {
+            (None, None, None) => {
+                service
+                    .replace_tool_callbacks(self.execution.tools.clone())
+                    .await;
+                Ok(())
+            }
+            (Some(applied), Some(surface), Some(binding))
+                if applied_surface_matches_bound(applied, surface) =>
+            {
+                let requires_callbacks = surface.contributions.iter().any(|contribution| {
+                    matches!(
+                        contribution.semantics,
+                        AgentSurfaceSemanticFacet::Tool(_) | AgentSurfaceSemanticFacet::Hook(_)
+                    )
+                });
+                if let Some(callbacks) = &self.host_callbacks {
+                    service
+                        .replace_tool_callbacks(Arc::new(
+                            DashAgentCoreToolCallbacks::from_bound_surface(
+                                callbacks.clone(),
+                                binding.route_id.clone(),
+                                binding.binding_generation,
+                                source.clone(),
+                                binding.default_deadline_ms,
+                                surface,
+                            ),
+                        ))
+                        .await;
+                    Ok(())
+                } else if requires_callbacks {
+                    Err(AgentServiceError::new(
+                        AgentServiceErrorCode::Unavailable,
+                        "Dash Agent cannot materialize durable native callbacks without AgentHostCallbacks",
+                        true,
+                    ))
+                } else {
+                    service
+                        .replace_tool_callbacks(self.execution.tools.clone())
+                        .await;
+                    Ok(())
+                }
+            }
+            _ => Err(internal(
+                "Dash Agent durable surface metadata is incomplete or inconsistent",
             )),
-            summary: format!(
-                "Dash Agent compacted {} history entries",
-                request.history.entries().len()
-            ),
-            retained_from: request
-                .history
-                .entries()
-                .last()
-                .map(|entry| entry.entry_id.clone()),
-        })
+        }
     }
 }
 
@@ -298,12 +400,16 @@ impl CompleteAgentService for DashAgentCompleteService {
         &self,
         command: CreateAgentCommand,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        let mut state = self.state.write().await;
         let source = Self::source_for_create(&command);
-        if let Some(recorded) = state.effects.get(&command.meta.effect_id) {
-            return recorded.command_receipt_for(&source, &command.meta.command_id);
+        let request_fingerprint = request_fingerprint(&command)?;
+        if let Some(recorded) = self.store.load_effect(&command.meta.effect_id).await? {
+            return recorded.command_receipt_for(
+                &source,
+                &command.meta.command_id,
+                &request_fingerprint,
+            );
         }
-        if state.sources.contains_key(&source) {
+        if self.store.load_source(&source).await?.is_some() {
             return Err(conflict("requested Dash Agent source already exists"));
         }
 
@@ -327,26 +433,22 @@ impl CompleteAgentService for DashAgentCompleteService {
                     renderer_version: None,
                     materialized_digest: None,
                 });
-        let service = DashAgentService::create(history, installation, self.execution.clone())
+        let repository = DashAgentService::initial_repository_state(history, installation)
             .map_err(map_dash_error)?;
+        let metadata = DashCompleteSourceMetadata {
+            applied_surface: None,
+            initial_context: initial_evidence.clone(),
+            callback_surface: None,
+            callback_binding: None,
+        };
         let revision = AgentSnapshotRevision(
-            service
-                .read()
-                .await
-                .map_err(map_dash_error)?
-                .state
+            repository
+                .history()
+                .state()
+                .map_err(|error| map_dash_error(error.into()))?
                 .entry_count,
         );
 
-        state.sources.insert(
-            source.clone(),
-            DashSource {
-                service,
-                applied_surface: None,
-                dash_surface: None,
-                initial_context: initial_evidence.clone(),
-            },
-        );
         let receipt = AgentCommandReceipt {
             command_id: command.meta.command_id.clone(),
             effect_id: command.meta.effect_id.clone(),
@@ -357,22 +459,25 @@ impl CompleteAgentService for DashAgentCompleteService {
             snapshot_revision: Some(revision),
             initial_context: initial_evidence.clone(),
         };
-        state.effects.insert(
-            command.meta.effect_id.clone(),
-            RecordedEffect {
-                inspection: AgentEffectInspection {
-                    effect_id: command.meta.effect_id,
-                    command_id: Some(command.meta.command_id),
-                    state: AgentEffectInspectionState::Applied {
-                        source,
-                        terminal: Some(AgentTerminalOutcome::Succeeded),
-                        initial_context: initial_evidence,
-                        child_source: None,
-                    },
-                },
-                receipt: RecordedReceipt::Command(receipt.clone()),
-            },
+        let record = command_effect_record(
+            DashCompleteCommandEffectKind::Create,
+            request_fingerprint,
+            receipt.clone(),
+            Some(AgentTerminalOutcome::Succeeded),
         );
+        self.store
+            .commit(DashCompleteAtomicCommit {
+                effect_id: command.meta.effect_id,
+                expected_effect: None,
+                replacement_effect: record,
+                source_mutations: vec![DashCompleteSourceMutation::Create {
+                    source: source.clone(),
+                    repository: Box::new(repository),
+                    metadata: Box::new(metadata),
+                }],
+            })
+            .await?;
+        self.open_source(&source).await?;
         Ok(receipt)
     }
 
@@ -380,16 +485,16 @@ impl CompleteAgentService for DashAgentCompleteService {
         &self,
         command: ResumeAgentCommand,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        let mut state = self.state.write().await;
-        if let Some(recorded) = state.effects.get(&command.meta.effect_id) {
-            return recorded.command_receipt_for(&command.source, &command.meta.command_id);
+        let request_fingerprint = request_fingerprint(&command)?;
+        if let Some(recorded) = self.store.load_effect(&command.meta.effect_id).await? {
+            return recorded.command_receipt_for(
+                &command.source,
+                &command.meta.command_id,
+                &request_fingerprint,
+            );
         }
-        let source = state
-            .sources
-            .get(&command.source)
-            .ok_or_else(|| not_found("Dash Agent source does not exist"))?;
-        let revision = source
-            .service
+        let (service, source) = self.open_source(&command.source).await?;
+        let revision = service
             .read()
             .await
             .map_err(map_dash_error)?
@@ -403,83 +508,97 @@ impl CompleteAgentService for DashAgentCompleteService {
                 outcome: AgentTerminalOutcome::Succeeded,
             },
             snapshot_revision: Some(AgentSnapshotRevision(revision)),
-            initial_context: source.initial_context.clone(),
+            initial_context: source.initial_context,
         };
-        record_command_effect(
-            &mut state,
-            command.meta.effect_id,
-            command.meta.command_id,
-            receipt.clone(),
-            Some(AgentTerminalOutcome::Succeeded),
-        );
+        self.store
+            .commit(DashCompleteAtomicCommit {
+                effect_id: command.meta.effect_id,
+                expected_effect: None,
+                replacement_effect: command_effect_record(
+                    DashCompleteCommandEffectKind::Resume,
+                    request_fingerprint,
+                    receipt.clone(),
+                    Some(AgentTerminalOutcome::Succeeded),
+                ),
+                source_mutations: vec![],
+            })
+            .await?;
         Ok(receipt)
     }
 
     async fn fork(&self, command: ForkAgentCommand) -> Result<ForkAgentReceipt, AgentServiceError> {
-        let mut state = self.state.write().await;
-        if let Some(recorded) = state.effects.get(&command.meta.effect_id) {
-            return recorded.fork_receipt_for(&command.source, &command.meta.command_id);
+        let request_fingerprint = request_fingerprint(&command)?;
+        if let Some(recorded) = self.store.load_effect(&command.meta.effect_id).await? {
+            return recorded.fork_receipt_for(
+                &command.source,
+                &command.meta.command_id,
+                &request_fingerprint,
+            );
         }
-        let parent = state
-            .sources
-            .get(&command.source)
-            .ok_or_else(|| not_found("Dash Agent parent source does not exist"))?
-            .clone();
+        let (parent, parent_metadata) = self.open_source(&command.source).await?;
         let child_source = command.requested_child_source.clone().unwrap_or_else(|| {
             AgentSourceCoordinate::new(format!("dash:fork:{}", command.meta.effect_id))
                 .expect("effect identity produces a source coordinate")
         });
-        if state.sources.contains_key(&child_source) {
+        if self.store.load_source(&child_source).await?.is_some() {
             return Err(conflict("requested Dash Agent child source already exists"));
         }
-        let child_service = parent
-            .service
-            .fork(
+        let child_repository = parent
+            .fork_repository_state(
                 AgentSessionId::new(child_source.as_str()),
                 BranchId::new(format!("{}:fork", child_source.as_str())),
                 translate_fork_cutoff(&command.cutoff)?,
             )
             .await
             .map_err(map_dash_error)?;
-        let child_history = child_service.history().await.map_err(map_dash_error)?;
+        let child_history = child_repository.history();
         let child_digest = AgentPayloadDigest::new(format!("sha256:{}", child_history.digest()))
             .map_err(internal)?;
-        state.sources.insert(
-            child_source.clone(),
-            DashSource {
-                service: child_service,
-                applied_surface: parent.applied_surface,
-                dash_surface: parent.dash_surface,
-                initial_context: parent.initial_context,
-            },
-        );
         let receipt = ForkAgentReceipt {
             command_id: command.meta.command_id.clone(),
             effect_id: command.meta.effect_id.clone(),
             parent_source: command.source.clone(),
             child_source: Some(child_source.clone()),
-            cutoff: command.cutoff,
-            child_history_digest: Some(child_digest),
+            cutoff: command.cutoff.clone(),
+            child_history_digest: Some(child_digest.clone()),
             state: AgentReceiptState::Terminal {
                 outcome: AgentTerminalOutcome::Succeeded,
             },
         };
-        state.effects.insert(
-            command.meta.effect_id.clone(),
-            RecordedEffect {
-                inspection: AgentEffectInspection {
-                    effect_id: command.meta.effect_id,
-                    command_id: Some(command.meta.command_id),
-                    state: AgentEffectInspectionState::Applied {
-                        source: command.source,
-                        terminal: Some(AgentTerminalOutcome::Succeeded),
-                        initial_context: None,
-                        child_source: Some(child_source),
+        let record = DashCompleteEffectRecord {
+            request_fingerprint,
+            inspection: AgentEffectInspection {
+                effect_id: command.meta.effect_id.clone(),
+                command_id: Some(command.meta.command_id.clone()),
+                state: AgentEffectInspectionState::Applied {
+                    outcome: AgentAppliedEffectOutcome::Fork {
+                        receipt: AppliedForkAgentReceipt {
+                            command_id: command.meta.command_id.clone(),
+                            effect_id: command.meta.effect_id.clone(),
+                            parent_source: command.source.clone(),
+                            child_source: child_source.clone(),
+                            cutoff: command.cutoff,
+                            child_history_digest: child_digest,
+                            terminal: Some(AgentTerminalOutcome::Succeeded),
+                        },
                     },
                 },
-                receipt: RecordedReceipt::Fork(receipt.clone()),
             },
-        );
+            receipt: DashCompleteRecordedReceipt::Fork(receipt.clone()),
+        };
+        self.store
+            .commit(DashCompleteAtomicCommit {
+                effect_id: command.meta.effect_id,
+                expected_effect: None,
+                replacement_effect: record,
+                source_mutations: vec![DashCompleteSourceMutation::Create {
+                    source: child_source.clone(),
+                    repository: Box::new(child_repository),
+                    metadata: Box::new(parent_metadata),
+                }],
+            })
+            .await?;
+        self.open_source(&child_source).await?;
         Ok(receipt)
     }
 
@@ -487,18 +606,44 @@ impl CompleteAgentService for DashAgentCompleteService {
         &self,
         command: AgentCommandEnvelope,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        let service = {
-            let state = self.state.read().await;
-            if let Some(recorded) = state.effects.get(&command.meta.effect_id) {
-                return recorded.command_receipt_for(&command.source, &command.meta.command_id);
-            }
-            state
-                .sources
-                .get(&command.source)
-                .ok_or_else(|| not_found("Dash Agent source does not exist"))?
-                .service
-                .clone()
-        };
+        let request_fingerprint = request_fingerprint(&command)?;
+        let accepted_record =
+            if let Some(recorded) = self.store.load_effect(&command.meta.effect_id).await? {
+                let receipt = recorded.command_receipt_for(
+                    &command.source,
+                    &command.meta.command_id,
+                    &request_fingerprint,
+                )?;
+                if matches!(receipt.state, AgentReceiptState::Terminal { .. }) {
+                    return Ok(receipt);
+                }
+                recorded
+            } else {
+                let accepted_receipt = AgentCommandReceipt {
+                    command_id: command.meta.command_id.clone(),
+                    effect_id: command.meta.effect_id.clone(),
+                    source: command.source.clone(),
+                    state: AgentReceiptState::Accepted,
+                    snapshot_revision: None,
+                    initial_context: None,
+                };
+                let accepted_record = command_effect_record(
+                    DashCompleteCommandEffectKind::Command,
+                    request_fingerprint.clone(),
+                    accepted_receipt,
+                    None,
+                );
+                self.store
+                    .commit(DashCompleteAtomicCommit {
+                        effect_id: command.meta.effect_id.clone(),
+                        expected_effect: None,
+                        replacement_effect: accepted_record.clone(),
+                        source_mutations: vec![],
+                    })
+                    .await?;
+                accepted_record
+            };
+        let (service, _) = self.open_source(&command.source).await?;
         let dash_receipt = service
             .execute(DashCommandRequest {
                 command_id: CommandId::new(command.meta.command_id.as_str()),
@@ -527,27 +672,26 @@ impl CompleteAgentService for DashAgentCompleteService {
             snapshot_revision: Some(AgentSnapshotRevision(revision)),
             initial_context: None,
         };
-        let mut state = self.state.write().await;
-        record_command_effect(
-            &mut state,
-            command.meta.effect_id,
-            command.meta.command_id,
+        let final_record = command_effect_record(
+            DashCompleteCommandEffectKind::Command,
+            request_fingerprint,
             receipt.clone(),
             terminal,
         );
+        self.store
+            .commit(DashCompleteAtomicCommit {
+                effect_id: command.meta.effect_id,
+                expected_effect: Some(accepted_record),
+                replacement_effect: final_record,
+                source_mutations: vec![],
+            })
+            .await?;
         Ok(receipt)
     }
 
     async fn read(&self, query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError> {
-        let source = {
-            let state = self.state.read().await;
-            state
-                .sources
-                .get(&query.source)
-                .ok_or_else(|| not_found("Dash Agent source does not exist"))?
-                .clone()
-        };
-        let read = source.service.read().await.map_err(map_dash_error)?;
+        let (service, source) = self.open_source(&query.source).await?;
+        let read = service.read().await.map_err(map_dash_error)?;
         let history_state = read.state;
         let revision = AgentSnapshotRevision(history_state.entry_count);
         if query
@@ -587,6 +731,9 @@ impl CompleteAgentService for DashAgentCompleteService {
                 .iter()
                 .map(|(id, interaction)| interaction_snapshot(id, interaction))
                 .collect::<Result<Vec<_>, _>>()?,
+            // Dash Agent history currently has no naming entry/fold rule, so the Complete Agent
+            // seam must report the capability as absent instead of deriving a title from prompts.
+            thread_name: None,
             source_info: AgentSnapshotSource {
                 authority: AgentSnapshotAuthority::AgentAuthoritative,
                 source_revision: Some(
@@ -596,8 +743,8 @@ impl CompleteAgentService for DashAgentCompleteService {
                 fidelity: SemanticFidelity::Exact,
                 observed_at_ms: 0,
             },
-            applied_surface: source.applied_surface.clone(),
-            initial_context: source.initial_context.clone(),
+            applied_surface: source.applied_surface,
+            initial_context: source.initial_context,
         })
     }
 
@@ -605,15 +752,7 @@ impl CompleteAgentService for DashAgentCompleteService {
         &self,
         query: AgentChangesQuery,
     ) -> Result<AgentChangePage, AgentServiceError> {
-        let service = {
-            let state = self.state.read().await;
-            state
-                .sources
-                .get(&query.source)
-                .ok_or_else(|| not_found("Dash Agent source does not exist"))?
-                .service
-                .clone()
-        };
+        let (service, _) = self.open_source(&query.source).await?;
         let after = query
             .after
             .as_ref()
@@ -650,43 +789,8 @@ impl CompleteAgentService for DashAgentCompleteService {
         &self,
         identity: AgentEffectIdentity,
     ) -> Result<AgentEffectInspection, AgentServiceError> {
-        let sources = {
-            let state = self.state.read().await;
-            if let Some(record) = state.effects.get(&identity) {
-                return Ok(record.inspection.clone());
-            }
-            state
-                .sources
-                .iter()
-                .map(|(source, record)| (source.clone(), record.service.clone()))
-                .collect::<Vec<_>>()
-        };
-        let dash_effect_id = agentdash_agent::dash::EffectId::new(identity.as_str());
-        for (source, service) in sources {
-            let Some(inspection) = service
-                .inspect(&dash_effect_id)
-                .await
-                .map_err(map_dash_error)?
-            else {
-                continue;
-            };
-            return Ok(AgentEffectInspection {
-                effect_id: identity,
-                command_id: Some(
-                    agentdash_agent_service_api::AgentCommandId::new(inspection.command_id.0)
-                        .map_err(internal)?,
-                ),
-                state: match inspection.state {
-                    DashReceiptState::Accepted => AgentEffectInspectionState::Accepted { source },
-                    DashReceiptState::Terminal(terminal) => AgentEffectInspectionState::Applied {
-                        source,
-                        terminal: Some(service_terminal(terminal)),
-                        initial_context: None,
-                        child_source: None,
-                    },
-                    DashReceiptState::Unknown => AgentEffectInspectionState::Unknown,
-                },
-            });
+        if let Some(record) = self.store.load_effect(&identity).await? {
+            return Ok(record.inspection);
         }
         Ok(AgentEffectInspection {
             effect_id: identity,
@@ -699,11 +803,17 @@ impl CompleteAgentService for DashAgentCompleteService {
         &self,
         command: ApplyBoundAgentSurface,
     ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
-        let mut state = self.state.write().await;
-        let source = state
-            .sources
-            .get_mut(&command.source)
-            .ok_or_else(|| not_found("Dash Agent source does not exist"))?;
+        let request_fingerprint = request_fingerprint(&command)?;
+        if let Some(recorded) = self.store.load_effect(&command.effect_id).await? {
+            let receipt = recorded.apply_surface_receipt_for(
+                &command.source,
+                &command.command_id,
+                &request_fingerprint,
+            )?;
+            self.open_source(&command.source).await?;
+            return Ok(receipt);
+        }
+        let (service, metadata) = self.open_source(&command.source).await?;
         let dash_surface = dash_surface_from_bound(&command.bound_surface)?;
         let profile = Self::descriptor().profile.surface;
         if let Some(unsupported) = command
@@ -721,6 +831,25 @@ impl CompleteAgentService for DashAgentCompleteService {
                 false,
             ));
         }
+        if self.host_callbacks.is_none()
+            && command
+                .bound_surface
+                .contributions
+                .iter()
+                .any(|contribution| {
+                    matches!(
+                        contribution.semantics,
+                        AgentSurfaceSemanticFacet::Tool(_) | AgentSurfaceSemanticFacet::Hook(_)
+                    )
+                })
+        {
+            return Err(AgentServiceError::new(
+                AgentServiceErrorCode::Unavailable,
+                "Dash Agent has no AgentHostCallbacks binding for native tool/hook materialization",
+                true,
+            ));
+        }
+        let callback_surface = command.bound_surface.clone();
         let applied = AppliedAgentSurface {
             revision: command.bound_surface.revision,
             digest: command.bound_surface.digest,
@@ -739,80 +868,249 @@ impl CompleteAgentService for DashAgentCompleteService {
                 })
                 .collect(),
         };
-        source
-            .service
-            .apply_surface(dash_surface.clone())
+        let (expected_repository, replacement_repository) = service
+            .stage_surface_apply(dash_surface)
             .await
             .map_err(map_dash_error)?;
-        source.applied_surface = Some(applied.clone());
-        source.dash_surface = Some(dash_surface);
-        Ok(AppliedAgentSurfaceReceipt {
-            command_id: command.command_id,
-            effect_id: command.effect_id,
-            source: command.source,
+        let replacement = DashCompleteSourceMetadata {
+            applied_surface: Some(applied.clone()),
+            initial_context: metadata.initial_context.clone(),
+            callback_surface: Some(callback_surface.clone()),
+            callback_binding: Some(command.callbacks.clone()),
+        };
+        let receipt = AppliedAgentSurfaceReceipt {
+            command_id: command.command_id.clone(),
+            effect_id: command.effect_id.clone(),
+            source: command.source.clone(),
             applied,
-        })
+        };
+        let record = DashCompleteEffectRecord {
+            request_fingerprint,
+            inspection: AgentEffectInspection {
+                effect_id: command.effect_id.clone(),
+                command_id: Some(command.command_id.clone()),
+                state: AgentEffectInspectionState::Applied {
+                    outcome: AgentAppliedEffectOutcome::SurfaceApply {
+                        receipt: receipt.clone(),
+                    },
+                },
+            },
+            receipt: DashCompleteRecordedReceipt::ApplySurface(receipt.clone()),
+        };
+        let commit_result = self
+            .store
+            .commit(DashCompleteAtomicCommit {
+                effect_id: command.effect_id.clone(),
+                expected_effect: None,
+                replacement_effect: record,
+                source_mutations: vec![DashCompleteSourceMutation::CompareAndSwap {
+                    source: command.source.clone(),
+                    expected_repository: Box::new(expected_repository),
+                    replacement_repository: Box::new(replacement_repository),
+                    expected_metadata: Box::new(metadata),
+                    replacement_metadata: Box::new(replacement),
+                }],
+            })
+            .await;
+        self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
+            .await?;
+        commit_result?;
+        Ok(receipt)
     }
 
     async fn revoke_surface(
         &self,
         command: RevokeBoundAgentSurface,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        let mut state = self.state.write().await;
-        let source = state
-            .sources
-            .get_mut(&command.source)
-            .ok_or_else(|| not_found("Dash Agent source does not exist"))?;
-        if source
+        let request_fingerprint = request_fingerprint(&command)?;
+        if let Some(recorded) = self.store.load_effect(&command.effect_id).await? {
+            let receipt = recorded.command_receipt_for(
+                &command.source,
+                &command.command_id,
+                &request_fingerprint,
+            )?;
+            self.open_source(&command.source).await?;
+            return Ok(receipt);
+        }
+        let (service, metadata) = self.open_source(&command.source).await?;
+        if metadata
             .applied_surface
             .as_ref()
             .is_some_and(|applied| applied.revision != command.expected_revision)
         {
             return Err(conflict("surface revision does not match"));
         }
-        source
-            .service
-            .revoke_surface(command.expected_revision.0)
+        if metadata
+            .callback_binding
+            .as_ref()
+            .is_some_and(|binding| binding.binding_generation != command.binding_generation)
+        {
+            return Err(AgentServiceError::new(
+                AgentServiceErrorCode::StaleBindingGeneration,
+                "surface revoke binding generation is stale",
+                false,
+            ));
+        }
+        let (expected_repository, replacement_repository) = service
+            .stage_surface_revoke(command.expected_revision.0)
             .await
             .map_err(map_dash_error)?;
-        let revision = source
-            .service
-            .read()
-            .await
-            .map_err(map_dash_error)?
-            .state
+        let revision = replacement_repository
+            .history()
+            .state()
+            .map_err(|error| map_dash_error(error.into()))?
             .entry_count;
-        source.applied_surface = None;
-        source.dash_surface = None;
-        Ok(AgentCommandReceipt {
-            command_id: command.command_id,
-            effect_id: command.effect_id,
-            source: command.source,
+        let receipt = AgentCommandReceipt {
+            command_id: command.command_id.clone(),
+            effect_id: command.effect_id.clone(),
+            source: command.source.clone(),
             state: AgentReceiptState::Terminal {
                 outcome: AgentTerminalOutcome::Succeeded,
             },
             snapshot_revision: Some(AgentSnapshotRevision(revision)),
             initial_context: None,
+        };
+        let record = command_effect_record(
+            DashCompleteCommandEffectKind::SurfaceRevoke,
+            request_fingerprint,
+            receipt.clone(),
+            Some(AgentTerminalOutcome::Succeeded),
+        );
+        let commit_result = self
+            .store
+            .commit(DashCompleteAtomicCommit {
+                effect_id: command.effect_id.clone(),
+                expected_effect: None,
+                replacement_effect: record,
+                source_mutations: vec![DashCompleteSourceMutation::CompareAndSwap {
+                    source: command.source.clone(),
+                    expected_repository: Box::new(expected_repository),
+                    replacement_repository: Box::new(replacement_repository),
+                    expected_metadata: Box::new(metadata.clone()),
+                    replacement_metadata: Box::new(DashCompleteSourceMetadata {
+                        applied_surface: None,
+                        initial_context: metadata.initial_context,
+                        callback_surface: None,
+                        callback_binding: None,
+                    }),
+                }],
+            })
+            .await;
+        self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
+            .await?;
+        commit_result?;
+        Ok(receipt)
+    }
+}
+
+struct NativeCompleteAgentServiceFactory {
+    execution: DashExecutionDependencies,
+    host_callbacks: Arc<dyn AgentHostCallbacks>,
+    store: Arc<dyn DashCompleteAgentStore>,
+}
+
+#[async_trait]
+impl CompleteAgentServiceFactory for NativeCompleteAgentServiceFactory {
+    async fn materialize(
+        &self,
+    ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentServiceFactoryError> {
+        Ok(Arc::new(DashAgentCompleteService::with_host_callbacks(
+            self.execution.clone(),
+            self.host_callbacks.clone(),
+            self.store.clone(),
+        )))
+    }
+}
+
+pub struct NativeCompleteAgentIntegration {
+    registration: CompleteAgentRegistrationContribution,
+}
+
+impl NativeCompleteAgentIntegration {
+    pub fn new(
+        instance_id: AgentServiceInstanceId,
+        execution: DashExecutionDependencies,
+        host_callbacks: Arc<dyn AgentHostCallbacks>,
+        store: Arc<dyn DashCompleteAgentStore>,
+    ) -> Result<Self, agentdash_integration_api::CompleteAgentContributionError> {
+        Ok(Self {
+            registration: native_complete_agent_registration(
+                instance_id,
+                execution,
+                host_callbacks,
+                store,
+            )?,
         })
     }
 }
 
-impl RecordedEffect {
+impl AgentDashIntegration for NativeCompleteAgentIntegration {
+    fn name(&self) -> &str {
+        "builtin.dash_agent"
+    }
+
+    fn complete_agent_registrations(&self) -> Vec<CompleteAgentRegistrationContribution> {
+        vec![self.registration.clone()]
+    }
+}
+
+pub fn native_complete_agent_registration(
+    instance_id: AgentServiceInstanceId,
+    execution: DashExecutionDependencies,
+    host_callbacks: Arc<dyn AgentHostCallbacks>,
+    store: Arc<dyn DashCompleteAgentStore>,
+) -> Result<
+    CompleteAgentRegistrationContribution,
+    agentdash_integration_api::CompleteAgentContributionError,
+> {
+    let declared_descriptor = DashAgentCompleteService::descriptor();
+    CompleteAgentRegistrationContribution::new(
+        declared_descriptor,
+        instance_id,
+        CompleteAgentPlacementRequirement::InProcess,
+        None,
+        CompleteAgentRegistrationClaim {
+            publisher_integration: "builtin.dash_agent".to_owned(),
+            service_version: env!("CARGO_PKG_VERSION").to_owned(),
+            claimed_service_build_digest: AgentPayloadDigest::new(format!(
+                "dash-complete-agent:{}",
+                env!("CARGO_PKG_VERSION")
+            ))
+            .expect("static Dash Complete Agent build digest"),
+            claimed_conformance_suite_revision: "dash-complete-agent-v1".to_owned(),
+        },
+        Arc::new(NativeCompleteAgentServiceFactory {
+            execution,
+            host_callbacks,
+            store,
+        }),
+    )
+}
+
+impl DashCompleteEffectRecord {
     fn command_receipt_for(
         &self,
         source: &AgentSourceCoordinate,
         command_id: &agentdash_agent_service_api::AgentCommandId,
+        request_fingerprint: &str,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
         match &self.receipt {
-            RecordedReceipt::Command(receipt)
-                if &receipt.source == source && &receipt.command_id == command_id =>
+            DashCompleteRecordedReceipt::Command(receipt)
+                if &receipt.source == source
+                    && &receipt.command_id == command_id
+                    && self.request_fingerprint == request_fingerprint =>
             {
                 Ok(receipt.clone())
             }
-            RecordedReceipt::Command(_) => Err(conflict(
+            DashCompleteRecordedReceipt::Command(_) => Err(conflict(
                 "effect identity was reused by another command or source",
             )),
-            RecordedReceipt::Fork(_) => Err(conflict("effect identity belongs to a fork command")),
+            DashCompleteRecordedReceipt::Fork(_) => {
+                Err(conflict("effect identity belongs to a fork command"))
+            }
+            DashCompleteRecordedReceipt::ApplySurface(_) => Err(conflict(
+                "effect identity belongs to a surface apply command",
+            )),
         }
     }
 
@@ -820,19 +1118,44 @@ impl RecordedEffect {
         &self,
         source: &AgentSourceCoordinate,
         command_id: &agentdash_agent_service_api::AgentCommandId,
+        request_fingerprint: &str,
     ) -> Result<ForkAgentReceipt, AgentServiceError> {
         match &self.receipt {
-            RecordedReceipt::Fork(receipt)
-                if &receipt.parent_source == source && &receipt.command_id == command_id =>
+            DashCompleteRecordedReceipt::Fork(receipt)
+                if &receipt.parent_source == source
+                    && &receipt.command_id == command_id
+                    && self.request_fingerprint == request_fingerprint =>
             {
                 Ok(receipt.clone())
             }
-            RecordedReceipt::Fork(_) => Err(conflict(
+            DashCompleteRecordedReceipt::Fork(_) => Err(conflict(
                 "effect identity was reused by another command or source",
             )),
-            RecordedReceipt::Command(_) => {
+            DashCompleteRecordedReceipt::Command(_)
+            | DashCompleteRecordedReceipt::ApplySurface(_) => {
                 Err(conflict("effect identity belongs to a non-fork command"))
             }
+        }
+    }
+
+    fn apply_surface_receipt_for(
+        &self,
+        source: &AgentSourceCoordinate,
+        command_id: &agentdash_agent_service_api::AgentCommandId,
+        request_fingerprint: &str,
+    ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
+        match &self.receipt {
+            DashCompleteRecordedReceipt::ApplySurface(receipt)
+                if &receipt.source == source
+                    && &receipt.command_id == command_id
+                    && self.request_fingerprint == request_fingerprint =>
+            {
+                Ok(receipt.clone())
+            }
+            DashCompleteRecordedReceipt::ApplySurface(_) => Err(conflict(
+                "effect identity was reused by another command or source",
+            )),
+            _ => Err(conflict("effect identity belongs to a non-surface command")),
         }
     }
 }
@@ -902,9 +1225,11 @@ fn translate_fork_cutoff(cutoff: &AgentForkPoint) -> Result<ForkCutoff, AgentSer
         AgentForkPoint::CompletedTurn { turn_id } => Ok(ForkCutoff::CompletedTurn {
             turn_id: agentdash_agent::dash::AgentTurnId::new(turn_id.as_str()),
         }),
-        AgentForkPoint::Item { item_id } => Ok(ForkCutoff::CompletedItem {
-            item_id: agentdash_agent::dash::AgentItemId::new(item_id.as_str()),
-        }),
+        AgentForkPoint::Item { .. } => Err(AgentServiceError::new(
+            AgentServiceErrorCode::Unsupported,
+            "Dash Agent does not advertise item-cutoff fork",
+            false,
+        )),
         AgentForkPoint::SourceCursor { .. } => Err(AgentServiceError::new(
             AgentServiceErrorCode::Unsupported,
             "Dash Agent does not advertise source-cursor fork",
@@ -1057,45 +1382,54 @@ fn item_snapshot(
     item_id: &DashItemId,
     item: &agentdash_agent::dash::ItemState,
 ) -> Result<AgentItemSnapshot, AgentServiceError> {
-    let content = match &item.details {
-        ItemDetails::Pending => AgentItemContent::Extension {
-            namespace: "dash.history".into(),
-            schema: "pending_item_v1".into(),
-            value: serde_json::json!({"kind": item.kind}),
+    let body = match &item.details {
+        ItemDetails::Pending => AgentItemBody::GenericToolActivity {
+            name: format!("{:?}", item.kind).to_ascii_lowercase(),
+            arguments: serde_json::json!({}),
+            result: None,
+            progress: Vec::new(),
         },
-        ItemDetails::AssistantMessage { content } => AgentItemContent::AgentOutput {
-            content: vec![AgentInputContent::Text {
+        ItemDetails::AssistantMessage { content } => AgentItemBody::AgentMessage {
+            content: vec![agentdash_agent_service_api::AgentContentBlock::Text {
                 text: content.clone(),
             }],
+            phase: None,
         },
-        ItemDetails::ToolCall { name, arguments } => AgentItemContent::ToolCall {
-            name: AgentToolName::new(name.clone()).map_err(internal)?,
+        ItemDetails::ToolCall { name, arguments } => AgentItemBody::GenericToolActivity {
+            name: name.clone(),
             arguments: serde_json::from_str(arguments)
                 .unwrap_or_else(|_| serde_json::Value::String(arguments.clone())),
+            result: None,
+            progress: Vec::new(),
         },
         ItemDetails::ToolResult {
             name,
             content,
             is_error,
-        } => AgentItemContent::ToolResult {
-            name: AgentToolName::new(name.clone().unwrap_or_else(|| "unknown".into()))
-                .map_err(internal)?,
-            result: serde_json::json!({"content": content, "is_error": is_error}),
+        } => AgentItemBody::GenericToolActivity {
+            name: name.clone().unwrap_or_else(|| "unknown".into()),
+            arguments: serde_json::json!({}),
+            result: Some(serde_json::json!({"content": content, "is_error": is_error})),
+            progress: Vec::new(),
         },
-        ItemDetails::Interaction { prompt } => AgentItemContent::Extension {
-            namespace: "dash.interaction".into(),
-            schema: "interaction_item_v1".into(),
-            value: serde_json::json!({"prompt": prompt}),
+        ItemDetails::Interaction { prompt } => AgentItemBody::GenericToolActivity {
+            name: "user_input".into(),
+            arguments: serde_json::json!({"prompt": prompt}),
+            result: None,
+            progress: Vec::new(),
         },
-        ItemDetails::ContextCompaction => AgentItemContent::ContextCompaction,
+        ItemDetails::ContextCompaction => AgentItemBody::ContextCompaction {
+            summary: None,
+            source_digest: None,
+        },
     };
-    let canonical = serde_json::to_vec(&content).map_err(internal)?;
+    let status = entity_status(item.status);
+    let terminal = terminal_evidence(item.status);
+    let presentation = AgentItemPresentation::new(body, None, None, terminal).map_err(internal)?;
     Ok(AgentItemSnapshot {
         id: service_item_id(item_id)?,
-        status: entity_status(item.status),
-        content,
-        content_digest: AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(canonical)))
-            .map_err(internal)?,
+        status,
+        presentation,
     })
 }
 
@@ -1111,9 +1445,20 @@ fn interaction_snapshot(
             .as_ref()
             .map(service_item_id)
             .transpose()?,
-        kind: AgentInteractionKind::UserInput,
-        prompt: interaction.prompt.clone(),
-        resolved: interaction.response.is_some(),
+        request: AgentInteractionRequest::UserInput {
+            prompt: interaction.prompt.clone(),
+            questions: Vec::new(),
+        },
+        status: if interaction.response.is_some() {
+            AgentInteractionStatus::Resolved
+        } else {
+            AgentInteractionStatus::Pending
+        },
+        resolution: interaction.response.as_ref().map(|response| {
+            AgentInteractionResolution::UserInput {
+                answers: serde_json::Value::String(response.clone()),
+            }
+        }),
     })
 }
 
@@ -1123,16 +1468,46 @@ fn compaction_snapshot(
 ) -> Result<AgentTurnSnapshot, AgentServiceError> {
     let id = agentdash_agent_service_api::AgentTurnId::new(id.0.clone()).map_err(internal)?;
     let item_id = agentdash_agent_service_api::AgentItemId::new(id.as_str()).map_err(internal)?;
+    let status = entity_status(compaction.status);
+    let body = AgentItemBody::ContextCompaction {
+        summary: compaction.summary.as_ref().map(|summary| {
+            vec![agentdash_agent_service_api::AgentContentBlock::Text {
+                text: summary.clone(),
+            }]
+        }),
+        source_digest: AgentPayloadDigest::new(format!("sha256:{}", compaction.source_digest)).ok(),
+    };
     Ok(AgentTurnSnapshot {
         id,
-        status: entity_status(compaction.status),
+        status,
         items: vec![AgentItemSnapshot {
             id: item_id,
-            status: entity_status(compaction.status),
-            content: AgentItemContent::ContextCompaction,
-            content_digest: AgentPayloadDigest::new(format!("sha256:{}", compaction.source_digest))
-                .map_err(internal)?,
+            status,
+            presentation: AgentItemPresentation::new(
+                body,
+                None,
+                None,
+                terminal_evidence(compaction.status),
+            )
+            .map_err(internal)?,
         }],
+    })
+}
+
+fn terminal_evidence(status: ActivityStatus) -> Option<AgentItemTerminalEvidence> {
+    let outcome = match status {
+        ActivityStatus::Active => return None,
+        ActivityStatus::Completed => AgentTerminalStatus::Completed,
+        ActivityStatus::Failed => AgentTerminalStatus::Failed,
+        ActivityStatus::Lost => AgentTerminalStatus::Lost,
+        ActivityStatus::Interrupted => AgentTerminalStatus::Interrupted,
+    };
+    Some(AgentItemTerminalEvidence {
+        outcome,
+        completed_at_ms: None,
+        duration_ms: None,
+        process_exit: None,
+        error: None,
     })
 }
 
@@ -1142,32 +1517,49 @@ fn change_payload(
 ) -> Result<AgentChangePayload, AgentServiceError> {
     match payload {
         HistoryPayload::TurnStarted { turn_id }
-        | HistoryPayload::AgentOutput { turn_id, .. }
         | HistoryPayload::TurnCompleted { turn_id }
         | HistoryPayload::TurnFailed { turn_id, .. }
         | HistoryPayload::TurnInterrupted { turn_id } => Ok(AgentChangePayload::TurnChanged {
             turn: turn_snapshot(state, turn_id)?,
         }),
+        HistoryPayload::AgentOutput {
+            turn_id,
+            item_id: None,
+            ..
+        } => Ok(AgentChangePayload::TurnChanged {
+            turn: turn_snapshot(state, turn_id)?,
+        }),
         HistoryPayload::ItemStarted {
             turn_id, item_id, ..
-        }
-        | HistoryPayload::ItemCompleted {
-            turn_id, item_id, ..
+        } => item_transition_change(state, turn_id, item_id, |item| {
+            AgentItemTransition::Started {
+                presentation: item.presentation,
+            }
+        }),
+        HistoryPayload::AgentOutput {
+            turn_id,
+            item_id: Some(item_id),
+            ..
         }
         | HistoryPayload::ToolCall {
             turn_id, item_id, ..
         }
         | HistoryPayload::ToolResult {
             turn_id, item_id, ..
-        } => Ok(AgentChangePayload::ItemChanged {
-            turn_id: service_turn_id(turn_id)?,
-            item: item_snapshot(
-                item_id,
-                state
-                    .items
-                    .get(item_id)
-                    .ok_or_else(|| internal("history fold lost an item"))?,
-            )?,
+        } => item_transition_change(state, turn_id, item_id, |item| {
+            AgentItemTransition::Updated {
+                update: AgentItemUpdate::BodyReplaced {
+                    body: item.presentation.body.clone(),
+                },
+                presentation: item.presentation,
+            }
+        }),
+        HistoryPayload::ItemCompleted {
+            turn_id, item_id, ..
+        } => item_transition_change(state, turn_id, item_id, |item| {
+            AgentItemTransition::Terminal {
+                presentation: item.presentation,
+            }
         }),
         HistoryPayload::InteractionRequested { interaction_id, .. }
         | HistoryPayload::InteractionResolved { interaction_id, .. } => {
@@ -1181,10 +1573,7 @@ fn change_payload(
                 )?,
             })
         }
-        HistoryPayload::CompactionStarted { compaction_id, .. }
-        | HistoryPayload::CompactionApplied { compaction_id, .. }
-        | HistoryPayload::CompactionCompleted { compaction_id }
-        | HistoryPayload::CompactionFailed { compaction_id, .. } => {
+        HistoryPayload::CompactionStarted { compaction_id, .. } => {
             Ok(AgentChangePayload::TurnChanged {
                 turn: compaction_snapshot(
                     compaction_id,
@@ -1193,6 +1582,48 @@ fn change_payload(
                         .get(compaction_id)
                         .ok_or_else(|| internal("history fold lost a compaction"))?,
                 )?,
+            })
+        }
+        HistoryPayload::CompactionApplied { compaction_id, .. } => {
+            let turn = compaction_snapshot(
+                compaction_id,
+                state
+                    .compactions
+                    .get(compaction_id)
+                    .ok_or_else(|| internal("history fold lost a compaction"))?,
+            )?;
+            let item = turn.items.into_iter().next().ok_or_else(|| {
+                internal("compaction snapshot did not contain its canonical item")
+            })?;
+            Ok(AgentChangePayload::ItemTransitioned {
+                turn_id: turn.id,
+                item_id: item.id,
+                transition: AgentItemTransition::Updated {
+                    update: AgentItemUpdate::BodyReplaced {
+                        body: item.presentation.body.clone(),
+                    },
+                    presentation: item.presentation,
+                },
+            })
+        }
+        HistoryPayload::CompactionCompleted { compaction_id }
+        | HistoryPayload::CompactionFailed { compaction_id, .. } => {
+            let turn = compaction_snapshot(
+                compaction_id,
+                state
+                    .compactions
+                    .get(compaction_id)
+                    .ok_or_else(|| internal("history fold lost a compaction"))?,
+            )?;
+            let item = turn.items.into_iter().next().ok_or_else(|| {
+                internal("compaction snapshot did not contain its canonical item")
+            })?;
+            Ok(AgentChangePayload::ItemTransitioned {
+                turn_id: turn.id,
+                item_id: item.id,
+                transition: AgentItemTransition::Terminal {
+                    presentation: item.presentation,
+                },
             })
         }
         HistoryPayload::Closed => Ok(AgentChangePayload::LifecycleChanged {
@@ -1204,6 +1635,26 @@ fn change_payload(
             })
         }
     }
+}
+
+fn item_transition_change(
+    state: &AgentHistoryState,
+    turn_id: &DashTurnId,
+    item_id: &DashItemId,
+    transition: impl FnOnce(AgentItemSnapshot) -> AgentItemTransition,
+) -> Result<AgentChangePayload, AgentServiceError> {
+    let item = item_snapshot(
+        item_id,
+        state
+            .items
+            .get(item_id)
+            .ok_or_else(|| internal("history fold lost an item"))?,
+    )?;
+    Ok(AgentChangePayload::ItemTransitioned {
+        turn_id: service_turn_id(turn_id)?,
+        item_id: item.id.clone(),
+        transition: transition(item),
+    })
 }
 
 fn surface_contribution_supported(
@@ -1224,34 +1675,78 @@ fn surface_contribution_supported(
         })
 }
 
-fn record_command_effect(
-    state: &mut DashServiceState,
-    effect_id: AgentEffectIdentity,
-    command_id: agentdash_agent_service_api::AgentCommandId,
+fn applied_surface_matches_bound(applied: &AppliedAgentSurface, bound: &BoundAgentSurface) -> bool {
+    applied.revision == bound.revision
+        && applied.digest == bound.digest
+        && applied.contributions.len() == bound.contributions.len()
+        && bound.contributions.iter().all(|expected| {
+            applied.contributions.iter().any(|actual| {
+                actual.key == expected.key
+                    && actual.route == expected.route
+                    && actual.fidelity == expected.fidelity
+                    && actual.semantics == expected.semantics
+                    && actual.payload_digest == expected.payload_digest
+                    && actual.status == AppliedContributionStatus::Applied
+            })
+        })
+}
+
+fn command_effect_record(
+    kind: DashCompleteCommandEffectKind,
+    request_fingerprint: String,
     receipt: AgentCommandReceipt,
     terminal: Option<AgentTerminalOutcome>,
-) {
-    state.effects.insert(
-        effect_id.clone(),
-        RecordedEffect {
-            inspection: AgentEffectInspection {
-                effect_id,
-                command_id: Some(command_id),
-                state: match terminal {
-                    Some(terminal) => AgentEffectInspectionState::Applied {
-                        source: receipt.source.clone(),
-                        terminal: Some(terminal),
-                        initial_context: receipt.initial_context.clone(),
-                        child_source: None,
-                    },
-                    None => AgentEffectInspectionState::Accepted {
-                        source: receipt.source.clone(),
+) -> DashCompleteEffectRecord {
+    let applied_receipt = AppliedAgentCommandReceipt {
+        command_id: receipt.command_id.clone(),
+        effect_id: receipt.effect_id.clone(),
+        source: receipt.source.clone(),
+        terminal,
+        snapshot_revision: receipt.snapshot_revision,
+        initial_context: receipt.initial_context.clone(),
+    };
+    DashCompleteEffectRecord {
+        request_fingerprint,
+        inspection: AgentEffectInspection {
+            effect_id: receipt.effect_id.clone(),
+            command_id: Some(receipt.command_id.clone()),
+            state: match terminal {
+                Some(_) => AgentEffectInspectionState::Applied {
+                    outcome: match kind {
+                        DashCompleteCommandEffectKind::Create => {
+                            AgentAppliedEffectOutcome::Create {
+                                receipt: applied_receipt,
+                            }
+                        }
+                        DashCompleteCommandEffectKind::Resume => {
+                            AgentAppliedEffectOutcome::Resume {
+                                receipt: applied_receipt,
+                            }
+                        }
+                        DashCompleteCommandEffectKind::Command => {
+                            AgentAppliedEffectOutcome::Command {
+                                receipt: applied_receipt,
+                            }
+                        }
+                        DashCompleteCommandEffectKind::SurfaceRevoke => {
+                            AgentAppliedEffectOutcome::SurfaceRevoke {
+                                receipt: applied_receipt,
+                            }
+                        }
                     },
                 },
+                None => AgentEffectInspectionState::Accepted {
+                    source: receipt.source.clone(),
+                },
             },
-            receipt: RecordedReceipt::Command(receipt),
         },
-    );
+        receipt: DashCompleteRecordedReceipt::Command(receipt),
+    }
+}
+
+fn request_fingerprint(request: &impl serde::Serialize) -> Result<String, AgentServiceError> {
+    let encoded = serde_json::to_vec(request).map_err(internal)?;
+    Ok(format!("sha256:{:x}", Sha256::digest(encoded)))
 }
 
 fn parse_cursor(cursor: &AgentSourceCursor) -> Result<DashChangeCursor, AgentServiceError> {
@@ -1386,20 +1881,38 @@ mod tests {
         let snapshot = turn_snapshot(&state, &turn_id).unwrap();
         assert_eq!(snapshot.status, AgentEntityStatus::Completed);
         assert!(matches!(
-            snapshot.items[0].content,
-            AgentItemContent::AgentOutput { .. }
+            snapshot.items[0].presentation.body,
+            AgentItemBody::AgentMessage { .. }
         ));
-        assert!(
+        assert_eq!(
             interaction_snapshot(
                 &interaction_id,
                 state.interactions.get(&interaction_id).unwrap()
             )
             .unwrap()
-            .resolved
+            .status,
+            AgentInteractionStatus::Resolved
         );
-        assert!(matches!(
-            change_payload(&state, &payloads[2]).unwrap(),
-            AgentChangePayload::TurnChanged { .. }
-        ));
+
+        let canonical_item_id = service_item_id(&item_id).unwrap();
+        let mut projected_item = None;
+        for sequence in 2..=4 {
+            let event_state = history.state_at(sequence).unwrap();
+            let payload = &history.entries()[(sequence - 1) as usize].payload;
+            let AgentChangePayload::ItemTransitioned {
+                item_id,
+                transition,
+                ..
+            } = change_payload(&event_state, payload).unwrap()
+            else {
+                panic!("item history must project as a typed item transition");
+            };
+            projected_item = Some(
+                AgentItemSnapshot::from_transition(item_id, projected_item.as_ref(), transition)
+                    .unwrap(),
+            );
+        }
+        assert_eq!(projected_item.as_ref(), Some(&snapshot.items[0]));
+        assert_eq!(projected_item.unwrap().id, canonical_item_id);
     }
 }

@@ -1,62 +1,55 @@
 use std::sync::Arc;
 
-use agentdash_spi::{
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, MountCapability, RuntimeVfsAccessPolicy,
     RuntimeVfsOperation, ToolUpdateCallback,
 };
 use async_trait::async_trait;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
+use crate::runtime_tool_execution::{VfsToolExecutionError, VfsToolExecutionResult};
 use crate::{VfsService, capability_name};
 
-use super::common::{SharedRuntimeVfs, ok_text};
+use super::common::SharedRuntimeVfs;
+use super::{legacy_error, legacy_result};
 
 // ---------------------------------------------------------------------------
 // mounts_list
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct MountsListParams {}
+
 #[derive(Clone)]
-pub struct MountsListTool {
+pub struct MountsListExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
 }
 
-impl MountsListTool {
+impl MountsListExecutor {
     pub fn new(service: Arc<VfsService>, vfs: SharedRuntimeVfs) -> Self {
         Self { service, vfs }
     }
-}
 
-#[async_trait]
-impl AgentTool for MountsListTool {
-    fn name(&self) -> &str {
-        "mounts_list"
+    pub fn parameters_schema() -> serde_json::Value {
+        schema_value::<MountsListParams>()
     }
-    fn description(&self) -> &str {
-        "List all available mounts and their capabilities in the current session.\n\
-         \n\
-         Usage:\n\
-         - Call this tool first to discover which mounts (file systems) are accessible.\n\
-         - Each mount exposes a set of capabilities (read, write, exec, etc.).\n\
-         - Use the returned mount IDs as prefixes in paths for other tools (e.g., `main://src/lib.rs`).\n\
-         - If only one mount exists, the prefix can be omitted in other tool calls."
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({ "type": "object", "properties": {}, "required": [], "additionalProperties": false })
-    }
-    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
-        Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
-    }
-    fn protocol_fixture_id(&self) -> Option<String> {
-        Some("main_tool_vfs_mounts_dynamic_lifecycle".to_string())
-    }
-    async fn execute(
+
+    pub async fn execute(
         &self,
-        _: &str,
-        _: serde_json::Value,
-        _: CancellationToken,
-        _: Option<ToolUpdateCallback>,
-    ) -> Result<AgentToolResult, AgentToolError> {
+        args: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
+        serde_json::from_value::<MountsListParams>(args).map_err(|error| {
+            VfsToolExecutionError::InvalidArguments(format!("invalid arguments: {error}"))
+        })?;
+        if cancel.is_cancelled() {
+            return Err(VfsToolExecutionError::Cancelled);
+        }
         let state = self.vfs.snapshot_state().await;
         let mounts = self.service.list_mounts(&state.vfs);
         let body = mounts
@@ -78,7 +71,7 @@ impl AgentTool for MountsListTool {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        Ok(ok_text(if body.is_empty() {
+        Ok(VfsToolExecutionResult::text(if body.is_empty() {
             "No mounts available in the current session.".to_string()
         } else {
             format!(
@@ -86,6 +79,57 @@ impl AgentTool for MountsListTool {
                 body
             )
         }))
+    }
+}
+
+#[derive(Clone)]
+pub struct MountsListTool {
+    executor: MountsListExecutor,
+}
+
+impl MountsListTool {
+    pub fn new(service: Arc<VfsService>, vfs: SharedRuntimeVfs) -> Self {
+        Self {
+            executor: MountsListExecutor::new(service, vfs),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for MountsListTool {
+    fn name(&self) -> &str {
+        "mounts_list"
+    }
+    fn description(&self) -> &str {
+        "List all available mounts and their capabilities in the current session.\n\
+         \n\
+         Usage:\n\
+         - Call this tool first to discover which mounts (file systems) are accessible.\n\
+         - Each mount exposes a set of capabilities (read, write, exec, etc.).\n\
+         - Use the returned mount IDs as prefixes in paths for other tools (e.g., `main://src/lib.rs`).\n\
+         - If only one mount exists, the prefix can be omitted in other tool calls."
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        MountsListExecutor::parameters_schema()
+    }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_vfs_mounts_dynamic_lifecycle".to_string())
+    }
+    async fn execute(
+        &self,
+        _: &str,
+        args: serde_json::Value,
+        cancel: CancellationToken,
+        _: Option<ToolUpdateCallback>,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        self.executor
+            .execute(args, cancel)
+            .await
+            .map(legacy_result)
+            .map_err(legacy_error)
     }
 }
 
@@ -122,7 +166,7 @@ mod tests {
 
     use std::{collections::BTreeSet, sync::Arc};
 
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         AgentTool, Mount, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsPathPattern, Vfs,
     };
 
@@ -143,6 +187,25 @@ mod tests {
             display_name: "Main".to_string(),
             metadata: serde_json::Value::Null,
         }
+    }
+
+    #[test]
+    fn mounts_list_schema_and_parser_share_the_empty_object_contract() {
+        let schema = MountsListExecutor::parameters_schema();
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["additionalProperties"], false);
+        assert!(schema.get("properties").is_none_or(|properties| {
+            properties
+                .as_object()
+                .is_some_and(serde_json::Map::is_empty)
+        }));
+
+        serde_json::from_value::<MountsListParams>(serde_json::json!({}))
+            .expect("empty object should parse");
+        serde_json::from_value::<MountsListParams>(serde_json::json!({
+            "unexpected": true
+        }))
+        .expect_err("schema-forbidden fields must be rejected by the parser");
     }
 
     #[tokio::test]

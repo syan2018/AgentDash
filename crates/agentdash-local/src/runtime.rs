@@ -4,7 +4,6 @@
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::Context;
 use serde::Serialize;
@@ -19,18 +18,6 @@ use crate::runtime_paths::local_runtime_data_dir;
 use crate::tool_executor::ToolExecutor;
 use crate::ws_client;
 
-/// 本机 runtime 启动配置。
-#[derive(Clone)]
-pub struct LocalAgentRuntimeInstanceConfig {
-    pub instance_id: agentdash_agent_runtime_contract::RuntimeServiceInstanceId,
-    pub definition_id: agentdash_integration_api::AgentServiceDefinitionId,
-    pub config: serde_json::Value,
-    pub credential_refs: std::collections::BTreeMap<
-        agentdash_integration_api::AgentRuntimeCredentialSlot,
-        agentdash_integration_api::AgentRuntimeCredentialRef,
-    >,
-}
-
 #[derive(Clone)]
 pub struct LocalRuntimeConfig {
     pub cloud_url: String,
@@ -39,12 +26,6 @@ pub struct LocalRuntimeConfig {
     pub name: String,
     pub workspace_roots: Vec<PathBuf>,
     pub executor_enabled: bool,
-    pub runtime_driver_contributions:
-        Vec<agentdash_integration_api::AgentRuntimeDriverContribution>,
-    pub runtime_trust_manifests: Vec<agentdash_integration_api::AgentRuntimeTrustManifest>,
-    pub runtime_service_instances: Vec<LocalAgentRuntimeInstanceConfig>,
-    pub runtime_credential_broker: Arc<dyn agentdash_integration_api::AgentRuntimeCredentialBroker>,
-    runtime_data_root: Option<PathBuf>,
 }
 
 impl LocalRuntimeConfig {
@@ -63,32 +44,7 @@ impl LocalRuntimeConfig {
             name,
             workspace_roots: canonicalize_workspace_roots(workspace_roots),
             executor_enabled,
-            runtime_driver_contributions: Vec::new(),
-            runtime_trust_manifests: Vec::new(),
-            runtime_service_instances: Vec::new(),
-            runtime_credential_broker: Arc::new(crate::agent_runtime_host::LocalCredentialBroker),
-            runtime_data_root: None,
         }
-    }
-
-    #[cfg(test)]
-    fn with_runtime_data_root(mut self, root: PathBuf) -> Self {
-        self.runtime_data_root = Some(root);
-        self
-    }
-
-    pub fn with_runtime_driver_contributions(
-        mut self,
-        contributions: Vec<agentdash_integration_api::AgentRuntimeDriverContribution>,
-        manifests: Vec<agentdash_integration_api::AgentRuntimeTrustManifest>,
-        instances: Vec<LocalAgentRuntimeInstanceConfig>,
-        credential_broker: Arc<dyn agentdash_integration_api::AgentRuntimeCredentialBroker>,
-    ) -> Self {
-        self.runtime_driver_contributions = contributions;
-        self.runtime_trust_manifests = manifests;
-        self.runtime_service_instances = instances;
-        self.runtime_credential_broker = credential_broker;
-        self
     }
 }
 
@@ -554,31 +510,6 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         local_backend_config.mcp_protect_mode,
     )));
 
-    let runtime_data_root = match &config.runtime_data_root {
-        Some(root) => root.clone(),
-        None => local_runtime_data_dir()?,
-    };
-    let runtime_artifact_root = runtime_data_root
-        .join("agent-runtime-artifacts")
-        .join(local_runtime_backend_key(&config.backend_id));
-    tokio::fs::create_dir_all(&runtime_artifact_root).await?;
-    let local_agent_runtime = crate::agent_runtime_host::bootstrap_local_agent_runtime_host(
-        &config.backend_id,
-        &config.workspace_roots,
-        &runtime_artifact_root,
-        &config.runtime_driver_contributions,
-        &config.runtime_trust_manifests,
-        &config.runtime_service_instances,
-        config.runtime_credential_broker.clone(),
-        config.executor_enabled,
-    )
-    .await?;
-    diag!(
-        Info,
-        Subsystem::Relay,
-        "Agent Runtime Integration Host 已初始化"
-    );
-
     Ok(ws_client::Config {
         cloud_url: config.cloud_url.clone(),
         token: config.token.clone(),
@@ -595,7 +526,6 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
             .join(local_runtime_backend_key(&config.backend_id)),
         runner_status: None,
         relay_status_tx: None,
-        runtime_wire: local_agent_runtime.handler,
     })
 }
 
@@ -728,29 +658,6 @@ mod tests {
         let running = status_with_state(&status, LocalRuntimeState::Running, None, None);
 
         assert_eq!(running.relay_connection, Some(relay));
-    }
-
-    #[tokio::test]
-    async fn websocket_bootstrap_constructs_host_backed_runtime_wire_without_external_injection() {
-        let data_root = tempfile::tempdir().expect("temporary Local Runtime data root");
-        let config = LocalRuntimeConfig::new(
-            "ws://127.0.0.1:17301/ws/backend".to_string(),
-            "secret".to_string(),
-            "backend-local".to_string(),
-            "Desktop Runtime".to_string(),
-            Vec::new(),
-            true,
-        )
-        .with_runtime_data_root(data_root.path().to_path_buf());
-        let ws_config = build_ws_config(&config)
-            .await
-            .expect("Local bootstrap owns its Host-backed Runtime Wire");
-        let offers = ws_config
-            .runtime_wire
-            .advertised_offers()
-            .await
-            .expect("installed Local offers are readable");
-        assert!(!offers.is_empty());
     }
 }
 

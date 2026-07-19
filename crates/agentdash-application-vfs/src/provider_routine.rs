@@ -17,7 +17,7 @@ use super::provider::{
 };
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use agentdash_domain::common::Mount;
-use agentdash_spi::platform::mount::RuntimeFileEntry;
+use agentdash_platform_spi::platform::mount::RuntimeFileEntry;
 
 const MEMORY_CONTAINER_ID: &str = "memory";
 const MEMORY_FILES: &[&str] = &[

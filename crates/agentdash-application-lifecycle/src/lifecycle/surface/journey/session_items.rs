@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent};
-use agentdash_spi::PersistedSessionEvent;
+use agentdash_platform_spi::PersistedSessionEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

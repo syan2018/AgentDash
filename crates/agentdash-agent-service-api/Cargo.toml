@@ -8,6 +8,10 @@ license.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[[bin]]
+name = "generate_agent_service_api"
+path = "src/generate.rs"
+
 [dependencies]
 async-trait = { workspace = true }
 schemars = { workspace = true }
@@ -15,6 +19,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+tempfile = { workspace = true }
+ts-rs = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -11,7 +11,7 @@ use agentdash_application::workspace::{
     CreateWorkspacePlacementInput, UpdateWorkspacePlacementInput, WorkspaceDetectionResult,
     WorkspacePlacementService,
 };
-use agentdash_application_runtime_gateway::{
+use agentdash_application_extension_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION, WORKSPACE_DISCOVER_BY_IDENTITY_ACTION,
     WorkspaceDetectGitInput, WorkspaceDetectGitOutput, WorkspaceDetectInput,
@@ -42,7 +42,7 @@ use crate::dto::{
 };
 use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
-use crate::workspace_placement_runtime::RuntimeGatewayWorkspacePlacementRuntime;
+use crate::workspace_placement_runtime::ExtensionGatewayWorkspacePlacementRuntime;
 
 pub async fn list_workspaces(
     State(state): State<Arc<AppState>>,
@@ -129,8 +129,8 @@ pub async fn create_workspace(
         .into_iter()
         .map(|binding| binding_input_to_binding(Uuid::nil(), binding))
         .collect::<Result<Vec<_>, _>>()?;
-    let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
-        state.services.runtime_gateway.clone(),
+    let placement_runtime = Arc::new(ExtensionGatewayWorkspacePlacementRuntime::new(
+        state.services.extension_gateway.clone(),
     ));
     let stored = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
         .create_workspace(CreateWorkspacePlacementInput {
@@ -195,8 +195,8 @@ pub async fn update_workspace(
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
-    let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
-        state.services.runtime_gateway.clone(),
+    let placement_runtime = Arc::new(ExtensionGatewayWorkspacePlacementRuntime::new(
+        state.services.extension_gateway.clone(),
     ));
     let stored = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
         .update_workspace(UpdateWorkspacePlacementInput {
@@ -455,8 +455,8 @@ pub async fn bind_discovered(
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
-    let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
-        state.services.runtime_gateway.clone(),
+    let placement_runtime = Arc::new(ExtensionGatewayWorkspacePlacementRuntime::new(
+        state.services.extension_gateway.clone(),
     ));
     let result = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
         .bind_discovered(BindDiscoveredWorkspaceBindingsInput {
@@ -548,7 +548,7 @@ async fn invoke_workspace_discover_by_identity(
         },
         input,
     );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
+    let invocation = state.services.extension_gateway.invoke(request).await?;
     serde_json::from_value::<WorkspaceDiscoverByIdentityOutput>(invocation.output.output).map_err(
         |error| {
             ApiError::Internal(format!(
@@ -612,7 +612,7 @@ async fn invoke_workspace_setup_detect(
         },
         input,
     );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
+    let invocation = state.services.extension_gateway.invoke(request).await?;
     serde_json::from_value::<WorkspaceDetectionResult>(invocation.output.output)
         .map_err(|error| ApiError::Internal(format!("workspace.detect 返回值解析失败: {error}")))
 }
@@ -662,7 +662,7 @@ async fn invoke_workspace_setup_detect_git(
         },
         input,
     );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
+    let invocation = state.services.extension_gateway.invoke(request).await?;
     serde_json::from_value::<WorkspaceDetectGitOutput>(invocation.output.output).map_err(|error| {
         ApiError::Internal(format!("workspace.detect_git 返回值解析失败: {error}"))
     })

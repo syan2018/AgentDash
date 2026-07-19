@@ -11,13 +11,12 @@ members = [
     "crates/agentdash-agent-runtime-test-support",
     "crates/agentdash-domain",
     "crates/agentdash-application-ports",
-    "crates/agentdash-application-runtime-gateway",
+    "crates/agentdash-application-extension-gateway",
     "crates/agentdash-application-vfs",
     "crates/agentdash-application-skill",
     "crates/agentdash-application-agentrun",
     "crates/agentdash-application-lifecycle",
     "crates/agentdash-application-workflow",
-    "crates/agentdash-application-hooks",
     "crates/agentdash-application-shared-library",
     "crates/agentdash-diagnostics",
     "crates/agentdash-test-support",
@@ -25,8 +24,7 @@ members = [
     "crates/agentdash-workspace-module",
     "crates/agentdash-application",
     "crates/agentdash-infrastructure",
-    "crates/agentdash-spi",
-    "crates/agentdash-executor",
+    "crates/agentdash-platform-spi",
     "crates/agentdash-first-party-integrations",
     "crates/agentdash-integration-api",
     "crates/agentdash-integration-native-agent",
@@ -112,13 +110,12 @@ agentdash-agent-runtime-wire = { path = "crates/agentdash-agent-runtime-wire" }
 agentdash-integration-remote-runtime = { path = "crates/agentdash-integration-remote-runtime" }
 agentdash-agent-runtime-test-support = { path = "crates/agentdash-agent-runtime-test-support" }
 agentdash-application-ports = { path = "crates/agentdash-application-ports" }
-agentdash-application-runtime-gateway = { path = "crates/agentdash-application-runtime-gateway" }
+agentdash-application-extension-gateway = { path = "crates/agentdash-application-extension-gateway" }
 agentdash-application-vfs = { path = "crates/agentdash-application-vfs" }
 agentdash-application-skill = { path = "crates/agentdash-application-skill" }
 agentdash-application-agentrun = { path = "crates/agentdash-application-agentrun" }
 agentdash-application-lifecycle = { path = "crates/agentdash-application-lifecycle" }
 agentdash-application-workflow = { path = "crates/agentdash-application-workflow" }
-agentdash-application-hooks = { path = "crates/agentdash-application-hooks" }
 agentdash-application-shared-library = { path = "crates/agentdash-application-shared-library" }
 agentdash-diagnostics = { path = "crates/agentdash-diagnostics" }
 agentdash-test-support = { path = "crates/agentdash-test-support" }
@@ -126,8 +123,7 @@ agentdash-process = { path = "crates/agentdash-process" }
 agentdash-workspace-module = { path = "crates/agentdash-workspace-module" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
-agentdash-spi = { path = "crates/agentdash-spi" }
-agentdash-executor = { path = "crates/agentdash-executor", default-features = false }
+agentdash-platform-spi = { path = "crates/agentdash-platform-spi" }
 agentdash-first-party-integrations = { path = "crates/agentdash-first-party-integrations" }
 
 agentdash-mcp = { path = "crates/agentdash-mcp" }

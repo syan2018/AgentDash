@@ -22,7 +22,7 @@ use agentdash_domain::workflow::{
     OutputPortDefinition, ValidationSeverity, WorkflowGraph, WorkflowGraphDraft,
     WorkflowHookRuleSpec, WorkflowHookTrigger,
 };
-use agentdash_spi::platform::auth::AuthIdentity;
+use agentdash_platform_spi::platform::auth::AuthIdentity;
 
 use crate::authz::{McpProjectPermission, require_project_permission};
 use crate::error::McpError;
@@ -628,7 +628,7 @@ impl ServerHandler for WorkflowMcpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::context::tool_schema_sanitizer::sanitize_tool_schema;
+    use agentdash_platform_spi::context::tool_schema_sanitizer::sanitize_tool_schema;
     use serde_json::Value;
 
     fn assert_schema_objects_have_type(value: &Value) {

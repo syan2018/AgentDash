@@ -5,33 +5,51 @@ use std::{
 };
 
 use agentdash_agent_service_api::{
-    AgentCapabilityProfile, AgentChange, AgentChangePage, AgentChangePayload, AgentChangesQuery,
-    AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
-    AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
-    AgentEffectInspectionState, AgentEntityStatus, AgentForkCapability, AgentForkCutoffKind,
-    AgentForkPoint, AgentInput, AgentInputContent, AgentInteractionId, AgentInteractionKind,
-    AgentInteractionSnapshot, AgentItemContent, AgentItemId, AgentItemSnapshot,
-    AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest,
-    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
-    AgentServiceError, AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority,
-    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
-    AgentSourceCursor, AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload,
-    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
-    AgentTurnId, AgentTurnSnapshot, AppliedAgentSurface, AppliedAgentSurfaceContribution,
-    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedInitialContextEvidence,
-    ApplyBoundAgentSurface, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
-    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
-    InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
-    ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentAppliedEffectOutcome, AgentCapabilityProfile, AgentChange, AgentChangePage,
+    AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandCapability,
+    AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
+    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentEntityStatus,
+    AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentInput, AgentInputContent,
+    AgentInteractionId, AgentInteractionRequest, AgentInteractionSnapshot, AgentInteractionStatus,
+    AgentItemBody, AgentItemId, AgentItemPresentation, AgentItemSnapshot,
+    AgentItemTerminalEvidence, AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest,
+    AgentPresentationError, AgentProcessExitEvidence, AgentProfileDigest, AgentReadQuery,
+    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
+    AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
+    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
+    AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload, AgentSurfaceProfile,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentTerminalStatus,
+    AgentTurnId, AgentTurnSnapshot, AppliedAgentCommandReceipt, AppliedAgentSurface,
+    AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
+    AppliedForkAgentReceipt, AppliedInitialContextEvidence, ApplyBoundAgentSurface,
+    CompleteAgentService, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
+    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContributionKind,
+    InitialContextDeliveryFidelity, InitialContextProfile, ResumeAgentCommand,
+    RevokeBoundAgentSurface, SemanticFidelity,
 };
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
-use crate::contribution::CODEX_PROTOCOL_REVISION;
+use crate::vendor_generated::codex_v2::{
+    command_execution_request_approval_params::CommandExecutionRequestApprovalParams,
+    dynamic_tool_call_params::DynamicToolCallParams,
+    file_change_request_approval_params::FileChangeRequestApprovalParams,
+    mcp_server_elicitation_request_params::McpServerElicitationRequestParams,
+    permissions_request_approval_params::PermissionsRequestApprovalParams,
+    server_notification::ServerNotification,
+    tool_request_user_input_params::ToolRequestUserInputParams,
+};
 
 pub const CODEX_INITIAL_CONTEXT_RENDERER_VERSION: &str = "agentdash.codex.initial-context.v1";
+/// Canonical digest contract for the source-authoritative `thread/read(includeTurns)` fork view.
+///
+/// The digest proves the AgentDash-observable Codex lineage at the exact native fork cutoff. It
+/// does not claim ownership of, or a vendor signature over, Codex's private ThreadStore.
+pub const CODEX_CHILD_HISTORY_DIGEST_VERSION: &str =
+    "agentdash.codex.child-history.thread-turns.v1";
+pub const CODEX_APP_SERVER_PROTOCOL_REVISION: u32 = 144;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexCompleteAgentTransportError {
@@ -63,26 +81,195 @@ impl CodexCompleteAgentTransportError {
 ///
 /// Vendor JSON terminates at this trait. Other crates only receive `AgentChange`/`AgentSnapshot`.
 #[derive(Debug, Clone, PartialEq)]
-pub enum CodexAppServerObservation {
-    Notification {
-        sequence: u64,
-        method: String,
-        params: Value,
-    },
+pub struct CodexAppServerObservation {
+    sequence: u64,
+    source_thread_id: Option<String>,
+    kind: CodexTypedObservation,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum CodexTypedObservation {
+    Notification(Box<ServerNotification>),
     ServerRequest {
-        sequence: u64,
         request_id: Value,
-        method: String,
-        params: Value,
+        request: Box<CodexTypedServerRequest>,
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum CodexTypedServerRequest {
+    CommandExecutionApproval(CommandExecutionRequestApprovalParams),
+    FileChangeApproval(FileChangeRequestApprovalParams),
+    PermissionsApproval(PermissionsRequestApprovalParams),
+    UserInput(ToolRequestUserInputParams),
+    DynamicTool(DynamicToolCallParams),
+    McpElicitation(CodexMcpElicitationRequest),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CodexMcpElicitationRequest {
+    thread_id: String,
+    turn_id: Option<String>,
+    server_name: String,
+    message: String,
+    requested_schema: Value,
+}
+
 impl CodexAppServerObservation {
-    fn sequence(&self) -> u64 {
-        match self {
-            Self::Notification { sequence, .. } | Self::ServerRequest { sequence, .. } => *sequence,
-        }
+    pub fn notification(
+        sequence: u64,
+        method: impl Into<String>,
+        params: Value,
+    ) -> Result<Self, CodexCompleteAgentTransportError> {
+        let method = method.into();
+        let source_thread_id = source_thread_id_from_params(&params).map(ToOwned::to_owned);
+        let notification = serde_json::from_value(json!({
+            "method": method,
+            "params": params,
+        }))
+        .map_err(|error| {
+            CodexCompleteAgentTransportError::protocol(format!(
+                "unknown or invalid Codex ServerNotification: {error}"
+            ))
+        })?;
+        Ok(Self {
+            sequence,
+            source_thread_id,
+            kind: CodexTypedObservation::Notification(Box::new(notification)),
+        })
     }
+
+    pub fn server_request(
+        sequence: u64,
+        request_id: Value,
+        method: impl Into<String>,
+        params: Value,
+    ) -> Result<Self, CodexCompleteAgentTransportError> {
+        let method = method.into();
+        let source_thread_id = source_thread_id_from_params(&params)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| {
+                CodexCompleteAgentTransportError::protocol(format!(
+                    "Codex server request {method} misses threadId"
+                ))
+            })?;
+        let request = decode_server_request(&method, params)?;
+        Ok(Self {
+            sequence,
+            source_thread_id: Some(source_thread_id),
+            kind: CodexTypedObservation::ServerRequest {
+                request_id,
+                request: Box::new(request),
+            },
+        })
+    }
+
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub(crate) fn source_thread_id(&self) -> Option<&str> {
+        self.source_thread_id.as_deref()
+    }
+}
+
+fn decode_server_request(
+    method: &str,
+    params: Value,
+) -> Result<CodexTypedServerRequest, CodexCompleteAgentTransportError> {
+    fn decode<T: serde::de::DeserializeOwned>(
+        method: &str,
+        params: Value,
+    ) -> Result<T, CodexCompleteAgentTransportError> {
+        serde_json::from_value(params).map_err(|error| {
+            CodexCompleteAgentTransportError::protocol(format!(
+                "invalid Codex server request {method}: {error}"
+            ))
+        })
+    }
+
+    Ok(match method {
+        "item/commandExecution/requestApproval" => {
+            CodexTypedServerRequest::CommandExecutionApproval(decode(method, params)?)
+        }
+        "item/fileChange/requestApproval" => {
+            CodexTypedServerRequest::FileChangeApproval(decode(method, params)?)
+        }
+        "item/permissions/requestApproval" => {
+            CodexTypedServerRequest::PermissionsApproval(decode(method, params)?)
+        }
+        "item/tool/requestUserInput" => CodexTypedServerRequest::UserInput(decode(method, params)?),
+        "item/tool/call" => CodexTypedServerRequest::DynamicTool(decode(method, params)?),
+        "mcpServer/elicitation/request" => {
+            let typed: McpServerElicitationRequestParams = decode(method, params.clone())?;
+            use crate::vendor_generated::codex_v2::mcp_server_elicitation_request_params::McpServerElicitationRequestParams as Source;
+            let request = match typed {
+                Source::Form {
+                    message,
+                    requested_schema,
+                    server_name,
+                    thread_id,
+                    turn_id,
+                    ..
+                } => CodexMcpElicitationRequest {
+                    thread_id,
+                    turn_id,
+                    server_name,
+                    message,
+                    requested_schema: serde_json::to_value(requested_schema).map_err(|error| {
+                        CodexCompleteAgentTransportError::protocol(format!(
+                            "invalid Codex MCP elicitation schema: {error}"
+                        ))
+                    })?,
+                },
+                Source::OpenaiForm {
+                    message,
+                    requested_schema,
+                    server_name,
+                    thread_id,
+                    turn_id,
+                    ..
+                } => CodexMcpElicitationRequest {
+                    thread_id,
+                    turn_id,
+                    server_name,
+                    message,
+                    requested_schema,
+                },
+                Source::Url {
+                    elicitation_id,
+                    message,
+                    server_name,
+                    thread_id,
+                    turn_id,
+                    url,
+                    ..
+                } => CodexMcpElicitationRequest {
+                    thread_id,
+                    turn_id,
+                    server_name,
+                    message,
+                    requested_schema: json!({
+                        "mode": "url",
+                        "elicitationId": elicitation_id,
+                        "url": url,
+                    }),
+                },
+            };
+            CodexTypedServerRequest::McpElicitation(request)
+        }
+        _ => {
+            return Err(CodexCompleteAgentTransportError::protocol(format!(
+                "unsupported Codex server request {method}"
+            )));
+        }
+    })
+}
+
+fn source_thread_id_from_params(params: &Value) -> Option<&str> {
+    ["/threadId", "/thread/id", "/thread/id/value", "/thread_id"]
+        .into_iter()
+        .find_map(|pointer| params.pointer(pointer).and_then(Value::as_str))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +292,12 @@ pub trait CodexAppServerTransport: Send + Sync {
         &self,
         request_id: Value,
         result: Value,
+    ) -> Result<(), CodexCompleteAgentTransportError>;
+
+    async fn notify(
+        &self,
+        method: &str,
+        params: Option<Value>,
     ) -> Result<(), CodexCompleteAgentTransportError>;
 
     async fn observations(
@@ -162,10 +355,24 @@ struct PendingInteraction {
 
 #[derive(Debug, Clone)]
 enum RecordedReceipt {
-    Command(AgentCommandReceipt),
-    Fork(ForkAgentReceipt),
-    Surface(AppliedAgentSurfaceReceipt),
+    Command {
+        family: CommandEffectFamily,
+        receipt: AgentCommandReceipt,
+    },
+    Fork {
+        receipt: ForkAgentReceipt,
+        applied: AppliedForkAgentReceipt,
+    },
+    SurfaceApply(AppliedAgentSurfaceReceipt),
     Unknown(AgentEffectInspection),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandEffectFamily {
+    Create,
+    Resume,
+    Command,
+    SurfaceRevoke,
 }
 
 #[derive(Default)]
@@ -174,11 +381,10 @@ struct CodexCompleteAgentState {
     effects: BTreeMap<AgentEffectIdentity, RecordedReceipt>,
 }
 
-/// Complete Agent target lane for Codex App Server.
+/// Complete Agent service for Codex App Server.
 ///
 /// Codex ThreadStore remains the history/resume/fork/compaction authority. This adapter keeps only
 /// command idempotency evidence, applied surface evidence, and live interaction correlation.
-/// Production registration remains on the legacy driver until the S5 cutover.
 pub struct CodexCompleteAgentService {
     config: CodexCompleteAgentConfig,
     transport: Arc<dyn CodexAppServerTransport>,
@@ -186,7 +392,7 @@ pub struct CodexCompleteAgentService {
 }
 
 impl CodexCompleteAgentService {
-    pub fn new(
+    pub(crate) fn new(
         config: CodexCompleteAgentConfig,
         transport: Arc<dyn CodexAppServerTransport>,
     ) -> Result<Self, AgentServiceError> {
@@ -198,7 +404,10 @@ impl CodexCompleteAgentService {
         })
     }
 
-    fn descriptor(&self) -> AgentServiceDescriptor {
+    pub fn descriptor_for(
+        definition_id: AgentServiceDefinitionId,
+        title: impl Into<String>,
+    ) -> AgentServiceDescriptor {
         let immutable = |semantics| AgentSurfaceCapabilityFacet {
             semantics,
             routes: BTreeSet::from([AgentSurfaceRoute::ImmutableDelivery]),
@@ -206,9 +415,9 @@ impl CodexCompleteAgentService {
             configuration_boundary: AgentConfigurationBoundary::Binding,
         };
         AgentServiceDescriptor {
-            definition_id: self.config.definition_id.clone(),
-            title: self.config.title.clone(),
-            protocol_revision: CODEX_PROTOCOL_REVISION,
+            definition_id,
+            title: title.into(),
+            protocol_revision: CODEX_APP_SERVER_PROTOCOL_REVISION,
             profile: AgentCapabilityProfile {
                 lifecycle: BTreeSet::from([
                     AgentLifecycleCapability::Create,
@@ -277,7 +486,7 @@ impl CodexCompleteAgentService {
             },
             profile_digest: AgentProfileDigest::new(format!(
                 "codex-complete-agent-profile-v{}",
-                CODEX_PROTOCOL_REVISION
+                CODEX_APP_SERVER_PROTOCOL_REVISION
             ))
             .expect("static profile digest"),
             configuration_boundary: AgentConfigurationBoundary::Binding,
@@ -287,12 +496,21 @@ impl CodexCompleteAgentService {
     async fn replay_command(
         &self,
         effect_id: &AgentEffectIdentity,
+        expected_family: CommandEffectFamily,
+        expected_command_id: &agentdash_agent_service_api::AgentCommandId,
+        expected_source: Option<&AgentSourceCoordinate>,
     ) -> Result<Option<AgentCommandReceipt>, AgentServiceError> {
         let state = self.state.read().await;
         match state.effects.get(effect_id) {
-            Some(RecordedReceipt::Command(receipt)) => Ok(Some(receipt.clone())),
+            Some(RecordedReceipt::Command { family, receipt })
+                if *family == expected_family
+                    && &receipt.command_id == expected_command_id
+                    && expected_source.is_none_or(|source| source == &receipt.source) =>
+            {
+                Ok(Some(receipt.clone()))
+            }
             Some(RecordedReceipt::Unknown(_)) => Err(unknown_outcome_error()),
-            Some(RecordedReceipt::Fork(_) | RecordedReceipt::Surface(_)) => Err(service_error(
+            Some(_) => Err(service_error(
                 AgentServiceErrorCode::Conflict,
                 "effect identity was already used for another Codex command family",
                 false,
@@ -444,14 +662,25 @@ impl CodexCompleteAgentService {
 #[async_trait]
 impl CompleteAgentService for CodexCompleteAgentService {
     async fn describe(&self) -> Result<AgentServiceDescriptor, AgentServiceError> {
-        Ok(self.descriptor())
+        Ok(Self::descriptor_for(
+            self.config.definition_id.clone(),
+            self.config.title.clone(),
+        ))
     }
 
     async fn create(
         &self,
         command: CreateAgentCommand,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        if let Some(receipt) = self.replay_command(&command.meta.effect_id).await? {
+        if let Some(receipt) = self
+            .replay_command(
+                &command.meta.effect_id,
+                CommandEffectFamily::Create,
+                &command.meta.command_id,
+                command.requested_source.as_ref(),
+            )
+            .await?
+        {
             return Ok(receipt);
         }
         let (params, initial_context) =
@@ -514,7 +743,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
         );
         state.effects.insert(
             command.meta.effect_id.clone(),
-            RecordedReceipt::Command(receipt.clone()),
+            RecordedReceipt::Command {
+                family: CommandEffectFamily::Create,
+                receipt: receipt.clone(),
+            },
         );
         Ok(receipt)
     }
@@ -523,7 +755,15 @@ impl CompleteAgentService for CodexCompleteAgentService {
         &self,
         command: ResumeAgentCommand,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        if let Some(receipt) = self.replay_command(&command.meta.effect_id).await? {
+        if let Some(receipt) = self
+            .replay_command(
+                &command.meta.effect_id,
+                CommandEffectFamily::Resume,
+                &command.meta.command_id,
+                Some(&command.source),
+            )
+            .await?
+        {
             return Ok(receipt);
         }
         let mut params = self.base_thread_params();
@@ -577,7 +817,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
         );
         self.state.write().await.effects.insert(
             command.meta.effect_id,
-            RecordedReceipt::Command(receipt.clone()),
+            RecordedReceipt::Command {
+                family: CommandEffectFamily::Resume,
+                receipt: receipt.clone(),
+            },
         );
         Ok(receipt)
     }
@@ -586,7 +829,17 @@ impl CompleteAgentService for CodexCompleteAgentService {
         {
             let state = self.state.read().await;
             match state.effects.get(&command.meta.effect_id) {
-                Some(RecordedReceipt::Fork(receipt)) => return Ok(receipt.clone()),
+                Some(RecordedReceipt::Fork { receipt, .. })
+                    if receipt.command_id == command.meta.command_id
+                        && receipt.parent_source == command.source
+                        && receipt.cutoff == command.cutoff
+                        && command
+                            .requested_child_source
+                            .as_ref()
+                            .is_none_or(|source| receipt.child_source.as_ref() == Some(source)) =>
+                {
+                    return Ok(receipt.clone());
+                }
                 Some(RecordedReceipt::Unknown(_)) => return Err(unknown_outcome_error()),
                 Some(_) => {
                     return Err(service_error(
@@ -694,6 +947,27 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 )
                 .await);
         }
+        if let Err(error) = verify_codex_fork_cutoff(&verified, &command.cutoff) {
+            return Err(self
+                .settle_post_dispatch_error(
+                    &command.meta.effect_id,
+                    &command.meta.command_id,
+                    error,
+                )
+                .await);
+        }
+        let child_history_digest = match codex_thread_history_digest(&verified) {
+            Ok(digest) => digest,
+            Err(error) => {
+                return Err(self
+                    .settle_post_dispatch_error(
+                        &command.meta.effect_id,
+                        &command.meta.command_id,
+                        error,
+                    )
+                    .await);
+            }
+        };
         let parent_state = self
             .state
             .read()
@@ -720,16 +994,27 @@ impl CompleteAgentService for CodexCompleteAgentService {
             effect_id: command.meta.effect_id.clone(),
             parent_source: command.source,
             child_source: Some(child.clone()),
-            cutoff: command.cutoff,
-            // thread/read is presentation/event projected, not an exact model-history digest.
-            child_history_digest: None,
+            cutoff: command.cutoff.clone(),
+            child_history_digest: Some(child_history_digest.clone()),
             state: AgentReceiptState::Terminal {
                 outcome: AgentTerminalOutcome::Succeeded,
             },
         };
+        let applied = AppliedForkAgentReceipt {
+            command_id: receipt.command_id.clone(),
+            effect_id: receipt.effect_id.clone(),
+            parent_source: receipt.parent_source.clone(),
+            child_source: child,
+            cutoff: command.cutoff,
+            child_history_digest,
+            terminal: Some(AgentTerminalOutcome::Succeeded),
+        };
         self.state.write().await.effects.insert(
             command.meta.effect_id,
-            RecordedReceipt::Fork(receipt.clone()),
+            RecordedReceipt::Fork {
+                receipt: receipt.clone(),
+                applied,
+            },
         );
         Ok(receipt)
     }
@@ -738,7 +1023,15 @@ impl CompleteAgentService for CodexCompleteAgentService {
         &self,
         command: AgentCommandEnvelope,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        if let Some(receipt) = self.replay_command(&command.meta.effect_id).await? {
+        if let Some(receipt) = self
+            .replay_command(
+                &command.meta.effect_id,
+                CommandEffectFamily::Command,
+                &command.meta.command_id,
+                Some(&command.source),
+            )
+            .await?
+        {
             return Ok(receipt);
         }
         let method;
@@ -801,7 +1094,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
                             false,
                         )
                     })?;
-                let result = interaction_result(pending.interaction.kind, response)?;
+                let result = interaction_result(&pending.interaction.request, response)?;
                 if let Err(error) = self.transport.respond(pending.request_id, result).await {
                     if error.outcome_unknown {
                         self.mark_unknown(
@@ -834,7 +1127,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 );
                 self.state.write().await.effects.insert(
                     command.meta.effect_id,
-                    RecordedReceipt::Command(receipt.clone()),
+                    RecordedReceipt::Command {
+                        family: CommandEffectFamily::Command,
+                        receipt: receipt.clone(),
+                    },
                 );
                 return Ok(receipt);
             }
@@ -869,7 +1165,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
         };
         self.state.write().await.effects.insert(
             command.meta.effect_id,
-            RecordedReceipt::Command(receipt.clone()),
+            RecordedReceipt::Command {
+                family: CommandEffectFamily::Command,
+                receipt: receipt.clone(),
+            },
         );
         Ok(receipt)
     }
@@ -897,6 +1196,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
             ));
         }
         let (turns, active_turn_id) = map_thread_turns(&result)?;
+        let thread_name = response_thread_name(&result)?;
         let mut state = self.state.write().await;
         let source = state
             .sources
@@ -921,6 +1221,15 @@ impl CompleteAgentService for CodexCompleteAgentService {
             active_turn_id,
             turns,
             interactions,
+            thread_name: Some(agentdash_agent_service_api::AgentThreadNameSnapshot {
+                thread_name,
+                source_info: AgentSnapshotSource {
+                    authority: AgentSnapshotAuthority::AgentAuthoritative,
+                    source_revision: None,
+                    fidelity: SemanticFidelity::Exact,
+                    observed_at_ms: now_ms(),
+                },
+            }),
             source_info: AgentSnapshotSource {
                 authority: AgentSnapshotAuthority::AgentObserved,
                 // App Server does not expose a stable durable snapshot/context revision.
@@ -976,32 +1285,34 @@ impl CompleteAgentService for CodexCompleteAgentService {
     ) -> Result<AgentEffectInspection, AgentServiceError> {
         let state = self.state.read().await;
         Ok(match state.effects.get(&identity) {
-            Some(RecordedReceipt::Command(receipt)) => inspection_from_command(receipt),
-            Some(RecordedReceipt::Fork(receipt)) => AgentEffectInspection {
+            Some(RecordedReceipt::Command { family, receipt }) => {
+                inspection_from_command(receipt, *family)
+            }
+            Some(RecordedReceipt::Fork { receipt, applied }) => AgentEffectInspection {
                 effect_id: receipt.effect_id.clone(),
                 command_id: Some(receipt.command_id.clone()),
                 state: AgentEffectInspectionState::Applied {
-                    source: receipt.parent_source.clone(),
-                    terminal: receipt.state.terminal(),
-                    initial_context: None,
-                    child_source: receipt.child_source.clone(),
+                    outcome: AgentAppliedEffectOutcome::Fork {
+                        receipt: applied.clone(),
+                    },
                 },
             },
-            Some(RecordedReceipt::Surface(receipt)) => AgentEffectInspection {
+            Some(RecordedReceipt::SurfaceApply(receipt)) => AgentEffectInspection {
                 effect_id: receipt.effect_id.clone(),
                 command_id: Some(receipt.command_id.clone()),
                 state: AgentEffectInspectionState::Applied {
-                    source: receipt.source.clone(),
-                    terminal: Some(AgentTerminalOutcome::Succeeded),
-                    initial_context: None,
-                    child_source: None,
+                    outcome: AgentAppliedEffectOutcome::SurfaceApply {
+                        receipt: receipt.clone(),
+                    },
                 },
             },
             Some(RecordedReceipt::Unknown(inspection)) => inspection.clone(),
             None => AgentEffectInspection {
                 effect_id: identity,
                 command_id: None,
-                state: AgentEffectInspectionState::NotApplied,
+                // Codex has no source-native effect lookup. An empty adapter ledger after process
+                // restart therefore cannot prove non-application and must not authorize a resend.
+                state: AgentEffectInspectionState::Unknown,
             },
         })
     }
@@ -1013,7 +1324,14 @@ impl CompleteAgentService for CodexCompleteAgentService {
         {
             let state = self.state.read().await;
             match state.effects.get(&command.effect_id) {
-                Some(RecordedReceipt::Surface(receipt)) => return Ok(receipt.clone()),
+                Some(RecordedReceipt::SurfaceApply(receipt))
+                    if receipt.command_id == command.command_id
+                        && receipt.source == command.source
+                        && receipt.applied.revision == command.bound_surface.revision
+                        && receipt.applied.digest == command.bound_surface.digest =>
+                {
+                    return Ok(receipt.clone());
+                }
                 Some(RecordedReceipt::Unknown(_)) => return Err(unknown_outcome_error()),
                 Some(_) => {
                     return Err(service_error(
@@ -1025,7 +1343,8 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 None => {}
             }
         }
-        let descriptor = self.descriptor();
+        let descriptor =
+            Self::descriptor_for(self.config.definition_id.clone(), self.config.title.clone());
         if command.bound_surface.offer_profile_digest != descriptor.profile_digest {
             return Err(service_error(
                 AgentServiceErrorCode::Conflict,
@@ -1066,7 +1385,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
             {
                 return Err(service_error(
                     AgentServiceErrorCode::Unsupported,
-                    "Codex target lane accepts only exact immutable surface contributions",
+                    "Codex accepts only exact immutable surface contributions",
                     false,
                 ));
             }
@@ -1164,9 +1483,10 @@ impl CompleteAgentService for CodexCompleteAgentService {
             .expect("source existence checked before Codex side effect");
         source.revision += 1;
         source.applied_surface = Some(applied);
-        state
-            .effects
-            .insert(command.effect_id, RecordedReceipt::Surface(receipt.clone()));
+        state.effects.insert(
+            command.effect_id,
+            RecordedReceipt::SurfaceApply(receipt.clone()),
+        );
         Ok(receipt)
     }
 
@@ -1174,7 +1494,15 @@ impl CompleteAgentService for CodexCompleteAgentService {
         &self,
         command: RevokeBoundAgentSurface,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
-        if let Some(receipt) = self.replay_command(&command.effect_id).await? {
+        if let Some(receipt) = self
+            .replay_command(
+                &command.effect_id,
+                CommandEffectFamily::SurfaceRevoke,
+                &command.command_id,
+                Some(&command.source),
+            )
+            .await?
+        {
             return Ok(receipt);
         }
         let current = self
@@ -1233,11 +1561,13 @@ impl CompleteAgentService for CodexCompleteAgentService {
             revision,
             None,
         );
-        self.state
-            .write()
-            .await
-            .effects
-            .insert(command.effect_id, RecordedReceipt::Command(receipt.clone()));
+        self.state.write().await.effects.insert(
+            command.effect_id,
+            RecordedReceipt::Command {
+                family: CommandEffectFamily::SurfaceRevoke,
+                receipt: receipt.clone(),
+            },
+        );
         Ok(receipt)
     }
 }
@@ -1248,14 +1578,13 @@ impl CodexCompleteAgentService {
         source: &AgentSourceCoordinate,
         observation: CodexAppServerObservation,
     ) -> Result<AgentChangePayload, AgentServiceError> {
-        match observation {
-            CodexAppServerObservation::ServerRequest {
+        let sequence = observation.sequence;
+        match observation.kind {
+            CodexTypedObservation::ServerRequest {
                 request_id,
-                method,
-                params,
-                sequence,
+                request,
             } => {
-                let interaction = map_server_request(sequence, &method, &params)?;
+                let interaction = map_server_request(sequence, &request_id, *request)?;
                 let pending = PendingInteraction {
                     request_id,
                     interaction: interaction.clone(),
@@ -1278,8 +1607,8 @@ impl CodexCompleteAgentService {
                 source_state.revision += 1;
                 Ok(AgentChangePayload::InteractionChanged { interaction })
             }
-            CodexAppServerObservation::Notification { method, params, .. } => {
-                map_notification(&method, &params)
+            CodexTypedObservation::Notification(notification) => {
+                map_notification(source, *notification)
             }
         }
     }
@@ -1356,6 +1685,87 @@ fn response_thread_source(result: &Value) -> Result<AgentSourceCoordinate, Agent
     AgentSourceCoordinate::new(thread_id).map_err(internal_error)
 }
 
+fn response_thread_name(result: &Value) -> Result<Option<String>, AgentServiceError> {
+    match result.pointer("/thread/name") {
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.clone())),
+        Some(Value::Null) | None => Ok(None),
+        Some(Value::String(_)) => Err(protocol_violation(
+            "thread/read returned a blank thread name",
+        )),
+        Some(_) => Err(protocol_violation(
+            "thread/read returned a non-string thread name",
+        )),
+    }
+}
+
+fn codex_thread_history_digest(result: &Value) -> Result<AgentPayloadDigest, AgentServiceError> {
+    let turns = result
+        .pointer("/thread/turns")
+        .and_then(Value::as_array)
+        .ok_or_else(|| protocol_violation("thread/read response misses thread.turns"))?;
+    let canonical = canonical_json(&json!({
+        "version": CODEX_CHILD_HISTORY_DIGEST_VERSION,
+        "turns": turns,
+    }))?;
+    AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(canonical)))
+        .map_err(internal_error)
+}
+
+fn verify_codex_fork_cutoff(
+    result: &Value,
+    cutoff: &AgentForkPoint,
+) -> Result<(), AgentServiceError> {
+    match cutoff {
+        AgentForkPoint::Head => Ok(()),
+        AgentForkPoint::CompletedTurn { turn_id } => {
+            let verified_turn = result
+                .pointer("/thread/turns")
+                .and_then(Value::as_array)
+                .and_then(|turns| turns.last());
+            let verified_turn_id = verified_turn
+                .and_then(|turn| turn.get("id"))
+                .and_then(Value::as_str);
+            let verified_turn_status = verified_turn
+                .and_then(|turn| turn.get("status"))
+                .and_then(Value::as_str);
+            if verified_turn_id == Some(turn_id.as_str())
+                && verified_turn_status == Some("completed")
+            {
+                Ok(())
+            } else {
+                Err(protocol_violation(
+                    "thread/read child history does not end at the requested completed-turn cutoff",
+                ))
+            }
+        }
+        AgentForkPoint::Item { .. } | AgentForkPoint::SourceCursor { .. } => Err(service_error(
+            AgentServiceErrorCode::Unsupported,
+            "Codex App Server cannot verify this fork cutoff",
+            false,
+        )),
+    }
+}
+
+fn canonical_json(value: &Value) -> Result<Vec<u8>, AgentServiceError> {
+    fn canonicalize(value: &Value) -> Value {
+        match value {
+            Value::Object(object) => {
+                let mut entries = object.iter().collect::<Vec<_>>();
+                entries.sort_by(|left, right| left.0.cmp(right.0));
+                let mut canonical = Map::new();
+                for (key, value) in entries {
+                    canonical.insert(key.clone(), canonicalize(value));
+                }
+                Value::Object(canonical)
+            }
+            Value::Array(items) => Value::Array(items.iter().map(canonicalize).collect()),
+            other => other.clone(),
+        }
+    }
+
+    serde_json::to_vec(&canonicalize(value)).map_err(internal_error)
+}
+
 fn map_thread_turns(
     result: &Value,
 ) -> Result<(Vec<AgentTurnSnapshot>, Option<AgentTurnId>), AgentServiceError> {
@@ -1379,184 +1789,783 @@ fn map_thread_turns(
             .and_then(Value::as_array)
             .ok_or_else(|| protocol_violation("thread/read turn misses items"))?
             .iter()
-            .map(map_item)
+            .map(|item| map_item(item, Some(status)))
             .collect::<Result<Vec<_>, _>>()?;
         mapped.push(AgentTurnSnapshot { id, status, items });
     }
     Ok((mapped, active))
 }
 
-fn map_item(item: &Value) -> Result<AgentItemSnapshot, AgentServiceError> {
+fn map_item(
+    item: &Value,
+    inherited_status: Option<AgentEntityStatus>,
+) -> Result<AgentItemSnapshot, AgentServiceError> {
+    use crate::vendor_generated::codex_v2::thread_item::ThreadItem;
+
     let id = required_id::<AgentItemId>(item, "id", AgentItemId::new)?;
-    let status = entity_status(item.get("status"));
-    let kind = item
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let content = match kind {
-        "userMessage" => AgentItemContent::UserInput {
-            input: AgentInput {
-                content: vec![AgentInputContent::Text {
-                    text: item
-                        .get("content")
-                        .and_then(Value::as_array)
-                        .map(|blocks| {
-                            blocks
-                                .iter()
-                                .filter_map(|block| block.get("text").and_then(Value::as_str))
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        })
-                        .unwrap_or_default(),
-                }],
-            },
+    let explicit_status = entity_status(item.get("status"));
+    let status = if explicit_status == AgentEntityStatus::Accepted {
+        inherited_status.unwrap_or(explicit_status)
+    } else {
+        explicit_status
+    };
+    let vendor: ThreadItem = serde_json::from_value(item.clone()).map_err(|error| {
+        protocol_violation(format!(
+            "unknown or invalid Codex ThreadItem cannot enter canonical history: {error}"
+        ))
+    })?;
+    let body = match vendor {
+        ThreadItem::UserMessage { content, .. } => AgentItemBody::UserMessage {
+            content: content
+                .iter()
+                .map(map_vendor_user_input)
+                .collect::<Result<Vec<_>, _>>()?,
         },
-        "agentMessage" => AgentItemContent::AgentOutput {
-            content: vec![AgentInputContent::Text {
-                text: item
-                    .get("text")
+        ThreadItem::HookPrompt { fragments, .. } => AgentItemBody::HookPrompt {
+            hook_point: "codex".to_owned(),
+            content: fragments
+                .into_iter()
+                .map(
+                    |fragment| agentdash_agent_service_api::AgentContentBlock::Text {
+                        text: fragment.text,
+                    },
+                )
+                .collect(),
+        },
+        ThreadItem::AgentMessage { text, phase, .. } => AgentItemBody::AgentMessage {
+            content: vec![text_block(text)],
+            phase: phase
+                .flatten()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(internal_error)?
+                .and_then(|value| value.as_str().map(ToOwned::to_owned)),
+        },
+        ThreadItem::Plan { text, .. } => AgentItemBody::Plan {
+            explanation: Some(text),
+            steps: Vec::new(),
+        },
+        ThreadItem::Reasoning {
+            content, summary, ..
+        } => AgentItemBody::Reasoning {
+            summary: summary.into_iter().map(text_block).collect(),
+            content: content.into_iter().map(text_block).collect(),
+        },
+        ThreadItem::CommandExecution {
+            command,
+            cwd,
+            aggregated_output,
+            ..
+        } => AgentItemBody::CommandExecution {
+            command,
+            cwd: json_string(&cwd)?,
+            output: aggregated_output
+                .flatten()
+                .into_iter()
+                .map(|text| agentdash_agent_service_api::AgentCommandOutput {
+                    stream: agentdash_agent_service_api::AgentCommandOutputStream::Combined,
+                    text,
+                })
+                .collect(),
+        },
+        ThreadItem::FileChange { changes, .. } => AgentItemBody::FileChange {
+            changes: changes
+                .into_iter()
+                .map(|change| {
+                    let kind = serde_json::to_value(&change.kind).map_err(internal_error)?;
+                    let (change_kind, moved_to) = map_patch_kind(&kind)?;
+                    Ok(agentdash_agent_service_api::AgentFilePatch {
+                        path: change.path,
+                        change_kind,
+                        patch: change.diff,
+                        moved_to,
+                    })
+                })
+                .collect::<Result<Vec<_>, AgentServiceError>>()?,
+            output: Vec::new(),
+        },
+        ThreadItem::McpToolCall {
+            server,
+            tool,
+            arguments,
+            result,
+            error,
+            ..
+        } => AgentItemBody::McpToolCall {
+            server,
+            tool,
+            arguments,
+            result: result
+                .flatten()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(internal_error)?
+                .or(error
+                    .flatten()
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .map_err(internal_error)?),
+            progress: Vec::new(),
+        },
+        ThreadItem::DynamicToolCall {
+            namespace,
+            tool,
+            arguments,
+            content_items,
+            success,
+            ..
+        } => AgentItemBody::DynamicToolCall {
+            namespace: namespace.flatten(),
+            tool,
+            arguments,
+            result: success.flatten().map(|success| json!({"success": success})),
+            progress: content_items
+                .flatten()
+                .unwrap_or_default()
+                .into_iter()
+                .map(map_dynamic_output)
+                .collect(),
+        },
+        ThreadItem::CollabAgentToolCall {
+            tool,
+            receiver_thread_ids,
+            prompt,
+            agents_states,
+            ..
+        } => AgentItemBody::CollaborationToolCall {
+            action: tool.to_string(),
+            target: (!receiver_thread_ids.is_empty()).then(|| receiver_thread_ids.join(",")),
+            prompt: prompt.flatten(),
+            result: Some(serde_json::to_value(agents_states).map_err(internal_error)?),
+        },
+        ThreadItem::SubAgentActivity {
+            agent_thread_id,
+            agent_path,
+            kind,
+            ..
+        } => AgentItemBody::SubagentActivity {
+            agent_id: agent_thread_id,
+            task: agent_path,
+            status: kind.to_string(),
+            result: Vec::new(),
+        },
+        ThreadItem::WebSearch { query, action, .. } => {
+            let action_value = action
+                .flatten()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(internal_error)?;
+            AgentItemBody::WebSearch {
+                action: action_value
+                    .as_ref()
+                    .and_then(|value| value.get("type"))
                     .and_then(Value::as_str)
-                    .unwrap_or_default()
+                    .unwrap_or("search")
                     .to_owned(),
-            }],
-        },
-        "contextCompaction" => AgentItemContent::ContextCompaction,
-        "dynamicToolCall" => AgentItemContent::ToolCall {
-            name: agentdash_agent_service_api::AgentToolName::new(
-                item.get("tool")
-                    .or_else(|| item.get("name"))
+                query: Some(query),
+                url: action_value
+                    .as_ref()
+                    .and_then(|value| value.get("url"))
                     .and_then(Value::as_str)
-                    .unwrap_or("codex.dynamic-tool"),
-            )
-            .map_err(internal_error)?,
-            arguments: item
-                .get("arguments")
-                .cloned()
-                .unwrap_or(Value::Object(Map::new())),
+                    .map(ToOwned::to_owned),
+                results: Vec::new(),
+            }
+        }
+        ThreadItem::ImageView { path, .. } => AgentItemBody::ImageView {
+            path: json_string_required(&path)?,
+            detail: None,
         },
-        _ => AgentItemContent::Extension {
-            namespace: "codex".to_owned(),
-            schema: format!("codex.thread_item.{kind}.v1"),
-            value: json!({
-                "type": kind,
-                "status": item.get("status"),
-            }),
+        ThreadItem::Sleep { duration_ms, .. } => AgentItemBody::Sleep {
+            duration_ms: agentdash_agent_service_api::AgentServiceU64(duration_ms),
+        },
+        ThreadItem::ImageGeneration {
+            result,
+            revised_prompt,
+            saved_path,
+            ..
+        } => {
+            let mut outputs = vec![text_block(result)];
+            if let Some(path) = saved_path.flatten() {
+                outputs.push(
+                    agentdash_agent_service_api::AgentContentBlock::LocalResource {
+                        path: json_string_required(&path)?,
+                        media_type: None,
+                        digest: None,
+                    },
+                );
+            }
+            AgentItemBody::ImageGeneration {
+                prompt: String::new(),
+                revised_prompt: revised_prompt.flatten(),
+                outputs,
+            }
+        }
+        ThreadItem::EnteredReviewMode { review, .. } => AgentItemBody::Review {
+            findings: Vec::new(),
+            summary: Some(review),
+        },
+        ThreadItem::ExitedReviewMode { review, .. } => AgentItemBody::Review {
+            findings: Vec::new(),
+            summary: Some(review),
+        },
+        ThreadItem::ContextCompaction { .. } => AgentItemBody::ContextCompaction {
+            summary: None,
+            source_digest: None,
         },
     };
-    let canonical = serde_json::to_vec(&content).map_err(internal_error)?;
-    let content_digest = AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(canonical)))
-        .map_err(internal_error)?;
+    let presentation = AgentItemPresentation::new(
+        body,
+        item.get("startedAt").and_then(Value::as_u64),
+        item.get("updatedAt").and_then(Value::as_u64),
+        terminal_evidence(status, item)?,
+    )
+    .map_err(internal_error)?;
     Ok(AgentItemSnapshot {
         id,
         status,
-        content,
-        content_digest,
+        presentation,
     })
 }
 
-fn map_notification(method: &str, params: &Value) -> Result<AgentChangePayload, AgentServiceError> {
-    match method {
-        "turn/started" | "turn/completed" => {
-            let turn = params
-                .get("turn")
-                .ok_or_else(|| protocol_violation("turn notification misses turn"))?;
-            let id = required_id::<AgentTurnId>(turn, "id", AgentTurnId::new)?;
-            Ok(AgentChangePayload::TurnChanged {
-                turn: AgentTurnSnapshot {
-                    id,
-                    status: entity_status(turn.get("status")),
-                    items: Vec::new(),
+fn text_block(text: String) -> agentdash_agent_service_api::AgentContentBlock {
+    agentdash_agent_service_api::AgentContentBlock::Text { text }
+}
+
+fn map_vendor_user_input(
+    input: &crate::vendor_generated::codex_v2::thread_item::UserInput,
+) -> Result<agentdash_agent_service_api::AgentContentBlock, AgentServiceError> {
+    use crate::vendor_generated::codex_v2::thread_item::UserInput;
+    Ok(match input {
+        UserInput::Text { text, .. } => text_block(text.clone()),
+        UserInput::Image { url, detail } => agentdash_agent_service_api::AgentContentBlock::Image {
+            media_type: "application/octet-stream".to_owned(),
+            source: url.clone(),
+            detail: detail
+                .as_ref()
+                .and_then(|value| value.as_ref())
+                .map(ToString::to_string),
+            digest: AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(url.as_bytes())))
+                .map_err(internal_error)?,
+        },
+        UserInput::LocalImage { path, detail: _ } => {
+            agentdash_agent_service_api::AgentContentBlock::LocalResource {
+                path: path.clone(),
+                media_type: Some("image/*".to_owned()),
+                digest: None,
+            }
+        }
+        UserInput::Skill { name, path } => {
+            agentdash_agent_service_api::AgentContentBlock::SkillReference {
+                name: name.clone(),
+                path: Some(path.clone()),
+            }
+        }
+        UserInput::Mention { name, path } => {
+            agentdash_agent_service_api::AgentContentBlock::Mention {
+                label: name.clone(),
+                reference: path.clone(),
+            }
+        }
+    })
+}
+
+fn map_dynamic_output(
+    output: crate::vendor_generated::codex_v2::thread_item::DynamicToolCallOutputContentItem,
+) -> agentdash_agent_service_api::AgentContentBlock {
+    use crate::vendor_generated::codex_v2::thread_item::DynamicToolCallOutputContentItem;
+    match output {
+        DynamicToolCallOutputContentItem::InputText { text } => text_block(text),
+        DynamicToolCallOutputContentItem::InputImage { image_url } => {
+            agentdash_agent_service_api::AgentContentBlock::ResourceLink {
+                uri: image_url,
+                title: None,
+                media_type: Some("image/*".to_owned()),
+                digest: None,
+            }
+        }
+    }
+}
+
+fn map_patch_kind(
+    value: &Value,
+) -> Result<
+    (
+        agentdash_agent_service_api::AgentFileChangeKind,
+        Option<String>,
+    ),
+    AgentServiceError,
+> {
+    let discriminant = value
+        .as_str()
+        .or_else(|| value.get("type").and_then(Value::as_str))
+        .ok_or_else(|| protocol_violation("Codex patch kind is not typed"))?;
+    let kind = match discriminant {
+        "add" => agentdash_agent_service_api::AgentFileChangeKind::Add,
+        "delete" => agentdash_agent_service_api::AgentFileChangeKind::Delete,
+        "update" => agentdash_agent_service_api::AgentFileChangeKind::Update,
+        "move" => agentdash_agent_service_api::AgentFileChangeKind::Move,
+        other => {
+            return Err(protocol_violation(format!(
+                "unknown Codex patch kind {other}"
+            )));
+        }
+    };
+    let moved_to = value
+        .get("move_path")
+        .or_else(|| value.get("movePath"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    Ok((kind, moved_to))
+}
+
+fn json_string<T: serde::Serialize>(value: &T) -> Result<Option<String>, AgentServiceError> {
+    let value = serde_json::to_value(value).map_err(internal_error)?;
+    Ok(value.as_str().map(ToOwned::to_owned))
+}
+
+fn json_string_required<T: serde::Serialize>(value: &T) -> Result<String, AgentServiceError> {
+    json_string(value)?.ok_or_else(|| protocol_violation("Codex path is not a string"))
+}
+
+fn terminal_evidence(
+    status: AgentEntityStatus,
+    item: &Value,
+) -> Result<Option<AgentItemTerminalEvidence>, AgentServiceError> {
+    let outcome = match status {
+        AgentEntityStatus::Accepted | AgentEntityStatus::Running => return Ok(None),
+        AgentEntityStatus::Completed => AgentTerminalStatus::Completed,
+        AgentEntityStatus::Failed => AgentTerminalStatus::Failed,
+        AgentEntityStatus::Interrupted => AgentTerminalStatus::Interrupted,
+        AgentEntityStatus::Lost => AgentTerminalStatus::Lost,
+    };
+    let exit_code = item
+        .get("exitCode")
+        .and_then(Value::as_i64)
+        .map(i32::try_from)
+        .transpose()
+        .map_err(|_| protocol_violation("Codex process exit code exceeds i32"))?;
+    let process_exit = (exit_code.is_some() || item.get("processId").is_some()).then(|| {
+        AgentProcessExitEvidence {
+            exit_code,
+            signal: None,
+            success: exit_code == Some(0),
+        }
+    });
+    let error = item
+        .get("error")
+        .filter(|value| !value.is_null())
+        .map(|value| AgentPresentationError {
+            code: "codex_item_failed".to_owned(),
+            message: value
+                .as_str()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| value.to_string()),
+            retryable: false,
+        });
+    Ok(Some(AgentItemTerminalEvidence {
+        outcome,
+        completed_at_ms: item
+            .get("completedAt")
+            .and_then(Value::as_u64)
+            .map(agentdash_agent_service_api::AgentServiceU64),
+        duration_ms: item
+            .get("durationMs")
+            .and_then(Value::as_u64)
+            .map(agentdash_agent_service_api::AgentServiceU64),
+        process_exit,
+        error,
+    }))
+}
+
+fn map_notification(
+    source: &AgentSourceCoordinate,
+    notification: ServerNotification,
+) -> Result<AgentChangePayload, AgentServiceError> {
+    use crate::vendor_generated::codex_v2::server_notification::ServerNotification as Source;
+
+    match notification {
+        Source::ThreadNameUpdated(notification) => {
+            let notification_source =
+                AgentSourceCoordinate::new(notification.thread_id).map_err(internal_error)?;
+            if &notification_source != source {
+                return Err(protocol_violation(
+                    "thread/name/updated belongs to a different source thread",
+                ));
+            }
+            if notification
+                .thread_name
+                .as_ref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
+                return Err(protocol_violation(
+                    "thread/name/updated returned a blank thread name",
+                ));
+            }
+            Ok(AgentChangePayload::ThreadNameChanged {
+                thread_name: notification.thread_name,
+                source_info: AgentSnapshotSource {
+                    authority: AgentSnapshotAuthority::AgentAuthoritative,
+                    source_revision: None,
+                    fidelity: SemanticFidelity::Exact,
+                    observed_at_ms: now_ms(),
                 },
             })
         }
-        "item/started" | "item/completed" | "item/updated" => {
-            let turn_id = required_id::<AgentTurnId>(params, "turnId", AgentTurnId::new)?;
-            let item = params
-                .get("item")
-                .ok_or_else(|| protocol_violation("item notification misses item"))?;
-            Ok(AgentChangePayload::ItemChanged {
-                turn_id,
-                item: map_item(item)?,
+        Source::TurnStarted(notification) => {
+            require_notification_source(source, &notification.thread_id, "turn/started")?;
+            Ok(AgentChangePayload::TurnChanged {
+                turn: map_notification_turn(notification.turn)?,
             })
         }
-        "thread/archived" => Ok(AgentChangePayload::LifecycleChanged {
-            status: AgentLifecycleStatus::Closed,
-        }),
-        _ => Ok(AgentChangePayload::SnapshotInvalidated {
-            reason: format!("Codex observation {method} requires thread/read reconciliation"),
+        Source::TurnCompleted(notification) => {
+            require_notification_source(source, &notification.thread_id, "turn/completed")?;
+            Ok(AgentChangePayload::TurnChanged {
+                turn: map_notification_turn(notification.turn)?,
+            })
+        }
+        Source::ItemStarted(notification) => {
+            require_notification_source(source, &notification.thread_id, "item/started")?;
+            let turn_id = AgentTurnId::new(notification.turn_id).map_err(internal_error)?;
+            let item = map_notification_item(
+                notification.item,
+                AgentEntityStatus::Running,
+                Some(notification.started_at_ms),
+                None,
+            )?;
+            Ok(AgentChangePayload::ItemTransitioned {
+                turn_id,
+                item_id: item.id,
+                transition: agentdash_agent_service_api::AgentItemTransition::Started {
+                    presentation: item.presentation.clone(),
+                },
+            })
+        }
+        Source::ItemCompleted(notification) => {
+            require_notification_source(source, &notification.thread_id, "item/completed")?;
+            let turn_id = AgentTurnId::new(notification.turn_id).map_err(internal_error)?;
+            let item = map_notification_item(
+                notification.item,
+                AgentEntityStatus::Completed,
+                None,
+                Some(notification.completed_at_ms),
+            )?;
+            Ok(AgentChangePayload::ItemTransitioned {
+                turn_id,
+                item_id: item.id,
+                transition: agentdash_agent_service_api::AgentItemTransition::Terminal {
+                    presentation: item.presentation.clone(),
+                },
+            })
+        }
+        Source::ThreadArchived(notification) => {
+            require_notification_source(source, &notification.thread_id, "thread/archived")?;
+            Ok(AgentChangePayload::LifecycleChanged {
+                status: AgentLifecycleStatus::Closed,
+            })
+        }
+        Source::ThreadCompacted(_)
+        | Source::Error(_)
+        | Source::ThreadStarted(_)
+        | Source::ThreadStatusChanged(_)
+        | Source::ThreadDeleted(_)
+        | Source::ThreadUnarchived(_)
+        | Source::ThreadClosed(_)
+        | Source::SkillsChanged(_)
+        | Source::ThreadGoalUpdated(_)
+        | Source::ThreadGoalCleared(_)
+        | Source::ThreadSettingsUpdated(_)
+        | Source::ThreadTokenUsageUpdated(_)
+        | Source::HookStarted(_)
+        | Source::HookCompleted(_)
+        | Source::TurnDiffUpdated(_)
+        | Source::TurnPlanUpdated(_)
+        | Source::ItemAutoApprovalReviewStarted(_)
+        | Source::ItemAutoApprovalReviewCompleted(_)
+        | Source::ItemAgentMessageDelta(_)
+        | Source::ItemPlanDelta(_)
+        | Source::CommandExecOutputDelta(_)
+        | Source::ProcessOutputDelta(_)
+        | Source::ProcessExited(_)
+        | Source::ItemCommandExecutionOutputDelta(_)
+        | Source::ItemCommandExecutionTerminalInteraction(_)
+        | Source::ItemFileChangeOutputDelta(_)
+        | Source::ItemFileChangePatchUpdated(_)
+        | Source::ServerRequestResolved(_)
+        | Source::ItemMcpToolCallProgress(_)
+        | Source::McpServerOauthLoginCompleted(_)
+        | Source::McpServerStartupStatusUpdated(_)
+        | Source::AccountUpdated(_)
+        | Source::AccountRateLimitsUpdated(_)
+        | Source::AppListUpdated(_)
+        | Source::RemoteControlStatusChanged(_)
+        | Source::ExternalAgentConfigImportProgress(_)
+        | Source::ExternalAgentConfigImportCompleted(_)
+        | Source::FsChanged(_)
+        | Source::ItemReasoningSummaryTextDelta(_)
+        | Source::ItemReasoningSummaryPartAdded(_)
+        | Source::ItemReasoningTextDelta(_)
+        | Source::ModelRerouted(_)
+        | Source::ModelVerification(_)
+        | Source::TurnModerationMetadata(_)
+        | Source::ModelSafetyBufferingUpdated(_)
+        | Source::Warning(_)
+        | Source::GuardianWarning(_)
+        | Source::DeprecationNotice(_)
+        | Source::ConfigWarning(_)
+        | Source::FuzzyFileSearchSessionUpdated(_)
+        | Source::FuzzyFileSearchSessionCompleted(_)
+        | Source::ThreadRealtimeStarted(_)
+        | Source::ThreadRealtimeItemAdded(_)
+        | Source::ThreadRealtimeTranscriptDelta(_)
+        | Source::ThreadRealtimeTranscriptDone(_)
+        | Source::ThreadRealtimeOutputAudioDelta(_)
+        | Source::ThreadRealtimeSdp(_)
+        | Source::ThreadRealtimeError(_)
+        | Source::ThreadRealtimeClosed(_)
+        | Source::WindowsWorldWritableWarning(_)
+        | Source::WindowsSandboxSetupCompleted(_)
+        | Source::AccountLoginCompleted(_) => Ok(AgentChangePayload::SnapshotInvalidated {
+            reason: "typed Codex notification requires thread/read reconciliation".to_owned(),
         }),
     }
 }
 
 fn map_server_request(
     sequence: u64,
-    method: &str,
-    params: &Value,
+    request_id: &Value,
+    request: CodexTypedServerRequest,
 ) -> Result<AgentInteractionSnapshot, AgentServiceError> {
-    let kind = match method {
-        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
-            AgentInteractionKind::Approval
+    let fallback_id = request_id_string(request_id)?;
+    let (interaction_id, turn_id, item_id, request) = match request {
+        CodexTypedServerRequest::CommandExecutionApproval(params) => {
+            let proposed_action = serde_json::to_value(&params).map_err(internal_error)?;
+            (
+                params.approval_id.unwrap_or_else(|| fallback_id.clone()),
+                params.turn_id,
+                Some(params.item_id),
+                AgentInteractionRequest::Approval {
+                    prompt: params
+                        .command
+                        .unwrap_or_else(|| "Codex requests command approval".to_owned()),
+                    reason: params.reason,
+                    proposed_action: Some(proposed_action),
+                },
+            )
         }
-        "item/tool/requestUserInput" => AgentInteractionKind::UserInput,
-        "mcpServer/elicitation/create" => AgentInteractionKind::McpElicitation,
-        "item/tool/call" => AgentInteractionKind::DynamicTool,
-        _ => {
-            return Err(service_error(
-                AgentServiceErrorCode::Unsupported,
-                format!("unsupported Codex server request {method}"),
-                false,
-            ));
+        CodexTypedServerRequest::FileChangeApproval(params) => {
+            let proposed_action = serde_json::to_value(&params).map_err(internal_error)?;
+            (
+                fallback_id.clone(),
+                params.turn_id,
+                Some(params.item_id),
+                AgentInteractionRequest::Approval {
+                    prompt: params
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "Codex requests file change approval".to_owned()),
+                    reason: params.reason,
+                    proposed_action: Some(proposed_action),
+                },
+            )
         }
+        CodexTypedServerRequest::PermissionsApproval(params) => {
+            let proposed_action = serde_json::to_value(&params).map_err(internal_error)?;
+            (
+                fallback_id.clone(),
+                params.turn_id,
+                Some(params.item_id),
+                AgentInteractionRequest::Approval {
+                    prompt: params
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "Codex requests additional permissions".to_owned()),
+                    reason: params.reason,
+                    proposed_action: Some(proposed_action),
+                },
+            )
+        }
+        CodexTypedServerRequest::UserInput(params) => (
+            fallback_id.clone(),
+            params.turn_id,
+            Some(params.item_id),
+            AgentInteractionRequest::UserInput {
+                prompt: "Codex requests user input".to_owned(),
+                questions: params
+                    .questions
+                    .into_iter()
+                    .map(|question| {
+                        let options = question.options;
+                        let allows_free_form = question.is_other || options.is_none();
+                        agentdash_agent_service_api::AgentInteractionQuestion {
+                            id: question.id,
+                            prompt: question.question,
+                            options: options
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|option| option.label)
+                                .collect(),
+                            allows_free_form,
+                        }
+                    })
+                    .collect(),
+            },
+        ),
+        CodexTypedServerRequest::DynamicTool(params) => (
+            params.call_id,
+            params.turn_id,
+            None,
+            AgentInteractionRequest::DynamicTool {
+                namespace: params.namespace,
+                tool: params.tool,
+                prompt: "Codex requests a dynamic tool call".to_owned(),
+                arguments: params.arguments,
+            },
+        ),
+        CodexTypedServerRequest::McpElicitation(params) => (
+            fallback_id,
+            params.turn_id.ok_or_else(|| {
+                protocol_violation("Codex MCP elicitation cannot be correlated to an active turn")
+            })?,
+            None,
+            AgentInteractionRequest::McpElicitation {
+                server: params.server_name,
+                prompt: params.message,
+                schema: params.requested_schema,
+            },
+        ),
     };
     Ok(AgentInteractionSnapshot {
-        id: AgentInteractionId::new(
-            params
-                .get("requestId")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("codex-request-{sequence}")),
-        )
+        id: AgentInteractionId::new(if interaction_id.is_empty() {
+            format!("codex-request-{sequence}")
+        } else {
+            interaction_id
+        })
         .map_err(internal_error)?,
-        turn_id: required_id::<AgentTurnId>(params, "turnId", AgentTurnId::new)?,
-        item_id: params
-            .get("itemId")
-            .and_then(Value::as_str)
+        turn_id: AgentTurnId::new(turn_id).map_err(internal_error)?,
+        item_id: item_id
             .map(AgentItemId::new)
             .transpose()
             .map_err(internal_error)?,
-        kind,
-        prompt: params
-            .get("prompt")
-            .or_else(|| params.get("message"))
-            .and_then(Value::as_str)
-            .unwrap_or("Codex requires a typed interaction response")
-            .to_owned(),
-        resolved: false,
+        request,
+        status: AgentInteractionStatus::Pending,
+        resolution: None,
     })
 }
 
+fn request_id_string(request_id: &Value) -> Result<String, AgentServiceError> {
+    match request_id {
+        Value::String(value) => Ok(value.clone()),
+        Value::Number(value) if value.is_i64() || value.is_u64() => Ok(value.to_string()),
+        _ => Err(protocol_violation(
+            "Codex server request id must be a string or integer",
+        )),
+    }
+}
+
+fn require_notification_source(
+    expected: &AgentSourceCoordinate,
+    actual: &str,
+    method: &str,
+) -> Result<(), AgentServiceError> {
+    if expected.as_str() == actual {
+        Ok(())
+    } else {
+        Err(protocol_violation(format!(
+            "{method} belongs to a different source thread"
+        )))
+    }
+}
+
+fn project_codex_turn_status(
+    status: crate::vendor_generated::codex_v2::server_notification::TurnStatus,
+) -> AgentEntityStatus {
+    use crate::vendor_generated::codex_v2::server_notification::TurnStatus;
+    match status {
+        TurnStatus::Completed => AgentEntityStatus::Completed,
+        TurnStatus::Interrupted => AgentEntityStatus::Interrupted,
+        TurnStatus::Failed => AgentEntityStatus::Failed,
+        TurnStatus::InProgress => AgentEntityStatus::Running,
+    }
+}
+
+fn map_notification_turn(
+    turn: crate::vendor_generated::codex_v2::server_notification::Turn,
+) -> Result<AgentTurnSnapshot, AgentServiceError> {
+    let status = project_codex_turn_status(turn.status);
+    let items = turn
+        .items
+        .into_iter()
+        .map(|item| {
+            let value = serde_json::to_value(item).map_err(internal_error)?;
+            map_item(&value, Some(status))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(AgentTurnSnapshot {
+        id: AgentTurnId::new(turn.id).map_err(internal_error)?,
+        status,
+        items,
+    })
+}
+
+fn map_notification_item(
+    item: crate::vendor_generated::codex_v2::server_notification::ThreadItem,
+    inherited_status: AgentEntityStatus,
+    started_at_ms: Option<i64>,
+    completed_at_ms: Option<i64>,
+) -> Result<AgentItemSnapshot, AgentServiceError> {
+    let value = serde_json::to_value(item).map_err(internal_error)?;
+    let mut mapped = map_item(&value, Some(inherited_status))?;
+    let started_at_ms = started_at_ms
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| protocol_violation("Codex item startedAtMs must be non-negative"))?
+        .or(mapped.presentation.started_at_ms.map(|value| value.0));
+    let mut terminal = mapped.presentation.terminal.clone();
+    if let (Some(completed_at_ms), Some(terminal)) = (completed_at_ms, terminal.as_mut()) {
+        terminal.completed_at_ms = Some(agentdash_agent_service_api::AgentServiceU64(
+            u64::try_from(completed_at_ms)
+                .map_err(|_| protocol_violation("Codex item completedAtMs must be non-negative"))?,
+        ));
+    }
+    mapped.presentation = AgentItemPresentation::new(
+        mapped.presentation.body,
+        started_at_ms,
+        completed_at_ms
+            .map(u64::try_from)
+            .transpose()
+            .map_err(|_| protocol_violation("Codex item completedAtMs must be non-negative"))?
+            .or(mapped.presentation.updated_at_ms.map(|value| value.0)),
+        terminal,
+    )
+    .map_err(internal_error)?;
+    Ok(mapped)
+}
+
 fn interaction_result(
-    kind: AgentInteractionKind,
+    request: &AgentInteractionRequest,
     response: &agentdash_agent_service_api::AgentInteractionResponse,
 ) -> Result<Value, AgentServiceError> {
     use agentdash_agent_service_api::AgentInteractionResponse;
-    match (kind, response) {
-        (AgentInteractionKind::Approval, AgentInteractionResponse::Approved) => {
+    match (request, response) {
+        (AgentInteractionRequest::Approval { .. }, AgentInteractionResponse::Approved) => {
             Ok(json!({"decision": "accept"}))
         }
-        (AgentInteractionKind::Approval, AgentInteractionResponse::Denied { reason }) => {
+        (AgentInteractionRequest::Approval { .. }, AgentInteractionResponse::Denied { reason }) => {
             Ok(json!({"decision": "decline", "reason": reason}))
         }
-        (AgentInteractionKind::UserInput, AgentInteractionResponse::UserInput { input }) => {
+        (
+            AgentInteractionRequest::UserInput { .. },
+            AgentInteractionResponse::UserInput { input },
+        ) => {
             let (input, additional) = codex_input(input)?;
             Ok(json!({"input": input, "additionalContext": additional}))
         }
         (
-            AgentInteractionKind::DynamicTool,
+            AgentInteractionRequest::DynamicTool { .. },
             AgentInteractionResponse::DynamicToolResult { result },
         ) => Ok(json!({"result": result})),
         (
-            AgentInteractionKind::McpElicitation,
+            AgentInteractionRequest::McpElicitation { .. },
             AgentInteractionResponse::McpElicitation { response },
         ) => Ok(json!({"response": response})),
         _ => Err(service_error(
@@ -1635,7 +2644,10 @@ fn successful_command_receipt(
     }
 }
 
-fn inspection_from_command(receipt: &AgentCommandReceipt) -> AgentEffectInspection {
+fn inspection_from_command(
+    receipt: &AgentCommandReceipt,
+    family: CommandEffectFamily,
+) -> AgentEffectInspection {
     AgentEffectInspection {
         effect_id: receipt.effect_id.clone(),
         command_id: Some(receipt.command_id.clone()),
@@ -1643,12 +2655,28 @@ fn inspection_from_command(receipt: &AgentCommandReceipt) -> AgentEffectInspecti
             AgentReceiptState::Rejected { .. } => AgentEffectInspectionState::NotApplied,
             AgentReceiptState::Unknown => AgentEffectInspectionState::Unknown,
             _ => AgentEffectInspectionState::Applied {
-                source: receipt.source.clone(),
-                terminal: receipt.state.terminal(),
-                initial_context: receipt.initial_context.clone(),
-                child_source: None,
+                outcome: family.applied_outcome(receipt),
             },
         },
+    }
+}
+
+impl CommandEffectFamily {
+    fn applied_outcome(self, receipt: &AgentCommandReceipt) -> AgentAppliedEffectOutcome {
+        let receipt = AppliedAgentCommandReceipt {
+            command_id: receipt.command_id.clone(),
+            effect_id: receipt.effect_id.clone(),
+            source: receipt.source.clone(),
+            terminal: receipt.state.terminal(),
+            snapshot_revision: receipt.snapshot_revision,
+            initial_context: receipt.initial_context.clone(),
+        };
+        match self {
+            Self::Create => AgentAppliedEffectOutcome::Create { receipt },
+            Self::Resume => AgentAppliedEffectOutcome::Resume { receipt },
+            Self::Command => AgentAppliedEffectOutcome::Command { receipt },
+            Self::SurfaceRevoke => AgentAppliedEffectOutcome::SurfaceRevoke { receipt },
+        }
     }
 }
 
@@ -1710,4 +2738,320 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis() as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn child_history_digest_is_stable_across_repeated_read_key_order() {
+        let first = json!({
+            "thread": {
+                "id": "child",
+                "turns": [{
+                    "id": "turn-1",
+                    "status": "completed",
+                    "items": [{"type": "agentMessage", "text": "done"}]
+                }]
+            }
+        });
+        let repeated = serde_json::from_str::<Value>(
+            r#"{
+                "thread": {
+                    "turns": [{
+                        "items": [{"text": "done", "type": "agentMessage"}],
+                        "status": "completed",
+                        "id": "turn-1"
+                    }],
+                    "id": "child"
+                }
+            }"#,
+        )
+        .expect("repeated thread/read");
+
+        assert_eq!(
+            codex_thread_history_digest(&first).expect("first digest"),
+            codex_thread_history_digest(&repeated).expect("repeated digest")
+        );
+    }
+
+    #[test]
+    fn unknown_vendor_item_is_rejected_before_canonical_history() {
+        let error = map_item(
+            &json!({
+                "type": "futureVendorItem",
+                "id": "item-1",
+                "payload": {"vendor": true}
+            }),
+            None,
+        )
+        .expect_err("unknown vendor item must not become a generic canonical item");
+
+        assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+        assert!(
+            error
+                .message
+                .contains("unknown or invalid Codex ThreadItem")
+        );
+    }
+
+    #[test]
+    fn every_admitted_server_request_is_typed_before_it_becomes_an_interaction() {
+        let fixtures = [
+            (
+                "item/commandExecution/requestApproval",
+                json!({
+                    "approvalId": "approval-1",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "startedAtMs": 1,
+                    "command": "cargo test",
+                    "reason": "approve command"
+                }),
+            ),
+            (
+                "item/fileChange/requestApproval",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "startedAtMs": 1,
+                    "reason": "approve files"
+                }),
+            ),
+            (
+                "item/permissions/requestApproval",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "startedAtMs": 1,
+                    "cwd": "C:\\repo",
+                    "permissions": {},
+                    "reason": "approve permissions"
+                }),
+            ),
+            (
+                "item/tool/requestUserInput",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "questions": [{
+                        "header": "Choice",
+                        "id": "choice",
+                        "question": "Choose",
+                        "options": [{"label": "A", "description": "first"}]
+                    }]
+                }),
+            ),
+            (
+                "item/tool/call",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "callId": "call-1",
+                    "namespace": "dash",
+                    "tool": "lookup",
+                    "arguments": {"query": "value"}
+                }),
+            ),
+            (
+                "mcpServer/elicitation/request",
+                json!({
+                    "mode": "openai/form",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "serverName": "mcp",
+                    "message": "Provide input",
+                    "requestedSchema": {"type": "object"}
+                }),
+            ),
+        ];
+
+        for (index, (method, params)) in fixtures.into_iter().enumerate() {
+            let observation =
+                CodexAppServerObservation::server_request(1, json!(index + 1), method, params)
+                    .expect("typed server request");
+            assert_eq!(observation.source_thread_id(), Some("thread-1"));
+            let CodexTypedObservation::ServerRequest {
+                request_id,
+                request,
+            } = observation.kind
+            else {
+                panic!("server request root");
+            };
+            let interaction =
+                map_server_request(1, &request_id, *request).expect("canonical interaction");
+            assert_eq!(interaction.turn_id.as_str(), "turn-1");
+            assert!(matches!(
+                (index, interaction.request),
+                (0..=2, AgentInteractionRequest::Approval { .. })
+                    | (3, AgentInteractionRequest::UserInput { .. })
+                    | (4, AgentInteractionRequest::DynamicTool { .. })
+                    | (5, AgentInteractionRequest::McpElicitation { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn unknown_methods_and_invalid_admitted_payloads_are_protocol_violations() {
+        for error in [
+            CodexAppServerObservation::notification(
+                1,
+                "future/notification",
+                json!({"threadId": "thread-1"}),
+            )
+            .expect_err("unknown notification"),
+            CodexAppServerObservation::notification(
+                1,
+                "thread/name/updated",
+                json!({"threadName": "missing source"}),
+            )
+            .expect_err("invalid admitted notification"),
+            CodexAppServerObservation::server_request(
+                1,
+                json!(1),
+                "future/request",
+                json!({"threadId": "thread-1"}),
+            )
+            .expect_err("unknown request"),
+            CodexAppServerObservation::server_request(
+                1,
+                json!(1),
+                "item/tool/call",
+                json!({"threadId": "thread-1"}),
+            )
+            .expect_err("invalid admitted request"),
+        ] {
+            assert!(!error.retryable);
+            assert!(!error.outcome_unknown);
+        }
+    }
+
+    #[test]
+    fn admitted_notification_families_project_without_retaining_raw_method_payload_pairs() {
+        let source = AgentSourceCoordinate::new("thread-1").expect("source");
+        let turn = |status: &str| {
+            json!({
+                "id": "turn-1",
+                "items": [],
+                "status": status
+            })
+        };
+        let item = || json!({"type": "agentMessage", "id": "item-1", "text": "hello"});
+        let fixtures = [
+            (
+                "thread/name/updated",
+                json!({"threadId": "thread-1", "threadName": "name"}),
+            ),
+            (
+                "turn/started",
+                json!({"threadId": "thread-1", "turn": turn("inProgress")}),
+            ),
+            (
+                "turn/completed",
+                json!({"threadId": "thread-1", "turn": turn("failed")}),
+            ),
+            (
+                "item/started",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "startedAtMs": 1,
+                    "item": item()
+                }),
+            ),
+            (
+                "item/completed",
+                json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "completedAtMs": 2,
+                    "item": item()
+                }),
+            ),
+            ("thread/archived", json!({"threadId": "thread-1"})),
+            (
+                "thread/compacted",
+                json!({"threadId": "thread-1", "turnId": "turn-1"}),
+            ),
+        ];
+
+        for (index, (method, params)) in fixtures.into_iter().enumerate() {
+            let observation =
+                CodexAppServerObservation::notification(index as u64 + 1, method, params)
+                    .expect("typed notification");
+            let CodexTypedObservation::Notification(notification) = observation.kind else {
+                panic!("notification root");
+            };
+            let payload = map_notification(&source, *notification).expect("canonical change");
+            assert!(matches!(
+                (index, payload),
+                (0, AgentChangePayload::ThreadNameChanged { .. })
+                    | (1..=2, AgentChangePayload::TurnChanged { .. })
+                    | (3..=4, AgentChangePayload::ItemTransitioned { .. })
+                    | (5, AgentChangePayload::LifecycleChanged { .. })
+                    | (6, AgentChangePayload::SnapshotInvalidated { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn compaction_failure_and_loss_remain_terminal_in_snapshot_projection() {
+        let source = AgentSourceCoordinate::new("thread-1").expect("source");
+        let observation = CodexAppServerObservation::notification(
+            1,
+            "turn/completed",
+            json!({
+                "threadId": "thread-1",
+                "turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "items": [{"type": "contextCompaction", "id": "compaction-1"}]
+                }
+            }),
+        )
+        .expect("typed failed turn");
+        let CodexTypedObservation::Notification(notification) = observation.kind else {
+            panic!("notification root");
+        };
+        let AgentChangePayload::TurnChanged { turn } =
+            map_notification(&source, *notification).expect("failed turn")
+        else {
+            panic!("turn change");
+        };
+        assert_eq!(turn.items[0].status, AgentEntityStatus::Failed);
+        assert_eq!(
+            turn.items[0]
+                .presentation
+                .terminal
+                .as_ref()
+                .expect("failed compaction evidence")
+                .outcome,
+            AgentTerminalStatus::Failed
+        );
+
+        for (status, expected) in [
+            (AgentEntityStatus::Failed, AgentTerminalStatus::Failed),
+            (AgentEntityStatus::Lost, AgentTerminalStatus::Lost),
+        ] {
+            let item = map_item(
+                &json!({"type": "contextCompaction", "id": "compaction-1"}),
+                Some(status),
+            )
+            .expect("typed compaction item");
+            assert_eq!(item.status, status);
+            assert_eq!(
+                item.presentation
+                    .terminal
+                    .as_ref()
+                    .expect("terminal evidence")
+                    .outcome,
+                expected
+            );
+        }
+    }
 }

@@ -395,7 +395,7 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::canvas::{CanvasDataBinding, CanvasRepository};
-    use agentdash_spi::platform::mount::MountRuntimeTextResolver;
+    use agentdash_platform_spi::platform::mount::MountRuntimeTextResolver;
 
     use super::*;
     use crate::canvas::{
@@ -415,9 +415,9 @@ mod tests {
     impl MountRuntimeTextResolver for StaticRuntimeTextResolver {
         async fn read_runtime_text(
             &self,
-            _vfs: &agentdash_spi::Vfs,
+            _vfs: &agentdash_platform_spi::Vfs,
             uri: &str,
-            _identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+            _identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
         ) -> Result<ReadResult, MountError> {
             if uri != "main://data/stats.csv" {
                 return Err(MountError::NotFound(uri.to_string()));
@@ -565,7 +565,7 @@ mod tests {
             .unwrap(),
         );
 
-        let vfs = agentdash_spi::Vfs {
+        let vfs = agentdash_platform_spi::Vfs {
             mounts: vec![
                 canvas_mount.clone(),
                 Mount {
@@ -573,7 +573,7 @@ mod tests {
                     provider: "inline_fs".to_string(),
                     backend_id: String::new(),
                     root_ref: "context://inline/main".to_string(),
-                    capabilities: vec![agentdash_spi::MountCapability::Read],
+                    capabilities: vec![agentdash_platform_spi::MountCapability::Read],
                     default_write: false,
                     display_name: "Main".to_string(),
                     metadata: serde_json::json!({}),
@@ -660,7 +660,7 @@ mod tests {
             )])
             .unwrap(),
         );
-        let vfs = agentdash_spi::Vfs {
+        let vfs = agentdash_platform_spi::Vfs {
             mounts: vec![
                 canvas_mount.clone(),
                 Mount {
@@ -668,7 +668,7 @@ mod tests {
                     provider: "inline_fs".to_string(),
                     backend_id: String::new(),
                     root_ref: "context://inline/main".to_string(),
-                    capabilities: vec![agentdash_spi::MountCapability::Read],
+                    capabilities: vec![agentdash_platform_spi::MountCapability::Read],
                     default_write: false,
                     display_name: "Main".to_string(),
                     metadata: serde_json::json!({}),

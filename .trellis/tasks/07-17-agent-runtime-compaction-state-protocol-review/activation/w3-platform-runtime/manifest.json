@@ -1,0 +1,576 @@
+{
+  "bundle": "Platform Runtime",
+  "checkpoint": "S5 activation component",
+  "base_revision": "45ff3e7c9196d30e94c5feeef95920fa1c487be9",
+  "platform_library_route_changed": true,
+  "production_composition_route_changed": false,
+  "activation_ready_requires_combined_bundle": true,
+  "ownership": {
+    "owned": [
+      "crates/agentdash-agent-runtime-contract",
+      "crates/agentdash-agent-runtime",
+      "crates/agentdash-agent-runtime-host",
+      "crates/agentdash-agent-runtime-wire",
+      ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w3-platform-runtime"
+    ],
+    "not_modified": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "formal migrations",
+      "production API/Local/Relay composition roots",
+      "canonical generated artifacts",
+      "Dash/Native Agent and AgentCore",
+      "Codex/Remote Complete Agent adapters",
+      "Product Runtime callers"
+    ]
+  },
+  "dependency_delta": {
+    "owned_manifest_additions": [
+      "crates/agentdash-agent-runtime-contract/Cargo.toml: sha2.workspace = true",
+      "crates/agentdash-agent-runtime/Cargo.toml: serde.workspace = true",
+      "crates/agentdash-agent-runtime/Cargo.toml: sha2.workspace = true",
+      "crates/agentdash-agent-runtime-host/Cargo.toml: agentdash-agent-runtime.workspace = true",
+      "crates/agentdash-agent-runtime-host/Cargo.toml: agentdash-agent-runtime-contract.workspace = true"
+    ],
+    "root_manifest_owner": "W8 composition",
+    "root_lock_owner": "W8 composition",
+    "component_modifies_root_lock": false,
+    "reason": "source observation and initial-context evidence use canonical SHA-256 digests; CompleteAgentHost implements the Host-neutral Runtime lifecycle port"
+  },
+  "live_contracts": [
+    {
+      "file": "crates/agentdash-agent-runtime-contract/src/gateway.rs",
+      "symbols": [
+        "ManagedAgentRuntimeGateway::execute(ManagedRuntimeCommandEnvelope) -> Result<ManagedRuntimeOperationReceipt, ManagedRuntimeGatewayError>",
+        "ManagedAgentRuntimeGateway::read(ManagedRuntimeReadRequest) -> Result<ManagedRuntimeSnapshot, ManagedRuntimeGatewayError>",
+        "ManagedAgentRuntimeGateway::changes(ManagedRuntimeChangesRequest) -> Result<ManagedRuntimeChangePage, ManagedRuntimeGatewayError>",
+        "ManagedRuntimeContractSchema"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime/src/managed_runtime.rs",
+      "symbols": [
+        "ManagedRuntimeStateRepository::load(&RuntimeThreadId) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError>",
+        "ManagedRuntimeStateRepository::commit(ManagedRuntimeStateCommit) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError>",
+        "ManagedRuntimeCoordinator::accept(ManagedRuntimeCommandEnvelope, AgentEffectIdentity, captured_at_ms) -> ManagedRuntimeOperationReceipt",
+        "ManagedRuntimeCoordinator::mark_running(&RuntimeThreadId, &RuntimeOperationId, claim_owner, captured_at_ms)",
+        "ManagedRuntimeCoordinator::settle(&RuntimeThreadId, &RuntimeOperationId, ManagedRuntimeSettlement)",
+        "ManagedRuntimeCoordinator::provision_child(RuntimeThreadId, ManagedRuntimeBindingFact, captured_at_ms)"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime/src/lifecycle.rs",
+      "symbols": [
+        "ManagedRuntimeLifecyclePort::create(ManagedRuntimeDispatchContext, Option<InitialAgentContextPackage>) -> ManagedRuntimeCreateOutcome",
+        "ManagedRuntimeLifecyclePort::resume(ManagedRuntimeDispatchContext, ManagedRuntimeAgentBinding) -> ManagedRuntimeResumeOutcome",
+        "ManagedRuntimeLifecyclePort::fork(ManagedRuntimeDispatchContext, ManagedRuntimeAgentBinding, RuntimeThreadId, AgentForkPoint) -> ManagedRuntimeForkOutcome",
+        "ManagedRuntimeLifecyclePort::execute(ManagedRuntimeDispatchContext, ManagedRuntimeAgentBinding, AgentCommandEnvelope) -> AgentCommandReceipt",
+        "ManagedRuntimeLifecyclePort::{inspect,read,changes,is_ready}"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime/src/gateway.rs",
+      "symbols": [
+        "ProductionManagedAgentRuntimeGateway",
+        "production_managed_runtime_gateway(Arc<dyn ManagedRuntimeStateRepository>, Arc<dyn ManagedRuntimeLifecyclePort>, dispatch_owner, lease_duration_ms)"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime/src/complete_agent_state.rs",
+      "symbols": [
+        "CompleteAgentStateReconciler::new(Arc<ManagedRuntimeStateRepository>, CompleteAgentRuntimeIdentityMap, BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability>)",
+        "CompleteAgentStateReconciler::reconcile_snapshot",
+        "CompleteAgentStateReconciler::reconcile_change_page",
+        "CompleteAgentStateReconciler::synchronize_source",
+        "PreparedCompleteAgentObservation",
+        "project_managed_runtime_snapshot",
+        "project_managed_runtime_change_page"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime-contract/src/managed_projection.rs",
+      "symbols": [
+        "ManagedRuntimeChangeDelta::SourceObservationApplied",
+        "ManagedRuntimeChangeDelta::SourceProjectionChanged",
+        "ManagedRuntimeSourceProjectionDelta",
+        "ManagedRuntimeProjectionSection"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime/src/complete_agent_surface.rs",
+      "symbols": [
+        "bind_complete_agent_surface"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime-host/src/complete_agent_repository.rs",
+      "symbols": [
+        "CompleteAgentHostRepository::load",
+        "CompleteAgentHostRepository::commit(CompleteAgentHostCommit)",
+        "CompleteAgentServiceRegistry::attach",
+        "CompleteAgentServiceRegistry::resolve"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime-host/src/complete_agent.rs",
+      "symbols": [
+        "CompleteAgentHost::register_service(AgentServiceInstanceId, CompleteAgentPlacement, Arc<dyn CompleteAgentService>)",
+        "CompleteAgentHost::register_binding",
+        "CompleteAgentHost::register_runtime_target",
+        "ManagedRuntimeLifecyclePort for CompleteAgentHost",
+        "complete_agent_managed_runtime_gateway(Arc<dyn ManagedRuntimeStateRepository>, Arc<CompleteAgentHost>, dispatch_owner, lease_duration_ms)",
+        "CompleteAgentHost::placement",
+        "CompleteAgentHost::acquire_binding_lease",
+        "CompleteAgentPlacement"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime-host/src/complete_agent_callbacks.rs",
+      "symbols": [
+        "CompleteAgentCallbackRepository::load() -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError>",
+        "CompleteAgentCallbackRepository::commit(CompleteAgentCallbackCommit) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError>",
+        "CompleteAgentCallbackBroker::new(tool_handler, hook_handler, SharedCompleteAgentHostRepository, SharedCompleteAgentCallbackRepository)",
+        "CompleteAgentCallbackBroker::inspect_callback",
+        "CompleteAgentCallbackBroker::mark_inspection_required",
+        "CompleteAgentCallbackBroker::mark_unknown",
+        "CompleteAgentCallbackBroker::reconcile_tool",
+        "CompleteAgentCallbackBroker::reconcile_hook"
+      ]
+    },
+    {
+      "file": "crates/agentdash-agent-runtime-wire/src/lib.rs",
+      "symbols": [
+        "RUNTIME_WIRE_PROTOCOL_REVISION = 4",
+        "RuntimeWireEnvelope",
+        "RuntimeWireRequest::{RuntimeExecute,RuntimeRead,RuntimeChanges,AgentService,AgentHostCallback}",
+        "RuntimeWireNotification::{RuntimeChange,AgentChange,Heartbeat}"
+      ]
+    }
+  ],
+  "owned_changes": [
+    {
+      "files": [
+        "crates/agentdash-agent-runtime-contract/src/lib.rs",
+        "crates/agentdash-agent-runtime-contract/src/gateway.rs",
+        "crates/agentdash-agent-runtime-contract/src/ids.rs",
+        "crates/agentdash-agent-runtime-contract/src/managed_projection.rs",
+        "crates/agentdash-agent-runtime-contract/src/generate.rs",
+        "crates/agentdash-agent-runtime-contract/Cargo.toml"
+      ],
+      "action": "make Managed Runtime command/read/change/projection the only production contract and generator root"
+    },
+    {
+      "files": [
+        "crates/agentdash-agent-runtime-contract/src/availability.rs",
+        "crates/agentdash-agent-runtime-contract/src/command.rs",
+        "crates/agentdash-agent-runtime-contract/src/context.rs",
+        "crates/agentdash-agent-runtime-contract/src/driver.rs",
+        "crates/agentdash-agent-runtime-contract/src/error.rs",
+        "crates/agentdash-agent-runtime-contract/src/event.rs",
+        "crates/agentdash-agent-runtime-contract/src/hook_plan.rs",
+        "crates/agentdash-agent-runtime-contract/src/profile.rs",
+        "crates/agentdash-agent-runtime-contract/src/snapshot.rs",
+        "crates/agentdash-agent-runtime-contract/src/terminal_hook_effect.rs"
+      ],
+      "action": "delete the Platform-owned Driver, Journal, Context Activation and terminal hook contract roots"
+    },
+    {
+      "files": [
+        "crates/agentdash-agent-runtime/src/lib.rs",
+        "crates/agentdash-agent-runtime/src/managed_runtime.rs",
+        "crates/agentdash-agent-runtime/src/gateway.rs",
+        "crates/agentdash-agent-runtime/src/lifecycle.rs",
+        "crates/agentdash-agent-runtime/src/complete_agent_state.rs",
+        "crates/agentdash-agent-runtime/src/complete_agent_surface.rs",
+        "crates/agentdash-agent-runtime/Cargo.toml"
+      ],
+      "action": "make Runtime transaction, normalized Complete Agent projection and typed desired-surface admission the only Runtime library roots"
+    },
+    {
+      "files": [
+        "crates/agentdash-agent-runtime/src/context.rs",
+        "crates/agentdash-agent-runtime/src/context_projection/**",
+        "crates/agentdash-agent-runtime/src/hook.rs",
+        "crates/agentdash-agent-runtime/src/memory.rs",
+        "crates/agentdash-agent-runtime/src/model.rs",
+        "crates/agentdash-agent-runtime/src/ports.rs",
+        "crates/agentdash-agent-runtime/src/surface.rs",
+        "crates/agentdash-agent-runtime/src/tool_broker.rs",
+        "crates/agentdash-agent-runtime/tests/business_surface.rs",
+        "crates/agentdash-agent-runtime/tests/context_compaction.rs",
+        "crates/agentdash-agent-runtime/tests/hook_orchestration.rs",
+        "crates/agentdash-agent-runtime/tests/runtime_interface.rs",
+        "crates/agentdash-agent-runtime/tests/tool_broker.rs",
+        "crates/agentdash-agent-runtime/tests/support/mod.rs",
+        "crates/agentdash-agent-runtime/tests/fixtures/**"
+      ],
+      "action": "delete the Platform-owned legacy Runtime implementation and evidence"
+    },
+    {
+      "files": [
+        "crates/agentdash-agent-runtime-host/src/lib.rs",
+        "crates/agentdash-agent-runtime-host/src/complete_agent.rs",
+        "crates/agentdash-agent-runtime-host/src/complete_agent_callbacks.rs",
+        "crates/agentdash-agent-runtime-host/src/complete_agent_repository.rs",
+        "crates/agentdash-agent-runtime-host/tests/complete_agent_target.rs",
+        "crates/agentdash-agent-runtime-host/Cargo.toml"
+      ],
+      "action": "make Complete Agent service/offer/placement/binding/generation/effect/lease and reverse callbacks the only Host roots"
+    },
+    {
+      "files": [
+        "crates/agentdash-agent-runtime-host/src/conformance.rs",
+        "crates/agentdash-agent-runtime-host/src/host.rs",
+        "crates/agentdash-agent-runtime-host/src/memory.rs",
+        "crates/agentdash-agent-runtime-host/src/model.rs",
+        "crates/agentdash-agent-runtime-host/src/ports.rs",
+        "crates/agentdash-agent-runtime-host/src/registry.rs",
+        "crates/agentdash-agent-runtime-host/tests/host_behavior.rs"
+      ],
+      "action": "delete the legacy Driver Host graph and test adapters"
+    },
+    {
+      "files": [
+        "crates/agentdash-agent-runtime-wire/src/lib.rs",
+        "crates/agentdash-agent-runtime-wire/src/complete_agent.rs",
+        "crates/agentdash-agent-runtime-wire/src/generate.rs",
+        "crates/agentdash-agent-runtime-wire/Cargo.toml"
+      ],
+      "action": "make revision 4 the unique Runtime plus Complete Agent transport and remove Integration/Driver generator inputs"
+    }
+  ],
+  "runtime_repository_contract": {
+    "authority": "one ManagedRuntimeStateCommit is one Runtime transaction",
+    "tables": [
+      "agent_runtime_state_revision",
+      "agent_runtime_source_projection",
+      "agent_runtime_source_identity",
+      "agent_runtime_source_change",
+      "agent_runtime_projection",
+      "agent_runtime_thread_binding",
+      "agent_runtime_operation",
+      "agent_runtime_idempotency",
+      "agent_runtime_pending_command",
+      "agent_runtime_change",
+      "agent_runtime_outbox"
+    ],
+    "required_transaction": [
+      "lock and compare ManagedRuntimeStateRevision for one Runtime thread",
+      "admit against the committed projection revision and command availability",
+      "prepare source normalization and Runtime projection candidates without an independent write",
+      "write source projection, source identity mappings and source changes in the same ManagedRuntimeStateCommit as their Runtime projection, typed changes and outbox",
+      "append exactly one SourceObservationApplied change and matching outbox row for every appended source change, including normalized no-op observations",
+      "append exactly one SourceProjectionChanged wrapper per changed section with explicit source change sequence, projection revision, observation digest, section digest and full section payload",
+      "write immutable operation identity and idempotency mapping",
+      "commit the Host-returned source binding and applied-surface evidence before lifecycle activation",
+      "write pending effect intent before any external dispatch",
+      "advance projection operation and availability facts",
+      "append typed Runtime changes and one outbox row per change",
+      "advance projection change head and state revision atomically",
+      "return the stored receipt for exact idempotency replay without a second write"
+    ],
+    "required_constraints": [
+      "operation identity, thread and command are immutable",
+      "source binding and terminal operation evidence are immutable and mutually consistent",
+      "idempotency key uniquely maps to one immutable operation command",
+      "pending command exactly equals its authoritative operation command",
+      "projection operations have one entry per authoritative operation id with exact payload, turn and status",
+      "availability evidence is complete and decided at the committed projection revision",
+      "pending effect identity and command coordinates are immutable",
+      "operation and pending delivery states cannot move backwards",
+      "source authority, fidelity, revision, identity mapping and source change history are monotonic",
+      "each source change has exactly one causal SourceObservationApplied delta with exact source, projection revision, observation, source revision, cursor and changed-section digests",
+      "each listed changed section has exactly one source-derived concrete wrapper and sections not listed by the observation have none",
+      "source-derived concrete wrappers exactly match the observation sequence/revision/digest and the reconstructed normalized section payload/digest",
+      "a source observation and every causal or concrete Runtime projection/change/outbox fact derived from it commit or fail together",
+      "a normalized no-op source observation has empty changed_sections and no concrete projection delta, but retains its causal change and outbox",
+      "without a trusted local source cursor, or after a gap/partial page, snapshot reconcile keeps source_cursor null instead of trusting page.next",
+      "Runtime change sequence is continuous and append-only",
+      "every Runtime change has exactly one matching append-only outbox entry"
+    ]
+  },
+  "callback_repository_contract": {
+    "authority": "callback CAS outcomes are durable execution facts and reference the Host-owned route fence",
+    "tables": [
+      "agent_runtime_callback_revision",
+      "agent_runtime_callback_reservation",
+      "agent_runtime_callback_outcome"
+    ],
+    "required_transaction": [
+      "load the committed Host route and validate source, binding generation, tombstone and semantic deadline before reservation",
+      "lock and compare CompleteAgentCallbackRevision",
+      "commit an immutable Pending reservation carrying the committed route generation and bound-surface digest before invoking any Tool or Hook handler",
+      "invoke the platform handler only after the reservation transaction commits",
+      "settle the typed Tool or Hook outcome with a second callback CAS",
+      "after restart, replay Settled outcomes and block Pending, InspectionRequired or Unknown records without re-execution",
+      "expose durable inspection plus explicit reconciliation or settlement for ambiguous outcomes"
+    ],
+    "required_constraints": [
+      "reservation route_id, generation and bound_surface_digest have a compound reference to one active committed Host route fence",
+      "idempotency key fixes callback kind, request digest, generation, bound surface, source and deadline",
+      "Pending can advance only to InspectionRequired, Unknown or a typed Settled outcome",
+      "InspectionRequired and Unknown never cause automatic handler re-execution",
+      "typed terminal outcomes are immutable and exact duplicate replay performs no write"
+    ]
+  },
+  "host_repository_contract": {
+    "authority": "one CompleteAgentHostCommit is one Host transaction",
+    "tables": [
+      "agent_runtime_host_revision",
+      "agent_service_instance",
+      "agent_runtime_offer",
+      "agent_runtime_placement",
+      "agent_runtime_lifecycle_target",
+      "agent_runtime_lifecycle_effect",
+      "agent_runtime_binding",
+      "agent_runtime_source_coordinate",
+      "agent_runtime_callback_route",
+      "agent_runtime_callback_route_tombstone",
+      "agent_runtime_effect",
+      "agent_runtime_effect_attempt_history",
+      "agent_runtime_lease",
+      "agent_runtime_lease_epoch"
+    ],
+    "required_transaction": [
+      "lock and compare CompleteAgentHostRevision",
+      "validate one immutable descriptor, offer and placement per service instance",
+      "validate binding/source/generation/profile/surface coordinates",
+      "persist Create, Resume and Fork lifecycle intent before invoking the Complete Agent service",
+      "when a callback-bound surface becomes Applied/Available, insert its unique route in the same Host revision transaction",
+      "when a callback-bound applied surface is revoked or lost, retain the immutable route and append its tombstone in the same Host revision transaction",
+      "validate effect identity, payload and append-only attempt evidence",
+      "validate active lease owner, token, epoch, generation and database-clock expiry",
+      "fence external receipt and inspection against the current lease",
+      "settle revoke receipt and applied-surface cleanup atomically",
+      "persist the complete changed Host fact graph and advance revision",
+      "return exact committed replay without a second write"
+    ],
+    "required_constraints": [
+      "service instance identity fixes descriptor, exact Runtime offer and placement",
+      "Runtime lifecycle target fixes service, generation, profile, bound surface and callback binding",
+      "lifecycle effect identity fixes operation kind, target, initial context or exact fork cutoff and terminal outcome",
+      "placement is exactly one of in_process, local_process or remote and all coordinates are non-empty",
+      "binding generation is positive and binding/source mapping is bidirectionally unique",
+      "an Available callback-bound applied surface has exactly one active route with exact binding, generation, source and bound-surface digest",
+      "an Available surface without AgentNativeCallback contributions has no active route",
+      "route identity, request fence, binding generation, source, delivery, deadline and bound surface are immutable",
+      "route tombstones are append-only and permanently fence callbacks from the old route generation",
+      "effect identity fixes command, payload, binding, source and generation",
+      "attempt history is continuous, immutable and append-only",
+      "terminal effect evidence cannot be downgraded or rewritten",
+      "lease epoch never decreases and Lost binding invalidates its active lease"
+    ]
+  },
+  "semantic_matrix": [
+    {
+      "duty": "Runtime operation/idempotency/pending/projection/change/outbox atomicity",
+      "symbols": [
+        "ManagedRuntimeFacts",
+        "ManagedRuntimeStateCommit",
+        "ManagedRuntimeCoordinator::accept",
+        "validate_managed_runtime_facts"
+      ],
+      "tests": [
+        "managed_runtime::tests::command_acceptance_atomically_writes_operation_pending_intent_and_outbox",
+        "managed_runtime::tests::facts_reject_pending_command_rebinding",
+        "managed_runtime::tests::facts_reject_duplicate_omitted_extra_or_tampered_projected_operations",
+        "managed_runtime::tests::facts_accept_exact_monotonic_operation_transition",
+        "managed_runtime::tests::facts_reject_change_outbox_operation_misassociation",
+        "managed_runtime::tests::facts_reject_removed_idempotency_pending_or_outbox_history",
+        "managed_runtime::tests::commit_rejects_projection_from_another_runtime_thread"
+      ]
+    },
+    {
+      "duty": "source authority, fidelity, identity, snapshot/change reconcile, retention gap and committed availability",
+      "symbols": [
+        "CompleteAgentStateReconciler",
+        "CompleteAgentRuntimeIdentityMap",
+        "project_managed_runtime_snapshot",
+        "project_managed_runtime_change_page"
+      ],
+      "tests": [
+        "complete_agent_state::tests::source_observation_commit_failure_leaves_no_normalized_or_platform_gap",
+        "complete_agent_state::tests::no_op_source_observation_keeps_causal_change_and_empty_sections",
+        "complete_agent_state::tests::source_observation_and_projection_deltas_reject_incomplete_or_wrong_evidence",
+        "complete_agent_state::tests::stale_source_candidate_cannot_commit_without_its_platform_change",
+        "complete_agent_state::tests::restarted_reconciler_continues_from_one_atomic_source_and_runtime_state",
+        "complete_agent_state::tests::first_partial_ordered_page_is_not_used_as_snapshot_head",
+        "complete_agent_state::tests::trusted_ordered_cursor_drains_multiple_pages_without_replay_or_regression",
+        "complete_agent_state::tests::weaker_snapshot_authority_cannot_replace_authoritative_projection",
+        "complete_agent_state::tests::source_sync_reloads_snapshot_at_gap_cursor",
+        "complete_agent_state::tests::managed_change_page_maps_runtime_ids_and_exposes_typed_retention_gap",
+        "complete_agent_state::tests::availability_must_be_complete_and_committed_at_snapshot_revision"
+      ]
+    },
+    {
+      "duty": "typed desired surface and one causal route",
+      "symbols": [
+        "bind_complete_agent_surface"
+      ],
+      "tests": [
+        "complete_agent_surface::tests::all_five_surface_kinds_bind_only_from_matching_typed_facets",
+        "complete_agent_surface::tests::bound_contribution_has_one_deterministic_causal_route",
+        "complete_agent_surface::tests::duplicate_desired_key_is_rejected"
+      ]
+    },
+    {
+      "duty": "service/offer/placement/binding/generation/effect/lease durability and recovery",
+      "symbols": [
+        "CompleteAgentHost",
+        "CompleteAgentHostFacts",
+        "validate_complete_agent_host_facts"
+      ],
+      "tests": [
+        "complete_agent_repository::tests::descriptor_offer_and_binding_contracts_reject_cross_revision_rewrites",
+        "complete_agent_repository::tests::effect_identity_payload_and_observation_evidence_are_monotonic",
+        "complete_agent_repository::tests::lease_identity_epoch_and_terminal_binding_rules_are_enforced",
+        "complete_agent_repository::tests::callback_route_is_atomic_with_apply_and_revoke_binding_transitions",
+        "complete_agent::tests::lease_reclaim_fences_old_owner_and_binding_loss_converges_state"
+      ]
+    },
+    {
+      "duty": "durable Tool/Hook route, pre-effect reservation, restart replay, ambiguous-outcome inspection and stale-generation fencing",
+      "symbols": [
+        "CompleteAgentCallbackRepository",
+        "CompleteAgentCallbackReservationState",
+        "CompleteAgentCallbackBroker"
+      ],
+      "tests": [
+        "complete_agent_callbacks::tests::duplicate_tool_callback_replays_one_result",
+        "complete_agent_callbacks::tests::missing_or_tombstoned_host_route_never_reserves_or_replays_callback",
+        "complete_agent_callbacks::tests::pending_callback_survives_restart_and_requires_explicit_reconciliation",
+        "complete_agent_callbacks::tests::stale_generation_and_elapsed_deadline_are_rejected",
+        "complete_agent_callbacks::tests::hook_decision_outside_bound_actions_is_rejected_and_replayed_once"
+      ]
+    },
+    {
+      "duty": "production Managed Runtime lifecycle admission, durable dispatch, recovery, fork provisioning and explicit activation",
+      "symbols": [
+        "ProductionManagedAgentRuntimeGateway",
+        "ManagedRuntimeLifecyclePort",
+        "ManagedRuntimeOperationEvidence",
+        "ManagedRuntimeForkProgressEvidence"
+      ],
+      "tests": [
+        "gateway::tests::create_activate_duplicate_and_fork_are_one_durable_runtime_fact_graph",
+        "gateway::tests::lost_create_receipt_recovers_by_same_effect_inspection_after_restart",
+        "gateway::tests::fork_child_known_without_provisioning_is_terminal_lost_evidence",
+        "gateway::tests::resume_without_mapping_is_typed_and_changes_cursor_is_strict",
+        "complete_agent::tests::runtime_lifecycle_adapter_persists_intent_before_create_and_fork_provisioning"
+      ]
+    },
+    {
+      "duty": "unique revision 4 Runtime and Complete Agent transport",
+      "symbols": [
+        "RUNTIME_WIRE_PROTOCOL_REVISION",
+        "RuntimeWireEnvelope",
+        "RuntimeWireCompleteAgentSchema"
+      ],
+      "tests": [
+        "tests::revision_four_is_the_only_accepted_revision",
+        "tests::schema_contains_runtime_and_complete_agent_business_frames",
+        "complete_agent::tests::mismatched_command_generation_is_rejected_before_dispatch"
+      ]
+    }
+  ],
+  "canonical_generators": [
+    {
+      "root": "ManagedRuntimeContractSchema",
+      "command": "cargo run -p agentdash-agent-runtime-contract --bin generate_agent_runtime_contracts",
+      "outputs": [
+        "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "schemas/agent-runtime-contract.schema.json"
+      ]
+    },
+    {
+      "root": "RuntimeWireEnvelope",
+      "schema_closure": "Runtime plus Complete Agent service/callback/change frames",
+      "command": "cargo run -p agentdash-agent-runtime-wire --bin generate_agent_runtime_wire",
+      "outputs": [
+        "packages/app-web/src/generated/agent-runtime-wire.ts",
+        "schemas/agent-runtime-wire.schema.json"
+      ]
+    }
+  ],
+  "wire": {
+    "only_revision": 4,
+    "framing_shared_by": [
+      "Managed Runtime gateway",
+      "Complete Agent service/callback/change transport"
+    ],
+    "legacy_revision_3_supported": false
+  },
+  "external_consumers": [
+    {"file":"crates/agentdash-api/src/agent_run_terminal_control.rs","symbols":["RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W7 Product/Protocol","action":"consume typed Runtime change/projection"},
+    {"file":"crates/agentdash-api/src/app_state.rs","symbols":["RuntimeJournalRecord"],"owner":"W7 Product/Protocol","action":"inject ManagedAgentRuntimeGateway and typed read/change state"},
+    {"file":"crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs","symbols":["AgentRuntimeDriverContribution","ContextActivation","RuntimeWireHostPortRouter","RUNTIME_WIRE_PROTOCOL_REVISION"],"owner":"W7 Product/Protocol + W8 composition","action":"register Remote Complete Agent and revision 4 business frames"},
+    {"file":"crates/agentdash-api/src/bootstrap/production_tools_e2e.rs","symbols":["RuntimeJournalFact"],"owner":"W7 Product/Protocol","action":"assert typed Runtime/Agent changes"},
+    {"file":"crates/agentdash-api/src/integrations.rs","symbols":["AgentRuntimeDriverContribution"],"owner":"W8 composition","action":"collect Complete Agent service registrations"},
+    {"file":"crates/agentdash-api/src/relay/registry.rs","symbols":["RUNTIME_WIRE_PROTOCOL_REVISION"],"owner":"W7 Product/Protocol","action":"negotiate revision 4 only"},
+    {"file":"crates/agentdash-api/src/relay/runtime_wire.rs","symbols":["RUNTIME_WIRE_PROTOCOL_REVISION"],"owner":"W7 Product/Protocol","action":"relay revision 4 Runtime/Complete Agent frames"},
+    {"file":"crates/agentdash-api/src/routes/lifecycle_agents.rs","symbols":["RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W7 Product/Protocol","action":"project lifecycle output from typed Runtime changes"},
+    {"file":"crates/agentdash-application-agentrun/src/agent_run/context_projection.rs","symbols":["RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W7 Product/Protocol","action":"consume Managed Runtime snapshot/change projection"},
+    {"file":"crates/agentdash-application-agentrun/src/agent_run/journal.rs","symbols":["RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W7 Product/Protocol","action":"replace universal journal with Runtime change read model"},
+    {"file":"crates/agentdash-application-agentrun/src/agent_run/runtime_application_presentation.rs","symbols":["RuntimeJournalFact"],"owner":"W7 Product/Protocol","action":"derive presentation from committed Runtime changes"},
+    {"file":"crates/agentdash-application-agentrun/src/agent_run/product_protocol/thread_name_projection.rs","symbols":["ManagedRuntimeChangeDelta","ManagedRuntimePlatformChange"],"owner":"W7 Product/Protocol","action":"invalidate Product title reads from committed canonical Runtime changes"},
+    {"file":"crates/agentdash-application-agentrun/tests/runtime_application_presentation.rs","symbols":["RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W7 Product/Protocol","action":"rewrite fixture to Runtime changes"},
+    {"file":"crates/agentdash-application-agentrun/tests/runtime_facade.rs","symbols":["RuntimeJournalFact"],"owner":"W7 Product/Protocol","action":"rewrite facade fixture to Managed Runtime contract"},
+    {"file":"crates/agentdash-infrastructure/src/agent_runtime_composition.rs","symbols":["AgentRuntimeDriverContribution","ContextActivation","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W8 integration","action":"construct PostgreSQL Runtime/Host/callback repositories and Complete Agent registry"},
+    {"file":"crates/agentdash-infrastructure/src/agent_runtime_workers.rs","symbols":["ContextActivation","ContextActivationId","ContextActivationOutboxEntry","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W8 integration","action":"replace legacy workers with pending Runtime effect, Host recovery and ambiguous callback inspection workers"},
+    {"file":"crates/agentdash-infrastructure/src/persistence/postgres/agent_runtime_context_broker.rs","symbols":["DriverContextActivation","RuntimeJournalFact"],"owner":"W8 integration","action":"delete after final Runtime projection/surface persistence is active"},
+    {"file":"crates/agentdash-infrastructure/src/persistence/postgres/runtime_repository.rs","symbols":["ContextActivation","ContextActivationId","ContextActivationOutboxEntry","ContextActivationStatus","RuntimeJournalBatch","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W8 integration","action":"implement ManagedRuntimeStateRepository, CompleteAgentHostRepository and CompleteAgentCallbackRepository using the single final migration; source-normalized facts belong to ManagedRuntimeStateRepository"},
+    {"file":"crates/agentdash-infrastructure/tests/runtime_recovery_context.rs","symbols":["AgentRuntimeDriver","AgentRuntimeDriverContribution","AgentRuntimeDriverFactory","DriverContextActivation"],"owner":"W8 integration","action":"replace with Runtime pending-effect and Complete Agent recovery evidence"},
+    {"file":"crates/agentdash-integration-api/src/agent_runtime.rs","symbols":["AgentRuntimeDriver","AgentRuntimeDriverContribution","AgentRuntimeDriverFactory","DriverContextActivation","RuntimeJournalRecord"],"owner":"W2 Dash/Native","action":"delete legacy driver contribution API after all Complete Agent registrations land"},
+    {"file":"crates/agentdash-integration-api/src/integration.rs","symbols":["AgentRuntimeDriverContribution"],"owner":"W2 Dash/Native","action":"expose Complete Agent service contribution only"},
+    {"file":"crates/agentdash-integration-api/src/lib.rs","symbols":["AgentRuntimeDriverContribution"],"owner":"W2 Dash/Native","action":"remove legacy public documentation/export"},
+    {"file":"crates/agentdash-integration-codex/src/contribution.rs","symbols":["AgentRuntimeDriverContribution"],"owner":"W6 External Agents","action":"register Codex Complete Agent service"},
+    {"file":"crates/agentdash-integration-codex/src/driver.rs","symbols":["AgentRuntimeDriver","AgentRuntimeDriverFactory","RuntimeJournalFact"],"owner":"W6 External Agents","action":"switch production module to Codex Complete Agent adapter"},
+    {"file":"crates/agentdash-integration-codex/src/mapping.rs","symbols":["RuntimeJournalFact"],"owner":"W6 External Agents","action":"map Codex native state to AgentSnapshot/AgentChange"},
+    {"file":"crates/agentdash-integration-native-agent/src/driver.rs","symbols":["AgentRuntimeDriver","AgentRuntimeDriverContribution","AgentRuntimeDriverFactory","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W2 Dash/Native","action":"switch production module to Native Complete Agent service"},
+    {"file":"crates/agentdash-integration-native-agent/src/tool.rs","symbols":["RuntimeJournalFact"],"owner":"W2 Dash/Native","action":"emit Agent history/change instead of Runtime journal"},
+    {"file":"crates/agentdash-integration-native-agent/tests/native_driver.rs","symbols":["AgentRuntimeDriver","DriverContextActivation","RuntimeJournalFact","RuntimeJournalRecord"],"owner":"W2 Dash/Native","action":"delete driver fixture and validate Complete Agent conformance"},
+    {"file":"crates/agentdash-integration-remote-runtime/src/lib.rs","symbols":["AgentRuntimeDriver","AgentRuntimeDriverContribution","AgentRuntimeDriverFactory","DriverContextActivation","RuntimeJournalFact","RuntimeJournalRecord","RuntimeWireDriver","RuntimeWireDriverEndpoint","RuntimeWireHostPort","RuntimeWireHostPortRouter","RUNTIME_WIRE_PROTOCOL_REVISION"],"owner":"W6 External Agents","action":"replace legacy driver proxy with revision 4 Complete Agent proxy"},
+    {"file":"crates/agentdash-local/src/agent_runtime_host.rs","symbols":["AgentRuntimeDriverContribution","RuntimeWireHostPortRouter","RUNTIME_WIRE_PROTOCOL_REVISION"],"owner":"W8 integration","action":"compose Complete Agent Host and revision 4 transport"},
+    {"file":"crates/agentdash-local/src/handlers/runtime_wire.rs","symbols":["AgentRuntimeDriver","RuntimeWireDriverEndpoint","RuntimeWireHostPortRouter","RUNTIME_WIRE_PROTOCOL_REVISION"],"owner":"W8 integration","action":"dispatch revision 4 Runtime and Complete Agent business frames"},
+    {"file":"crates/agentdash-local/src/runtime.rs","symbols":["AgentRuntimeDriverContribution"],"owner":"W8 integration","action":"accept final Complete Agent registrations"},
+    {"file":"crates/agentdash-relay/src/runtime_wire.rs","symbols":["RUNTIME_WIRE_PROTOCOL_REVISION"],"owner":"W7 Product/Protocol","action":"relay revision 4 only"}
+  ],
+  "consumer_count": 33,
+  "combined_apply_order": [
+    "apply this Platform Runtime activation component",
+    "apply W2 Dash/Core physical activation and Native Complete Agent callers",
+    "apply W6 Codex/Remote Complete Agent callers",
+    "apply W7 Product/Protocol Managed Runtime callers",
+    "apply W8 root Cargo/lock, final migration, PostgreSQL adapters and production composition",
+    "regenerate the four canonical TypeScript/JSON Schema artifacts once",
+    "verify zero legacy consumers and run full workspace gates"
+  ],
+  "production_composition_prerequisites": {
+    "factory": "complete_agent_managed_runtime_gateway(Arc<dyn ManagedRuntimeStateRepository>, Arc<CompleteAgentHost>, dispatch_owner, lease_duration_ms)",
+    "w8_supplies": [
+      "one PostgreSQL ManagedRuntimeStateRepository",
+      "one PostgreSQL CompleteAgentHostRepository",
+      "one process-local CompleteAgentServiceRegistry populated with final Complete Agent registrations",
+      "CompleteAgentRuntimeTarget registrations for every production Runtime thread placement",
+      "database-backed lease and recovery workers for pending Runtime and Host lifecycle effects"
+    ],
+    "activation_rule": "Product submits Fork once, observes its terminal operation evidence, and sends a separate Activate only after Provisioned evidence; no Product DTO contains Host source, generation, lease or provisioning fields"
+  },
+  "gates": {
+    "component_tests": [
+      "cargo test -p agentdash-agent-runtime-contract -p agentdash-agent-runtime -p agentdash-agent-runtime-host -p agentdash-agent-runtime-wire",
+      "cargo clippy -p agentdash-agent-runtime-contract -p agentdash-agent-runtime -p agentdash-agent-runtime-host -p agentdash-agent-runtime-wire --all-targets -- -D warnings"
+    ],
+    "negative_search": "rg 'AgentRuntimeDriver|RuntimeJournal|ContextActivation|RuntimeWireDriver|RuntimeWireHostPort' crates/agentdash-agent-runtime-contract crates/agentdash-agent-runtime crates/agentdash-agent-runtime-host crates/agentdash-agent-runtime-wire",
+    "combined_only": [
+      "all 33 external consumer entries are removed or switched by their owner",
+      "root Cargo.toml and Cargo.lock expose only final dependencies",
+      "the one final forward migration implements Runtime, Host and callback repository contracts",
+      "production composition injects PostgreSQL Runtime/Host/callback repositories and Complete Agent registrations without in-memory defaults",
+      "revision 4 is the only registered and generated Runtime Wire revision",
+      "canonical generators produce no legacy Driver, Journal or Context Activation declarations",
+      "cargo test --workspace --all-targets",
+      "cargo clippy --workspace --all-targets -- -D warnings"
+    ]
+  }
+}

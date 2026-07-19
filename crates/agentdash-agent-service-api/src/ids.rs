@@ -3,6 +3,7 @@ use std::{fmt, str::FromStr};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use ts_rs::TS;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error("{type_name} must not be empty")]
@@ -13,7 +14,17 @@ pub struct InvalidAgentServiceId {
 macro_rules! service_id {
     ($name:ident) => {
         #[derive(
-            Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+            Debug,
+            Clone,
+            PartialEq,
+            Eq,
+            PartialOrd,
+            Ord,
+            Hash,
+            Serialize,
+            Deserialize,
+            JsonSchema,
+            TS,
         )]
         #[serde(transparent)]
         #[schemars(transparent)]
@@ -91,10 +102,16 @@ macro_rules! service_revision {
             Serialize,
             Deserialize,
             JsonSchema,
+            TS,
         )]
         #[serde(transparent)]
         #[schemars(transparent)]
-        pub struct $name(pub u64);
+        #[ts(type = "AgentServiceU64")]
+        pub struct $name(
+            #[serde(with = "crate::wire_u64")]
+            #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+            pub u64,
+        );
     };
 }
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_spi::connector::RuntimeToolProvider;
-use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext};
+use agentdash_platform_spi::RuntimeToolProvider;
+use agentdash_platform_spi::{PlatformRuntimeError, DynAgentTool, ExecutionContext};
 use async_trait::async_trait;
 
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
@@ -66,7 +66,7 @@ impl RuntimeToolProvider for VfsRuntimeToolProvider {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
-    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
+    ) -> Result<Vec<DynAgentTool>, PlatformRuntimeError> {
         let shared_vfs = shared_runtime_vfs_from_context(context)?;
         let overlay: Option<Arc<InlineContentOverlay>> = self
             .inline_persister
@@ -78,7 +78,7 @@ impl RuntimeToolProvider for VfsRuntimeToolProvider {
             .platform_tool_execution
             .as_ref()
             .ok_or_else(|| {
-                ConnectorError::InvalidConfig(
+                PlatformRuntimeError::InvalidConfig(
                     "缺少 Platform Tool typed owner context，无法注册 shell terminal".to_string(),
                 )
             })?;

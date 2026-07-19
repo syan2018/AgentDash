@@ -10,7 +10,7 @@ use agentdash_application_ports::vfs_surface_runtime::{
 use agentdash_domain::project::Project;
 use agentdash_domain::project_vfs_mount::ProjectVfsMount;
 use agentdash_domain::story::Story;
-use agentdash_spi::Vfs;
+use agentdash_platform_spi::Vfs;
 use uuid::Uuid;
 
 use crate::ApplicationError;

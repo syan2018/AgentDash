@@ -1,6 +1,6 @@
-use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::collections::HashMap;
 
+use agentdash_diagnostics::{Subsystem, diag};
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
@@ -821,19 +821,16 @@ async fn emit_retry_scheduled(
         },
     )
     .await;
-    let diagnostic_context =
-        DiagnosticErrorContext::new("agent.loop.provider_request", "retry_scheduled");
-    diag_error!(
+    diag!(
         Warn,
         Subsystem::AgentRun,
-        context = &diagnostic_context,
-        error = error,
+        error = %error,
         attempt,
         retry_count = attempt.saturating_sub(1),
         max_attempts = retry_policy.max_attempts,
         delay_ms,
-        http_status = classification.http_status,
-        provider_code = classification.provider_code.as_deref(),
+        http_status = ?classification.http_status,
+        provider_code = ?classification.provider_code.as_deref(),
         "provider attempt failed before visible delta; retry scheduled"
     );
 }

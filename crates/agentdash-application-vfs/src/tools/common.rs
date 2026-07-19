@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_spi::{
-    AgentToolResult, ContentPart, RuntimeVfsAccessPolicy, RuntimeVfsAccessSource, Vfs,
-};
+use agentdash_platform_spi::{RuntimeVfsAccessPolicy, RuntimeVfsAccessSource, Vfs};
 use tokio::sync::RwLock;
 
 use crate::{ResourceRef, compile_whole_mount_runtime_vfs_access_policy, parse_mount_uri};
@@ -120,20 +118,12 @@ impl SharedRuntimeVfs {
     }
 }
 
-pub fn ok_text(text: String) -> AgentToolResult {
-    AgentToolResult {
-        content: vec![ContentPart::text(text)],
-        is_error: false,
-        details: None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         Mount, MountCapability, RuntimeVfsAccessRule, RuntimeVfsOperation, RuntimeVfsPathPattern,
     };
 

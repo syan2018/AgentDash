@@ -17,7 +17,7 @@ use agentdash_application::workspace::{
 use agentdash_application::workspace::{
     list_project_workspace_candidates, sync_project_backend_workspace_bindings,
 };
-use agentdash_application_runtime_gateway::{
+use agentdash_application_extension_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
     WorkspaceBrowseDirectoryOutput,
@@ -40,7 +40,7 @@ use crate::dto::{
     BrowseAccessDirectoryRequest, BrowseDirectoryEntryResponse, BrowseDirectoryResponse,
 };
 use crate::rpc::ApiError;
-use crate::workspace_placement_runtime::RuntimeGatewayWorkspacePlacementRuntime;
+use crate::workspace_placement_runtime::ExtensionGatewayWorkspacePlacementRuntime;
 
 pub async fn list_project_backend_access(
     State(state): State<Arc<AppState>>,
@@ -259,8 +259,8 @@ pub async fn register_project_backend_inventory(
         ProjectPermission::Configure,
     )
     .await?;
-    let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
-        state.services.runtime_gateway.clone(),
+    let placement_runtime = Arc::new(ExtensionGatewayWorkspacePlacementRuntime::new(
+        state.services.extension_gateway.clone(),
     ));
     let item = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
         .register_backend_inventory(RegisterBackendInventoryInput {
@@ -353,7 +353,7 @@ pub async fn browse_project_backend_access(
         },
         input,
     );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
+    let invocation = state.services.extension_gateway.invoke(request).await?;
     let output = serde_json::from_value::<WorkspaceBrowseDirectoryOutput>(invocation.output.output)
         .map_err(|error| {
             ApiError::Internal(format!(

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::agent_run_target::AgentRunTarget;
+
 use super::run_state::ExecutorRunRef;
 use super::{
     ActivityCompletionPolicy, ActivityIterationPolicy, ActivityJoinPolicy, AgentProcedureContract,
@@ -332,6 +334,8 @@ pub struct RuntimeNodeState {
     pub outputs: Vec<NodePortValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_run_ref: Option<ExecutorRunRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_call: Option<WorkflowAgentCallRuntimeState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<RuntimeNodeState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -348,6 +352,31 @@ pub struct RuntimeNodeState {
     pub cache: Option<NodeCacheState>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkflowAgentCallRuntimeState {
+    pub request_id: String,
+    pub payload_digest: String,
+    pub target: AgentRunTarget,
+    pub request: Value,
+    pub prepared_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatched_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_binding: Option<WorkflowAgentCallSourceBindingRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WorkflowAgentCallSourceBindingRef {
+    pub source_ref: String,
+    pub committed_at_revision: u64,
+    pub applied_surface_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activated_at_revision: Option<u64>,
+}
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeNodeStatus {
@@ -382,8 +411,12 @@ pub struct RuntimeNodeError {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeTraceRef {
-    RuntimeSession {
-        session_id: String,
+    RuntimeThread {
+        thread_id: String,
+    },
+    AgentRun {
+        run_id: Uuid,
+        agent_id: Uuid,
     },
     FunctionRun {
         run_id: String,
@@ -655,16 +688,19 @@ mod tests {
                 attempt: 1,
                 inputs: Vec::new(),
                 outputs: Vec::new(),
-                executor_run_ref: Some(ExecutorRunRef::RuntimeSession {
-                    session_id: "session-1".to_string(),
+                executor_run_ref: Some(ExecutorRunRef::AgentRun {
+                    run_id: Uuid::nil(),
+                    agent_id: Uuid::from_u128(1),
                 }),
+                agent_call: None,
                 children: Vec::new(),
                 phase_path: vec!["root".to_string()],
                 started_at: Some(Utc::now()),
                 completed_at: None,
                 error: None,
-                trace_refs: vec![RuntimeTraceRef::RuntimeSession {
-                    session_id: "session-1".to_string(),
+                trace_refs: vec![RuntimeTraceRef::AgentRun {
+                    run_id: Uuid::nil(),
+                    agent_id: Uuid::from_u128(1),
                 }],
                 cache: None,
             },
@@ -682,6 +718,7 @@ mod tests {
                 executor_run_ref: Some(ExecutorRunRef::FunctionRun {
                     run_id: "function-run-1".to_string(),
                 }),
+                agent_call: None,
                 children: Vec::new(),
                 phase_path: Vec::new(),
                 started_at: None,
@@ -709,6 +746,7 @@ mod tests {
                 executor_run_ref: Some(ExecutorRunRef::HumanDecision {
                     decision_id: "decision-1".to_string(),
                 }),
+                agent_call: None,
                 children: Vec::new(),
                 phase_path: Vec::new(),
                 started_at: None,

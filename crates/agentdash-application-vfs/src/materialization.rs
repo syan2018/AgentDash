@@ -5,7 +5,7 @@ use agentdash_application_ports::vfs_materialization::{
     MaterializationTargetKind, VfsMaterializationTransport, VfsMaterializeContent,
     VfsMaterializeEntry, VfsMaterializeRequest,
 };
-use agentdash_spi::{Mount, MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsOperation, Vfs};
+use agentdash_platform_spi::{Mount, MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsOperation, Vfs};
 use futures::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
@@ -312,7 +312,7 @@ impl VfsMaterializationService {
         target: &ResourceRef,
         mount: &Mount,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<MaterializationPlan, String> {
         let normalized_path = normalize_mount_relative_path(&target.path, true)?;
         let stat = self
@@ -394,7 +394,7 @@ impl VfsMaterializationService {
         mount_id: &str,
         root_path: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<Vec<String>, String> {
         let result = self
             .vfs_service
@@ -427,7 +427,7 @@ impl VfsMaterializationService {
         target: &ResourceRef,
         plan: &MaterializationPlan,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<&agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Result<Vec<VfsMaterializeEntry>, String> {
         let mut entries = Vec::with_capacity(plan.entry_paths.len());
         for path in &plan.entry_paths {
@@ -468,7 +468,7 @@ pub struct RewriteShellCommandInput<'a> {
     pub turn_id: Option<&'a str>,
     pub tool_call_id: Option<&'a str>,
     pub overlay: Option<&'a InlineContentOverlay>,
-    pub identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
+    pub identity: Option<&'a agentdash_platform_spi::platform::auth::AuthIdentity>,
 }
 
 #[derive(Clone, Copy)]
@@ -481,7 +481,7 @@ pub struct RewriteJsonArgumentsInput<'a> {
     pub turn_id: Option<&'a str>,
     pub tool_call_id: Option<&'a str>,
     pub overlay: Option<&'a InlineContentOverlay>,
-    pub identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
+    pub identity: Option<&'a agentdash_platform_spi::platform::auth::AuthIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -512,7 +512,7 @@ struct MaterializationBuildInput<'a> {
     turn_id: Option<&'a str>,
     tool_call_id: Option<&'a str>,
     overlay: Option<&'a InlineContentOverlay>,
-    identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
+    identity: Option<&'a agentdash_platform_spi::platform::auth::AuthIdentity>,
 }
 
 struct LocalPathForUriInput<'a> {
@@ -524,7 +524,7 @@ struct LocalPathForUriInput<'a> {
     turn_id: Option<&'a str>,
     tool_call_id: Option<&'a str>,
     overlay: Option<&'a InlineContentOverlay>,
-    identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
+    identity: Option<&'a agentdash_platform_spi::platform::auth::AuthIdentity>,
 }
 
 struct MaterializationPlan {
@@ -728,7 +728,7 @@ fn to_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use agentdash_application_ports::vfs_materialization::VfsMaterializeResponse;
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         MountCapability, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsPathPattern,
     };
     use std::collections::BTreeSet;

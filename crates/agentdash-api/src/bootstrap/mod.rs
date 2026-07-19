@@ -1,18 +1,9 @@
-pub mod agent_runtime;
-pub mod agent_runtime_surface;
 pub mod auth;
 pub mod background_workers;
+pub mod extension_gateway;
 pub mod relay;
 pub mod repositories;
-pub mod runtime_gateway;
-pub mod runtime_tools;
 pub mod vfs;
-
-#[cfg(test)]
-mod enterprise_remote_e2e;
-
-#[cfg(test)]
-mod production_tools_e2e;
 
 #[cfg(test)]
 mod tests {

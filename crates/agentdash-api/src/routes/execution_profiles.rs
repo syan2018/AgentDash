@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_agent_runtime_host::CompleteAgentHostRepository;
 use agentdash_contracts::project_agent::{
     ExecutionProfileDiscoveryResponse, ExecutionProfileDto, ExecutionProfileModelDto,
     ExecutionProfileModelSelectorDto, ExecutionProfileOptionsDto, ExecutionProfileProviderDto,
@@ -25,16 +26,25 @@ pub struct ExecutionProfileOptionsQuery {
     pub executor: String,
 }
 
-pub fn is_known_execution_profile(state: &AppState, profile_id: &str) -> bool {
+pub async fn is_known_execution_profile(
+    state: &AppState,
+    profile_id: &str,
+) -> Result<bool, ApiError> {
     let Some(definition_id) = execution_profile_definition_id(profile_id) else {
-        return false;
+        return Ok(false);
     };
-    state
+    let snapshot = state
         .services
-        .agent_runtime_host
-        .definitions()
-        .iter()
-        .any(|definition| definition.provenance.definition_id.as_str() == definition_id)
+        .complete_agent
+        .host_repository
+        .load()
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    Ok(snapshot
+        .facts
+        .service_instances
+        .values()
+        .any(|descriptor| descriptor.definition_id.as_str() == definition_id))
 }
 
 fn execution_profile_definition_id(profile_id: &str) -> Option<&'static str> {
@@ -92,7 +102,8 @@ pub async fn discover_execution_profiles(
     State(state): State<Arc<AppState>>,
     CurrentUser(identity): CurrentUser,
 ) -> Result<Json<ExecutionProfileDiscoveryResponse>, ApiError> {
-    let native_registered = is_known_execution_profile(&state, MANAGED_EXECUTION_PROFILE_ID);
+    let native_registered =
+        is_known_execution_profile(&state, MANAGED_EXECUTION_PROFILE_ID).await?;
     let catalog = build_effective_profile_catalog_from_db(
         state.repos.llm_provider_repo.as_ref(),
         Some(state.repos.llm_provider_credential_repo.as_ref()),
@@ -104,10 +115,7 @@ pub async fn discover_execution_profiles(
     Ok(Json(ExecutionProfileDiscoveryResponse {
         executors: vec![
             managed_profile(native_registered, provider_available),
-            codex_profile(is_known_execution_profile(
-                &state,
-                CODEX_EXECUTION_PROFILE_ID,
-            )),
+            codex_profile(is_known_execution_profile(&state, CODEX_EXECUTION_PROFILE_ID).await?),
         ],
     }))
 }
@@ -117,7 +125,7 @@ pub async fn stream_execution_profile_options(
     CurrentUser(identity): CurrentUser,
     Query(query): Query<ExecutionProfileOptionsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if !is_known_execution_profile(&state, query.executor.trim()) {
+    if !is_known_execution_profile(&state, query.executor.trim()).await? {
         return Err(ApiError::BadRequest(format!(
             "未知 execution profile: {}",
             query.executor.trim()

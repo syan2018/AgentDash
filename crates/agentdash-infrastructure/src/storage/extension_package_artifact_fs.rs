@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use agentdash_spi::extension_package::{
+use agentdash_platform_spi::extension_package::{
     ExtensionPackageArtifactStorage, ExtensionPackageArtifactStorageError,
 };
 use uuid::Uuid;

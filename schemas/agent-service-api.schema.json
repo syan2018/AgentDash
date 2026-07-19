@@ -1,0 +1,4532 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentServiceApiSchema",
+  "description": "Schema root covering every public Complete Agent contract family.",
+  "type": "object",
+  "properties": {
+    "descriptor": {
+      "$ref": "#/$defs/AgentServiceDescriptor"
+    },
+    "create": {
+      "$ref": "#/$defs/CreateAgentCommand"
+    },
+    "resume": {
+      "$ref": "#/$defs/ResumeAgentCommand"
+    },
+    "fork": {
+      "$ref": "#/$defs/ForkAgentCommand"
+    },
+    "execute": {
+      "$ref": "#/$defs/AgentCommandEnvelope"
+    },
+    "receipt": {
+      "$ref": "#/$defs/AgentCommandReceipt"
+    },
+    "fork_receipt": {
+      "$ref": "#/$defs/ForkAgentReceipt"
+    },
+    "create_evidence": {
+      "$ref": "#/$defs/AgentCreateEvidence"
+    },
+    "read": {
+      "$ref": "#/$defs/AgentReadQuery"
+    },
+    "snapshot": {
+      "$ref": "#/$defs/AgentSnapshot"
+    },
+    "changes": {
+      "$ref": "#/$defs/AgentChangesQuery"
+    },
+    "change_page": {
+      "$ref": "#/$defs/AgentChangePage"
+    },
+    "inspection": {
+      "$ref": "#/$defs/AgentEffectInspection"
+    },
+    "applied_effect_outcome": {
+      "$ref": "#/$defs/AgentAppliedEffectOutcome"
+    },
+    "desired_surface": {
+      "$ref": "#/$defs/AgentSurfaceSnapshot"
+    },
+    "surface_contribution_kind": {
+      "$ref": "#/$defs/AgentSurfaceContributionKind"
+    },
+    "offer": {
+      "$ref": "#/$defs/AgentRuntimeOffer"
+    },
+    "bound_surface": {
+      "$ref": "#/$defs/BoundAgentSurface"
+    },
+    "applied_surface": {
+      "$ref": "#/$defs/AppliedAgentSurface"
+    },
+    "apply_surface": {
+      "$ref": "#/$defs/ApplyBoundAgentSurface"
+    },
+    "revoke_surface": {
+      "$ref": "#/$defs/RevokeBoundAgentSurface"
+    },
+    "tool_invocation": {
+      "$ref": "#/$defs/AgentToolInvocation"
+    },
+    "tool_result": {
+      "$ref": "#/$defs/AgentToolResult"
+    },
+    "hook_invocation": {
+      "$ref": "#/$defs/AgentHookInvocation"
+    },
+    "hook_decision": {
+      "$ref": "#/$defs/AgentHookDecision"
+    },
+    "error": {
+      "$ref": "#/$defs/AgentServiceError"
+    }
+  },
+  "required": [
+    "descriptor",
+    "create",
+    "resume",
+    "fork",
+    "execute",
+    "receipt",
+    "fork_receipt",
+    "create_evidence",
+    "read",
+    "snapshot",
+    "changes",
+    "change_page",
+    "inspection",
+    "applied_effect_outcome",
+    "desired_surface",
+    "surface_contribution_kind",
+    "offer",
+    "bound_surface",
+    "applied_surface",
+    "apply_surface",
+    "revoke_surface",
+    "tool_invocation",
+    "tool_result",
+    "hook_invocation",
+    "hook_decision",
+    "error"
+  ],
+  "$defs": {
+    "AgentServiceDescriptor": {
+      "type": "object",
+      "properties": {
+        "definition_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "protocol_revision": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "profile": {
+          "$ref": "#/$defs/AgentCapabilityProfile"
+        },
+        "profile_digest": {
+          "type": "string"
+        },
+        "configuration_boundary": {
+          "$ref": "#/$defs/AgentConfigurationBoundary"
+        }
+      },
+      "required": [
+        "definition_id",
+        "title",
+        "protocol_revision",
+        "profile",
+        "profile_digest",
+        "configuration_boundary"
+      ]
+    },
+    "AgentCapabilityProfile": {
+      "type": "object",
+      "properties": {
+        "lifecycle": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/AgentLifecycleCapability"
+          }
+        },
+        "commands": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/AgentCommandCapability"
+          }
+        },
+        "fork": {
+          "$ref": "#/$defs/AgentForkCapability"
+        },
+        "compaction": {
+          "type": "object",
+          "properties": {
+            "agent_owned_native": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
+            "exact_context_revision": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
+            "observed_only": {
+              "$ref": "#/$defs/SemanticFidelity"
+            }
+          },
+          "additionalProperties": false
+        },
+        "source_changes": {
+          "$ref": "#/$defs/AgentSourceChangeLevel"
+        },
+        "initial_context": {
+          "$ref": "#/$defs/InitialContextProfile"
+        },
+        "surface": {
+          "$ref": "#/$defs/AgentSurfaceProfile"
+        },
+        "inspect_effects": {
+          "$ref": "#/$defs/SemanticFidelity"
+        }
+      },
+      "required": [
+        "lifecycle",
+        "commands",
+        "fork",
+        "compaction",
+        "source_changes",
+        "initial_context",
+        "surface",
+        "inspect_effects"
+      ]
+    },
+    "AgentLifecycleCapability": {
+      "type": "string",
+      "enum": [
+        "create",
+        "start",
+        "resume",
+        "close"
+      ]
+    },
+    "AgentCommandCapability": {
+      "type": "string",
+      "enum": [
+        "submit_input",
+        "steer",
+        "interrupt",
+        "request_compaction",
+        "resolve_interaction"
+      ]
+    },
+    "AgentForkCapability": {
+      "type": "object",
+      "properties": {
+        "cutoffs": {
+          "type": "object",
+          "properties": {
+            "completed_turn": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
+            "head": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
+            "item": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
+            "source_cursor": {
+              "$ref": "#/$defs/SemanticFidelity"
+            }
+          },
+          "additionalProperties": false
+        },
+        "lineage_fidelity": {
+          "$ref": "#/$defs/SemanticFidelity"
+        },
+        "native_durability": {
+          "$ref": "#/$defs/SemanticFidelity"
+        }
+      },
+      "required": [
+        "cutoffs",
+        "lineage_fidelity",
+        "native_durability"
+      ]
+    },
+    "SemanticFidelity": {
+      "type": "string",
+      "enum": [
+        "unsupported",
+        "observed",
+        "approximation",
+        "exact"
+      ]
+    },
+    "AgentSourceChangeLevel": {
+      "type": "string",
+      "enum": [
+        "ordered_durable_tail",
+        "ordered_live_stream",
+        "snapshot_only",
+        "observation_only"
+      ]
+    },
+    "InitialContextProfile": {
+      "type": "object",
+      "properties": {
+        "contribution_fidelity": {
+          "type": "object",
+          "properties": {
+            "compact_summary": {
+              "$ref": "#/$defs/InitialContextDeliveryFidelity"
+            },
+            "constraint_set": {
+              "$ref": "#/$defs/InitialContextDeliveryFidelity"
+            },
+            "workflow_context": {
+              "$ref": "#/$defs/InitialContextDeliveryFidelity"
+            }
+          },
+          "additionalProperties": false
+        },
+        "applied_evidence": {
+          "$ref": "#/$defs/InitialContextAppliedEvidence"
+        },
+        "renderer_versions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "contribution_fidelity",
+        "applied_evidence",
+        "renderer_versions"
+      ]
+    },
+    "InitialContextDeliveryFidelity": {
+      "type": "string",
+      "enum": [
+        "unsupported",
+        "canonical_rendered",
+        "typed_native"
+      ]
+    },
+    "InitialContextAppliedEvidence": {
+      "type": "string",
+      "enum": [
+        "unsupported",
+        "package_digest",
+        "package_and_materialized_digest"
+      ]
+    },
+    "AgentSurfaceProfile": {
+      "type": "object",
+      "properties": {
+        "facets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentSurfaceCapabilityFacet"
+          }
+        }
+      },
+      "required": [
+        "facets"
+      ]
+    },
+    "AgentSurfaceCapabilityFacet": {
+      "type": "object",
+      "properties": {
+        "semantics": {
+          "$ref": "#/$defs/AgentSurfaceSemanticFacet"
+        },
+        "routes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/AgentSurfaceRoute"
+          }
+        },
+        "fidelity": {
+          "$ref": "#/$defs/SemanticFidelity"
+        },
+        "configuration_boundary": {
+          "$ref": "#/$defs/AgentConfigurationBoundary"
+        }
+      },
+      "required": [
+        "semantics",
+        "routes",
+        "fidelity",
+        "configuration_boundary"
+      ]
+    },
+    "AgentSurfaceSemanticFacet": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "instruction"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "tool"
+            },
+            "facet": {
+              "$ref": "#/$defs/AgentToolSemanticFacet"
+            }
+          },
+          "required": [
+            "kind",
+            "facet"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "hook"
+            },
+            "facet": {
+              "$ref": "#/$defs/AgentHookSemanticFacet"
+            }
+          },
+          "required": [
+            "kind",
+            "facet"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "workspace"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "context_requirement"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "AgentToolSemanticFacet": {
+      "type": "object",
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/AgentToolDelivery"
+        },
+        "invocation": {
+          "$ref": "#/$defs/SemanticFidelity"
+        },
+        "update": {
+          "$ref": "#/$defs/AgentToolUpdateSemantics"
+        }
+      },
+      "required": [
+        "delivery",
+        "invocation",
+        "update"
+      ]
+    },
+    "AgentToolDelivery": {
+      "type": "string",
+      "enum": [
+        "prompt_declaration",
+        "runtime_broker_callback",
+        "agent_native_callback",
+        "agent_native_registry"
+      ]
+    },
+    "AgentToolUpdateSemantics": {
+      "type": "string",
+      "enum": [
+        "unsupported",
+        "binding_only",
+        "hot_update"
+      ]
+    },
+    "AgentHookSemanticFacet": {
+      "type": "object",
+      "properties": {
+        "point": {
+          "$ref": "#/$defs/AgentHookPoint"
+        },
+        "timing": {
+          "$ref": "#/$defs/AgentHookTiming"
+        },
+        "blocking": {
+          "$ref": "#/$defs/AgentHookBlockingSemantics"
+        },
+        "mutations": {
+          "type": "object",
+          "properties": {
+            "add_context": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
+            "rewrite_input": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
+            "rewrite_result": {
+              "$ref": "#/$defs/SemanticFidelity"
+            }
+          },
+          "additionalProperties": false
+        },
+        "effects": {
+          "type": "object",
+          "properties": {
+            "emit_effect": {
+              "$ref": "#/$defs/SemanticFidelity"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "point",
+        "timing",
+        "blocking",
+        "mutations",
+        "effects"
+      ]
+    },
+    "AgentHookPoint": {
+      "type": "string",
+      "enum": [
+        "before_turn",
+        "after_turn",
+        "before_provider_request",
+        "before_tool",
+        "after_tool",
+        "before_compaction",
+        "after_compaction",
+        "before_stop",
+        "after_item"
+      ]
+    },
+    "AgentHookTiming": {
+      "type": "string",
+      "enum": [
+        "before",
+        "after"
+      ]
+    },
+    "AgentHookBlockingSemantics": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "non_blocking"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "fidelity": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
+            "kind": {
+              "type": "string",
+              "const": "blocking"
+            }
+          },
+          "required": [
+            "kind",
+            "fidelity"
+          ]
+        }
+      ]
+    },
+    "AgentSurfaceRoute": {
+      "type": "string",
+      "enum": [
+        "immutable_delivery",
+        "runtime_tool_broker",
+        "agent_native_callback",
+        "agent_native_registry",
+        "host_lifecycle",
+        "observation_only"
+      ]
+    },
+    "AgentConfigurationBoundary": {
+      "type": "string",
+      "enum": [
+        "static_service",
+        "binding",
+        "create",
+        "turn",
+        "hot_update"
+      ]
+    },
+    "CreateAgentCommand": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/AgentCommandMeta"
+        },
+        "requested_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initial_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InitialAgentContextPackage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "meta"
+      ]
+    },
+    "AgentCommandMeta": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "effect_id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "binding_generation": {
+          "$ref": "#/$defs/AgentBindingGeneration"
+        },
+        "expected_snapshot_revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command_id",
+        "effect_id",
+        "idempotency_key",
+        "binding_generation"
+      ]
+    },
+    "AgentBindingGeneration": {
+      "$ref": "#/$defs/AgentServiceU64"
+    },
+    "AgentServiceU64": {
+      "description": "canonical unsigned-decimal Complete Agent coordinate",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$",
+      "maxLength": 20
+    },
+    "AgentSnapshotRevision": {
+      "$ref": "#/$defs/AgentServiceU64"
+    },
+    "InitialAgentContextPackage": {
+      "type": "object",
+      "properties": {
+        "package_id": {
+          "type": "string"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/AgentContextSchemaVersion"
+        },
+        "mode": {
+          "$ref": "#/$defs/InitialContextMode"
+        },
+        "contributions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InitialContextContribution"
+          }
+        },
+        "digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "package_id",
+        "schema_version",
+        "mode",
+        "contributions",
+        "digest"
+      ]
+    },
+    "AgentContextSchemaVersion": {
+      "$ref": "#/$defs/AgentServiceU64"
+    },
+    "InitialContextMode": {
+      "type": "string",
+      "enum": [
+        "compact",
+        "workflow_only",
+        "constraints_only"
+      ]
+    },
+    "InitialContextContribution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": "string"
+            },
+            "provenance": {
+              "$ref": "#/$defs/ContextProvenance"
+            },
+            "kind": {
+              "type": "string",
+              "const": "compact_summary"
+            }
+          },
+          "required": [
+            "kind",
+            "summary",
+            "provenance"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "payload": {
+              "$ref": "#/$defs/TypedContextPayload"
+            },
+            "provenance": {
+              "$ref": "#/$defs/ContextProvenance"
+            },
+            "kind": {
+              "type": "string",
+              "const": "workflow_context"
+            }
+          },
+          "required": [
+            "kind",
+            "payload",
+            "provenance"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "payload": {
+              "$ref": "#/$defs/TypedContextPayload"
+            },
+            "provenance": {
+              "$ref": "#/$defs/ContextProvenance"
+            },
+            "kind": {
+              "type": "string",
+              "const": "constraint_set"
+            }
+          },
+          "required": [
+            "kind",
+            "payload",
+            "provenance"
+          ]
+        }
+      ]
+    },
+    "ContextProvenance": {
+      "type": "object",
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/ContextAuthorityKind"
+        },
+        "source": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "authority",
+        "source",
+        "revision",
+        "digest"
+      ]
+    },
+    "ContextAuthorityKind": {
+      "type": "string",
+      "enum": [
+        "agent_history",
+        "agent_snapshot",
+        "workflow",
+        "constraint"
+      ]
+    },
+    "TypedContextPayload": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "value": true
+      },
+      "required": [
+        "schema",
+        "value"
+      ]
+    },
+    "ResumeAgentCommand": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/AgentCommandMeta"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "meta",
+        "source"
+      ]
+    },
+    "ForkAgentCommand": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/AgentCommandMeta"
+        },
+        "source": {
+          "type": "string"
+        },
+        "requested_child_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cutoff": {
+          "$ref": "#/$defs/AgentForkPoint"
+        }
+      },
+      "required": [
+        "meta",
+        "source",
+        "cutoff"
+      ]
+    },
+    "AgentForkPoint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "head"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "completed_turn"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "item_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "item"
+            }
+          },
+          "required": [
+            "kind",
+            "item_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "source_cursor"
+            }
+          },
+          "required": [
+            "kind",
+            "cursor",
+            "digest"
+          ]
+        }
+      ]
+    },
+    "AgentCommandEnvelope": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/AgentCommandMeta"
+        },
+        "source": {
+          "type": "string"
+        },
+        "command": {
+          "$ref": "#/$defs/AgentCommand"
+        }
+      },
+      "required": [
+        "meta",
+        "source",
+        "command"
+      ]
+    },
+    "AgentCommand": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/AgentInput"
+            },
+            "kind": {
+              "type": "string",
+              "const": "submit_input"
+            }
+          },
+          "required": [
+            "kind",
+            "input"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "expected_turn_id": {
+              "type": "string"
+            },
+            "input": {
+              "$ref": "#/$defs/AgentInput"
+            },
+            "kind": {
+              "type": "string",
+              "const": "steer"
+            }
+          },
+          "required": [
+            "kind",
+            "expected_turn_id",
+            "input"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "expected_turn_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "interrupt"
+            }
+          },
+          "required": [
+            "kind",
+            "expected_turn_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "request_compaction"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "interaction_id": {
+              "type": "string"
+            },
+            "response": {
+              "$ref": "#/$defs/AgentInteractionResponse"
+            },
+            "kind": {
+              "type": "string",
+              "const": "resolve_interaction"
+            }
+          },
+          "required": [
+            "kind",
+            "interaction_id",
+            "response"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "close"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "AgentInput": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentInputContent"
+          }
+        }
+      },
+      "required": [
+        "content"
+      ]
+    },
+    "AgentInputContent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "media_type": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "image"
+            }
+          },
+          "required": [
+            "kind",
+            "media_type",
+            "source",
+            "digest"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            },
+            "media_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "resource"
+            }
+          },
+          "required": [
+            "kind",
+            "uri"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "type": "string"
+            },
+            "value": true,
+            "kind": {
+              "type": "string",
+              "const": "structured"
+            }
+          },
+          "required": [
+            "kind",
+            "schema",
+            "value"
+          ]
+        }
+      ]
+    },
+    "AgentInteractionResponse": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "approved"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "denied"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/AgentInput"
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_input"
+            }
+          },
+          "required": [
+            "kind",
+            "input"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "result": true,
+            "kind": {
+              "type": "string",
+              "const": "dynamic_tool_result"
+            }
+          },
+          "required": [
+            "kind",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "response": true,
+            "kind": {
+              "type": "string",
+              "const": "mcp_elicitation"
+            }
+          },
+          "required": [
+            "kind",
+            "response"
+          ]
+        }
+      ]
+    },
+    "AgentCommandReceipt": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "effect_id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentReceiptState"
+        },
+        "snapshot_revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppliedInitialContextEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command_id",
+        "effect_id",
+        "source",
+        "state"
+      ]
+    },
+    "AgentReceiptState": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "accepted"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "rejected"
+            }
+          },
+          "required": [
+            "kind",
+            "code",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "terminal": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentTerminalOutcome"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "already_applied"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "$ref": "#/$defs/AgentTerminalOutcome"
+            },
+            "kind": {
+              "type": "string",
+              "const": "terminal"
+            }
+          },
+          "required": [
+            "kind",
+            "outcome"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "AgentTerminalOutcome": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "failed",
+        "interrupted",
+        "closed",
+        "lost"
+      ]
+    },
+    "AppliedInitialContextEvidence": {
+      "type": "object",
+      "properties": {
+        "package_id": {
+          "type": "string"
+        },
+        "package_digest": {
+          "type": "string"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/InitialContextDeliveryFidelity"
+        },
+        "renderer_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "materialized_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "package_id",
+        "package_digest",
+        "fidelity"
+      ]
+    },
+    "ForkAgentReceipt": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "effect_id": {
+          "type": "string"
+        },
+        "parent_source": {
+          "type": "string"
+        },
+        "child_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cutoff": {
+          "$ref": "#/$defs/AgentForkPoint"
+        },
+        "child_history_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/AgentReceiptState"
+        }
+      },
+      "required": [
+        "command_id",
+        "effect_id",
+        "parent_source",
+        "cutoff",
+        "state"
+      ]
+    },
+    "AgentCreateEvidence": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "initial_context_package_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initial_context_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source"
+      ]
+    },
+    "AgentReadQuery": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "at_revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source"
+      ]
+    },
+    "AgentSnapshot": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/AgentSnapshotRevision"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/AgentLifecycleStatus"
+        },
+        "active_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTurnSnapshot"
+          }
+        },
+        "interactions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentInteractionSnapshot"
+          }
+        },
+        "thread_name": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentThreadNameSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_info": {
+          "$ref": "#/$defs/AgentSnapshotSource"
+        },
+        "applied_surface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppliedAgentSurface"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppliedInitialContextEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "revision",
+        "lifecycle",
+        "turns",
+        "interactions",
+        "source_info"
+      ]
+    },
+    "AgentLifecycleStatus": {
+      "type": "string",
+      "enum": [
+        "creating",
+        "active",
+        "suspended",
+        "closed",
+        "lost"
+      ]
+    },
+    "AgentTurnSnapshot": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentEntityStatus"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentItemSnapshot"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "items"
+      ]
+    },
+    "AgentEntityStatus": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "running",
+        "completed",
+        "failed",
+        "interrupted",
+        "lost"
+      ]
+    },
+    "AgentItemSnapshot": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentEntityStatus"
+        },
+        "presentation": {
+          "$ref": "#/$defs/AgentItemPresentation"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "presentation"
+      ]
+    },
+    "AgentItemPresentation": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/AgentItemBody"
+        },
+        "started_at_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentServiceU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updated_at_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentServiceU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentItemTerminalEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "body_digest": {
+          "type": "string"
+        },
+        "presentation_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "body_digest",
+        "presentation_digest"
+      ]
+    },
+    "AgentItemBody": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_message"
+            }
+          },
+          "required": [
+            "kind",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hook_point": {
+              "type": "string"
+            },
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "hook_prompt"
+            }
+          },
+          "required": [
+            "kind",
+            "hook_point",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "phase": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "agent_message"
+            }
+          },
+          "required": [
+            "kind",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "reasoning"
+            }
+          },
+          "required": [
+            "kind",
+            "summary",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "explanation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentPlanStep"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "plan"
+            }
+          },
+          "required": [
+            "kind",
+            "steps"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "output": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentCommandOutput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "command_execution"
+            }
+          },
+          "required": [
+            "kind",
+            "command",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentFilePatch"
+              }
+            },
+            "output": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_change"
+            }
+          },
+          "required": [
+            "kind",
+            "changes",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "line_start": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "line_end": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_read"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "$ref": "#/$defs/AgentFileSearchMode"
+            },
+            "query": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "matches": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentFileSearchMatch"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_search"
+            }
+          },
+          "required": [
+            "kind",
+            "mode",
+            "query",
+            "matches"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "server": {
+              "type": "string"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "arguments": true,
+            "result": true,
+            "progress": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "mcp_tool_call"
+            }
+          },
+          "required": [
+            "kind",
+            "server",
+            "tool",
+            "arguments",
+            "progress"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tool": {
+              "type": "string"
+            },
+            "arguments": true,
+            "result": true,
+            "progress": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "dynamic_tool_call"
+            }
+          },
+          "required": [
+            "kind",
+            "tool",
+            "arguments",
+            "progress"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "target": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "prompt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": true,
+            "kind": {
+              "type": "string",
+              "const": "collaboration_tool_call"
+            }
+          },
+          "required": [
+            "kind",
+            "action"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string"
+            },
+            "task": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "result": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "subagent_activity"
+            }
+          },
+          "required": [
+            "kind",
+            "agent_id",
+            "task",
+            "status",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "query": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "results": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "web_search"
+            }
+          },
+          "required": [
+            "kind",
+            "action",
+            "results"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "image_view"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string"
+            },
+            "revised_prompt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "outputs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "image_generation"
+            }
+          },
+          "required": [
+            "kind",
+            "prompt",
+            "outputs"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "duration_ms": {
+              "$ref": "#/$defs/AgentServiceU64"
+            },
+            "kind": {
+              "type": "string",
+              "const": "sleep"
+            }
+          },
+          "required": [
+            "kind",
+            "duration_ms"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "findings": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentReviewFinding"
+              }
+            },
+            "summary": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "review"
+            }
+          },
+          "required": [
+            "kind",
+            "findings"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "terminal_id": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string"
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "terminal_control"
+            }
+          },
+          "required": [
+            "kind",
+            "terminal_id",
+            "action"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "source_digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_compaction"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "arguments": true,
+            "result": true,
+            "progress": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "generic_tool_activity"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "arguments",
+            "progress"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "error"
+            }
+          },
+          "required": [
+            "kind",
+            "code",
+            "message"
+          ]
+        }
+      ]
+    },
+    "AgentContentBlock": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "media_type": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "digest": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "image"
+            }
+          },
+          "required": [
+            "kind",
+            "media_type",
+            "source",
+            "digest"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "media_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "local_resource"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "media_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "resource_link"
+            }
+          },
+          "required": [
+            "kind",
+            "uri"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "skill_reference"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "reference": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "mention"
+            }
+          },
+          "required": [
+            "kind",
+            "label",
+            "reference"
+          ]
+        },
+        {
+          "description": "AgentDash-owned structured presentation only. `schema_version` makes evolution explicit.",
+          "type": "object",
+          "properties": {
+            "schema": {
+              "type": "string"
+            },
+            "schema_version": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "value": true,
+            "kind": {
+              "type": "string",
+              "const": "structured"
+            }
+          },
+          "required": [
+            "kind",
+            "schema",
+            "schema_version",
+            "value"
+          ]
+        }
+      ]
+    },
+    "AgentPlanStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentPlanStepStatus"
+        }
+      },
+      "required": [
+        "text",
+        "status"
+      ]
+    },
+    "AgentPlanStepStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed",
+        "failed"
+      ]
+    },
+    "AgentCommandOutput": {
+      "type": "object",
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/AgentCommandOutputStream"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stream",
+        "text"
+      ]
+    },
+    "AgentCommandOutputStream": {
+      "type": "string",
+      "enum": [
+        "stdout",
+        "stderr",
+        "combined"
+      ]
+    },
+    "AgentFilePatch": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "change_kind": {
+          "$ref": "#/$defs/AgentFileChangeKind"
+        },
+        "patch": {
+          "type": "string"
+        },
+        "moved_to": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "change_kind",
+        "patch"
+      ]
+    },
+    "AgentFileChangeKind": {
+      "type": "string",
+      "enum": [
+        "add",
+        "update",
+        "delete",
+        "move"
+      ]
+    },
+    "AgentFileSearchMode": {
+      "type": "string",
+      "enum": [
+        "grep",
+        "glob"
+      ]
+    },
+    "AgentFileSearchMatch": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "column": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "AgentReviewFinding": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "severity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "body"
+      ]
+    },
+    "AgentItemTerminalEvidence": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/AgentTerminalStatus"
+        },
+        "completed_at_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentServiceU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentServiceU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "process_exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentProcessExitEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentPresentationError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "outcome"
+      ]
+    },
+    "AgentTerminalStatus": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "interrupted",
+        "lost"
+      ]
+    },
+    "AgentProcessExitEvidence": {
+      "type": "object",
+      "properties": {
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "signal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "success": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "success"
+      ]
+    },
+    "AgentPresentationError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ]
+    },
+    "AgentInteractionSnapshot": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "request": {
+          "$ref": "#/$defs/AgentInteractionRequest"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentInteractionStatus"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentInteractionResolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "turn_id",
+        "request",
+        "status"
+      ]
+    },
+    "AgentInteractionRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "proposed_action": true,
+            "kind": {
+              "type": "string",
+              "const": "approval"
+            }
+          },
+          "required": [
+            "kind",
+            "prompt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string"
+            },
+            "questions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentInteractionQuestion"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_input"
+            }
+          },
+          "required": [
+            "kind",
+            "prompt",
+            "questions"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "server": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "schema": true,
+            "kind": {
+              "type": "string",
+              "const": "mcp_elicitation"
+            }
+          },
+          "required": [
+            "kind",
+            "server",
+            "prompt",
+            "schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tool": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "arguments": true,
+            "kind": {
+              "type": "string",
+              "const": "dynamic_tool"
+            }
+          },
+          "required": [
+            "kind",
+            "tool",
+            "prompt",
+            "arguments"
+          ]
+        }
+      ]
+    },
+    "AgentInteractionQuestion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allows_free_form": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "prompt",
+        "options",
+        "allows_free_form"
+      ]
+    },
+    "AgentInteractionStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "resolved",
+        "cancelled",
+        "expired",
+        "lost"
+      ]
+    },
+    "AgentInteractionResolution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "approved"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "denied"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "answers": true,
+            "kind": {
+              "type": "string",
+              "const": "user_input"
+            }
+          },
+          "required": [
+            "kind",
+            "answers"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "response": true,
+            "kind": {
+              "type": "string",
+              "const": "mcp_elicitation"
+            }
+          },
+          "required": [
+            "kind",
+            "response"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "result": true,
+            "kind": {
+              "type": "string",
+              "const": "dynamic_tool_result"
+            }
+          },
+          "required": [
+            "kind",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "expired"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "lost"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "AgentThreadNameSnapshot": {
+      "type": "object",
+      "properties": {
+        "thread_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_info": {
+          "$ref": "#/$defs/AgentSnapshotSource"
+        }
+      },
+      "required": [
+        "source_info"
+      ]
+    },
+    "AgentSnapshotSource": {
+      "type": "object",
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/AgentSnapshotAuthority"
+        },
+        "source_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fidelity": {
+          "$ref": "#/$defs/SemanticFidelity"
+        },
+        "observed_at_ms": {
+          "$ref": "#/$defs/AgentServiceU64"
+        }
+      },
+      "required": [
+        "authority",
+        "fidelity",
+        "observed_at_ms"
+      ]
+    },
+    "AgentSnapshotAuthority": {
+      "type": "string",
+      "enum": [
+        "agent_authoritative",
+        "agent_observed",
+        "derived"
+      ]
+    },
+    "AppliedAgentSurface": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/AgentSurfaceRevision"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "contributions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AppliedAgentSurfaceContribution"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "digest",
+        "contributions"
+      ]
+    },
+    "AgentSurfaceRevision": {
+      "$ref": "#/$defs/AgentServiceU64"
+    },
+    "AppliedAgentSurfaceContribution": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "route": {
+          "$ref": "#/$defs/AgentSurfaceRoute"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/SemanticFidelity"
+        },
+        "semantics": {
+          "$ref": "#/$defs/AgentSurfaceSemanticFacet"
+        },
+        "payload_digest": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AppliedContributionStatus"
+        },
+        "evidence": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "route",
+        "fidelity",
+        "semantics",
+        "payload_digest",
+        "status"
+      ]
+    },
+    "AppliedContributionStatus": {
+      "type": "string",
+      "enum": [
+        "applied",
+        "rejected",
+        "revoked"
+      ]
+    },
+    "AgentChangesQuery": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "after": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "source",
+        "limit"
+      ]
+    },
+    "AgentChangePage": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentChange"
+          }
+        },
+        "next": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gap": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source",
+        "changes",
+        "gap"
+      ]
+    },
+    "AgentChange": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "source_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "occurred_at_ms": {
+          "$ref": "#/$defs/AgentServiceU64"
+        },
+        "payload": {
+          "$ref": "#/$defs/AgentChangePayload"
+        }
+      },
+      "required": [
+        "cursor",
+        "occurred_at_ms",
+        "payload"
+      ]
+    },
+    "AgentChangePayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "thread_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_info": {
+              "$ref": "#/$defs/AgentSnapshotSource"
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_name_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "source_info"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "$ref": "#/$defs/AgentLifecycleStatus"
+            },
+            "kind": {
+              "type": "string",
+              "const": "lifecycle_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn": {
+              "$ref": "#/$defs/AgentTurnSnapshot"
+            },
+            "kind": {
+              "type": "string",
+              "const": "turn_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "turn"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "active_turn_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "active_turn_changed"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/AgentItemSnapshot"
+            },
+            "kind": {
+              "type": "string",
+              "const": "item_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id",
+            "item"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
+            "item_id": {
+              "type": "string"
+            },
+            "transition": {
+              "$ref": "#/$defs/AgentItemTransition"
+            },
+            "kind": {
+              "type": "string",
+              "const": "item_transitioned"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id",
+            "item_id",
+            "transition"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "interaction": {
+              "$ref": "#/$defs/AgentInteractionSnapshot"
+            },
+            "kind": {
+              "type": "string",
+              "const": "interaction_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "interaction"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "applied": {
+              "$ref": "#/$defs/AppliedAgentSurface"
+            },
+            "kind": {
+              "type": "string",
+              "const": "surface_applied"
+            }
+          },
+          "required": [
+            "kind",
+            "applied"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "snapshot_invalidated"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "AgentItemTransition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "presentation": {
+              "$ref": "#/$defs/AgentItemPresentation"
+            },
+            "kind": {
+              "type": "string",
+              "const": "started"
+            }
+          },
+          "required": [
+            "kind",
+            "presentation"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "update": {
+              "$ref": "#/$defs/AgentItemUpdate"
+            },
+            "presentation": {
+              "$ref": "#/$defs/AgentItemPresentation"
+            },
+            "kind": {
+              "type": "string",
+              "const": "updated"
+            }
+          },
+          "required": [
+            "kind",
+            "update",
+            "presentation"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "presentation": {
+              "$ref": "#/$defs/AgentItemPresentation"
+            },
+            "kind": {
+              "type": "string",
+              "const": "terminal"
+            }
+          },
+          "required": [
+            "kind",
+            "presentation"
+          ]
+        }
+      ]
+    },
+    "AgentItemUpdate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "text_appended"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "reasoning_appended"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "content_appended"
+            }
+          },
+          "required": [
+            "kind",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "output": {
+              "$ref": "#/$defs/AgentCommandOutput"
+            },
+            "kind": {
+              "type": "string",
+              "const": "command_output_appended"
+            }
+          },
+          "required": [
+            "kind",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentFilePatch"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "patch_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "changes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "explanation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentPlanStep"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "plan_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "steps"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentContentBlock"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "tool_progress"
+            }
+          },
+          "required": [
+            "kind",
+            "content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+            "result": true,
+            "kind": {
+              "type": "string",
+              "const": "collaboration_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/AgentItemBody"
+            },
+            "kind": {
+              "type": "string",
+              "const": "body_replaced"
+            }
+          },
+          "required": [
+            "kind",
+            "body"
+          ]
+        }
+      ]
+    },
+    "AgentEffectInspection": {
+      "type": "object",
+      "properties": {
+        "effect_id": {
+          "type": "string"
+        },
+        "command_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/AgentEffectInspectionState"
+        }
+      },
+      "required": [
+        "effect_id",
+        "state"
+      ]
+    },
+    "AgentEffectInspectionState": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_applied"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "accepted"
+            }
+          },
+          "required": [
+            "kind",
+            "source"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "$ref": "#/$defs/AgentAppliedEffectOutcome"
+            },
+            "kind": {
+              "type": "string",
+              "const": "applied"
+            }
+          },
+          "required": [
+            "kind",
+            "outcome"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "AgentAppliedEffectOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "receipt": {
+              "$ref": "#/$defs/AppliedAgentCommandReceipt"
+            },
+            "kind": {
+              "type": "string",
+              "const": "create"
+            }
+          },
+          "required": [
+            "kind",
+            "receipt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "receipt": {
+              "$ref": "#/$defs/AppliedAgentCommandReceipt"
+            },
+            "kind": {
+              "type": "string",
+              "const": "resume"
+            }
+          },
+          "required": [
+            "kind",
+            "receipt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "receipt": {
+              "$ref": "#/$defs/AppliedForkAgentReceipt"
+            },
+            "kind": {
+              "type": "string",
+              "const": "fork"
+            }
+          },
+          "required": [
+            "kind",
+            "receipt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "receipt": {
+              "$ref": "#/$defs/AppliedAgentCommandReceipt"
+            },
+            "kind": {
+              "type": "string",
+              "const": "command"
+            }
+          },
+          "required": [
+            "kind",
+            "receipt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "receipt": {
+              "$ref": "#/$defs/AppliedAgentSurfaceReceipt"
+            },
+            "kind": {
+              "type": "string",
+              "const": "surface_apply"
+            }
+          },
+          "required": [
+            "kind",
+            "receipt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "receipt": {
+              "$ref": "#/$defs/AppliedAgentCommandReceipt"
+            },
+            "kind": {
+              "type": "string",
+              "const": "surface_revoke"
+            }
+          },
+          "required": [
+            "kind",
+            "receipt"
+          ]
+        }
+      ]
+    },
+    "AppliedAgentCommandReceipt": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "effect_id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentTerminalOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot_revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppliedInitialContextEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command_id",
+        "effect_id",
+        "source"
+      ]
+    },
+    "AppliedForkAgentReceipt": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "effect_id": {
+          "type": "string"
+        },
+        "parent_source": {
+          "type": "string"
+        },
+        "child_source": {
+          "type": "string"
+        },
+        "cutoff": {
+          "$ref": "#/$defs/AgentForkPoint"
+        },
+        "child_history_digest": {
+          "type": "string"
+        },
+        "terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentTerminalOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command_id",
+        "effect_id",
+        "parent_source",
+        "child_source",
+        "cutoff",
+        "child_history_digest"
+      ]
+    },
+    "AppliedAgentSurfaceReceipt": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "effect_id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "applied": {
+          "$ref": "#/$defs/AppliedAgentSurface"
+        }
+      },
+      "required": [
+        "command_id",
+        "effect_id",
+        "source",
+        "applied"
+      ]
+    },
+    "AgentSurfaceSnapshot": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/AgentSurfaceRevision"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentSurfaceRequirement"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "digest",
+        "requirements"
+      ]
+    },
+    "AgentSurfaceRequirement": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "minimum_fidelity": {
+          "$ref": "#/$defs/SemanticFidelity"
+        },
+        "allowed_routes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/AgentSurfaceRoute"
+          }
+        },
+        "semantics": {
+          "$ref": "#/$defs/AgentSurfaceSemanticFacet"
+        },
+        "payload": {
+          "$ref": "#/$defs/AgentSurfaceContributionPayload"
+        },
+        "payload_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "required",
+        "minimum_fidelity",
+        "allowed_routes",
+        "semantics",
+        "payload",
+        "payload_digest"
+      ]
+    },
+    "AgentSurfaceContributionPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "instruction"
+            }
+          },
+          "required": [
+            "kind",
+            "channel",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "input_schema": true,
+            "output_schema": true,
+            "kind": {
+              "type": "string",
+              "const": "tool"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "description",
+            "input_schema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "definition_id": {
+              "type": "string"
+            },
+            "point": {
+              "$ref": "#/$defs/AgentHookPoint"
+            },
+            "timing": {
+              "$ref": "#/$defs/AgentHookTiming"
+            },
+            "actions": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/AgentHookAction"
+              }
+            },
+            "deadline_ms": {
+              "$ref": "#/$defs/AgentServiceU64"
+            },
+            "kind": {
+              "type": "string",
+              "const": "hook"
+            }
+          },
+          "required": [
+            "kind",
+            "definition_id",
+            "point",
+            "timing",
+            "actions",
+            "deadline_ms"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "requirement": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "workspace"
+            }
+          },
+          "required": [
+            "kind",
+            "requirement"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "requirement": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_requirement"
+            }
+          },
+          "required": [
+            "kind",
+            "requirement"
+          ]
+        }
+      ]
+    },
+    "AgentHookAction": {
+      "type": "string",
+      "enum": [
+        "observe",
+        "allow_or_deny",
+        "rewrite_input",
+        "rewrite_result",
+        "add_context",
+        "emit_effect"
+      ]
+    },
+    "AgentSurfaceContributionKind": {
+      "type": "string",
+      "enum": [
+        "instruction",
+        "tool",
+        "hook",
+        "workspace",
+        "context_requirement"
+      ]
+    },
+    "AgentRuntimeOffer": {
+      "type": "object",
+      "properties": {
+        "profile_digest": {
+          "type": "string"
+        },
+        "contributions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentSurfaceCapabilityFacet"
+          }
+        }
+      },
+      "required": [
+        "profile_digest",
+        "contributions"
+      ]
+    },
+    "BoundAgentSurface": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/AgentSurfaceRevision"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "offer_profile_digest": {
+          "type": "string"
+        },
+        "contributions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BoundAgentSurfaceContribution"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "digest",
+        "offer_profile_digest",
+        "contributions"
+      ]
+    },
+    "BoundAgentSurfaceContribution": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "route": {
+          "$ref": "#/$defs/AgentSurfaceRoute"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/SemanticFidelity"
+        },
+        "semantics": {
+          "$ref": "#/$defs/AgentSurfaceSemanticFacet"
+        },
+        "payload": {
+          "$ref": "#/$defs/AgentSurfaceContributionPayload"
+        },
+        "payload_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "required",
+        "route",
+        "fidelity",
+        "semantics",
+        "payload",
+        "payload_digest"
+      ]
+    },
+    "ApplyBoundAgentSurface": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "effect_id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "bound_surface": {
+          "$ref": "#/$defs/BoundAgentSurface"
+        },
+        "callbacks": {
+          "$ref": "#/$defs/AgentHostCallbackBinding"
+        }
+      },
+      "required": [
+        "command_id",
+        "effect_id",
+        "idempotency_key",
+        "source",
+        "bound_surface",
+        "callbacks"
+      ]
+    },
+    "AgentHostCallbackBinding": {
+      "type": "object",
+      "properties": {
+        "route_id": {
+          "type": "string"
+        },
+        "binding_generation": {
+          "$ref": "#/$defs/AgentBindingGeneration"
+        },
+        "delivery": {
+          "$ref": "#/$defs/AgentSurfaceRoute"
+        },
+        "default_deadline_ms": {
+          "$ref": "#/$defs/AgentServiceU64"
+        }
+      },
+      "required": [
+        "route_id",
+        "binding_generation",
+        "delivery",
+        "default_deadline_ms"
+      ]
+    },
+    "RevokeBoundAgentSurface": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "effect_id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "binding_generation": {
+          "$ref": "#/$defs/AgentBindingGeneration"
+        },
+        "source": {
+          "type": "string"
+        },
+        "expected_revision": {
+          "$ref": "#/$defs/AgentSurfaceRevision"
+        }
+      },
+      "required": [
+        "command_id",
+        "effect_id",
+        "idempotency_key",
+        "binding_generation",
+        "source",
+        "expected_revision"
+      ]
+    },
+    "AgentToolInvocation": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/AgentHostCallbackMeta"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "arguments": true
+      },
+      "required": [
+        "meta",
+        "tool",
+        "arguments"
+      ]
+    },
+    "AgentHostCallbackMeta": {
+      "type": "object",
+      "properties": {
+        "route_id": {
+          "type": "string"
+        },
+        "binding_generation": {
+          "$ref": "#/$defs/AgentBindingGeneration"
+        },
+        "source": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "interaction_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effect_id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "deadline_at_ms": {
+          "description": "Absolute Unix epoch deadline. The Host must not start a callback after it.",
+          "$ref": "#/$defs/AgentServiceU64"
+        }
+      },
+      "required": [
+        "route_id",
+        "binding_generation",
+        "source",
+        "turn_id",
+        "effect_id",
+        "idempotency_key",
+        "deadline_at_ms"
+      ]
+    },
+    "AgentToolResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "output": true,
+            "kind": {
+              "type": "string",
+              "const": "completed"
+            }
+          },
+          "required": [
+            "kind",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "rejected"
+            }
+          },
+          "required": [
+            "kind",
+            "code",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "required": [
+            "kind",
+            "code",
+            "message"
+          ]
+        }
+      ]
+    },
+    "AgentHookInvocation": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/AgentHostCallbackMeta"
+        },
+        "definition_id": {
+          "type": "string"
+        },
+        "point": {
+          "$ref": "#/$defs/AgentHookPoint"
+        },
+        "timing": {
+          "$ref": "#/$defs/AgentHookTiming"
+        },
+        "allowed_actions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/AgentHookAction"
+          }
+        },
+        "input": true
+      },
+      "required": [
+        "meta",
+        "definition_id",
+        "point",
+        "timing",
+        "allowed_actions",
+        "input"
+      ]
+    },
+    "AgentHookDecision": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "allow"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "deny"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "input": true,
+            "kind": {
+              "type": "string",
+              "const": "replace_input"
+            }
+          },
+          "required": [
+            "kind",
+            "input"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "result": true,
+            "kind": {
+              "type": "string",
+              "const": "replace_result"
+            }
+          },
+          "required": [
+            "kind",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "context": true,
+            "kind": {
+              "type": "string",
+              "const": "add_context"
+            }
+          },
+          "required": [
+            "kind",
+            "context"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "effect": true,
+            "kind": {
+              "type": "string",
+              "const": "emit_effect"
+            }
+          },
+          "required": [
+            "kind",
+            "effect"
+          ]
+        }
+      ]
+    },
+    "AgentServiceError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/AgentServiceErrorCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ]
+    },
+    "AgentServiceErrorCode": {
+      "type": "string",
+      "enum": [
+        "invalid_argument",
+        "not_found",
+        "conflict",
+        "unsupported",
+        "stale_binding_generation",
+        "deadline_exceeded",
+        "unavailable",
+        "protocol_violation",
+        "internal"
+      ]
+    }
+  }
+}

@@ -16,8 +16,8 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, GateWaitPolicyEnvelope, LifecycleAgent,
     LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
 };
-use agentdash_spi::ExecutionContext;
-use agentdash_spi::connector::RuntimeToolProvider;
+use agentdash_platform_spi::ExecutionContext;
+use agentdash_platform_spi::RuntimeToolProvider;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
@@ -895,11 +895,11 @@ async fn runtime_tool_catalog_includes_wait() {
     let composer =
         crate::runtime_tools::provider::SessionRuntimeToolComposer::new(vec![Arc::new(provider)]);
     let context = ExecutionContext {
-        session: agentdash_spi::ExecutionSessionFrame {
+        session: agentdash_platform_spi::ExecutionSessionFrame {
             turn_id: "runtime-1".to_string(),
             working_directory: std::path::PathBuf::from("."),
             environment_variables: std::collections::HashMap::new(),
-            executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            executor_config: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
             mcp_servers: Vec::new(),
             vfs: None,
             vfs_access_policy: None,
@@ -907,7 +907,7 @@ async fn runtime_tool_catalog_includes_wait() {
             runtime_backend_anchor: None,
             identity: None,
         },
-        turn: agentdash_spi::ExecutionTurnFrame::default(),
+        turn: agentdash_platform_spi::ExecutionTurnFrame::default(),
     };
 
     let tools = composer.build_tools(&context).await.expect("build tools");

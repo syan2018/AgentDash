@@ -1,8 +1,8 @@
 use agentdash_application_ports::lifecycle_materialization::LifecycleMaterializationError;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::DomainError;
-use agentdash_spi::ConnectorError;
-use agentdash_spi::session_persistence::SessionStoreError;
+use agentdash_platform_spi::PlatformRuntimeError;
+use agentdash_platform_spi::session_persistence::SessionStoreError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkflowApplicationError {
@@ -36,15 +36,15 @@ impl From<DomainError> for WorkflowApplicationError {
     }
 }
 
-impl From<ConnectorError> for WorkflowApplicationError {
-    fn from(value: ConnectorError) -> Self {
+impl From<PlatformRuntimeError> for WorkflowApplicationError {
+    fn from(value: PlatformRuntimeError) -> Self {
         match value {
-            ConnectorError::InvalidConfig(message) => Self::BadRequest(message),
-            ConnectorError::ConnectionFailed(message) => Self::Internal(message),
-            ConnectorError::SpawnFailed(message) | ConnectorError::Runtime(message) => {
+            PlatformRuntimeError::InvalidConfig(message) => Self::BadRequest(message),
+            PlatformRuntimeError::ConnectionFailed(message) => Self::Internal(message),
+            PlatformRuntimeError::SpawnFailed(message) | PlatformRuntimeError::Runtime(message) => {
                 Self::Internal(message)
             }
-            ConnectorError::Io(error) => {
+            PlatformRuntimeError::Io(error) => {
                 let context =
                     DiagnosticErrorContext::new("workflow.error_conversion", "connector_io")
                         .with_field("error_source", "connector");
@@ -58,7 +58,7 @@ impl From<ConnectorError> for WorkflowApplicationError {
                 );
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
-            ConnectorError::Json(error) => Self::BadRequest(error.to_string()),
+            PlatformRuntimeError::Json(error) => Self::BadRequest(error.to_string()),
         }
     }
 }

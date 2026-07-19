@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
+use ts_rs::TS;
 
 use crate::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentChangePage, AgentChangesQuery,
@@ -17,7 +18,7 @@ use crate::{
 };
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentServiceErrorCode {
@@ -32,7 +33,7 @@ pub enum AgentServiceErrorCode {
     Internal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize, JsonSchema, TS)]
 #[error("{code:?}: {message}")]
 #[serde(rename_all = "snake_case")]
 pub struct AgentServiceError {
@@ -51,7 +52,7 @@ impl AgentServiceError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentHostCallbackMeta {
     pub route_id: AgentCallbackRouteId,
@@ -63,10 +64,13 @@ pub struct AgentHostCallbackMeta {
     pub effect_id: AgentEffectIdentity,
     pub idempotency_key: AgentIdempotencyKey,
     /// Absolute Unix epoch deadline. The Host must not start a callback after it.
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+    #[ts(type = "AgentServiceU64")]
     pub deadline_at_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentToolInvocation {
     pub meta: AgentHostCallbackMeta,
@@ -74,7 +78,7 @@ pub struct AgentToolInvocation {
     pub arguments: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentToolResult {
     Completed { output: Value },
@@ -82,7 +86,7 @@ pub enum AgentToolResult {
     Failed { code: String, message: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentHookInvocation {
     pub meta: AgentHostCallbackMeta,
@@ -93,7 +97,7 @@ pub struct AgentHookInvocation {
     pub input: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentHookDecision {
     Allow,
@@ -105,7 +109,7 @@ pub enum AgentHookDecision {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHostCallbackErrorCode {
@@ -119,7 +123,7 @@ pub enum AgentHostCallbackErrorCode {
     Internal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize, JsonSchema, TS)]
 #[error("{code:?}: {message}")]
 #[serde(rename_all = "snake_case")]
 pub struct AgentHostCallbackError {

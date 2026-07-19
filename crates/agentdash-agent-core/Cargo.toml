@@ -1,6 +1,6 @@
 [package]
 name = "agentdash-agent-core"
-description = "Dash Agent 使用的平台无关 provider/tool loop"
+description = "Dash Agent 使用的平台无关 provider/tool loop 与纯计算 primitive"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,5 +11,5 @@ futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros"] }
-tokio-util = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["rt"] }

@@ -19,7 +19,7 @@
 
 跨 repository 用例使用具名 deps struct，例如 `AgentRunForkRepos`、`ProjectAgentRunStartRepos`、`DeliveryRuntimeSelectionRepositories` 或 workspace query deps。这样 constructor 签名表达真实依赖集合，测试 fixture 也必须显式构造该用例需要的 port。原因是全量 repository set 会把 service locator 伪装成业务依赖，难以判断某个用例是否跨越了不该跨的 aggregate。
 
-Session runtime persistence 不通过 `RepositorySet` 表达。`SessionPersistence`、session event record、terminal effect outbox record 与 runtime command record 定义在 `agentdash-spi::session_persistence`，由 application 组合成 runtime stores，由 infrastructure 提供 PostgreSQL / SQLite adapter。这样 session runtime 的持久化事实可以跨 cloud/local adapter 复用，而基础设施层不需要依赖 application 编排 crate。
+Session runtime persistence 不通过 `RepositorySet` 表达。`SessionPersistence`、session event record、terminal effect outbox record 与 runtime command record 定义在 `agentdash-platform-spi::session_persistence`，由 application 组合成 runtime stores，由 infrastructure 提供 PostgreSQL / SQLite adapter。这样 session runtime 的持久化事实可以跨 cloud/local adapter 复用，而基础设施层不需要依赖 application 编排 crate。
 
 ---
 

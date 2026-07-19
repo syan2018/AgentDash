@@ -23,7 +23,10 @@ import {
 import { isAggregatedGroup, isAggregatedThinkingGroup, isDisplayEntry } from "../model/types";
 import type { SessionDisplayItem, SessionDisplayEntry, TokenUsageInfo } from "../model/types";
 import { buildRoundActionModel, type RoundActionModel } from "../model/roundActions";
-import type { TurnActivityStatus, TurnSegment } from "../model/useSessionFeed";
+import type {
+  AgentRunRuntimeTurnActivityStatus,
+  AgentRunRuntimeTurnSegment,
+} from "../../agent-run-runtime";
 import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
 import type { SessionChatCommandModel, SessionChatCommandState } from "./SessionChatViewTypes";
@@ -97,7 +100,7 @@ function ContextUsageRing({
 }: {
   usage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  refreshKey: number;
+  refreshKey: number | bigint;
   compactContextCommand?: ConversationCommandView;
 }) {
   const [hover, setHover] = useState(false);
@@ -246,7 +249,7 @@ export function SessionChatStream({
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
   displayItems: SessionDisplayItem[];
-  turnSegments?: TurnSegment[];
+  turnSegments?: AgentRunRuntimeTurnSegment[];
   agentRunTarget?: AgentRunRuntimeTarget | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   hasRuntimeStreamTarget: boolean;
@@ -349,7 +352,7 @@ function formatTurnDurationSuffix(ms: number | undefined): string {
   return ` ${formatTurnDuration(ms)}`;
 }
 
-function terminalTurnLabel(status: TurnSegment["status"]): string | null {
+function terminalTurnLabel(status: AgentRunRuntimeTurnSegment["status"]): string | null {
   switch (status) {
     case "completed":
       return "已处理";
@@ -362,7 +365,7 @@ function terminalTurnLabel(status: TurnSegment["status"]): string | null {
   }
 }
 
-function turnActivityClassName(activity: TurnActivityStatus): string {
+function turnActivityClassName(activity: AgentRunRuntimeTurnActivityStatus): string {
   switch (activity.kind) {
     case "retry_exhausted":
       return "border-destructive/20 bg-destructive/8 text-destructive";
@@ -374,7 +377,11 @@ function turnActivityClassName(activity: TurnActivityStatus): string {
   }
 }
 
-function TurnActivityStrip({ activity }: { activity: TurnActivityStatus }) {
+function TurnActivityStrip({
+  activity,
+}: {
+  activity: AgentRunRuntimeTurnActivityStatus;
+}) {
   return (
     <div className={`flex w-fit items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs ${turnActivityClassName(activity)}`}>
       <span className="inline-block h-1.5 w-1.5 rounded-[8px] bg-current" />
@@ -403,7 +410,7 @@ function TurnSection({
   streamingEntryId,
   onForkFromMessageRef,
 }: {
-  segment: TurnSegment;
+  segment: AgentRunRuntimeTurnSegment;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   streamingEntryId: string | null;
@@ -631,7 +638,7 @@ export function SessionChatComposer({
   workspaceId?: string | null;
   tokenUsage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  projectionRefreshKey: number;
+  projectionRefreshKey: number | bigint;
   compactContextCommand?: ConversationCommandView;
   onAtTrigger: (query: string) => void;
   onFileSelected: (file: FileEntry) => void;

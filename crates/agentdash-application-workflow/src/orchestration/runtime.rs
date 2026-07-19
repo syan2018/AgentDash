@@ -5,7 +5,7 @@ use agentdash_domain::workflow::{
     LifecycleRun, NodePortValue, OrchestrationInstance, OrchestrationPlanSnapshot,
     OrchestrationSourceRef, OrchestrationStatus, PlanNode, PlanNodeKind, RuntimeNodeError,
     RuntimeNodeState, RuntimeNodeStatus, RuntimeTraceRef, StateExchangeRule, StateExchangeSnapshot,
-    TransitionCondition,
+    TransitionCondition, WorkflowAgentCallRuntimeState,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
@@ -105,6 +105,7 @@ fn materialize_plan_activation_with_input(
             inputs: Vec::new(),
             outputs: Vec::new(),
             executor_run_ref: None,
+            agent_call: None,
             children: Vec::new(),
             phase_path: plan_node_phase_path(node),
             started_at: None,
@@ -177,6 +178,30 @@ fn plan_node_phase_path(node: &PlanNode) -> Vec<String> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrchestrationRuntimeEvent {
+    AgentCallPrepared {
+        node_path: String,
+        attempt: u32,
+        request_id: String,
+        payload_digest: String,
+        target: agentdash_domain::agent_run_target::AgentRunTarget,
+        request: Value,
+        runtime_thread_id: Option<String>,
+        source_binding: Option<agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef>,
+        timestamp: DateTime<Utc>,
+    },
+    /// One aggregate transition for Product acceptance, dispatch evidence,
+    /// claim ownership and AgentRun start.
+    AgentCallStarted {
+        node_path: String,
+        attempt: u32,
+        request_id: String,
+        payload_digest: String,
+        target: agentdash_domain::agent_run_target::AgentRunTarget,
+        runtime_thread_id: String,
+        source_binding: agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef,
+        claim_id: String,
+        timestamp: DateTime<Utc>,
+    },
     NodeClaimed {
         node_path: String,
         attempt: u32,
@@ -219,6 +244,7 @@ pub struct OrchestrationRuntimeApplyOutcome {
     pub activated_node_ids: Vec<String>,
     pub diagnostics: Vec<OrchestrationRuntimeDiagnostic>,
     pub terminal_idempotent: bool,
+    pub idempotent_replay: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,6 +281,12 @@ pub enum OrchestrationRuntimeError {
     PlanNodeNotFound { node_id: String },
     #[error("runtime node 不存在: {node_id}")]
     RuntimeNodeNotFound { node_id: String },
+    #[error(
+        "AgentCall payload conflicts with prepared history: node_path={node_path}, attempt={attempt}"
+    )]
+    AgentCallPayloadConflict { node_path: String, attempt: u32 },
+    #[error("AgentCall dispatch has no prepared history: node_path={node_path}, attempt={attempt}")]
+    AgentCallNotPrepared { node_path: String, attempt: u32 },
     #[error("node `{node_id}` 缺少 required output ports: {missing_output_ports:?}")]
     CompletionPolicyRejected {
         node_id: String,
@@ -281,10 +313,16 @@ pub fn apply_orchestration_event_to_run(
             .ok_or(OrchestrationRuntimeError::OrchestrationNotFound { orchestration_id })?;
         apply_orchestration_event(orchestration, event)?
     };
-    run.refresh_status_from_orchestrations();
-    let now = Utc::now();
-    run.updated_at = now;
-    run.last_activity_at = now;
+    if !outcome.idempotent_replay {
+        run.revision = run
+            .revision
+            .checked_add(1)
+            .expect("LifecycleRun aggregate revision overflow");
+        run.refresh_status_from_orchestrations();
+        let now = Utc::now();
+        run.updated_at = now;
+        run.last_activity_at = now;
+    }
     Ok((run, outcome))
 }
 
@@ -293,7 +331,10 @@ pub fn apply_orchestration_event(
     event: OrchestrationRuntimeEvent,
 ) -> Result<OrchestrationRuntimeApplyOutcome, OrchestrationRuntimeError> {
     let mut next = instance.clone();
-    let outcome = apply_orchestration_event_inner(&mut next, event)?;
+    let mut outcome = apply_orchestration_event_inner(&mut next, event)?;
+    if outcome.terminal_idempotent {
+        outcome.idempotent_replay = true;
+    }
     *instance = next;
     Ok(outcome)
 }
@@ -305,6 +346,143 @@ fn apply_orchestration_event_inner(
     let mut outcome = OrchestrationRuntimeApplyOutcome::default();
 
     match event {
+        OrchestrationRuntimeEvent::AgentCallPrepared {
+            node_path,
+            attempt,
+            request_id,
+            payload_digest,
+            target,
+            request,
+            runtime_thread_id,
+            source_binding,
+            timestamp,
+        } => {
+            let Some(node) = find_runtime_node_mut(&mut instance.node_tree, &node_path, attempt)
+            else {
+                return Err(OrchestrationRuntimeError::NodeNotFound { node_path, attempt });
+            };
+            match &node.agent_call {
+                Some(existing)
+                    if existing.request_id != request_id
+                        || existing.payload_digest != payload_digest
+                        || existing.target != target
+                        || existing.request != request
+                        || existing.runtime_thread_id != runtime_thread_id
+                        || existing.source_binding != source_binding =>
+                {
+                    return Err(OrchestrationRuntimeError::AgentCallPayloadConflict {
+                        node_path,
+                        attempt,
+                    });
+                }
+                Some(_) => {
+                    outcome.idempotent_replay = true;
+                }
+                None => {
+                    node.agent_call = Some(WorkflowAgentCallRuntimeState {
+                        request_id,
+                        payload_digest,
+                        target,
+                        request,
+                        prepared_at: timestamp,
+                        dispatched_at: None,
+                        runtime_thread_id,
+                        source_binding,
+                        claim_id: None,
+                    });
+                }
+            }
+        }
+        OrchestrationRuntimeEvent::AgentCallStarted {
+            node_path,
+            attempt,
+            request_id,
+            payload_digest,
+            target,
+            runtime_thread_id,
+            source_binding,
+            claim_id,
+            timestamp,
+        } => {
+            let Some(node) = find_runtime_node_mut(&mut instance.node_tree, &node_path, attempt)
+            else {
+                return Err(OrchestrationRuntimeError::NodeNotFound { node_path, attempt });
+            };
+            let Some(agent_call) = node.agent_call.as_mut() else {
+                return Err(OrchestrationRuntimeError::AgentCallNotPrepared { node_path, attempt });
+            };
+            if agent_call.request_id != request_id
+                || agent_call.payload_digest != payload_digest
+                || agent_call.target != target
+                || agent_call
+                    .runtime_thread_id
+                    .as_ref()
+                    .is_some_and(|existing| existing != &runtime_thread_id)
+                || agent_call
+                    .source_binding
+                    .as_ref()
+                    .is_some_and(|existing| existing != &source_binding)
+                || agent_call
+                    .claim_id
+                    .as_ref()
+                    .is_some_and(|existing| existing != &claim_id)
+            {
+                return Err(OrchestrationRuntimeError::AgentCallPayloadConflict {
+                    node_path,
+                    attempt,
+                });
+            }
+            if agent_call.dispatched_at.is_some()
+                && (agent_call.runtime_thread_id.as_ref() != Some(&runtime_thread_id)
+                    || agent_call.source_binding.as_ref() != Some(&source_binding)
+                    || agent_call.claim_id.as_ref() != Some(&claim_id))
+            {
+                return Err(OrchestrationRuntimeError::AgentCallPayloadConflict {
+                    node_path,
+                    attempt,
+                });
+            }
+            if agent_call.dispatched_at.is_some()
+                && node.status == RuntimeNodeStatus::Running
+                && node.executor_run_ref
+                    == Some(ExecutorRunRef::AgentRun {
+                        run_id: target.run_id,
+                        agent_id: target.agent_id,
+                    })
+            {
+                outcome.idempotent_replay = true;
+                return Ok(outcome);
+            }
+            if agent_call.dispatched_at.is_none() {
+                agent_call.dispatched_at = Some(timestamp);
+                agent_call.runtime_thread_id = Some(runtime_thread_id.clone());
+                agent_call.source_binding = Some(source_binding);
+                agent_call.claim_id = Some(claim_id);
+            }
+            let node_id = node.node_id.clone();
+            node.status = RuntimeNodeStatus::Running;
+            node.started_at.get_or_insert(timestamp);
+            node.executor_run_ref = Some(ExecutorRunRef::AgentRun {
+                run_id: target.run_id,
+                agent_id: target.agent_id,
+            });
+            node.completed_at = None;
+            node.error = None;
+            push_runtime_trace_ref(
+                node,
+                RuntimeTraceRef::RuntimeThread {
+                    thread_id: runtime_thread_id,
+                },
+            );
+            push_runtime_trace_ref(
+                node,
+                RuntimeTraceRef::AgentRun {
+                    run_id: target.run_id,
+                    agent_id: target.agent_id,
+                },
+            );
+            remove_ready_node(instance, &node_id);
+        }
         OrchestrationRuntimeEvent::NodeClaimed {
             node_path,
             attempt,
@@ -849,8 +1027,9 @@ fn upsert_node_port_value(values: &mut Vec<NodePortValue>, port_key: String, val
 
 fn runtime_trace_ref_from_executor_run_ref(executor_run_ref: &ExecutorRunRef) -> RuntimeTraceRef {
     match executor_run_ref {
-        ExecutorRunRef::RuntimeSession { session_id } => RuntimeTraceRef::RuntimeSession {
-            session_id: session_id.clone(),
+        ExecutorRunRef::AgentRun { run_id, agent_id } => RuntimeTraceRef::AgentRun {
+            run_id: *run_id,
+            agent_id: *agent_id,
         },
         ExecutorRunRef::FunctionRun { run_id } => RuntimeTraceRef::FunctionRun {
             run_id: run_id.clone(),
@@ -1230,8 +1409,9 @@ mod tests {
             OrchestrationRuntimeEvent::NodeStarted {
                 node_path: "entry".to_string(),
                 attempt: 1,
-                executor_run_ref: Some(ExecutorRunRef::RuntimeSession {
-                    session_id: "session-1".to_string(),
+                executor_run_ref: Some(ExecutorRunRef::AgentRun {
+                    run_id: Uuid::nil(),
+                    agent_id: Uuid::from_u128(1),
                 }),
                 timestamp: Utc::now(),
             },
@@ -1248,14 +1428,16 @@ mod tests {
         assert_eq!(entry.status, RuntimeNodeStatus::Running);
         assert_eq!(
             entry.executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession {
-                session_id: "session-1".to_string()
+            Some(ExecutorRunRef::AgentRun {
+                run_id: Uuid::nil(),
+                agent_id: Uuid::from_u128(1),
             })
         );
         assert_eq!(
             entry.trace_refs,
-            vec![RuntimeTraceRef::RuntimeSession {
-                session_id: "session-1".to_string()
+            vec![RuntimeTraceRef::AgentRun {
+                run_id: Uuid::nil(),
+                agent_id: Uuid::from_u128(1),
             }]
         );
         assert!(entry.started_at.is_some());
@@ -1305,8 +1487,9 @@ mod tests {
             OrchestrationRuntimeEvent::NodeStarted {
                 node_path: "entry".to_string(),
                 attempt: 1,
-                executor_run_ref: Some(ExecutorRunRef::RuntimeSession {
-                    session_id: "session-1".to_string(),
+                executor_run_ref: Some(ExecutorRunRef::AgentRun {
+                    run_id: Uuid::nil(),
+                    agent_id: Uuid::from_u128(1),
                 }),
                 timestamp: Utc::now(),
             },

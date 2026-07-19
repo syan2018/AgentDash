@@ -21,8 +21,11 @@ pub use error::WorkflowApplicationError;
 pub use graph_planner::ApplicationWorkflowGraphPlanner;
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use orchestration::{
-    OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput,
-    SubmitHumanGateDecisionResult,
+    LaunchedAgentNode, OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher,
+    SubmitHumanGateDecisionInput, SubmitHumanGateDecisionResult, WorkflowAgentCallContentBlock,
+    WorkflowAgentCallDispatchError, WorkflowAgentCallDispatchOutcome,
+    WorkflowAgentCallDispatchPort, WorkflowAgentCallIdentity, WorkflowAgentCallMailboxState,
+    WorkflowAgentCallRequest, WorkflowAgentCallTargetIntent,
 };
 pub use orchestration::{
     ScriptCompileDiagnostic, ScriptCompileInput, ScriptCompileOutput, ScriptCompiler,

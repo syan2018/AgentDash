@@ -112,9 +112,9 @@ impl From<std::io::Error> for ApiError {
     }
 }
 
-impl From<agentdash_spi::session_persistence::SessionStoreError> for ApiError {
-    fn from(err: agentdash_spi::session_persistence::SessionStoreError) -> Self {
-        use agentdash_spi::session_persistence::SessionStoreError as E;
+impl From<agentdash_platform_spi::session_persistence::SessionStoreError> for ApiError {
+    fn from(err: agentdash_platform_spi::session_persistence::SessionStoreError) -> Self {
+        use agentdash_platform_spi::session_persistence::SessionStoreError as E;
         match err {
             E::NotFound(message) => ApiError::NotFound(message),
             E::InvalidInput(message) | E::InvalidData(message) => ApiError::BadRequest(message),
@@ -182,9 +182,9 @@ impl From<agentdash_application::ApplicationError> for ApiError {
     }
 }
 
-impl From<agentdash_spi::ConnectorError> for ApiError {
-    fn from(err: agentdash_spi::ConnectorError) -> Self {
-        use agentdash_spi::ConnectorError as E;
+impl From<agentdash_platform_spi::PlatformRuntimeError> for ApiError {
+    fn from(err: agentdash_platform_spi::PlatformRuntimeError) -> Self {
+        use agentdash_platform_spi::PlatformRuntimeError as E;
         match err {
             E::InvalidConfig(message) => ApiError::BadRequest(message),
             E::ConnectionFailed(message) => ApiError::ServiceUnavailable(message),
@@ -305,9 +305,9 @@ impl From<agentdash_application_shared_library::ExternalMarketplaceLibraryError>
     }
 }
 
-impl From<agentdash_application_runtime_gateway::RuntimeInvocationError> for ApiError {
-    fn from(err: agentdash_application_runtime_gateway::RuntimeInvocationError) -> Self {
-        use agentdash_application_runtime_gateway::{
+impl From<agentdash_application_extension_gateway::RuntimeInvocationError> for ApiError {
+    fn from(err: agentdash_application_extension_gateway::RuntimeInvocationError) -> Self {
+        use agentdash_application_extension_gateway::{
             RuntimeInvocationError as E, RuntimeInvocationErrorKind,
         };
 

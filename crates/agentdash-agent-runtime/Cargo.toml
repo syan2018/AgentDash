@@ -10,15 +10,9 @@ path = "src/lib.rs"
 [dependencies]
 agentdash-agent-service-api = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }
-agentdash-agent-protocol = { workspace = true }
-agentdash-diagnostics = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tokio-util = { workspace = true }
-
-[dev-dependencies]
-agentdash-agent-runtime-test-support = { workspace = true }

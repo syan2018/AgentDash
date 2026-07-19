@@ -24,7 +24,7 @@ use super::types::{
     BinaryReadResult, ExecRequest, ExecResult, ListOptions, ListResult, ReadResult,
 };
 use agentdash_domain::common::Mount;
-use agentdash_spi::platform::mount::RuntimeFileEntry;
+use agentdash_platform_spi::platform::mount::RuntimeFileEntry;
 
 const MAX_SKILL_KEY_LENGTH: usize = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH: usize = 1024;
@@ -557,7 +557,7 @@ impl MountProvider for SkillAssetFsMountProvider {
     }
 
     fn edit_capabilities(&self, mount: &Mount) -> MountEditCapabilities {
-        if mount.supports(agentdash_spi::MountCapability::Write) {
+        if mount.supports(agentdash_platform_spi::MountCapability::Write) {
             MountEditCapabilities {
                 create: true,
                 delete: true,

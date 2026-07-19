@@ -4,7 +4,7 @@ use agentdash_application_runtime_session::session::{
     SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
 };
 use agentdash_contracts::session::SessionNdjsonEnvelope;
-use agentdash_spi::session_persistence::{
+use agentdash_platform_spi::session_persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionEventStore,
     SessionLineageStore, SessionStoreResult,
 };

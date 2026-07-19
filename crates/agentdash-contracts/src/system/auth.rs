@@ -4,7 +4,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use agentdash_domain::identity::{Group, User};
-use agentdash_spi::platform::auth as spi_auth;
+use agentdash_platform_spi::platform::auth as spi_auth;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

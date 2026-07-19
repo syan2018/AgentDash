@@ -1,8 +1,5 @@
 import { api, type ApiHttpError } from "../api/client";
-import type {
-  SessionEventsPageResponse,
-  SessionProjectionViewResponse,
-} from "../generated/session-contracts";
+import type { SessionProjectionViewResponse } from "../generated/session-contracts";
 import type {
   AgentRunCommandOnlyRequest,
   AgentRunContextCompactionCommandResponse,
@@ -10,79 +7,48 @@ import type {
   AgentRunToolCallRejectionResponse,
 } from "../generated/agent-run-mailbox-contracts";
 import type {
-  BoundRuntimeHookPlan,
-  DriverThreadId,
-  ProfileDigest,
-  ProfileProvenance,
-  RuntimeBindingId,
-  RuntimeDriverGeneration,
-  RuntimeEventEnvelope,
-  RuntimeTransientCoordinate,
-  InteractionResponse,
-  OperationReceipt,
-  RuntimeContextView,
-  RuntimeProfile,
-  RuntimeSnapshot,
-  RuntimeSubscribeError,
-  RuntimeThreadId,
-  SurfaceDigest,
+  ManagedRuntimeInteractionResponse,
 } from "../generated/agent-runtime-contracts";
+import {
+  decodeManagedRuntimeChangePage,
+  decodeManagedRuntimeOperationReceipt,
+  decodeManagedRuntimeSnapshot,
+  encodeRuntimeU64,
+  type ManagedRuntimeChangePage,
+  type ManagedRuntimeOperationReceipt,
+  type ManagedRuntimeSnapshot,
+} from "../generated/agent-runtime-validators";
 
 export interface AgentRunRuntimeTarget {
   runId: string;
   agentId: string;
 }
 
-export interface AgentRunRuntimeBindingView {
-  target: { run_id: string; agent_id: string };
-  thread_id: RuntimeThreadId;
-  binding_id: RuntimeBindingId;
-  driver_generation: RuntimeDriverGeneration;
-  source_thread_id: DriverThreadId;
-  profile_digest: ProfileDigest;
-  profile_provenance: ProfileProvenance;
-  bound_profile: RuntimeProfile;
-  surface_digest: SurfaceDigest;
-  hook_plan: BoundRuntimeHookPlan;
-}
-
-export interface AgentRunRuntimeInspectResponse {
-  target: { run_id: string; agent_id: string };
-  binding: AgentRunRuntimeBindingView | null;
-  snapshot: RuntimeSnapshot | null;
-}
-
-export type AgentRunRuntimeEventStreamItem =
-  | { kind: "event"; durable_cursor: number | null; transient_cursor: RuntimeTransientCoordinate | null; envelope: RuntimeEventEnvelope }
-  | { kind: "error"; error: RuntimeSubscribeError };
-
 export function agentRunScopedPath(target: AgentRunRuntimeTarget, route: string): string {
   return `/agent-runs/${encodeURIComponent(target.runId)}/agents/${encodeURIComponent(target.agentId)}${route}`;
 }
 
-export async function fetchAgentRunJournalEvents(
+export async function fetchManagedRuntimeSnapshot(
   target: AgentRunRuntimeTarget,
-  afterSeq = 0,
-  limit = 500,
-): Promise<SessionEventsPageResponse> {
+): Promise<ManagedRuntimeSnapshot> {
+  const payload = await api.get<unknown>(agentRunScopedPath(target, "/runtime/snapshot"));
+  return decodeManagedRuntimeSnapshot(payload);
+}
+
+export async function fetchManagedRuntimeChangePage(
+  target: AgentRunRuntimeTarget,
+  after?: bigint,
+  limit = 256,
+): Promise<ManagedRuntimeChangePage> {
   const params = new URLSearchParams();
-  params.set("after_seq", String(afterSeq));
   params.set("limit", String(limit));
-  return api.get<SessionEventsPageResponse>(
-    agentRunScopedPath(target, `/journal/events?${params.toString()}`),
+  if (after !== undefined) {
+    params.set("after", encodeRuntimeU64(after));
+  }
+  const payload = await api.get<unknown>(
+    agentRunScopedPath(target, `/runtime/changes?${params.toString()}`),
   );
-}
-
-export async function fetchAgentRunRuntimeInspect(
-  target: AgentRunRuntimeTarget,
-): Promise<AgentRunRuntimeInspectResponse> {
-  return api.get<AgentRunRuntimeInspectResponse>(agentRunScopedPath(target, "/runtime"));
-}
-
-export async function fetchAgentRunRuntimeContext(
-  target: AgentRunRuntimeTarget,
-): Promise<RuntimeContextView> {
-  return api.get<RuntimeContextView>(agentRunScopedPath(target, "/runtime/context"));
+  return decodeManagedRuntimeChangePage(payload);
 }
 
 export async function fetchAgentRunRuntimeContextProjection(
@@ -133,10 +99,11 @@ export async function rejectAgentRunToolCall(
 export async function respondAgentRunInteraction(
   target: AgentRunRuntimeTarget,
   interactionId: string,
-  response: InteractionResponse,
-): Promise<OperationReceipt> {
-  return api.post<OperationReceipt>(
+  response: ManagedRuntimeInteractionResponse,
+): Promise<ManagedRuntimeOperationReceipt> {
+  const payload = await api.post<unknown>(
     agentRunScopedPath(target, `/runtime/interactions/${encodeURIComponent(interactionId)}/respond`),
     response,
   );
+  return decodeManagedRuntimeOperationReceipt(payload);
 }

@@ -22,8 +22,9 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentLineage, AgentLineageRepository, AgentProcedure,
     AgentProcedureRepository, AgentRunLineage, AgentRunLineageRepository, GateWaitPolicyEnvelope,
     LifecycleAgent, LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleRun,
-    LifecycleRunRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
-    SubjectRef, WaitProducerRef, WorkflowGraph, WorkflowGraphRepository,
+    LifecycleRunRepository, LifecycleRunWriteError, LifecycleSubjectAssociation,
+    LifecycleSubjectAssociationRepository, SubjectRef, WaitProducerRef, WorkflowGraph,
+    WorkflowGraphRepository,
 };
 use chrono::Utc;
 use tokio::sync::Mutex;
@@ -80,6 +81,31 @@ impl LifecycleRunRepository for MemoryLifecycleRunRepository {
             *existing = run.clone();
             existing.channel_registry = channel_registry;
         }
+        Ok(())
+    }
+
+    async fn compare_and_swap(
+        &self,
+        expected_revision: u64,
+        run: &LifecycleRun,
+    ) -> Result<(), LifecycleRunWriteError> {
+        let mut runs = self.runs.lock().await;
+        let Some(existing) = runs.iter_mut().find(|item| item.id == run.id) else {
+            return Err(LifecycleRunWriteError::Persistence(DomainError::NotFound {
+                entity: "lifecycle_run",
+                id: run.id.to_string(),
+            }));
+        };
+        if existing.revision != expected_revision || run.revision != expected_revision + 1 {
+            return Err(LifecycleRunWriteError::RevisionConflict {
+                run_id: run.id,
+                expected_revision,
+                actual_revision: existing.revision,
+            });
+        }
+        let channel_registry = existing.channel_registry.clone();
+        *existing = run.clone();
+        existing.channel_registry = channel_registry;
         Ok(())
     }
 

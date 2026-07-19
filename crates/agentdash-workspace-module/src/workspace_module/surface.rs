@@ -1621,7 +1621,7 @@ mod tests {
     use agentdash_domain::shared_library::{
         ProjectExtensionInstallation, ProjectExtensionInstallationRepository,
     };
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         CapabilityState, RuntimeVfsAccessPolicy, ToolCluster, WorkspaceModuleDimension,
     };
     use agentdash_test_support::workspace_module::MemoryProjectRepository;

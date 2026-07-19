@@ -3,7 +3,7 @@ use agentdash_application_vfs::{
     discover_dynamic_mount_files,
 };
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AuthIdentity, SkillDiscoveryDiagnostic, SkillDiscoveryVfsFile, SkillDiscoveryVfsRule, Vfs,
 };
 

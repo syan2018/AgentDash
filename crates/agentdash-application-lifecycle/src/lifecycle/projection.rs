@@ -6,7 +6,7 @@ use agentdash_domain::workflow::{
     LifecycleNodeType, LifecycleRun, LifecycleRunRepository, OrchestrationInstance,
     OrchestrationSourceRef, PlanNode, RuntimeNodeState, RuntimeSessionPolicy,
 };
-use agentdash_spi::hooks::HookControlTarget;
+use agentdash_platform_spi::hooks::HookControlTarget;
 
 use super::session_association::ActivityRuntimeAssociationResolver;
 

@@ -14,10 +14,10 @@ use agentdash_contracts::workspace_module::{
 use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
-use agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
-use agentdash_spi::{
-    AgentTool, AgentToolError, AgentToolResult, ConnectorError, ContentPart, DynAgentTool,
-    ExecutionContext, ToolCluster, ToolUpdateCallback, connector::RuntimeToolProvider,
+use agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
+use agentdash_platform_spi::{
+    AgentTool, AgentToolError, AgentToolResult, PlatformRuntimeError, ContentPart, DynAgentTool,
+    ExecutionContext, ToolCluster, ToolUpdateCallback, RuntimeToolProvider,
 };
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
@@ -155,8 +155,8 @@ impl AgentTool for WorkspaceModuleInvokeUnavailableTool {
             "additionalProperties": false
         })
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -192,7 +192,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
-    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
+    ) -> Result<Vec<DynAgentTool>, PlatformRuntimeError> {
         let flow = &context.turn.capability_state;
         if !flow
             .tool

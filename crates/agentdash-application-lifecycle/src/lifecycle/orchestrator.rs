@@ -25,8 +25,8 @@ use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
     NodePortValue, RuntimeNodeError, RuntimeNodeStatus, WorkflowSessionTerminalState,
 };
-use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
-use agentdash_spi::{FunctionRunner, PlatformToolExecutionContext};
+use agentdash_platform_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
+use agentdash_platform_spi::{FunctionRunner, PlatformToolExecutionContext};
 use uuid::Uuid;
 
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};

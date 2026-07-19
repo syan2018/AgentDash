@@ -10,20 +10,13 @@ use agentdash_agent_service_api::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-
-/// Target-only revision for Complete Agent frames before the S5 canonical route activation.
-///
-/// The active Driver Runtime Wire remains on [`crate::RUNTIME_WIRE_PROTOCOL_REVISION`]. Complete
-/// Agent adapters use this revision in isolated target composition until their frames, generated
-/// bindings, and production route are activated atomically.
-pub const RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION: u32 = 4;
+use ts_rs::TS;
 
 /// Schema root for the Complete Agent transport vocabulary.
 ///
-/// Complete Agent frames remain independently schema-checkable while the production-generated
-/// Runtime Wire bindings continue to describe the active Driver route. The hard cut can make this
-/// closure canonical without inventing parallel DTOs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+/// Complete Agent frames are part of the canonical Runtime Wire revision and remain independently
+/// schema-checkable without inventing parallel DTOs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireCompleteAgentSchema {
     pub request: RuntimeWireAgentServiceRequest,
@@ -38,20 +31,20 @@ pub struct RuntimeWireCompleteAgentSchema {
 /// The instance identity routes the frame to one registered service. The generation fences every
 /// binding-scoped request and notification; it must agree with the generation carried by command
 /// or callback metadata when that metadata is present.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireAgentBindingTarget {
     pub service_instance_id: AgentServiceInstanceId,
     pub binding_generation: AgentBindingGeneration,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireAgentServiceDescribeRequest {
     pub service_instance_id: AgentServiceInstanceId,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "operation", content = "request", rename_all = "snake_case")]
 pub enum RuntimeWireAgentServiceRequest {
     Describe(RuntimeWireAgentServiceDescribeRequest),
@@ -137,7 +130,7 @@ impl RuntimeWireAgentServiceRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS, Error)]
 #[error("stale Complete Agent binding generation: expected {expected:?}, received {received:?}")]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireGenerationFenceError {
@@ -145,7 +138,7 @@ pub struct RuntimeWireGenerationFenceError {
     pub received: AgentBindingGeneration,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "operation", content = "result", rename_all = "snake_case")]
 pub enum RuntimeWireAgentServiceResponse {
     Describe(Result<Box<AgentServiceDescriptor>, AgentServiceError>),
@@ -165,7 +158,7 @@ pub enum RuntimeWireAgentServiceResponse {
 /// `AgentChange.cursor` is the source-owned ordering coordinate. Runtime Wire frame identity and
 /// ack provide transport replay; `binding_generation` prevents an old placement from advancing the
 /// current binding after reconnect.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireAgentChangeNotification {
     pub target: RuntimeWireAgentBindingTarget,
@@ -173,7 +166,7 @@ pub struct RuntimeWireAgentChangeNotification {
     pub change: AgentChange,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "callback", content = "request", rename_all = "snake_case")]
 pub enum RuntimeWireAgentHostCallbackRequest {
     Tool(AgentToolInvocation),
@@ -189,7 +182,7 @@ impl RuntimeWireAgentHostCallbackRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "callback", content = "result", rename_all = "snake_case")]
 pub enum RuntimeWireAgentHostCallbackResponse {
     Tool(Result<Box<AgentToolResult>, AgentHostCallbackError>),
@@ -199,8 +192,13 @@ pub enum RuntimeWireAgentHostCallbackResponse {
 #[cfg(test)]
 mod tests {
     use agentdash_agent_service_api::{
-        AgentCallbackRouteId, AgentCommandId, AgentCommandMeta, AgentEffectIdentity,
-        AgentHostCallbackMeta, AgentIdempotencyKey, AgentItemId, AgentToolName, AgentTurnId,
+        AgentAppliedEffectOutcome, AgentCallbackRouteId, AgentCommandId, AgentCommandMeta,
+        AgentContentBlock, AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState,
+        AgentForkPoint, AgentHostCallbackMeta, AgentIdempotencyKey, AgentItemBody, AgentItemId,
+        AgentItemPresentation, AgentItemTerminalEvidence, AgentItemTransition, AgentPayloadDigest,
+        AgentSnapshotRevision, AgentSurfaceDigest, AgentSurfaceRevision, AgentTerminalOutcome,
+        AgentTerminalStatus, AgentToolName, AgentTurnId, AppliedAgentCommandReceipt,
+        AppliedAgentSurface, AppliedAgentSurfaceReceipt, AppliedForkAgentReceipt,
     };
     use serde_json::json;
 
@@ -255,6 +253,9 @@ mod tests {
             "callback_request",
             "callback_response",
             "AgentChange",
+            "surface_apply",
+            "surface_revoke",
+            "child_history_digest",
         ] {
             assert!(schema.contains(operation), "missing {operation}");
         }
@@ -281,6 +282,84 @@ mod tests {
     }
 
     #[test]
+    fn every_closed_applied_outcome_round_trips_on_revision_four() {
+        let command_id = id("command-inspect", AgentCommandId::new);
+        let effect_id = id("effect-inspect", AgentEffectIdentity::new);
+        let source = id("source-parent", AgentSourceCoordinate::new);
+        let command_receipt = AppliedAgentCommandReceipt {
+            command_id: command_id.clone(),
+            effect_id: effect_id.clone(),
+            source: source.clone(),
+            terminal: Some(AgentTerminalOutcome::Succeeded),
+            snapshot_revision: Some(AgentSnapshotRevision(7)),
+            initial_context: None,
+        };
+        let outcomes = [
+            AgentAppliedEffectOutcome::Create {
+                receipt: command_receipt.clone(),
+            },
+            AgentAppliedEffectOutcome::Resume {
+                receipt: command_receipt.clone(),
+            },
+            AgentAppliedEffectOutcome::Fork {
+                receipt: AppliedForkAgentReceipt {
+                    command_id: command_id.clone(),
+                    effect_id: effect_id.clone(),
+                    parent_source: source.clone(),
+                    child_source: id("source-child", AgentSourceCoordinate::new),
+                    cutoff: AgentForkPoint::Head,
+                    child_history_digest: id("sha256:history", AgentPayloadDigest::new),
+                    terminal: Some(AgentTerminalOutcome::Succeeded),
+                },
+            },
+            AgentAppliedEffectOutcome::Command {
+                receipt: command_receipt.clone(),
+            },
+            AgentAppliedEffectOutcome::SurfaceApply {
+                receipt: AppliedAgentSurfaceReceipt {
+                    command_id: command_id.clone(),
+                    effect_id: effect_id.clone(),
+                    source: source.clone(),
+                    applied: AppliedAgentSurface {
+                        revision: AgentSurfaceRevision(4),
+                        digest: id("sha256:surface", AgentSurfaceDigest::new),
+                        contributions: Vec::new(),
+                    },
+                },
+            },
+            AgentAppliedEffectOutcome::SurfaceRevoke {
+                receipt: command_receipt,
+            },
+        ];
+
+        for outcome in outcomes {
+            let inspection = AgentEffectInspection {
+                effect_id: effect_id.clone(),
+                command_id: Some(command_id.clone()),
+                state: AgentEffectInspectionState::Applied { outcome },
+            };
+            let envelope = RuntimeWireEnvelope {
+                protocol_revision: crate::RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id: RuntimeWireFrameId(40),
+                critical: true,
+                frame: RuntimeWireFrame::Response {
+                    request_frame_id: RuntimeWireFrameId(39),
+                    response: crate::RuntimeWireResponse::AgentService(
+                        RuntimeWireAgentServiceResponse::Inspect(Ok(Box::new(inspection.clone()))),
+                    ),
+                },
+            };
+            let encoded = serde_json::to_vec(&envelope).expect("serialize inspection");
+            let decoded: RuntimeWireEnvelope =
+                serde_json::from_slice(&encoded).expect("deserialize inspection");
+
+            assert_eq!(decoded, envelope);
+            assert!(inspection.validate());
+            assert_eq!(decoded.protocol_revision, 4);
+        }
+    }
+
+    #[test]
     fn callback_reuses_request_correlation_and_transport_ack() {
         let callback = RuntimeWireAgentHostCallbackRequest::Tool(AgentToolInvocation {
             meta: AgentHostCallbackMeta {
@@ -298,7 +377,7 @@ mod tests {
             arguments: json!({"path": "README.md"}),
         });
         let request = RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+            protocol_revision: crate::RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(10),
             critical: true,
             frame: RuntimeWireFrame::Request(Box::new(RuntimeWireRequest::AgentHostCallback(
@@ -313,7 +392,7 @@ mod tests {
         assert_eq!(callback.binding_generation(), AgentBindingGeneration(9));
 
         let ack = RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+            protocol_revision: crate::RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(11),
             critical: true,
             frame: RuntimeWireFrame::Ack(RuntimeWireAck {
@@ -324,8 +403,8 @@ mod tests {
             serde_json::to_value(ack)
                 .expect("serialize ack")
                 .pointer("/frame/payload/through_frame_id")
-                .and_then(serde_json::Value::as_u64),
-            Some(10)
+                .and_then(serde_json::Value::as_str),
+            Some("10")
         );
     }
 
@@ -351,8 +430,8 @@ mod tests {
         assert_eq!(
             value
                 .pointer("/target/binding_generation")
-                .and_then(serde_json::Value::as_u64),
-            Some(12)
+                .and_then(serde_json::Value::as_str),
+            Some("12")
         );
         assert_eq!(
             value
@@ -362,7 +441,7 @@ mod tests {
         );
 
         let envelope = RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION,
+            protocol_revision: crate::RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(42),
             critical: true,
             frame: RuntimeWireFrame::Notification(Box::new(
@@ -374,9 +453,102 @@ mod tests {
         assert_eq!(
             serde_json::to_value(envelope)
                 .expect("serialize envelope")
-                .pointer("/frame/payload/method")
+                .pointer("/frame/payload/kind")
                 .and_then(serde_json::Value::as_str),
             Some("agent_change")
         );
+    }
+
+    #[test]
+    fn source_authoritative_thread_name_set_and_clear_round_trip_losslessly() {
+        for thread_name in [Some("远程标题".to_owned()), None] {
+            let notification = RuntimeWireAgentChangeNotification {
+                target: target(12),
+                source: id("source-1", AgentSourceCoordinate::new),
+                change: AgentChange {
+                    cursor: id(
+                        if thread_name.is_some() {
+                            "cursor-name-set"
+                        } else {
+                            "cursor-name-clear"
+                        },
+                        agentdash_agent_service_api::AgentSourceCursor::new,
+                    ),
+                    source_revision: None,
+                    occurred_at_ms: 99,
+                    payload: agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+                        thread_name: thread_name.clone(),
+                        source_info: agentdash_agent_service_api::AgentSnapshotSource {
+                            authority:
+                                agentdash_agent_service_api::AgentSnapshotAuthority::AgentAuthoritative,
+                            source_revision: None,
+                            fidelity: agentdash_agent_service_api::SemanticFidelity::Exact,
+                            observed_at_ms: 99,
+                        },
+                    },
+                },
+            };
+            let encoded = serde_json::to_vec(&notification).expect("serialize name change");
+            let decoded: RuntimeWireAgentChangeNotification =
+                serde_json::from_slice(&encoded).expect("deserialize name change");
+            assert_eq!(decoded, notification);
+        }
+    }
+
+    #[test]
+    fn canonical_item_transitions_round_trip_with_every_terminal_evidence() {
+        for outcome in [
+            AgentTerminalStatus::Completed,
+            AgentTerminalStatus::Failed,
+            AgentTerminalStatus::Interrupted,
+            AgentTerminalStatus::Lost,
+        ] {
+            let presentation = AgentItemPresentation::new(
+                AgentItemBody::AgentMessage {
+                    content: vec![AgentContentBlock::Text {
+                        text: format!("{outcome:?}"),
+                    }],
+                    phase: None,
+                },
+                Some(1),
+                Some(2),
+                Some(AgentItemTerminalEvidence {
+                    outcome,
+                    completed_at_ms: None,
+                    duration_ms: None,
+                    process_exit: None,
+                    error: None,
+                }),
+            )
+            .expect("presentation");
+            let notification = RuntimeWireAgentChangeNotification {
+                target: target(12),
+                source: id("source-1", AgentSourceCoordinate::new),
+                change: AgentChange {
+                    cursor: id(
+                        &format!("cursor-{outcome:?}"),
+                        agentdash_agent_service_api::AgentSourceCursor::new,
+                    ),
+                    source_revision: None,
+                    occurred_at_ms: u64::MAX,
+                    payload: agentdash_agent_service_api::AgentChangePayload::ItemTransitioned {
+                        turn_id: id("turn-1", AgentTurnId::new),
+                        item_id: id("item-1", AgentItemId::new),
+                        transition: AgentItemTransition::Terminal { presentation },
+                    },
+                },
+            };
+            let encoded = serde_json::to_vec(&notification).expect("serialize transition");
+            let decoded: RuntimeWireAgentChangeNotification =
+                serde_json::from_slice(&encoded).expect("deserialize transition");
+            assert_eq!(decoded, notification);
+            assert_eq!(
+                serde_json::to_value(decoded)
+                    .expect("json")
+                    .pointer("/change/occurred_at_ms")
+                    .and_then(serde_json::Value::as_str),
+                Some(u64::MAX.to_string().as_str())
+            );
+        }
     }
 }

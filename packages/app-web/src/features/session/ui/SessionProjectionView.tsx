@@ -18,7 +18,7 @@ import {
 
 export interface SessionProjectionViewProps {
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  refreshKey?: number;
+  refreshKey?: number | bigint;
   tokenUsage?: TokenUsageInfo | null;
   compactContextCommand?: ConversationCommandView;
   /** 浮层模式：去掉整页内联的外层留白/边框，适配 popover 容器 */

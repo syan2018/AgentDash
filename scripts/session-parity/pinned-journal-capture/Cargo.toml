@@ -11,7 +11,7 @@ agentdash-agent-protocol = { path = "../../../../AgentDash-main-reference/crates
 agentdash-application-agentrun = { path = "../../../../AgentDash-main-reference/crates/agentdash-application-agentrun" }
 agentdash-application-runtime-session = { path = "../../../../AgentDash-main-reference/crates/agentdash-application-runtime-session" }
 agentdash-contracts = { path = "../../../../AgentDash-main-reference/crates/agentdash-contracts" }
-agentdash-spi = { path = "../../../../AgentDash-main-reference/crates/agentdash-spi" }
+agentdash-platform-spi = { path = "../../../../AgentDash-main-reference/crates/agentdash-platform-spi" }
 async-trait = "0.1"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }

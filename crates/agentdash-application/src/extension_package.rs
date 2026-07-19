@@ -17,7 +17,7 @@ use agentdash_domain::shared_library::{
     ExtensionTemplatePayload, ExtensionWorkspaceTabRendererDeclaration,
     ProjectExtensionInstallation,
 };
-pub use agentdash_spi::extension_package::{
+pub use agentdash_platform_spi::extension_package::{
     ExtensionPackageArtifactStorage, ExtensionPackageArtifactStorageError,
 };
 

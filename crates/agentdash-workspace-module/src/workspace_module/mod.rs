@@ -1,11 +1,6 @@
-pub mod runtime_bridge;
-mod runtime_context;
-pub mod runtime_tool_provider;
-mod surface;
-mod tools;
-pub mod visibility;
+pub mod presentation_protocol;
 
-use agentdash_application_runtime_gateway::{
+use agentdash_application_extension_gateway::{
     RuntimeActionDescriptor, RuntimeActionKind, validate_json_schema_subset,
 };
 use agentdash_contracts::workspace_module::{
@@ -32,35 +27,6 @@ use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::extension_runtime::{
     ExtensionBackendServiceProjection, ExtensionGeneratedOperationDispatch,
     ExtensionGeneratedOperationProjection, ExtensionGeneratedOperationVisibility,
-};
-
-pub use runtime_bridge::{
-    ResolvedInvocationBackend, SharedWorkspaceModuleAgentRunBridgeHandle,
-    SharedWorkspaceModulePresentationAppendHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
-    WorkspaceModuleAgentRunBridge, WorkspaceModulePresentationAppendPort,
-    effective_capability_view_from_context, project_authorization_context_from_identity,
-    project_id_from_context, request_existing_canvas_visibility_for_runtime,
-    resolve_invocation_backend, runtime_thread_id_from_context, shared_runtime_vfs_from_context,
-    submit_canvas_runtime_surface_update,
-};
-pub(crate) use runtime_context::WorkspaceModuleRuntimeContext;
-pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
-pub(crate) use surface::{
-    WorkspaceModuleAgentSurface, WorkspaceModuleAgentSurfaceCommand,
-    WorkspaceModuleCanvasBindingResult, WorkspaceModuleCommandDiagnostic,
-    WorkspaceModuleInvokeCommand, WorkspaceModuleOperateCommand, WorkspaceModuleOperationOutcome,
-    WorkspaceModuleOperationRuntimeSource, WorkspaceModulePresentCommand,
-    WorkspaceModuleResolveContext, WorkspaceModuleSurfaceError, WorkspaceModuleVisibilitySource,
-};
-pub use tools::{
-    WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
-    WorkspaceModuleOperateTool, WorkspaceModulePresentTool,
-};
-pub use visibility::{
-    WorkspaceModuleVisibilityDiagnostic, WorkspaceModuleVisibilityInput,
-    WorkspaceModuleVisibilityProjection, project_agent_run_workspace_module_visibility,
-    project_workspace_module_visibility, resolve_workspace_module_visibility,
-    resolve_workspace_module_visibility_with_operation_context,
 };
 
 pub const MODULE_ID_EXTENSION_PREFIX: &str = "ext:";
@@ -145,16 +111,16 @@ impl WorkspaceModuleRuntimeActionCatalog {
             descriptors,
             missing_descriptor_readiness: WorkspaceModuleOperationReadiness::unavailable(
                 WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable,
-                "runtime action is not present in the RuntimeGateway actor/context catalog",
+                "runtime action is not present in the ExtensionGateway actor/context catalog",
             ),
         }
     }
 
-    pub fn missing_runtime_gateway(reason: impl Into<String>) -> Self {
+    pub fn missing_extension_gateway(reason: impl Into<String>) -> Self {
         Self {
             descriptors: Vec::new(),
             missing_descriptor_readiness: WorkspaceModuleOperationReadiness::unavailable(
-                WorkspaceModuleOperationReadinessKind::MissingRuntimeGateway,
+                WorkspaceModuleOperationReadinessKind::MissingExtensionGateway,
                 reason,
             ),
         }
@@ -180,8 +146,8 @@ impl WorkspaceModuleRuntimeActionCatalog {
 
 impl Default for WorkspaceModuleRuntimeActionCatalog {
     fn default() -> Self {
-        Self::missing_runtime_gateway(
-            "RuntimeGateway catalog is not attached to this workspace module projection",
+        Self::missing_extension_gateway(
+            "ExtensionGateway catalog is not attached to this workspace module projection",
         )
     }
 }
@@ -800,7 +766,7 @@ fn describe_permission(permission: &ExtensionPermissionDeclaration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_application_runtime_gateway::{
+    use agentdash_application_extension_gateway::{
         RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimePolicy,
     };
     use agentdash_contracts::workspace_module::{

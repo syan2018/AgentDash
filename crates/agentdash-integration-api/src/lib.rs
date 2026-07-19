@@ -15,7 +15,7 @@
 //! |--------|-------|------|
 //! | 寻址空间 | `VfsProvider` | 新增可寻址资源类型 |
 //! | 来源解析器 | `SourceResolver` | 新增 ContextSourceKind 解析逻辑 |
-//! | Agent Runtime | `AgentRuntimeDriverContribution` | 接入受信 Agent service definition/factory |
+//! | Agent Runtime | `CompleteAgentRegistrationContribution` | 声明 Complete Agent service candidate |
 //! | 认证/授权 | `AuthProvider` | 企业 SSO/LDAP 等 |
 //! | 外部服务 | `ExternalServiceClient` | 企业 KM、文档中心等只读内容源 |
 
@@ -26,10 +26,15 @@ pub mod external;
 pub mod integration;
 
 // 复用已有 trait，不重新定义
+pub use agentdash_agent_service_api;
+pub use agentdash_agent_service_api::{
+    AgentBindingGeneration, AgentConfigurationBoundary, AgentPayloadDigest, AgentProfileDigest,
+    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceInstanceId, CompleteAgentService,
+};
 pub use agentdash_domain::context_source::ContextSourceKind;
-pub use agentdash_spi::platform::marketplace_source;
-pub use agentdash_spi::platform::memory_discovery;
-pub use agentdash_spi::{
+pub use agentdash_platform_spi::platform::marketplace_source;
+pub use agentdash_platform_spi::platform::memory_discovery;
+pub use agentdash_platform_spi::{
     DiscoveredMemorySource, DiscoveredSkill, MemoryDiscoveryCluster, MemoryDiscoveryContext,
     MemoryDiscoveryDiagnostic, MemoryDiscoveryError, MemoryDiscoveryMount, MemoryDiscoveryOutput,
     MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
@@ -40,7 +45,7 @@ pub use agentdash_spi::{
     SkillDiscoveryUserContext, SkillDiscoveryVfsFile, SkillDiscoveryVfsRule, SourceResolver,
     VfsDiscoveryProvider, is_controlled_vfs_memory_uri,
 };
-pub use agentdash_spi::{
+pub use agentdash_platform_spi::{
     MarketplaceAssetDetail, MarketplaceAssetListing, MarketplaceAssetPage, MarketplaceAssetQuery,
     MarketplaceFetchedAsset, MarketplaceFetchedAssetPayload, MarketplaceInstallRequirement,
     MarketplaceInstallRequirementKind, MarketplaceSourceDescriptor, MarketplaceSourceError,
@@ -69,4 +74,4 @@ pub use integration::{
 /// Mount I/O SPI — 供 Host Integration 实现文件系统级操作。
 ///
 /// 用法：`use agentdash_integration_api::mount::{MountProvider, ReadResult, ...};`
-pub use agentdash_spi::platform::mount;
+pub use agentdash_platform_spi::platform::mount;

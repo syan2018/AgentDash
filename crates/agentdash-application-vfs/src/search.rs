@@ -21,7 +21,7 @@ pub struct TextSearchParams<'a> {
     pub max_results: usize,
     pub context_lines: usize,
     pub overlay: Option<&'a InlineContentOverlay>,
-    pub identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
+    pub identity: Option<&'a agentdash_platform_spi::platform::auth::AuthIdentity>,
     /// `false` ⇒ smart-case；`true` ⇒ 严格大小写。默认 `true`（与历史行为一致）。
     pub case_sensitive: bool,
     /// `-B` 等价；与 `context_lines` 同时设置时取 `max(before_lines, context_lines)`。
@@ -31,7 +31,7 @@ pub struct TextSearchParams<'a> {
     /// `true` ⇒ pattern `.` 跨行 + `^/$` 匹配每行（ripgrep multiline）。
     pub multiline: bool,
     /// 输出形态。默认 `Content`。
-    pub output_mode: agentdash_spi::platform::mount::SearchOutputMode,
+    pub output_mode: agentdash_platform_spi::platform::mount::SearchOutputMode,
 }
 
 /// 路径段（任一 `/` 分隔的中间段）命中 VCS 黑名单 ⇒ 返回 true。

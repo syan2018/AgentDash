@@ -11,6 +11,22 @@ use super::lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectR
 use crate::channel::{ChannelRegistryDocument, ChannelRegistryMutation};
 use crate::common::error::DomainError;
 
+#[derive(Debug, thiserror::Error)]
+pub enum LifecycleRunWriteError {
+    #[error(
+        "LifecycleRun revision conflict: run_id={run_id}, expected={expected_revision}, actual={actual_revision}"
+    )]
+    RevisionConflict {
+        run_id: Uuid,
+        expected_revision: u64,
+        actual_revision: u64,
+    },
+    #[error("LifecycleRun CAS persistence failed: {0}")]
+    Persistence(#[from] DomainError),
+    #[error("LifecycleRun repository does not implement the required revision CAS contract")]
+    CasNotImplemented,
+}
+
 #[async_trait::async_trait]
 pub trait AgentProcedureRepository: Send + Sync {
     async fn create(&self, procedure: &AgentProcedure) -> Result<(), DomainError>;
@@ -69,6 +85,21 @@ pub trait LifecycleRunRepository: Send + Sync {
     async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
+    /// Atomically replaces the aggregate iff the stored revision equals
+    /// `expected_revision`.
+    ///
+    /// Implementations must require `run.revision == expected_revision + 1`
+    /// and persist the aggregate body plus revision in one transaction.
+    /// Product Workflow execution must not compose the default implementation.
+    /// The write set is the executor aggregate plus revision; it must preserve
+    /// `channel_registry`, whose independent mutation method owns that column.
+    async fn compare_and_swap(
+        &self,
+        _expected_revision: u64,
+        _run: &LifecycleRun,
+    ) -> Result<(), LifecycleRunWriteError> {
+        Err(LifecycleRunWriteError::CasNotImplemented)
+    }
     async fn load_channel_registry(
         &self,
         run_id: Uuid,

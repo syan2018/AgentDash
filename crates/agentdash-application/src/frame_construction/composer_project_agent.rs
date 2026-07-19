@@ -3,7 +3,7 @@
 use agentdash_domain::common::AgentBackendRequirement;
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun, SubjectRef};
 use agentdash_domain::workspace::{Workspace, WorkspaceBinding};
-use agentdash_spi::{AgentConfig, ConnectorError, Vfs};
+use agentdash_platform_spi::{AgentConfig, PlatformRuntimeError, Vfs};
 
 use crate::agent_run::frame::{
     AgentFrameBuilder, AgentFrameSurfaceExt, FrameLaunchEnvelope,
@@ -83,7 +83,7 @@ pub(super) async fn compose(
     agent: LifecycleAgent,
     run: LifecycleRun,
     input: &FrameLaunchEnvelopeConstructionInput,
-) -> Result<FrameLaunchEnvelope, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
     let launch_path = owner_prompt_launch_path(
         svc.prompt_launch_path(frame.typed_execution_profile().as_ref(), input),
     );
@@ -127,9 +127,9 @@ pub(super) async fn compose(
 pub(super) async fn compose_project_agent_owner_frame(
     context: &ProjectAgentOwnerCompositionContext<'_>,
     input: ProjectAgentOwnerCompositionInput<'_>,
-) -> Result<(AgentFrameBuilder, super::FrameAssemblyLaunchExtras), ConnectorError> {
+) -> Result<(AgentFrameBuilder, super::FrameAssemblyLaunchExtras), PlatformRuntimeError> {
     let project_agent_id = input.agent.project_agent_id.ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!(
+        PlatformRuntimeError::InvalidConfig(format!(
             "LifecycleAgent {} 缺少 project_agent_id",
             input.agent.id
         ))
@@ -141,7 +141,7 @@ pub(super) async fn compose_project_agent_owner_frame(
         .await
         .map_err(connector_internal)?
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!("Project {} 不存在", input.run.project_id))
+            PlatformRuntimeError::InvalidConfig(format!("Project {} 不存在", input.run.project_id))
         })?;
     let project_agent = context
         .repos
@@ -150,7 +150,7 @@ pub(super) async fn compose_project_agent_owner_frame(
         .await
         .map_err(connector_internal)?
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!("ProjectAgent {} 不存在", project_agent_id))
+            PlatformRuntimeError::InvalidConfig(format!("ProjectAgent {} 不存在", project_agent_id))
         })?;
     let agent_context = build_project_agent_context(&project_agent)
         .await
@@ -239,14 +239,14 @@ pub(super) async fn compose_project_agent_owner_frame(
             },
         )
         .await
-        .map_err(ConnectorError::InvalidConfig)
+        .map_err(PlatformRuntimeError::InvalidConfig)
 }
 
 async fn resolve_project_agent_workspace(
     context: &ProjectAgentOwnerCompositionContext<'_>,
     project: &agentdash_domain::project::Project,
     backend_requirement: AgentBackendRequirement,
-) -> Result<Option<Workspace>, ConnectorError> {
+) -> Result<Option<Workspace>, PlatformRuntimeError> {
     let Some(workspace) = resolve_project_workspace(context.repos.workspace_repo.as_ref(), project)
         .await
         .map_err(connector_internal)?
@@ -275,7 +275,7 @@ async fn resolve_project_agent_workspace(
         Err(error) => {
             return match backend_requirement {
                 AgentBackendRequirement::Required => {
-                    Err(ConnectorError::ConnectionFailed(error.to_string()))
+                    Err(PlatformRuntimeError::ConnectionFailed(error.to_string()))
                 }
                 AgentBackendRequirement::Optional => Ok(None),
             };
@@ -283,7 +283,7 @@ async fn resolve_project_agent_workspace(
     };
     if !context.availability.is_online(&resolved.backend_id).await {
         return match backend_requirement {
-            AgentBackendRequirement::Required => Err(ConnectorError::ConnectionFailed(format!(
+            AgentBackendRequirement::Required => Err(PlatformRuntimeError::ConnectionFailed(format!(
                 "Workspace `{}` 的 backend `{}` 当前不在线",
                 workspace.name, resolved.backend_id
             ))),
@@ -318,7 +318,7 @@ async fn resolve_project_agent_subject_assignment(
     agent_id: uuid::Uuid,
     project_id: uuid::Uuid,
     explicit_subject_ref: Option<&SubjectRef>,
-) -> Result<Option<SubjectContextAssignment>, ConnectorError> {
+) -> Result<Option<SubjectContextAssignment>, PlatformRuntimeError> {
     let subject_ref = match explicit_subject_ref {
         Some(subject_ref) if subject_ref.kind != "project" => Some(subject_ref.clone()),
         Some(_) => None,
@@ -342,7 +342,7 @@ async fn resolve_project_agent_subject_ref(
     context: &ProjectAgentOwnerCompositionContext<'_>,
     run_id: uuid::Uuid,
     agent_id: uuid::Uuid,
-) -> Result<Option<SubjectRef>, ConnectorError> {
+) -> Result<Option<SubjectRef>, PlatformRuntimeError> {
     let agent_associations = context
         .repos
         .lifecycle_subject_association_repo

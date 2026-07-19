@@ -1,16 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::inline_persistence::InlineContentOverlay;
+use crate::runtime_tool_execution::{VfsToolExecutionError, VfsToolExecutionResult};
 use crate::service::VfsService;
-use crate::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
+use crate::tools::common::{SharedRuntimeVfs, resolve_uri_path};
+use crate::tools::{legacy_error, legacy_result};
 
 // ---------------------------------------------------------------------------
 // fs_grep — aligned with Claude Code GrepTool
@@ -36,24 +38,147 @@ const LANG_EXTENSIONS: &[(&str, &[&str])] = &[
 ];
 
 #[derive(Clone)]
-pub struct FsGrepTool {
+pub struct FsGrepExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
 }
-impl FsGrepTool {
+impl FsGrepExecutor {
     pub fn new(
         service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
             vfs,
             overlay,
             identity,
+        }
+    }
+
+    pub fn parameters_schema() -> serde_json::Value {
+        schema_value::<FsGrepParams>()
+    }
+
+    pub async fn execute(
+        &self,
+        args: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
+        let params: FsGrepParams = serde_json::from_value(args).map_err(|error| {
+            VfsToolExecutionError::InvalidArguments(format!("invalid arguments: {error}"))
+        })?;
+        let combined_glob = build_combined_glob(params.glob.as_deref(), params.type_.as_deref())
+            .map_err(VfsToolExecutionError::InvalidArguments)?;
+
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
+        let target = resolve_uri_path(&vfs, params.path.as_deref().unwrap_or("."))
+            .map_err(VfsToolExecutionError::ExecutionFailed)?;
+        let search_path = if target.path.is_empty() {
+            ".".to_string()
+        } else {
+            target.path
+        };
+
+        let head_limit = params.head_limit.unwrap_or(DEFAULT_HEAD_LIMIT);
+        let offset = params.offset.unwrap_or(0);
+        let service_max = if head_limit == 0 {
+            UNLIMITED_PAGE_SIZE
+        } else {
+            head_limit.saturating_add(offset).max(1)
+        };
+        let before_lines = params.before_context.unwrap_or(0);
+        let after_lines = params.after_context.unwrap_or(0);
+        let context_lines = params.context.or(params.context_short).unwrap_or(0);
+
+        let search_params = crate::TextSearchParams {
+            mount_id: &target.mount_id,
+            path: &search_path,
+            query: &params.pattern,
+            is_regex: true,
+            include_glob: combined_glob.as_deref(),
+            max_results: service_max,
+            context_lines,
+            overlay: self.overlay.as_ref().map(|arc| arc.as_ref()),
+            identity: self.identity.as_ref(),
+            case_sensitive: !params.case_insensitive,
+            before_lines,
+            after_lines,
+            multiline: params.multiline,
+            output_mode: agentdash_platform_spi::platform::mount::SearchOutputMode::Content,
+        };
+        let (hits, truncated) = tokio::select! {
+            _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+            result = self.service.grep_text_extended_with_policy(
+                &vfs,
+                Some(&access_policy),
+                &search_params,
+            ) => result.map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string()))?,
+        };
+
+        let take = if head_limit == 0 {
+            usize::MAX
+        } else {
+            head_limit
+        };
+        let paginated: Vec<String> = hits.into_iter().skip(offset).take(take).collect();
+        let mut output = match params.output_mode.unwrap_or_default() {
+            OutputMode::Content => format_content(&paginated, params.line_numbers),
+            OutputMode::FilesWithMatches => {
+                let unique: BTreeSet<&str> = paginated
+                    .iter()
+                    .filter_map(|hit| extract_path(hit))
+                    .collect();
+                if unique.is_empty() {
+                    "no matches found".to_string()
+                } else {
+                    unique.into_iter().collect::<Vec<_>>().join("\n")
+                }
+            }
+            OutputMode::Count => {
+                let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+                for hit in &paginated {
+                    if let Some(path) = extract_path(hit) {
+                        *counts.entry(path).or_insert(0) += 1;
+                    }
+                }
+                if counts.is_empty() {
+                    "no matches found".to_string()
+                } else {
+                    counts
+                        .iter()
+                        .map(|(path, count)| format!("{path}:{count}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+            }
+        };
+        if truncated {
+            output.push_str("\n(results truncated; narrow your search to see more)");
+        }
+        Ok(VfsToolExecutionResult::text(output))
+    }
+}
+
+#[derive(Clone)]
+pub struct FsGrepTool {
+    executor: FsGrepExecutor,
+}
+
+impl FsGrepTool {
+    pub fn new(
+        service: Arc<VfsService>,
+        vfs: SharedRuntimeVfs,
+        overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    ) -> Self {
+        Self {
+            executor: FsGrepExecutor::new(service, vfs, overlay, identity),
         }
     }
 }
@@ -139,7 +264,7 @@ impl AgentTool for FsGrepTool {
          - Lines longer than 500 characters are truncated with a `...(truncated)` suffix."
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<FsGrepParams>()
+        FsGrepExecutor::parameters_schema()
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::FsGrep)
@@ -151,113 +276,14 @@ impl AgentTool for FsGrepTool {
         &self,
         _: &str,
         args: serde_json::Value,
-        _: CancellationToken,
+        cancel: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: FsGrepParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-
-        let combined_glob = build_combined_glob(params.glob.as_deref(), params.type_.as_deref())
-            .map_err(AgentToolError::InvalidArguments)?;
-
-        let state = self.vfs.snapshot_state().await;
-        let vfs = state.vfs;
-        let access_policy = state.access_policy;
-        let target = resolve_uri_path(&vfs, params.path.as_deref().unwrap_or("."))
-            .map_err(AgentToolError::ExecutionFailed)?;
-        let search_path = if target.path.is_empty() {
-            ".".to_string()
-        } else {
-            target.path
-        };
-
-        let head_limit = params.head_limit.unwrap_or(DEFAULT_HEAD_LIMIT);
-        let offset = params.offset.unwrap_or(0);
-        // service 层 max_results = head_limit + offset（buffer 让 tool 能 skip）。
-        // head_limit = 0 ⇒ 50000 上限。
-        let service_max = if head_limit == 0 {
-            UNLIMITED_PAGE_SIZE
-        } else {
-            head_limit.saturating_add(offset).max(1)
-        };
-
-        let before_lines = params.before_context.unwrap_or(0);
-        let after_lines = params.after_context.unwrap_or(0);
-        let context_lines = params.context.or(params.context_short).unwrap_or(0);
-
-        let (hits, truncated) = self
-            .service
-            .grep_text_extended_with_policy(
-                &vfs,
-                Some(&access_policy),
-                &crate::TextSearchParams {
-                    mount_id: &target.mount_id,
-                    path: &search_path,
-                    query: &params.pattern,
-                    is_regex: true,
-                    include_glob: combined_glob.as_deref(),
-                    max_results: service_max,
-                    context_lines,
-                    overlay: self.overlay.as_ref().map(|arc| arc.as_ref()),
-                    identity: self.identity.as_ref(),
-                    case_sensitive: !params.case_insensitive,
-                    before_lines,
-                    after_lines,
-                    multiline: params.multiline,
-                    // service 始终按 Content 收集；output_mode 转换在 tool 层做。
-                    output_mode: agentdash_spi::platform::mount::SearchOutputMode::Content,
-                },
-            )
+        self.executor
+            .execute(args, cancel)
             .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-
-        // 分页：tool 层 skip(offset).take(head_limit)；head_limit=0 ⇒ 不限制。
-        let take = if head_limit == 0 {
-            usize::MAX
-        } else {
-            head_limit
-        };
-        let paginated: Vec<String> = hits.into_iter().skip(offset).take(take).collect();
-
-        let output_mode = params.output_mode.unwrap_or_default();
-        let mut output = match output_mode {
-            OutputMode::Content => format_content(&paginated, params.line_numbers),
-            OutputMode::FilesWithMatches => {
-                let unique: BTreeSet<&str> =
-                    paginated.iter().filter_map(|h| extract_path(h)).collect();
-                if unique.is_empty() {
-                    "no matches found".to_string()
-                } else {
-                    unique
-                        .into_iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }
-            }
-            OutputMode::Count => {
-                let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-                for hit in &paginated {
-                    if let Some(p) = extract_path(hit) {
-                        *counts.entry(p).or_insert(0) += 1;
-                    }
-                }
-                if counts.is_empty() {
-                    "no matches found".to_string()
-                } else {
-                    counts
-                        .iter()
-                        .map(|(p, c)| format!("{p}:{c}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }
-            }
-        };
-
-        if truncated {
-            output.push_str("\n(results truncated; narrow your search to see more)");
-        }
-        Ok(ok_text(output))
+            .map(legacy_result)
+            .map_err(legacy_error)
     }
 }
 
@@ -333,8 +359,10 @@ mod fs_grep_tests {
     use crate::tools::common::SharedRuntimeVfs;
     use crate::{MountProviderRegistry, ReadResult};
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
-    use agentdash_spi::platform::mount::{MountError, MountOperationContext, RuntimeFileEntry};
-    use agentdash_spi::{Mount, MountCapability, Vfs};
+    use agentdash_platform_spi::platform::mount::{
+        MountError, MountOperationContext, RuntimeFileEntry,
+    };
+    use agentdash_platform_spi::{Mount, MountCapability, Vfs};
     use agentdash_test_support::inline_file::MemoryInlineFileRepository;
     use serde_json::json;
     use std::sync::Arc;

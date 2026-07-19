@@ -1,9 +1,13 @@
+use agentdash_application_agentrun::runtime_task_tools::{
+    RuntimeTaskToolKind, RuntimeTaskToolOutcome, RuntimeTaskToolRequest, RuntimeTaskToolScope,
+    RuntimeTaskToolService,
+};
 use agentdash_domain::context_source::{
     ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
 };
 use agentdash_domain::workflow::{SubjectRef, TaskPlanStatus, TaskPriority};
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, ExecutionContext, ToolUpdateCallback,
 };
 use async_trait::async_trait;
@@ -15,6 +19,7 @@ use uuid::Uuid;
 use crate::repository_set::RepositorySet;
 use crate::task::scope::{
     AgentRunTaskScopeInput, AgentRunTaskScopeResolutionError, AgentRunTaskScopeResolver,
+    TaskPlanScope,
 };
 use crate::task::workspace::{
     TaskPlanChangeset, TaskPlanChangesetMode, TaskPlanCreateCommand, TaskPlanOperation,
@@ -82,6 +87,7 @@ fn default_read_format() -> TaskReadFormat {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TaskReadParams {
     #[serde(default = "default_read_mode")]
     pub mode: TaskReadMode,
@@ -124,6 +130,10 @@ impl TaskReadParams {
     }
 }
 
+pub fn task_read_parameters_schema() -> serde_json::Value {
+    schema_value::<TaskReadParams>()
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatusInput {
@@ -145,12 +155,14 @@ pub enum TaskPriorityInput {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SubjectRefInput {
     pub kind: String,
     pub id: Uuid,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContextSourceRefInput {
     pub kind: ContextSourceKindInput,
     pub locator: String,
@@ -209,6 +221,7 @@ fn default_write_mode() -> TaskWriteMode {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TaskWriteParams {
     #[serde(default = "default_write_mode")]
     pub mode: TaskWriteMode,
@@ -249,10 +262,53 @@ impl TaskWriteParams {
             return_mode: self.return_mode.into(),
         })
     }
+
+    fn validate_runtime_scope(
+        &self,
+        scope: &RuntimeTaskToolScope,
+    ) -> Result<(), RuntimeTaskToolOutcome> {
+        let RuntimeTaskToolScope::Task { task_id, .. } = scope else {
+            return Ok(());
+        };
+        let reject = || RuntimeTaskToolOutcome::Rejected {
+            code: "task_scope_violation".to_owned(),
+            message: "Task-scoped grant cannot read or mutate sibling Tasks".to_owned(),
+        };
+        match self.mode {
+            TaskWriteMode::Snapshot => return Err(reject()),
+            TaskWriteMode::Patch => {}
+        }
+        for operation in &self.operations {
+            let authorized = match operation {
+                TaskWriteOperation::PatchTask {
+                    task_id: candidate, ..
+                }
+                | TaskWriteOperation::SetStatus {
+                    task_id: candidate, ..
+                }
+                | TaskWriteOperation::DropTask { task_id: candidate }
+                | TaskWriteOperation::ReplaceContextRefs {
+                    task_id: candidate, ..
+                } => Uuid::parse_str(candidate).is_ok_and(|candidate| candidate == *task_id),
+                TaskWriteOperation::CreateTask { .. } | TaskWriteOperation::ReorderTasks { .. } => {
+                    false
+                }
+            };
+            if !authorized {
+                return Err(reject());
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn task_write_parameters_schema() -> serde_json::Value {
+    schema_value::<TaskWriteParams>()
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[serde(deny_unknown_fields)]
 pub enum TaskWriteOperation {
     CreateTask {
         title: String,
@@ -373,6 +429,7 @@ impl TaskWriteOperation {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TaskSnapshotItem {
     #[serde(default)]
     pub id: Option<Uuid>,
@@ -423,10 +480,10 @@ impl AgentTool for TaskReadTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<TaskReadParams>()
+        task_read_parameters_schema()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -464,10 +521,10 @@ impl AgentTool for TaskWriteTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<TaskWriteParams>()
+        task_write_parameters_schema()
     }
-    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -492,6 +549,124 @@ impl AgentTool for TaskWriteTool {
             .map_err(workspace_error)?;
         let message = format!("Task 写入完成，变更 {} 个 Task。", result.changes.len());
         Ok(result_with_view(&message, result.view, false))
+    }
+}
+
+#[derive(Clone)]
+pub struct ApplicationRuntimeTaskToolService {
+    repos: RepositorySet,
+}
+
+impl ApplicationRuntimeTaskToolService {
+    pub fn new(repos: RepositorySet) -> Self {
+        Self { repos }
+    }
+}
+
+#[async_trait]
+impl RuntimeTaskToolService for ApplicationRuntimeTaskToolService {
+    fn parameters_schema(&self, kind: RuntimeTaskToolKind) -> serde_json::Value {
+        match kind {
+            RuntimeTaskToolKind::Read => task_read_parameters_schema(),
+            RuntimeTaskToolKind::Write => task_write_parameters_schema(),
+        }
+    }
+
+    async fn execute(&self, request: RuntimeTaskToolRequest) -> RuntimeTaskToolOutcome {
+        let scope = TaskPlanScope {
+            project_id: match &request.scope {
+                RuntimeTaskToolScope::Project { project_id }
+                | RuntimeTaskToolScope::Task { project_id, .. } => *project_id,
+            },
+            run_id: request.run_id,
+            agent_id: Some(request.agent_id),
+        };
+        match request.kind {
+            RuntimeTaskToolKind::Read => self.execute_read(scope, request).await,
+            RuntimeTaskToolKind::Write => self.execute_write(scope, request).await,
+        }
+    }
+}
+
+impl ApplicationRuntimeTaskToolService {
+    async fn execute_read(
+        &self,
+        scope: TaskPlanScope,
+        request: RuntimeTaskToolRequest,
+    ) -> RuntimeTaskToolOutcome {
+        let mut params: TaskReadParams = match serde_json::from_value(request.arguments) {
+            Ok(params) => params,
+            Err(error) => {
+                return RuntimeTaskToolOutcome::Rejected {
+                    code: "invalid_task_read_arguments".to_owned(),
+                    message: error.to_string(),
+                };
+            }
+        };
+        if let RuntimeTaskToolScope::Task { task_id, .. } = request.scope {
+            if params.task_id.is_some_and(|candidate| candidate != task_id) {
+                return RuntimeTaskToolOutcome::Rejected {
+                    code: "task_scope_violation".to_owned(),
+                    message: "Task-scoped grant cannot read a sibling Task".to_owned(),
+                };
+            }
+            params.task_id = Some(task_id);
+        }
+        match TaskPlanWorkspace::from_repos(&self.repos)
+            .read(&scope, params.into_query())
+            .await
+        {
+            Ok(view) => RuntimeTaskToolOutcome::Completed {
+                output: serde_json::json!({"summary": "Task view 已读取", "view": view}),
+            },
+            Err(error) => RuntimeTaskToolOutcome::Failed {
+                code: "task_read_failed".to_owned(),
+                message: error.to_string(),
+            },
+        }
+    }
+
+    async fn execute_write(
+        &self,
+        scope: TaskPlanScope,
+        request: RuntimeTaskToolRequest,
+    ) -> RuntimeTaskToolOutcome {
+        let params: TaskWriteParams = match serde_json::from_value(request.arguments) {
+            Ok(params) => params,
+            Err(error) => {
+                return RuntimeTaskToolOutcome::Rejected {
+                    code: "invalid_task_write_arguments".to_owned(),
+                    message: error.to_string(),
+                };
+            }
+        };
+        if let Err(outcome) = params.validate_runtime_scope(&request.scope) {
+            return outcome;
+        }
+        let changeset = match params.into_changeset() {
+            Ok(changeset) => changeset,
+            Err(error) => {
+                return RuntimeTaskToolOutcome::Rejected {
+                    code: "invalid_task_write_arguments".to_owned(),
+                    message: error.to_string(),
+                };
+            }
+        };
+        match TaskPlanWorkspace::from_repos(&self.repos)
+            .apply(&scope, changeset)
+            .await
+        {
+            Ok(result) => RuntimeTaskToolOutcome::Completed {
+                output: serde_json::json!({
+                    "summary": format!("Task 写入完成，变更 {} 个 Task。", result.changes.len()),
+                    "view": result.view
+                }),
+            },
+            Err(error) => RuntimeTaskToolOutcome::Failed {
+                code: "task_write_failed".to_owned(),
+                message: error.to_string(),
+            },
+        }
     }
 }
 
@@ -660,5 +835,95 @@ mod tests {
             error.to_string().contains("execution"),
             "error should mention rejected mode: {error}"
         );
+    }
+
+    #[test]
+    fn runtime_task_schemas_are_derived_from_the_strict_parser_types() {
+        let read_schema = task_read_parameters_schema();
+        assert!(schema_contains_enum_value(
+            &read_schema["properties"]["mode"],
+            "overview"
+        ));
+        assert_eq!(read_schema["additionalProperties"], false);
+
+        let write_schema = task_write_parameters_schema();
+        let operations = &write_schema["properties"]["operations"];
+        assert_eq!(operations["type"], "array");
+        assert!(operations.get("items").is_some());
+        assert!(schema_contains_enum_value(operations, "set_status"));
+        assert_eq!(write_schema["additionalProperties"], false);
+
+        serde_json::from_value::<TaskWriteParams>(serde_json::json!({
+            "operations": [{"op": "set_status", "task_id": Uuid::nil(), "status": "done"}]
+        }))
+        .expect("schema-advertised task_write operation should parse");
+        serde_json::from_value::<TaskWriteParams>(serde_json::json!({
+            "operations": [{
+                "op": "set_status",
+                "task_id": Uuid::nil(),
+                "status": "done",
+                "unexpected": true
+            }]
+        }))
+        .expect_err("schema-forbidden nested fields must be rejected by the parser");
+        serde_json::from_value::<TaskReadParams>(serde_json::json!({
+            "mode": "overview",
+            "unexpected": true
+        }))
+        .expect_err("schema-forbidden root fields must be rejected by the parser");
+    }
+
+    #[test]
+    fn task_scoped_write_rejects_sibling_and_project_wide_mutations() {
+        let project_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let scope = RuntimeTaskToolScope::Task {
+            project_id,
+            task_id,
+        };
+        let allowed: TaskWriteParams = serde_json::from_value(serde_json::json!({
+            "operations": [{"op": "set_status", "task_id": task_id, "status": "done"}]
+        }))
+        .unwrap();
+        assert!(allowed.validate_runtime_scope(&scope).is_ok());
+
+        let sibling: TaskWriteParams = serde_json::from_value(serde_json::json!({
+            "operations": [{"op": "set_status", "task_id": Uuid::new_v4(), "status": "done"}]
+        }))
+        .unwrap();
+        assert!(matches!(
+            sibling.validate_runtime_scope(&scope),
+            Err(RuntimeTaskToolOutcome::Rejected { code, .. }) if code == "task_scope_violation"
+        ));
+
+        let snapshot: TaskWriteParams = serde_json::from_value(serde_json::json!({
+            "mode": "snapshot",
+            "snapshot": [{"id": task_id, "title": "only"}]
+        }))
+        .unwrap();
+        assert!(snapshot.validate_runtime_scope(&scope).is_err());
+        assert!(
+            snapshot
+                .validate_runtime_scope(&RuntimeTaskToolScope::Project { project_id })
+                .is_ok()
+        );
+    }
+
+    fn schema_contains_enum_value(schema: &serde_json::Value, expected: &str) -> bool {
+        match schema {
+            serde_json::Value::Array(values) => values
+                .iter()
+                .any(|value| schema_contains_enum_value(value, expected)),
+            serde_json::Value::Object(object) => {
+                object.get("enum").is_some_and(|values| {
+                    values
+                        .as_array()
+                        .is_some_and(|values| values.iter().any(|value| value == expected))
+                }) || object
+                    .values()
+                    .any(|value| schema_contains_enum_value(value, expected))
+            }
+            _ => false,
+        }
     }
 }

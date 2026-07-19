@@ -1,620 +1,615 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-    sync::Arc,
-};
+use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{
-    AgentRuntimeDriver, ConfigurationBoundary, ContextBlock, ContextCandidateId,
-    ContextCheckpointId, ContextCompactionId, ContextDigest, ContextFidelity, ContextRecipe,
-    ContextRevision, DriverItemId, DriverThreadId, DriverTurnId, EventSequence, HookAction,
-    HookDefinitionId, HookExecutionSite, HookFailurePolicy, HookPlanDigest, HookPlanRevision,
-    HookPoint, InstructionChannel, MaterializedContext, RuntimeBindingId, RuntimeDriverGeneration,
-    RuntimeInteractionId, RuntimeItemId, RuntimeJournalRecord, RuntimeProfile,
-    RuntimeServiceInstanceId, RuntimeThreadId, RuntimeTurnId, SemanticStrength, SurfaceDigest,
-    SurfaceRevision, ToolChannel, ToolSetRevision, WorkspaceCapability,
+use agentdash_agent_service_api::{
+    AgentBindingGeneration, AgentPayloadDigest, AgentServiceDescriptor, AgentServiceError,
+    AgentServiceInstanceId, CompleteAgentService,
 };
 use async_trait::async_trait;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use thiserror::Error;
-use ts_rs::TS;
 
-pub fn agent_service_schema_digest(value: &serde_json::Value) -> String {
-    use sha2::{Digest, Sha256};
-
-    fn canonicalize(value: &serde_json::Value) -> serde_json::Value {
-        match value {
-            serde_json::Value::Object(object) => {
-                let mut entries = object.iter().collect::<Vec<_>>();
-                entries.sort_by(|left, right| left.0.cmp(right.0));
-                serde_json::Value::Object(
-                    entries
-                        .into_iter()
-                        .map(|(key, value)| (key.clone(), canonicalize(value)))
-                        .collect(),
-                )
-            }
-            serde_json::Value::Array(items) => {
-                serde_json::Value::Array(items.iter().map(canonicalize).collect())
-            }
-            other => other.clone(),
-        }
-    }
-
-    let canonical = serde_json::to_vec(&canonicalize(value))
-        .expect("JSON value canonical serialization cannot fail");
-    format!("sha256:{:x}", Sha256::digest(canonical))
-}
-
-use crate::AuthIdentity;
-
-macro_rules! integration_id {
-    ($name:ident) => {
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-        #[serde(transparent)]
-        pub struct $name(String);
-
-        impl $name {
-            pub fn new(value: impl Into<String>) -> Result<Self, InvalidAgentServiceId> {
-                let value = value.into();
-                if value.trim().is_empty() {
-                    return Err(InvalidAgentServiceId {
-                        type_name: stringify!($name),
-                    });
-                }
-                Ok(Self(value))
-            }
-
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str(&self.0)
-            }
-        }
-    };
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("{type_name} must not be empty")]
-pub struct InvalidAgentServiceId {
-    type_name: &'static str,
-}
-
-integration_id!(AgentServiceDefinitionId);
-integration_id!(AgentServiceOfferId);
-integration_id!(AgentServiceBuildDigest);
-integration_id!(AgentServiceSchemaDigest);
-integration_id!(AgentRuntimeFactoryKey);
-integration_id!(AgentRuntimeCredentialSlot);
-integration_id!(AgentRuntimeCredentialRef);
-integration_id!(AgentRuntimePlacementId);
-
+/// Non-authoritative build and conformance claims declared by one Integration.
+///
+/// W8 passes these claims to a Host-owned verifier. Only the verifier may produce verified profile
+/// or build evidence; an Integration cannot attest its own trust, credentials, health, placement
+/// transport, or runtime offer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentServiceProvenance {
-    pub definition_id: AgentServiceDefinitionId,
+pub struct CompleteAgentRegistrationClaim {
     pub publisher_integration: String,
     pub service_version: String,
-    pub build_digest: AgentServiceBuildDigest,
+    pub claimed_service_build_digest: AgentPayloadDigest,
+    pub claimed_conformance_suite_revision: String,
 }
 
-/// Integration 随 driver definition 一并交给宿主的静态信任声明。
+/// Platform-neutral placement requested by an Integration contribution.
 ///
-/// 该声明只描述由集成构建、测试并签入的事实，不携带运行期配置或凭据。宿主会据此
-/// 构造自己的 conformance verifier，并在 service instance 激活时校验实际证据。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeTrustManifest {
-    pub provenance: AgentServiceProvenance,
-    pub suite_revision: String,
-    pub driver_build_digest: String,
-    pub protocol_revision: u32,
-    pub verified_profile: RuntimeProfile,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct CredentialSlotDefinition {
-    pub slot: AgentRuntimeCredentialSlot,
-    pub purpose: String,
-    pub required: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentServiceDefinition {
-    pub provenance: AgentServiceProvenance,
-    pub factory_key: AgentRuntimeFactoryKey,
-    pub supported_protocol_revisions: Vec<u32>,
-    pub config_schema: Value,
-    pub config_schema_digest: AgentServiceSchemaDigest,
-    pub credential_slots: Vec<CredentialSlotDefinition>,
-    pub service_profile_upper_bound: RuntimeProfile,
-}
-
+/// The composition root adds Host-owned incarnation and transport evidence before constructing
+/// the final Host placement. Relay remains transport and never becomes the service identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AgentRuntimePlacement {
+pub enum CompleteAgentPlacementRequirement {
     InProcess,
     LocalProcess {
         host_id: String,
     },
     Remote {
         host_id: String,
-        transport_id: AgentRuntimePlacementId,
+        transport_id: String,
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ActivatedAgentServiceInstance {
-    pub instance_id: RuntimeServiceInstanceId,
-    pub instance_revision: u64,
-    pub generation: RuntimeDriverGeneration,
-    pub definition: AgentServiceDefinition,
-    pub config: Value,
-    pub credentials: BTreeMap<AgentRuntimeCredentialSlot, AgentRuntimeCredentialRef>,
-    pub placement: AgentRuntimePlacement,
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub struct CredentialLease {
-    pub slot: AgentRuntimeCredentialSlot,
-    pub purpose: String,
-    pub secret: String,
-}
-
-impl fmt::Debug for CredentialLease {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("CredentialLease")
-            .field("slot", &self.slot)
-            .field("purpose", &self.purpose)
-            .field("secret", &"[REDACTED]")
-            .finish()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum CredentialResolveError {
-    #[error("credential reference is unavailable for slot {slot}: {reason}")]
-    Unavailable {
-        slot: AgentRuntimeCredentialSlot,
-        reason: String,
-    },
-    #[error("credential purpose is not allowed for slot {slot}")]
-    PurposeDenied { slot: AgentRuntimeCredentialSlot },
-}
-
-#[async_trait]
-pub trait AgentRuntimeCredentialBroker: Send + Sync {
-    async fn resolve(
-        &self,
-        slot: &AgentRuntimeCredentialSlot,
-        reference: &AgentRuntimeCredentialRef,
-        purpose: &str,
-    ) -> Result<CredentialLease, CredentialResolveError>;
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverSurfaceRequest {
-    pub binding_id: RuntimeBindingId,
-    pub surface_revision: SurfaceRevision,
-    pub surface_digest: SurfaceDigest,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverInstructionSet {
-    pub channel: InstructionChannel,
-    pub entries: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverContextSurface {
-    pub recipe: ContextRecipe,
-    pub instructions: Vec<DriverInstructionSet>,
-    pub blocks: Vec<ContextBlock>,
-    pub digest: ContextDigest,
-    pub fidelity: ContextFidelity,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub parameters_schema: Value,
-    pub channels: Vec<ToolChannel>,
-    pub protocol_projection: agentdash_agent_runtime_contract::ToolProtocolProjection,
-    /// Effective single presentation producer selected for this exact binding.
-    pub presentation_emitter: agentdash_agent_runtime_contract::ToolPresentationEmitter,
-    pub parity_fixture_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverToolSurface {
-    pub revision: ToolSetRevision,
-    pub digest: String,
-    pub tools: Vec<DriverToolDefinition>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverHookBinding {
-    pub definition_id: HookDefinitionId,
-    pub point: HookPoint,
-    pub actions: Vec<HookAction>,
-    pub strength: SemanticStrength,
-    pub failure_policy: HookFailurePolicy,
-    pub required: bool,
-    pub site: HookExecutionSite,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverHookSurface {
-    pub revision: HookPlanRevision,
-    pub digest: HookPlanDigest,
-    pub artifact_digest: Option<String>,
-    pub configuration_boundary: ConfigurationBoundary,
-    pub bindings: Vec<DriverHookBinding>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverWorkspaceSurface {
-    pub digest: String,
-    pub capabilities: Vec<WorkspaceCapability>,
-    pub roots: Vec<String>,
-}
-
-/// Runtime-owned surface materialized for one immutable binding intent.
+/// Immutable identity and generation rewrite fact for one remote Complete Agent binding.
 ///
-/// Drivers may cache this value, but must acknowledge exactly the revisions and digests they
-/// actually installed. The Integration host never treats a requested digest as proof of apply.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+/// The local identity/generation is the Host-facing fence. The remote identity/generation is the
+/// Runtime Wire target. They may differ only through this explicit mapping: outbound requests are
+/// fenced against `local_binding_generation` and rewritten to `remote_binding_generation`;
+/// callbacks apply the inverse rewrite after fencing the remote generation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct MaterializedDriverSurface {
-    pub runtime_thread_id: RuntimeThreadId,
-    pub revision: SurfaceRevision,
-    pub digest: SurfaceDigest,
-    pub authorization_identity: Option<AuthIdentity>,
-    pub context: DriverContextSurface,
-    pub tools: DriverToolSurface,
-    pub hooks: DriverHookSurface,
-    pub workspace: DriverWorkspaceSurface,
+pub struct CompleteAgentRemoteBindingMapping {
+    pub local_service_instance_id: AgentServiceInstanceId,
+    pub local_binding_generation: AgentBindingGeneration,
+    pub remote_service_instance_id: AgentServiceInstanceId,
+    pub remote_binding_generation: AgentBindingGeneration,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum DriverSurfaceError {
-    #[error("driver surface is unavailable: {reason}")]
-    Unavailable { reason: String, retryable: bool },
-    #[error("driver surface request is stale")]
-    Stale,
-    #[error("driver surface materialization violated its digest contract: {reason}")]
-    InvalidMaterialization { reason: String },
-}
-
-#[async_trait]
-pub trait AgentRuntimeSurfaceBroker: Send + Sync {
-    async fn materialize(
+impl CompleteAgentRemoteBindingMapping {
+    fn validate(
         &self,
-        request: DriverSurfaceRequest,
-    ) -> Result<MaterializedDriverSurface, DriverSurfaceError>;
-
-    async fn materialize_tool_set(
-        &self,
-        binding_id: RuntimeBindingId,
-        revision: ToolSetRevision,
-        digest: &str,
-    ) -> Result<DriverToolSurface, DriverSurfaceError>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverContextCheckpointRequest {
-    pub binding_id: RuntimeBindingId,
-    pub generation: RuntimeDriverGeneration,
-    pub checkpoint_id: ContextCheckpointId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverCompactionActivationRequest {
-    pub binding_id: RuntimeBindingId,
-    pub generation: RuntimeDriverGeneration,
-    pub compaction_id: ContextCompactionId,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverContextActivation {
-    pub candidate_id: ContextCandidateId,
-    pub checkpoint_id: ContextCheckpointId,
-    pub context_revision: ContextRevision,
-    pub materialized: MaterializedContext,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverTranscriptRequest {
-    pub binding_id: RuntimeBindingId,
-    pub generation: RuntimeDriverGeneration,
-    pub runtime_thread_id: RuntimeThreadId,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverTranscript {
-    pub earliest_available: EventSequence,
-    pub latest_available: EventSequence,
-    pub current_thread_name: Option<String>,
-    /// Inclusive durable journal boundary represented by the active compacted
-    /// context base. Records after this sequence must be replayed as the live
-    /// transcript tail instead of being discarded with the compacted prefix.
-    pub active_compaction_source_end: Option<EventSequence>,
-    /// Runtime-projected terminal presentation item identities. Unlike the
-    /// retained journal window, this watermark survives prefix pruning and
-    /// prevents a cold driver from reusing readable vendor item ids.
-    pub completed_presentation_item_ids: Vec<String>,
-    pub records: Vec<RuntimeJournalRecord>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum DriverContextError {
-    #[error("driver context is unavailable: {reason}")]
-    Unavailable { reason: String, retryable: bool },
-    #[error("driver context request is stale")]
-    Stale,
-    #[error("driver context does not exist")]
-    NotFound,
-    #[error("driver context materialization violated its digest contract: {reason}")]
-    InvalidMaterialization { reason: String },
-}
-
-#[async_trait]
-pub trait AgentRuntimeContextBroker: Send + Sync {
-    async fn load_transcript(
-        &self,
-        request: DriverTranscriptRequest,
-    ) -> Result<DriverTranscript, DriverContextError>;
-
-    async fn load_checkpoint(
-        &self,
-        request: DriverContextCheckpointRequest,
-    ) -> Result<DriverContextActivation, DriverContextError>;
-
-    async fn compaction_activation(
-        &self,
-        request: DriverCompactionActivationRequest,
-    ) -> Result<DriverContextActivation, DriverContextError>;
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverToolInvocation {
-    pub thread_id: RuntimeThreadId,
-    pub turn_id: RuntimeTurnId,
-    pub item_id: RuntimeItemId,
-    /// Session-visible protocol item identity. This remains distinct from the
-    /// canonical Runtime item used for state and idempotency.
-    pub presentation_item_id: agentdash_agent_runtime_contract::PresentationItemId,
-    pub binding_id: RuntimeBindingId,
-    pub generation: RuntimeDriverGeneration,
-    pub source_thread_id: DriverThreadId,
-    pub source_turn_id: DriverTurnId,
-    pub source_item_id: DriverItemId,
-    pub tool_set_revision: ToolSetRevision,
-    pub tool_name: String,
-    pub arguments: Value,
-    pub timeout_ms: u64,
-    pub authorization_identity: Option<AuthIdentity>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DriverToolOutcome {
-    Completed {
-        output: Value,
-        is_error: bool,
-    },
-    InteractionRequired {
-        interaction_id: RuntimeInteractionId,
-        reason: String,
-    },
-    Denied {
-        reason: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum DriverToolCallbackError {
-    #[error("tool callback is unavailable: {reason}")]
-    Unavailable { reason: String, retryable: bool },
-    #[error("tool callback coordinates are stale")]
-    Stale,
-    #[error("tool callback protocol violation: {reason}")]
-    ProtocolViolation { reason: String },
-}
-
-#[async_trait]
-pub trait AgentRuntimeToolCallback: Send + Sync {
-    async fn invoke(
-        &self,
-        request: DriverToolInvocation,
-    ) -> Result<DriverToolOutcome, DriverToolCallbackError>;
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct DriverHookInvocation {
-    pub thread_id: RuntimeThreadId,
-    pub turn_id: Option<RuntimeTurnId>,
-    pub item_id: Option<RuntimeItemId>,
-    pub binding_id: RuntimeBindingId,
-    pub generation: RuntimeDriverGeneration,
-    pub hook_plan_revision: HookPlanRevision,
-    pub hook_plan_digest: HookPlanDigest,
-    pub source_thread_id: DriverThreadId,
-    pub source_turn_id: Option<DriverTurnId>,
-    pub source_item_id: Option<DriverItemId>,
-    pub definition_id: HookDefinitionId,
-    pub point: HookPoint,
-    pub payload: Value,
-    pub authorization_identity: Option<AuthIdentity>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DriverHookDecision {
-    Continue {
-        payload: Value,
-    },
-    Block {
-        reason: String,
-    },
-    InteractionRequired {
-        interaction_id: RuntimeInteractionId,
-        reason: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum DriverHookCallbackError {
-    #[error("hook callback is unavailable: {reason}")]
-    Unavailable { reason: String, retryable: bool },
-    #[error("hook callback coordinates are stale")]
-    Stale,
-    #[error("hook callback protocol violation: {reason}")]
-    ProtocolViolation { reason: String },
-}
-
-#[async_trait]
-pub trait AgentRuntimeHookCallback: Send + Sync {
-    async fn execute(
-        &self,
-        request: DriverHookInvocation,
-    ) -> Result<DriverHookDecision, DriverHookCallbackError>;
-}
-
-#[derive(Clone)]
-pub struct RuntimeDriverHostPorts {
-    pub credentials: Arc<dyn AgentRuntimeCredentialBroker>,
-    pub surfaces: Arc<dyn AgentRuntimeSurfaceBroker>,
-    pub context: Arc<dyn AgentRuntimeContextBroker>,
-    pub tools: Arc<dyn AgentRuntimeToolCallback>,
-    pub hooks: Arc<dyn AgentRuntimeHookCallback>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum DriverFactoryError {
-    #[error("driver configuration is invalid: {reason}")]
-    InvalidConfiguration { reason: String },
-    #[error("driver credential is unavailable for slot {slot}: {reason}")]
-    CredentialUnavailable {
-        slot: AgentRuntimeCredentialSlot,
-        reason: String,
-    },
-    #[error("driver could not be created: {reason}")]
-    Unavailable { reason: String, retryable: bool },
-}
-
-#[async_trait]
-pub trait AgentRuntimeDriverFactory: Send + Sync {
-    fn factory_key(&self) -> &AgentRuntimeFactoryKey;
-
-    async fn create(
-        &self,
-        instance: ActivatedAgentServiceInstance,
-        host: RuntimeDriverHostPorts,
-    ) -> Result<Arc<dyn AgentRuntimeDriver>, DriverFactoryError>;
-}
-
-#[derive(Clone)]
-pub struct AgentRuntimeDriverContribution {
-    pub definition: AgentServiceDefinition,
-    pub factory: Arc<dyn AgentRuntimeDriverFactory>,
-    pub conversation_projection: DriverConversationProjectionProfile,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DriverConversationProjectionProfile {
-    pub item_families: BTreeSet<DriverConversationItemFamily>,
-    pub typed_interactions: bool,
-    pub transient_delta_identity: bool,
-    pub usage_and_error_fidelity: bool,
-    pub extension_revision: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum DriverConversationItemFamily {
-    Message,
-    Reasoning,
-    Plan,
-    Command,
-    FileChange,
-    Mcp,
-    Dynamic,
-    Context,
-}
-
-impl DriverConversationProjectionProfile {
-    pub fn full_fidelity(extension_revision: u32) -> Self {
-        Self {
-            item_families: [
-                DriverConversationItemFamily::Message,
-                DriverConversationItemFamily::Reasoning,
-                DriverConversationItemFamily::Plan,
-                DriverConversationItemFamily::Command,
-                DriverConversationItemFamily::FileChange,
-                DriverConversationItemFamily::Mcp,
-                DriverConversationItemFamily::Dynamic,
-                DriverConversationItemFamily::Context,
-            ]
-            .into(),
-            typed_interactions: true,
-            transient_delta_identity: true,
-            usage_and_error_fidelity: true,
-            extension_revision,
+        contribution_instance_id: &AgentServiceInstanceId,
+    ) -> Result<(), CompleteAgentContributionError> {
+        if &self.local_service_instance_id != contribution_instance_id {
+            return Err(CompleteAgentContributionError::RemoteBindingMismatch {
+                coordinate: "local_service_instance_id".to_owned(),
+                expected: contribution_instance_id.to_string(),
+                actual: self.local_service_instance_id.to_string(),
+            });
         }
-    }
-    pub fn validate_required_families(&self) -> Result<(), String> {
-        let required = [
-            DriverConversationItemFamily::Message,
-            DriverConversationItemFamily::Reasoning,
-            DriverConversationItemFamily::Command,
-            DriverConversationItemFamily::FileChange,
-            DriverConversationItemFamily::Mcp,
-            DriverConversationItemFamily::Context,
-        ];
-        if let Some(missing) = required
-            .into_iter()
-            .find(|family| !self.item_families.contains(family))
-        {
-            return Err(format!("missing required conversation family {missing:?}"));
-        }
-        if !self.typed_interactions
-            || !self.transient_delta_identity
-            || !self.usage_and_error_fidelity
-        {
-            return Err(
-                "typed interactions, transient identity, and usage/error fidelity are required"
-                    .to_string(),
-            );
-        }
-        if self.extension_revision == 0 {
-            return Err("extension revision must be positive".to_string());
+        if self.local_binding_generation.0 == 0 || self.remote_binding_generation.0 == 0 {
+            return Err(CompleteAgentContributionError::InvalidRegistration {
+                reason: "remote binding generations must be non-zero".to_owned(),
+            });
         }
         Ok(())
+    }
+}
+
+impl CompleteAgentPlacementRequirement {
+    pub fn validate(&self) -> Result<(), CompleteAgentContributionError> {
+        let valid = match self {
+            Self::InProcess => true,
+            Self::LocalProcess { host_id } => !host_id.trim().is_empty(),
+            Self::Remote {
+                host_id,
+                transport_id,
+            } => !host_id.trim().is_empty() && !transport_id.trim().is_empty(),
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(CompleteAgentContributionError::InvalidRegistration {
+                reason: "Complete Agent placement coordinates must not be empty".to_owned(),
+            })
+        }
+    }
+}
+
+/// Typed factory failure before a Complete Agent service can enter Host registration.
+///
+/// Credential and health failures are explicit. There is no implicit healthy/credentialed state,
+/// trust flag, fallback service, or default-success factory path.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum CompleteAgentServiceFactoryError {
+    #[error("Complete Agent configuration is invalid: {reason}")]
+    InvalidConfiguration { reason: String },
+    #[error("Complete Agent credential is unavailable: {reason}")]
+    CredentialUnavailable { reason: String },
+    #[error("Complete Agent service is unhealthy: {reason}")]
+    Unhealthy { reason: String, retryable: bool },
+    #[error("Complete Agent service is unavailable: {reason}")]
+    Unavailable { reason: String, retryable: bool },
+}
+
+#[async_trait]
+pub trait CompleteAgentServiceFactory: Send + Sync {
+    async fn materialize(
+        &self,
+    ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentServiceFactoryError>;
+}
+
+/// Dependency-light declared contribution collected from [`crate::AgentDashIntegration`].
+///
+/// `declared_descriptor` and `registration_claim` are Integration claims, not verified Host facts.
+/// Host definition, health, credential, verifier and offer facts are deliberately absent: W8
+/// verifies this input, materializes the service, and then calls the final Host registration
+/// boundary.
+#[derive(Clone)]
+pub struct CompleteAgentRegistrationContribution {
+    facts: CompleteAgentRegistrationFacts,
+    factory: Arc<dyn CompleteAgentServiceFactory>,
+}
+
+/// Immutable declared facts preserved from Integration collection through Host verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteAgentRegistrationFacts {
+    declared_descriptor: AgentServiceDescriptor,
+    instance_id: AgentServiceInstanceId,
+    placement: CompleteAgentPlacementRequirement,
+    remote_binding: Option<CompleteAgentRemoteBindingMapping>,
+    registration_claim: CompleteAgentRegistrationClaim,
+}
+
+impl CompleteAgentRegistrationFacts {
+    pub fn declared_descriptor(&self) -> &AgentServiceDescriptor {
+        &self.declared_descriptor
+    }
+
+    pub fn instance_id(&self) -> &AgentServiceInstanceId {
+        &self.instance_id
+    }
+
+    pub fn placement(&self) -> &CompleteAgentPlacementRequirement {
+        &self.placement
+    }
+
+    pub fn remote_binding(&self) -> Option<&CompleteAgentRemoteBindingMapping> {
+        self.remote_binding.as_ref()
+    }
+
+    pub fn registration_claim(&self) -> &CompleteAgentRegistrationClaim {
+        &self.registration_claim
+    }
+}
+
+impl CompleteAgentRegistrationContribution {
+    pub fn new(
+        declared_descriptor: AgentServiceDescriptor,
+        instance_id: AgentServiceInstanceId,
+        placement: CompleteAgentPlacementRequirement,
+        remote_binding: Option<CompleteAgentRemoteBindingMapping>,
+        registration_claim: CompleteAgentRegistrationClaim,
+        factory: Arc<dyn CompleteAgentServiceFactory>,
+    ) -> Result<Self, CompleteAgentContributionError> {
+        placement.validate()?;
+        match (&placement, &remote_binding) {
+            (CompleteAgentPlacementRequirement::Remote { .. }, Some(remote_binding)) => {
+                remote_binding.validate(&instance_id)?
+            }
+            (CompleteAgentPlacementRequirement::Remote { .. }, None) => {
+                return Err(CompleteAgentContributionError::InvalidRegistration {
+                    reason: "remote Complete Agent placement requires an explicit identity and generation mapping"
+                        .to_owned(),
+                });
+            }
+            (_, Some(_)) => {
+                return Err(CompleteAgentContributionError::InvalidRegistration {
+                    reason:
+                        "remote binding mapping is only valid for remote Complete Agent placement"
+                            .to_owned(),
+                });
+            }
+            (_, None) => {}
+        }
+        if declared_descriptor.title.trim().is_empty()
+            || declared_descriptor.protocol_revision == 0
+            || registration_claim.publisher_integration.trim().is_empty()
+            || registration_claim.service_version.trim().is_empty()
+            || registration_claim
+                .claimed_conformance_suite_revision
+                .trim()
+                .is_empty()
+        {
+            return Err(CompleteAgentContributionError::InvalidRegistration {
+                reason: "Complete Agent descriptor and registration claim fields must not be empty"
+                    .to_owned(),
+            });
+        }
+        Ok(Self {
+            facts: CompleteAgentRegistrationFacts {
+                declared_descriptor,
+                instance_id,
+                placement,
+                remote_binding,
+                registration_claim,
+            },
+            factory,
+        })
+    }
+
+    pub fn facts(&self) -> &CompleteAgentRegistrationFacts {
+        &self.facts
+    }
+
+    pub async fn materialize(
+        &self,
+    ) -> Result<MaterializedCompleteAgentCandidate, CompleteAgentContributionError> {
+        let service = self.factory.materialize().await?;
+        let actual = service.describe().await?;
+        if actual != self.facts.declared_descriptor {
+            return Err(CompleteAgentContributionError::DescriptorMismatch {
+                expected: self.facts.declared_descriptor.definition_id.to_string(),
+                actual: actual.definition_id.to_string(),
+            });
+        }
+        Ok(MaterializedCompleteAgentCandidate {
+            facts: self.facts.clone(),
+            service,
+        })
+    }
+}
+
+/// Fully materialized, non-authoritative Integration candidate.
+///
+/// No registration claim or binding mapping is discarded. W8 verifies the descriptor/build/
+/// conformance claims, persists Host-owned verifier evidence and the remote generation mapping,
+/// maps `placement` to its Host-owned placement, then registers `service`.
+pub struct MaterializedCompleteAgentCandidate {
+    facts: CompleteAgentRegistrationFacts,
+    service: Arc<dyn CompleteAgentService>,
+}
+
+impl MaterializedCompleteAgentCandidate {
+    pub fn facts(&self) -> &CompleteAgentRegistrationFacts {
+        &self.facts
+    }
+
+    pub fn service(&self) -> Arc<dyn CompleteAgentService> {
+        self.service.clone()
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (
+        CompleteAgentRegistrationFacts,
+        Arc<dyn CompleteAgentService>,
+    ) {
+        (self.facts, self.service)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum CompleteAgentContributionError {
+    #[error("Complete Agent registration is invalid: {reason}")]
+    InvalidRegistration { reason: String },
+    #[error("Complete Agent descriptor mismatch: expected {expected}, actual {actual}")]
+    DescriptorMismatch { expected: String, actual: String },
+    #[error(
+        "Complete Agent remote binding {coordinate} mismatch: expected {expected}, actual {actual}"
+    )]
+    RemoteBindingMismatch {
+        coordinate: String,
+        expected: String,
+        actual: String,
+    },
+    #[error(transparent)]
+    Factory(#[from] CompleteAgentServiceFactoryError),
+    #[error(transparent)]
+    Service(#[from] AgentServiceError),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        future::Future,
+        task::{Context, Poll, Wake, Waker},
+    };
+
+    use agentdash_agent_service_api::{
+        AgentCapabilityProfile, AgentChangePage, AgentChangesQuery, AgentCommandCapability,
+        AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
+        AgentEffectIdentity, AgentEffectInspection, AgentForkCapability, AgentLifecycleCapability,
+        AgentProfileDigest, AgentReadQuery, AgentServiceDefinitionId, AgentSnapshot,
+        AgentSourceChangeLevel, AgentSurfaceProfile, AppliedAgentSurfaceReceipt,
+        ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
+        InitialContextAppliedEvidence, InitialContextProfile, ResumeAgentCommand,
+        RevokeBoundAgentSurface, SemanticFidelity,
+    };
+
+    use super::*;
+
+    struct UnavailableFactory;
+
+    #[async_trait]
+    impl CompleteAgentServiceFactory for UnavailableFactory {
+        async fn materialize(
+            &self,
+        ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentServiceFactoryError> {
+            Err(CompleteAgentServiceFactoryError::CredentialUnavailable {
+                reason: "credential slot was not resolved".to_owned(),
+            })
+        }
+    }
+
+    fn descriptor() -> AgentServiceDescriptor {
+        AgentServiceDescriptor {
+            definition_id: AgentServiceDefinitionId::new("fixture").expect("definition"),
+            title: "Fixture".to_owned(),
+            protocol_revision: 1,
+            profile: AgentCapabilityProfile {
+                lifecycle: BTreeSet::from([AgentLifecycleCapability::Create]),
+                commands: BTreeSet::from([AgentCommandCapability::SubmitInput]),
+                fork: AgentForkCapability {
+                    cutoffs: BTreeMap::new(),
+                    lineage_fidelity: SemanticFidelity::Unsupported,
+                    native_durability: SemanticFidelity::Unsupported,
+                },
+                compaction: BTreeMap::<AgentCompactionMode, SemanticFidelity>::new(),
+                source_changes: AgentSourceChangeLevel::SnapshotOnly,
+                initial_context: InitialContextProfile {
+                    contribution_fidelity: BTreeMap::new(),
+                    applied_evidence: InitialContextAppliedEvidence::Unsupported,
+                    renderer_versions: BTreeSet::new(),
+                },
+                surface: AgentSurfaceProfile { facets: Vec::new() },
+                inspect_effects: SemanticFidelity::Exact,
+            },
+            profile_digest: AgentProfileDigest::new("fixture-profile").expect("profile"),
+            configuration_boundary: AgentConfigurationBoundary::StaticService,
+        }
+    }
+
+    fn claim() -> CompleteAgentRegistrationClaim {
+        CompleteAgentRegistrationClaim {
+            publisher_integration: "fixture.integration".to_owned(),
+            service_version: "1".to_owned(),
+            claimed_service_build_digest: AgentPayloadDigest::new("sha256:fixture")
+                .expect("digest"),
+            claimed_conformance_suite_revision: "complete-agent-v1".to_owned(),
+        }
+    }
+
+    struct DescriptorOnlyService {
+        descriptor: AgentServiceDescriptor,
+    }
+
+    #[async_trait]
+    impl CompleteAgentService for DescriptorOnlyService {
+        async fn describe(&self) -> Result<AgentServiceDescriptor, AgentServiceError> {
+            Ok(self.descriptor.clone())
+        }
+
+        async fn create(
+            &self,
+            _command: CreateAgentCommand,
+        ) -> Result<AgentCommandReceipt, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn resume(
+            &self,
+            _command: ResumeAgentCommand,
+        ) -> Result<AgentCommandReceipt, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn fork(
+            &self,
+            _command: ForkAgentCommand,
+        ) -> Result<ForkAgentReceipt, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn execute(
+            &self,
+            _command: AgentCommandEnvelope,
+        ) -> Result<AgentCommandReceipt, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn read(&self, _query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn changes(
+            &self,
+            _query: AgentChangesQuery,
+        ) -> Result<AgentChangePage, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn inspect(
+            &self,
+            _identity: AgentEffectIdentity,
+        ) -> Result<AgentEffectInspection, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn apply_surface(
+            &self,
+            _command: ApplyBoundAgentSurface,
+        ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
+            unreachable!()
+        }
+
+        async fn revoke_surface(
+            &self,
+            _command: RevokeBoundAgentSurface,
+        ) -> Result<AgentCommandReceipt, AgentServiceError> {
+            unreachable!()
+        }
+    }
+
+    struct DescriptorOnlyFactory {
+        descriptor: AgentServiceDescriptor,
+    }
+
+    #[async_trait]
+    impl CompleteAgentServiceFactory for DescriptorOnlyFactory {
+        async fn materialize(
+            &self,
+        ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentServiceFactoryError> {
+            Ok(Arc::new(DescriptorOnlyService {
+                descriptor: self.descriptor.clone(),
+            }))
+        }
+    }
+
+    struct NoopWake;
+
+    impl Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(NoopWake));
+        let mut context = Context::from_waker(&waker);
+        let mut future = Box::pin(future);
+        loop {
+            match Future::poll(future.as_mut(), &mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+
+    #[test]
+    fn contribution_never_defaults_missing_credentials_or_health_to_success() {
+        let expected = descriptor();
+        let contribution = CompleteAgentRegistrationContribution::new(
+            expected.clone(),
+            AgentServiceInstanceId::new("fixture-instance").expect("instance"),
+            CompleteAgentPlacementRequirement::InProcess,
+            None,
+            claim(),
+            Arc::new(UnavailableFactory),
+        )
+        .expect("registration");
+
+        assert!(matches!(
+            block_on(contribution.materialize()),
+            Err(CompleteAgentContributionError::Factory(
+                CompleteAgentServiceFactoryError::CredentialUnavailable { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn placement_and_remote_binding_mapping_are_validated_before_factory_side_effects() {
+        let expected = descriptor();
+        assert!(matches!(
+            CompleteAgentRegistrationContribution::new(
+                expected,
+                AgentServiceInstanceId::new("fixture-instance").expect("instance"),
+                CompleteAgentPlacementRequirement::Remote {
+                    host_id: String::new(),
+                    transport_id: String::new(),
+                },
+                None,
+                claim(),
+                Arc::new(UnavailableFactory),
+            ),
+            Err(CompleteAgentContributionError::InvalidRegistration { .. })
+        ));
+    }
+
+    #[test]
+    fn remote_registration_requires_an_explicit_matching_local_identity() {
+        let declared_descriptor = descriptor();
+        let local_instance = AgentServiceInstanceId::new("local-instance").expect("instance");
+        let placement = CompleteAgentPlacementRequirement::Remote {
+            host_id: "remote-host".to_owned(),
+            transport_id: "runtime-wire".to_owned(),
+        };
+
+        assert!(matches!(
+            CompleteAgentRegistrationContribution::new(
+                declared_descriptor.clone(),
+                local_instance.clone(),
+                placement.clone(),
+                None,
+                claim(),
+                Arc::new(UnavailableFactory),
+            ),
+            Err(CompleteAgentContributionError::InvalidRegistration { .. })
+        ));
+        assert!(matches!(
+            CompleteAgentRegistrationContribution::new(
+                declared_descriptor,
+                local_instance,
+                placement,
+                Some(CompleteAgentRemoteBindingMapping {
+                    local_service_instance_id: AgentServiceInstanceId::new("another-local")
+                        .expect("instance"),
+                    local_binding_generation: AgentBindingGeneration(3),
+                    remote_service_instance_id: AgentServiceInstanceId::new("remote-instance")
+                        .expect("instance"),
+                    remote_binding_generation: AgentBindingGeneration(9),
+                }),
+                claim(),
+                Arc::new(UnavailableFactory),
+            ),
+            Err(CompleteAgentContributionError::RemoteBindingMismatch {
+                coordinate,
+                ..
+            }) if coordinate == "local_service_instance_id"
+        ));
+    }
+
+    #[test]
+    fn materialized_candidate_preserves_descriptor_claim_and_mapping_facts() {
+        let declared_descriptor = descriptor();
+        let registration_claim = claim();
+        let local_instance =
+            AgentServiceInstanceId::new("fixture-local-instance").expect("instance");
+        let remote_binding = CompleteAgentRemoteBindingMapping {
+            local_service_instance_id: local_instance.clone(),
+            local_binding_generation: AgentBindingGeneration(3),
+            remote_service_instance_id: AgentServiceInstanceId::new("fixture-remote-instance")
+                .expect("instance"),
+            remote_binding_generation: AgentBindingGeneration(9),
+        };
+        let contribution = CompleteAgentRegistrationContribution::new(
+            declared_descriptor.clone(),
+            local_instance.clone(),
+            CompleteAgentPlacementRequirement::Remote {
+                host_id: "remote-host".to_owned(),
+                transport_id: "runtime-wire".to_owned(),
+            },
+            Some(remote_binding.clone()),
+            registration_claim.clone(),
+            Arc::new(DescriptorOnlyFactory {
+                descriptor: declared_descriptor.clone(),
+            }),
+        )
+        .expect("registration");
+
+        let candidate = block_on(contribution.materialize()).expect("materialize");
+
+        assert_eq!(
+            candidate.facts().declared_descriptor(),
+            &declared_descriptor
+        );
+        assert_eq!(candidate.facts().instance_id(), &local_instance);
+        assert_eq!(candidate.facts().remote_binding(), Some(&remote_binding));
+        assert_eq!(candidate.facts().registration_claim(), &registration_claim);
+    }
+
+    #[test]
+    fn integration_claim_has_no_host_verified_profile_authority() {
+        let contract = include_str!("agent_runtime.rs");
+
+        assert!(!contract.contains(concat!("verified_profile_", "digest")));
+    }
+
+    #[test]
+    fn agent_registration_module_depends_on_service_api_not_runtime_concrete() {
+        let manifest = include_str!("../Cargo.toml");
+        let integration_contract = include_str!("integration.rs");
+
+        assert!(manifest.contains("agentdash-agent-service-api"));
+        assert!(!manifest.contains(concat!("agentdash-agent-", "runtime-contract")));
+        for legacy in [
+            concat!("AgentRuntime", "DriverContribution"),
+            concat!("AgentRuntime", "TrustManifest"),
+            concat!("agent_runtime_", "drivers"),
+            concat!("agent_runtime_", "trust_manifests"),
+        ] {
+            assert!(
+                !integration_contract.contains(legacy),
+                "legacy Agent contribution symbol survived: {legacy}"
+            );
+        }
     }
 }

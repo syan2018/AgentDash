@@ -40,6 +40,10 @@ interface TerminalStoreState {
     state: TerminalProcessState,
     exitCode?: number,
   ) => void;
+  updateTerminalAvailability: (
+    terminalId: string,
+    availability: "online" | "offline" | "reconciling",
+  ) => void;
   appendOutput: (terminalId: string, data: string) => void;
   replaceOutput: (terminalId: string, data: string) => void;
   projectOutputEvent: (
@@ -108,6 +112,15 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
         });
       }
       return { terminals: newTerminals };
+    }),
+
+  updateTerminalAvailability: (terminalId, availability) =>
+    set((state) => {
+      const existing = state.terminals.get(terminalId);
+      if (!existing) return state;
+      const terminals = new Map(state.terminals);
+      terminals.set(terminalId, { ...existing, availability });
+      return { terminals };
     }),
 
   appendOutput: (terminalId, data) =>

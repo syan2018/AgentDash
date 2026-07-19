@@ -26,6 +26,12 @@ use agentdash_application::extension_runtime::{
     uninstall_extension_installation,
 };
 use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
+use agentdash_application_extension_gateway::{
+    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
+    ExtensionRuntimeChannelInvokeResult, RuntimeActionKey, RuntimeActor, RuntimeContext,
+    RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
+    attach_extension_invocation_workspace, resolve_extension_invocation_workspace,
+};
 use agentdash_application_ports::extension_runtime::{
     ExtensionBackendServiceInvokeRequest as BackendServiceTransportRequest,
     ExtensionBackendServiceInvokeResponse as BackendServiceTransportResponse,
@@ -33,12 +39,6 @@ use agentdash_application_ports::extension_runtime::{
     ExtensionInvocationWorkspacePayload as BackendServiceWorkspacePayload,
     ExtensionPackageArtifactPayload as BackendServicePackageArtifactPayload,
     ExtensionRuntimeActionTransportError,
-};
-use agentdash_application_runtime_gateway::{
-    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
-    ExtensionRuntimeChannelInvokeResult, RuntimeActionKey, RuntimeActor, RuntimeContext,
-    RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
-    attach_extension_invocation_workspace, resolve_extension_invocation_workspace,
 };
 use agentdash_contracts::extension_runtime::{
     ExtensionBackendServiceDiagnosticResponse, ExtensionBackendServiceHttpResponse,
@@ -174,7 +174,7 @@ pub async fn invoke_agent_run_extension_runtime_action(
     });
     attach_extension_invocation_workspace(&mut request, workspace);
 
-    let result = state.services.runtime_gateway.invoke(request).await?;
+    let result = state.services.extension_gateway.invoke(request).await?;
     Ok(Json(extension_runtime_invoke_response(result)))
 }
 

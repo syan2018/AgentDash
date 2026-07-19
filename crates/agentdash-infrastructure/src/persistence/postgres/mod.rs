@@ -1,17 +1,17 @@
 mod agent_repository;
 mod agent_run_command_receipt_repository;
-mod agent_run_control_effect_store;
-mod agent_run_delete_store;
 mod agent_run_lineage_repository;
 mod agent_run_mailbox_repository;
 mod agent_run_message_submission_store;
-mod agent_runtime_composition_repository;
-mod agent_runtime_context_broker;
+mod agent_run_product_persistence;
+mod agent_run_product_projection_repository;
 mod auth_session_repository;
 mod backend_execution_lease_repository;
 mod backend_repository;
 mod canvas_repository;
 mod canvas_runtime_state_repository;
+mod complete_agent_repositories;
+mod dash_complete_agent_store;
 mod extension_package_artifact_repository;
 mod inline_file_repository;
 mod json_document;
@@ -26,16 +26,16 @@ mod project_vfs_mount_repository;
 mod routine_repository;
 mod runner_registration_token_repository;
 mod runtime_health_repository;
-mod runtime_host_repository;
-mod runtime_repository;
 mod settings_repository;
 mod shared_library_repository;
 mod skill_asset_repository;
 mod state_change_repository;
 mod state_change_store;
 mod story_repository;
-mod tool_broker_repository;
 mod user_directory_repository;
+mod workflow_agent_call_repository;
+mod workflow_executor_effect_repository;
+mod workflow_recovery_repository;
 mod workflow_repository;
 mod workspace_repository;
 
@@ -154,19 +154,30 @@ fn database_constraint_message(
 
 pub use agent_repository::PostgresProjectAgentRepository;
 pub use agent_run_command_receipt_repository::PostgresAgentRunCommandReceiptRepository;
-pub use agent_run_control_effect_store::PostgresAgentRunControlEffectStore;
-pub use agent_run_delete_store::PostgresAgentRunDeleteStore;
 pub use agent_run_fork_graph_store::PostgresAgentRunForkGraphStore;
 pub use agent_run_lineage_repository::PostgresAgentRunLineageRepository;
 pub use agent_run_mailbox_repository::PostgresAgentRunMailboxRepository;
 pub use agent_run_message_submission_store::PostgresAgentRunMessageSubmissionStore;
-pub use agent_runtime_composition_repository::PostgresAgentRuntimeCompositionRepository;
-pub use agent_runtime_context_broker::PostgresAgentRuntimeContextBroker;
+pub use agent_run_product_persistence::{
+    PostgresAgentRunAppliedResourceSurfaceRepository, PostgresProductMailboxRepository,
+    PostgresProductRuntimeCommandClaimRepository,
+};
+pub use agent_run_product_projection_repository::{
+    PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
+    PostgresWorkspaceModulePresentationStore,
+};
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
 pub use backend_repository::PostgresBackendRepository;
 pub use canvas_repository::PostgresCanvasRepository;
 pub use canvas_runtime_state_repository::PostgresCanvasRuntimeStateRepository;
+pub use complete_agent_repositories::{
+    PostgresCompleteAgentCallbackRepository, PostgresCompleteAgentHostRepository,
+    PostgresManagedRuntimeStateRepository,
+};
+pub use dash_complete_agent_store::{
+    PostgresDashAgentRepositoryStore, PostgresDashCompleteAgentStore,
+};
 pub use extension_package_artifact_repository::PostgresExtensionPackageArtifactRepository;
 pub use inline_file_repository::PostgresInlineFileRepository;
 pub use lifecycle_anchor_repository::{
@@ -184,15 +195,15 @@ pub use project_vfs_mount_repository::PostgresProjectVfsMountRepository;
 pub use routine_repository::{PostgresRoutineExecutionRepository, PostgresRoutineRepository};
 pub use runner_registration_token_repository::PostgresRunnerRegistrationTokenRepository;
 pub use runtime_health_repository::PostgresRuntimeHealthRepository;
-pub use runtime_host_repository::PostgresAgentRuntimeHostRepository;
-pub use runtime_repository::PostgresRuntimeRepository;
 pub use settings_repository::PostgresSettingsRepository;
 pub use shared_library_repository::PostgresSharedLibraryRepository;
 pub use skill_asset_repository::PostgresSkillAssetRepository;
 pub use state_change_repository::PostgresStateChangeRepository;
 pub use story_repository::PostgresStoryRepository;
-pub use tool_broker_repository::PostgresToolBrokerRepository;
 pub use user_directory_repository::PostgresUserDirectoryRepository;
+pub use workflow_agent_call_repository::PostgresWorkflowAgentCallRepository;
+pub use workflow_executor_effect_repository::PostgresWorkflowExecutorEffectRepository;
+pub use workflow_recovery_repository::PostgresWorkflowRecoveryRepository;
 pub use workflow_repository::PostgresWorkflowRepository;
 pub use workspace_repository::PostgresWorkspaceRepository;
 mod agent_run_fork_graph_store;

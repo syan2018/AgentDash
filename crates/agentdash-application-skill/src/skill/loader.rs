@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use agentdash_application_vfs::{BUILTIN_SKILL_RULES, VfsService, discover_mount_files};
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_spi::{AuthIdentity, SkillRef, Vfs};
+use agentdash_platform_spi::{AuthIdentity, SkillRef, Vfs};
 
 use super::{MAX_NAME_LENGTH, SkillDiagnostic, SkillFrontmatter, parse_skill_file};
 
@@ -269,7 +269,7 @@ mod tests {
         MountProviderRegistry, PROVIDER_INLINE_FS, ReadResult, RuntimeFileEntry, SearchQuery,
         SearchResult,
     };
-    use agentdash_spi::{Mount, MountCapability};
+    use agentdash_platform_spi::{Mount, MountCapability};
     use tokio::sync::Mutex;
 
     use super::*;

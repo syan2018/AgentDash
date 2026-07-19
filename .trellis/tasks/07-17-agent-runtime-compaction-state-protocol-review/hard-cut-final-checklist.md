@@ -6,6 +6,8 @@
 正确替代并通过真实 consumer/tracer 证明的旧实现。
 Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 [`product-control-plane-boundary-audit.md`](./product-control-plane-boundary-audit.md)。
+最终逐项 replacement 与删除顺序见
+[`runtime-legacy-replacement-manifest.md`](./runtime-legacy-replacement-manifest.md)。
 
 ## 当前真实状态
 

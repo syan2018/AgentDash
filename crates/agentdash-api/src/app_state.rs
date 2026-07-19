@@ -24,7 +24,7 @@ use agentdash_application::product_runtime_surface::{
     ProductAgentRunAppliedResourceSurfaceCompiler, ProductAgentRunFactsResolver,
 };
 pub use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::routine::RoutineExecutor;
+use agentdash_application::routine::{RoutineExecutor, RoutineRuntimeTurnTerminalObserver};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::task::tools::ApplicationRuntimeTaskToolService;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
@@ -520,6 +520,7 @@ impl AppState {
             repos.clone(),
             backend_registry.clone(),
             product_input_delivery.clone(),
+            product_launch.clone(),
             frame_construction.clone(),
         ));
         let cron_scheduler = CronSchedulerHandle::new();
@@ -594,6 +595,12 @@ impl AppState {
             .register_runtime_change_observer(Arc::new(LifecycleRuntimeTurnTerminalObserver::new(
                 product.gateway.clone(),
                 lifecycle_orchestrator.clone(),
+            )))
+            .map_err(anyhow::Error::msg)?;
+        product
+            .register_runtime_change_observer(Arc::new(RoutineRuntimeTurnTerminalObserver::new(
+                product.gateway.clone(),
+                repos.routine_execution_repo.clone(),
             )))
             .map_err(anyhow::Error::msg)?;
         let auth_mode = crate::bootstrap::auth::validate_auth_provider_registered(

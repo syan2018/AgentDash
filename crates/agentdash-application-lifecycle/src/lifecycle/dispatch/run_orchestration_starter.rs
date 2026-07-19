@@ -109,12 +109,23 @@ impl<'a> RunOrchestrationStarter<'a> {
                 "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
             )),
             _ => {
-                let run = LifecycleRun::new_plain_for_user(
+                let mut run = LifecycleRun::new_plain_for_user(
                     plan.project_id,
                     plan.created_by_user_id
                         .as_deref()
                         .unwrap_or(LifecycleRun::SYSTEM_CREATED_BY_USER_ID),
                 );
+                if let Some(stable_run_id) = plan.stable_run_id {
+                    if let Some(existing) = self.run_repo.get_by_id(stable_run_id).await? {
+                        if existing.project_id != plan.project_id {
+                            return Err(WorkflowApplicationError::Conflict(format!(
+                                "stable LifecycleRun {stable_run_id} owner evidence drifted"
+                            )));
+                        }
+                        return Ok(existing);
+                    }
+                    run.id = stable_run_id;
+                }
                 self.run_repo.create(&run).await?;
                 Ok(run)
             }
@@ -190,7 +201,20 @@ impl<'a> RunOrchestrationStarter<'a> {
                 "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
             )),
             _ => {
-                let run = create_lifecycle_run(plan);
+                if let Some(stable_run_id) = plan.stable_run_id
+                    && let Some(existing) = self.run_repo.get_by_id(stable_run_id).await?
+                {
+                    if existing.project_id != plan.project_id {
+                        return Err(WorkflowApplicationError::Conflict(format!(
+                            "stable LifecycleRun {stable_run_id} owner evidence drifted"
+                        )));
+                    }
+                    return Ok(existing);
+                }
+                let mut run = create_lifecycle_run(plan);
+                if let Some(stable_run_id) = plan.stable_run_id {
+                    run.id = stable_run_id;
+                }
                 self.run_repo.create(&run).await?;
                 Ok(run)
             }

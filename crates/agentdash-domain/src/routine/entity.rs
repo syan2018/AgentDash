@@ -195,12 +195,27 @@ impl RoutineExecution {
         }
     }
 
-    /// Intent 已提交至 LifecycleDispatchService，记录 dispatch 锚点。
-    /// `Dispatched` 表示"已成功派发到控制面"，真正 terminal 从 LifecycleRun/Agent projection 派生。
+    /// Intent 已提交至 Product AgentRun mailbox，记录可恢复的 dispatch receipt。
+    /// `Dispatched` 表示输入已被 AgentRun 接受，真正 terminal 从 Runtime turn projection 派生。
     pub fn mark_dispatched(&mut self, refs: RoutineDispatchRefs, resolved_prompt: String) {
         self.dispatch_refs = Some(refs);
         self.resolved_prompt = Some(resolved_prompt);
         self.status = RoutineExecutionStatus::Dispatched;
+        self.error = None;
+    }
+
+    /// Product graph 与 frozen input intent 已持久化，可以在进程重启后从相同
+    /// AgentRun target 继续完成 Runtime launch / mailbox delivery。
+    pub fn mark_dispatch_prepared(&mut self, refs: RoutineDispatchRefs, resolved_prompt: String) {
+        self.dispatch_refs = Some(refs);
+        self.resolved_prompt = Some(resolved_prompt);
+        self.status = RoutineExecutionStatus::Pending;
+        self.error = None;
+    }
+
+    pub fn mark_recovery_pending(&mut self, error: impl Into<String>) {
+        self.status = RoutineExecutionStatus::Pending;
+        self.error = Some(error.into());
     }
 
     pub fn mark_failed(&mut self, error: impl Into<String>) {
@@ -214,6 +229,18 @@ impl RoutineExecution {
         self.error = Some(reason.into());
         self.completed_at = Some(Utc::now());
     }
+
+    pub fn mark_terminal(&mut self, status: RoutineExecutionStatus, detail: Option<String>) {
+        debug_assert!(matches!(
+            status,
+            RoutineExecutionStatus::Completed
+                | RoutineExecutionStatus::Failed
+                | RoutineExecutionStatus::Interrupted
+        ));
+        self.status = status;
+        self.error = detail;
+        self.completed_at = Some(Utc::now());
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,10 +248,12 @@ impl RoutineExecution {
 pub enum RoutineExecutionStatus {
     #[default]
     Pending,
-    /// Intent 已成功提交到 LifecycleDispatchService，Agent 正在执行。
-    /// 真正的 terminal status 从 LifecycleRun / LifecycleAgent projection 派生。
+    /// 输入已成功提交到 Product AgentRun mailbox，Agent 正在执行。
+    /// 真正的 terminal status 从 Runtime turn projection 派生。
     Dispatched,
+    Completed,
     Failed,
+    Interrupted,
     /// Agent 仍在运行时跳过重入
     Skipped,
 }

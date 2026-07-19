@@ -281,33 +281,29 @@ impl AgentRunProductLaunchService {
                 .clone(),
             source_binding: pre_activation_source_binding,
         };
-        let binding_digest = pre_activation_binding
-            .calculated_digest()
-            .map_err(AgentRunProductLaunchError::Binding)?;
         match self
             .bindings
             .load_product_binding(&request.provisioning.target)
             .await
             .map_err(AgentRunProductLaunchError::Binding)?
         {
-            Some(existing)
-                if existing
-                    .calculated_digest()
-                    .map_err(AgentRunProductLaunchError::Binding)?
-                    == binding_digest => {}
+            Some(existing) if same_launch_binding(&existing, &pre_activation_binding) => {}
             Some(_) => return Err(AgentRunProductLaunchError::RuntimeBindingMismatch),
-            None => self
-                .bindings
-                .commit_product_binding(&pre_activation_binding)
-                .await
-                .map_err(AgentRunProductLaunchError::Binding)?,
+            None => {
+                self.bindings
+                    .commit_product_binding(&pre_activation_binding)
+                    .await
+                    .map_err(AgentRunProductLaunchError::Binding)?;
+            }
         }
 
         self.resources
             .materialize(AgentRunAppliedResourceSurfaceMaterializeRequest {
                 target: request.provisioning.target.clone(),
                 expected_current_snapshot_revision: None,
-                product_binding_digest: binding_digest.clone(),
+                product_binding_digest: pre_activation_binding
+                    .calculated_digest()
+                    .map_err(AgentRunProductLaunchError::Binding)?,
             })
             .await
             .map_err(|error| AgentRunProductLaunchError::ResourceSurface(error.to_string()))?;
@@ -389,6 +385,21 @@ impl AgentRunProductLaunchService {
             input_receipt,
         })
     }
+}
+
+fn same_launch_binding(
+    existing: &AgentRunProductRuntimeBinding,
+    expected: &AgentRunProductRuntimeBinding,
+) -> bool {
+    existing.target == expected.target
+        && existing.runtime_thread_id == expected.runtime_thread_id
+        && existing.launch_frame == expected.launch_frame
+        && existing.execution_profile_digest == expected.execution_profile_digest
+        && existing.source_binding.source_ref == expected.source_binding.source_ref
+        && existing.source_binding.committed_at_revision
+            == expected.source_binding.committed_at_revision
+        && existing.source_binding.applied_surface_revision
+            == expected.source_binding.applied_surface_revision
 }
 
 fn envelope(
@@ -740,10 +751,13 @@ mod tests {
             runtime.clone(),
             bindings.clone(),
             resources.clone(),
-            resources,
+            resources.clone(),
         );
 
-        let outcome = service.launch(request).await.expect("replay converges");
+        let outcome = service
+            .launch(request.clone())
+            .await
+            .expect("replay converges");
 
         assert_eq!(
             outcome.binding.source_binding.activated_at_revision,
@@ -780,6 +794,21 @@ mod tests {
         assert_eq!(
             observed[2].expected_revision,
             Some(RuntimeProjectionRevision(2))
+        );
+        drop(observed);
+
+        let replayed = service
+            .launch(request)
+            .await
+            .expect("activated binding replay converges");
+        assert_eq!(replayed.binding, outcome.binding);
+        assert_eq!(runtime.observed.lock().await.len(), 6);
+        let resource_requests = resources.requests.lock().await;
+        assert_eq!(resource_requests.len(), 2);
+        assert_eq!(
+            resource_requests[0].product_binding_digest,
+            resource_requests[1].product_binding_digest,
+            "resource surface remains pinned to the pre-activation binding identity"
         );
     }
 }

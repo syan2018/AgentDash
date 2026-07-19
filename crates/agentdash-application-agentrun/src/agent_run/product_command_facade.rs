@@ -245,18 +245,8 @@ impl AgentRunProductCommandFacade {
                 response,
             },
         };
-        let identity = format!(
-            "{:x}",
-            Sha256::digest(
-                serde_json::to_vec(&(
-                    "agentdash.product-command-identity/v1",
-                    request.target.run_id,
-                    request.target.agent_id,
-                    client_command_id,
-                ))
-                .expect("Product command identity is serializable"),
-            )
-        );
+        let identity = product_command_identity(&request.target, client_command_id);
+        let operation_id = stable_product_command_operation_id(&request.target, client_command_id)?;
         let envelope = self
             .claims
             .claim(ProductRuntimeCommandClaimRequest {
@@ -264,8 +254,7 @@ impl AgentRunProductCommandFacade {
                 client_command_id: client_command_id.to_owned(),
                 request_digest,
                 envelope: ManagedRuntimeCommandEnvelope {
-                    operation_id: RuntimeOperationId::new(format!("product-command:v1:{identity}"))
-                        .map_err(|_| AgentRunProductCommandError::InvalidClientCommandId)?,
+                    operation_id,
                     idempotency_key: RuntimeIdempotencyKey::new(format!(
                         "product-command-idempotency:v1:{identity}"
                     ))
@@ -279,6 +268,36 @@ impl AgentRunProductCommandFacade {
             .map_err(product_command_claim_error)?;
         self.runtime.execute(envelope).await.map_err(Into::into)
     }
+}
+
+pub fn stable_product_command_operation_id(
+    target: &AgentRunTarget,
+    client_command_id: &str,
+) -> Result<RuntimeOperationId, AgentRunProductCommandError> {
+    let client_command_id = client_command_id.trim();
+    if client_command_id.is_empty() || client_command_id.len() > 256 {
+        return Err(AgentRunProductCommandError::InvalidClientCommandId);
+    }
+    RuntimeOperationId::new(format!(
+        "product-command:v1:{}",
+        product_command_identity(target, client_command_id)
+    ))
+    .map_err(|_| AgentRunProductCommandError::InvalidClientCommandId)
+}
+
+fn product_command_identity(target: &AgentRunTarget, client_command_id: &str) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&(
+                "agentdash.product-command-identity/v1",
+                target.run_id,
+                target.agent_id,
+                client_command_id,
+            ))
+            .expect("Product command identity is serializable"),
+        )
+    )
 }
 
 fn product_command_claim_error(
@@ -869,7 +888,7 @@ mod tests {
         );
         after
             .execute(request(
-                target,
+                target.clone(),
                 "client-restart",
                 AgentRunProductCommand::RequestCompaction,
             ))
@@ -879,6 +898,11 @@ mod tests {
         let before = runtime_before.observed.lock().await;
         let after = runtime_after.observed.lock().await;
         assert_eq!(before[0].operation_id, after[0].operation_id);
+        assert_eq!(
+            before[0].operation_id,
+            stable_product_command_operation_id(&target, "client-restart")
+                .expect("stable operation id")
+        );
         assert_eq!(before[0].idempotency_key, after[0].idempotency_key);
     }
 

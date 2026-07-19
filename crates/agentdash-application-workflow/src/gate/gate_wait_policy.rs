@@ -340,15 +340,10 @@ fn producer_resolved_by(producer: &WaitProducerRef) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{BTreeSet, HashMap},
-        str::FromStr,
+        collections::HashMap,
         sync::{Arc, Mutex},
     };
 
-    use agentdash_agent_runtime_contract::*;
-    use agentdash_application_ports::agent_run_runtime::{
-        AgentRunRuntimeBinding, AgentRunRuntimeBindingError,
-    };
     use agentdash_domain::{
         DomainError,
         workflow::{
@@ -465,133 +460,21 @@ mod tests {
         }
     }
 
-    struct FixtureRuntimeBindingRepo {
-        binding: AgentRunRuntimeBinding,
+    struct FixtureWakeTargetRuntimeThreadQuery {
+        run_id: Uuid,
+        agent_id: Uuid,
+        runtime_thread_id: String,
     }
 
     #[async_trait::async_trait]
-    impl AgentRunRuntimeBindingRepository for FixtureRuntimeBindingRepo {
-        async fn load(
-            &self,
-            target: &AgentRunRuntimeTarget,
-        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
-            Ok((&self.binding.target == target).then(|| self.binding.clone()))
-        }
-
-        async fn load_by_thread_id(
-            &self,
-            thread_id: &RuntimeThreadId,
-        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
-            Ok((&self.binding.thread_id == thread_id).then(|| self.binding.clone()))
-        }
-
-        async fn list_by_run(
+    impl GateWakeTargetRuntimeThreadQuery for FixtureWakeTargetRuntimeThreadQuery {
+        async fn resolve_runtime_thread(
             &self,
             run_id: Uuid,
-        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
-            Ok((self.binding.target.run_id == run_id)
-                .then(|| self.binding.clone())
-                .into_iter()
-                .collect())
-        }
-
-        async fn list_by_agent(
-            &self,
             agent_id: Uuid,
-        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
-            Ok((self.binding.target.agent_id == agent_id)
-                .then(|| self.binding.clone())
-                .into_iter()
-                .collect())
-        }
-
-        async fn insert(
-            &self,
-            binding: AgentRunRuntimeBinding,
-        ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
-            Ok(binding)
-        }
-    }
-
-    fn runtime_id<T: FromStr>(value: &str) -> T
-    where
-        T::Err: std::fmt::Debug,
-    {
-        value.parse().expect("valid runtime id")
-    }
-
-    fn runtime_binding(run_id: Uuid, agent_id: Uuid) -> AgentRunRuntimeBinding {
-        AgentRunRuntimeBinding {
-            target: AgentRunRuntimeTarget { run_id, agent_id },
-            presentation_thread_id: runtime_id("parent-presentation-session"),
-            thread_id: runtime_id("parent-session"),
-            binding_id: runtime_id("parent-binding"),
-            binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
-            driver_generation: RuntimeDriverGeneration(1),
-            source_thread_id: runtime_id("parent-source"),
-            profile_digest: runtime_id("parent-profile"),
-            profile_provenance: ProfileProvenance {
-                service_digest: runtime_id("parent-service"),
-                transport_digest: runtime_id("parent-transport"),
-                host_policy_digest: runtime_id("parent-policy"),
-            },
-            bound_profile: RuntimeProfile {
-                reference_class: ReferenceRuntimeClass::ManagedThread,
-                input: InputProfile {
-                    modalities: BTreeSet::new(),
-                },
-                instruction: InstructionProfile {
-                    channels: BTreeSet::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                },
-                tools: ToolProfile {
-                    channels: BTreeSet::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                    cancellation: true,
-                },
-                workspace: WorkspaceProfile {
-                    capabilities: BTreeSet::new(),
-                    mechanism: DeliveryMechanism::Native,
-                },
-                interactions: InteractionProfile {
-                    kinds: BTreeSet::new(),
-                    durable_correlation: true,
-                },
-                lifecycle: BTreeSet::new(),
-                hooks: HookProfile {
-                    points: Vec::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                },
-                context: ContextProfile {
-                    capabilities: BTreeSet::new(),
-                    fidelity: ContextFidelity::Opaque,
-                    activation_idempotent: false,
-                },
-                telemetry_config: BTreeSet::new(),
-            },
-            surface: agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
-                source_frame_id: "parent-frame".to_string(),
-                surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(1),
-                surface_digest: runtime_id("parent-surface"),
-                vfs_digest: "parent-vfs".to_string(),
-                context_recipe_revision: agentdash_agent_runtime_contract::ContextRecipeRevision(1),
-                context_digest: runtime_id("parent-context"),
-                settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision: ToolSetRevision(0),
-                tool_set_digest: "parent-tools".to_string(),
-                hook_plan: BoundRuntimeHookPlan {
-                    revision: HookPlanRevision(1),
-                    digest: runtime_id("parent-hook"),
-                    entries: Vec::new(),
-                },
-                terminal_hook_effect_binding: None,
-            },
-            settings_revision: ThreadSettingsRevision(0),
-            context_delivery_target:
-                agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget {
-                    connector_id: "pi-agent".to_string(),
-                    executor: "PI_AGENT".to_string(),
-                },
+        ) -> Result<Option<String>, String> {
+            Ok((self.run_id == run_id && self.agent_id == agent_id)
+                .then(|| self.runtime_thread_id.clone()))
         }
     }
 
@@ -673,11 +556,13 @@ mod tests {
     ) -> (Arc<FixtureGateRepo>, GateProducerTerminalConvergenceService) {
         let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(gate).await.expect("seed gate");
-        let runtime_binding_repo = Arc::new(FixtureRuntimeBindingRepo {
-            binding: runtime_binding(run_id, parent_agent_id),
+        let runtime_thread_query = Arc::new(FixtureWakeTargetRuntimeThreadQuery {
+            run_id,
+            agent_id: parent_agent_id,
+            runtime_thread_id: "parent-session".to_string(),
         });
         let service =
-            GateProducerTerminalConvergenceService::new(gate_repo.clone(), runtime_binding_repo);
+            GateProducerTerminalConvergenceService::new(gate_repo.clone(), runtime_thread_query);
         (gate_repo, service)
     }
 

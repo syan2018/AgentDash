@@ -40,6 +40,24 @@ impl<'a> SubjectAssociationWriter<'a> {
         } else {
             LifecycleSubjectAssociation::new_run_scoped(run_id, subject_ref, role, None)
         };
+        if let Some(existing) = self
+            .association_repo
+            .list_by_subject(subject_ref)
+            .await?
+            .into_iter()
+            .find(|existing| {
+                existing.anchor_run_id == association.anchor_run_id
+                    && existing.anchor_agent_id == association.anchor_agent_id
+                    && existing.role == association.role
+            })
+        {
+            return Ok(SubjectAssociationWriteResult {
+                subject_execution_ref: Some(SubjectExecutionRef {
+                    subject_ref: subject_ref.clone(),
+                    association_id: existing.id,
+                }),
+            });
+        }
         self.association_repo.create(&association).await?;
 
         Ok(SubjectAssociationWriteResult {

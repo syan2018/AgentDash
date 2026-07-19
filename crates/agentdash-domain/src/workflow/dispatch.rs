@@ -128,6 +128,8 @@ pub struct AgentLaunchIntent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubjectExecutionIntent {
     pub project_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_agent_id: Option<Uuid>,
     pub source: ExecutionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_user_id: Option<String>,
@@ -292,6 +294,7 @@ mod tests {
     fn execution_intent_serializes_as_discriminated_taxonomy() {
         let intent = ExecutionIntent::SubjectExecution(SubjectExecutionIntent {
             project_id: Uuid::new_v4(),
+            project_agent_id: None,
             source: ExecutionSource::ProjectAgent,
             created_by_user_id: None,
             subject_ref: SubjectRef::new("project", Uuid::new_v4()),

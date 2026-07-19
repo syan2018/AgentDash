@@ -677,6 +677,20 @@ mod tests {
             Ok(vec![self.execution.clone()])
         }
 
+        async fn list_recoverable(
+            &self,
+            _limit: u32,
+        ) -> Result<Vec<RoutineExecution>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn find_by_runtime_operation_id(
+            &self,
+            _runtime_operation_id: &str,
+        ) -> Result<Option<RoutineExecution>, DomainError> {
+            Ok(None)
+        }
+
         async fn find_latest_by_entity_key(
             &self,
             _routine_id: Uuid,

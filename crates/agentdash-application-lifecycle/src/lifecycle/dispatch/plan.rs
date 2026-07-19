@@ -24,6 +24,7 @@ pub(crate) struct DispatchPlan {
     pub(crate) run_policy: RunPolicy,
     pub(crate) agent_policy: AgentPolicy,
     pub(crate) gate_policy: Option<GatePolicy>,
+    pub(crate) stable_run_id: Option<Uuid>,
     pub(crate) stable_agent_id: Option<Uuid>,
     pub(crate) stable_delivery_runtime_ref: Option<Uuid>,
 }
@@ -68,6 +69,7 @@ impl From<&AgentLaunchIntent> for DispatchPlan {
             run_policy: intent.run_policy.clone(),
             agent_policy: intent.agent_policy.clone(),
             gate_policy: None,
+            stable_run_id: None,
             stable_agent_id: None,
             stable_delivery_runtime_ref: None,
         }
@@ -78,7 +80,7 @@ impl From<&SubjectExecutionIntent> for DispatchPlan {
     fn from(intent: &SubjectExecutionIntent) -> Self {
         Self {
             project_id: intent.project_id,
-            project_agent_id: None,
+            project_agent_id: intent.project_agent_id,
             execution_profile_override: None,
             source: intent.source.clone(),
             created_by_user_id: intent.created_by_user_id.clone(),
@@ -89,6 +91,7 @@ impl From<&SubjectExecutionIntent> for DispatchPlan {
             run_policy: intent.run_policy.clone(),
             agent_policy: intent.agent_policy.clone(),
             gate_policy: None,
+            stable_run_id: None,
             stable_agent_id: None,
             stable_delivery_runtime_ref: None,
         }
@@ -110,6 +113,7 @@ impl From<&InteractionDispatchIntent> for DispatchPlan {
             run_policy: RunPolicy::AppendGraph,
             agent_policy: AgentPolicy::SpawnChild,
             gate_policy: Some(intent.gate_policy.clone()),
+            stable_run_id: None,
             stable_agent_id: None,
             stable_delivery_runtime_ref: None,
         }

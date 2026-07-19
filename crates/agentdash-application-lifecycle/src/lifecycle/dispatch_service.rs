@@ -205,6 +205,30 @@ impl<'a> LifecycleDispatchService<'a> {
         })
     }
 
+    pub async fn execute_subject_with_stable_runtime_identity(
+        &self,
+        intent: &SubjectExecutionIntent,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+        delivery_runtime_ref: uuid::Uuid,
+    ) -> Result<SubjectExecutionDispatchResult, WorkflowApplicationError> {
+        let mut plan = DispatchPlan::from(intent);
+        plan.stable_run_id = Some(run_id);
+        plan.stable_agent_id = Some(agent_id);
+        plan.stable_delivery_runtime_ref = Some(delivery_runtime_ref);
+        let facts = self.dispatch_common(plan).await?;
+        let subject_execution_ref = facts.subject_execution_ref.ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "SubjectExecutionIntent 未创建 subject_execution_ref".to_string(),
+            )
+        })?;
+        Ok(SubjectExecutionDispatchResult {
+            runtime_refs: facts.runtime_refs,
+            subject_execution_ref,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
+        })
+    }
+
     pub async fn open_interaction_gate(
         &self,
         intent: &InteractionDispatchIntent,

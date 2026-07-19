@@ -380,6 +380,41 @@ mod tests {
                 .collect())
         }
 
+        async fn list_recoverable(&self, limit: u32) -> Result<Vec<RoutineExecution>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|execution| {
+                    execution.status == RoutineExecutionStatus::Pending
+                        && execution.dispatch_refs.is_some()
+                })
+                .take(limit as usize)
+                .cloned()
+                .collect())
+        }
+
+        async fn find_by_runtime_operation_id(
+            &self,
+            runtime_operation_id: &str,
+        ) -> Result<Option<RoutineExecution>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|execution| {
+                    execution
+                        .dispatch_refs
+                        .as_ref()
+                        .and_then(|refs| refs.mailbox_refs.as_ref())
+                        .and_then(|refs| refs.runtime_operation_id.as_deref())
+                        == Some(runtime_operation_id)
+                })
+                .cloned())
+        }
+
         async fn find_latest_by_entity_key(
             &self,
             routine_id: Uuid,

@@ -232,7 +232,9 @@ impl From<DispatchStrategy> for RoutineDispatchStrategyDto {
 pub enum RoutineExecutionStatusDto {
     Pending,
     Dispatched,
+    Completed,
     Failed,
+    Interrupted,
     Skipped,
 }
 
@@ -241,7 +243,9 @@ impl From<RoutineExecutionStatus> for RoutineExecutionStatusDto {
         match status {
             RoutineExecutionStatus::Pending => Self::Pending,
             RoutineExecutionStatus::Dispatched => Self::Dispatched,
+            RoutineExecutionStatus::Completed => Self::Completed,
             RoutineExecutionStatus::Failed => Self::Failed,
+            RoutineExecutionStatus::Interrupted => Self::Interrupted,
             RoutineExecutionStatus::Skipped => Self::Skipped,
         }
     }

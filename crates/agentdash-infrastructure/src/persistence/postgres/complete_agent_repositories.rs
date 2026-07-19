@@ -1148,6 +1148,7 @@ mod tests {
                 turns: Vec::new(),
                 items: Vec::new(),
                 interactions: Vec::new(),
+                conversation_history: Vec::new(),
                 thread_name: thread_name.map(str::to_owned),
                 thread_name_source: Some(ManagedRuntimeThreadNameSource {
                     authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,

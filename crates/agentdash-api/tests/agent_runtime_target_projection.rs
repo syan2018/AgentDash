@@ -98,9 +98,7 @@ fn snapshot(
     let terminal = match item_status {
         ManagedRuntimeEntityStatus::Completed => Some(ManagedRuntimeTerminalStatus::Completed),
         ManagedRuntimeEntityStatus::Failed => Some(ManagedRuntimeTerminalStatus::Failed),
-        ManagedRuntimeEntityStatus::Interrupted => {
-            Some(ManagedRuntimeTerminalStatus::Interrupted)
-        }
+        ManagedRuntimeEntityStatus::Interrupted => Some(ManagedRuntimeTerminalStatus::Interrupted),
         ManagedRuntimeEntityStatus::Lost => Some(ManagedRuntimeTerminalStatus::Lost),
         ManagedRuntimeEntityStatus::Accepted | ManagedRuntimeEntityStatus::Running => None,
     }
@@ -143,6 +141,7 @@ fn snapshot(
             .expect("canonical compaction presentation"),
         }],
         interactions: Vec::new(),
+        conversation_history: Vec::new(),
         thread_name: None,
         thread_name_source: None,
         operations: vec![ManagedRuntimeOperation {

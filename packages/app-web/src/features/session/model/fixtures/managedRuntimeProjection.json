@@ -74,6 +74,15 @@
             "applied_surface_revision": null
           }
         },
+        "rebind": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": "6",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
         "activate": {
           "status": "available",
           "evidence": {
@@ -146,7 +155,8 @@
             "applied_surface_revision": null
           }
         }
-      }
+      },
+      "conversation_history": []
     },
     "failed": {
       "thread_id": "runtime-thread-child",
@@ -222,6 +232,15 @@
             "applied_surface_revision": null
           }
         },
+        "rebind": {
+          "status": "available",
+          "evidence": {
+            "decided_at_revision": "7",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
         "activate": {
           "status": "available",
           "evidence": {
@@ -294,7 +313,8 @@
             "applied_surface_revision": null
           }
         }
-      }
+      },
+      "conversation_history": []
     },
     "lost": {
       "thread_id": "runtime-thread-child",
@@ -372,6 +392,16 @@
             "applied_surface_revision": null
           }
         },
+        "rebind": {
+          "status": "unavailable",
+          "reason": "source_unavailable",
+          "evidence": {
+            "decided_at_revision": "8",
+            "blocking_operation_id": null,
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
         "activate": {
           "status": "unavailable",
           "reason": "source_unavailable",
@@ -452,7 +482,8 @@
             "applied_surface_revision": null
           }
         }
-      }
+      },
+      "conversation_history": []
     },
     "started": {
       "thread_id": "runtime-thread-child",
@@ -524,6 +555,16 @@
             "applied_surface_revision": null
           }
         },
+        "rebind": {
+          "status": "unavailable",
+          "reason": "operation_in_flight",
+          "evidence": {
+            "decided_at_revision": "5",
+            "blocking_operation_id": "operation-compaction",
+            "bound_surface_revision": null,
+            "applied_surface_revision": null
+          }
+        },
         "activate": {
           "status": "unavailable",
           "reason": "operation_in_flight",
@@ -604,7 +645,8 @@
             "applied_surface_revision": null
           }
         }
-      }
+      },
+      "conversation_history": []
     }
   },
   "change_page": {

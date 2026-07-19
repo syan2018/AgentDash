@@ -3,6 +3,7 @@ use std::sync::Arc;
 use agentdash_agent_runtime_contract::{ManagedRuntimeGatewayError, RuntimeChangeSequence};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommand, AgentRunProductCommandError, AgentRunProductCommandRequest,
+    AgentRunProductDeleteError, AgentRunProductDeleteRequest, AgentRunProductDeleteService,
     AgentRunProductProjectionError, AgentRunProductRuntimeRecoveryError,
     AgentRunProductRuntimeRecoveryRequest, AgentRunTerminalChangeSequence,
 };
@@ -56,6 +57,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::post(execute_managed_runtime_command),
         )
         .route(
+            "/projects/{project_id}/agent-runs/{run_id}",
+            axum::routing::delete(delete_project_agent_run),
+        )
+        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/workspace",
             axum::routing::get(get_agent_run_workspace),
         )
@@ -79,6 +84,52 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/changes",
             axum::routing::get(get_agent_run_terminal_changes),
         )
+}
+
+async fn delete_project_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, run_id)): Path<(String, String)>,
+) -> Result<Json<agentdash_contracts::workflow::DeleteAgentRunResponse>, ApiError> {
+    let project_id = parse_uuid(&project_id, "project_id")?;
+    let run_id = parse_uuid(&run_id, "run_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Configure,
+    )
+    .await?;
+    let outcome = AgentRunProductDeleteService::new(
+        state.repos.lifecycle_run_repo.clone(),
+        state.repos.lifecycle_agent_repo.clone(),
+        state
+            .services
+            .agent_run_product_projection_composition
+            .gateway
+            .clone(),
+        state.services.agent_run_product_commands.clone(),
+    )
+    .delete(AgentRunProductDeleteRequest { project_id, run_id })
+    .await
+    .map_err(agent_run_product_delete_error)?;
+    Ok(Json(
+        agentdash_contracts::workflow::DeleteAgentRunResponse {
+            deleted: outcome.deleted,
+            project_id: outcome.project_id.to_string(),
+            run_id: outcome.run_id.to_string(),
+        },
+    ))
+}
+
+fn agent_run_product_delete_error(error: AgentRunProductDeleteError) -> ApiError {
+    match error {
+        AgentRunProductDeleteError::ProjectMismatch => ApiError::NotFound(error.to_string()),
+        AgentRunProductDeleteError::RuntimeNotClosed => ApiError::Conflict(error.to_string()),
+        AgentRunProductDeleteError::Repository(_) | AgentRunProductDeleteError::Runtime(_) => {
+            ApiError::Internal(error.to_string())
+        }
+    }
 }
 
 async fn get_agent_run_workspace(

@@ -198,6 +198,9 @@ async fn execute_managed_runtime_command(
             .map_err(agent_run_product_recovery_error);
     }
     let command = match body.command {
+        product_projection_contract::AgentRunProductRuntimeCommand::Resume => {
+            AgentRunProductCommand::Resume
+        }
         product_projection_contract::AgentRunProductRuntimeCommand::SubmitInput { content } => {
             AgentRunProductCommand::SubmitInput { content }
         }
@@ -215,6 +218,9 @@ async fn execute_managed_runtime_command(
             interaction_id,
             response,
         },
+        product_projection_contract::AgentRunProductRuntimeCommand::Close => {
+            AgentRunProductCommand::Close
+        }
     };
     state
         .services
@@ -241,15 +247,15 @@ fn agent_run_product_recovery_error(error: AgentRunProductRuntimeRecoveryError) 
         | AgentRunProductRuntimeRecoveryError::Runtime(ManagedRuntimeGatewayError::Conflict {
             ..
         })
-        | AgentRunProductRuntimeRecoveryError::Runtime(
-            ManagedRuntimeGatewayError::Unavailable { .. },
-        ) => ApiError::Conflict(error.to_string()),
+        | AgentRunProductRuntimeRecoveryError::Runtime(ManagedRuntimeGatewayError::Unavailable {
+            ..
+        }) => ApiError::Conflict(error.to_string()),
         AgentRunProductRuntimeRecoveryError::Binding(_)
         | AgentRunProductRuntimeRecoveryError::ResourceSurface(_)
         | AgentRunProductRuntimeRecoveryError::Runtime(ManagedRuntimeGatewayError::NotFound)
-        | AgentRunProductRuntimeRecoveryError::Runtime(
-            ManagedRuntimeGatewayError::Persistence { .. },
-        ) => ApiError::Internal(error.to_string()),
+        | AgentRunProductRuntimeRecoveryError::Runtime(ManagedRuntimeGatewayError::Persistence {
+            ..
+        }) => ApiError::Internal(error.to_string()),
         AgentRunProductRuntimeRecoveryError::Runtime(ManagedRuntimeGatewayError::Invalid {
             ..
         }) => ApiError::BadRequest(error.to_string()),

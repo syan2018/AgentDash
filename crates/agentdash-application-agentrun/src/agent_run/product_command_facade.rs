@@ -53,6 +53,7 @@ pub trait ProductRuntimeCommandClaimRepository: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentRunProductCommand {
+    Resume,
     SubmitInput {
         content: Vec<ManagedRuntimeContentBlock>,
     },
@@ -63,17 +64,20 @@ pub enum AgentRunProductCommand {
         interaction_id: RuntimeInteractionId,
         response: ManagedRuntimeInteractionResponse,
     },
+    Close,
 }
 
 impl AgentRunProductCommand {
     fn runtime_kind(&self, has_active_turn: bool) -> ManagedRuntimeCommandKind {
         match self {
+            Self::Resume => ManagedRuntimeCommandKind::Resume,
             Self::SubmitInput { .. } if has_active_turn => ManagedRuntimeCommandKind::Steer,
             Self::SubmitInput { .. } => ManagedRuntimeCommandKind::SubmitInput,
             Self::Interrupt => ManagedRuntimeCommandKind::Interrupt,
             Self::RequestCompaction => ManagedRuntimeCommandKind::RequestCompaction,
             Self::Rebind => ManagedRuntimeCommandKind::Rebind,
             Self::ResolveInteraction { .. } => ManagedRuntimeCommandKind::ResolveInteraction,
+            Self::Close => ManagedRuntimeCommandKind::Close,
         }
     }
 }
@@ -220,6 +224,7 @@ impl AgentRunProductCommandFacade {
             });
         }
         let command = match request.command {
+            AgentRunProductCommand::Resume => ManagedRuntimeCommand::Resume,
             AgentRunProductCommand::SubmitInput { content } => {
                 if let Some(expected_turn_id) = snapshot.active_turn_id {
                     ManagedRuntimeCommand::Steer {
@@ -244,6 +249,7 @@ impl AgentRunProductCommandFacade {
                 interaction_id,
                 response,
             },
+            AgentRunProductCommand::Close => ManagedRuntimeCommand::Close,
         };
         let identity = product_command_identity(&request.target, client_command_id);
         let operation_id = stable_product_command_operation_id(&request.target, client_command_id)?;
@@ -508,11 +514,13 @@ mod tests {
         };
         let mut command_availability = BTreeMap::new();
         for kind in [
+            ManagedRuntimeCommandKind::Resume,
             ManagedRuntimeCommandKind::SubmitInput,
             ManagedRuntimeCommandKind::Steer,
             ManagedRuntimeCommandKind::Interrupt,
             ManagedRuntimeCommandKind::RequestCompaction,
             ManagedRuntimeCommandKind::ResolveInteraction,
+            ManagedRuntimeCommandKind::Close,
         ] {
             command_availability.insert(
                 kind,
@@ -614,6 +622,7 @@ mod tests {
 
     fn commands() -> Vec<(bool, AgentRunProductCommand)> {
         vec![
+            (false, AgentRunProductCommand::Resume),
             (
                 false,
                 AgentRunProductCommand::SubmitInput {
@@ -632,6 +641,7 @@ mod tests {
                     response: ManagedRuntimeInteractionResponse::Approved,
                 },
             ),
+            (false, AgentRunProductCommand::Close),
         ]
     }
 

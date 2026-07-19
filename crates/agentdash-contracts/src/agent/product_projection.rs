@@ -16,6 +16,7 @@ pub struct AgentRunProjectionTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentRunProductRuntimeCommand {
+    Resume,
     SubmitInput {
         content: Vec<ManagedRuntimeContentBlock>,
     },
@@ -26,6 +27,7 @@ pub enum AgentRunProductRuntimeCommand {
         interaction_id: RuntimeInteractionId,
         response: ManagedRuntimeInteractionResponse,
     },
+    Close,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

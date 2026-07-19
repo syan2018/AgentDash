@@ -22,7 +22,7 @@ conformance 的关键路径收尾，完整状态评估和阶段出口以
 验收索引；依赖关系以本文件为准，安全迁移边界和派发协议以
 `transition-architecture.md` 为准。
 
-Product 业务以 `c3cc58b9` 和既有行为测试为 oracle；恢复时保留业务规则，只把旧
+Product 控制面以 `58c537b7`（`c3cc58b9^`）和既有行为测试为 oracle；恢复时保留业务规则，只把旧
 RuntimeSession/journal/Backbone seam 适配到最终 owner。
 
 ## 1. 依赖图
@@ -422,7 +422,7 @@ cargo test -p agentdash-agent-runtime-test-support codex
 
 ### Implement
 
-- [ ] 以 `c3cc58b9` 建立 Product capability/file/route/composition/test oracle；
+- [ ] 以 `58c537b7` 建立 Product capability/file/route/composition/test oracle；
   Companion、Frame Construction、Routine、Workspace、Canvas、Terminal、VFS、Wait、
   Capability、Workflow 与 AgentRun commands 均有恢复条目。
 - [ ] 恢复 Product 源码、routes、AppState composition 和测试；业务条件、权限、

@@ -1018,7 +1018,8 @@
 - 当前 S4 的剩余范围已收敛为 Companion、Routine、Workspace/Canvas/Terminal、
   Lifecycle VFS、Wait、Capability 与 canonical UI 的 production caller/tracer。
 - 已清理未提交的 Companion PG repository / graph helper 实验改动，工作树恢复干净。
-- Product behavior oracle 固定为 `c3cc58b9`。后续先从 oracle 恢复 Product 源码、routes、
+- Product 控制面 oracle 修正为 `58c537b7`（`c3cc58b9^`）。`c3cc58b9` 已经切断
+  AgentRun exports，不能作为完整 composition baseline。后续先从 oracle 恢复 Product 源码、routes、
   composition 与 tests，再只在旧依赖点机械适配 Runtime Contract、Tool Broker、
   Product repositories、AppliedResourceSurface 与 canonical projection。
 - `final-convergence-closeout.md` 已固定 C0–C6 全分支收尾路径；

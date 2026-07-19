@@ -8,7 +8,7 @@
 ## 当前真实状态
 
 - [x] C0：工作树干净，Product behavior oracle 与 capability inventory 已固定。
-- [x] Product behavior oracle 固定为 `c3cc58b9`。
+- [x] Product 控制面 oracle 固定为 `58c537b7`（`c3cc58b9^`）。
 - [x] Complete Agent / Managed Runtime / Host / Dash/Core 的已验证基础保留。
 - [x] canonical App Server protocol owner、source projector、Runtime carrier 与前端
   reducer/renderer 已恢复。
@@ -97,6 +97,11 @@
 - [ ] restart/unknown outcome/recovery 使用同一 command/effect/child identity。
 
 ## C5 — Final Hard Cut
+
+Application/Product 领域不属于 Hard Cut。Companion、Frame、Routine、Workflow、
+Workspace、Canvas、Terminal、Wait、Lifecycle 只迁移 Runtime 接入 seam；其业务规则、
+route、worker、权限、gate、mailbox 与用户可见行为必须保持。移除 module export、
+route mount、AppState composition 或 Product caller 不能证明旧 Runtime 已被替代。
 
 每个候选项必须填写：
 

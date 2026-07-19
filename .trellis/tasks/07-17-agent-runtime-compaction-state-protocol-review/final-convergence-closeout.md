@@ -5,7 +5,7 @@
 > 当前阶段：完成 S4 Product Lane，随后重新形成 S5 唯一 production path，最后执行
 > S6 Final Conformance
 >
-> Product 恢复 oracle：`c3cc58b9`
+> Product 控制面 oracle：`58c537b7`（`c3cc58b9^`）
 
 ## 1. 分支最终要交付的系统
 
@@ -109,7 +109,7 @@ flowchart LR
 输出：
 
 - 当前 HEAD 与单分支工作树；
-- `c3cc58b9` Product behavior oracle；
+- `58c537b7` Product 控制面、composition、route 与 behavior oracle；
 - Product capability inventory；
 - final owner mapping；
 - replacement/deletion manifest 模板。
@@ -216,6 +216,17 @@ Lifecycle mount 必须在 AgentRun AppliedResourceSurface materialization 时写
 ### C5 — Final Hard Cut
 
 Hard Cut 只处理已经通过 C1–C4 的 owner replacements：
+
+本任务的重构对象是 Agent Runtime 内核及其旧 owner。Application/Product 领域不属于
+Hard Cut 对象；Companion、Frame、Routine、Workflow、Workspace、Canvas、Terminal、
+Wait、Lifecycle 的业务规则、route、worker、权限、gate、mailbox 与用户可见行为只允许
+把旧 Runtime seam 适配到最终 Runtime Contract、Product projection、
+AppliedResourceSurface 与 canonical history。
+
+删除 module export、route mount、AppState composition 或 Product caller 不构成
+legacy zero-consumer evidence。只有同一生产 caller 已接入 final replacement，且产品
+tracer 证明前向路径成立后，旧 Runtime implementation/repository/schema/crate 才进入
+deletion manifest。
 
 - final migration 与 repository activation；
 - production composition / registry；
@@ -344,7 +355,7 @@ Negative evidence:
 ## 7. 当前下一步
 
 1. 提交本收尾规划 checkpoint；
-2. C1：从 `c3cc58b9` 恢复 Product modules、routes、composition 和 tests；
+2. C1：从 `58c537b7` 恢复 Product modules、routes、composition 和 tests；
 3. 对恢复后的编译断点生成 final seam ledger；
 4. C2：优先闭合 Companion/Frame/Routine，再闭合 Workspace/Canvas/Terminal/Wait；
 5. 衔接 Lifecycle mount materialization；

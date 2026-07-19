@@ -29,7 +29,7 @@ use agentdash_application_vfs::{MountProviderRegistry, VfsMutationDispatcher, Vf
 use agentdash_contracts::project::ProjectEventStreamEnvelope;
 use agentdash_diagnostics::DiagnosticBuffer;
 use agentdash_domain::llm_provider::LlmSecretCodec;
-use agentdash_infrastructure::agent_runtime_composition::AgentRunProductProjectionComposition;
+use agentdash_infrastructure::AgentRunProductProjectionComposition;
 use agentdash_infrastructure::{
     CompleteAgentComposition, PinnedCompleteAgentVerificationCatalog,
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,

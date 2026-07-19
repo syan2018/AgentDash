@@ -1,4 +1,4 @@
-pub mod agent_runtime_composition;
+mod agent_run_product_projection_composition;
 mod complete_agent_composition;
 pub mod function_runner;
 pub mod hooks;
@@ -12,6 +12,7 @@ pub mod skill_source;
 pub mod storage;
 pub mod workflow_scripts;
 
+pub use agent_run_product_projection_composition::AgentRunProductProjectionComposition;
 pub use complete_agent_composition::{
     CompleteAgentComposition, CompleteAgentCompositionError, PinnedCompleteAgentVerificationCatalog,
 };

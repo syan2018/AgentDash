@@ -49,7 +49,13 @@ inputs.
 - `projection_revision bigint not null`
 - `captured_at_ms bigint not null`
 - primary key `(run_id, agent_id, snapshot_revision)`
-- unique `(run_id, agent_id, agent_surface_digest, vfs_digest, product_binding_digest)`
+
+All Rust `u64` values mapped to PostgreSQL `bigint` must be rejected at the Product boundary when
+they exceed `i64::MAX`. Snapshot revisions are additionally positive. The remaining revision and
+timestamp columns are non-negative, so SQL checks and Rust validation describe the same signed
+storage range. The snapshot table does not use a uniqueness constraint over a subset of declared
+digests: such a key cannot prove equality of VFS/Task payloads and provenance. Primary-key exact
+row replay plus the current-pointer CAS is the idempotency authority.
 
 `agent_run_applied_resource_surface_current`
 
@@ -60,21 +66,33 @@ inputs.
 - foreign key `(run_id, agent_id, snapshot_revision)` references the immutable snapshot table
 
 Commit runs in one transaction. Insert the immutable snapshot, accepting only an exact replay of
-all canonical evidence. Insert the first current pointer only when the expected revision is null;
-otherwise update it with
+all canonical evidence. Exact replay is determined by the primary-key row and byte-for-byte
+equality of every scalar and typed JSONB column, not by a subset of caller-declared digests. A
+same-revision row with any different payload, digest, revision or provenance is a conflict.
+`AlreadyCurrent` is returned only when the current pointer references that exact row; an old
+immutable row cannot replay successfully after the pointer has advanced.
+Insert the first current pointer only when the expected revision is null; otherwise update it with
 `where run_id = ? and agent_id = ? and snapshot_revision = expected_revision`. A zero-row CAS is
-`Missing` or `Conflict`, never last-write-wins. A binding/surface/VFS digest change requires
+`Missing` or `Conflict`, never last-write-wins. A binding/Agent surface/VFS/Task digest change requires
 `snapshot_revision + 1`; old grants are never copied implicitly. The query joins the current
 pointer to the immutable snapshot in the same database snapshot and validates the echoed target
-before returning `Current`.
+before returning the complete `AgentRunAppliedResourceSurfaceSnapshot`. It optionally fences an
+expected snapshot revision and returns typed stale evidence; missing surface data is
+`SurfaceNotApplied`, not a claim that Product binding is absent.
 
 ## Consumer mapping
 
 Infrastructure authorizers compare the callback applied surface revision/digest byte-for-byte
 with `agent_surface_revision`/`agent_surface_digest`, then match the requested mount, operation
-and relative path against `vfs_grants`. `Read` never implies `List`, `Search`, `Write` or `Exec`;
-an absent grant never means the whole mount. The workspace API may expose the same Product
-snapshot but must not independently reconstruct VFS facts.
+and canonical relative path against `vfs_grants`. Paths are segmented on `/`; absolute paths,
+backslashes, NUL, empty segments, `.` and `..` are rejected. A prefix matches itself or descendants
+beginning at the next segment boundary, so `src` matches `src/lib.rs` but not `src2/lib.rs`.
+`Read` never implies `List`, `Search`, `Write` or `Exec`; an absent grant never means the whole
+mount. The workspace API may expose the same Product snapshot but must not independently
+reconstruct VFS facts.
+The typed authorization decision/audit evidence records the outer `snapshot_revision` together
+with the Agent, VFS and Task revisions/digests, so one decision cannot accidentally combine
+resource families from different Product snapshots.
 
 Task executors map `AppliedTaskScope` and `AppliedTaskOperation` to their Runtime execution grant.
 An absent scope or operation is a typed deny; Project scope never implies Write, and a Task scope

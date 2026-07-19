@@ -113,7 +113,10 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 
 ## C3/C4 — Product parity tracer
 
-- [ ] Project Agent / AgentRun create、resume、delete。
+- [x] AgentRun Resume/Close 经 Product command facade 与 durable claim 调 Runtime；
+  Product aggregate Delete 逐一 Close 并复读 canonical Closed 后删除 LifecycleRun，且与
+  ProjectAgent 模板删除保持独立。
+- [ ] ProjectAgent direct AgentRun create Product saga、POST route 与首输入纵向 tracer。
 - [ ] 普通 input → Complete Agent → canonical Turn/Item/output → UI；Native Dash history
   已证明产生 canonical input/Turn start/Turn complete，等待 production
   AgentRun/API/frontend 纵向 consumer。

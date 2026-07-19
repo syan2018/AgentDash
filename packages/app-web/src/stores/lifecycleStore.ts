@@ -14,7 +14,6 @@ import type {
   AgentRunView,
   AgentFrameRuntimeView,
   SubjectExecutionView,
-  RuntimeSessionTraceView,
   OrchestrationInstanceView,
   RuntimeNodeView,
 } from "../types";
@@ -24,7 +23,6 @@ import {
   fetchSubjectExecution,
   fetchProjectActiveAgents,
   fetchAgentFrameRuntime,
-  fetchRuntimeTrace,
 } from "../services/lifecycle";
 
 // ─── State Shape ─────────────────────────────────────────
@@ -36,7 +34,6 @@ interface LifecycleState {
   agents: Map<string, AgentRunView>;
   frames: Map<string, AgentFrameRuntimeView>;
   subjectExecutions: Map<string, SubjectExecutionView>;
-  runtimeTraces: Map<string, RuntimeSessionTraceView>;
 
   isLoading: boolean;
   error: string | null;
@@ -48,7 +45,6 @@ interface LifecycleState {
   setAgent: (agent: AgentRunView) => void;
   setFrame: (frame: AgentFrameRuntimeView) => void;
   setSubjectExecution: (view: SubjectExecutionView) => void;
-  setRuntimeTrace: (trace: RuntimeSessionTraceView) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
 
@@ -60,7 +56,6 @@ interface LifecycleState {
   fetchProjectActiveAgents: (projectId: string) => Promise<void>;
   fetchSubjectExecution: (subjectKind: string, subjectId: string) => Promise<SubjectExecutionView | null>;
   fetchFrame: (frameId: string) => Promise<AgentFrameRuntimeView | null>;
-  fetchRuntimeTrace: (runtimeSessionId: string) => Promise<RuntimeSessionTraceView | null>;
 
   // ── derived views ──
   /** 按 subject association 聚合：返回指定 subject 关联的所有 LifecycleRun */
@@ -93,7 +88,6 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   agents: new Map(),
   frames: new Map(),
   subjectExecutions: new Map(),
-  runtimeTraces: new Map(),
   isLoading: false,
   error: null,
 
@@ -138,13 +132,6 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
       const next = new Map(s.subjectExecutions);
       next.set(key, view);
       return { subjectExecutions: next };
-    }),
-
-  setRuntimeTrace: (trace) =>
-    set((s) => {
-      const next = new Map(s.runtimeTraces);
-      next.set(trace.runtime_session_ref.runtime_session_id, trace);
-      return { runtimeTraces: next };
     }),
 
   setLoading: (loading) => set({ isLoading: loading }),
@@ -222,17 +209,6 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
       const frame = await fetchAgentFrameRuntime(frameId);
       get().setFrame(frame);
       return frame;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  fetchRuntimeTrace: async (runtimeSessionId) => {
-    try {
-      const trace = await fetchRuntimeTrace(runtimeSessionId);
-      get().setRuntimeTrace(trace);
-      return trace;
     } catch (e) {
       set({ error: (e as Error).message });
       return null;

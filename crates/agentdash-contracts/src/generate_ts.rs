@@ -235,7 +235,7 @@ use agentdash_contracts::workflow::{
     OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
     PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
     ProjectAgentRunListView, RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionRefDto,
-    RuntimeSessionTraceView, SubjectExecutionAttemptView, SubjectExecutionView, SubjectRefDto,
+    SubjectExecutionAttemptView, SubjectExecutionView, SubjectRefDto,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
     WorkflowGraphResponse, WorkflowHookTrigger, WorkflowScriptApiEndpointDto,
@@ -919,7 +919,6 @@ fn main() {
             export_all::<SubjectExecutionAttemptView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
-            export_all::<RuntimeSessionTraceView>(dir);
             export_all::<AgentRunListRuntimeSummaryView>(dir);
             export_all::<AgentRunListRuntimeThreadStatus>(dir);
             export_all::<AgentRunListChildView>(dir);

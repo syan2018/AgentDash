@@ -213,8 +213,6 @@ export type RuntimeSessionPolicy = "create_new" | "deliver_to_current_trace";
 
 export type RuntimeSessionRefDto = { runtime_session_id: string, };
 
-export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDto, frame_ref?: AgentFrameRefDto, events: Array<JsonValue>, turns: Array<JsonValue>, };
-
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
 
 export type SubjectExecutionAttemptView = { target: AgentRunRefDto, runtime: LifecycleRuntimeExecutionTraceView, attempt: LifecycleExecutionAttemptView, };

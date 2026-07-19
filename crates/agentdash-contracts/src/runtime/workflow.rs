@@ -1570,19 +1570,6 @@ pub struct SubjectExecutionView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct RuntimeSessionTraceView {
-    pub runtime_session_ref: RuntimeSessionRefDto,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub frame_ref: Option<AgentFrameRefDto>,
-    #[serde(default)]
-    pub events: Vec<Value>,
-    #[serde(default)]
-    pub turns: Vec<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct AgentRunRuntimeCommandRequest {
     pub client_command_id: String,
 }

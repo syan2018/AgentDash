@@ -1,6 +1,4 @@
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
-use agentdash_contracts::session::SessionProjectionViewResponse;
 use uuid::Uuid;
 
 use crate::{app_state::AppState, rpc::ApiError};
@@ -48,23 +46,6 @@ async fn load_lifecycle_run_for_session(
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
 }
 
-pub(crate) async fn load_runtime_trace_context_projection(
-    state: &AppState,
-    target: AgentRunRuntimeTarget,
-) -> Result<SessionProjectionViewResponse, ApiError> {
-    state
-        .services
-        .agent_run_journal
-        .build_context_projection_read_model(
-            agentdash_application_agentrun::agent_run::AgentRunJournalQuery {
-                run_id: target.run_id,
-                agent_id: target.agent_id,
-            },
-        )
-        .await
-        .map_err(ApiError::from)
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // Context Audit —— Bundle / Fragment 产出与消费的可观测轨迹（Step 10d）
 // ═══════════════════════════════════════════════════════════════════
@@ -86,10 +67,19 @@ fn parse_scope_tag(tag: &str) -> Option<agentdash_platform_spi::FragmentScope> {
 fn scope_set_to_tags(scope: agentdash_platform_spi::FragmentScopeSet) -> Vec<String> {
     let mut tags = Vec::new();
     for (label, s) in [
-        ("runtime_agent", agentdash_platform_spi::FragmentScope::RuntimeAgent),
+        (
+            "runtime_agent",
+            agentdash_platform_spi::FragmentScope::RuntimeAgent,
+        ),
         ("title_gen", agentdash_platform_spi::FragmentScope::TitleGen),
-        ("summarizer", agentdash_platform_spi::FragmentScope::Summarizer),
-        ("bridge_replay", agentdash_platform_spi::FragmentScope::BridgeReplay),
+        (
+            "summarizer",
+            agentdash_platform_spi::FragmentScope::Summarizer,
+        ),
+        (
+            "bridge_replay",
+            agentdash_platform_spi::FragmentScope::BridgeReplay,
+        ),
         ("audit", agentdash_platform_spi::FragmentScope::Audit),
     ] {
         if scope.contains(s) {

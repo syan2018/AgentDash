@@ -11,7 +11,6 @@ import type {
   ProjectAgentRunListView,
   LifecycleRunView,
   ProjectActiveAgentsView,
-  RuntimeSessionTraceView,
   SubjectExecutionView,
 } from "../types";
 import { agentRunScopedPath } from "./agentRunRuntime";
@@ -61,12 +60,6 @@ export async function fetchProjectAgentRuns(
 
 export async function fetchAgentFrameRuntime(frameId: string): Promise<AgentFrameRuntimeView> {
   return api.get<AgentFrameRuntimeView>(`/agent-frames/${encodeURIComponent(frameId)}/runtime`);
-}
-
-export async function fetchRuntimeTrace(runtimeSessionId: string): Promise<RuntimeSessionTraceView> {
-  return api.get<RuntimeSessionTraceView>(
-    `/runtime-traces/${encodeURIComponent(runtimeSessionId)}`,
-  );
 }
 
 export async function fetchAgentRunWorkspace(

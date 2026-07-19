@@ -3,8 +3,8 @@ use std::sync::Arc;
 use agentdash_agent_runtime_contract::ManagedAgentRuntimeGateway;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommandFacade, AgentRunProductProjectionGateway,
-    AgentRunProductProjectionQueryPort,
-    AgentRunThreadNameProjectionObserver, ProductAgentRunRuntimeProjectionAdapter,
+    AgentRunProductProjectionQueryPort, AgentRunThreadNameProjectionObserver,
+    ProductAgentRunRuntimeProjectionAdapter,
 };
 use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
 use agentdash_domain::workflow::LifecycleRunRepository;
@@ -36,21 +36,20 @@ impl AgentRunProductProjectionComposition {
     pub fn build(
         pool: PgPool,
         runtime: Arc<dyn ManagedAgentRuntimeGateway>,
+        runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
+        workspace_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
         runs: Arc<dyn LifecycleRunRepository>,
         notifications: Arc<dyn ProjectProjectionNotificationPort>,
         change_claim_owner: impl Into<String>,
         change_claim_lease_duration_ms: u64,
     ) -> Result<Self, String> {
-        let runtime_bindings = Arc::new(PostgresAgentRunProductRuntimeBindingRepository::new(
+        let runtime_command_claims = Arc::new(PostgresProductRuntimeCommandClaimRepository::new(
             pool.clone(),
         ));
-        let runtime_command_claims =
-            Arc::new(PostgresProductRuntimeCommandClaimRepository::new(pool.clone()));
-        let workspace_presentations =
-            Arc::new(PostgresWorkspaceModulePresentationStore::new(pool.clone()));
         let terminals = Arc::new(PostgresAgentRunTerminalProjectionStore::new(pool.clone()));
-        let runtime_projection =
-            Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(runtime.clone()));
+        let runtime_projection = Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(
+            runtime.clone(),
+        ));
         let commands = Arc::new(AgentRunProductCommandFacade::new(
             runtime_bindings.clone(),
             runtime,

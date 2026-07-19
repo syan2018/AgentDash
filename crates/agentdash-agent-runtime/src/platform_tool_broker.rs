@@ -2,8 +2,9 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentProfileDigest, AgentServiceInstanceId, AgentSourceCoordinate,
-    AgentSurfaceDigest, AgentSurfaceRevision, AgentToolName, AgentToolResult,
+    AgentBindingGeneration, AgentEffectIdentity, AgentItemId, AgentProfileDigest,
+    AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceDigest, AgentSurfaceRevision,
+    AgentToolName, AgentToolResult, AgentTurnId,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,9 @@ pub struct RuntimeToolResolvedContext {
     pub bound_surface_digest: AgentSurfaceDigest,
     pub applied_surface_revision: AgentSurfaceRevision,
     pub applied_surface_digest: AgentSurfaceDigest,
+    pub turn_id: AgentTurnId,
+    pub item_id: Option<AgentItemId>,
+    pub effect_id: AgentEffectIdentity,
     pub callback_idempotency_key: String,
     pub deadline_at_ms: u64,
 }
@@ -462,6 +466,9 @@ mod tests {
             bound_surface_digest: AgentSurfaceDigest::new("bound-test").unwrap(),
             applied_surface_revision: AgentSurfaceRevision(1),
             applied_surface_digest: AgentSurfaceDigest::new("applied-test").unwrap(),
+            turn_id: AgentTurnId::new("turn-test").unwrap(),
+            item_id: Some(AgentItemId::new("item-test").unwrap()),
+            effect_id: AgentEffectIdentity::new("effect-test").unwrap(),
             callback_idempotency_key: "callback-test".to_owned(),
             deadline_at_ms: u64::MAX,
         }

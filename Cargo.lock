@@ -593,6 +593,7 @@ dependencies = [
  "agentdash-application-ports",
  "agentdash-application-vfs",
  "agentdash-application-workflow",
+ "agentdash-contracts",
  "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-integration-api",
@@ -874,7 +875,6 @@ dependencies = [
 name = "agentdash-workspace-module"
 version = "0.1.0"
 dependencies = [
- "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-application-extension-gateway",
  "agentdash-application-ports",
@@ -890,6 +890,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",

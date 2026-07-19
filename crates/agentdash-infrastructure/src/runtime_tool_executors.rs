@@ -1,10 +1,15 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use agentdash_agent_runtime::{
     RuntimeTaskExecutionScope, RuntimeTaskGrantedOperation, RuntimeToolDefinition,
     RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation, RuntimeToolPermission,
     RuntimeToolResourceGrant, RuntimeVfsGrantedOperation, RuntimeVfsPathGrant,
 };
+use agentdash_agent_runtime_contract::{RuntimeItemId, RuntimeTurnId, SurfaceRevision};
 use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
 use agentdash_application_agentrun::runtime_task_tools::{
     RuntimeTaskToolKind, RuntimeTaskToolOutcome, RuntimeTaskToolRequest, RuntimeTaskToolScope,
@@ -15,12 +20,19 @@ use agentdash_application_vfs::{
     AppliedVfsToolOutcome, AppliedVfsToolOwner, AppliedVfsToolPathScope, AppliedVfsToolRequest,
     AppliedVfsToolSurface,
 };
+use agentdash_contracts::workspace_module::WorkspaceModulePresentation;
+use agentdash_workspace_module::workspace_module::presentation_protocol::{
+    WorkspaceModulePresentationActor, WorkspaceModulePresentationActorKind,
+    WorkspaceModulePresentationCause, WorkspaceModulePresentationCommand,
+    WorkspaceModulePresentationCommandPort, WorkspaceModulePresentationEffectId,
+};
 use async_trait::async_trait;
 use uuid::Uuid;
 
 pub fn final_runtime_tool_catalog(
     vfs: Arc<AppliedVfsRuntimeToolService>,
     task: Arc<dyn RuntimeTaskToolService>,
+    workspace_module_present: Arc<dyn RuntimeToolExecutor>,
 ) -> Vec<Arc<dyn RuntimeToolExecutor>> {
     vec![
         Arc::new(MountsListRuntimeTool::new(vfs.clone())),
@@ -31,6 +43,7 @@ pub fn final_runtime_tool_catalog(
         Arc::new(ShellExecRuntimeTool::new(vfs)),
         Arc::new(RuntimeTaskReadTool::new(task.clone())),
         Arc::new(RuntimeTaskWriteTool::new(task)),
+        workspace_module_present,
     ]
 }
 
@@ -171,6 +184,166 @@ impl RuntimeToolExecutor for RuntimeTaskWriteTool {
         )
         .await
     }
+}
+
+pub struct WorkspaceModulePresentRuntimeTool {
+    product_bindings: Arc<crate::PostgresAgentRunProductRuntimeBindingRepository>,
+    presentations: Arc<dyn WorkspaceModulePresentationCommandPort>,
+}
+
+impl WorkspaceModulePresentRuntimeTool {
+    pub fn new(
+        product_bindings: Arc<crate::PostgresAgentRunProductRuntimeBindingRepository>,
+        presentations: Arc<dyn WorkspaceModulePresentationCommandPort>,
+    ) -> Self {
+        Self {
+            product_bindings,
+            presentations,
+        }
+    }
+}
+
+#[async_trait]
+impl RuntimeToolExecutor for WorkspaceModulePresentRuntimeTool {
+    fn definition(&self) -> RuntimeToolDefinition {
+        RuntimeToolDefinition {
+            name: AgentToolName::new("workspace_module_present").expect("static runtime tool name"),
+            description:
+                "Present a typed Workspace Module view through the Product-owned projection."
+                    .to_owned(),
+            parameters_schema: serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                    "module_id",
+                    "view_key",
+                    "renderer_kind",
+                    "presentation_uri",
+                    "title"
+                ],
+                "properties": {
+                    "module_id": {"type": "string", "minLength": 1},
+                    "view_key": {"type": "string", "minLength": 1},
+                    "renderer_kind": {"type": "string", "minLength": 1},
+                    "presentation_uri": {"type": "string", "minLength": 1},
+                    "title": {"type": "string"},
+                    "payload": {},
+                    "diagnostics": {}
+                }
+            }),
+            permission: RuntimeToolPermission::ProductWrite,
+            effect: RuntimeToolEffect::ProductMutation,
+        }
+    }
+
+    async fn execute(&self, invocation: RuntimeToolInvocation) -> AgentToolResult {
+        if !matches!(
+            invocation.grant.resources,
+            RuntimeToolResourceGrant::Product
+        ) {
+            return rejected(
+                "runtime_product_grant_required",
+                "Workspace Module presentation requires a typed Product execution grant",
+            );
+        }
+        let presentation: WorkspaceModulePresentation =
+            match serde_json::from_value(invocation.arguments) {
+                Ok(value) => value,
+                Err(error) => {
+                    return rejected(
+                        "invalid_workspace_module_presentation",
+                        format!("Workspace Module presentation arguments are invalid: {error}"),
+                    );
+                }
+            };
+        let Some(item_id) = invocation.context.item_id.as_ref() else {
+            return rejected(
+                "missing_runtime_tool_item",
+                "Workspace Module presentation requires the Complete Agent tool item identity",
+            );
+        };
+        let binding = match self
+            .product_bindings
+            .load_product_binding_by_runtime_thread(&invocation.context.runtime_thread_id)
+            .await
+        {
+            Ok(Some(binding)) => binding,
+            Ok(None) => {
+                return rejected(
+                    "missing_product_binding",
+                    "Runtime thread has no Product target binding",
+                );
+            }
+            Err(error) => {
+                return AgentToolResult::Failed {
+                    code: "product_binding_query_failed".to_owned(),
+                    message: error,
+                };
+            }
+        };
+        if binding.target.run_id.to_string() != invocation.grant.target.run_id
+            || binding.target.agent_id.to_string() != invocation.grant.target.agent_id
+            || binding.runtime_thread_id != invocation.context.runtime_thread_id
+        {
+            return rejected(
+                "stale_product_binding",
+                "Runtime callback coordinates differ from the Product target binding",
+            );
+        }
+        let effect_id =
+            match WorkspaceModulePresentationEffectId::new(invocation.context.effect_id.as_str()) {
+                Ok(value) => value,
+                Err(error) => {
+                    return rejected("invalid_workspace_presentation_effect", error.to_string());
+                }
+            };
+        let runtime_turn_id = match RuntimeTurnId::new(invocation.context.turn_id.as_str()) {
+            Ok(value) => value,
+            Err(error) => return rejected("invalid_runtime_turn", error.to_string()),
+        };
+        let runtime_item_id = match RuntimeItemId::new(item_id.as_str()) {
+            Ok(value) => value,
+            Err(error) => return rejected("invalid_runtime_item", error.to_string()),
+        };
+        let command = WorkspaceModulePresentationCommand {
+            effect_id,
+            target: binding.target,
+            actor: WorkspaceModulePresentationActor {
+                kind: WorkspaceModulePresentationActorKind::AgentTool,
+                actor_id: invocation.context.service_instance_id.to_string(),
+            },
+            cause: WorkspaceModulePresentationCause {
+                runtime_thread_id: binding.runtime_thread_id,
+                runtime_operation_id: None,
+                runtime_turn_id,
+                runtime_item_id,
+            },
+            source_binding: binding.source_binding,
+            surface_revision: SurfaceRevision(invocation.context.applied_surface_revision.0),
+            presentation,
+            committed_at_ms: now_ms(),
+        };
+        match self.presentations.present(command).await {
+            Ok(change) => AgentToolResult::Completed {
+                output: serde_json::json!({
+                    "intent_id": change.intent.intent_id,
+                    "change_sequence": change.sequence.0,
+                    "presentation": change.intent.presentation,
+                }),
+            },
+            Err(error) => AgentToolResult::Failed {
+                code: "workspace_module_presentation_commit_failed".to_owned(),
+                message: error.to_string(),
+            },
+        }
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }
 
 async fn execute_vfs(
@@ -397,14 +570,39 @@ mod tests {
         }
     }
 
+    struct NoopWorkspaceModulePresentTool;
+
+    #[async_trait]
+    impl RuntimeToolExecutor for NoopWorkspaceModulePresentTool {
+        fn definition(&self) -> RuntimeToolDefinition {
+            RuntimeToolDefinition {
+                name: AgentToolName::new("workspace_module_present").expect("tool"),
+                description: "fixture".to_owned(),
+                parameters_schema: serde_json::json!({
+                    "type": "object",
+                    "owner": "workspace_module_present"
+                }),
+                permission: RuntimeToolPermission::ProductWrite,
+                effect: RuntimeToolEffect::ProductMutation,
+            }
+        }
+
+        async fn execute(&self, _: RuntimeToolInvocation) -> AgentToolResult {
+            AgentToolResult::Completed {
+                output: Value::Null,
+            }
+        }
+    }
+
     #[test]
-    fn final_runtime_catalog_defines_all_eight_platform_tools() {
+    fn final_runtime_catalog_defines_all_nine_platform_tools() {
         let vfs = Arc::new(AppliedVfsRuntimeToolService::new(
             Arc::new(VfsService::new(Arc::new(MountProviderRegistry::new()))),
             Arc::new(NoopTerminalRegistry),
         ));
         let task: Arc<dyn RuntimeTaskToolService> = Arc::new(NoopTaskService);
-        let executors = final_runtime_tool_catalog(vfs, task);
+        let executors =
+            final_runtime_tool_catalog(vfs, task, Arc::new(NoopWorkspaceModulePresentTool));
         assert_eq!(
             executors
                 .iter()
@@ -419,12 +617,13 @@ mod tests {
                 "shell_exec",
                 "task_read",
                 "task_write",
+                "workspace_module_present",
             ]
         );
     }
 
     #[test]
-    fn final_runtime_catalog_uses_all_eight_owner_parameter_schemas_exactly() {
+    fn final_runtime_catalog_uses_all_nine_owner_parameter_schemas_exactly() {
         let vfs = Arc::new(AppliedVfsRuntimeToolService::new(
             Arc::new(VfsService::new(Arc::new(MountProviderRegistry::new()))),
             Arc::new(NoopTerminalRegistry),
@@ -439,12 +638,16 @@ mod tests {
             AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::ShellExec),
             task.parameters_schema(RuntimeTaskToolKind::Read),
             task.parameters_schema(RuntimeTaskToolKind::Write),
+            NoopWorkspaceModulePresentTool
+                .definition()
+                .parameters_schema,
         ];
 
-        let actual = final_runtime_tool_catalog(vfs, task)
-            .into_iter()
-            .map(|executor| executor.definition().parameters_schema)
-            .collect::<Vec<_>>();
+        let actual =
+            final_runtime_tool_catalog(vfs, task, Arc::new(NoopWorkspaceModulePresentTool))
+                .into_iter()
+                .map(|executor| executor.definition().parameters_schema)
+                .collect::<Vec<_>>();
 
         assert_eq!(actual, expected);
         assert_eq!(actual[1]["properties"]["path"]["type"], "string");

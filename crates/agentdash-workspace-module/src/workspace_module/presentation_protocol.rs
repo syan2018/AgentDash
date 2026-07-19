@@ -6,6 +6,8 @@ use agentdash_contracts::workspace_module::WorkspaceModulePresentation;
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use thiserror::Error;
 
 use agentdash_contracts::agent_run_product_projection as wire;
@@ -223,6 +225,89 @@ pub struct WorkspaceModulePresentationCommit {
     pub outbox: WorkspaceModulePresentationOutboxEntry,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkspaceModulePresentationCommand {
+    pub effect_id: WorkspaceModulePresentationEffectId,
+    pub target: AgentRunTarget,
+    pub actor: WorkspaceModulePresentationActor,
+    pub cause: WorkspaceModulePresentationCause,
+    pub source_binding: ManagedRuntimeSourceBindingEvidence,
+    pub surface_revision: SurfaceRevision,
+    pub presentation: WorkspaceModulePresentation,
+    pub committed_at_ms: u64,
+}
+
+pub fn build_pending_workspace_module_presentation_commit(
+    head: &WorkspaceModulePresentationHead,
+    command: WorkspaceModulePresentationCommand,
+) -> Result<WorkspaceModulePresentationCommit, WorkspaceModulePresentationProtocolError> {
+    if head.target != command.target {
+        return Err(WorkspaceModulePresentationProtocolError::TargetMismatch);
+    }
+    let sequence = WorkspaceModulePresentationChangeSequence(
+        head.revision
+            .0
+            .checked_add(1)
+            .ok_or(WorkspaceModulePresentationProtocolError::RevisionExhausted)?,
+    );
+    let effect_suffix = command.effect_id.as_str();
+    let change_id = WorkspaceModulePresentationChangeId::new(format!(
+        "workspace-module-presentation-change:{effect_suffix}"
+    ))?;
+    let intent = WorkspaceModulePresentationIntent {
+        intent_id: WorkspaceModulePresentationIntentId::new(format!(
+            "workspace-module-presentation-intent:{effect_suffix}"
+        ))?,
+        effect_id: command.effect_id.clone(),
+        target: command.target.clone(),
+        actor: command.actor,
+        cause: command.cause.clone(),
+        currentness_fence: WorkspaceModulePresentationCurrentnessFence {
+            runtime_thread_id: command.cause.runtime_thread_id,
+            source_binding: command.source_binding,
+            surface_revision: command.surface_revision,
+            module_id: command.presentation.module_id.clone(),
+            view_key: command.presentation.view_key.clone(),
+            renderer_kind: command.presentation.renderer_kind.clone(),
+            presentation_uri: command.presentation.presentation_uri.clone(),
+        },
+        presentation_digest: presentation_digest(&command.presentation)?,
+        presentation: command.presentation,
+        committed_at_ms: command.committed_at_ms,
+    };
+    let commit = WorkspaceModulePresentationCommit {
+        expected_revision: head.revision,
+        change: WorkspaceModulePresentationChange {
+            change_id: change_id.clone(),
+            target: command.target.clone(),
+            sequence,
+            revision: WorkspaceModulePresentationRevision(sequence.0),
+            status: WorkspaceModulePresentationIntentStatus::Pending,
+            intent,
+            acknowledgement: None,
+        },
+        outbox: WorkspaceModulePresentationOutboxEntry {
+            effect_id: command.effect_id,
+            change_id,
+            target: command.target,
+            sequence,
+        },
+    };
+    commit.validate()?;
+    Ok(commit)
+}
+
+fn presentation_digest(
+    presentation: &WorkspaceModulePresentation,
+) -> Result<RuntimePayloadDigest, WorkspaceModulePresentationProtocolError> {
+    let payload = serde_json::to_vec(presentation).map_err(|error| {
+        WorkspaceModulePresentationProtocolError::Serialization(error.to_string())
+    })?;
+    RuntimePayloadDigest::new(format!("sha256:{:x}", Sha256::digest(payload)))
+        .map_err(|error| WorkspaceModulePresentationProtocolError::Serialization(error.to_string()))
+}
+
 impl WorkspaceModulePresentationCommit {
     pub fn validate(&self) -> Result<(), WorkspaceModulePresentationProtocolError> {
         self.change.intent.validate()?;
@@ -429,6 +514,11 @@ impl From<WorkspaceModulePresentationChangePage> for wire::WorkspaceModulePresen
 
 #[async_trait]
 pub trait WorkspaceModulePresentationRepository: Send + Sync {
+    async fn load_change_by_effect(
+        &self,
+        effect_id: &WorkspaceModulePresentationEffectId,
+    ) -> Result<Option<WorkspaceModulePresentationChange>, WorkspaceModulePresentationStoreError>;
+
     async fn load_head(
         &self,
         target: &AgentRunTarget,
@@ -453,6 +543,83 @@ pub trait WorkspaceModulePresentationUnitOfWork: Send + Sync {
         &self,
         commit: WorkspaceModulePresentationCommit,
     ) -> Result<(), WorkspaceModulePresentationStoreError>;
+}
+
+#[async_trait]
+pub trait WorkspaceModulePresentationCommandPort: Send + Sync {
+    async fn present(
+        &self,
+        command: WorkspaceModulePresentationCommand,
+    ) -> Result<WorkspaceModulePresentationChange, WorkspaceModulePresentationCommandError>;
+}
+
+pub struct WorkspaceModulePresentationCommandService {
+    repository: Arc<dyn WorkspaceModulePresentationRepository>,
+    unit_of_work: Arc<dyn WorkspaceModulePresentationUnitOfWork>,
+}
+
+impl WorkspaceModulePresentationCommandService {
+    pub fn new(
+        repository: Arc<dyn WorkspaceModulePresentationRepository>,
+        unit_of_work: Arc<dyn WorkspaceModulePresentationUnitOfWork>,
+    ) -> Self {
+        Self {
+            repository,
+            unit_of_work,
+        }
+    }
+}
+
+#[async_trait]
+impl WorkspaceModulePresentationCommandPort for WorkspaceModulePresentationCommandService {
+    async fn present(
+        &self,
+        command: WorkspaceModulePresentationCommand,
+    ) -> Result<WorkspaceModulePresentationChange, WorkspaceModulePresentationCommandError> {
+        if let Some(change) = self
+            .repository
+            .load_change_by_effect(&command.effect_id)
+            .await?
+        {
+            return replayed_change(change, &command);
+        }
+        let head = self.repository.load_head(&command.target).await?;
+        let commit = build_pending_workspace_module_presentation_commit(&head, command.clone())?;
+        let change = commit.change.clone();
+        match self.unit_of_work.commit(commit).await {
+            Ok(()) => Ok(change),
+            Err(WorkspaceModulePresentationStoreError::Conflict) => {
+                let replay = self
+                    .repository
+                    .load_change_by_effect(&command.effect_id)
+                    .await?
+                    .ok_or(WorkspaceModulePresentationStoreError::Conflict)?;
+                replayed_change(replay, &command)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+fn replayed_change(
+    change: WorkspaceModulePresentationChange,
+    command: &WorkspaceModulePresentationCommand,
+) -> Result<WorkspaceModulePresentationChange, WorkspaceModulePresentationCommandError> {
+    let intent = &change.intent;
+    let fence = &intent.currentness_fence;
+    if intent.effect_id != command.effect_id
+        || intent.target != command.target
+        || intent.actor != command.actor
+        || intent.cause != command.cause
+        || fence.runtime_thread_id != command.cause.runtime_thread_id
+        || fence.source_binding != command.source_binding
+        || fence.surface_revision != command.surface_revision
+        || intent.presentation != command.presentation
+        || intent.presentation_digest != presentation_digest(&command.presentation)?
+    {
+        return Err(WorkspaceModulePresentationProtocolError::EffectConflict.into());
+    }
+    Ok(change)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -489,6 +656,12 @@ pub enum WorkspaceModulePresentationProtocolError {
     OutboxMismatch,
     #[error("presentation acknowledgement does not fulfill the exact pending intent")]
     AcknowledgementMismatch,
+    #[error("presentation revision is exhausted")]
+    RevisionExhausted,
+    #[error("presentation serialization failed: {0}")]
+    Serialization(String),
+    #[error("presentation effect identity was reused with different immutable facts")]
+    EffectConflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -497,6 +670,14 @@ pub enum WorkspaceModulePresentationStoreError {
     Conflict,
     #[error("workspace presentation projection persistence failed: {0}")]
     Persistence(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum WorkspaceModulePresentationCommandError {
+    #[error(transparent)]
+    Protocol(#[from] WorkspaceModulePresentationProtocolError),
+    #[error(transparent)]
+    Store(#[from] WorkspaceModulePresentationStoreError),
 }
 
 pub const WORKSPACE_MODULE_PRESENTATION_PERSISTENCE_CONSTRAINTS: &[&str] = &[
@@ -591,6 +772,72 @@ mod tests {
                 sequence: WorkspaceModulePresentationChangeSequence(5),
             },
         }
+    }
+
+    #[test]
+    fn pending_command_builds_one_contiguous_typed_commit() {
+        let fixture = commit();
+        let target = fixture.change.target.clone();
+        let presentation = fixture.change.intent.presentation.clone();
+        let command = WorkspaceModulePresentationCommand {
+            effect_id: WorkspaceModulePresentationEffectId::new("effect-command").expect("effect"),
+            target: target.clone(),
+            actor: WorkspaceModulePresentationActor {
+                kind: WorkspaceModulePresentationActorKind::AgentTool,
+                actor_id: "service-instance".to_owned(),
+            },
+            cause: WorkspaceModulePresentationCause {
+                runtime_thread_id: RuntimeThreadId::new("thread-command").expect("thread"),
+                runtime_operation_id: None,
+                runtime_turn_id: RuntimeTurnId::new("turn-command").expect("turn"),
+                runtime_item_id: RuntimeItemId::new("item-command").expect("item"),
+            },
+            source_binding: ManagedRuntimeSourceBindingEvidence {
+                source_ref: agentdash_agent_runtime_contract::RuntimeSourceRef::new(
+                    "source-command",
+                )
+                .expect("source"),
+                committed_at_revision: agentdash_agent_runtime_contract::RuntimeProjectionRevision(
+                    7,
+                ),
+                applied_surface_revision: SurfaceRevision(8),
+                activated_at_revision: Some(
+                    agentdash_agent_runtime_contract::RuntimeProjectionRevision(9),
+                ),
+            },
+            surface_revision: SurfaceRevision(8),
+            presentation: presentation.clone(),
+            committed_at_ms: 10,
+        };
+
+        let commit = build_pending_workspace_module_presentation_commit(
+            &WorkspaceModulePresentationHead {
+                target,
+                revision: WorkspaceModulePresentationRevision(4),
+                latest_change_sequence: WorkspaceModulePresentationChangeSequence(4),
+            },
+            command,
+        )
+        .expect("canonical commit");
+
+        assert_eq!(
+            commit.change.revision,
+            WorkspaceModulePresentationRevision(5)
+        );
+        assert_eq!(
+            commit.change.sequence,
+            WorkspaceModulePresentationChangeSequence(5)
+        );
+        assert_eq!(commit.change.intent.presentation, presentation);
+        assert_eq!(
+            commit.change.intent.currentness_fence.surface_revision,
+            SurfaceRevision(8)
+        );
+        assert_eq!(
+            commit.change.intent.presentation_digest.as_str().len(),
+            "sha256:".len() + 64
+        );
+        commit.validate().expect("valid atomic write set");
     }
 
     #[test]

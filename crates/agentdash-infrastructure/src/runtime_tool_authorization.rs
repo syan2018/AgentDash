@@ -155,6 +155,7 @@ fn authorize_snapshot(
         "shell_exec" => shell_vfs_grant(surface, &request.arguments)?,
         "task_read" => task_grant(surface, AppliedTaskOperation::Read, &request.arguments)?,
         "task_write" => task_grant(surface, AppliedTaskOperation::Write, &request.arguments)?,
+        "workspace_module_present" => RuntimeToolResourceGrant::Product,
         _ => {
             return Err(denied(
                 "unsupported_runtime_tool_policy",
@@ -1069,6 +1070,37 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn workspace_presentation_receives_only_the_committed_product_target() {
+        let binding = binding();
+        let authorizer = ProductRuntimeToolAuthorizer::new(
+            Arc::new(BindingFixture {
+                value: Some(binding.clone()),
+            }),
+            Arc::new(SurfaceFixture {
+                value: Ok(snapshot(
+                    binding.binding.target.clone(),
+                    binding.binding_digest,
+                )),
+            }),
+        );
+
+        let grant = authorizer
+            .authorize(request("workspace_module_present"))
+            .await
+            .expect("committed Product target must authorize presentation");
+
+        assert_eq!(grant.resources, RuntimeToolResourceGrant::Product);
+        assert_eq!(
+            grant.target.run_id,
+            binding.binding.target.run_id.to_string()
+        );
+        assert_eq!(
+            grant.target.agent_id,
+            binding.binding.target.agent_id.to_string()
+        );
+    }
+
     fn binding() -> CommittedRuntimeToolProductBinding {
         let target = AgentRunTarget {
             run_id: Uuid::new_v4(),
@@ -1161,7 +1193,7 @@ mod tests {
         arguments: serde_json::Value,
     ) -> RuntimeToolAuthorizationRequest {
         let (permission, effect) = match tool {
-            "task_write" => (
+            "task_write" | "workspace_module_present" => (
                 RuntimeToolPermission::ProductWrite,
                 RuntimeToolEffect::ProductMutation,
             ),
@@ -1182,6 +1214,10 @@ mod tests {
                 bound_surface_digest: AgentSurfaceDigest::new("bound-test").unwrap(),
                 applied_surface_revision: AgentSurfaceRevision(1),
                 applied_surface_digest: AgentSurfaceDigest::new("applied-test").unwrap(),
+                turn_id: agentdash_agent_service_api::AgentTurnId::new("turn-test").unwrap(),
+                item_id: Some(agentdash_agent_service_api::AgentItemId::new("item-test").unwrap()),
+                effect_id: agentdash_agent_service_api::AgentEffectIdentity::new("effect-test")
+                    .unwrap(),
                 callback_idempotency_key: "callback-test".to_owned(),
                 deadline_at_ms: u64::MAX,
             },

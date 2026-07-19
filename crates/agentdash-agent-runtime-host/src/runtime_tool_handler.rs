@@ -38,6 +38,9 @@ impl CompleteAgentToolHandler for RuntimePlatformToolHandler {
                     bound_surface_digest: context.bound_surface_digest,
                     applied_surface_revision: context.applied_surface_revision,
                     applied_surface_digest: context.applied_surface_digest,
+                    turn_id: callback.invocation.meta.turn_id,
+                    item_id: callback.invocation.meta.item_id,
+                    effect_id: callback.invocation.meta.effect_id,
                     callback_idempotency_key: callback
                         .invocation
                         .meta

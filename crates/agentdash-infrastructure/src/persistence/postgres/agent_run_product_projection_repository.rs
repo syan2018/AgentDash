@@ -20,11 +20,12 @@ use agentdash_workspace_module::workspace_module::presentation_protocol::{
     WorkspaceModulePresentationChange, WorkspaceModulePresentationChangeGap,
     WorkspaceModulePresentationChangeId, WorkspaceModulePresentationChangePage,
     WorkspaceModulePresentationChangeSequence, WorkspaceModulePresentationCommit,
-    WorkspaceModulePresentationHead, WorkspaceModulePresentationIntent,
-    WorkspaceModulePresentationIntentStatus, WorkspaceModulePresentationOutboxEntry,
-    WorkspaceModulePresentationPendingIntent, WorkspaceModulePresentationRepository,
-    WorkspaceModulePresentationRevision, WorkspaceModulePresentationSnapshot,
-    WorkspaceModulePresentationStoreError, WorkspaceModulePresentationUnitOfWork,
+    WorkspaceModulePresentationEffectId, WorkspaceModulePresentationHead,
+    WorkspaceModulePresentationIntent, WorkspaceModulePresentationIntentStatus,
+    WorkspaceModulePresentationOutboxEntry, WorkspaceModulePresentationPendingIntent,
+    WorkspaceModulePresentationRepository, WorkspaceModulePresentationRevision,
+    WorkspaceModulePresentationSnapshot, WorkspaceModulePresentationStoreError,
+    WorkspaceModulePresentationUnitOfWork,
 };
 use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
@@ -484,6 +485,27 @@ impl PostgresWorkspaceModulePresentationStore {
 
 #[async_trait]
 impl WorkspaceModulePresentationRepository for PostgresWorkspaceModulePresentationStore {
+    async fn load_change_by_effect(
+        &self,
+        effect_id: &WorkspaceModulePresentationEffectId,
+    ) -> Result<Option<WorkspaceModulePresentationChange>, WorkspaceModulePresentationStoreError>
+    {
+        let value = sqlx::query_scalar::<_, Value>(
+            "SELECT change FROM workspace_module_presentation_change
+             WHERE intent_id=(
+                 SELECT intent_id FROM workspace_module_presentation_intent WHERE effect_id=$1
+             )
+             ORDER BY change_sequence DESC LIMIT 1",
+        )
+        .bind(effect_id.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(workspace_db_error)?;
+        value
+            .map(|value| decode(value).map_err(workspace_serde_error))
+            .transpose()
+    }
+
     async fn load_head(
         &self,
         target: &AgentRunTarget,

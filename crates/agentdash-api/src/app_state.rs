@@ -42,20 +42,23 @@ use agentdash_infrastructure::{
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
     PostgresWorkflowAgentCallRepository, PostgresWorkflowExecutorEffectRepository,
     PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
-    ProcessShellTerminalRegistry, ProductRuntimeToolAuthorizer, final_runtime_tool_catalog,
+    ProcessShellTerminalRegistry, ProductRuntimeToolAuthorizer, WorkspaceModulePresentRuntimeTool,
+    final_runtime_tool_catalog,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, AuthMode, MarketplaceSourceProvider, MemoryDiscoveryProvider,
     SkillDiscoveryProvider,
 };
 use agentdash_platform_spi::extension_package::ExtensionPackageArtifactStorage;
+use agentdash_workspace_module::workspace_module::presentation_protocol::{
+    WorkspaceModulePresentationCommandPort, WorkspaceModulePresentationCommandService,
+};
 
 use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::project_projection_notification::ProjectProjectionNotificationPublisher;
 use crate::relay::{
     RelayAgentRunTerminalProjectionProducer, RelayAgentRunTerminalSourceReconcile,
-    registry::BackendRegistry,
-    runtime_wire::CloudRuntimeWirePlacementRegistry,
+    registry::BackendRegistry, runtime_wire::CloudRuntimeWirePlacementRegistry,
 };
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -212,6 +215,14 @@ impl AppState {
         let runtime_product_bindings = Arc::new(
             PostgresAgentRunProductRuntimeBindingRepository::new(pool.clone()),
         );
+        let workspace_module_presentations =
+            Arc::new(PostgresWorkspaceModulePresentationStore::new(pool.clone()));
+        let workspace_module_presentation_commands: Arc<
+            dyn WorkspaceModulePresentationCommandPort,
+        > = Arc::new(WorkspaceModulePresentationCommandService::new(
+            workspace_module_presentations.clone(),
+            workspace_module_presentations.clone(),
+        ));
         let shell_terminal_registry = Arc::new(ProcessShellTerminalRegistry::default());
         let applied_vfs_tools = Arc::new(
             AppliedVfsRuntimeToolService::new(vfs_service.clone(), shell_terminal_registry.clone())
@@ -219,8 +230,16 @@ impl AppState {
                 .with_shell_output_registry(Some(shell_output_registry.clone())),
         );
         let runtime_task_tools = Arc::new(ApplicationRuntimeTaskToolService::new(repos.clone()));
-        let runtime_tool_catalog: Vec<Arc<dyn RuntimeToolExecutor>> =
-            final_runtime_tool_catalog(applied_vfs_tools, runtime_task_tools);
+        let workspace_module_present_tool: Arc<dyn RuntimeToolExecutor> =
+            Arc::new(WorkspaceModulePresentRuntimeTool::new(
+                runtime_product_bindings.clone(),
+                workspace_module_presentation_commands,
+            ));
+        let runtime_tool_catalog: Vec<Arc<dyn RuntimeToolExecutor>> = final_runtime_tool_catalog(
+            applied_vfs_tools,
+            runtime_task_tools,
+            workspace_module_present_tool,
+        );
         let runtime_tool_authorizer = Arc::new(ProductRuntimeToolAuthorizer::new(
             runtime_product_bindings.clone(),
             product_persistence.applied_resource_surfaces.clone(),
@@ -254,12 +273,14 @@ impl AppState {
             complete_agent.runtime.clone(),
         ));
         let product_mailbox =
-            Arc::new(product_persistence.product_mailbox_facade(runtime_product_bindings));
+            Arc::new(product_persistence.product_mailbox_facade(runtime_product_bindings.clone()));
 
         let product = Arc::new(
             AgentRunProductProjectionComposition::build(
                 pool.clone(),
                 complete_agent.runtime.clone(),
+                runtime_product_bindings.clone(),
+                workspace_module_presentations,
                 repos.lifecycle_run_repo.clone(),
                 project_projection_notifications,
                 format!("{host_incarnation_id}:agent-run-product-change"),

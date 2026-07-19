@@ -85,7 +85,7 @@ pub use runtime_tool_authorization::{
 pub use runtime_tool_executors::{
     FsApplyPatchRuntimeTool, FsGlobRuntimeTool, FsGrepRuntimeTool, FsReadRuntimeTool,
     MountsListRuntimeTool, RuntimeTaskReadTool, RuntimeTaskWriteTool, ShellExecRuntimeTool,
-    final_runtime_tool_catalog,
+    WorkspaceModulePresentRuntimeTool, final_runtime_tool_catalog,
 };
 pub use script_runtime::{RhaiScriptLimits, RhaiScriptRuntime};
 pub use secret::LlmProviderSecretCipher;

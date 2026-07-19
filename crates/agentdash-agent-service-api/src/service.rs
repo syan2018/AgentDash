@@ -64,7 +64,9 @@ pub struct AgentHostCallbackMeta {
     pub effect_id: AgentEffectIdentity,
     pub idempotency_key: AgentIdempotencyKey,
     /// Absolute Unix epoch deadline. The Host must not start a callback after it.
-    #[ts(type = "number")]
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+    #[ts(type = "AgentServiceU64")]
     pub deadline_at_ms: u64,
 }
 

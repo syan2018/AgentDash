@@ -12,6 +12,7 @@ pub mod profile;
 pub mod service;
 pub mod snapshot;
 pub mod surface;
+pub mod wire_u64;
 
 pub use command::*;
 pub use context::*;
@@ -20,6 +21,7 @@ pub use profile::*;
 pub use service::*;
 pub use snapshot::*;
 pub use surface::*;
+pub use wire_u64::*;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -106,10 +108,11 @@ mod tests {
     }
 
     #[test]
-    fn complete_agent_typescript_root_exports_public_contracts_without_bigint() {
+    fn complete_agent_typescript_root_exports_lossless_decimal_wire_scalars() {
         let temp = tempfile::tempdir().expect("create TypeScript export directory");
         AgentServiceApiSchema::export_all_to(temp.path())
             .expect("export Complete Agent service types");
+        AgentServiceU64::export_all_to(temp.path()).expect("export Service u64");
         let typescript = read_typescript(temp.path());
 
         for contract in [
@@ -135,8 +138,11 @@ mod tests {
             assert!(typescript.contains(outcome), "missing outcome {outcome}");
         }
         assert!(!typescript.contains("bigint"));
-        assert!(typescript.contains("deadline_at_ms: number"));
-        assert!(typescript.contains("occurred_at_ms: number"));
+        assert!(typescript.contains(
+            "export type AgentServiceU64 = string & { readonly __agent_service_u64: \"canonical_unsigned_decimal\" };"
+        ));
+        assert!(typescript.contains("deadline_at_ms: AgentServiceU64"));
+        assert!(typescript.contains("occurred_at_ms: AgentServiceU64"));
         assert!(typescript.contains("\"thread_name_changed\""));
     }
 

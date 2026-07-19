@@ -9,9 +9,7 @@
       "minimum": 0
     },
     "frame_id": {
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
+      "$ref": "#/$defs/RuntimeWireFrameId"
     },
     "critical": {
       "type": "boolean"
@@ -27,6 +25,15 @@
     "frame"
   ],
   "$defs": {
+    "RuntimeWireFrameId": {
+      "$ref": "#/$defs/RuntimeWireU64"
+    },
+    "RuntimeWireU64": {
+      "description": "canonical unsigned-decimal Runtime Wire coordinate",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "maxLength": 20
+    },
     "RuntimeWireFrame": {
       "oneOf": [
         {
@@ -56,9 +63,7 @@
               "type": "object",
               "properties": {
                 "request_frame_id": {
-                  "type": "integer",
-                  "format": "uint64",
-                  "minimum": 0
+                  "$ref": "#/$defs/RuntimeWireFrameId"
                 },
                 "response": {
                   "$ref": "#/$defs/RuntimeWireResponse"
@@ -206,12 +211,14 @@
           "type": "string"
         },
         "expected_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeProjectionRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "command": {
           "$ref": "#/$defs/ManagedRuntimeCommand"
@@ -223,6 +230,15 @@
         "thread_id",
         "command"
       ]
+    },
+    "RuntimeProjectionRevision": {
+      "$ref": "#/$defs/RuntimeU64"
+    },
+    "RuntimeU64": {
+      "description": "canonical unsigned-decimal Runtime coordinate",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "maxLength": 20
     },
     "ManagedRuntimeCommand": {
       "oneOf": [
@@ -736,12 +752,14 @@
           "type": "string"
         },
         "after": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeChangeSequence"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "limit": {
           "type": "integer",
@@ -753,6 +771,9 @@
         "thread_id",
         "limit"
       ]
+    },
+    "RuntimeChangeSequence": {
+      "$ref": "#/$defs/RuntimeU64"
     },
     "RuntimeWireAgentServiceRequest": {
       "oneOf": [
@@ -1045,15 +1066,22 @@
           "type": "string"
         },
         "binding_generation": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentBindingGeneration"
         }
       },
       "required": [
         "service_instance_id",
         "binding_generation"
       ]
+    },
+    "AgentBindingGeneration": {
+      "$ref": "#/$defs/AgentServiceU64"
+    },
+    "AgentServiceU64": {
+      "description": "canonical unsigned-decimal Complete Agent coordinate",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "maxLength": 20
     },
     "CreateAgentCommand": {
       "type": "object",
@@ -1095,17 +1123,17 @@
           "type": "string"
         },
         "binding_generation": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentBindingGeneration"
         },
         "expected_snapshot_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -1115,6 +1143,9 @@
         "binding_generation"
       ]
     },
+    "AgentSnapshotRevision": {
+      "$ref": "#/$defs/AgentServiceU64"
+    },
     "InitialAgentContextPackage": {
       "type": "object",
       "properties": {
@@ -1122,9 +1153,7 @@
           "type": "string"
         },
         "schema_version": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentContextSchemaVersion"
         },
         "mode": {
           "$ref": "#/$defs/InitialContextMode"
@@ -1146,6 +1175,9 @@
         "contributions",
         "digest"
       ]
+    },
+    "AgentContextSchemaVersion": {
+      "$ref": "#/$defs/AgentServiceU64"
     },
     "InitialContextMode": {
       "type": "string",
@@ -1680,12 +1712,14 @@
           "type": "string"
         },
         "at_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -1750,9 +1784,7 @@
       "type": "object",
       "properties": {
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentSurfaceRevision"
         },
         "digest": {
           "type": "string"
@@ -1773,6 +1805,9 @@
         "offer_profile_digest",
         "contributions"
       ]
+    },
+    "AgentSurfaceRevision": {
+      "$ref": "#/$defs/AgentServiceU64"
     },
     "BoundAgentSurfaceContribution": {
       "type": "object",
@@ -2100,9 +2135,7 @@
               }
             },
             "deadline_ms": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/AgentServiceU64"
             },
             "kind": {
               "type": "string",
@@ -2170,17 +2203,13 @@
           "type": "string"
         },
         "binding_generation": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentBindingGeneration"
         },
         "delivery": {
           "$ref": "#/$defs/AgentSurfaceRoute"
         },
         "default_deadline_ms": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentServiceU64"
         }
       },
       "required": [
@@ -2203,17 +2232,13 @@
           "type": "string"
         },
         "binding_generation": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentBindingGeneration"
         },
         "source": {
           "type": "string"
         },
         "expected_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentSurfaceRevision"
         }
       },
       "required": [
@@ -2285,9 +2310,7 @@
           "type": "string"
         },
         "binding_generation": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentBindingGeneration"
         },
         "source": {
           "type": "string"
@@ -2315,9 +2338,7 @@
         },
         "deadline_at_ms": {
           "description": "Absolute Unix epoch deadline. The Host must not start a callback after it.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentServiceU64"
         }
       },
       "required": [
@@ -2493,9 +2514,7 @@
           "type": "string"
         },
         "accepted_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "status": {
           "$ref": "#/$defs/ManagedRuntimeOperationStatus"
@@ -2622,22 +2641,20 @@
           "type": "string"
         },
         "committed_at_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "applied_surface_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/SurfaceRevision"
         },
         "activated_at_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeProjectionRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2645,6 +2662,9 @@
         "committed_at_revision",
         "applied_surface_revision"
       ]
+    },
+    "SurfaceRevision": {
+      "$ref": "#/$defs/RuntimeU64"
     },
     "ManagedRuntimeAppliedInitialContextEvidence": {
       "type": "object",
@@ -2874,9 +2894,7 @@
           "type": "object",
           "properties": {
             "actual": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeProjectionRevision"
             },
             "kind": {
               "type": "string",
@@ -2993,19 +3011,13 @@
           "type": "string"
         },
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "latest_change_sequence": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeChangeSequence"
         },
         "captured_at_ms": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeU64"
         },
         "lifecycle": {
           "$ref": "#/$defs/ManagedRuntimeLifecycleStatus"
@@ -3394,9 +3406,7 @@
           ]
         },
         "observed_at_ms": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeU64"
         }
       },
       "required": [
@@ -3498,9 +3508,7 @@
       "type": "object",
       "properties": {
         "decided_at_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "blocking_operation_id": {
           "type": [
@@ -3509,20 +3517,24 @@
           ]
         },
         "bound_surface_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SurfaceRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "applied_surface_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SurfaceRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -3592,9 +3604,7 @@
           }
         },
         "next": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeChangeSequence"
         },
         "gap": {
           "anyOf": [
@@ -3620,14 +3630,10 @@
           "type": "string"
         },
         "sequence": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeChangeSequence"
         },
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "delta": {
           "$ref": "#/$defs/ManagedRuntimeChangeDelta"
@@ -3646,14 +3652,10 @@
           "type": "object",
           "properties": {
             "source_change_sequence": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeU64"
             },
             "source_projection_revision": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeProjectionRevision"
             },
             "thread_name": {
               "type": [
@@ -3680,14 +3682,10 @@
           "type": "object",
           "properties": {
             "source_change_sequence": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeU64"
             },
             "source_projection_revision": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeProjectionRevision"
             },
             "source_identity_digest": {
               "type": "string"
@@ -3732,14 +3730,10 @@
           "type": "object",
           "properties": {
             "source_change_sequence": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeU64"
             },
             "source_projection_revision": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeProjectionRevision"
             },
             "observation_digest": {
               "type": "string"
@@ -3808,20 +3802,24 @@
           "type": "object",
           "properties": {
             "bound_surface_revision": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SurfaceRevision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "applied_surface_revision": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SurfaceRevision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -3924,12 +3922,14 @@
               "$ref": "#/$defs/ManagedRuntimeProjectionFidelity"
             },
             "applied_surface_revision": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SurfaceRevision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -4041,12 +4041,14 @@
           "type": "object",
           "properties": {
             "applied_surface_revision": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SurfaceRevision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -4078,27 +4080,23 @@
       "type": "object",
       "properties": {
         "requested_after": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeChangeSequence"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "earliest_available": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeChangeSequence"
         },
         "latest_available": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeChangeSequence"
         },
         "snapshot_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         }
       },
       "required": [
@@ -4628,12 +4626,14 @@
           "$ref": "#/$defs/AgentReceiptState"
         },
         "snapshot_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "initial_context": {
           "anyOf": [
@@ -4878,9 +4878,7 @@
           "type": "string"
         },
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentSnapshotRevision"
         },
         "lifecycle": {
           "$ref": "#/$defs/AgentLifecycleStatus"
@@ -5216,9 +5214,7 @@
           "$ref": "#/$defs/SemanticFidelity"
         },
         "observed_at_ms": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentServiceU64"
         }
       },
       "required": [
@@ -5239,9 +5235,7 @@
       "type": "object",
       "properties": {
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentSurfaceRevision"
         },
         "digest": {
           "type": "string"
@@ -5371,9 +5365,7 @@
           ]
         },
         "occurred_at_ms": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentServiceU64"
         },
         "payload": {
           "$ref": "#/$defs/AgentChangePayload"
@@ -5759,12 +5751,14 @@
           ]
         },
         "snapshot_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "initial_context": {
           "anyOf": [
@@ -6184,9 +6178,7 @@
               "type": "object",
               "properties": {
                 "last_received_frame_id": {
-                  "type": "integer",
-                  "format": "uint64",
-                  "minimum": 0
+                  "$ref": "#/$defs/RuntimeWireFrameId"
                 }
               },
               "required": [
@@ -6225,9 +6217,7 @@
       "type": "object",
       "properties": {
         "through_frame_id": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeWireFrameId"
         }
       },
       "required": [

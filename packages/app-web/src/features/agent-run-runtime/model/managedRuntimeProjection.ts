@@ -1,7 +1,7 @@
 import type {
   ManagedRuntimeChangePage,
   ManagedRuntimeSnapshot,
-} from "../../../generated/agent-runtime-contracts";
+} from "../../../generated/agent-runtime-validators";
 
 export class ManagedRuntimeFeedProtocolError extends Error {}
 
@@ -12,18 +12,18 @@ export class ManagedRuntimeFeedProtocolError extends Error {}
 export function consumeManagedRuntimeChangePage<
   TSnapshot extends {
     readonly thread_id: string;
-    readonly revision: number;
-    readonly latest_change_sequence: number;
+    readonly revision: bigint;
+    readonly latest_change_sequence: bigint;
   },
   TPage extends {
     readonly thread_id: string;
     readonly changes: readonly {
       readonly thread_id: string;
-      readonly sequence: number;
-      readonly revision: number;
+      readonly sequence: bigint;
+      readonly revision: bigint;
       readonly delta: unknown;
     }[];
-    readonly next: number;
+    readonly next: bigint;
     readonly gap: unknown | null;
   },
 >(snapshot: TSnapshot, page: TPage) {
@@ -52,7 +52,7 @@ export function consumeManagedRuntimeChangePage<
       }
       continue;
     }
-    if (change.sequence !== sequence + 1) {
+    if (change.sequence !== sequence + 1n) {
       throw new ManagedRuntimeFeedProtocolError(
         "managed Runtime changes are not contiguous",
       );

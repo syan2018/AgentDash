@@ -290,11 +290,11 @@ export function SessionChatView({
     [changes],
   );
   const dispatchedRuntimeTargetRef = useRef<string | null>(null);
-  const dispatchedRuntimeSequenceRef = useRef(0);
+  const dispatchedRuntimeSequenceRef = useRef(0n);
   useEffect(() => {
     if (dispatchedRuntimeTargetRef.current !== agentRunTargetKey) {
       dispatchedRuntimeTargetRef.current = agentRunTargetKey;
-      dispatchedRuntimeSequenceRef.current = 0;
+      dispatchedRuntimeSequenceRef.current = 0n;
     }
     if (!onRuntimeChanges) return;
     const pending = changes.filter(

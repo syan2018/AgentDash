@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, env, fs, path::Path};
 
 use agentdash_agent_service_api::{
-    AgentHostCallbackError, AgentServiceApiSchema, AgentServiceInstanceId,
+    AgentHostCallbackError, AgentServiceApiSchema, AgentServiceInstanceId, AgentServiceU64,
 };
 use schemars::schema_for;
 use ts_rs::TS;
@@ -19,6 +19,8 @@ fn main() {
         .expect("export Complete Agent Service routing identity");
     AgentHostCallbackError::export_all_to(temp.path())
         .expect("export Complete Agent Host callback error");
+    AgentServiceU64::export_all_to(temp.path())
+        .expect("export canonical Complete Agent u64 wire scalar");
     let mut declarations = Vec::new();
     collect_typescript(temp.path(), &mut declarations);
     declarations.sort();
@@ -64,6 +66,7 @@ fn required_service_type_names() -> BTreeSet<String> {
         "AgentHostCallbackError",
         "AgentServiceInstanceId",
         "AgentServiceError",
+        "AgentServiceU64",
     ]
     .into_iter()
     .map(str::to_owned)

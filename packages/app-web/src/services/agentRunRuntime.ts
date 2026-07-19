@@ -7,14 +7,15 @@ import type {
   AgentRunToolCallRejectionResponse,
 } from "../generated/agent-run-mailbox-contracts";
 import type {
-  ManagedRuntimeChangePage,
   ManagedRuntimeInteractionResponse,
   ManagedRuntimeOperationReceipt,
-  ManagedRuntimeSnapshot,
 } from "../generated/agent-runtime-contracts";
 import {
-  isManagedRuntimeChangePage,
-  isManagedRuntimeSnapshot,
+  decodeManagedRuntimeChangePage,
+  decodeManagedRuntimeSnapshot,
+  encodeRuntimeU64,
+  type ManagedRuntimeChangePage,
+  type ManagedRuntimeSnapshot,
 } from "../generated/agent-runtime-validators";
 
 export interface AgentRunRuntimeTarget {
@@ -30,29 +31,23 @@ export async function fetchManagedRuntimeSnapshot(
   target: AgentRunRuntimeTarget,
 ): Promise<ManagedRuntimeSnapshot> {
   const payload = await api.get<unknown>(agentRunScopedPath(target, "/runtime/snapshot"));
-  if (!isManagedRuntimeSnapshot(payload)) {
-    throw new Error("Managed Runtime snapshot 响应不符合 canonical contract");
-  }
-  return payload;
+  return decodeManagedRuntimeSnapshot(payload);
 }
 
 export async function fetchManagedRuntimeChangePage(
   target: AgentRunRuntimeTarget,
-  after?: number,
+  after?: bigint,
   limit = 256,
 ): Promise<ManagedRuntimeChangePage> {
   const params = new URLSearchParams();
   params.set("limit", String(limit));
   if (after !== undefined) {
-    params.set("after", String(after));
+    params.set("after", encodeRuntimeU64(after));
   }
   const payload = await api.get<unknown>(
     agentRunScopedPath(target, `/runtime/changes?${params.toString()}`),
   );
-  if (!isManagedRuntimeChangePage(payload)) {
-    throw new Error("Managed Runtime change page 响应不符合 canonical contract");
-  }
-  return payload;
+  return decodeManagedRuntimeChangePage(payload);
 }
 
 export async function fetchAgentRunRuntimeContextProjection(

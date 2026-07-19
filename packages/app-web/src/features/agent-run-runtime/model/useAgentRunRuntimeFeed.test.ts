@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ManagedRuntimeSnapshot } from "../../../generated/agent-runtime-contracts";
+import type { ManagedRuntimeSnapshot } from "../../../generated/agent-runtime-validators";
 import { managedRuntimeTestFixtures } from "./managedRuntimeTestFixtures";
 import {
   commandIsAvailable,

@@ -402,8 +402,8 @@ mod tests {
             serde_json::to_value(ack)
                 .expect("serialize ack")
                 .pointer("/frame/payload/through_frame_id")
-                .and_then(serde_json::Value::as_u64),
-            Some(10)
+                .and_then(serde_json::Value::as_str),
+            Some("10")
         );
     }
 
@@ -429,8 +429,8 @@ mod tests {
         assert_eq!(
             value
                 .pointer("/target/binding_generation")
-                .and_then(serde_json::Value::as_u64),
-            Some(12)
+                .and_then(serde_json::Value::as_str),
+            Some("12")
         );
         assert_eq!(
             value

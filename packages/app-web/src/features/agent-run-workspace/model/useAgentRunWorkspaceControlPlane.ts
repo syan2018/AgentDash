@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-contracts";
+import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
 import { acknowledgeWorkspacePresentation } from "../../../services/agentRunProductProjections";
 import type { ExecutorConfig } from "../../../services/executor";
 import { subscribeProjectEvents } from "../../../stores/eventStore";

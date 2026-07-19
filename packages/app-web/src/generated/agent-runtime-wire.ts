@@ -13,6 +13,11 @@ import type { AgentBindingGeneration, AgentChange, AgentChangePage, AgentChanges
 export type RuntimeWireAgentChangeNotification = { target: RuntimeWireAgentBindingTarget, source: AgentSourceCoordinate, change: AgentChange, };
 
 /**
+ * Raw Runtime Wire framing coordinate.
+ */
+export type RuntimeWireU64 = string & { readonly __runtime_wire_u64: "canonical_unsigned_decimal" };
+
+/**
  * Remote Complete Agent binding selected by the Host.
  *
  * The instance identity routes the frame to one registered service. The generation fences every
@@ -51,7 +56,7 @@ export type RuntimeWireExecuteResult = { "status": "ok", "value": ManagedRuntime
 
 export type RuntimeWireFrame = { "kind": "request", "payload": RuntimeWireRequest } | { "kind": "response", "payload": { request_frame_id: RuntimeWireFrameId, response: RuntimeWireResponse, } } | { "kind": "notification", "payload": RuntimeWireNotification } | { "kind": "ack", "payload": RuntimeWireAck };
 
-export type RuntimeWireFrameId = number;
+export type RuntimeWireFrameId = RuntimeWireU64;
 
 export type RuntimeWireGenerationFenceError = { expected: AgentBindingGeneration, received: AgentBindingGeneration, };
 

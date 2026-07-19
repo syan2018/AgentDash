@@ -1,4 +1,4 @@
-import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-contracts";
+import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
@@ -55,15 +55,17 @@ export function resolveExecutorFromHint(
  */
 export function computeAgentRunRuntimeProjectionRefreshKey(
   changes: readonly ManagedRuntimePlatformChange[],
-): number {
-  let refreshKey = 0;
+): bigint {
+  let refreshKey = 0n;
   for (const change of changes) {
     if (
       change.delta.kind === "source_projection_changed"
       || change.delta.kind === "runtime_lifecycle_changed"
       || change.delta.kind === "source_binding_changed"
     ) {
-      refreshKey = Math.max(refreshKey, change.sequence);
+      if (change.sequence > refreshKey) {
+        refreshKey = change.sequence;
+      }
     }
   }
   return refreshKey;

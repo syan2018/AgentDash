@@ -24,7 +24,9 @@ pub struct AgentSnapshotSource {
     pub authority: AgentSnapshotAuthority,
     pub source_revision: Option<AgentSourceRevision>,
     pub fidelity: SemanticFidelity,
-    #[ts(type = "number")]
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+    #[ts(type = "AgentServiceU64")]
     pub observed_at_ms: u64,
 }
 
@@ -194,7 +196,9 @@ pub enum AgentChangePayload {
 pub struct AgentChange {
     pub cursor: AgentSourceCursor,
     pub source_revision: Option<AgentSourceRevision>,
-    #[ts(type = "number")]
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+    #[ts(type = "AgentServiceU64")]
     pub occurred_at_ms: u64,
     pub payload: AgentChangePayload,
 }

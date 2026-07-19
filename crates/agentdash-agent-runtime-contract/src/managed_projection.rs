@@ -38,7 +38,9 @@ pub struct ManagedRuntimeThreadNameSource {
     pub fidelity: ManagedRuntimeProjectionFidelity,
     pub source_identity_digest: RuntimePayloadDigest,
     pub source_revision_digest: Option<RuntimePayloadDigest>,
-    #[ts(type = "number")]
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
     pub observed_at_ms: u64,
 }
 
@@ -367,7 +369,9 @@ pub struct ManagedRuntimeSnapshot {
     pub thread_id: RuntimeThreadId,
     pub revision: RuntimeProjectionRevision,
     pub latest_change_sequence: RuntimeChangeSequence,
-    #[ts(type = "number")]
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
     pub captured_at_ms: u64,
     pub lifecycle: ManagedRuntimeLifecycleStatus,
     pub active_turn_id: Option<RuntimeTurnId>,
@@ -436,14 +440,18 @@ pub enum ManagedRuntimeSourceProjectionDelta {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ManagedRuntimeChangeDelta {
     ThreadNameChanged {
-        #[ts(type = "number")]
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::RuntimeU64")]
+        #[ts(type = "RuntimeU64")]
         source_change_sequence: u64,
         source_projection_revision: RuntimeProjectionRevision,
         thread_name: Option<String>,
         source: ManagedRuntimeThreadNameSource,
     },
     SourceObservationApplied {
-        #[ts(type = "number")]
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::RuntimeU64")]
+        #[ts(type = "RuntimeU64")]
         source_change_sequence: u64,
         source_projection_revision: RuntimeProjectionRevision,
         source_identity_digest: RuntimePayloadDigest,
@@ -453,7 +461,9 @@ pub enum ManagedRuntimeChangeDelta {
         changed_sections: BTreeSet<ManagedRuntimeProjectionSection>,
     },
     SourceProjectionChanged {
-        #[ts(type = "number")]
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::RuntimeU64")]
+        #[ts(type = "RuntimeU64")]
         source_change_sequence: u64,
         source_projection_revision: RuntimeProjectionRevision,
         observation_digest: RuntimePayloadDigest,
@@ -591,12 +601,12 @@ mod tests {
         };
 
         let json = serde_json::to_value(&contract).expect("serialize contract fixture");
-        assert_eq!(json["snapshot"]["revision"], 5);
+        assert_eq!(json["snapshot"]["revision"], "5");
         assert_eq!(
             json["snapshot"]["command_availability"]["submit_input"]["status"],
             "available"
         );
-        assert_eq!(json["change_page"]["gap"]["earliest_available"], 5);
+        assert_eq!(json["change_page"]["gap"]["earliest_available"], "5");
         let decoded: ManagedRuntimeProjectionSchema =
             serde_json::from_value(json).expect("deserialize contract fixture");
         assert_eq!(decoded, contract);

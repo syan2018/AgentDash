@@ -302,7 +302,9 @@ pub enum AgentSurfaceContributionPayload {
         point: AgentHookPoint,
         timing: AgentHookTiming,
         actions: BTreeSet<AgentHookAction>,
-        #[ts(type = "number")]
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+        #[ts(type = "AgentServiceU64")]
         deadline_ms: u64,
     },
     Workspace {
@@ -436,7 +438,9 @@ pub struct AgentHostCallbackBinding {
     pub route_id: AgentCallbackRouteId,
     pub binding_generation: AgentBindingGeneration,
     pub delivery: AgentSurfaceRoute,
-    #[ts(type = "number")]
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+    #[ts(type = "AgentServiceU64")]
     pub default_deadline_ms: u64,
 }
 

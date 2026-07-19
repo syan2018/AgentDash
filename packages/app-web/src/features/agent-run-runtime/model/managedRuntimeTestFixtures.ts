@@ -1,10 +1,12 @@
 import type {
-  ManagedRuntimeChangePage,
-  ManagedRuntimeCommandAvailability,
   ManagedRuntimeEntityStatus,
   ManagedRuntimeOperationStatus,
-  ManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-contracts";
+import type {
+  ManagedRuntimeChangePage,
+  ManagedRuntimeCommandAvailability,
+  ManagedRuntimeSnapshot,
+} from "../../../generated/agent-runtime-validators";
 
 function operationStatus(
   status: ManagedRuntimeEntityStatus,
@@ -15,7 +17,7 @@ function operationStatus(
 
 function availability(
   status: ManagedRuntimeEntityStatus,
-  revision: number,
+  revision: bigint,
 ): ManagedRuntimeCommandAvailability {
   const evidence = {
     decided_at_revision: revision,
@@ -43,14 +45,14 @@ function availability(
 
 function runtimeSnapshot(
   status: ManagedRuntimeEntityStatus,
-  revision: number,
-  latestChangeSequence: number,
+  revision: bigint,
+  latestChangeSequence: bigint,
 ): ManagedRuntimeSnapshot {
   return {
     thread_id: "runtime-thread-child",
     revision,
     latest_change_sequence: latestChangeSequence,
-    captured_at_ms: 1000 + revision,
+    captured_at_ms: 1000n + revision,
     lifecycle: "active",
     active_turn_id: status === "running" ? "turn-compaction" : null,
     turns: [
@@ -70,6 +72,8 @@ function runtimeSnapshot(
       },
     ],
     interactions: [],
+    thread_name: null,
+    thread_name_source: null,
     operations: [
       {
         id: "operation-compaction",
@@ -89,22 +93,22 @@ function runtimeSnapshot(
   };
 }
 
-const started = runtimeSnapshot("running", 5, 8);
-const completed = runtimeSnapshot("completed", 6, 9);
-const failed = runtimeSnapshot("failed", 7, 10);
-const lost = runtimeSnapshot("lost", 8, 11);
+const started = runtimeSnapshot("running", 5n, 8n);
+const completed = runtimeSnapshot("completed", 6n, 9n);
+const failed = runtimeSnapshot("failed", 7n, 10n);
+const lost = runtimeSnapshot("lost", 8n, 11n);
 
 const changePage: ManagedRuntimeChangePage = {
   thread_id: started.thread_id,
   changes: [
     {
       thread_id: started.thread_id,
-      sequence: 9,
-      revision: 6,
+      sequence: 9n,
+      revision: 6n,
       delta: {
         kind: "source_projection_changed",
-        source_change_sequence: 9,
-        source_projection_revision: 6,
+        source_change_sequence: 9n,
+        source_projection_revision: 6n,
         observation_digest: "sha256:observation-6",
         section: "snapshot",
         section_digest: "sha256:snapshot-6",
@@ -122,19 +126,19 @@ const changePage: ManagedRuntimeChangePage = {
       },
     },
   ],
-  next: 9,
+  next: 9n,
   gap: null,
 };
 
 const gapPage: ManagedRuntimeChangePage = {
   thread_id: started.thread_id,
   changes: [],
-  next: 12,
+  next: 12n,
   gap: {
-    requested_after: 4,
-    earliest_available: 9,
-    latest_available: 12,
-    snapshot_revision: 8,
+    requested_after: 4n,
+    earliest_available: 9n,
+    latest_available: 12n,
+    snapshot_revision: 8n,
   },
 };
 

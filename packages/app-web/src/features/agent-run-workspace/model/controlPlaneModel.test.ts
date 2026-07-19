@@ -372,18 +372,18 @@ describe("AgentRun control-plane model", () => {
       planAgentRunRuntimeChanges([
         {
           thread_id: "runtime-thread",
-          sequence: 12,
-          revision: 8,
+          sequence: 12n,
+          revision: 8n,
           delta: {
             kind: "source_projection_changed",
-            source_change_sequence: 12,
-            source_projection_revision: 8,
+            source_change_sequence: 12n,
+            source_projection_revision: 8n,
             observation_digest: "sha256:observation",
             section: "surface",
             section_digest: "sha256:surface",
             delta: {
               kind: "surface_changed",
-              applied_surface_revision: 7,
+              applied_surface_revision: 7n,
             },
           },
         },

@@ -634,17 +634,17 @@
           "type": "string"
         },
         "binding_generation": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentBindingGeneration"
         },
         "expected_snapshot_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -654,6 +654,18 @@
         "binding_generation"
       ]
     },
+    "AgentBindingGeneration": {
+      "$ref": "#/$defs/AgentServiceU64"
+    },
+    "AgentServiceU64": {
+      "description": "canonical unsigned-decimal Complete Agent coordinate",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "maxLength": 20
+    },
+    "AgentSnapshotRevision": {
+      "$ref": "#/$defs/AgentServiceU64"
+    },
     "InitialAgentContextPackage": {
       "type": "object",
       "properties": {
@@ -661,9 +673,7 @@
           "type": "string"
         },
         "schema_version": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentContextSchemaVersion"
         },
         "mode": {
           "$ref": "#/$defs/InitialContextMode"
@@ -685,6 +695,9 @@
         "contributions",
         "digest"
       ]
+    },
+    "AgentContextSchemaVersion": {
+      "$ref": "#/$defs/AgentServiceU64"
     },
     "InitialContextMode": {
       "type": "string",
@@ -1228,12 +1241,14 @@
           "$ref": "#/$defs/AgentReceiptState"
         },
         "snapshot_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "initial_context": {
           "anyOf": [
@@ -1449,12 +1464,14 @@
           "type": "string"
         },
         "at_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -1468,9 +1485,7 @@
           "type": "string"
         },
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentSnapshotRevision"
         },
         "lifecycle": {
           "$ref": "#/$defs/AgentLifecycleStatus"
@@ -1806,9 +1821,7 @@
           "$ref": "#/$defs/SemanticFidelity"
         },
         "observed_at_ms": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentServiceU64"
         }
       },
       "required": [
@@ -1829,9 +1842,7 @@
       "type": "object",
       "properties": {
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentSurfaceRevision"
         },
         "digest": {
           "type": "string"
@@ -1848,6 +1859,9 @@
         "digest",
         "contributions"
       ]
+    },
+    "AgentSurfaceRevision": {
+      "$ref": "#/$defs/AgentServiceU64"
     },
     "AppliedAgentSurfaceContribution": {
       "type": "object",
@@ -1958,9 +1972,7 @@
           ]
         },
         "occurred_at_ms": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentServiceU64"
         },
         "payload": {
           "$ref": "#/$defs/AgentChangePayload"
@@ -2320,12 +2332,14 @@
           ]
         },
         "snapshot_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "initial_context": {
           "anyOf": [
@@ -2412,9 +2426,7 @@
       "type": "object",
       "properties": {
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentSurfaceRevision"
         },
         "digest": {
           "type": "string"
@@ -2536,9 +2548,7 @@
               }
             },
             "deadline_ms": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/AgentServiceU64"
             },
             "kind": {
               "type": "string",
@@ -2631,9 +2641,7 @@
       "type": "object",
       "properties": {
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentSurfaceRevision"
         },
         "digest": {
           "type": "string"
@@ -2728,17 +2736,13 @@
           "type": "string"
         },
         "binding_generation": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentBindingGeneration"
         },
         "delivery": {
           "$ref": "#/$defs/AgentSurfaceRoute"
         },
         "default_deadline_ms": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentServiceU64"
         }
       },
       "required": [
@@ -2761,17 +2765,13 @@
           "type": "string"
         },
         "binding_generation": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentBindingGeneration"
         },
         "source": {
           "type": "string"
         },
         "expected_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentSurfaceRevision"
         }
       },
       "required": [
@@ -2807,9 +2807,7 @@
           "type": "string"
         },
         "binding_generation": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentBindingGeneration"
         },
         "source": {
           "type": "string"
@@ -2837,9 +2835,7 @@
         },
         "deadline_at_ms": {
           "description": "Absolute Unix epoch deadline. The Host must not start a callback after it.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/AgentServiceU64"
         }
       },
       "required": [

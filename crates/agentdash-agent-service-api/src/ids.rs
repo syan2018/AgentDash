@@ -106,8 +106,12 @@ macro_rules! service_revision {
         )]
         #[serde(transparent)]
         #[schemars(transparent)]
-        #[ts(type = "number")]
-        pub struct $name(pub u64);
+        #[ts(type = "AgentServiceU64")]
+        pub struct $name(
+            #[serde(with = "crate::wire_u64")]
+            #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+            pub u64,
+        );
     };
 }
 

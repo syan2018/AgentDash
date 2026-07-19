@@ -48,12 +48,14 @@
           "type": "string"
         },
         "expected_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeProjectionRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "command": {
           "$ref": "#/$defs/ManagedRuntimeCommand"
@@ -65,6 +67,15 @@
         "thread_id",
         "command"
       ]
+    },
+    "RuntimeProjectionRevision": {
+      "$ref": "#/$defs/RuntimeU64"
+    },
+    "RuntimeU64": {
+      "description": "canonical unsigned-decimal Runtime coordinate",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "maxLength": 20
     },
     "ManagedRuntimeCommand": {
       "oneOf": [
@@ -570,9 +581,7 @@
           "type": "string"
         },
         "accepted_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "status": {
           "$ref": "#/$defs/ManagedRuntimeOperationStatus"
@@ -699,22 +708,20 @@
           "type": "string"
         },
         "committed_at_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "applied_surface_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/SurfaceRevision"
         },
         "activated_at_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeProjectionRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -722,6 +729,9 @@
         "committed_at_revision",
         "applied_surface_revision"
       ]
+    },
+    "SurfaceRevision": {
+      "$ref": "#/$defs/RuntimeU64"
     },
     "ManagedRuntimeAppliedInitialContextEvidence": {
       "type": "object",
@@ -963,12 +973,14 @@
           "type": "string"
         },
         "after": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeChangeSequence"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "limit": {
           "type": "integer",
@@ -981,15 +993,16 @@
         "limit"
       ]
     },
+    "RuntimeChangeSequence": {
+      "$ref": "#/$defs/RuntimeU64"
+    },
     "ManagedRuntimeGatewayError": {
       "oneOf": [
         {
           "type": "object",
           "properties": {
             "actual": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeProjectionRevision"
             },
             "kind": {
               "type": "string",
@@ -1070,19 +1083,13 @@
           "type": "string"
         },
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "latest_change_sequence": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeChangeSequence"
         },
         "captured_at_ms": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeU64"
         },
         "lifecycle": {
           "$ref": "#/$defs/ManagedRuntimeLifecycleStatus"
@@ -1471,9 +1478,7 @@
           ]
         },
         "observed_at_ms": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeU64"
         }
       },
       "required": [
@@ -1575,9 +1580,7 @@
       "type": "object",
       "properties": {
         "decided_at_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "blocking_operation_id": {
           "type": [
@@ -1586,20 +1589,24 @@
           ]
         },
         "bound_surface_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SurfaceRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "applied_surface_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SurfaceRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -1633,9 +1640,7 @@
           }
         },
         "next": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeChangeSequence"
         },
         "gap": {
           "anyOf": [
@@ -1661,14 +1666,10 @@
           "type": "string"
         },
         "sequence": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeChangeSequence"
         },
         "revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "delta": {
           "$ref": "#/$defs/ManagedRuntimeChangeDelta"
@@ -1687,14 +1688,10 @@
           "type": "object",
           "properties": {
             "source_change_sequence": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeU64"
             },
             "source_projection_revision": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeProjectionRevision"
             },
             "thread_name": {
               "type": [
@@ -1721,14 +1718,10 @@
           "type": "object",
           "properties": {
             "source_change_sequence": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeU64"
             },
             "source_projection_revision": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeProjectionRevision"
             },
             "source_identity_digest": {
               "type": "string"
@@ -1773,14 +1766,10 @@
           "type": "object",
           "properties": {
             "source_change_sequence": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeU64"
             },
             "source_projection_revision": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
+              "$ref": "#/$defs/RuntimeProjectionRevision"
             },
             "observation_digest": {
               "type": "string"
@@ -1849,20 +1838,24 @@
           "type": "object",
           "properties": {
             "bound_surface_revision": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SurfaceRevision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "applied_surface_revision": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SurfaceRevision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -1965,12 +1958,14 @@
               "$ref": "#/$defs/ManagedRuntimeProjectionFidelity"
             },
             "applied_surface_revision": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SurfaceRevision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -2082,12 +2077,14 @@
           "type": "object",
           "properties": {
             "applied_surface_revision": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SurfaceRevision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -2119,27 +2116,23 @@
       "type": "object",
       "properties": {
         "requested_after": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeChangeSequence"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "earliest_available": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeChangeSequence"
         },
         "latest_available": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeChangeSequence"
         },
         "snapshot_revision": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "$ref": "#/$defs/RuntimeProjectionRevision"
         }
       },
       "required": [

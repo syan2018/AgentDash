@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ManagedRuntimeSnapshot } from "../../../generated/agent-runtime-contracts";
+import type { ManagedRuntimeSnapshot } from "../../../generated/agent-runtime-validators";
 import { managedRuntimeTestFixtures } from "./managedRuntimeTestFixtures";
 import {
   connectManagedRuntimeFeed,
@@ -51,13 +51,13 @@ describe("Managed Runtime feed connection", () => {
     );
     await connection.ready;
 
-    expect(options[0]?.after).toBe(8);
+    expect(options[0]?.after).toBe(8n);
     options[0]?.onPage(changePage);
     expect(connectionObserver.onProjection).toHaveBeenCalledTimes(1);
     expect(connectionObserver.onProjection).toHaveBeenCalledWith(
       expect.objectContaining({
-        revision: 6,
-        latest_change_sequence: 9,
+        revision: 6n,
+        latest_change_sequence: 9n,
       }),
       changePage.changes,
     );
@@ -100,7 +100,7 @@ describe("Managed Runtime feed connection", () => {
     expect(transports[0]?.transport.close).toHaveBeenCalledOnce();
     expect(fetchSnapshot).toHaveBeenCalledTimes(2);
     expect(connectionObserver.onBaseline).toHaveBeenLastCalledWith(lost);
-    expect(transports[1]?.options.after).toBe(11);
+    expect(transports[1]?.options.after).toBe(11n);
   });
 
   it("does not publish a late baseline after the connection is closed", async () => {

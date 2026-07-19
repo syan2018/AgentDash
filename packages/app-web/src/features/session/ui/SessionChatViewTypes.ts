@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-contracts";
+import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type {
   BackendSelectionRequestDto,

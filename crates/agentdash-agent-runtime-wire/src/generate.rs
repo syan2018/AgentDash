@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, env, fs, path::Path};
 
 use agentdash_agent_runtime_wire::{
     RuntimeProtocolViolation, RuntimeWireCompleteAgentSchema, RuntimeWireEnvelope,
-    RuntimeWireGenerationFenceError,
+    RuntimeWireGenerationFenceError, RuntimeWireU64,
 };
 use schemars::schema_for;
 use ts_rs::TS;
@@ -23,6 +23,7 @@ fn main() {
         .expect("export Runtime Wire generation fence errors");
     RuntimeWireCompleteAgentSchema::export_all_to(temp.path())
         .expect("export Complete Agent Runtime Wire schema root");
+    RuntimeWireU64::export_all_to(temp.path()).expect("export canonical Wire u64 scalar");
     let mut declarations = Vec::new();
     collect_typescript(temp.path(), &mut declarations);
 
@@ -100,6 +101,7 @@ fn wire_owned_type_names() -> BTreeSet<String> {
         "RuntimeWireRequest",
         "RuntimeWireResponse",
         "RuntimeWireGenerationFenceError",
+        "RuntimeWireU64",
     ]
     .into_iter()
     .map(str::to_owned)

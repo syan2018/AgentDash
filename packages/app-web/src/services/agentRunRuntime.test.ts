@@ -19,6 +19,10 @@ import {
   respondAgentRunInteraction,
 } from "./agentRunRuntime";
 import { managedRuntimeTestFixtures } from "../features/agent-run-runtime/model/managedRuntimeTestFixtures";
+import {
+  encodeManagedRuntimeChangePage,
+  encodeManagedRuntimeSnapshot,
+} from "../generated/agent-runtime-validators";
 
 describe("AgentRun runtime service", () => {
   beforeEach(() => {
@@ -59,27 +63,65 @@ describe("AgentRun runtime service", () => {
 
   it("loads the canonical Managed Runtime snapshot from the AgentRun target", async () => {
     mocks.apiGetMock.mockResolvedValue(
-      managedRuntimeTestFixtures.snapshots.started,
+      encodeManagedRuntimeSnapshot(managedRuntimeTestFixtures.snapshots.started),
     );
     await expect(
       fetchManagedRuntimeSnapshot({ runId: "run/1", agentId: "agent/1" }),
-    ).resolves.toBe(managedRuntimeTestFixtures.snapshots.started);
+    ).resolves.toEqual(managedRuntimeTestFixtures.snapshots.started);
     expect(mocks.apiGetMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/snapshot",
     );
   });
 
   it("loads canonical committed changes after the durable cursor", async () => {
-    mocks.apiGetMock.mockResolvedValue(managedRuntimeTestFixtures.changePage);
+    mocks.apiGetMock.mockResolvedValue(
+      encodeManagedRuntimeChangePage(managedRuntimeTestFixtures.changePage),
+    );
     await expect(
       fetchManagedRuntimeChangePage(
         { runId: "run/1", agentId: "agent/1" },
-        8,
+        8n,
       ),
-    ).resolves.toBe(managedRuntimeTestFixtures.changePage);
+    ).resolves.toEqual(managedRuntimeTestFixtures.changePage);
     expect(mocks.apiGetMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/changes?limit=256&after=8",
     );
+  });
+
+  it("round-trips the full u64 cursor through the URL without numeric coercion", async () => {
+    mocks.apiGetMock.mockResolvedValue(
+      encodeManagedRuntimeChangePage({
+        ...managedRuntimeTestFixtures.changePage,
+        changes: [],
+        next: 18_446_744_073_709_551_615n,
+      }),
+    );
+
+    await expect(
+      fetchManagedRuntimeChangePage(
+        { runId: "run/1", agentId: "agent/1" },
+        18_446_744_073_709_551_614n,
+      ),
+    ).resolves.toMatchObject({ next: 18_446_744_073_709_551_615n });
+    expect(mocks.apiGetMock).toHaveBeenCalledWith(
+      "/agent-runs/run%2F1/agents/agent%2F1/runtime/changes?limit=256&after=18446744073709551614",
+    );
+  });
+
+  it.each([
+    ["JSON number", 9],
+    ["leading zero", "09"],
+    ["negative", "-1"],
+    ["overflow", "18446744073709551616"],
+  ])("rejects a non-canonical Runtime u64 encoded as %s", async (_case, revision) => {
+    mocks.apiGetMock.mockResolvedValue({
+      ...encodeManagedRuntimeSnapshot(managedRuntimeTestFixtures.snapshots.started),
+      revision,
+    });
+
+    await expect(
+      fetchManagedRuntimeSnapshot({ runId: "run/1", agentId: "agent/1" }),
+    ).rejects.toThrow("$.revision");
   });
 
   it("rejects a response that is not the canonical Runtime projection", async () => {
@@ -90,7 +132,7 @@ describe("AgentRun runtime service", () => {
 
     await expect(
       fetchManagedRuntimeSnapshot({ runId: "run/1", agentId: "agent/1" }),
-    ).rejects.toThrow("canonical contract");
+    ).rejects.toThrow("expected");
   });
 
   it("responds to a typed Runtime interaction", async () => {

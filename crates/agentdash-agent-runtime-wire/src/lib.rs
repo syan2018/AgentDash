@@ -1,8 +1,10 @@
 //! Canonical cross-process framing for Managed Runtime and Complete Agent traffic.
 
 mod complete_agent;
+pub mod wire_u64;
 
 pub use complete_agent::*;
+pub use wire_u64::*;
 
 use agentdash_agent_runtime_contract::{
     ManagedRuntimeChangePage, ManagedRuntimeChangesRequest, ManagedRuntimeCommandEnvelope,
@@ -21,8 +23,12 @@ pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 4;
 )]
 #[serde(transparent)]
 #[schemars(transparent)]
-#[ts(type = "number")]
-pub struct RuntimeWireFrameId(pub u64);
+#[ts(type = "RuntimeWireU64")]
+pub struct RuntimeWireFrameId(
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::RuntimeWireU64")]
+    pub u64,
+);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -161,7 +167,8 @@ pub fn decode_frame(bytes: &[u8]) -> Result<DecodedRuntimeWireFrame, RuntimeProt
                 kind,
                 frame_id: value
                     .get("frame_id")
-                    .and_then(serde_json::Value::as_u64)
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|value| crate::wire_u64::parse(value).ok())
                     .map(RuntimeWireFrameId),
             })
         }
@@ -224,9 +231,10 @@ mod tests {
     }
 
     #[test]
-    fn rev4_typescript_root_exports_complete_remote_seam_without_bigint() {
+    fn rev4_typescript_root_exports_lossless_decimal_frame_ids() {
         let temp = tempfile::tempdir().expect("create TypeScript export directory");
         RuntimeWireEnvelope::export_all_to(temp.path()).expect("export Runtime Wire contracts");
+        RuntimeWireU64::export_all_to(temp.path()).expect("export Wire u64");
         let typescript = read_typescript(temp.path());
 
         assert!(!typescript.contains("bigint"));
@@ -256,7 +264,10 @@ mod tests {
         ] {
             assert!(typescript.contains(variant), "missing variant {variant}");
         }
-        assert!(typescript.contains("export type RuntimeWireFrameId = number;"));
+        assert!(typescript.contains(
+            "export type RuntimeWireU64 = string & { readonly __runtime_wire_u64: \"canonical_unsigned_decimal\" };"
+        ));
+        assert!(typescript.contains("export type RuntimeWireFrameId = RuntimeWireU64;"));
     }
 
     fn read_typescript(directory: &Path) -> String {

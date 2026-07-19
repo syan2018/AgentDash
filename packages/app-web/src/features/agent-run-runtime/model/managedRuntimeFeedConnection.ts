@@ -1,7 +1,7 @@
 import type {
   ManagedRuntimePlatformChange,
   ManagedRuntimeSnapshot,
-} from "../../../generated/agent-runtime-contracts";
+} from "../../../generated/agent-runtime-validators";
 import {
   fetchManagedRuntimeSnapshot,
   type AgentRunRuntimeTarget,

@@ -8,10 +8,12 @@
 pub mod gateway;
 pub mod ids;
 pub mod managed_projection;
+pub mod wire_u64;
 
 pub use gateway::*;
 pub use ids::*;
 pub use managed_projection::*;
+pub use wire_u64::*;
 
 #[cfg(test)]
 mod tests {
@@ -22,19 +24,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn runtime_typescript_root_uses_json_safe_number_vocabulary() {
+    fn runtime_typescript_root_uses_canonical_unsigned_decimal_vocabulary() {
         let temp = tempfile::tempdir().expect("create TypeScript export directory");
         ManagedRuntimeContractSchema::export_all_to(temp.path())
             .expect("export Managed Runtime contracts");
+        RuntimeU64::export_all_to(temp.path()).expect("export Runtime u64");
         let typescript = read_typescript(temp.path());
 
         assert!(!typescript.contains("bigint"));
         for declaration in [
-            "export type SurfaceRevision = number;",
-            "export type RuntimeProjectionRevision = number;",
-            "export type RuntimeChangeSequence = number;",
-            "captured_at_ms: number",
-            "source_change_sequence: number",
+            "export type RuntimeU64 = string & { readonly __runtime_u64: \"canonical_unsigned_decimal\" };",
+            "export type SurfaceRevision = RuntimeU64;",
+            "export type RuntimeProjectionRevision = RuntimeU64;",
+            "export type RuntimeChangeSequence = RuntimeU64;",
+            "captured_at_ms: RuntimeU64",
+            "source_change_sequence: RuntimeU64",
         ] {
             assert!(typescript.contains(declaration), "missing {declaration}");
         }

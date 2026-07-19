@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ManagedRuntimePlatformChange,
   ManagedRuntimeSnapshot,
-} from "../../../generated/agent-runtime-contracts";
+} from "../../../generated/agent-runtime-validators";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import {
   connectManagedRuntimeFeed,

@@ -37,8 +37,8 @@ describe("managed Runtime feed protocol", () => {
 
     expect(applied).not.toBeNull();
     expect(applied).toMatchObject({
-      revision: 6,
-      latest_change_sequence: 9,
+      revision: 6n,
+      latest_change_sequence: 9n,
       active_turn_id: null,
       turns: [{ id: "turn-compaction", status: "completed" }],
       items: [{ id: "item-compaction", status: "completed" }],
@@ -53,10 +53,10 @@ describe("managed Runtime feed protocol", () => {
       ),
     ).toEqual({ kind: "snapshot_reload_required" });
     expect(managedRuntimeTestFixtures.gapPage.gap).toEqual({
-      requested_after: 4,
-      earliest_available: 9,
-      latest_available: 12,
-      snapshot_revision: 8,
+      requested_after: 4n,
+      earliest_available: 9n,
+      latest_available: 12n,
+      snapshot_revision: 8n,
     });
   });
 
@@ -86,7 +86,7 @@ describe("managed Runtime feed protocol", () => {
     expect(started).toMatchObject({
       status: "unavailable",
       reason: "operation_in_flight",
-      evidence: { decided_at_revision: 5 },
+      evidence: { decided_at_revision: 5n },
     });
     expect(
       managedRuntimeCommandAvailability(
@@ -96,7 +96,7 @@ describe("managed Runtime feed protocol", () => {
     ).toBe(completed);
     expect(completed).toMatchObject({
       status: "available",
-      evidence: { decided_at_revision: 6 },
+      evidence: { decided_at_revision: 6n },
     });
     expect(
       managedRuntimeCommandAvailability(
@@ -105,7 +105,7 @@ describe("managed Runtime feed protocol", () => {
       ),
     ).toMatchObject({
       status: "available",
-      evidence: { decided_at_revision: 7 },
+      evidence: { decided_at_revision: 7n },
     });
     expect(
       managedRuntimeCommandAvailability(
@@ -115,7 +115,7 @@ describe("managed Runtime feed protocol", () => {
     ).toMatchObject({
       status: "unavailable",
       reason: "source_unavailable",
-      evidence: { decided_at_revision: 8 },
+      evidence: { decided_at_revision: 8n },
     });
   });
 
@@ -131,9 +131,9 @@ describe("managed Runtime feed protocol", () => {
         ...managedRuntimeTestFixtures.changePage,
         changes: managedRuntimeTestFixtures.changePage.changes.map((change) => ({
           ...change,
-          sequence: 10,
+          sequence: 10n,
         })),
-        next: 10,
+        next: 10n,
       }),
     ).toThrow("not contiguous");
   });
@@ -146,5 +146,31 @@ describe("managed Runtime feed protocol", () => {
       kind: "duplicate",
     });
     expect(applyManagedRuntimeChangePage(completed, duplicatePage)).toBe(completed);
+  });
+
+  it("keeps adjacent committed changes distinct above JavaScript MAX_SAFE_INTEGER", () => {
+    const sequence = 9_007_199_254_740_992n;
+    const snapshot = {
+      ...managedRuntimeTestFixtures.snapshots.started,
+      revision: sequence,
+      latest_change_sequence: sequence,
+    };
+    const page = {
+      ...managedRuntimeTestFixtures.changePage,
+      changes: managedRuntimeTestFixtures.changePage.changes.map((change) => ({
+        ...change,
+        sequence: sequence + 1n,
+        revision: sequence + 1n,
+      })),
+      next: sequence + 1n,
+    };
+
+    expect(consumeManagedRuntimeChangePage(snapshot, page)).toMatchObject({
+      kind: "apply",
+    });
+    expect(applyManagedRuntimeChangePage(snapshot, page)).toMatchObject({
+      revision: sequence + 1n,
+      latest_change_sequence: sequence + 1n,
+    });
   });
 });

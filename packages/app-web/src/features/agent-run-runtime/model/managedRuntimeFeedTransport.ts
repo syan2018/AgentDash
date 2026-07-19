@@ -1,4 +1,4 @@
-import type { ManagedRuntimeChangePage } from "../../../generated/agent-runtime-contracts";
+import type { ManagedRuntimeChangePage } from "../../../generated/agent-runtime-validators";
 import {
   fetchManagedRuntimeChangePage,
   type AgentRunRuntimeTarget,
@@ -14,7 +14,7 @@ export type ManagedRuntimeFeedLifecycle =
 
 export interface ManagedRuntimeFeedTransportOptions {
   agentRunTarget: AgentRunRuntimeTarget;
-  after: number;
+  after: bigint;
   onPage: (page: ManagedRuntimeChangePage) => void;
   onLifecycleChange: (lifecycle: ManagedRuntimeFeedLifecycle) => void;
   onError: (error: Error) => void;
@@ -31,7 +31,7 @@ function normalizeError(error: unknown): Error {
 class PollingManagedRuntimeFeedTransport implements ManagedRuntimeFeedTransport {
   private closed = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private after: number;
+  private after: bigint;
   private connected = false;
   private readonly options: ManagedRuntimeFeedTransportOptions;
 

@@ -1,13 +1,15 @@
 import { useMemo } from "react";
 
 import type {
-  ManagedRuntimeCommandAvailability,
   ManagedRuntimeContentBlock,
   ManagedRuntimeInteraction,
   ManagedRuntimeItem,
+} from "../../../generated/agent-runtime-contracts";
+import type {
+  ManagedRuntimeCommandAvailability,
   ManagedRuntimePlatformChange,
   ManagedRuntimeSnapshot,
-} from "../../../generated/agent-runtime-contracts";
+} from "../../../generated/agent-runtime-validators";
 import type {
   AgentDashThreadItem,
   BackboneEvent,
@@ -68,6 +70,13 @@ export interface UseAgentRunRuntimeFeedResult {
   tokenUsage: TokenUsageInfo | null;
 }
 
+function runtimeTimestampMs(value: bigint): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError("Managed Runtime timestamp exceeds JavaScript safe integer range");
+  }
+  return Number(value);
+}
+
 function blockText(block: ManagedRuntimeContentBlock): string {
   switch (block.kind) {
     case "text":
@@ -104,6 +113,7 @@ function itemEvent(
   item: ManagedRuntimeItem,
 ): BackboneEvent {
   const content = item.content;
+  const capturedAtMs = runtimeTimestampMs(snapshot.captured_at_ms);
   switch (content.kind) {
     case "user_input":
       return {
@@ -153,7 +163,7 @@ function itemEvent(
             item: threadItem,
             threadId: snapshot.thread_id,
             turnId: item.turn_id,
-            startedAtMs: snapshot.captured_at_ms,
+            startedAtMs: capturedAtMs,
           },
         };
       }
@@ -163,7 +173,7 @@ function itemEvent(
           item: threadItem,
           threadId: snapshot.thread_id,
           turnId: item.turn_id,
-          completedAtMs: snapshot.captured_at_ms,
+          completedAtMs: capturedAtMs,
         },
       };
     }
@@ -179,7 +189,7 @@ function itemEvent(
             item: threadItem,
             threadId: snapshot.thread_id,
             turnId: item.turn_id,
-            startedAtMs: snapshot.captured_at_ms,
+            startedAtMs: capturedAtMs,
           },
         };
       }
@@ -189,7 +199,7 @@ function itemEvent(
           item: threadItem,
           threadId: snapshot.thread_id,
           turnId: item.turn_id,
-          completedAtMs: snapshot.captured_at_ms,
+          completedAtMs: capturedAtMs,
         },
       };
     }
@@ -217,6 +227,7 @@ function itemEvent(
 }
 
 function displayEntries(snapshot: ManagedRuntimeSnapshot): SessionDisplayEntry[] {
+  const capturedAtMs = runtimeTimestampMs(snapshot.captured_at_ms);
   return snapshot.items.map((item, index) => {
     const event = itemEvent(snapshot, item);
     const accumulatedText =
@@ -224,7 +235,7 @@ function displayEntries(snapshot: ManagedRuntimeSnapshot): SessionDisplayEntry[]
     return {
       id: item.id,
       sessionId: snapshot.thread_id,
-      timestamp: snapshot.captured_at_ms,
+      timestamp: capturedAtMs,
       eventSeq: index + 1,
       timelineOrder: { kind: "durable", seq: index + 1 },
       itemFreshness:

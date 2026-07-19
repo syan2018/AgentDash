@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-contracts";
+import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
 import {
   computeAgentRunRuntimeProjectionRefreshKey,
   isAgentRunWorkspaceActionRunning,
@@ -8,7 +8,7 @@ import {
 } from "./AgentRunRuntimeViewModel";
 
 function change(
-  sequence: number,
+  sequence: bigint,
   delta: ManagedRuntimePlatformChange["delta"],
 ): ManagedRuntimePlatformChange {
   return {
@@ -22,26 +22,26 @@ function change(
 describe("AgentRunRuntimeViewModel", () => {
   it("只以 committed Runtime projection change 推进刷新键", () => {
     const changes = [
-      change(1, {
+      change(1n, {
         kind: "command_availability_changed",
         command: "fork",
         availability: {
           status: "available",
           evidence: {
-            decided_at_revision: 1,
+            decided_at_revision: 1n,
             blocking_operation_id: null,
             bound_surface_revision: null,
             applied_surface_revision: null,
           },
         },
       }),
-      change(2, {
+      change(2n, {
         kind: "runtime_lifecycle_changed",
         lifecycle: "active",
       }),
     ];
 
-    expect(computeAgentRunRuntimeProjectionRefreshKey(changes)).toBe(2);
+    expect(computeAgentRunRuntimeProjectionRefreshKey(changes)).toBe(2n);
   });
 
   it("不会从未知产品状态推断运行中", () => {

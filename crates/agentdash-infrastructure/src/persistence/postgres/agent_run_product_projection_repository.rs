@@ -131,27 +131,38 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         let binding_json = product_binding_json(binding);
         let result = sqlx::query(
             "UPDATE agent_run_product_runtime_binding
-             SET source_committed_revision=$5,
+             SET launch_frame_id=$5,
+                 launch_frame_revision=$6,
+                 execution_profile_digest=$7,
+                 source_committed_revision=$8,
+                 source_applied_surface_revision=$9,
                  source_activated_revision=NULL,
-                 binding_digest=$6,
+                 binding_digest=$10,
                  applied_resource_snapshot_revision=NULL,
                  applied_resource_binding_id=NULL,
                  applied_resource_binding_generation=NULL,
-                 binding=$7
+                 binding=$11
              WHERE target_run_id=$1 AND target_agent_id=$2
                AND runtime_thread_id=$3
                AND source_ref=$4
                AND (
-                   binding_digest=$8
-                   OR (binding_digest=$6 AND binding=$7)
+                   binding_digest=$12
+                   OR (binding_digest=$10 AND binding=$11)
                )",
         )
         .bind(binding.target.run_id.to_string())
         .bind(binding.target.agent_id.to_string())
         .bind(binding.runtime_thread_id.as_str())
         .bind(binding.source_binding.source_ref.as_str())
+        .bind(binding.launch_frame.frame_id.to_string())
+        .bind(to_i64(binding.launch_frame.revision).map_err(|error| error.to_string())?)
+        .bind(&binding.execution_profile_digest)
         .bind(
             to_i64(binding.source_binding.committed_at_revision.0)
+                .map_err(|error| error.to_string())?,
+        )
+        .bind(
+            to_i64(binding.source_binding.applied_surface_revision.0)
                 .map_err(|error| error.to_string())?,
         )
         .bind(&binding_digest)

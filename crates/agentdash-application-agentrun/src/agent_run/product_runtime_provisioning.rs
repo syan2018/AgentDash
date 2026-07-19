@@ -212,6 +212,58 @@ pub trait AgentRunProductRuntimeProvisioningPort: Send + Sync {
     ) -> Result<AgentRunProductRuntimeProvisioningEvidence, AgentRunProductRuntimeProvisioningError>;
 }
 
+/// Product-owned request for replacing the applied surface of an existing Runtime thread.
+///
+/// The caller has already persisted `frame`; the implementation compiles its immutable surface,
+/// advances the Host binding generation exactly once, and leaves Managed Runtime Rebind/Activate
+/// to the Product convergence saga.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRunProductRuntimeSurfaceRebindRequest {
+    pub target: AgentRunTarget,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub idempotency_key: String,
+    pub frame: ProductAgentFrameRef,
+    pub execution_profile_digest: String,
+    pub execution_configuration: serde_json::Value,
+    pub surface_facts: ProductAgentSurfaceFacts,
+}
+
+impl AgentRunProductRuntimeSurfaceRebindRequest {
+    pub fn validate(&self) -> Result<(), AgentRunProductRuntimeProvisioningError> {
+        if self.frame.agent_id != self.target.agent_id
+            || self.frame.revision == 0
+            || self.execution_profile_digest.trim().is_empty()
+            || self.idempotency_key.trim().is_empty()
+            || self.surface_facts.surface_revision != self.frame.revision
+            || !self.surface_facts.validate()
+        {
+            return Err(AgentRunProductRuntimeProvisioningError::InvalidRequest {
+                reason: "surface rebind request does not pin one valid Product frame".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRunProductRuntimeSurfaceRebindEvidence {
+    pub target: AgentRunTarget,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub idempotency_key: String,
+    pub previous_generation: u64,
+    pub prepared_generation: u64,
+    pub frame: ProductAgentFrameRef,
+    pub surface_facts_digest: String,
+}
+
+#[async_trait]
+pub trait AgentRunProductRuntimeSurfaceRebindPort: Send + Sync {
+    async fn prepare_runtime_surface_rebind(
+        &self,
+        request: AgentRunProductRuntimeSurfaceRebindRequest,
+    ) -> Result<AgentRunProductRuntimeSurfaceRebindEvidence, AgentRunProductRuntimeProvisioningError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

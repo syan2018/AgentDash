@@ -631,6 +631,175 @@ impl CompleteAgentHost {
         }
     }
 
+    /// Atomically prepares an explicit surface replacement for an active Runtime thread.
+    ///
+    /// The old generation is fenced in the same durable commit that installs the replacement
+    /// target. Managed Runtime can therefore replay one stable Rebind operation after process
+    /// loss without ever observing a new surface on the old generation.
+    pub async fn prepare_runtime_surface_rebind(
+        &self,
+        request: CompleteAgentRuntimeTargetRecoveryRequest,
+    ) -> Result<CompleteAgentRuntimeTargetRecovery, CompleteAgentHostError> {
+        if request.callback_deadline_ms == 0 || request.expected_generation.0 == 0 {
+            return Err(CompleteAgentHostError::Invariant {
+                reason: "Runtime surface rebind requires positive generation and callback deadline"
+                    .to_owned(),
+            });
+        }
+        loop {
+            let snapshot = self.repository.load().await?;
+            if let Some(existing) = snapshot
+                .facts
+                .runtime_target_recoveries
+                .get(&request.idempotency_key)
+            {
+                if existing.request_digest == request.request_digest
+                    && existing.previous_target.runtime_thread_id == request.runtime_thread_id
+                    && existing.recovered_target.service_instance_id == request.service_instance_id
+                {
+                    return Ok(existing.clone());
+                }
+                return Err(CompleteAgentHostError::ProvisioningConflict);
+            }
+            let previous_target = snapshot
+                .facts
+                .runtime_targets
+                .get(&request.runtime_thread_id)
+                .cloned()
+                .ok_or_else(|| CompleteAgentHostError::DispatchRejected {
+                    reason: format!(
+                        "Runtime target {} is not registered",
+                        request.runtime_thread_id
+                    ),
+                })?;
+            if previous_target.generation != request.expected_generation
+                || previous_target.service_instance_id != request.service_instance_id
+            {
+                return Err(CompleteAgentHostError::StaleGeneration {
+                    expected: request.expected_generation,
+                    actual: previous_target.generation,
+                });
+            }
+            let previous_binding_id =
+                runtime_binding_id(&request.runtime_thread_id, request.expected_generation)?;
+            let previous_binding = snapshot
+                .facts
+                .bindings
+                .get(&previous_binding_id)
+                .ok_or_else(|| CompleteAgentHostError::UnknownBinding {
+                    binding_id: previous_binding_id.as_str().to_owned(),
+                })?;
+            if previous_binding.service_instance_id != previous_target.service_instance_id
+                || previous_binding.generation != previous_target.generation
+                || !matches!(
+                    previous_binding.state,
+                    CompleteAgentBindingState::Available
+                        | CompleteAgentBindingState::PendingSurface
+                )
+            {
+                return Err(CompleteAgentHostError::DispatchRejected {
+                    reason: "Runtime surface rebind requires the exact current Host binding"
+                        .to_owned(),
+                });
+            }
+            if snapshot.facts.lifecycle_effects.values().any(|effect| {
+                effect.runtime_thread_id == request.runtime_thread_id
+                    && effect.generation == request.expected_generation
+                    && effect.outcome.is_none()
+            }) || snapshot.facts.effects.values().any(|effect| {
+                effect.binding_id == previous_binding_id
+                    && !matches!(
+                        effect.state,
+                        CompleteAgentEffectState::Applied
+                            | CompleteAgentEffectState::Rejected
+                            | CompleteAgentEffectState::NotApplied
+                    )
+            }) {
+                return Err(CompleteAgentHostError::DispatchRejected {
+                    reason: "Runtime surface rebind requires all current effects to be settled"
+                        .to_owned(),
+                });
+            }
+            let offer = snapshot
+                .facts
+                .offers
+                .get(&request.service_instance_id)
+                .ok_or_else(|| CompleteAgentHostError::UnknownService {
+                    instance_id: request.service_instance_id.clone(),
+                })?;
+            let bound_surface = bind_complete_agent_surface(&request.desired_surface, offer)
+                .map_err(|error| CompleteAgentHostError::DispatchRejected {
+                    reason: error.to_string(),
+                })?;
+            let generation =
+                AgentBindingGeneration(request.expected_generation.0.checked_add(1).ok_or_else(
+                    || CompleteAgentHostError::Invariant {
+                        reason: "Runtime target binding generation is exhausted".to_owned(),
+                    },
+                )?);
+            let callback_route = callback_route_id(
+                &request.runtime_thread_id,
+                &request.service_instance_id,
+                generation,
+                &bound_surface,
+            )?;
+            let recovered_target = CompleteAgentRuntimeTarget {
+                runtime_thread_id: request.runtime_thread_id.clone(),
+                service_instance_id: request.service_instance_id.clone(),
+                generation,
+                profile_digest: offer.profile_digest.clone(),
+                bound_surface,
+                callbacks: AgentHostCallbackBinding {
+                    route_id: callback_route,
+                    binding_generation: generation,
+                    delivery: AgentSurfaceRoute::AgentNativeCallback,
+                    default_deadline_ms: request.callback_deadline_ms,
+                },
+            };
+            let recovery = CompleteAgentRuntimeTargetRecovery {
+                idempotency_key: request.idempotency_key.clone(),
+                request_digest: request.request_digest.clone(),
+                previous_target,
+                recovered_target: recovered_target.clone(),
+            };
+            let mut facts = snapshot.facts;
+            facts
+                .bindings
+                .get_mut(&previous_binding_id)
+                .expect("surface rebind binding was validated in the same state")
+                .state = CompleteAgentBindingState::Lost;
+            facts.leases.remove(&previous_binding_id);
+            let route_ids = facts
+                .callback_routes
+                .values()
+                .filter(|route| {
+                    route.binding_id == previous_binding_id
+                        && route.generation == request.expected_generation
+                })
+                .map(|route| route.route_id.clone())
+                .collect::<Vec<_>>();
+            facts.revoked_callback_routes.extend(route_ids);
+            facts
+                .runtime_targets
+                .insert(request.runtime_thread_id.clone(), recovered_target);
+            facts
+                .runtime_target_recoveries
+                .insert(request.idempotency_key.clone(), recovery.clone());
+            match self
+                .repository
+                .commit(CompleteAgentHostCommit {
+                    expected_revision: snapshot.revision,
+                    facts,
+                })
+                .await
+            {
+                Ok(_) => return Ok(recovery),
+                Err(CompleteAgentHostStoreError::Conflict { .. }) => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
     /// Explicitly advances a lost Runtime binding to a newly selected trusted service placement.
     ///
     /// Runtime targets are sticky. Recovery is the only operation that may replace one, and the
@@ -4208,6 +4377,79 @@ mod tests {
         assert_eq!(
             host.provision_runtime_target(conflict).await,
             Err(CompleteAgentHostError::ProvisioningConflict)
+        );
+    }
+
+    #[tokio::test]
+    async fn surface_rebind_preparation_survives_restart_and_rebinds_exact_new_surface() {
+        let repository = Arc::new(FixtureHostRepository::default());
+        let (host, service, runtime_thread_id) = lifecycle_host(repository.clone()).await;
+        let created = host
+            .create(
+                lifecycle_context(runtime_thread_id.clone(), "surface-rebind-create"),
+                None,
+            )
+            .await
+            .expect("create source");
+        let request = CompleteAgentRuntimeTargetRecoveryRequest {
+            idempotency_key: AgentIdempotencyKey::new("surface-rebind-frame-2")
+                .expect("idempotency"),
+            request_digest: AgentPayloadDigest::new("sha256:surface-rebind-frame-2")
+                .expect("digest"),
+            runtime_thread_id: runtime_thread_id.clone(),
+            expected_generation: AgentBindingGeneration(1),
+            service_instance_id: AgentServiceInstanceId::new("lifecycle-service").expect("service"),
+            desired_surface: AgentSurfaceSnapshot {
+                revision: AgentSurfaceRevision(2),
+                digest: agentdash_agent_service_api::AgentSurfaceDigest::new("surface-2")
+                    .expect("surface digest"),
+                requirements: Vec::new(),
+            },
+            callback_deadline_ms: 1_000,
+        };
+
+        let prepared = host
+            .prepare_runtime_surface_rebind(request.clone())
+            .await
+            .expect("prepare surface rebind");
+        let restarted = restarted_lifecycle_host(repository.clone(), service).await;
+        let replayed = restarted
+            .prepare_runtime_surface_rebind(request)
+            .await
+            .expect("replay prepared surface rebind");
+        assert_eq!(replayed, prepared);
+        assert_eq!(
+            restarted
+                .binding(
+                    &runtime_binding_id(&runtime_thread_id, AgentBindingGeneration(1))
+                        .expect("old binding"),
+                )
+                .await
+                .expect("load old binding")
+                .expect("old binding")
+                .state,
+            CompleteAgentBindingState::Lost
+        );
+
+        let rebound = restarted
+            .rebind(
+                lifecycle_context(runtime_thread_id.clone(), "surface-rebind-apply"),
+                created.binding,
+            )
+            .await
+            .expect("apply prepared surface rebind");
+        assert_eq!(rebound.binding.generation, AgentBindingGeneration(2));
+        assert_eq!(
+            rebound.binding.applied_surface.revision,
+            AgentSurfaceRevision(2)
+        );
+        assert_eq!(
+            restarted
+                .runtime_target(&runtime_thread_id)
+                .await
+                .expect("replacement target")
+                .generation,
+            AgentBindingGeneration(2)
         );
     }
 

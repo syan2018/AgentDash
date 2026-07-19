@@ -497,6 +497,8 @@ impl AppState {
             Arc::new(ProductAgentRunRuntimeSurfaceUpdateService::new(
                 repos.clone(),
                 runtime_product_bindings.clone(),
+                complete_agent.runtime.clone(),
+                product_runtime_provisioner.clone(),
                 product_resource_materializer.clone(),
                 product_persistence.applied_resource_surfaces.clone(),
             ));

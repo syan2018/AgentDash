@@ -23,7 +23,9 @@ use agentdash_application_agentrun::agent_run::frame::{
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductRuntimeProvisioningError, AgentRunProductRuntimeProvisioningEvidence,
     AgentRunProductRuntimeProvisioningPort, AgentRunProductRuntimeProvisioningRequest,
-    ProductAgentSurfaceFacts, ProductExecutionProfileRef,
+    AgentRunProductRuntimeSurfaceRebindEvidence, AgentRunProductRuntimeSurfaceRebindPort,
+    AgentRunProductRuntimeSurfaceRebindRequest, ProductAgentSurfaceFacts,
+    ProductExecutionProfileRef,
 };
 use agentdash_application_ports::agent_frame_hook_plan::{
     AgentFrameHookPlan, AgentFrameHookRequirement, HookAction, HookExecutionSite, HookPoint,
@@ -332,6 +334,74 @@ impl AgentRunProductRuntimeProvisioningPort for CompleteAgentProductRuntimeProvi
             idempotency_key: request.idempotency_key,
             frame: request.frame,
             profile_digest: request.execution_profile.profile_digest,
+            surface_facts_digest: request.surface_facts.surface_digest,
+        })
+    }
+}
+
+#[async_trait]
+impl AgentRunProductRuntimeSurfaceRebindPort for CompleteAgentProductRuntimeProvisioner {
+    async fn prepare_runtime_surface_rebind(
+        &self,
+        request: AgentRunProductRuntimeSurfaceRebindRequest,
+    ) -> Result<AgentRunProductRuntimeSurfaceRebindEvidence, AgentRunProductRuntimeProvisioningError>
+    {
+        request.validate()?;
+        let current = self
+            .host
+            .runtime_target(&request.runtime_thread_id)
+            .await
+            .map_err(map_host_error)?;
+        if current.profile_digest.as_str() != request.execution_profile_digest {
+            return Err(incompatible(
+                "surface rebind execution profile does not match the active Complete Agent",
+            ));
+        }
+        let profile = ProductExecutionProfileRef {
+            profile_key: "surface-rebind".to_owned(),
+            profile_revision: 1,
+            profile_digest: request.execution_profile_digest.clone(),
+            configuration: request.execution_configuration.clone(),
+            credential_scope: None,
+        };
+        let desired_surface = compile_product_surface(
+            &request.runtime_thread_id,
+            &profile,
+            &request.surface_facts,
+            self.broker.as_ref(),
+            self.dynamic_tools.as_ref(),
+        )
+        .await?;
+        let request_digest = payload_digest(&serde_json::json!({
+            "schema": "agentdash.product-runtime-surface-rebind/v1",
+            "target": request.target,
+            "runtime_thread_id": request.runtime_thread_id,
+            "frame": request.frame,
+            "execution_profile_digest": request.execution_profile_digest,
+            "surface_facts_digest": request.surface_facts.surface_digest,
+            "desired_surface": desired_surface,
+        }))?;
+        let prepared = self
+            .host
+            .prepare_runtime_surface_rebind(CompleteAgentRuntimeTargetRecoveryRequest {
+                idempotency_key: AgentIdempotencyKey::new(request.idempotency_key.clone())
+                    .map_err(|error| invalid(error.to_string()))?,
+                request_digest,
+                runtime_thread_id: request.runtime_thread_id.clone(),
+                expected_generation: current.generation,
+                service_instance_id: current.service_instance_id,
+                desired_surface,
+                callback_deadline_ms: current.callbacks.default_deadline_ms,
+            })
+            .await
+            .map_err(map_host_error)?;
+        Ok(AgentRunProductRuntimeSurfaceRebindEvidence {
+            target: request.target,
+            runtime_thread_id: request.runtime_thread_id,
+            idempotency_key: request.idempotency_key,
+            previous_generation: prepared.previous_target.generation.0,
+            prepared_generation: prepared.recovered_target.generation.0,
+            frame: request.frame,
             surface_facts_digest: request.surface_facts.surface_digest,
         })
     }

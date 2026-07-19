@@ -1,10 +1,17 @@
 use std::sync::Arc;
 
+use agentdash_agent_runtime_contract::{
+    ManagedAgentRuntimeGateway, ManagedRuntimeCommand, ManagedRuntimeCommandEnvelope,
+    ManagedRuntimeOperationStatus, ManagedRuntimeReadRequest, RuntimeIdempotencyKey,
+};
 use agentdash_application_agentrun::agent_run::frame::AgentFrameBuilder;
 use agentdash_application_agentrun::agent_run::{
     AgentFrameSurfaceExt, AgentRunAppliedResourceSurfaceMaterializationPort,
     AgentRunAppliedResourceSurfaceMaterializeRequest, AgentRunAppliedResourceSurfaceQueryError,
-    AgentRunAppliedResourceSurfaceQueryPort, AgentRunProductRuntimeBindingRepository,
+    AgentRunAppliedResourceSurfaceQueryPort, AgentRunProductRuntimeBinding,
+    AgentRunProductRuntimeBindingStore, AgentRunProductRuntimeSurfaceRebindPort,
+    AgentRunProductRuntimeSurfaceRebindRequest, ProductAgentFrameRef, ProductAgentSurfaceFacts,
+    stable_product_command_operation_id,
 };
 use agentdash_application_ports::agent_frame_materialization::{
     AgentFrameWriteRole, AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError,
@@ -21,7 +28,9 @@ use crate::repository_set::RepositorySet;
 
 pub struct ProductAgentRunRuntimeSurfaceUpdateService {
     repos: RepositorySet,
-    bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+    bindings: Arc<dyn AgentRunProductRuntimeBindingStore>,
+    runtime: Arc<dyn ManagedAgentRuntimeGateway>,
+    surface_rebind: Arc<dyn AgentRunProductRuntimeSurfaceRebindPort>,
     resources: Arc<dyn AgentRunAppliedResourceSurfaceMaterializationPort>,
     resource_query: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
 }
@@ -29,13 +38,17 @@ pub struct ProductAgentRunRuntimeSurfaceUpdateService {
 impl ProductAgentRunRuntimeSurfaceUpdateService {
     pub fn new(
         repos: RepositorySet,
-        bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+        bindings: Arc<dyn AgentRunProductRuntimeBindingStore>,
+        runtime: Arc<dyn ManagedAgentRuntimeGateway>,
+        surface_rebind: Arc<dyn AgentRunProductRuntimeSurfaceRebindPort>,
         resources: Arc<dyn AgentRunAppliedResourceSurfaceMaterializationPort>,
         resource_query: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
     ) -> Self {
         Self {
             repos,
             bindings,
+            runtime,
+            surface_rebind,
             resources,
             resource_query,
         }
@@ -81,16 +94,6 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
             ));
         }
 
-        let current_resource_revision = match self
-            .resource_query
-            .applied_resource_surface(&request.target, None)
-            .await
-        {
-            Ok(snapshot) => Some(snapshot.snapshot_revision),
-            Err(AgentRunAppliedResourceSurfaceQueryError::SurfaceNotApplied) => None,
-            Err(error) => return Err(surface_rejected(error)),
-        };
-
         let candidate = self.apply_change(&request, &current).await?;
         let (frame, wrote_frame_revision) = if frame_surface_equal(&current, &candidate) {
             (current, false)
@@ -102,16 +105,188 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
                 .map_err(surface_rejected)?;
             (candidate, true)
         };
-
-        let binding_digest = binding.calculated_digest().map_err(surface_rejected)?;
-        self.resources
-            .materialize(AgentRunAppliedResourceSurfaceMaterializeRequest {
-                target: request.target.clone(),
-                expected_current_snapshot_revision: current_resource_revision,
-                product_binding_digest: binding_digest,
+        let frame_ref = ProductAgentFrameRef {
+            frame_id: frame.id,
+            agent_id: frame.agent_id,
+            revision: u64::try_from(frame.revision)
+                .map_err(|_| surface_rejected("AgentFrame revision is negative"))?,
+        };
+        let operation_key = surface_operation_key(&request, &frame_ref);
+        let mut converged_binding = binding.clone();
+        let runtime_before = self
+            .runtime
+            .read(ManagedRuntimeReadRequest {
+                thread_id: request.runtime_thread_id.clone(),
             })
             .await
             .map_err(surface_rejected)?;
+
+        if converged_binding.launch_frame != frame_ref {
+            if runtime_before
+                .source_binding
+                .as_ref()
+                .is_none_or(|source| source.applied_surface_revision.0 != frame_ref.revision)
+            {
+                self.surface_rebind
+                    .prepare_runtime_surface_rebind(AgentRunProductRuntimeSurfaceRebindRequest {
+                        target: request.target.clone(),
+                        runtime_thread_id: request.runtime_thread_id.clone(),
+                        idempotency_key: format!("{operation_key}:host"),
+                        frame: frame_ref.clone(),
+                        execution_profile_digest: binding.execution_profile_digest.clone(),
+                        execution_configuration: frame.execution_profile_json.clone().ok_or_else(
+                            || {
+                                surface_rejected(
+                                    "surface rebind AgentFrame has no execution profile",
+                                )
+                            },
+                        )?,
+                        surface_facts: ProductAgentSurfaceFacts::from_frame(&frame),
+                    })
+                    .await
+                    .map_err(surface_rejected)?;
+                let receipt = self
+                    .runtime
+                    .execute(surface_envelope(
+                        &request,
+                        &format!("{operation_key}:rebind"),
+                        Some(runtime_before.revision),
+                        ManagedRuntimeCommand::Rebind,
+                    )?)
+                    .await
+                    .map_err(surface_rejected)?;
+                require_succeeded(receipt.status)?;
+            }
+            let rebound = self
+                .runtime
+                .read(ManagedRuntimeReadRequest {
+                    thread_id: request.runtime_thread_id.clone(),
+                })
+                .await
+                .map_err(surface_rejected)?;
+            let mut rebound_source = rebound
+                .source_binding
+                .ok_or_else(|| surface_rejected("Runtime Rebind omitted source binding"))?;
+            if rebound_source.source_ref != binding.source_binding.source_ref
+                || rebound_source.applied_surface_revision.0 != frame_ref.revision
+            {
+                return Err(surface_rejected(
+                    "Runtime Rebind did not apply the candidate AgentFrame surface",
+                ));
+            }
+            rebound_source.activated_at_revision = None;
+            converged_binding = AgentRunProductRuntimeBinding {
+                launch_frame: frame_ref.clone(),
+                source_binding: rebound_source,
+                ..binding.clone()
+            };
+            self.bindings
+                .prepare_product_binding_recovery(
+                    &binding.calculated_digest().map_err(surface_rejected)?,
+                    &converged_binding,
+                )
+                .await
+                .map_err(surface_rejected)?;
+        }
+
+        let binding_digest = converged_binding
+            .calculated_digest()
+            .map_err(surface_rejected)?;
+        let current_resource = match self
+            .resource_query
+            .applied_resource_surface(&request.target, None)
+            .await
+        {
+            Ok(snapshot) => Some(snapshot),
+            Err(AgentRunAppliedResourceSurfaceQueryError::SurfaceNotApplied) => None,
+            Err(error) => return Err(surface_rejected(error)),
+        };
+        let resource_snapshot_revision = if current_resource
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.surface.product_binding_digest == binding_digest)
+        {
+            current_resource
+                .as_ref()
+                .expect("matching resource snapshot")
+                .snapshot_revision
+        } else {
+            let expected_current_snapshot_revision = current_resource
+                .as_ref()
+                .map(|snapshot| snapshot.snapshot_revision);
+            self.resources
+                .materialize(AgentRunAppliedResourceSurfaceMaterializeRequest {
+                    target: request.target.clone(),
+                    expected_current_snapshot_revision,
+                    product_binding_digest: binding_digest.clone(),
+                })
+                .await
+                .map_err(surface_rejected)?;
+            self.resource_query
+                .applied_resource_surface(&request.target, None)
+                .await
+                .map_err(surface_rejected)?
+                .snapshot_revision
+        };
+
+        if converged_binding
+            .source_binding
+            .activated_at_revision
+            .is_none()
+        {
+            let before_activate = self
+                .runtime
+                .read(ManagedRuntimeReadRequest {
+                    thread_id: request.runtime_thread_id.clone(),
+                })
+                .await
+                .map_err(surface_rejected)?;
+            if before_activate
+                .source_binding
+                .as_ref()
+                .is_none_or(|source| source.activated_at_revision.is_none())
+            {
+                let receipt = self
+                    .runtime
+                    .execute(surface_envelope(
+                        &request,
+                        &format!("{operation_key}:activate"),
+                        Some(before_activate.revision),
+                        ManagedRuntimeCommand::Activate,
+                    )?)
+                    .await
+                    .map_err(surface_rejected)?;
+                require_succeeded(receipt.status)?;
+            }
+            let activated = self
+                .runtime
+                .read(ManagedRuntimeReadRequest {
+                    thread_id: request.runtime_thread_id.clone(),
+                })
+                .await
+                .map_err(surface_rejected)?;
+            let activated_source = activated
+                .source_binding
+                .ok_or_else(|| surface_rejected("Runtime Activate omitted source binding"))?;
+            if activated_source.source_ref != converged_binding.source_binding.source_ref
+                || activated_source.applied_surface_revision.0 != frame_ref.revision
+                || activated_source.activated_at_revision.is_none()
+            {
+                return Err(surface_rejected(
+                    "Runtime Activate did not pin the candidate AgentFrame surface",
+                ));
+            }
+            converged_binding.source_binding = activated_source;
+            self.bindings
+                .activate_product_binding(
+                    &converged_binding,
+                    &converged_binding
+                        .calculated_digest()
+                        .map_err(surface_rejected)?,
+                    resource_snapshot_revision,
+                )
+                .await
+                .map_err(surface_rejected)?;
+        }
 
         let mut outcome =
             AgentRunFrameSurfaceCommandOutcome::new(AgentFrameWriteRole::RuntimeSurfaceUpdate);
@@ -119,7 +294,7 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
         outcome.agent_id = Some(frame.agent_id);
         outcome.runtime_thread_id = Some(request.runtime_thread_id.to_string());
         outcome.wrote_frame_revision = wrote_frame_revision;
-        outcome.adopted_active_runtime = false;
+        outcome.adopted_active_runtime = true;
         outcome.diagnostics.push(format!(
             "Product AppliedResourceSurface converged from {:?} change",
             request.surface_kind()
@@ -221,6 +396,45 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
             ));
         }
         Ok(run.project_id)
+    }
+}
+
+fn surface_operation_key(
+    request: &RuntimeSurfaceUpdateRequest,
+    frame: &ProductAgentFrameRef,
+) -> String {
+    format!(
+        "surface-update:v1:{}:{}:{}:{}",
+        request.target.run_id, request.target.agent_id, frame.frame_id, frame.revision
+    )
+}
+
+fn surface_envelope(
+    request: &RuntimeSurfaceUpdateRequest,
+    identity: &str,
+    expected_revision: Option<agentdash_agent_runtime_contract::RuntimeProjectionRevision>,
+    command: ManagedRuntimeCommand,
+) -> Result<ManagedRuntimeCommandEnvelope, AgentRunFrameSurfaceError> {
+    Ok(ManagedRuntimeCommandEnvelope {
+        operation_id: stable_product_command_operation_id(&request.target, identity)
+            .map_err(surface_rejected)?,
+        idempotency_key: RuntimeIdempotencyKey::new(identity.to_owned())
+            .map_err(surface_rejected)?,
+        thread_id: request.runtime_thread_id.clone(),
+        expected_revision,
+        command,
+    })
+}
+
+fn require_succeeded(
+    status: ManagedRuntimeOperationStatus,
+) -> Result<(), AgentRunFrameSurfaceError> {
+    if status == ManagedRuntimeOperationStatus::Succeeded {
+        Ok(())
+    } else {
+        Err(surface_rejected(format!(
+            "Runtime surface convergence is not terminal: {status:?}"
+        )))
     }
 }
 
@@ -356,5 +570,60 @@ mod tests {
         candidate.created_by_kind = "runtime_surface_update".to_owned();
 
         assert!(frame_surface_equal(&current, &candidate));
+    }
+
+    #[test]
+    fn candidate_frame_pins_stable_rebind_and_activate_operation_identities() {
+        let target = agentdash_domain::agent_run_target::AgentRunTarget {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+        };
+        let request = RuntimeSurfaceUpdateRequest {
+            target: target.clone(),
+            runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId::new(
+                "surface-thread",
+            )
+            .unwrap(),
+            change: RuntimeSurfaceChange::SkillInventoryChanged {
+                provider_key: "skills-2".to_owned(),
+            },
+        };
+        let frame = ProductAgentFrameRef {
+            frame_id: Uuid::new_v4(),
+            agent_id: target.agent_id,
+            revision: 2,
+        };
+        let key = surface_operation_key(&request, &frame);
+        let first = surface_envelope(
+            &request,
+            &format!("{key}:rebind"),
+            Some(agentdash_agent_runtime_contract::RuntimeProjectionRevision(
+                4,
+            )),
+            ManagedRuntimeCommand::Rebind,
+        )
+        .unwrap();
+        let replay = surface_envelope(
+            &request,
+            &format!("{key}:rebind"),
+            Some(agentdash_agent_runtime_contract::RuntimeProjectionRevision(
+                4,
+            )),
+            ManagedRuntimeCommand::Rebind,
+        )
+        .unwrap();
+        let activate = surface_envelope(
+            &request,
+            &format!("{key}:activate"),
+            Some(agentdash_agent_runtime_contract::RuntimeProjectionRevision(
+                5,
+            )),
+            ManagedRuntimeCommand::Activate,
+        )
+        .unwrap();
+
+        assert_eq!(first, replay);
+        assert_ne!(first.operation_id, activate.operation_id);
+        assert_ne!(first.idempotency_key, activate.idempotency_key);
     }
 }

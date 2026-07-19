@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  decodeManagedRuntimeChangesRequest,
+  decodeManagedRuntimeCommandEnvelope,
+  decodeManagedRuntimeGatewayError,
+  decodeManagedRuntimeOperationReceipt,
+  encodeManagedRuntimeChangesRequest,
+  encodeManagedRuntimeCommandEnvelope,
+  encodeManagedRuntimeGatewayError,
+  encodeManagedRuntimeOperationReceipt,
+} from "../../../generated/agent-runtime-validators";
+import {
   decodeAgentChangePage,
   decodeAgentCommandEnvelope,
   decodeAgentServiceU64,
@@ -18,6 +28,70 @@ import {
 
 const MAX_U64 = "18446744073709551615";
 const MAX_U64_BIGINT = 18_446_744_073_709_551_615n;
+
+describe("Managed Runtime canonical u64 codecs", () => {
+  it("round-trips command, receipt, changes cursor, and conflict revision at u64 max", () => {
+    const command = decodeManagedRuntimeCommandEnvelope({
+      operation_id: "operation-1",
+      idempotency_key: "idem-1",
+      thread_id: "thread-1",
+      expected_revision: MAX_U64,
+      command: { kind: "request_compaction" },
+    });
+    const receipt = decodeManagedRuntimeOperationReceipt({
+      operation_id: "operation-1",
+      thread_id: "thread-1",
+      accepted_revision: MAX_U64,
+      status: "accepted",
+      evidence: null,
+      duplicate: false,
+    });
+    const changes = decodeManagedRuntimeChangesRequest({
+      thread_id: "thread-1",
+      after: MAX_U64,
+      limit: 1,
+    });
+    const conflict = decodeManagedRuntimeGatewayError({
+      kind: "conflict",
+      actual: MAX_U64,
+    });
+
+    expect(command.expected_revision).toBe(MAX_U64_BIGINT);
+    expect(receipt.accepted_revision).toBe(MAX_U64_BIGINT);
+    expect(changes.after).toBe(MAX_U64_BIGINT);
+    expect(conflict).toEqual({
+      kind: "conflict",
+      actual: MAX_U64_BIGINT,
+    });
+    expect(encodeManagedRuntimeCommandEnvelope(command).expected_revision).toBe(
+      MAX_U64,
+    );
+    expect(encodeManagedRuntimeOperationReceipt(receipt).accepted_revision).toBe(
+      MAX_U64,
+    );
+    expect(encodeManagedRuntimeChangesRequest(changes).after).toBe(MAX_U64);
+    expect(encodeManagedRuntimeGatewayError(conflict)).toEqual({
+      kind: "conflict",
+      actual: MAX_U64,
+    });
+  });
+
+  it.each([1, "01", "-1", "18446744073709551616"])(
+    "rejects non-canonical Runtime root u64 %s",
+    (value) => {
+      expect(() =>
+        decodeManagedRuntimeOperationReceipt({
+          operation_id: "operation-1",
+          thread_id: "thread-1",
+          accepted_revision: value,
+          status: "accepted",
+          evidence: null,
+          duplicate: false,
+        }),
+      ).toThrow("$.accepted_revision");
+    },
+  );
+});
 
 describe("Complete Agent canonical u64 codecs", () => {
   it("round-trips command generations and expected revisions at u64 max", () => {

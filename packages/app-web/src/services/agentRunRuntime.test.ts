@@ -136,11 +136,21 @@ describe("AgentRun runtime service", () => {
   });
 
   it("responds to a typed Runtime interaction", async () => {
-    await respondAgentRunInteraction(
+    mocks.apiPostMock.mockResolvedValue({
+      operation_id: "operation-1",
+      thread_id: "thread-1",
+      accepted_revision: "18446744073709551615",
+      status: "accepted",
+      evidence: null,
+      duplicate: false,
+    });
+    await expect(respondAgentRunInteraction(
       { runId: "run/1", agentId: "agent/1" },
       "interaction/1",
       { kind: "denied", reason: null },
-    );
+    )).resolves.toMatchObject({
+      accepted_revision: 18_446_744_073_709_551_615n,
+    });
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/interactions/interaction%2F1/respond",
       { kind: "denied", reason: null },

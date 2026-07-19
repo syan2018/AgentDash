@@ -3,10 +3,16 @@
 import type {
   ManagedRuntimeChangeDelta as ManagedRuntimeChangeDeltaWire,
   ManagedRuntimeChangePage as ManagedRuntimeChangePageWire,
+  ManagedRuntimeChangesRequest as ManagedRuntimeChangesRequestWire,
+  ManagedRuntimeCommandEnvelope as ManagedRuntimeCommandEnvelopeWire,
   ManagedRuntimeCommandAvailability as ManagedRuntimeCommandAvailabilityWire,
+  ManagedRuntimeContractSchema as ManagedRuntimeContractSchemaWire,
+  ManagedRuntimeGatewayError as ManagedRuntimeGatewayErrorWire,
   ManagedRuntimeOperation as ManagedRuntimeOperationWire,
+  ManagedRuntimeOperationReceipt as ManagedRuntimeOperationReceiptWire,
   ManagedRuntimePlatformChange as ManagedRuntimePlatformChangeWire,
   ManagedRuntimeProjectionSchema as ManagedRuntimeProjectionSchemaWire,
+  ManagedRuntimeReadRequest as ManagedRuntimeReadRequestWire,
   ManagedRuntimeSnapshot as ManagedRuntimeSnapshotWire,
   ManagedRuntimeSourceBindingEvidence as ManagedRuntimeSourceBindingEvidenceWire,
   RuntimeU64,
@@ -20,13 +26,25 @@ type DecodeRuntimeU64<T> =
 
 export type ManagedRuntimeCommandAvailability =
   DecodeRuntimeU64<ManagedRuntimeCommandAvailabilityWire>;
+export type ManagedRuntimeCommandEnvelope =
+  DecodeRuntimeU64<ManagedRuntimeCommandEnvelopeWire>;
+export type ManagedRuntimeOperationReceipt =
+  DecodeRuntimeU64<ManagedRuntimeOperationReceiptWire>;
+export type ManagedRuntimeReadRequest =
+  DecodeRuntimeU64<ManagedRuntimeReadRequestWire>;
+export type ManagedRuntimeChangesRequest =
+  DecodeRuntimeU64<ManagedRuntimeChangesRequestWire>;
+export type ManagedRuntimeGatewayError =
+  DecodeRuntimeU64<ManagedRuntimeGatewayErrorWire>;
 export type ManagedRuntimeOperation = DecodeRuntimeU64<ManagedRuntimeOperationWire>;
 export type ManagedRuntimePlatformChange = DecodeRuntimeU64<ManagedRuntimePlatformChangeWire>;
 export type ManagedRuntimeSnapshot = DecodeRuntimeU64<ManagedRuntimeSnapshotWire>;
 export type ManagedRuntimeChangePage = DecodeRuntimeU64<ManagedRuntimeChangePageWire>;
 export type ManagedRuntimeProjectionSchema = DecodeRuntimeU64<ManagedRuntimeProjectionSchemaWire>;
+export type ManagedRuntimeContractSchema =
+  DecodeRuntimeU64<ManagedRuntimeContractSchemaWire>;
 
-const CANONICAL_U64 = /^(0|[1-9][0-9]{0,19})$/;
+const CANONICAL_U64 = /^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$/;
 const U64_MAX = 18_446_744_073_709_551_615n;
 
 export class ManagedRuntimeContractDecodeError extends Error {
@@ -200,6 +218,115 @@ function encodeOperation(operation: ManagedRuntimeOperation): ManagedRuntimeOper
     ...operation,
     evidence: encodeOperationEvidence(operation.evidence),
   } as ManagedRuntimeOperationWire;
+}
+
+export function decodeManagedRuntimeCommandEnvelope(
+  value: unknown,
+): ManagedRuntimeCommandEnvelope {
+  const envelope = record(value, "$");
+  return {
+    ...envelope,
+    expected_revision: optionalRuntimeU64(
+      envelope.expected_revision,
+      "$.expected_revision",
+    ),
+  } as ManagedRuntimeCommandEnvelope;
+}
+
+export function encodeManagedRuntimeCommandEnvelope(
+  envelope: ManagedRuntimeCommandEnvelope,
+): ManagedRuntimeCommandEnvelopeWire {
+  return {
+    ...envelope,
+    expected_revision:
+      envelope.expected_revision === null
+        ? null
+        : encodeRuntimeU64(envelope.expected_revision, "$.expected_revision"),
+  } as ManagedRuntimeCommandEnvelopeWire;
+}
+
+export function decodeManagedRuntimeOperationReceipt(
+  value: unknown,
+): ManagedRuntimeOperationReceipt {
+  const receipt = record(value, "$");
+  return {
+    ...receipt,
+    accepted_revision: runtimeU64(
+      receipt.accepted_revision,
+      "$.accepted_revision",
+    ),
+    evidence: decodeOperationEvidence(receipt.evidence, "$.evidence"),
+  } as ManagedRuntimeOperationReceipt;
+}
+
+export function encodeManagedRuntimeOperationReceipt(
+  receipt: ManagedRuntimeOperationReceipt,
+): ManagedRuntimeOperationReceiptWire {
+  return {
+    ...receipt,
+    accepted_revision: encodeRuntimeU64(
+      receipt.accepted_revision,
+      "$.accepted_revision",
+    ),
+    evidence: encodeOperationEvidence(receipt.evidence),
+  } as ManagedRuntimeOperationReceiptWire;
+}
+
+export function decodeManagedRuntimeReadRequest(
+  value: unknown,
+): ManagedRuntimeReadRequest {
+  return record(value, "$") as ManagedRuntimeReadRequest;
+}
+
+export function encodeManagedRuntimeReadRequest(
+  value: ManagedRuntimeReadRequest,
+): ManagedRuntimeReadRequestWire {
+  return value as ManagedRuntimeReadRequestWire;
+}
+
+export function decodeManagedRuntimeChangesRequest(
+  value: unknown,
+): ManagedRuntimeChangesRequest {
+  const request = record(value, "$");
+  return {
+    ...request,
+    after: optionalRuntimeU64(request.after, "$.after"),
+  } as ManagedRuntimeChangesRequest;
+}
+
+export function encodeManagedRuntimeChangesRequest(
+  request: ManagedRuntimeChangesRequest,
+): ManagedRuntimeChangesRequestWire {
+  return {
+    ...request,
+    after:
+      request.after === null
+        ? null
+        : encodeRuntimeU64(request.after, "$.after"),
+  } as ManagedRuntimeChangesRequestWire;
+}
+
+export function decodeManagedRuntimeGatewayError(
+  value: unknown,
+): ManagedRuntimeGatewayError {
+  const error = record(value, "$");
+  return (error.kind === "conflict"
+    ? {
+        ...error,
+        actual: runtimeU64(error.actual, "$.actual"),
+      }
+    : error) as ManagedRuntimeGatewayError;
+}
+
+export function encodeManagedRuntimeGatewayError(
+  error: ManagedRuntimeGatewayError,
+): ManagedRuntimeGatewayErrorWire {
+  return (error.kind === "conflict"
+    ? {
+        ...error,
+        actual: encodeRuntimeU64(error.actual, "$.actual"),
+      }
+    : error) as ManagedRuntimeGatewayErrorWire;
 }
 
 function decodeAvailability(value: unknown, path: string): ManagedRuntimeCommandAvailability {
@@ -584,6 +711,37 @@ export function encodeManagedRuntimeProjectionSchema(
   value: ManagedRuntimeProjectionSchema,
 ): ManagedRuntimeProjectionSchemaWire {
   return {
+    snapshot: encodeManagedRuntimeSnapshot(value.snapshot),
+    change_page: encodeManagedRuntimeChangePage(value.change_page),
+  };
+}
+
+export function decodeManagedRuntimeContractSchema(
+  value: unknown,
+): ManagedRuntimeContractSchema {
+  const root = record(value, "$");
+  return {
+    command: decodeManagedRuntimeCommandEnvelope(root.command),
+    operation_receipt: decodeManagedRuntimeOperationReceipt(root.operation_receipt),
+    read: decodeManagedRuntimeReadRequest(root.read),
+    changes: decodeManagedRuntimeChangesRequest(root.changes),
+    error: decodeManagedRuntimeGatewayError(root.error),
+    snapshot: decodeManagedRuntimeSnapshot(root.snapshot),
+    change_page: decodeManagedRuntimeChangePage(root.change_page),
+  };
+}
+
+export function encodeManagedRuntimeContractSchema(
+  value: ManagedRuntimeContractSchema,
+): ManagedRuntimeContractSchemaWire {
+  return {
+    command: encodeManagedRuntimeCommandEnvelope(value.command),
+    operation_receipt: encodeManagedRuntimeOperationReceipt(
+      value.operation_receipt,
+    ),
+    read: encodeManagedRuntimeReadRequest(value.read),
+    changes: encodeManagedRuntimeChangesRequest(value.changes),
+    error: encodeManagedRuntimeGatewayError(value.error),
     snapshot: encodeManagedRuntimeSnapshot(value.snapshot),
     change_page: encodeManagedRuntimeChangePage(value.change_page),
   };

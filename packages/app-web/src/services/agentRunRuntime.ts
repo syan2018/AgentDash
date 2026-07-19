@@ -8,13 +8,14 @@ import type {
 } from "../generated/agent-run-mailbox-contracts";
 import type {
   ManagedRuntimeInteractionResponse,
-  ManagedRuntimeOperationReceipt,
 } from "../generated/agent-runtime-contracts";
 import {
   decodeManagedRuntimeChangePage,
+  decodeManagedRuntimeOperationReceipt,
   decodeManagedRuntimeSnapshot,
   encodeRuntimeU64,
   type ManagedRuntimeChangePage,
+  type ManagedRuntimeOperationReceipt,
   type ManagedRuntimeSnapshot,
 } from "../generated/agent-runtime-validators";
 
@@ -100,8 +101,9 @@ export async function respondAgentRunInteraction(
   interactionId: string,
   response: ManagedRuntimeInteractionResponse,
 ): Promise<ManagedRuntimeOperationReceipt> {
-  return api.post<ManagedRuntimeOperationReceipt>(
+  const payload = await api.post<unknown>(
     agentRunScopedPath(target, `/runtime/interactions/${encodeURIComponent(interactionId)}/respond`),
     response,
   );
+  return decodeManagedRuntimeOperationReceipt(payload);
 }

@@ -29,7 +29,7 @@ pub struct SessionToolVisibilitySummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SessionRuntimePolicySummary {
+pub struct RuntimeThreadPolicySummary {
     pub markdown: String,
     pub workspace_attached: bool,
     pub vfs_attached: bool,
@@ -362,7 +362,7 @@ pub fn summarize_runtime_policy(
     vfs: Option<&Vfs>,
     mcp_servers: &[McpServerSummary],
     tool_names: &[String],
-) -> SessionRuntimePolicySummary {
+) -> RuntimeThreadPolicySummary {
     let mount_ids = vfs
         .map(|item| {
             item.mounts
@@ -409,7 +409,7 @@ pub fn summarize_runtime_policy(
         path_policy
     );
 
-    SessionRuntimePolicySummary {
+    RuntimeThreadPolicySummary {
         markdown,
         workspace_attached,
         vfs_attached: vfs.is_some(),

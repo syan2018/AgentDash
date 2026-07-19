@@ -65,7 +65,7 @@ use super::{
 use crate::channel::{
     ChannelService, LifecycleRunChannelOwnerStore, UnsupportedChannelBindingResolver,
 };
-use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
+use crate::runtime_tools::{RuntimeThreadToolServices, SharedRuntimeThreadToolServicesHandle};
 use crate::wait_activity::{WaitActivityService, WaitToolContext};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductInputDeliveryPort, DeliverAgentRunProductInput,
@@ -123,10 +123,10 @@ pub struct CompanionRequestParams {
     pub payload: serde_json::Value,
 }
 
-async fn require_session_services(
-    handle: &SharedSessionToolServicesHandle,
+async fn require_runtime_thread_services(
+    handle: &SharedRuntimeThreadToolServicesHandle,
     action: &str,
-) -> Result<SessionToolServices, AgentToolError> {
+) -> Result<RuntimeThreadToolServices, AgentToolError> {
     handle.get().await.ok_or_else(|| {
         AgentToolError::ExecutionFailed(format!("Session services 尚未完成初始化，无法{action}"))
     })
@@ -143,21 +143,21 @@ impl<'a> CompanionGateControlFactory<'a> {
 
     fn with_agent_run_delivery(
         &self,
-        session_services: &SessionToolServices,
+        runtime_thread_services: &RuntimeThreadToolServices,
     ) -> CompanionGateControlService {
         CompanionGateControlService::with_agent_run_projection(CompanionGateControlRepos {
             gate_repo: self.repos.lifecycle_gate_repo.clone(),
             frame_repo: self.repos.agent_frame_repo.clone(),
             agent_repo: self.repos.lifecycle_agent_repo.clone(),
-            runtime_binding_repo: session_services.product_runtime_bindings.clone(),
+            runtime_binding_repo: runtime_thread_services.product_runtime_bindings.clone(),
             lineage_repo: self.repos.agent_lineage_repo.clone(),
         })
         .with_parent_mailbox_delivery(Arc::new(AgentRunCompanionMailboxDelivery::new(
             self.repos.clone(),
-            session_services.clone(),
+            runtime_thread_services.clone(),
         )))
         .with_human_response_mailbox_delivery(Arc::new(
-            AgentRunCompanionMailboxDelivery::new(self.repos.clone(), session_services.clone()),
+            AgentRunCompanionMailboxDelivery::new(self.repos.clone(), runtime_thread_services.clone()),
         ))
     }
 }
@@ -171,11 +171,11 @@ pub struct AgentRunCompanionMailboxDelivery {
 impl AgentRunCompanionMailboxDelivery {
     pub fn new(
         repos: crate::repository_set::RepositorySet,
-        session_services: SessionToolServices,
+        runtime_thread_services: RuntimeThreadToolServices,
     ) -> Self {
         Self {
             repos,
-            product_input_delivery: session_services.product_input_delivery,
+            product_input_delivery: runtime_thread_services.product_input_delivery,
         }
     }
 }
@@ -1117,7 +1117,7 @@ impl ContextSourceRefCompanionExt for agentdash_domain::context_source::ContextS
 pub struct CompanionRequestTool {
     project_agent_repo: Arc<dyn ProjectAgentRepository>,
     repos: crate::repository_set::RepositorySet,
-    session_services_handle: SharedSessionToolServicesHandle,
+    runtime_thread_services_handle: SharedRuntimeThreadToolServicesHandle,
     tool_context: CompanionToolContext,
     companion_agents: Vec<CompanionAgentEntry>,
     wait_service: WaitActivityService,
@@ -1128,7 +1128,7 @@ pub struct CompanionRequestTool {
 pub(crate) struct CompanionRequestToolDeps {
     pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
     pub repos: crate::repository_set::RepositorySet,
-    pub session_services_handle: SharedSessionToolServicesHandle,
+    pub runtime_thread_services_handle: SharedRuntimeThreadToolServicesHandle,
     pub tool_context: CompanionToolContext,
     pub companion_agents: Vec<CompanionAgentEntry>,
     pub wait_service: WaitActivityService,
@@ -1141,7 +1141,7 @@ impl CompanionRequestTool {
         Self {
             project_agent_repo: deps.project_agent_repo,
             repos: deps.repos,
-            session_services_handle: deps.session_services_handle,
+            runtime_thread_services_handle: deps.runtime_thread_services_handle,
             tool_context: deps.tool_context,
             companion_agents: deps.companion_agents,
             wait_service: deps.wait_service,
@@ -1333,14 +1333,14 @@ impl CompanionRequestTool {
         )
         .await?;
 
-        let session_services =
-            require_session_services(&self.session_services_handle, "执行 companion request")
+        let runtime_thread_services =
+            require_runtime_thread_services(&self.runtime_thread_services_handle, "执行 companion request")
                 .await?;
 
         if let Some(reason) = before_resolution.block_reason.clone() {
             record_subagent_trace(
                 hook_runtime.as_ref(),
-                Some(&session_services),
+                Some(&runtime_thread_services),
                 Some(self.tool_context.turn_id()),
                 HookTrigger::BeforeSubagentDispatch,
                 "deny",
@@ -1395,7 +1395,7 @@ impl CompanionRequestTool {
         let dispatch_prompt = build_companion_dispatch_prompt(&dispatch_plan, &dispatch_message);
         record_subagent_trace(
             hook_runtime.as_ref(),
-            Some(&session_services),
+            Some(&runtime_thread_services),
             Some(self.tool_context.turn_id()),
             HookTrigger::BeforeSubagentDispatch,
             "allow",
@@ -1406,8 +1406,8 @@ impl CompanionRequestTool {
 
         let dispatch_result = CompanionChildDispatchService::new(
             &self.repos,
-            session_services.product_launch.as_ref(),
-            session_services.frame_construction.as_ref(),
+            runtime_thread_services.product_launch.as_ref(),
+            runtime_thread_services.frame_construction.as_ref(),
         )
         .dispatch_child(CompanionChildDispatchRequest {
             project_id,
@@ -1480,7 +1480,7 @@ impl CompanionRequestTool {
                     "companion channel materialization 失败: {error}"
                 ))
             })?;
-        let mailbox_result = session_services
+        let mailbox_result = runtime_thread_services
             .product_input_delivery
             .deliver(DeliverAgentRunProductInput {
                 target: AgentRunTarget {
@@ -1560,7 +1560,7 @@ impl CompanionRequestTool {
         .await?;
         record_subagent_trace(
             hook_runtime.as_ref(),
-            Some(&session_services),
+            Some(&runtime_thread_services),
             Some(self.tool_context.turn_id()),
             HookTrigger::AfterSubagentDispatch,
             "dispatched",
@@ -1727,10 +1727,10 @@ impl CompanionRequestTool {
             .tool_context
             .require_delivery_runtime_thread_id("向上提审")?
             .to_string();
-        let session_services =
-            require_session_services(&self.session_services_handle, "向上提审").await?;
+        let runtime_thread_services =
+            require_runtime_thread_services(&self.runtime_thread_services_handle, "向上提审").await?;
         let gate_control = CompanionGateControlFactory::new(&self.repos)
-            .with_agent_run_delivery(&session_services);
+            .with_agent_run_delivery(&runtime_thread_services);
         let opened = gate_control
             .open_parent_request(OpenCompanionParentRequestCommand {
                 child_runtime_thread_id: current_session_id,
@@ -2079,19 +2079,19 @@ pub struct CompanionRespondParams {
 #[derive(Clone)]
 pub struct CompanionRespondTool {
     repos: crate::repository_set::RepositorySet,
-    session_services_handle: SharedSessionToolServicesHandle,
+    runtime_thread_services_handle: SharedRuntimeThreadToolServicesHandle,
     tool_context: CompanionToolContext,
 }
 
 impl CompanionRespondTool {
     pub(crate) fn new(
         repos: crate::repository_set::RepositorySet,
-        session_services_handle: SharedSessionToolServicesHandle,
+        runtime_thread_services_handle: SharedRuntimeThreadToolServicesHandle,
         tool_context: CompanionToolContext,
     ) -> Self {
         Self {
             repos,
-            session_services_handle,
+            runtime_thread_services_handle,
             tool_context,
         }
     }
@@ -2143,8 +2143,8 @@ impl AgentTool for CompanionRespondTool {
             .tool_context
             .require_delivery_runtime_thread_id("回应 companion 请求")?
             .to_string();
-        let session_services =
-            require_session_services(&self.session_services_handle, "回应 companion 请求").await?;
+        let runtime_thread_services =
+            require_runtime_thread_services(&self.runtime_thread_services_handle, "回应 companion 请求").await?;
 
         let reply_target = self.resolve_reply_target(raw.reply_to.as_ref()).await?;
         let request_id = reply_target.request_id.as_str();
@@ -2155,7 +2155,7 @@ impl AgentTool for CompanionRespondTool {
                     request_id,
                     &current_session_id,
                     &payload,
-                    &session_services,
+                    &runtime_thread_services,
                 )
                 .await?,
             CompanionReplyRoute::PendingAction => self
@@ -2163,7 +2163,7 @@ impl AgentTool for CompanionRespondTool {
                     request_id,
                     &current_session_id,
                     &payload,
-                    &session_services,
+                    &runtime_thread_services,
                 )
                 .await?,
             CompanionReplyRoute::ChildDispatch => {
@@ -2171,7 +2171,7 @@ impl AgentTool for CompanionRespondTool {
                     request_id,
                     &current_session_id,
                     &payload,
-                    &session_services,
+                    &runtime_thread_services,
                 )
                 .await?
             }
@@ -2353,10 +2353,10 @@ impl CompanionRespondTool {
         request_id: &str,
         current_session_id: &str,
         payload: &serde_json::Value,
-        session_services: &SessionToolServices,
+        runtime_thread_services: &RuntimeThreadToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
         let service =
-            CompanionGateControlFactory::new(&self.repos).with_agent_run_delivery(session_services);
+            CompanionGateControlFactory::new(&self.repos).with_agent_run_delivery(runtime_thread_services);
         let Some(result) = service
             .resolve_parent_request(ResolveCompanionParentRequestCommand {
                 request_id: request_id.to_string(),
@@ -2420,7 +2420,7 @@ impl CompanionRespondTool {
         request_id: &str,
         current_session_id: &str,
         payload: &serde_json::Value,
-        _session_services: &SessionToolServices,
+        _runtime_thread_services: &RuntimeThreadToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
         let hook_runtime = match self.tool_context.hook_runtime() {
             Some(session) => session,
@@ -2497,10 +2497,10 @@ impl CompanionRespondTool {
         request_id: &str,
         current_session_id: &str,
         payload: &serde_json::Value,
-        session_services: &SessionToolServices,
+        runtime_thread_services: &RuntimeThreadToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
         let service =
-            CompanionGateControlFactory::new(&self.repos).with_agent_run_delivery(session_services);
+            CompanionGateControlFactory::new(&self.repos).with_agent_run_delivery(runtime_thread_services);
         let Some(result) = service
             .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
                 request_id: request_id.to_string(),
@@ -2857,7 +2857,7 @@ async fn evaluate_subagent_hook(
 
 async fn record_subagent_trace(
     hook_runtime: &dyn agentdash_platform_spi::hooks::HookRuntimeAccess,
-    session_services: Option<&SessionToolServices>,
+    runtime_thread_services: Option<&RuntimeThreadToolServices>,
     turn_id: Option<&str>,
     trigger: HookTrigger,
     decision: &str,
@@ -2886,7 +2886,7 @@ async fn record_subagent_trace(
     };
     hook_runtime.append_trace(trace.clone());
 
-    let _ = (session_services, turn_id);
+    let _ = (runtime_thread_services, turn_id);
 }
 
 #[cfg(test)]
@@ -3355,7 +3355,7 @@ mod companion_tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    use crate::runtime_tools::SharedSessionToolServicesHandle;
+    use crate::runtime_tools::SharedRuntimeThreadToolServicesHandle;
     #[derive(Default)]
     struct FixtureGateRepo {
         gates: Mutex<HashMap<Uuid, LifecycleGate>>,
@@ -4207,6 +4207,6 @@ mod companion_tests {
         // when no AgentLineage exists for the child session.
         // Full integration test requires in-memory repos + dispatch service.
         // Here we just verify the tool can be constructed with repos.
-        let _ = SharedSessionToolServicesHandle::default();
+        let _ = SharedRuntimeThreadToolServicesHandle::default();
     }
 }

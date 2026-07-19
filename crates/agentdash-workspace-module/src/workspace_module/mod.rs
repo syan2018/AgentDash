@@ -1,4 +1,5 @@
 pub mod presentation_protocol;
+pub mod visibility;
 
 use agentdash_application_extension_gateway::{
     RuntimeActionDescriptor, RuntimeActionKind, validate_json_schema_subset,
@@ -27,6 +28,13 @@ use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::extension_runtime::{
     ExtensionBackendServiceProjection, ExtensionGeneratedOperationDispatch,
     ExtensionGeneratedOperationProjection, ExtensionGeneratedOperationVisibility,
+};
+
+pub use visibility::{
+    WorkspaceModuleVisibilityDiagnostic, WorkspaceModuleVisibilityInput,
+    WorkspaceModuleVisibilityProjection, project_agent_run_workspace_module_visibility,
+    project_workspace_module_visibility, resolve_workspace_module_visibility,
+    resolve_workspace_module_visibility_with_operation_context,
 };
 
 pub const MODULE_ID_EXTENSION_PREFIX: &str = "ext:";
@@ -138,7 +146,7 @@ impl WorkspaceModuleRuntimeActionCatalog {
 
     fn session_action_descriptor(&self, action_key: &str) -> Option<&RuntimeActionDescriptor> {
         self.descriptors.iter().find(|descriptor| {
-            descriptor.kind == RuntimeActionKind::SessionRuntime
+            descriptor.kind == RuntimeActionKind::RuntimeThread
                 && descriptor.action_key.as_str() == action_key
         })
     }
@@ -949,7 +957,7 @@ mod tests {
                 extension_key: "ops-demo".to_string(),
                 extension_id: "ops-demo".to_string(),
                 action_key: "ops-demo.run".to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Run".to_string(),
                 input_schema: serde_json::json!(true),
                 output_schema: serde_json::json!(true),
@@ -989,7 +997,7 @@ mod tests {
                 extension_key: "ops-demo".to_string(),
                 extension_id: "ops-demo".to_string(),
                 action_key: "ops-demo.run".to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Manifest description must not become executable metadata".to_string(),
                 input_schema: serde_json::json!({"type": "object"}),
                 output_schema: serde_json::json!({"type": "object"}),
@@ -1027,7 +1035,7 @@ mod tests {
                 extension_key: "ops-demo".to_string(),
                 extension_id: "ops-demo".to_string(),
                 action_key: "ops-demo.run".to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Manifest action".to_string(),
                 input_schema: serde_json::json!({"type": "object"}),
                 output_schema: serde_json::json!({"type": "object"}),
@@ -1100,7 +1108,7 @@ mod tests {
                 extension_key: "ops-demo".to_string(),
                 extension_id: "ops-demo".to_string(),
                 action_key: action_key.to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Manifest action metadata is not an operation fact".to_string(),
                 input_schema: serde_json::json!(true),
                 output_schema: serde_json::json!(true),
@@ -1123,7 +1131,7 @@ mod tests {
         };
         let descriptor = RuntimeActionDescriptor {
             action_key: RuntimeActionKey::parse(action_key).expect("valid action key"),
-            kind: RuntimeActionKind::SessionRuntime,
+            kind: RuntimeActionKind::RuntimeThread,
             description: Some("Gateway resolved descriptor".to_string()),
             input_schema: Some(serde_json::json!({"type": "object"})),
             output_schema: Some(serde_json::json!({"type": "object"})),

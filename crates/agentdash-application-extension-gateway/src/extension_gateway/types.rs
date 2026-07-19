@@ -85,7 +85,7 @@ fn validate_action_key(value: &str) -> Result<(), RuntimeActionKeyError> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeActionKind {
-    SessionRuntime,
+    RuntimeThread,
     Setup,
 }
 
@@ -168,7 +168,7 @@ pub enum RuntimeContext {
 impl RuntimeContext {
     pub fn action_kind(&self) -> RuntimeActionKind {
         match self {
-            RuntimeContext::Session { .. } => RuntimeActionKind::SessionRuntime,
+            RuntimeContext::Session { .. } => RuntimeActionKind::RuntimeThread,
             RuntimeContext::Setup { .. } => RuntimeActionKind::Setup,
         }
     }

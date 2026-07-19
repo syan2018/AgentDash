@@ -70,8 +70,8 @@ pub enum ResolvedVfsSurfaceSource {
         project_id: String,
         task_id: String,
     },
-    SessionRuntime {
-        session_id: String,
+    RuntimeThread {
+        runtime_thread_id: String,
     },
     AgentRun {
         run_id: String,

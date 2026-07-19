@@ -112,6 +112,14 @@ pub trait AgentRunProductRuntimeBindingStore:
         expected_binding_digest: &str,
         expected_snapshot_revision: u64,
     ) -> Result<(), String>;
+
+    /// Advances an existing Product binding to the pre-activation source evidence produced by
+    /// Managed Runtime Rebind. The previous digest is the recovery CAS fence.
+    async fn prepare_product_binding_recovery(
+        &self,
+        expected_previous_binding_digest: &str,
+        binding: &AgentRunProductRuntimeBinding,
+    ) -> Result<(), String>;
 }
 
 pub struct AgentRunProductProjectionGateway {

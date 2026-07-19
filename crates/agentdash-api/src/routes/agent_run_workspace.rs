@@ -1,8 +1,12 @@
 use agentdash_application_agentrun::agent_run::{
-    self as app_agent_run, AgentRunProductRuntimeSnapshotObservation,
-    project_capability_state_from_frame, workspace as app_workspace,
+    self as app_agent_run, AgentRunProductRuntimeSnapshotObservation, workspace as app_workspace,
 };
-use agentdash_contracts::agent_run_mailbox::{MailboxMessageView, MailboxStateView};
+use agentdash_application_agentrun::agent_run::runtime_capability::project_capability_state_from_frame;
+use agentdash_contracts::agent_run_mailbox::{
+    ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
+    MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
+    SteeringStopEffect,
+};
 use agentdash_contracts::workflow::{
     AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunLineageRef, AgentRunOwnershipView,
@@ -29,8 +33,7 @@ use crate::{
     app_state::AppState,
     auth::project_authorization_context,
     routes::{
-        lifecycle_agents::mailbox_message_contract, vfs_surfaces::dto as vfs_surface_dto,
-        workspace_module::load_project_workspace_modules,
+        vfs_surfaces::dto as vfs_surface_dto, workspace_module::load_project_workspace_modules,
     },
     rpc::ApiError,
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
@@ -193,6 +196,100 @@ async fn lineage_ref(
         display_title,
         subagent_count: descendants(agent.id, edges),
     })
+}
+
+fn mailbox_message_contract(
+    message: agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,
+) -> MailboxMessageView {
+    use agentdash_domain::agent_run_mailbox as domain;
+
+    let can_delete = matches!(
+        message.status,
+        domain::MailboxMessageStatus::Accepted
+            | domain::MailboxMessageStatus::Queued
+            | domain::MailboxMessageStatus::ReadyToConsume
+            | domain::MailboxMessageStatus::Paused
+            | domain::MailboxMessageStatus::Blocked
+    );
+    let user_turn_message = message.origin == domain::MailboxMessageOrigin::User
+        && message.delivery == domain::MailboxDelivery::LaunchOrContinueTurn;
+    MailboxMessageView {
+        id: message.id.to_string(),
+        origin: match message.origin {
+            domain::MailboxMessageOrigin::User => MailboxMessageOrigin::User,
+            domain::MailboxMessageOrigin::System => MailboxMessageOrigin::System,
+            domain::MailboxMessageOrigin::Hook => MailboxMessageOrigin::Hook,
+            domain::MailboxMessageOrigin::Companion => MailboxMessageOrigin::Companion,
+            domain::MailboxMessageOrigin::Workflow => MailboxMessageOrigin::Workflow,
+        },
+        source: MailboxSourceIdentity {
+            namespace: message.source.namespace.clone(),
+            kind: message.source.kind.clone(),
+            source_ref: message.source.source_ref.clone(),
+            correlation_ref: message.source.correlation_ref.clone(),
+            actor: message.source.actor.clone(),
+            route: message.source.route.clone(),
+            display_label_key: message.source.display_label_key.clone(),
+            metadata: message.source.metadata.clone(),
+        },
+        delivery: match &message.delivery {
+            domain::MailboxDelivery::LaunchOrContinueTurn => MailboxDelivery::LaunchOrContinueTurn,
+            domain::MailboxDelivery::SteerActiveTurn { stop_effect } => {
+                MailboxDelivery::SteerActiveTurn {
+                    stop_effect: match stop_effect {
+                        domain::SteeringStopEffect::None => SteeringStopEffect::None,
+                        domain::SteeringStopEffect::ContinueOnStop => {
+                            SteeringStopEffect::ContinueOnStop
+                        }
+                    },
+                }
+            }
+            domain::MailboxDelivery::ResumeLaunchSource { launch_source } => {
+                MailboxDelivery::ResumeLaunchSource {
+                    launch_source: launch_source.clone(),
+                }
+            }
+        },
+        barrier: match message.barrier {
+            domain::ConsumptionBarrier::ImmediateIfIdle => ConsumptionBarrier::ImmediateIfIdle,
+            domain::ConsumptionBarrier::AgentLoopTurnBoundary => {
+                ConsumptionBarrier::AgentLoopTurnBoundary
+            }
+            domain::ConsumptionBarrier::AgentRunTurnBoundary => {
+                ConsumptionBarrier::AgentRunTurnBoundary
+            }
+            domain::ConsumptionBarrier::ManualResume => ConsumptionBarrier::ManualResume,
+        },
+        drain_mode: match message.drain_mode {
+            domain::MailboxDrainMode::One => MailboxDrainMode::One,
+            domain::MailboxDrainMode::All => MailboxDrainMode::All,
+        },
+        status: match message.status {
+            domain::MailboxMessageStatus::Accepted => MailboxMessageStatus::Accepted,
+            domain::MailboxMessageStatus::Queued => MailboxMessageStatus::Queued,
+            domain::MailboxMessageStatus::ReadyToConsume => MailboxMessageStatus::ReadyToConsume,
+            domain::MailboxMessageStatus::Consuming => MailboxMessageStatus::Consuming,
+            domain::MailboxMessageStatus::Dispatched => MailboxMessageStatus::Dispatched,
+            domain::MailboxMessageStatus::Steered => MailboxMessageStatus::Steered,
+            domain::MailboxMessageStatus::Paused => MailboxMessageStatus::Paused,
+            domain::MailboxMessageStatus::Blocked => MailboxMessageStatus::Blocked,
+            domain::MailboxMessageStatus::Failed => MailboxMessageStatus::Failed,
+            domain::MailboxMessageStatus::Deleted => MailboxMessageStatus::Deleted,
+        },
+        preview: message.preview.clone(),
+        has_images: message.has_images,
+        attempt_count: message.attempt_count,
+        accepted_refs: None,
+        last_error: message.last_error.clone(),
+        created_at: message.created_at.to_rfc3339(),
+        updated_at: message.updated_at.to_rfc3339(),
+        can_promote: can_delete && user_turn_message,
+        can_delete,
+        can_reorder: can_delete && user_turn_message,
+        can_recall: can_delete
+            && message.origin == domain::MailboxMessageOrigin::User
+            && message.payload_json.is_some(),
+    }
 }
 
 fn workspace_to_contract(
@@ -529,7 +626,7 @@ fn diagnostic_to_contract(
 }
 
 fn subject_association_to_contract(
-    association: app_agent_run::PresentationLifecycleSubjectAssociationView,
+    association: app_agent_run::LifecycleSubjectAssociationView,
 ) -> LifecycleSubjectAssociationDto {
     LifecycleSubjectAssociationDto {
         id: association.id,

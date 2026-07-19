@@ -7,28 +7,42 @@ use tokio::sync::broadcast;
 use agentdash_agent_runtime::{PlatformToolBroker, RuntimeToolExecutor};
 use agentdash_agent_runtime_contract::ManagedAgentRuntimeGateway;
 use agentdash_agent_runtime_host::{
-    CompleteAgentVerificationMethod, CompleteAgentVerificationRecord, RuntimePlatformHookHandler,
-    RuntimePlatformToolHandler,
+    CompleteAgentVerificationMethod, CompleteAgentVerificationRecord, RuntimePlatformToolHandler,
 };
 use agentdash_agent_service_api::{AgentHostCallbacks, AgentPayloadDigest, AgentServiceInstanceId};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
 };
+use agentdash_application::frame_construction::{
+    AgentRunProjectOwnerFrameConstructionAdapter, AgentRunProjectOwnerFrameConstructionDeps,
+};
+use agentdash_application::hook_workflow_projection::ProductHookWorkflowProjection;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
+use agentdash_application::product_runtime_surface::{
+    ProductAgentRunAppliedResourceSurfaceCompiler, ProductAgentRunFactsResolver,
+};
+use agentdash_application::routine::RoutineExecutor;
+use agentdash_application::scheduling::CronSchedulerHandle;
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::task::tools::ApplicationRuntimeTaskToolService;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductCommandFacade, AgentRunProductProjectionQueryPort,
-    AgentRunTerminalSourceReconcilePort, ProductMailboxFacade, ProductManagedRuntimeCommandAdapter,
+    AgentRunProductCommandFacade, AgentRunProductInputDeliveryPort,
+    AgentRunProductInputDeliveryService, AgentRunProductLaunchService,
+    AgentRunProductProjectionQueryPort, AgentRunProductRuntimeRecoveryPort,
+    AgentRunProductRuntimeRecoveryService, AgentRunTerminalSourceReconcilePort,
+    ProductMailboxFacade, ProductManagedRuntimeCommandAdapter,
     build_durable_workflow_agent_call_dispatch,
 };
+use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
+use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeChannelInvoker};
 use agentdash_application_lifecycle::run_view_builder::{
     LifecycleRunViewQueryDeps, LifecycleRunViewQueryPort, LifecycleRunViewQueryService,
 };
 use agentdash_application_lifecycle::{
+    AgentRunLifecycleAppliedResourceSurfaceCompiler, AgentRunLifecycleSurfaceProjector,
     LifecycleOrchestrator, LifecycleOrchestratorDeps, LifecycleRuntimeTurnTerminalObserver,
 };
 use agentdash_application_vfs::{
@@ -42,12 +56,16 @@ use agentdash_infrastructure::{
     AgentRunProductPersistenceComposition, AgentRunProductProjectionComposition,
 };
 use agentdash_infrastructure::{
-    CompleteAgentComposition, CompleteAgentServiceSelectionCatalog,
-    PinnedCompleteAgentVerificationCatalog, PostgresAgentRunProductRuntimeBindingRepository,
+    CompleteAgentComposition, CompleteAgentProductRuntimeProvisioner,
+    CompleteAgentServiceSelectionCatalog,
+    PinnedCompleteAgentVerificationCatalog, PostgresAgentRunMailboxRepository,
+    PostgresAgentRunProductRuntimeBindingRepository,
     PostgresAgentRunTerminalProjectionStore, PostgresWorkflowAgentCallRepository,
     PostgresWorkflowExecutorEffectRepository, PostgresWorkflowRecoveryRepository,
     PostgresWorkspaceModulePresentationStore, ProcessShellTerminalRegistry,
-    ProductRuntimeToolAuthorizer, WorkspaceModulePresentRuntimeTool, final_runtime_tool_catalog,
+    ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
+    ProductionCompleteAgentServiceSelector, WorkspaceModulePresentRuntimeTool,
+    final_runtime_tool_catalog,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, AuthMode, MarketplaceSourceProvider, MemoryDiscoveryProvider,
@@ -134,6 +152,13 @@ pub struct ServiceSet {
     pub agent_run_product_runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
     pub agent_run_product_commands: Arc<AgentRunProductCommandFacade>,
     pub agent_run_product_mailbox: Arc<ProductMailboxFacade>,
+    pub agent_run_product_launch: Arc<AgentRunProductLaunchService>,
+    pub agent_run_product_recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort>,
+    pub agent_run_product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
+    pub agent_run_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    pub hook_provider: Arc<AppExecutionHookProvider>,
+    pub cron_scheduler: CronSchedulerHandle,
+    pub routine_executor: Arc<RoutineExecutor>,
     pub runtime_tool_broker: Arc<PlatformToolBroker>,
     pub shell_terminal_registry: Arc<ProcessShellTerminalRegistry>,
     pub lifecycle_run_views: Arc<dyn LifecycleRunViewQueryPort>,
@@ -214,6 +239,13 @@ impl AppState {
         let auth_session_service = repository_bootstrap.auth_session_service;
         let extension_package_artifact_storage =
             repository_bootstrap.extension_package_artifact_storage;
+        let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
+        let llm_provider_secret: Arc<dyn LlmSecretCodec> = Arc::new(
+            agentdash_infrastructure::LlmProviderSecretCipher::from_env_or_create_default()?,
+        );
+        let platform_config: SharedPlatformConfig = Arc::new(PlatformConfig {
+            mcp_base_url: configured_platform_mcp_base_url(),
+        });
 
         let relay_bootstrap =
             crate::bootstrap::relay::build_relay_runtime(BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY);
@@ -280,7 +312,21 @@ impl AppState {
         );
         let runtime_tool_handler =
             Arc::new(RuntimePlatformToolHandler::new(runtime_tool_broker.clone()));
-        let runtime_hook_handler = Arc::new(RuntimePlatformHookHandler::new());
+        let hook_provider = Arc::new(AppExecutionHookProvider::new(
+            AppExecutionHookProviderDeps {
+                workflow_projection: Arc::new(ProductHookWorkflowProjection::new(
+                    repos.clone(),
+                    runtime_product_bindings.clone(),
+                )),
+                script_evaluator: Arc::new(agentdash_infrastructure::RhaiHookScriptEvaluator::new(
+                    &AppExecutionHookProvider::builtin_preset_scripts(),
+                )),
+            },
+        ));
+        let runtime_hook_handler = Arc::new(ProductCompleteAgentHookHandler::new(
+            runtime_product_bindings.clone(),
+            hook_provider.clone(),
+        ));
 
         let host_incarnation_id = format!("agentdash-api-host-{}", uuid::Uuid::new_v4());
         let complete_agent_verifier = Arc::new(builtin_complete_agent_verifier()?);
@@ -298,8 +344,42 @@ impl AppState {
             .complete_agent_registrations
             .drain(..)
         {
-            complete_agent.register_contribution(contribution).await?;
+            let instance_id = contribution.facts().instance_id().clone();
+            let descriptor = complete_agent.register_contribution(contribution).await?;
+            complete_agent_selections
+                .activate_recovery_profile(descriptor.profile_digest, instance_id)
+                .await;
         }
+        let complete_agent_selector = Arc::new(ProductionCompleteAgentServiceSelector::new(
+            complete_agent.clone(),
+            complete_agent_selections.clone(),
+            AgentServiceInstanceId::new(
+                agentdash_integration_codex::CODEX_COMPLETE_AGENT_INSTANCE_ID,
+            )?,
+            Arc::new(
+                agentdash_infrastructure::persistence::postgres::PostgresDashCompleteAgentStore::new(
+                    pool.clone(),
+                ),
+            ),
+            repos.llm_provider_repo.clone(),
+            repos.llm_provider_credential_repo.clone(),
+            llm_provider_secret.clone(),
+        ));
+        let dynamic_runtime_tools = Arc::new(
+            agentdash_infrastructure::mcp::ProductionRuntimeMcpToolCatalog::new(Some(
+                mcp_probe_relay.clone(),
+            )),
+        );
+        let product_runtime_provisioner = Arc::new(CompleteAgentProductRuntimeProvisioner::new(
+            complete_agent.host.clone(),
+            complete_agent_selector,
+            runtime_tool_broker.clone(),
+            dynamic_runtime_tools,
+        ));
+        complete_agent
+            .host
+            .install_runtime_recovery_planner(product_runtime_provisioner.clone())
+            .await;
         let runtime_wire_complete_agents = RuntimeWireCompleteAgentAdmission::new(
             runtime_wire_placements.clone(),
             complete_agent.clone(),
@@ -313,6 +393,21 @@ impl AppState {
         ));
         let product_mailbox =
             Arc::new(product_persistence.product_mailbox_facade(runtime_product_bindings.clone()));
+        let product_facts = Arc::new(ProductAgentRunFactsResolver::new(
+            repos.clone(),
+            runtime_product_bindings.clone(),
+        ));
+        let product_surface_compiler = Arc::new(
+            AgentRunLifecycleAppliedResourceSurfaceCompiler::new(
+                Arc::new(ProductAgentRunAppliedResourceSurfaceCompiler::new(
+                    product_facts.as_ref().clone(),
+                )),
+                product_facts,
+            ),
+        );
+        let product_resource_materializer = Arc::new(
+            product_persistence.applied_resource_surface_materializer(product_surface_compiler),
+        );
 
         let product = Arc::new(
             AgentRunProductProjectionComposition::build(
@@ -327,6 +422,56 @@ impl AppState {
             )
             .map_err(anyhow::Error::msg)?,
         );
+        let product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort> = Arc::new(
+            AgentRunProductInputDeliveryService::new(
+                Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone())),
+                product.gateway.clone(),
+                product_commands.clone(),
+            ),
+        );
+        let product_launch = Arc::new(AgentRunProductLaunchService::new(
+            product_runtime_provisioner,
+            complete_agent.runtime.clone(),
+            runtime_product_bindings.clone(),
+            product_resource_materializer.clone(),
+            product_persistence.applied_resource_surfaces.clone(),
+        ));
+        let product_recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort> =
+            Arc::new(AgentRunProductRuntimeRecoveryService::new(
+                complete_agent.runtime.clone(),
+                runtime_product_bindings.clone(),
+                product_resource_materializer,
+                product_persistence.applied_resource_surfaces.clone(),
+            ));
+        let lifecycle_surface_projection =
+            Arc::new(AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
+                repos.skill_asset_repo.clone(),
+            ));
+        let frame_construction: Arc<dyn AgentRunFrameConstructionPort> =
+            Arc::new(AgentRunProjectOwnerFrameConstructionAdapter::new(
+                AgentRunProjectOwnerFrameConstructionDeps {
+                    repos: repos.clone(),
+                    vfs_service: vfs_service.clone(),
+                    availability: backend_registry.clone(),
+                    platform_config: platform_config.clone(),
+                    lifecycle_surface_projection,
+                    audit_bus: audit_bus.clone(),
+                    hook_plan_compiler: hook_provider.clone(),
+                },
+            ));
+        let routine_executor = Arc::new(RoutineExecutor::new(
+            repos.clone(),
+            backend_registry.clone(),
+            product_input_delivery.clone(),
+            frame_construction.clone(),
+        ));
+        let cron_scheduler = CronSchedulerHandle::new();
+        agentdash_application::scheduling::spawn_cron_scheduler(
+            repos.clone(),
+            routine_executor.clone(),
+            &cron_scheduler,
+        )
+        .await;
         lifecycle_history_query
             .bind_product_projection(product.gateway.clone())
             .map_err(|error| anyhow::anyhow!(error))?;
@@ -394,13 +539,6 @@ impl AppState {
                 lifecycle_orchestrator.clone(),
             )))
             .map_err(anyhow::Error::msg)?;
-        let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
-        let llm_provider_secret: Arc<dyn LlmSecretCodec> = Arc::new(
-            agentdash_infrastructure::LlmProviderSecretCipher::from_env_or_create_default()?,
-        );
-        let platform_config: SharedPlatformConfig = Arc::new(PlatformConfig {
-            mcp_base_url: configured_platform_mcp_base_url(),
-        });
         let auth_mode = crate::bootstrap::auth::validate_auth_provider_registered(
             crate::bootstrap::auth::resolve_configured_auth_mode()?,
             integration_registration.auth_provider.is_some(),
@@ -423,6 +561,13 @@ impl AppState {
                 agent_run_product_runtime_bindings: product.runtime_bindings.clone(),
                 agent_run_product_commands: product_commands,
                 agent_run_product_mailbox: product_mailbox,
+                agent_run_product_launch: product_launch,
+                agent_run_product_recovery: product_recovery,
+                agent_run_product_input_delivery: product_input_delivery,
+                agent_run_frame_construction: frame_construction,
+                hook_provider,
+                cron_scheduler,
+                routine_executor,
                 runtime_tool_broker,
                 shell_terminal_registry,
                 lifecycle_run_views,

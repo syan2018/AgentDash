@@ -17,9 +17,9 @@ pub async fn ensure_runtime_trace_permission(
     let thread_id = RuntimeThreadId::new(runtime_thread_id.to_string())
         .map_err(|error| ApiError::BadRequest(format!("无效的 Runtime Thread ID: {error}")))?;
     let binding = match state
-        .repos
-        .agent_run_runtime_binding_repo
-        .load_by_thread_id(&thread_id)
+        .services
+        .agent_run_product_runtime_bindings
+        .load_product_binding_by_runtime_thread(&thread_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?
     {

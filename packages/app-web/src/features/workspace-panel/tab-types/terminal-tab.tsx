@@ -106,8 +106,11 @@ function TerminalView({ terminalId: initialTerminalId, tabId }: TerminalViewProp
 
     term.onData((data) => {
       const id = realIdRef.current;
-      if (!isInteractiveRef.current || !id || id === "new") return;
-      void authenticatedFetch(buildApiPath(`/terminals/${encodeURIComponent(id)}/input`), {
+      if (!isInteractiveRef.current || !id || id === "new" || !agentRunRuntimeTarget) return;
+      void authenticatedFetch(buildApiPath(agentRunScopedPath(
+        agentRunRuntimeTarget,
+        `/runtime/terminals/${encodeURIComponent(id)}/input`,
+      )), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data }),
@@ -116,8 +119,11 @@ function TerminalView({ terminalId: initialTerminalId, tabId }: TerminalViewProp
 
     term.onResize(({ cols, rows }) => {
       const id = realIdRef.current;
-      if (!isInteractiveRef.current || !id || id === "new") return;
-      void authenticatedFetch(buildApiPath(`/terminals/${encodeURIComponent(id)}/resize`), {
+      if (!isInteractiveRef.current || !id || id === "new" || !agentRunRuntimeTarget) return;
+      void authenticatedFetch(buildApiPath(agentRunScopedPath(
+        agentRunRuntimeTarget,
+        `/runtime/terminals/${encodeURIComponent(id)}/resize`,
+      )), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cols, rows }),

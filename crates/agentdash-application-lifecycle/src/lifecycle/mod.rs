@@ -6,11 +6,13 @@ pub mod dispatch_service;
 pub mod execution_log;
 pub mod history_projection;
 mod orchestrator;
+mod projection;
 pub(crate) mod run;
 pub mod run_command_service;
 pub mod run_view_builder;
 mod runtime_thread_association;
 mod runtime_turn_terminal_observer;
+mod session_run_context_resolver;
 mod session_tool_result_cache;
 pub mod surface;
 pub mod tools;
@@ -39,6 +41,10 @@ pub use orchestrator::{
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator, LifecycleOrchestratorDeps,
     OrchestrationResult,
 };
+pub use projection::{
+    ActiveWorkflowProjection, resolve_active_workflow_projection_for_target,
+    resolve_active_workflow_projection_from_message_stream_trace,
+};
 pub use run::select_active_run;
 pub use run_command_service::{
     ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandDeps,
@@ -51,6 +57,7 @@ pub use runtime_thread_association::{
     resolve_current_frame_from_delivery_trace_ref,
 };
 pub use runtime_turn_terminal_observer::LifecycleRuntimeTurnTerminalObserver;
+pub use session_run_context_resolver::{SubjectRunContextResolver, build_subject_run_context};
 pub use session_tool_result_cache::{
     SessionToolResultCache, SessionToolResultCacheRead, SessionToolResultCacheStatus,
     SessionToolResultCacheStatusKind, lifecycle_path_for_tool_result,

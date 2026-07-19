@@ -23,7 +23,7 @@ use agentdash_application::extension_package::{
     StoreExtensionPackageArchiveInput, install_extension_package_artifact,
     store_extension_package_archive,
 };
-use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
+use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use agentdash_application_extension_gateway::{
     RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeSurface,
@@ -700,8 +700,8 @@ fn agent_run_canvas_resource_surface_ref(context: &CanvasAgentRunContext) -> Str
 }
 
 fn agent_run_canvas_resource_surface_ref_for_session(runtime_thread_id: &str) -> String {
-    ResolvedVfsSurfaceSource::SessionRuntime {
-        session_id: runtime_thread_id.to_string(),
+    ResolvedVfsSurfaceSource::RuntimeThread {
+        runtime_thread_id: runtime_thread_id.to_string(),
     }
     .surface_ref()
 }
@@ -992,7 +992,7 @@ fn runtime_context_to_contract(context: RuntimeContext) -> RuntimeContextDto {
 
 fn runtime_action_kind_to_contract(kind: RuntimeActionKind) -> RuntimeActionKindDto {
     match kind {
-        RuntimeActionKind::SessionRuntime => RuntimeActionKindDto::SessionRuntime,
+        RuntimeActionKind::RuntimeThread => RuntimeActionKindDto::RuntimeThread,
         RuntimeActionKind::Setup => RuntimeActionKindDto::Setup,
     }
 }
@@ -1000,18 +1000,18 @@ fn runtime_action_kind_to_contract(kind: RuntimeActionKind) -> RuntimeActionKind
 async fn build_canvas_runtime_bridge_surface(
     state: &AppState,
     canvas: &agentdash_domain::canvas::Canvas,
-    session_id: &str,
+    runtime_thread_id: &str,
 ) -> Result<CanvasRuntimeBridgeSnapshot, ApiError> {
     let surface = state
         .services
         .extension_gateway
         .surface_for_actor(
             RuntimeActor::UserCanvas {
-                session_id: session_id.to_string(),
+                session_id: runtime_thread_id.to_string(),
                 canvas_id: Some(canvas.id),
             },
             RuntimeContext::Session {
-                session_id: session_id.to_string(),
+                session_id: runtime_thread_id.to_string(),
                 project_id: Some(canvas.project_id),
                 workspace_id: None,
             },

@@ -213,6 +213,7 @@ dependencies = [
  "agentdash-application",
  "agentdash-application-agentrun",
  "agentdash-application-extension-gateway",
+ "agentdash-application-hooks",
  "agentdash-application-lifecycle",
  "agentdash-application-ports",
  "agentdash-application-shared-library",

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_platform_spi::RuntimeToolProvider;
-use agentdash_platform_spi::{PlatformRuntimeError, DynAgentTool, ExecutionContext};
+use agentdash_platform_spi::{DynAgentTool, ExecutionContext, PlatformRuntimeError};
 use async_trait::async_trait;
 
 use super::service::{WaitActivityDeps, WaitActivityService};

@@ -16,7 +16,9 @@ use agentdash_platform_spi::platform::tool_capability::{
     self, CAP_COLLABORATION, CAP_WORKFLOW, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS,
 };
 use agentdash_platform_spi::{CapabilityScopeCtx, McpInjectionConfig};
-use agentdash_platform_spi::{CapabilityState, CompanionSliceMode, ToolCapabilityFilter, ToolCluster};
+use agentdash_platform_spi::{
+    CapabilityState, CompanionSliceMode, ToolCapabilityFilter, ToolCluster,
+};
 
 use crate::platform_config::PlatformConfig;
 
@@ -694,11 +696,13 @@ mod tests {
                 has_active_workflow: false,
             }),
             companion: Some(CompanionContribution {
-                available: vec![agentdash_platform_spi::context::capability::CompanionAgentEntry {
-                    name: "reviewer".to_string(),
-                    executor: "PI_AGENT".to_string(),
-                    display_name: "Reviewer".to_string(),
-                }],
+                available: vec![
+                    agentdash_platform_spi::context::capability::CompanionAgentEntry {
+                        name: "reviewer".to_string(),
+                        executor: "PI_AGENT".to_string(),
+                        display_name: "Reviewer".to_string(),
+                    },
+                ],
             }),
         });
 

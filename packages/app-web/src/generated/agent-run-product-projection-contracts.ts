@@ -6,7 +6,7 @@ import type { WorkspaceModulePresentation } from "./workspace-module-contracts";
 
 export type AgentRunProductProjectionContractSchema = { runtime_command: AgentRunProductRuntimeCommandRequest, runtime_command_receipt: ManagedRuntimeOperationReceipt, workspace_snapshot: WorkspaceModulePresentationSnapshot, workspace_change_page: WorkspaceModulePresentationChangePage, terminal_snapshot: AgentRunTerminalSnapshot, terminal_change_page: AgentRunTerminalChangePage, };
 
-export type AgentRunProductRuntimeCommand = { "kind": "submit_input", content: Array<ManagedRuntimeContentBlock>, } | { "kind": "interrupt" } | { "kind": "request_compaction" } | { "kind": "resolve_interaction", interaction_id: RuntimeInteractionId, response: ManagedRuntimeInteractionResponse, };
+export type AgentRunProductRuntimeCommand = { "kind": "submit_input", content: Array<ManagedRuntimeContentBlock>, } | { "kind": "interrupt" } | { "kind": "request_compaction" } | { "kind": "rebind" } | { "kind": "resolve_interaction", interaction_id: RuntimeInteractionId, response: ManagedRuntimeInteractionResponse, };
 
 export type AgentRunProductRuntimeCommandRequest = { client_command_id: string, expected_revision: RuntimeProjectionRevision, command: AgentRunProductRuntimeCommand, };
 

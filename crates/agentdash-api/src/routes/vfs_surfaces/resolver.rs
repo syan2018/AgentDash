@@ -34,8 +34,8 @@ pub(crate) async fn resolve_surface_bundle(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
     );
-    let bundle = if let ResolvedVfsSurfaceSource::SessionRuntime { session_id } = source {
-        let thread_id = RuntimeThreadId::new(session_id.clone())
+    let bundle = if let ResolvedVfsSurfaceSource::RuntimeThread { runtime_thread_id } = source {
+        let thread_id = RuntimeThreadId::new(runtime_thread_id.clone())
             .map_err(|error| ApiError::BadRequest(format!("runtime thread id 非法: {error}")))?;
         let binding = state
             .services
@@ -45,7 +45,7 @@ pub(crate) async fn resolve_surface_bundle(
             .map_err(ApiError::Internal)?
             .ok_or_else(|| {
                 ApiError::Conflict(format!(
-                    "runtime thread 缺少 canonical Product binding: {session_id}"
+                    "runtime thread 缺少 canonical Product binding: {runtime_thread_id}"
                 ))
             })?;
         state

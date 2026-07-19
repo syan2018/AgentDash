@@ -9,6 +9,7 @@ mod product_input_delivery;
 mod product_launch;
 mod product_mailbox_facade;
 mod product_projection_gateway;
+mod product_recovery;
 pub mod product_protocol;
 mod product_runtime_change_observer;
 mod product_runtime_provisioning;
@@ -37,6 +38,7 @@ pub use conversation_snapshot::{
     ConversationWaitingItemModel, ValidationSeverityModel, conversation_command_id_for,
     conversation_execution_state_code, conversation_snapshot_id,
 };
+pub use lifecycle_read_model_facade::LifecycleSubjectAssociationView;
 pub use display_title::{AgentRunDisplayTitle, resolve_agent_run_display_title};
 pub use execution_state::AgentRunExecutionState;
 pub use frame::{
@@ -48,6 +50,7 @@ pub use product_input_delivery::*;
 pub use product_launch::*;
 pub use product_mailbox_facade::*;
 pub use product_projection_gateway::*;
+pub use product_recovery::*;
 pub use product_protocol::*;
 pub use product_runtime_change_observer::*;
 pub use product_runtime_provisioning::*;

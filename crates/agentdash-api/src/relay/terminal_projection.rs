@@ -43,6 +43,49 @@ impl RelayAgentRunTerminalProjectionProducer {
         }
     }
 
+    pub async fn register_spawned(
+        &self,
+        projection: AgentRunTerminalProjection,
+        change_id: &str,
+    ) -> Result<(), AgentRunTerminalProjectionStoreError> {
+        if projection.latest_source_sequence.0 == 0 {
+            return Err(AgentRunTerminalProjectionStoreError::Conflict);
+        }
+        let head = self.projections.load_head(&projection.owner.target).await?;
+        let next = head.revision.0.saturating_add(1);
+        let change_id = AgentRunTerminalChangeId::new(change_id).map_err(protocol_store_error)?;
+        let delta = AgentRunTerminalProjectionDelta::Registered {
+            terminal: projection.clone(),
+        };
+        self.unit_of_work
+            .commit(AgentRunTerminalProjectionCommit {
+                expected_revision: head.revision,
+                expected_source_sequence: Some(AgentRunTerminalSourceSequence(
+                    projection.latest_source_sequence.0.saturating_sub(1),
+                )),
+                expected_output_sequence: None,
+                expected_terminal_state: None,
+                change: AgentRunTerminalChange {
+                    change_id: change_id.clone(),
+                    target: projection.owner.target.clone(),
+                    sequence: AgentRunTerminalChangeSequence(next),
+                    revision: AgentRunTerminalProjectionRevision(next),
+                    origin: AgentRunTerminalChangeOrigin::SourceFact {
+                        terminal_owner_epoch_id: projection.owner.terminal_owner_epoch_id.clone(),
+                        source_sequence: projection.latest_source_sequence,
+                    },
+                    payload_digest: payload_digest(&delta)?,
+                    delta,
+                },
+                outbox: AgentRunTerminalOutboxEntry {
+                    change_id,
+                    target: projection.owner.target,
+                    sequence: AgentRunTerminalChangeSequence(next),
+                },
+            })
+            .await
+    }
+
     pub async fn mark_backend_offline(
         &self,
         backend_id: &str,

@@ -25,7 +25,7 @@ use agentdash_application::extension_runtime::{
     UninstallExtensionInstallationInput, extension_runtime_projection_from_installations,
     uninstall_extension_installation,
 };
-use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
+use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use agentdash_application_extension_gateway::{
     ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
     ExtensionRuntimeChannelInvokeResult, RuntimeActionKey, RuntimeActor, RuntimeContext,

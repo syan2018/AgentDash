@@ -727,7 +727,7 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
           extension_key: "protocol-demo",
           extension_id: "protocol-demo",
           action_key: "protocol-demo.greet",
-          kind: "session_runtime",
+          kind: "runtime_thread",
           description: "Greet",
           input_schema: true,
           output_schema: true,
@@ -760,7 +760,7 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
 function runtimeSurface(): NonNullable<WorkspaceData["runtimeSurface"]> {
   return {
     surface_ref: "surface-1",
-    source: { source_type: "session_runtime", session_id: "session-1" },
+    source: { source_type: "runtime_thread", runtime_thread_id: "session-1" },
     default_mount_id: "mount-1",
     mounts: [runtimeMount()],
   };

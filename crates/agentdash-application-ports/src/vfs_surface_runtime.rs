@@ -25,8 +25,8 @@ pub enum ResolvedVfsSurfaceSource {
         project_id: Uuid,
         task_id: Uuid,
     },
-    SessionRuntime {
-        session_id: String,
+    RuntimeThread {
+        runtime_thread_id: String,
     },
     AgentRun {
         run_id: Uuid,
@@ -57,8 +57,8 @@ impl ResolvedVfsSurfaceSource {
                 project_id,
                 task_id,
             } => format!("task-preview:{project_id}:{task_id}"),
-            Self::SessionRuntime { session_id } => {
-                format!("session-runtime:{}", session_id.trim())
+            Self::RuntimeThread { runtime_thread_id } => {
+                format!("session-runtime:{}", runtime_thread_id.trim())
             }
             Self::AgentRun { run_id, agent_id } => format!("agent-run:{run_id}:{agent_id}"),
             Self::ProjectSkillAssets { project_id } => format!("project-skill-assets:{project_id}"),
@@ -117,12 +117,12 @@ impl ResolvedVfsSurfaceSource {
             });
         }
         if let Some(rest) = trimmed.strip_prefix("session-runtime:") {
-            let session_id = rest.trim();
-            if session_id.is_empty() {
+            let runtime_thread_id = rest.trim();
+            if runtime_thread_id.is_empty() {
                 return Err(format!("无效的 session runtime surface_ref: {trimmed}"));
             }
-            return Ok(Self::SessionRuntime {
-                session_id: session_id.to_string(),
+            return Ok(Self::RuntimeThread {
+                runtime_thread_id: runtime_thread_id.to_string(),
             });
         }
         if let Some(rest) = trimmed.strip_prefix("agent-run:") {
@@ -301,16 +301,16 @@ mod tests {
     }
 
     #[test]
-    fn session_runtime_surface_ref_trims_session_id() {
-        let source = ResolvedVfsSurfaceSource::SessionRuntime {
-            session_id: "  sess-1  ".to_string(),
+    fn runtime_thread_surface_ref_trims_runtime_thread_id() {
+        let source = ResolvedVfsSurfaceSource::RuntimeThread {
+            runtime_thread_id: "  sess-1  ".to_string(),
         };
 
         assert_eq!(source.surface_ref(), "session-runtime:sess-1");
         assert_eq!(
             ResolvedVfsSurfaceSource::parse_surface_ref(&source.surface_ref()).unwrap(),
-            ResolvedVfsSurfaceSource::SessionRuntime {
-                session_id: "sess-1".to_string()
+            ResolvedVfsSurfaceSource::RuntimeThread {
+                runtime_thread_id: "sess-1".to_string()
             }
         );
     }

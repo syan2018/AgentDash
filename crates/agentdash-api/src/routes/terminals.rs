@@ -1,29 +1,85 @@
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
+use agentdash_application_agentrun::agent_run::{
+    AgentRunProductRuntimeBindingRepository, AgentRunTerminalAvailability,
+    AgentRunTerminalCapability, AgentRunTerminalControlRoutingRepository, AgentRunTerminalId,
+    AgentRunTerminalLifecycleState, AgentRunTerminalOutputProjection,
+    AgentRunTerminalOutputSequence, AgentRunTerminalOwnerEpochId, AgentRunTerminalOwnerFence,
+    AgentRunTerminalProjection, AgentRunTerminalSourceSequence,
+};
 use agentdash_application_ports::agent_run_surface::AgentRunTerminalLaunchTarget;
 use agentdash_relay::*;
 
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
 use crate::relay::registry::BackendCommandError;
-use crate::routes::runtime_traces::ensure_runtime_trace_permission;
+use crate::agent_run_runtime_surface::resolve_current_runtime_surface_with_backend_for_agent_run_for_api;
+use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use crate::{app_state::AppState, rpc::ApiError};
+
+const TERMINAL_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
     axum::Router::new()
-        .route("/terminals/{id}/input", axum::routing::post(terminal_input))
         .route(
-            "/terminals/{id}/resize",
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals",
+            axum::routing::post(spawn_terminal),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/{id}/input",
+            axum::routing::post(terminal_input),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/{id}/resize",
             axum::routing::post(terminal_resize),
         )
-        .route("/terminals/{id}", axum::routing::delete(terminal_kill))
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/{id}",
+            axum::routing::delete(terminal_kill),
+        )
+}
+
+pub async fn spawn_terminal(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<SpawnTerminalBody>,
+) -> Result<Response, ApiError> {
+    let runtime = resolve_current_runtime_surface_with_backend_for_agent_run_for_api(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+        RuntimeSurfaceQueryPurpose::new("terminal_spawn"),
+        "Terminal",
+    )
+    .await?;
+    let backend_id = runtime.runtime_backend_anchor.backend_id.clone();
+    let mount_root_ref = runtime
+        .runtime_backend_anchor
+        .root_ref
+        .clone()
+        .ok_or_else(|| ApiError::Conflict("Terminal Runtime backend anchor 缺少 root_ref".into()))?;
+    spawn_terminal_for_runtime_thread(
+        &state,
+        &runtime.runtime_thread_id,
+        &run_id,
+        &agent_id,
+        AgentRunTerminalLaunchTarget {
+            backend_id,
+            mount_root_ref,
+        },
+        body,
+    )
+    .await
 }
 
 pub(crate) async fn spawn_terminal_for_runtime_thread(
@@ -47,6 +103,8 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
     }
 
     let terminal_id = RelayMessage::new_id("term");
+    let backend_id = target.backend_id.clone();
+    let terminal_cwd = body.cwd.clone();
     let payload = TerminalSpawnPayload {
         terminal_id: terminal_id.clone(),
         session_id: runtime_thread_id.to_string(),
@@ -55,16 +113,8 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
         shell: body.shell,
         cols: body.cols.unwrap_or(80),
         rows: body.rows.unwrap_or(24),
+        max_output_bytes: TERMINAL_MAX_OUTPUT_BYTES,
     };
-
-    // 预注册到 registry，避免 event_tx 事件到达时 registry 尚未就绪的 race condition
-    state.services.terminal_registry.register_terminal(
-        run_id,
-        agent_id,
-        &terminal_id,
-        &target.backend_id,
-        None,
-    );
 
     match state
         .services
@@ -82,15 +132,70 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
             payload: Some(resp),
             ..
         }) => {
-            if resp.process_id.is_some() {
-                state
-                    .services
-                    .terminal_registry
-                    .update_process_id(&resp.terminal_id, resp.process_id);
-            }
+            let target_ref = agentdash_domain::agent_run_target::AgentRunTarget {
+                run_id: uuid::Uuid::parse_str(run_id)
+                    .map_err(|_| ApiError::BadRequest("无效的 run_id".into()))?,
+                agent_id: uuid::Uuid::parse_str(agent_id)
+                    .map_err(|_| ApiError::BadRequest("无效的 agent_id".into()))?,
+            };
+            let binding = state
+                .services
+                .agent_run_product_runtime_bindings
+                .load_product_binding(&target_ref)
+                .await
+                .map_err(ApiError::Internal)?
+                .ok_or_else(|| ApiError::Conflict("Terminal 缺少 Product Runtime binding".into()))?;
+            let latest_source_sequence = u64::max(resp.latest_source_sequence, 1);
+            state
+                .services
+                .terminal_projection_producer
+                .register_spawned(
+                    AgentRunTerminalProjection {
+                        terminal_id: AgentRunTerminalId::new(resp.terminal_id.clone())
+                            .map_err(|error| ApiError::Internal(error.to_string()))?,
+                        owner: AgentRunTerminalOwnerFence {
+                            terminal_owner_epoch_id: AgentRunTerminalOwnerEpochId::new(
+                                resp.terminal_owner_epoch_id.clone(),
+                            )
+                            .map_err(|error| ApiError::Internal(error.to_string()))?,
+                            target: target_ref,
+                            runtime_thread_id: binding.runtime_thread_id,
+                            source_binding: binding.source_binding,
+                            backend_id,
+                        },
+                        mount_id: None,
+                        cwd: terminal_cwd,
+                        capability: AgentRunTerminalCapability::Interactive,
+                        max_output_bytes: u64::try_from(resp.max_output_bytes).unwrap_or(u64::MAX),
+                        state: AgentRunTerminalLifecycleState::Starting,
+                        availability: AgentRunTerminalAvailability::Online,
+                        latest_source_sequence: AgentRunTerminalSourceSequence(
+                            latest_source_sequence,
+                        ),
+                        exit_code: None,
+                        process_id: resp.process_id,
+                        created_at_ms: now_ms(),
+                        exited_at_ms: None,
+                        output: AgentRunTerminalOutputProjection {
+                            next_sequence: AgentRunTerminalOutputSequence(0),
+                            retained_output: String::new(),
+                            truncated: false,
+                            omitted_bytes: 0,
+                        },
+                    },
+                    &format!(
+                        "terminal-spawn:{}:{}",
+                        resp.terminal_owner_epoch_id, latest_source_sequence
+                    ),
+                )
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
             Ok(Json(serde_json::json!({
                 "terminal_id": resp.terminal_id,
                 "runtime_thread_id": runtime_thread_id,
+                "terminal_owner_epoch_id": resp.terminal_owner_epoch_id,
+                "latest_source_sequence": resp.latest_source_sequence,
+                "max_output_bytes": resp.max_output_bytes,
                 "process_id": resp.process_id,
             }))
             .into_response())
@@ -98,10 +203,6 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
         Ok(RelayMessage::ResponseTerminalSpawn {
             error: Some(err), ..
         }) => {
-            state
-                .services
-                .terminal_registry
-                .remove_terminal(&terminal_id);
             Ok((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": err.message })),
@@ -109,10 +210,6 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
                 .into_response())
         }
         _ => {
-            state
-                .services
-                .terminal_registry
-                .remove_terminal(&terminal_id);
             Ok((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": "unexpected response" })),
@@ -125,10 +222,11 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
 pub async fn terminal_input(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path(terminal_id): Path<String>,
+    Path((run_id, agent_id, terminal_id)): Path<(String, String, String)>,
     Json(body): Json<TerminalInputBody>,
 ) -> Result<Response, ApiError> {
-    let term_state = load_terminal_for_user(&state, &current_user, &terminal_id).await?;
+    let term_state =
+        load_terminal_for_user(&state, &current_user, &run_id, &agent_id, &terminal_id).await?;
 
     let payload = TerminalInputPayload {
         terminal_id: terminal_id.clone(),
@@ -139,7 +237,7 @@ pub async fn terminal_input(
         .services
         .backend_registry
         .send_command(
-            &term_state.backend_id,
+            &term_state.owner.backend_id,
             RelayMessage::CommandTerminalInput {
                 id: RelayMessage::new_id("api-term-input"),
                 payload,
@@ -156,10 +254,11 @@ pub async fn terminal_input(
 pub async fn terminal_resize(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path(terminal_id): Path<String>,
+    Path((run_id, agent_id, terminal_id)): Path<(String, String, String)>,
     Json(body): Json<TerminalResizeBody>,
 ) -> Result<Response, ApiError> {
-    let term_state = load_terminal_for_user(&state, &current_user, &terminal_id).await?;
+    let term_state =
+        load_terminal_for_user(&state, &current_user, &run_id, &agent_id, &terminal_id).await?;
 
     let payload = TerminalResizePayload {
         terminal_id: terminal_id.clone(),
@@ -171,7 +270,7 @@ pub async fn terminal_resize(
         .services
         .backend_registry
         .send_command(
-            &term_state.backend_id,
+            &term_state.owner.backend_id,
             RelayMessage::CommandTerminalResize {
                 id: RelayMessage::new_id("api-term-resize"),
                 payload,
@@ -193,9 +292,10 @@ pub async fn terminal_resize(
 pub async fn terminal_kill(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path(terminal_id): Path<String>,
+    Path((run_id, agent_id, terminal_id)): Path<(String, String, String)>,
 ) -> Result<Response, ApiError> {
-    let term_state = load_terminal_for_user(&state, &current_user, &terminal_id).await?;
+    let term_state =
+        load_terminal_for_user(&state, &current_user, &run_id, &agent_id, &terminal_id).await?;
 
     let payload = TerminalKillPayload {
         terminal_id: terminal_id.clone(),
@@ -206,7 +306,7 @@ pub async fn terminal_kill(
         .services
         .backend_registry
         .send_command(
-            &term_state.backend_id,
+            &term_state.owner.backend_id,
             RelayMessage::CommandTerminalKill {
                 id: RelayMessage::new_id("api-term-kill"),
                 payload,
@@ -223,28 +323,60 @@ pub async fn terminal_kill(
 async fn load_terminal_for_user(
     state: &Arc<AppState>,
     current_user: &agentdash_integration_api::AuthIdentity,
+    run_id: &str,
+    agent_id: &str,
     terminal_id: &str,
-) -> Result<TerminalState, ApiError> {
-    let term_state = state
-        .services
-        .terminal_registry
-        .get_terminal(terminal_id)
-        .ok_or_else(|| ApiError::NotFound("terminal not found".to_string()))?;
-    // Permission check: resolve active session from AgentRun scope
-    if let Some(session_id) = state
-        .services
-        .terminal_registry
-        .resolve_active_session(&term_state.run_id, &term_state.agent_id)
-    {
-        ensure_runtime_trace_permission(
-            state.as_ref(),
-            current_user,
-            &session_id,
-            ProjectPermission::Use,
-        )
-        .await?;
+) -> Result<agentdash_application_agentrun::agent_run::AgentRunTerminalControlRoute, ApiError> {
+    let target = agentdash_domain::agent_run_target::AgentRunTarget {
+        run_id: uuid::Uuid::parse_str(run_id)
+            .map_err(|_| ApiError::BadRequest("无效的 run_id".into()))?,
+        agent_id: uuid::Uuid::parse_str(agent_id)
+            .map_err(|_| ApiError::BadRequest("无效的 agent_id".into()))?,
+    };
+    let run = state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(target.run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("AgentRun 不存在".into()))?;
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(target.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("AgentRun Agent 不存在".into()))?;
+    if agent.run_id != run.id || agent.project_id != run.project_id {
+        return Err(ApiError::Conflict("AgentRun target 不一致".into()));
     }
-    Ok(term_state)
+    crate::auth::load_project_with_permission(
+        state.as_ref(),
+        current_user,
+        run.project_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let terminal_id =
+        AgentRunTerminalId::new(terminal_id).map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let route = state
+        .services
+        .terminal_projections
+        .resolve_control_route(&target, &terminal_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("terminal not found".to_string()))?;
+    if route.availability != AgentRunTerminalAvailability::Online {
+        return Err(ApiError::Conflict("terminal backend is not online".into()));
+    }
+    Ok(route)
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 #[derive(Debug, Clone, Copy)]

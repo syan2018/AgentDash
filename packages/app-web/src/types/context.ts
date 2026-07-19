@@ -66,7 +66,7 @@ export interface TaskSessionToolVisibilitySummary {
   mcp_servers: RuntimeMcpServerSummary[];
 }
 
-export interface TaskSessionRuntimePolicySummary {
+export interface TaskRuntimeThreadPolicySummary {
   markdown: string;
   workspace_attached: boolean;
   vfs_attached: boolean;
@@ -104,7 +104,7 @@ export interface SessionStoryOverrides {
 export interface SessionEffectiveContext {
   session_composition: SessionComposition;
   tool_visibility: TaskSessionToolVisibilitySummary;
-  runtime_policy: TaskSessionRuntimePolicySummary;
+  runtime_policy: TaskRuntimeThreadPolicySummary;
 }
 
 export type SessionOwnerContext =

@@ -23,17 +23,17 @@ impl<'a> CanvasRuntimeResourceService<'a> {
     pub async fn build_snapshot_with_bindings(
         &self,
         canvas: &Canvas,
-        session_id: Option<String>,
+        runtime_thread_id: Option<String>,
         vfs: Option<&Vfs>,
     ) -> CanvasRuntimeSnapshot {
-        let mut snapshot = build_runtime_snapshot(canvas, session_id);
+        let mut snapshot = build_runtime_snapshot(canvas, runtime_thread_id);
         let Some(vfs) = vfs else {
             return snapshot;
         };
-        if let Some(session_id) = snapshot.session_id.as_deref() {
+        if let Some(runtime_thread_id) = snapshot.runtime_thread_id.as_deref() {
             snapshot.resource_surface_ref = Some(
-                ResolvedVfsSurfaceSource::SessionRuntime {
-                    session_id: session_id.to_string(),
+                ResolvedVfsSurfaceSource::RuntimeThread {
+                    runtime_thread_id: runtime_thread_id.to_string(),
                 }
                 .surface_ref(),
             );

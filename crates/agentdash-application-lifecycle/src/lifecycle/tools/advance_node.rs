@@ -13,9 +13,9 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Default)]
-pub struct SharedSessionToolServicesHandle;
+pub struct SharedRuntimeThreadToolServicesHandle;
 
-impl SharedSessionToolServicesHandle {
+impl SharedRuntimeThreadToolServicesHandle {
     pub async fn get(&self) -> Option<()> {
         Some(())
     }
@@ -28,7 +28,7 @@ impl SharedSessionToolServicesHandle {
 #[derive(Clone)]
 pub struct CompleteLifecycleNodeTool {
     orchestrator_deps: LifecycleOrchestratorDeps,
-    session_services_handle: SharedSessionToolServicesHandle,
+    runtime_thread_services_handle: SharedRuntimeThreadToolServicesHandle,
     current_turn_id: String,
     hook_runtime: Option<agentdash_platform_spi::hooks::SharedHookRuntime>,
     owner: Option<agentdash_platform_spi::PlatformToolExecutionContext>,
@@ -59,12 +59,12 @@ pub struct CompleteLifecycleNodeParams {
 impl CompleteLifecycleNodeTool {
     pub fn new(
         orchestrator_deps: LifecycleOrchestratorDeps,
-        session_services_handle: SharedSessionToolServicesHandle,
+        runtime_thread_services_handle: SharedRuntimeThreadToolServicesHandle,
         context: &ExecutionContext,
     ) -> Self {
         Self {
             orchestrator_deps,
-            session_services_handle,
+            runtime_thread_services_handle,
             current_turn_id: context.session.turn_id.clone(),
             hook_runtime: context.turn.hook_runtime.clone(),
             owner: context.turn.platform_tool_execution.clone(),
@@ -110,7 +110,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
             )
         })?;
 
-        let _session_services = self.session_services_handle.get().await.ok_or_else(|| {
+        let _runtime_thread_services = self.runtime_thread_services_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
                 "session services 尚未就绪，无法推进 lifecycle node".to_string(),
             )

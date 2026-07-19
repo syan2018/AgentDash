@@ -34,6 +34,7 @@ pub mod skill {
     pub use agentdash_application_skill::skill::*;
 }
 pub mod gate_wait_policy;
+pub mod hook_workflow_projection;
 pub mod skill_asset;
 pub mod story;
 pub mod task;

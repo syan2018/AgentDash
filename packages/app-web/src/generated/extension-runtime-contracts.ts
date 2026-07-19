@@ -67,7 +67,7 @@ export type ExtensionProtocolChannelMethodProjectionResponse = { name: string, d
 
 export type ExtensionProtocolChannelProjectionResponse = { extension_key: string, extension_id: string, channel_key: string, version: string, description: string, methods: Array<ExtensionProtocolChannelMethodProjectionResponse>, };
 
-export type ExtensionRuntimeActionKindResponse = "session_runtime" | "setup";
+export type ExtensionRuntimeActionKindResponse = "runtime_thread" | "setup";
 
 export type ExtensionRuntimeActionProjectionResponse = { extension_key: string, extension_id: string, action_key: string, kind: ExtensionRuntimeActionKindResponse, description: string, input_schema: JsonValue, output_schema: JsonValue, permissions: Array<string>, };
 

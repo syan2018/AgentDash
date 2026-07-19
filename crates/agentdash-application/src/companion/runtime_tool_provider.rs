@@ -9,13 +9,13 @@ use crate::companion::model_preflight::CompanionModelPreflightPort;
 use crate::companion::tool_context::CompanionToolContext;
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::companion::workflow_script_preflight::CompanionWorkflowScriptPreflightPort;
-use crate::runtime_tools::provider::SharedSessionToolServicesHandle;
+use crate::runtime_tools::provider::SharedRuntimeThreadToolServicesHandle;
 use crate::wait_activity::WaitActivityService;
 
 #[derive(Clone)]
 pub struct CollaborationRuntimeToolProvider {
     repos: crate::repository_set::RepositorySet,
-    session_services_handle: SharedSessionToolServicesHandle,
+    runtime_thread_services_handle: SharedRuntimeThreadToolServicesHandle,
     wait_service: Option<WaitActivityService>,
     model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
     workflow_script_preflight: Option<Arc<dyn CompanionWorkflowScriptPreflightPort>>,
@@ -24,11 +24,11 @@ pub struct CollaborationRuntimeToolProvider {
 impl CollaborationRuntimeToolProvider {
     pub fn new(
         repos: crate::repository_set::RepositorySet,
-        session_services_handle: SharedSessionToolServicesHandle,
+        runtime_thread_services_handle: SharedRuntimeThreadToolServicesHandle,
     ) -> Self {
         Self {
             repos,
-            session_services_handle,
+            runtime_thread_services_handle,
             wait_service: None,
             model_preflight: None,
             workflow_script_preflight: None,
@@ -88,7 +88,7 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
                 super::tools::CompanionRequestToolDeps {
                     project_agent_repo: self.repos.project_agent_repo.clone(),
                     repos: self.repos.clone(),
-                    session_services_handle: self.session_services_handle.clone(),
+                    runtime_thread_services_handle: self.runtime_thread_services_handle.clone(),
                     tool_context: companion_tool_context.clone(),
                     companion_agents: flow.companion.agents.clone(),
                     wait_service,
@@ -104,7 +104,7 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
         ) {
             tools.push(Arc::new(CompanionRespondTool::new(
                 self.repos.clone(),
-                self.session_services_handle.clone(),
+                self.runtime_thread_services_handle.clone(),
                 companion_tool_context,
             )));
         }

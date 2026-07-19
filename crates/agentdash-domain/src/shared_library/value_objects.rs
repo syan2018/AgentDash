@@ -1452,7 +1452,7 @@ impl ExtensionAssetRef {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionRuntimeActionKind {
-    SessionRuntime,
+    RuntimeThread,
     Setup,
 }
 
@@ -2530,7 +2530,7 @@ mod tests {
             }],
             "runtime_actions": [{
                 "action_key": "gitlab-review.prepare",
-                "kind": "session_runtime",
+                "kind": "runtime_thread",
                 "description": "准备 review runtime action",
                 "input_schema": {},
                 "output_schema": {},
@@ -2618,7 +2618,7 @@ mod tests {
         let runtime_action = extension_template_from_json(json!({
             "runtime_actions": [{
                 "action_key": "demo.run",
-                "kind": "session_runtime",
+                "kind": "runtime_thread",
                 "description": "Run demo",
                 "input_schema": {},
                 "output_schema": {}
@@ -2705,7 +2705,7 @@ mod tests {
         let template = extension_template_from_json(json!({
             "runtime_actions": [{
                 "action_key": "demo.run",
-                "kind": "session_runtime",
+                "kind": "runtime_thread",
                 "description": "Run demo",
                 "input_schema": {},
                 "output_schema": {},
@@ -2751,7 +2751,7 @@ mod tests {
                 "asset_version": "0.1.0",
                 "runtime_actions": [{
                     "action_key": "Bad.Action",
-                    "kind": "session_runtime",
+                    "kind": "runtime_thread",
                     "description": "bad",
                     "input_schema": {},
                     "output_schema": {}
@@ -2837,7 +2837,7 @@ mod tests {
                 "asset_version": "0.1.0",
                 "runtime_actions": [{
                     "action_key": "bad.run",
-                    "kind": "session_runtime",
+                    "kind": "runtime_thread",
                     "description": "bad",
                     "output_schema": {}
                 }]
@@ -2926,7 +2926,7 @@ mod tests {
             asset_refs: vec![],
             runtime_actions: vec![ExtensionRuntimeActionDefinition {
                 action_key: "gitlab-review.prepare".to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Prepare review".to_string(),
                 input_schema: json!({}),
                 output_schema: json!({}),

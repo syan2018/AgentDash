@@ -218,7 +218,8 @@ mod tests {
             &self,
             _url: &str,
             headers: &[McpHttpHeader],
-        ) -> Result<Vec<agentdash_platform_spi::platform::mcp_probe::McpProbedTool>, String> {
+        ) -> Result<Vec<agentdash_platform_spi::platform::mcp_probe::McpProbedTool>, String>
+        {
             *self.headers.lock().expect("headers lock") = headers.to_vec();
             Ok(Vec::new())
         }

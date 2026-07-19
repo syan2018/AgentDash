@@ -1,4 +1,4 @@
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
+use agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository;
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentFrameRepository,
     AgentProcedure, AgentProcedureContract, AgentProcedureRepository, AgentReusePolicy,
@@ -8,7 +8,7 @@ use agentdash_domain::workflow::{
 };
 use agentdash_platform_spi::hooks::HookControlTarget;
 
-use super::session_association::ActivityRuntimeAssociationResolver;
+use super::runtime_thread_association::ActivityRuntimeAssociationResolver;
 
 /// 运行时聚合视图:单 activity 激活所需的全部定义域上下文。
 ///
@@ -201,17 +201,17 @@ fn derive_node_facts(plan_node: &PlanNode) -> (Option<String>, LifecycleNodeType
 /// 生产链路只允许 RuntimeThread 作为 Product binding lookup 起点：
 /// Runtime thread -> AgentRun runtime binding -> LifecycleRun.orchestrations。
 pub async fn resolve_active_workflow_projection_from_message_stream_trace(
-    session_id: &str,
+    runtime_thread_id: &str,
     definition_repo: &dyn AgentProcedureRepository,
     frame_repo: &dyn AgentFrameRepository,
     _agent_repo: &dyn LifecycleAgentRepository,
     run_repo: &dyn LifecycleRunRepository,
-    binding_repo: &dyn AgentRunRuntimeBindingRepository,
+    binding_repo: &dyn AgentRunProductRuntimeBindingRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
     let resolver = ActivityRuntimeAssociationResolver::new(frame_repo, run_repo)
         .with_binding_repo(binding_repo);
     let Some(association) = resolver
-        .resolve_by_message_stream_trace(session_id)
+        .resolve_by_message_stream_trace(runtime_thread_id)
         .await
         .map_err(|error| error.to_string())?
     else {

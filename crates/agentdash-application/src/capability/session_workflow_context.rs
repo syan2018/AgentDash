@@ -8,7 +8,7 @@
 //! - `Story { project_id }` —— 查 `is_default_for_story=true` 的 ProjectAgent
 //! - `Routine { project_id, project_agent_id }` —— 复用 Project 查询（routine 自带 agent 绑定）
 //!
-//! Task session 已在 session_runtime_inputs / turn_context 就地拿到 `ActiveWorkflowProjection`，
+//! Task session 已在 runtime_thread_inputs / turn_context 就地拿到 `ActiveWorkflowProjection`，
 //! 无需走 helper；那边直接用 `tool_directives_from_active_workflow` 做单步计算即可。
 //!
 //! 错误处理哲学：repo 报错 / 未找到 / 未配置统一返回 `None`，

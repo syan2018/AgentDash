@@ -756,7 +756,7 @@ mod tests {
             asset_refs: vec![],
             runtime_actions: vec![ExtensionRuntimeActionDefinition {
                 action_key: action_key.to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "read profile".to_string(),
                 input_schema: serde_json::json!({}),
                 output_schema: serde_json::json!({}),

@@ -64,7 +64,7 @@ export type PublishCanvasToProjectRequest = { canvas_mount_id?: string, title?: 
 
 export type RuntimeActionDescriptorDto = { action_key: string, kind: RuntimeActionKindDto, description?: string, input_schema?: JsonValue, output_schema?: JsonValue, default_policy: RuntimePolicyDto, };
 
-export type RuntimeActionKindDto = "session_runtime" | "setup";
+export type RuntimeActionKindDto = "runtime_thread" | "setup";
 
 export type RuntimeContextDto = { "type": "session", session_id: string, project_id?: string, workspace_id?: string, } | { "type": "setup", project_id?: string, workspace_id?: string, backend_id?: string, root_ref?: string, };
 

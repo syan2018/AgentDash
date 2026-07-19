@@ -1,3 +1,5 @@
+use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
     LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociation,
@@ -12,7 +14,7 @@ use crate::lifecycle::WorkflowApplicationError;
 pub struct SubjectRunContextResolver<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
-    runtime_binding_repo: &'a dyn AgentRunRuntimeBindingRepository,
+    runtime_binding_repo: &'a dyn AgentRunProductRuntimeBindingRepository,
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     story_repo: &'a dyn StoryRepository,
 }
@@ -21,7 +23,7 @@ impl<'a> SubjectRunContextResolver<'a> {
     pub fn new(
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
         lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
-        runtime_binding_repo: &'a dyn AgentRunRuntimeBindingRepository,
+        runtime_binding_repo: &'a dyn AgentRunProductRuntimeBindingRepository,
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         story_repo: &'a dyn StoryRepository,
     ) -> Self {
@@ -43,7 +45,7 @@ impl<'a> SubjectRunContextResolver<'a> {
             .map_err(|error| WorkflowApplicationError::Conflict(error.to_string()))?;
         let Some(binding) = self
             .runtime_binding_repo
-            .load_by_thread_id(&thread_id)
+            .load_product_binding_by_runtime_thread(&thread_id)
             .await
             .map_err(|error| WorkflowApplicationError::Conflict(error.to_string()))?
         else {
@@ -232,5 +234,3 @@ async fn story_context(
         scope: CapabilityScope::Story,
     })
 }
-use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;

@@ -169,14 +169,14 @@ fn validate_actor_context(
     trace: Option<super::types::RuntimeTrace>,
 ) -> Result<(), RuntimeInvocationError> {
     match action_kind {
-        RuntimeActionKind::SessionRuntime => {
-            validate_session_runtime_actor_context(actor, context, trace)
+        RuntimeActionKind::RuntimeThread => {
+            validate_runtime_thread_actor_context(actor, context, trace)
         }
         RuntimeActionKind::Setup => validate_setup_actor_context(actor, context, trace),
     }
 }
 
-fn validate_session_runtime_actor_context(
+fn validate_runtime_thread_actor_context(
     actor: &RuntimeActor,
     context: &RuntimeContext,
     trace: Option<super::types::RuntimeTrace>,
@@ -334,7 +334,7 @@ mod tests {
     async fn session_action_requires_session_context() {
         let gateway = ExtensionGateway::new().with_provider(Arc::new(FakeProvider::new(
             "session.echo",
-            RuntimeActionKind::SessionRuntime,
+            RuntimeActionKind::RuntimeThread,
         )));
         let mut request = session_request("session.echo");
         request.context = RuntimeContext::Setup {
@@ -376,7 +376,7 @@ mod tests {
     async fn provider_error_keeps_invocation_trace() {
         let gateway = ExtensionGateway::new().with_provider(Arc::new(FakeProvider::failing(
             "session.echo",
-            RuntimeActionKind::SessionRuntime,
+            RuntimeActionKind::RuntimeThread,
         )));
         let request = session_request("session.echo");
         let expected_trace_id = request.trace.trace_id.clone();
@@ -397,7 +397,7 @@ mod tests {
     async fn registered_session_action_invokes_provider() {
         let gateway = ExtensionGateway::new().with_provider(Arc::new(FakeProvider::new(
             "session.echo",
-            RuntimeActionKind::SessionRuntime,
+            RuntimeActionKind::RuntimeThread,
         )));
 
         let result = gateway
@@ -414,7 +414,7 @@ mod tests {
         let gateway = ExtensionGateway::new()
             .with_provider(Arc::new(FakeProvider::new(
                 "session.echo",
-                RuntimeActionKind::SessionRuntime,
+                RuntimeActionKind::RuntimeThread,
             )))
             .with_provider(Arc::new(FakeProvider::new(
                 "workspace.detect",
@@ -449,11 +449,11 @@ mod tests {
         let gateway = ExtensionGateway::new()
             .with_provider(Arc::new(FakeProvider::new(
                 "session.echo",
-                RuntimeActionKind::SessionRuntime,
+                RuntimeActionKind::RuntimeThread,
             )))
             .with_dynamic_provider(Arc::new(FakeProvider::new(
                 "session.dynamic",
-                RuntimeActionKind::SessionRuntime,
+                RuntimeActionKind::RuntimeThread,
             )));
 
         let surface = gateway
@@ -483,7 +483,7 @@ mod tests {
     async fn actor_aware_surface_rejects_mismatched_session_actor() {
         let gateway = ExtensionGateway::new().with_provider(Arc::new(FakeProvider::new(
             "session.echo",
-            RuntimeActionKind::SessionRuntime,
+            RuntimeActionKind::RuntimeThread,
         )));
 
         let err = gateway
@@ -509,7 +509,7 @@ mod tests {
         let gateway = ExtensionGateway::new()
             .with_provider(Arc::new(FakeProvider::new(
                 "session.echo",
-                RuntimeActionKind::SessionRuntime,
+                RuntimeActionKind::RuntimeThread,
             )))
             .with_provider(Arc::new(FakeProvider::new(
                 "workspace.detect",
@@ -568,7 +568,7 @@ mod tests {
         let gateway = ExtensionGateway::new()
             .with_provider(Arc::new(FakeProvider::new(
                 "session.echo",
-                RuntimeActionKind::SessionRuntime,
+                RuntimeActionKind::RuntimeThread,
             )))
             .with_provider(Arc::new(FakeProvider::new(
                 "workspace.detect",

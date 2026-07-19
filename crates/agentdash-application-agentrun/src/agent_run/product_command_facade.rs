@@ -58,6 +58,7 @@ pub enum AgentRunProductCommand {
     },
     Interrupt,
     RequestCompaction,
+    Rebind,
     ResolveInteraction {
         interaction_id: RuntimeInteractionId,
         response: ManagedRuntimeInteractionResponse,
@@ -71,6 +72,7 @@ impl AgentRunProductCommand {
             Self::SubmitInput { .. } => ManagedRuntimeCommandKind::SubmitInput,
             Self::Interrupt => ManagedRuntimeCommandKind::Interrupt,
             Self::RequestCompaction => ManagedRuntimeCommandKind::RequestCompaction,
+            Self::Rebind => ManagedRuntimeCommandKind::Rebind,
             Self::ResolveInteraction { .. } => ManagedRuntimeCommandKind::ResolveInteraction,
         }
     }
@@ -234,6 +236,7 @@ impl AgentRunProductCommandFacade {
                     .ok_or(AgentRunProductCommandError::ActiveTurnMissing)?,
             },
             AgentRunProductCommand::RequestCompaction => ManagedRuntimeCommand::RequestCompaction,
+            AgentRunProductCommand::Rebind => ManagedRuntimeCommand::Rebind,
             AgentRunProductCommand::ResolveInteraction {
                 interaction_id,
                 response,

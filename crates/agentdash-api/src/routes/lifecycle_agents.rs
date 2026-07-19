@@ -3,7 +3,8 @@ use std::sync::Arc;
 use agentdash_agent_runtime_contract::{ManagedRuntimeGatewayError, RuntimeChangeSequence};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommand, AgentRunProductCommandError, AgentRunProductCommandRequest,
-    AgentRunProductProjectionError, AgentRunTerminalChangeSequence,
+    AgentRunProductProjectionError, AgentRunProductRuntimeRecoveryError,
+    AgentRunProductRuntimeRecoveryRequest, AgentRunTerminalChangeSequence,
 };
 use agentdash_contracts::agent_run_product_projection as product_projection_contract;
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -55,6 +56,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::post(execute_managed_runtime_command),
         )
         .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/workspace",
+            axum::routing::get(get_agent_run_workspace),
+        )
+        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/snapshot",
             axum::routing::get(get_workspace_presentation_snapshot),
         )
@@ -74,6 +79,40 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/changes",
             axum::routing::get(get_agent_run_terminal_changes),
         )
+}
+
+async fn get_agent_run_workspace(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<agentdash_contracts::workflow::AgentRunWorkspaceView>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let run = state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(target.run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("AgentRun 不存在".into()))?;
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(target.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("AgentRun Agent 不存在".into()))?;
+    let (parent, children) =
+        super::agent_run_workspace::resolve_lineage(state.as_ref(), &run, &agent).await?;
+    let mut workspace =
+        super::agent_run_workspace::load(state.as_ref(), run, agent, &current_user).await?;
+    workspace.parent = parent;
+    workspace.children = children;
+    Ok(Json(workspace))
 }
 
 async fn get_managed_runtime_snapshot(
@@ -142,6 +181,22 @@ async fn execute_managed_runtime_command(
         ProjectPermission::Use,
     )
     .await?;
+    if matches!(
+        &body.command,
+        product_projection_contract::AgentRunProductRuntimeCommand::Rebind
+    ) {
+        return state
+            .services
+            .agent_run_product_recovery
+            .recover(AgentRunProductRuntimeRecoveryRequest {
+                target,
+                client_command_id: body.client_command_id,
+                expected_revision: body.expected_revision,
+            })
+            .await
+            .map(|outcome| Json(outcome.activate_receipt))
+            .map_err(agent_run_product_recovery_error);
+    }
     let command = match body.command {
         product_projection_contract::AgentRunProductRuntimeCommand::SubmitInput { content } => {
             AgentRunProductCommand::SubmitInput { content }
@@ -152,6 +207,7 @@ async fn execute_managed_runtime_command(
         product_projection_contract::AgentRunProductRuntimeCommand::RequestCompaction => {
             AgentRunProductCommand::RequestCompaction
         }
+        product_projection_contract::AgentRunProductRuntimeCommand::Rebind => unreachable!(),
         product_projection_contract::AgentRunProductRuntimeCommand::ResolveInteraction {
             interaction_id,
             response,
@@ -173,6 +229,31 @@ async fn execute_managed_runtime_command(
         .await
         .map(Json)
         .map_err(agent_run_product_command_error)
+}
+
+fn agent_run_product_recovery_error(error: AgentRunProductRuntimeRecoveryError) -> ApiError {
+    match error {
+        AgentRunProductRuntimeRecoveryError::InvalidRequest => {
+            ApiError::BadRequest(error.to_string())
+        }
+        AgentRunProductRuntimeRecoveryError::BindingMissing
+        | AgentRunProductRuntimeRecoveryError::RuntimeBindingMismatch
+        | AgentRunProductRuntimeRecoveryError::Runtime(ManagedRuntimeGatewayError::Conflict {
+            ..
+        })
+        | AgentRunProductRuntimeRecoveryError::Runtime(
+            ManagedRuntimeGatewayError::Unavailable { .. },
+        ) => ApiError::Conflict(error.to_string()),
+        AgentRunProductRuntimeRecoveryError::Binding(_)
+        | AgentRunProductRuntimeRecoveryError::ResourceSurface(_)
+        | AgentRunProductRuntimeRecoveryError::Runtime(ManagedRuntimeGatewayError::NotFound)
+        | AgentRunProductRuntimeRecoveryError::Runtime(
+            ManagedRuntimeGatewayError::Persistence { .. },
+        ) => ApiError::Internal(error.to_string()),
+        AgentRunProductRuntimeRecoveryError::Runtime(ManagedRuntimeGatewayError::Invalid {
+            ..
+        }) => ApiError::BadRequest(error.to_string()),
+    }
 }
 
 async fn get_workspace_presentation_snapshot(

@@ -324,11 +324,7 @@ pub async fn fire_webhook(
 
     verify_webhook_token(&routine, &headers)?;
 
-    let executor = state
-        .services
-        .routine_executor
-        .as_ref()
-        .ok_or_else(|| ApiError::Internal("RoutineExecutor 未初始化".into()))?;
+    let executor = state.services.routine_executor.as_ref();
 
     let exec_id = executor
         .fire_webhook(routine.id, req.text.as_deref(), req.payload)

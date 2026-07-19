@@ -105,13 +105,13 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
     }
 
     fn action_kind(&self) -> RuntimeActionKind {
-        RuntimeActionKind::SessionRuntime
+        RuntimeActionKind::RuntimeThread
     }
 
     fn describe_action(&self) -> RuntimeActionDescriptor {
         RuntimeActionDescriptor {
             action_key: self.marker_key.clone(),
-            kind: RuntimeActionKind::SessionRuntime,
+            kind: RuntimeActionKind::RuntimeThread,
             description: Some("Project enabled extension runtime action proxy".to_string()),
             input_schema: None,
             output_schema: None,
@@ -121,7 +121,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
     }
 
     fn supports(&self, action_key: &RuntimeActionKey, context: &RuntimeContext) -> bool {
-        &self.marker_key == action_key && context.action_kind() == RuntimeActionKind::SessionRuntime
+        &self.marker_key == action_key && context.action_kind() == RuntimeActionKind::RuntimeThread
     }
 
     async fn supports_action(
@@ -129,7 +129,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
         action_key: &RuntimeActionKey,
         context: &RuntimeContext,
     ) -> Result<bool, RuntimeInvocationError> {
-        if context.action_kind() != RuntimeActionKind::SessionRuntime {
+        if context.action_kind() != RuntimeActionKind::RuntimeThread {
             return Ok(false);
         }
         let project_id = session_project_id_for_invoke(context)?;
@@ -278,7 +278,7 @@ impl ExtensionRuntimeActionProvider {
                 .manifest
                 .runtime_actions
                 .iter()
-                .filter(|action| action.kind == ExtensionRuntimeActionKind::SessionRuntime)
+                .filter(|action| action.kind == ExtensionRuntimeActionKind::RuntimeThread)
             {
                 let resolved = ResolvedExtensionRuntimeAction {
                     installations: installations.clone(),
@@ -352,7 +352,7 @@ fn extension_action_descriptor(
     );
     Ok(RuntimeActionDescriptor {
         action_key,
-        kind: RuntimeActionKind::SessionRuntime,
+        kind: RuntimeActionKind::RuntimeThread,
         description: Some(action.description.clone()),
         input_schema: Some(action.input_schema.clone()),
         output_schema: Some(action.output_schema.clone()),
@@ -2497,7 +2497,7 @@ mod tests {
             asset_refs: vec![],
             runtime_actions: vec![ExtensionRuntimeActionDefinition {
                 action_key: "local-hello.profile".to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Read profile".to_string(),
                 input_schema: json!({}),
                 output_schema: json!({}),

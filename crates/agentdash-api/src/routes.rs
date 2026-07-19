@@ -1,9 +1,12 @@
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
+pub mod canvases;
+pub mod companion_gates;
 pub mod diagnostics;
 pub mod execution_profiles;
 pub mod extension_package_artifacts;
+pub mod extension_runtime;
 pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
@@ -19,6 +22,7 @@ pub mod project_extensions;
 pub mod project_vfs_mounts;
 pub mod projects;
 pub mod release_info;
+pub mod routines;
 pub mod runner_registration_tokens;
 pub mod settings;
 pub mod shared_library;
@@ -26,10 +30,14 @@ pub mod skill_assets;
 pub mod stories;
 pub mod story_runs;
 pub mod task_plan;
+pub mod terminals;
 pub mod vfs;
 pub mod vfs_surfaces;
 pub mod workflows;
+pub mod workspace_module;
 pub mod workspaces;
+mod agent_run_workspace;
+mod runtime_traces;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -76,6 +84,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(workspaces::router())
         .merge(backend_access::router())
         .merge(stories::router())
+        .merge(canvases::router())
+        .merge(companion_gates::router())
         .merge(task_plan::router())
         .merge(lifecycle_agents::router())
         .merge(lifecycle_views::router())
@@ -87,6 +97,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(marketplace::router())
         .merge(project_extensions::router())
         .merge(extension_package_artifacts::router())
+        .merge(extension_runtime::router())
+        .merge(workspace_module::router())
+        .merge(routines::router())
+        .merge(terminals::router())
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         .merge(vfs::router())
         .merge(vfs_surfaces::router())
@@ -104,6 +118,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(auth_routes::public_router())
         .merge(runner_registration_tokens::public_router())
         .merge(extension_package_artifacts::public_router())
+        .merge(routines::public_router())
         .merge(diagnostics::router())
         .merge(secured_api)
         .with_state(state.clone());

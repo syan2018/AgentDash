@@ -419,6 +419,15 @@ mod tests {
             *self.binding.lock().await = Some(binding.clone());
             Ok(())
         }
+
+        async fn prepare_product_binding_recovery(
+            &self,
+            _expected_previous_binding_digest: &str,
+            binding: &AgentRunProductRuntimeBinding,
+        ) -> Result<(), String> {
+            *self.binding.lock().await = Some(binding.clone());
+            Ok(())
+        }
     }
 
     struct ReplayResources {

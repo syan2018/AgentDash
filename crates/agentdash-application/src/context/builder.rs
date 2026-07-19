@@ -1,11 +1,13 @@
-﻿//! Context builder — 统一的 session 上下文 Bundle 构建入口。
+//! Context builder — 统一的 session 上下文 Bundle 构建入口。
 //!
 //! 本模块的公共 API（`ContextBuildPhase` / `SessionContextConfig` /
 //! `Contribution` / `build_session_context_bundle`）**不依赖任何 domain 类型**，
 //! 是纯合并 reducer（参见 PRD D6 决策）。领域自治的 `contribute_*` 纯函数负责
 //! 把 domain 对象解包成 `Contribution`，调用方按 phase 组装后喂给 builder。
 
-use agentdash_platform_spi::{ContextFragment, FragmentScopeSet, MergeStrategy, SessionContextBundle};
+use agentdash_platform_spi::{
+    ContextFragment, FragmentScopeSet, MergeStrategy, SessionContextBundle,
+};
 use uuid::Uuid;
 
 use crate::runtime::McpServerSummary;

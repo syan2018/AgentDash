@@ -117,6 +117,55 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         tx.commit().await.map_err(string_db_error)
     }
 
+    pub async fn prepare_product_binding_recovery(
+        &self,
+        expected_previous_binding_digest: &str,
+        binding: &AgentRunProductRuntimeBinding,
+    ) -> Result<(), String> {
+        if expected_previous_binding_digest.trim().is_empty()
+            || binding.source_binding.activated_at_revision.is_some()
+        {
+            return Err("Product recovery preparation requires a previous digest and a pre-activation binding".to_string());
+        }
+        let binding_digest = binding.calculated_digest()?;
+        let binding_json = product_binding_json(binding);
+        let result = sqlx::query(
+            "UPDATE agent_run_product_runtime_binding
+             SET source_committed_revision=$5,
+                 source_activated_revision=NULL,
+                 binding_digest=$6,
+                 applied_resource_snapshot_revision=NULL,
+                 applied_resource_binding_id=NULL,
+                 applied_resource_binding_generation=NULL,
+                 binding=$7
+             WHERE target_run_id=$1 AND target_agent_id=$2
+               AND runtime_thread_id=$3
+               AND source_ref=$4
+               AND (
+                   binding_digest=$8
+                   OR (binding_digest=$6 AND binding=$7)
+               )",
+        )
+        .bind(binding.target.run_id.to_string())
+        .bind(binding.target.agent_id.to_string())
+        .bind(binding.runtime_thread_id.as_str())
+        .bind(binding.source_binding.source_ref.as_str())
+        .bind(
+            to_i64(binding.source_binding.committed_at_revision.0)
+                .map_err(|error| error.to_string())?,
+        )
+        .bind(&binding_digest)
+        .bind(&binding_json)
+        .bind(expected_previous_binding_digest)
+        .execute(&self.pool)
+        .await
+        .map_err(string_db_error)?;
+        if result.rows_affected() != 1 {
+            return Err("AgentRun Product recovery binding CAS conflict".to_string());
+        }
+        Ok(())
+    }
+
     /// Commits the Product activation fence after resource materialization.
     ///
     /// The transaction locks the current immutable resource snapshot and resolves the current
@@ -484,6 +533,19 @@ impl AgentRunProductRuntimeBindingStore for PostgresAgentRunProductRuntimeBindin
             binding,
             expected_binding_digest,
             expected_snapshot_revision,
+        )
+        .await
+    }
+
+    async fn prepare_product_binding_recovery(
+        &self,
+        expected_previous_binding_digest: &str,
+        binding: &AgentRunProductRuntimeBinding,
+    ) -> Result<(), String> {
+        PostgresAgentRunProductRuntimeBindingRepository::prepare_product_binding_recovery(
+            self,
+            expected_previous_binding_digest,
+            binding,
         )
         .await
     }

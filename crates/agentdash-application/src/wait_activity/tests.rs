@@ -893,7 +893,7 @@ async fn runtime_tool_catalog_includes_wait() {
     let provider =
         WaitRuntimeToolProvider::from_service(test_service(AgentRunTerminalRegistry::new()));
     let composer =
-        crate::runtime_tools::provider::SessionRuntimeToolComposer::new(vec![Arc::new(provider)]);
+        crate::runtime_tools::provider::RuntimeThreadToolComposer::new(vec![Arc::new(provider)]);
     let context = ExecutionContext {
         session: agentdash_platform_spi::ExecutionSessionFrame {
             turn_id: "runtime-1".to_string(),

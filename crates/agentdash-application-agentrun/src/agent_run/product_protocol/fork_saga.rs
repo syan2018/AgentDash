@@ -545,6 +545,24 @@ impl AgentRunForkSaga {
         self.version
     }
 
+    pub fn advance_persisted_version(
+        mut self,
+        expected: u64,
+    ) -> Result<Self, AgentRunForkSagaRepositoryError> {
+        if self.version != expected {
+            return Err(AgentRunForkSagaRepositoryError::Conflict {
+                expected,
+                actual: self.version,
+            });
+        }
+        self.version = expected.checked_add(1).ok_or_else(|| {
+            AgentRunForkSagaRepositoryError::Unavailable(
+                "fork saga persisted version exhausted".to_string(),
+            )
+        })?;
+        Ok(self)
+    }
+
     pub fn child_history_digest(&self) -> Option<&RuntimePayloadDigest> {
         self.child_history_digest.as_ref()
     }

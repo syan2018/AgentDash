@@ -7,23 +7,23 @@ use async_trait::async_trait;
 
 use crate::lifecycle::LifecycleOrchestratorDeps;
 use crate::lifecycle::tools::advance_node::{
-    CompleteLifecycleNodeTool, SharedSessionToolServicesHandle,
+    CompleteLifecycleNodeTool, SharedRuntimeThreadToolServicesHandle,
 };
 
 #[derive(Clone)]
 pub struct WorkflowRuntimeToolProvider {
     orchestrator_deps: LifecycleOrchestratorDeps,
-    session_services_handle: SharedSessionToolServicesHandle,
+    runtime_thread_services_handle: SharedRuntimeThreadToolServicesHandle,
 }
 
 impl WorkflowRuntimeToolProvider {
     pub fn new(
         orchestrator_deps: LifecycleOrchestratorDeps,
-        session_services_handle: SharedSessionToolServicesHandle,
+        runtime_thread_services_handle: SharedRuntimeThreadToolServicesHandle,
     ) -> Self {
         Self {
             orchestrator_deps,
-            session_services_handle,
+            runtime_thread_services_handle,
         }
     }
 }
@@ -47,7 +47,7 @@ impl RuntimeToolProvider for WorkflowRuntimeToolProvider {
 
         Ok(vec![Arc::new(CompleteLifecycleNodeTool::new(
             self.orchestrator_deps.clone(),
-            self.session_services_handle.clone(),
+            self.runtime_thread_services_handle.clone(),
             context,
         ))])
     }

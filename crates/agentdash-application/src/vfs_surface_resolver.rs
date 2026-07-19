@@ -88,7 +88,7 @@ impl VfsSurfaceResolver {
         }
         if !matches!(
             source,
-            ResolvedVfsSurfaceSource::SessionRuntime { .. }
+            ResolvedVfsSurfaceSource::RuntimeThread { .. }
                 | ResolvedVfsSurfaceSource::AgentRun { .. }
         ) {
             return Err(ApplicationError::BadRequest(
@@ -220,7 +220,7 @@ impl VfsSurfaceResolver {
                 };
                 (vfs, *project_id)
             }
-            ResolvedVfsSurfaceSource::SessionRuntime { .. } => {
+            ResolvedVfsSurfaceSource::RuntimeThread { .. } => {
                 let target = bound_target.ok_or_else(|| {
                     ApplicationError::Conflict(
                         "runtime surface 缺少 canonical Product runtime binding".to_string(),

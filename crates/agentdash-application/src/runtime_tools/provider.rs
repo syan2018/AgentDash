@@ -15,7 +15,7 @@ use agentdash_application_agentrun::agent_run::{
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 
 #[derive(Clone)]
-pub struct SessionToolServices {
+pub struct RuntimeThreadToolServices {
     pub product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
     pub product_runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub product_launch: Arc<AgentRunProductLaunchService>,
@@ -23,27 +23,27 @@ pub struct SessionToolServices {
 }
 
 #[derive(Clone, Default)]
-pub struct SharedSessionToolServicesHandle {
-    inner: Arc<RwLock<Option<SessionToolServices>>>,
+pub struct SharedRuntimeThreadToolServicesHandle {
+    inner: Arc<RwLock<Option<RuntimeThreadToolServices>>>,
 }
 
-impl SharedSessionToolServicesHandle {
-    pub async fn set(&self, services: SessionToolServices) {
+impl SharedRuntimeThreadToolServicesHandle {
+    pub async fn set(&self, services: RuntimeThreadToolServices) {
         let mut guard = self.inner.write().await;
         *guard = Some(services);
     }
 
-    pub async fn get(&self) -> Option<SessionToolServices> {
+    pub async fn get(&self) -> Option<RuntimeThreadToolServices> {
         self.inner.read().await.clone()
     }
 }
 
 #[derive(Clone, Default)]
-pub struct SessionRuntimeToolComposer {
+pub struct RuntimeThreadToolComposer {
     providers: Vec<Arc<dyn RuntimeToolProvider>>,
 }
 
-impl SessionRuntimeToolComposer {
+impl RuntimeThreadToolComposer {
     pub fn new(providers: Vec<Arc<dyn RuntimeToolProvider>>) -> Self {
         Self { providers }
     }
@@ -63,7 +63,7 @@ impl SessionRuntimeToolComposer {
 }
 
 #[async_trait]
-impl RuntimeToolProvider for SessionRuntimeToolComposer {
+impl RuntimeToolProvider for RuntimeThreadToolComposer {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
@@ -210,7 +210,7 @@ mod tests {
             ["vfs", "lifecycle", "companion", "task", "wait", "workspace"].map(|tool_name| {
                 Arc::new(SingleToolProvider { tool_name }) as Arc<dyn RuntimeToolProvider>
             });
-        let composer = SessionRuntimeToolComposer::from_final_catalog_providers(providers);
+        let composer = RuntimeThreadToolComposer::from_final_catalog_providers(providers);
         let context = ExecutionContext {
             session: agentdash_platform_spi::ExecutionSessionFrame {
                 turn_id: "turn-final-catalog".to_string(),
@@ -238,7 +238,7 @@ mod tests {
 
     #[tokio::test]
     async fn composer_rejects_duplicate_callable_tool_names() {
-        let composer = SessionRuntimeToolComposer::new(vec![
+        let composer = RuntimeThreadToolComposer::new(vec![
             Arc::new(SingleToolProvider {
                 tool_name: "same_tool",
             }),

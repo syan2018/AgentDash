@@ -54,8 +54,8 @@ const contextSnapshot: SessionContextSnapshot = {
 const runtimeSurface: ResolvedVfsSurface = {
   surface_ref: "session:sess-projection",
   source: {
-    source_type: "session_runtime",
-    session_id: "sess-projection",
+    source_type: "runtime_thread",
+    runtime_thread_id: "sess-projection",
   },
   default_mount_id: "runtime-shared",
   mounts: [
@@ -190,10 +190,10 @@ const lifecycleRunView: LifecycleRunView = {
 };
 
 const hookRuntime: AgentFrameHookRuntimeInfo = {
-  runtime_adapter_session_id: "sess-projection",
+  runtime_adapter_runtime_thread_id: "sess-projection",
   revision: 1,
   snapshot: {
-    runtime_adapter_session_id: "sess-projection",
+    runtime_adapter_runtime_thread_id: "sess-projection",
     sources: [],
     tags: [],
     injections: [],

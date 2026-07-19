@@ -2463,7 +2463,7 @@ mod tests {
                 runtime_thread_id: saga.child().runtime_thread_id.clone(),
                 idempotency_key: selection.idempotency_key.clone(),
                 frame: ProductAgentFrameRef {
-                    frame_id: saga.child().frame_id,
+                    frame_id: selection.materialized_frame_id,
                     agent_id: saga.child().agent_id,
                     revision: 1,
                 },

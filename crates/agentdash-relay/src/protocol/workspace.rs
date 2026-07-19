@@ -1,7 +1,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::prompt::WorkspaceIdentityKindRelay;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceIdentityKindRelay {
+    GitRepo,
+    P4Workspace,
+    LocalDir,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandWorkspaceDetectPayload {

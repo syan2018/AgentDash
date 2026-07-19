@@ -808,9 +808,7 @@ fn notify_backend_runtime_changed(state: &AppState, backend_id: &str) {
 fn is_pending_response_message(msg: &RelayMessage) -> bool {
     matches!(
         msg,
-        RelayMessage::ResponsePrompt { .. }
-            | RelayMessage::ResponseCancel { .. }
-            | RelayMessage::ResponseDiscover { .. }
+        RelayMessage::ResponseDiscover { .. }
             | RelayMessage::ResponseWorkspaceDetect { .. }
             | RelayMessage::ResponseWorkspaceDetectGit { .. }
             | RelayMessage::ResponseWorkspaceDiscoverByIdentity { .. }

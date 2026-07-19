@@ -419,9 +419,6 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::RuntimeWirePlacementLost { .. } => "runtime_wire.placement.lost",
         RelayMessage::Ping { .. } => "ping",
         RelayMessage::Pong { .. } => "pong",
-        RelayMessage::CommandPrompt { .. } => "command.prompt",
-        RelayMessage::CommandCancel { .. } => "command.cancel",
-        RelayMessage::CommandSteer { .. } => "command.steer",
         RelayMessage::CommandDiscover { .. } => "command.discover",
         RelayMessage::CommandDiscoverOptions { .. } => "command.discover_options",
         RelayMessage::CommandWorkspaceDetect { .. } => "command.workspace_detect",
@@ -443,9 +440,6 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::CommandVfsMaterialize { .. } => "command.vfs.materialize",
         RelayMessage::CommandToolFileList { .. } => "command.tool.file_list",
         RelayMessage::CommandToolSearch { .. } => "command.tool.search",
-        RelayMessage::ResponsePrompt { .. } => "response.prompt",
-        RelayMessage::ResponseCancel { .. } => "response.cancel",
-        RelayMessage::ResponseSteer { .. } => "response.steer",
         RelayMessage::ResponseDiscover { .. } => "response.discover",
         RelayMessage::ResponseWorkspaceDetect { .. } => "response.workspace_detect",
         RelayMessage::ResponseWorkspaceDetectGit { .. } => "response.workspace_detect_git",
@@ -467,10 +461,6 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::ResponseToolFileList { .. } => "response.tool.file_list",
         RelayMessage::ResponseToolSearch { .. } => "response.tool.search",
         RelayMessage::EventCapabilitiesChanged { .. } => "event.capabilities_changed",
-        RelayMessage::EventSessionNotification { .. } => "event.session_notification",
-        RelayMessage::EventRuntimeSessionStateChanged { .. } => {
-            "event.runtime_session_state_changed"
-        }
         RelayMessage::EventDiscoverOptionsPatch { .. } => "event.discover_options_patch",
         RelayMessage::CommandMcpProbeTransport { .. } => "command.mcp_probe_transport",
         RelayMessage::CommandMcpListTools { .. } => "command.mcp_list_tools",

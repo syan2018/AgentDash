@@ -17,8 +17,6 @@ pub mod discovery;
 pub mod extension_runtime;
 pub mod handshake;
 pub mod mcp;
-pub mod prompt;
-pub mod session_event;
 pub mod terminal;
 pub mod tool;
 pub mod vfs_materialization;
@@ -28,8 +26,6 @@ pub use discovery::*;
 pub use extension_runtime::*;
 pub use handshake::*;
 pub use mcp::*;
-pub use prompt::*;
-pub use session_event::*;
 pub use terminal::*;
 pub use tool::*;
 pub use vfs_materialization::*;
@@ -134,28 +130,6 @@ pub enum RelayMessage {
     /// 本机 → 云端
     #[serde(rename = "pong")]
     Pong { id: String, payload: PongPayload },
-
-    // ── 命令（云端 → 本机）──
-    /// 执行第三方 Agent prompt
-    #[serde(rename = "command.prompt")]
-    CommandPrompt {
-        id: String,
-        payload: Box<CommandPromptPayload>,
-    },
-
-    /// 取消执行
-    #[serde(rename = "command.cancel")]
-    CommandCancel {
-        id: String,
-        payload: CommandCancelPayload,
-    },
-
-    /// 向运行中的第三方 Agent 注入 steer 消息
-    #[serde(rename = "command.steer")]
-    CommandSteer {
-        id: String,
-        payload: CommandSteerPayload,
-    },
 
     /// 查询本机第三方能力
     #[serde(rename = "command.discover")]
@@ -286,33 +260,6 @@ pub enum RelayMessage {
     },
 
     // ── 响应（本机 → 云端）──
-    #[serde(rename = "response.prompt")]
-    ResponsePrompt {
-        id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        payload: Option<ResponsePromptPayload>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<RelayError>,
-    },
-
-    #[serde(rename = "response.cancel")]
-    ResponseCancel {
-        id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        payload: Option<ResponseCancelPayload>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<RelayError>,
-    },
-
-    #[serde(rename = "response.steer")]
-    ResponseSteer {
-        id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        payload: Option<ResponseSteerPayload>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<RelayError>,
-    },
-
     #[serde(rename = "response.discover")]
     ResponseDiscover {
         id: String,
@@ -482,20 +429,6 @@ pub enum RelayMessage {
     EventCapabilitiesChanged {
         id: String,
         payload: CapabilitiesPayload,
-    },
-
-    /// ACP 会话通知（最高频消息）
-    #[serde(rename = "event.session_notification")]
-    EventSessionNotification {
-        id: String,
-        payload: SessionNotificationPayload,
-    },
-
-    /// RuntimeSession delivery 状态变更
-    #[serde(rename = "event.runtime_session_state_changed")]
-    EventRuntimeSessionStateChanged {
-        id: String,
-        payload: RuntimeSessionStateChangedPayload,
     },
 
     /// 执行器选项发现 patch（流式）
@@ -739,9 +672,6 @@ impl RelayMessage {
             | Self::RuntimeWirePlacementLost { id, .. }
             | Self::Ping { id, .. }
             | Self::Pong { id, .. }
-            | Self::CommandPrompt { id, .. }
-            | Self::CommandCancel { id, .. }
-            | Self::CommandSteer { id, .. }
             | Self::CommandDiscover { id, .. }
             | Self::CommandDiscoverOptions { id, .. }
             | Self::CommandWorkspaceDetect { id, .. }
@@ -761,9 +691,6 @@ impl RelayMessage {
             | Self::CommandVfsMaterialize { id, .. }
             | Self::CommandToolFileList { id, .. }
             | Self::CommandToolSearch { id, .. }
-            | Self::ResponsePrompt { id, .. }
-            | Self::ResponseCancel { id, .. }
-            | Self::ResponseSteer { id, .. }
             | Self::ResponseDiscover { id, .. }
             | Self::ResponseWorkspaceDetect { id, .. }
             | Self::ResponseWorkspaceDetectGit { id, .. }
@@ -797,8 +724,6 @@ impl RelayMessage {
             | Self::ResponseExtensionChannelInvoke { id, .. }
             | Self::ResponseExtensionBackendServiceInvoke { id, .. }
             | Self::EventCapabilitiesChanged { id, .. }
-            | Self::EventSessionNotification { id, .. }
-            | Self::EventRuntimeSessionStateChanged { id, .. }
             | Self::EventDiscoverOptionsPatch { id, .. }
             | Self::EventToolShellOutput { id, .. }
             | Self::CommandTerminalSpawn { id, .. }
@@ -834,73 +759,7 @@ fn rand_u32() -> u32 {
 // ─── Payload 定义 ──────────────────────────────────────────
 #[cfg(test)]
 mod tests {
-    use super::CommandPromptPayload;
     use super::*;
-    use agentdash_agent_protocol::codex_app_server_protocol as codex;
-    #[test]
-    fn command_prompt_payload_requires_mount_root_ref() {
-        let payload: CommandPromptPayload = serde_json::from_value(serde_json::json!({
-            "session_id": "s1",
-            "input": [
-                {
-                    "type": "text",
-                    "text": "hello",
-                    "text_elements": []
-                }
-            ],
-            "mount_root_ref": "/workspace/repo"
-        }))
-        .expect("payload should deserialize");
-        assert_eq!(payload.mount_root_ref, "/workspace/repo");
-    }
-
-    #[test]
-    fn command_prompt_payload_serializes_mount_root_ref() {
-        let payload = CommandPromptPayload {
-            session_id: "s1".to_string(),
-            follow_up_session_id: None,
-            input: agentdash_agent_protocol::text_user_input_blocks("hello"),
-            mount_root_ref: "/new/workspace".to_string(),
-            workspace_identity_kind: None,
-            workspace_identity_payload: None,
-            working_dir: None,
-            env: std::collections::HashMap::new(),
-            executor_config: None,
-            mcp_servers: Vec::new(),
-        };
-
-        let value = serde_json::to_value(payload).expect("payload should serialize");
-        assert_eq!(value["mount_root_ref"], "/new/workspace");
-        assert_eq!(value["input"][0]["type"], "text");
-        let old_raw_field = ["prompt", "blocks"].join("_");
-        assert!(
-            !value
-                .as_object()
-                .expect("payload object")
-                .contains_key(&old_raw_field)
-        );
-    }
-
-    #[test]
-    fn runtime_session_state_changed_uses_runtime_session_wire_name() {
-        let msg = RelayMessage::EventRuntimeSessionStateChanged {
-            id: "runtime-terminal-1".to_string(),
-            payload: RuntimeSessionStateChangedPayload {
-                runtime_session_id: "runtime-session-1".to_string(),
-                turn_id: "turn-1".to_string(),
-                state: RuntimeSessionState::Failed,
-                message: Some("backend disconnected".to_string()),
-            },
-        };
-
-        let json = serde_json::to_value(&msg).expect("serialize runtime session state");
-        assert_eq!(json["type"], "event.runtime_session_state_changed");
-        assert_eq!(json["payload"]["runtime_session_id"], "runtime-session-1");
-        assert!(json["payload"].get("session_id").is_none());
-
-        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize");
-        assert_eq!(decoded.id(), "runtime-terminal-1");
-    }
 
     #[test]
     fn pty_terminal_state_changed_uses_pty_terminal_wire_name() {
@@ -925,67 +784,6 @@ mod tests {
 
         let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize");
         assert_eq!(decoded.id(), "pty-terminal-1");
-    }
-
-    #[test]
-    fn command_prompt_payload_roundtrips_typed_user_input() {
-        let input = vec![
-            codex::UserInput::Text {
-                text: "请分析这张图".to_string(),
-                text_elements: Vec::new(),
-            },
-            codex::UserInput::Image {
-                detail: None,
-                url: "data:image/png;base64,AAAA".to_string(),
-            },
-            codex::UserInput::LocalImage {
-                detail: None,
-                path: "assets/local.png".to_string(),
-            },
-            codex::UserInput::Skill {
-                name: "reviewer".to_string(),
-                path: "skills/reviewer/SKILL.md".to_string(),
-            },
-            codex::UserInput::Mention {
-                name: "main.rs".to_string(),
-                path: "file://src/main.rs".to_string(),
-            },
-        ];
-        let payload = CommandPromptPayload {
-            session_id: "s1".to_string(),
-            follow_up_session_id: Some("s0".to_string()),
-            input: input.clone(),
-            mount_root_ref: "/workspace/repo".to_string(),
-            workspace_identity_kind: None,
-            workspace_identity_payload: None,
-            working_dir: Some("crates/app".to_string()),
-            env: std::collections::HashMap::new(),
-            executor_config: None,
-            mcp_servers: Vec::new(),
-        };
-
-        let value = serde_json::to_value(&payload).expect("payload should serialize");
-        assert!(value.get("input").is_some());
-        let old_raw_field = ["prompt", "blocks"].join("_");
-        assert!(value.get(&old_raw_field).is_none());
-
-        let decoded: CommandPromptPayload =
-            serde_json::from_value(value).expect("payload should deserialize");
-        assert_eq!(decoded.input, input);
-        assert_eq!(decoded.follow_up_session_id.as_deref(), Some("s0"));
-    }
-
-    #[test]
-    fn command_prompt_payload_rejects_legacy_prompt_and_workspace_root() {
-        let error = serde_json::from_value::<CommandPromptPayload>(serde_json::json!({
-            "session_id": "s1",
-            "prompt": "old text prompt",
-            "workspace_root": "/workspace"
-        }))
-        .expect_err("legacy prompt/workspace_root fields should be rejected");
-
-        let message = error.to_string();
-        assert!(message.contains("prompt") || message.contains("workspace_root"));
     }
 
     #[test]

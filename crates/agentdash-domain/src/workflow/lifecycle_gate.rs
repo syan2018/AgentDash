@@ -16,7 +16,7 @@ pub struct LifecycleGateWaitingProjection {
 ///
 /// Gate 可跨进程重启恢复，并能恢复 agent/frame/run context。
 /// correlation_id 用于 resume 时匹配。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LifecycleGate {
     pub id: Uuid,
     pub run_id: Uuid,

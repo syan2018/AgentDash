@@ -12,6 +12,7 @@ mod lifecycle_subject_association;
 mod repository;
 mod validation;
 mod value_objects;
+mod workflow_executor_effect;
 
 pub use agent_frame::{AgentFrame, AgentFrameSurfaceDocument};
 pub use agent_lineage::AgentLineage;
@@ -80,4 +81,13 @@ pub use value_objects::{
     WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
     WorkflowSessionTerminalState, mcp_capability_key, mcp_tool_capability_path,
     reduce_tool_capability_directives, workflow_script_source_digest,
+};
+pub use workflow_executor_effect::{
+    WORKFLOW_EXECUTOR_EFFECT_COLUMNS, WORKFLOW_EXECUTOR_EFFECT_PRIMARY_KEY,
+    WORKFLOW_EXECUTOR_EFFECT_TABLE, WORKFLOW_EXECUTOR_EFFECT_UNIQUE_KEYS,
+    WorkflowExecutorEffectIdentity, WorkflowExecutorEffectRepository,
+    WorkflowExecutorEffectRepositoryError, WorkflowFunctionEffectRecord,
+    WorkflowFunctionEffectRequest, WorkflowFunctionTerminalResult, WorkflowHumanGateOpenEffect,
+    WorkflowHumanGateOpenReceipt, WorkflowHumanGateResolutionEffect,
+    WorkflowHumanGateResolutionReceipt,
 };

@@ -385,6 +385,8 @@ pub trait WorkflowAgentCallProductGraphPort: Send + Sync {
 
     async fn commit_runtime_binding(
         &self,
+        request_id: &str,
+        payload_digest: &str,
         target: &AgentRunTarget,
         runtime_thread_id: &RuntimeThreadId,
         binding: &ManagedRuntimeSourceBindingEvidence,
@@ -402,6 +404,8 @@ pub struct WorkflowAgentCallTargetMaterialization {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowAgentCallBindingCommit {
+    pub request_id: String,
+    pub payload_digest: String,
     pub target: AgentRunTarget,
     pub runtime_thread_id: RuntimeThreadId,
     pub binding: ManagedRuntimeSourceBindingEvidence,
@@ -461,12 +465,16 @@ impl WorkflowAgentCallProductGraphPort for DurableWorkflowAgentCallProductGraphA
 
     async fn commit_runtime_binding(
         &self,
+        request_id: &str,
+        payload_digest: &str,
         target: &AgentRunTarget,
         runtime_thread_id: &RuntimeThreadId,
         binding: &ManagedRuntimeSourceBindingEvidence,
         effect_id: &str,
     ) -> Result<(), String> {
         let expected = WorkflowAgentCallBindingCommit {
+            request_id: request_id.to_owned(),
+            payload_digest: payload_digest.to_owned(),
             target: target.clone(),
             runtime_thread_id: runtime_thread_id.clone(),
             binding: binding.clone(),
@@ -818,6 +826,8 @@ impl ProductWorkflowAgentCallDispatchService {
                     })?;
                     self.product_graph
                         .commit_runtime_binding(
+                            &saga.request.identity.request_id,
+                            &saga.request.payload_digest,
                             saga.target(),
                             &saga.runtime_thread_id,
                             &binding,
@@ -1012,6 +1022,29 @@ mod tests {
         commits: tokio::sync::Mutex<Vec<String>>,
     }
 
+    #[derive(Default)]
+    struct RecordingDurableGraphRepository {
+        bindings: tokio::sync::Mutex<Vec<WorkflowAgentCallBindingCommit>>,
+    }
+
+    #[async_trait]
+    impl WorkflowAgentCallProductGraphRepository for RecordingDurableGraphRepository {
+        async fn materialize_target_idempotent(
+            &self,
+            mutation: WorkflowAgentCallTargetMaterialization,
+        ) -> Result<WorkflowAgentCallTargetMaterialization, String> {
+            Ok(mutation)
+        }
+
+        async fn commit_runtime_binding_idempotent(
+            &self,
+            mutation: WorkflowAgentCallBindingCommit,
+        ) -> Result<WorkflowAgentCallBindingCommit, String> {
+            self.bindings.lock().await.push(mutation.clone());
+            Ok(mutation)
+        }
+    }
+
     #[async_trait]
     impl WorkflowAgentCallProductGraphPort for RecordingProductGraph {
         async fn materialize_target(
@@ -1028,6 +1061,8 @@ mod tests {
 
         async fn commit_runtime_binding(
             &self,
+            _request_id: &str,
+            _payload_digest: &str,
             _target: &AgentRunTarget,
             _runtime_thread_id: &RuntimeThreadId,
             _binding: &ManagedRuntimeSourceBindingEvidence,
@@ -1287,6 +1322,40 @@ mod tests {
                 .map(|receipt| receipt.phase)
                 .collect::<Vec<_>>(),
             WorkflowAgentCallProductPhase::CONTINUE_CURRENT_ORDER
+        );
+    }
+
+    #[tokio::test]
+    async fn durable_graph_binding_mutation_carries_saga_request_identity() {
+        let repository = Arc::new(RecordingDurableGraphRepository::default());
+        let adapter = DurableWorkflowAgentCallProductGraphAdapter::new(repository.clone());
+        let request = request();
+        let target = request.target_intent.target().clone();
+        let thread_id = RuntimeThreadId::new("thread:binding").expect("thread");
+        let binding = RecordingRuntime::binding(true);
+
+        adapter
+            .commit_runtime_binding(
+                &request.identity.request_id,
+                &request.payload_digest,
+                &target,
+                &thread_id,
+                &binding,
+                "effect:commit-binding",
+            )
+            .await
+            .expect("commit");
+
+        assert_eq!(
+            repository.bindings.lock().await.as_slice(),
+            &[WorkflowAgentCallBindingCommit {
+                request_id: request.identity.request_id,
+                payload_digest: request.payload_digest,
+                target,
+                runtime_thread_id: thread_id,
+                binding,
+                effect_id: "effect:commit-binding".to_owned(),
+            }]
         );
     }
 }

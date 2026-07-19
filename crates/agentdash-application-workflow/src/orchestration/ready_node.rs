@@ -62,6 +62,7 @@ pub(super) struct ReadyNodeView<'a> {
     pub(super) coordinate: RuntimeNodeCoordinate,
     pub(super) plan_node: &'a PlanNode,
     pub(super) runtime_node: &'a RuntimeNodeState,
+    pub(super) state_snapshot: &'a StateExchangeSnapshot,
 }
 
 impl<'a> ReadyNodeView<'a> {
@@ -100,6 +101,7 @@ impl<'a> ReadyNodeView<'a> {
             coordinate: coordinate.clone(),
             plan_node,
             runtime_node,
+            state_snapshot: &orchestration.state_snapshot,
         })
     }
 
@@ -126,15 +128,14 @@ impl<'a> ReadyNodeView<'a> {
             ),
             plan_node,
             runtime_node,
+            state_snapshot: &orchestration.state_snapshot,
         })
     }
 }
 
 pub(super) struct RunningNodeView<'a> {
-    pub(super) coordinate: RuntimeNodeCoordinate,
     pub(super) plan_node: &'a PlanNode,
     pub(super) runtime_node: &'a RuntimeNodeState,
-    pub(super) state_snapshot: &'a StateExchangeSnapshot,
 }
 
 impl<'a> RunningNodeView<'a> {
@@ -151,10 +152,8 @@ impl<'a> RunningNodeView<'a> {
         }
         let plan_node = plan_node_for_runtime(orchestration, runtime_node)?;
         Ok(Self {
-            coordinate: coordinate.clone(),
             plan_node,
             runtime_node,
-            state_snapshot: &orchestration.state_snapshot,
         })
     }
 }

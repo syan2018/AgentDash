@@ -26,6 +26,34 @@ pub struct BashExecOutcome {
     pub success: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum FunctionEffectSpec {
+    ApiRequest(ApiRequestExecutorSpec),
+    BashExec(BashExecExecutorSpec),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionEffectRequest {
+    pub effect_id: String,
+    pub payload_digest: String,
+    pub spec: FunctionEffectSpec,
+    pub context: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionEffectRawOutcome {
+    ApiRequest(ApiRequestOutcome),
+    BashExec(BashExecOutcome),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionEffectObservation {
+    Unknown,
+    Accepted,
+    Succeeded(FunctionEffectRawOutcome),
+    Failed { message: String, retryable: bool },
+}
+
 /// Executes function-activity side effects against a rendered template context.
 ///
 /// Errors returned here cover template rendering, transport, and process
@@ -45,4 +73,18 @@ pub trait FunctionRunner: Send + Sync {
         spec: &BashExecExecutorSpec,
         context: &Value,
     ) -> Result<BashExecOutcome, String>;
+
+    /// Stable effect protocol used by Workflow production execution. The
+    /// implementation must durably deduplicate `effect_id` + payload digest
+    /// and make terminal observations inspectable after restart.
+    async fn execute_effect(
+        &self,
+        _request: FunctionEffectRequest,
+    ) -> Result<FunctionEffectObservation, String> {
+        Err("stable Function effect protocol is not implemented".to_owned())
+    }
+
+    async fn inspect_effect(&self, _effect_id: &str) -> Result<FunctionEffectObservation, String> {
+        Err("stable Function effect inspection is not implemented".to_owned())
+    }
 }

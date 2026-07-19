@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    ArtifactAliasPolicy, ExecutorRunRef, LifecycleGateRepository, LifecycleRun,
-    LifecycleRunRepository, LifecycleRunWriteError, PlanNode, PlanNodeKind, RuntimeNodeError,
+    ArtifactAliasPolicy, ExecutorRunRef, LifecycleRun, LifecycleRunRepository,
+    LifecycleRunWriteError, PlanNode, PlanNodeKind, RuntimeNodeError, RuntimeNodeState,
+    RuntimeNodeStatus, WorkflowExecutorEffectIdentity, WorkflowExecutorEffectRepository,
+    WorkflowFunctionTerminalResult,
 };
 use agentdash_platform_spi::FunctionRunner;
 use serde_json::Value;
@@ -75,27 +77,57 @@ pub struct OrchestrationExecutorLauncher {
 #[derive(Clone)]
 struct OrchestrationExecutorRepositories {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
+    executor_effect_repo: Arc<dyn WorkflowExecutorEffectRepository>,
     agent_procedure_repo: Arc<dyn agentdash_domain::workflow::AgentProcedureRepository>,
 }
 
-impl From<WorkflowRepositorySet> for OrchestrationExecutorRepositories {
-    fn from(repos: WorkflowRepositorySet) -> Self {
+impl OrchestrationExecutorRepositories {
+    fn new(
+        repos: WorkflowRepositorySet,
+        executor_effect_repo: Arc<dyn WorkflowExecutorEffectRepository>,
+    ) -> Self {
         Self {
             lifecycle_run_repo: repos.lifecycle_run_repo,
-            lifecycle_gate_repo: repos.lifecycle_gate_repo,
+            executor_effect_repo,
             agent_procedure_repo: repos.agent_procedure_repo,
         }
     }
 }
 
 impl OrchestrationExecutorLauncher {
+    #[cfg(test)]
     pub fn new(repos: WorkflowRepositorySet) -> Self {
-        Self::from_executor_repositories(repos.into())
+        Self::new_for_test(
+            repos,
+            Arc::new(MemoryWorkflowExecutorEffectRepository::default()),
+        )
+    }
+
+    #[cfg(test)]
+    fn new_for_test(
+        repos: WorkflowRepositorySet,
+        executor_effect_repo: Arc<dyn WorkflowExecutorEffectRepository>,
+    ) -> Self {
+        Self::from_executor_repositories(OrchestrationExecutorRepositories::new(
+            repos,
+            executor_effect_repo,
+        ))
+    }
+
+    pub fn new_durable(
+        repos: WorkflowRepositorySet,
+        executor_effect_repo: Arc<dyn WorkflowExecutorEffectRepository>,
+        function_runner: Arc<dyn FunctionRunner>,
+    ) -> Self {
+        Self::from_executor_repositories(OrchestrationExecutorRepositories::new(
+            repos,
+            executor_effect_repo,
+        ))
+        .with_function_runner_inner(function_runner)
     }
 
     fn from_executor_repositories(repos: OrchestrationExecutorRepositories) -> Self {
-        let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
+        let human_gate_launcher = HumanGateLauncher::new(repos.executor_effect_repo.clone());
         let agent_call_launcher =
             WorkflowAgentCallLauncher::new(repos.agent_procedure_repo.clone());
         Self {
@@ -106,7 +138,12 @@ impl OrchestrationExecutorLauncher {
         }
     }
 
-    pub fn with_function_runner(mut self, runner: Arc<dyn FunctionRunner>) -> Self {
+    #[cfg(test)]
+    pub fn with_function_runner(self, runner: Arc<dyn FunctionRunner>) -> Self {
+        self.with_function_runner_inner(runner)
+    }
+
+    fn with_function_runner_inner(mut self, runner: Arc<dyn FunctionRunner>) -> Self {
         self.function_node_runner = self.function_node_runner.with_runner(runner);
         self
     }
@@ -124,8 +161,43 @@ impl OrchestrationExecutorLauncher {
         run_id: Uuid,
     ) -> Result<OrchestrationExecutorDrainResult, WorkflowApplicationError> {
         let mut result = OrchestrationExecutorDrainResult::default();
-        for _ in 0..MAX_DRAIN_STEPS {
+        'drain: for _ in 0..MAX_DRAIN_STEPS {
             let run = self.load_run(run_id).await?;
+            if let Some((coordinate, kind)) = next_recoverable_executor_node(&run) {
+                match kind {
+                    PlanNodeKind::Function | PlanNodeKind::LocalEffect => {
+                        let node_path = coordinate.node_path.clone();
+                        match self.resume_function_node(run, coordinate).await {
+                            Ok(Some(FunctionLaunchTerminal::Completed)) => {
+                                result.completed_effect_nodes.push(node_path);
+                                continue;
+                            }
+                            Ok(Some(FunctionLaunchTerminal::Failed)) => {
+                                result.failed_nodes.push(node_path);
+                                continue;
+                            }
+                            Ok(None) => return Ok(result),
+                            Err(WorkflowApplicationError::Conflict(_)) => continue,
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for coordinate in running_human_gate_coordinates(&run) {
+                if let Some(decision) = self
+                    .inspect_human_gate_resolution(&run, &coordinate)
+                    .await?
+                {
+                    match self
+                        .apply_human_gate_decision(run, &coordinate, &decision)
+                        .await
+                    {
+                        Ok(_) | Err(WorkflowApplicationError::Conflict(_)) => continue 'drain,
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
             let Some((coordinate, kind, attempt_policy)) = ReadyNodeView::next(&run).map(|view| {
                 (
                     view.coordinate.clone(),
@@ -144,21 +216,30 @@ impl OrchestrationExecutorLauncher {
             }
             match kind {
                 PlanNodeKind::Function | PlanNodeKind::LocalEffect => {
-                    let node_path = coordinate.node_path.clone();
-                    match self.launch_function_node(run, coordinate).await? {
-                        FunctionLaunchTerminal::Completed => {
-                            result.completed_effect_nodes.push(node_path);
-                        }
-                        FunctionLaunchTerminal::Failed => {
-                            result.failed_nodes.push(node_path);
-                        }
+                    if !self.function_node_runner.is_composed() {
+                        let node_path = coordinate.node_path.clone();
+                        self.block_ready_node(
+                            run,
+                            coordinate,
+                            "function_effect_protocol_not_composed",
+                            "Workflow Function durable effect protocol 未注入",
+                            true,
+                        )
+                        .await?;
+                        result.failed_nodes.push(node_path);
+                        continue;
+                    }
+                    match self.start_function_node(run, coordinate).await {
+                        Ok(_) | Err(WorkflowApplicationError::Conflict(_)) => continue,
+                        Err(error) => return Err(error),
                     }
                 }
-                PlanNodeKind::HumanGate => {
-                    if let Some(opened) = self.open_human_gate(run, coordinate).await? {
-                        result.opened_human_gates.push(opened);
-                    }
-                }
+                PlanNodeKind::HumanGate => match self.open_human_gate(run, coordinate).await {
+                    Ok(Some(opened)) => result.opened_human_gates.push(opened),
+                    Ok(None) => {}
+                    Err(WorkflowApplicationError::Conflict(_)) => continue,
+                    Err(error) => return Err(error),
+                },
                 PlanNodeKind::AgentCall => {
                     match self.agent_call_launcher.launch(&run, &coordinate).await? {
                         WorkflowAgentCallLaunchOutcome::Prepared { event } => {
@@ -229,30 +310,70 @@ impl OrchestrationExecutorLauncher {
         &self,
         input: SubmitHumanGateDecisionInput,
     ) -> Result<SubmitHumanGateDecisionResult, WorkflowApplicationError> {
-        let run = self.load_run(input.run_id).await?;
         let coordinate = RuntimeNodeCoordinate::new(
             input.run_id,
             input.orchestration_id,
             input.node_path.clone(),
             input.attempt,
         );
-        let decision = self
-            .human_gate_launcher
-            .resolve_decision(&run, &input, &coordinate)
-            .await?;
-
-        let run = self
-            .apply_event(
-                run,
-                coordinate.orchestration_id,
-                OrchestrationRuntimeEvent::NodeCompleted {
-                    node_path: coordinate.node_path.clone(),
-                    attempt: coordinate.attempt,
-                    outputs: decision.outputs,
-                    timestamp: chrono::Utc::now(),
-                },
-            )
-            .await?;
+        let (run, decision) = loop {
+            let run = self.load_run(input.run_id).await?;
+            let decision = if run
+                .orchestrations
+                .iter()
+                .flat_map(|orchestration| orchestration.node_tree.iter())
+                .find(|node| {
+                    node.node_path == coordinate.node_path && node.attempt == coordinate.attempt
+                })
+                .is_some_and(|node| is_executor_terminal(node.status))
+            {
+                let gate_id = run
+                    .orchestrations
+                    .iter()
+                    .flat_map(|orchestration| orchestration.node_tree.iter())
+                    .find(|node| {
+                        node.node_path == coordinate.node_path && node.attempt == coordinate.attempt
+                    })
+                    .map(super::human_gate_launcher::human_gate_id_from_node)
+                    .transpose()?
+                    .ok_or_else(|| {
+                        WorkflowApplicationError::NotFound(
+                            "HumanGate runtime node 不存在".to_owned(),
+                        )
+                    })?;
+                self.human_gate_launcher
+                    .inspect_resolution(gate_id)
+                    .await?
+                    .ok_or_else(|| {
+                        WorkflowApplicationError::Conflict(
+                            "HumanGate 已终结但缺少 durable resolution receipt".to_owned(),
+                        )
+                    })
+                    .and_then(|decision| {
+                        if decision.decision != input.decision
+                            || decision.resolved_by != input.resolved_by
+                        {
+                            return Err(WorkflowApplicationError::Conflict(
+                                "HumanGate decision replay payload conflicts with durable receipt"
+                                    .to_owned(),
+                            ));
+                        }
+                        Ok(decision)
+                    })?
+            } else {
+                self.human_gate_launcher
+                    .resolve_decision(&run, &input, &coordinate)
+                    .await?
+            };
+            match self
+                .apply_human_gate_decision(run, &coordinate, &decision)
+                .await
+            {
+                Ok(run) => break (run, decision),
+                Err(WorkflowApplicationError::Conflict(_)) => continue,
+                Err(error) => return Err(error),
+            }
+        };
         let drain_result = self.drain_ready_nodes(run.id).await?;
         let final_run = self.load_run(run.id).await?;
         Ok(SubmitHumanGateDecisionResult {
@@ -262,71 +383,90 @@ impl OrchestrationExecutorLauncher {
         })
     }
 
-    async fn launch_function_node(
+    async fn start_function_node(
         &self,
         run: LifecycleRun,
         coordinate: RuntimeNodeCoordinate,
-    ) -> Result<FunctionLaunchTerminal, WorkflowApplicationError> {
-        let function_run_id = Uuid::new_v4().to_string();
-        let run = self
-            .apply_event(
-                run,
-                coordinate.orchestration_id,
-                OrchestrationRuntimeEvent::NodeStarted {
-                    node_path: coordinate.node_path.clone(),
-                    attempt: coordinate.attempt,
-                    executor_run_ref: Some(ExecutorRunRef::FunctionRun {
-                        run_id: function_run_id.clone(),
-                    }),
-                    timestamp: chrono::Utc::now(),
-                },
-            )
-            .await?;
-
-        let terminal = match self.function_node_runner.execute(&run, &coordinate).await {
-            Ok(outputs) => OrchestrationRuntimeEvent::NodeCompleted {
-                node_path: coordinate.node_path.clone(),
-                attempt: coordinate.attempt,
-                outputs,
-                timestamp: chrono::Utc::now(),
-            },
-            Err(error) => OrchestrationRuntimeEvent::NodeFailed {
-                node_path: coordinate.node_path.clone(),
-                attempt: coordinate.attempt,
-                error,
-                timestamp: chrono::Utc::now(),
-            },
-        };
-        let completed = matches!(terminal, OrchestrationRuntimeEvent::NodeCompleted { .. });
-        let run_id = run.id;
-        if let Err(error) = self
-            .apply_event(run, coordinate.orchestration_id, terminal)
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
+        let identity = function_effect_identity(&coordinate);
+        let prepared = self
+            .function_node_runner
+            .prepare_ready(&run, &coordinate, identity.clone())
+            .map_err(|error| WorkflowApplicationError::Conflict(error.message))?;
+        self.repos
+            .executor_effect_repo
+            .prepare_function(prepared.request)
             .await
-        {
-            let latest_run = self.load_run(run_id).await?;
-            self.apply_event(
-                latest_run,
-                coordinate.orchestration_id,
-                OrchestrationRuntimeEvent::NodeFailed {
-                    node_path: coordinate.node_path.clone(),
-                    attempt: coordinate.attempt,
-                    error: RuntimeNodeError {
-                        code: "terminal_materialization_failed".to_string(),
-                        message: error.to_string(),
-                        retryable: false,
-                        detail: Some(coordinate.detail()),
-                    },
-                    timestamp: chrono::Utc::now(),
-                },
-            )
-            .await?;
-            return Ok(FunctionLaunchTerminal::Failed);
-        }
-        Ok(if completed {
+            .map_err(executor_effect_error)?;
+        self.apply_event(
+            run,
+            coordinate.orchestration_id,
+            OrchestrationRuntimeEvent::NodeStarted {
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
+                executor_run_ref: Some(ExecutorRunRef::FunctionRun {
+                    run_id: identity.effect_id,
+                }),
+                timestamp: chrono::Utc::now(),
+            },
+        )
+        .await
+    }
+
+    async fn resume_function_node(
+        &self,
+        run: LifecycleRun,
+        coordinate: RuntimeNodeCoordinate,
+    ) -> Result<Option<FunctionLaunchTerminal>, WorkflowApplicationError> {
+        let identity = function_effect_identity(&coordinate);
+        let record = self
+            .repos
+            .executor_effect_repo
+            .get_function(&identity.effect_id)
+            .await
+            .map_err(executor_effect_error)?
+            .ok_or_else(|| {
+                WorkflowApplicationError::Conflict(format!(
+                    "Running Function node 缺少 durable Prepared effect: {}",
+                    identity.effect_id
+                ))
+            })?;
+        let prepared = self
+            .function_node_runner
+            .prepare_recovery(&run, &coordinate, record.request.clone())
+            .map_err(|error| WorkflowApplicationError::Conflict(error.message))?;
+        let terminal = match record.terminal {
+            Some(terminal) => terminal,
+            None => {
+                let Some(terminal) = self
+                    .function_node_runner
+                    .dispatch(&prepared)
+                    .await
+                    .map_err(|error| WorkflowApplicationError::Internal(error.message))?
+                else {
+                    return Ok(None);
+                };
+                self.repos
+                    .executor_effect_repo
+                    .commit_function_terminal(prepared.request, terminal)
+                    .await
+                    .map_err(executor_effect_error)?
+                    .terminal
+                    .expect("committed Function terminal receipt")
+            }
+        };
+        let completed = matches!(terminal, WorkflowFunctionTerminalResult::Completed { .. });
+        self.apply_event(
+            run,
+            coordinate.orchestration_id,
+            function_terminal_event(&coordinate, terminal),
+        )
+        .await?;
+        Ok(Some(if completed {
             FunctionLaunchTerminal::Completed
         } else {
             FunctionLaunchTerminal::Failed
-        })
+        }))
     }
 
     async fn open_human_gate(
@@ -350,6 +490,52 @@ impl OrchestrationExecutorLauncher {
                 Ok(None)
             }
         }
+    }
+
+    async fn inspect_human_gate_resolution(
+        &self,
+        run: &LifecycleRun,
+        coordinate: &RuntimeNodeCoordinate,
+    ) -> Result<Option<super::human_gate_launcher::HumanGateDecision>, WorkflowApplicationError>
+    {
+        let node = run
+            .orchestrations
+            .iter()
+            .find(|orchestration| orchestration.orchestration_id == coordinate.orchestration_id)
+            .and_then(|orchestration| {
+                find_runtime_node(
+                    &orchestration.node_tree,
+                    &coordinate.node_path,
+                    coordinate.attempt,
+                )
+            })
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!(
+                    "HumanGate runtime node 不存在: {}",
+                    coordinate.node_path
+                ))
+            })?;
+        let gate_id = super::human_gate_launcher::human_gate_id_from_node(node)?;
+        self.human_gate_launcher.inspect_resolution(gate_id).await
+    }
+
+    async fn apply_human_gate_decision(
+        &self,
+        run: LifecycleRun,
+        coordinate: &RuntimeNodeCoordinate,
+        decision: &super::human_gate_launcher::HumanGateDecision,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
+        self.apply_event(
+            run,
+            coordinate.orchestration_id,
+            OrchestrationRuntimeEvent::NodeCompleted {
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
+                outputs: decision.outputs.clone(),
+                timestamp: chrono::Utc::now(),
+            },
+        )
+        .await
     }
 
     async fn block_ready_node(
@@ -424,6 +610,154 @@ enum FunctionLaunchTerminal {
     Failed,
 }
 
+fn function_effect_id(coordinate: &RuntimeNodeCoordinate) -> String {
+    format!(
+        "workflow-function:{}:{}#{}",
+        coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
+    )
+}
+
+pub(super) fn function_effect_identity(
+    coordinate: &RuntimeNodeCoordinate,
+) -> WorkflowExecutorEffectIdentity {
+    WorkflowExecutorEffectIdentity {
+        effect_id: function_effect_id(coordinate),
+        lifecycle_run_id: coordinate.run_id,
+        orchestration_id: coordinate.orchestration_id,
+        node_path: coordinate.node_path.clone(),
+        attempt: coordinate.attempt,
+    }
+}
+
+fn function_terminal_event(
+    coordinate: &RuntimeNodeCoordinate,
+    terminal: WorkflowFunctionTerminalResult,
+) -> OrchestrationRuntimeEvent {
+    match terminal {
+        WorkflowFunctionTerminalResult::Completed { outputs } => {
+            OrchestrationRuntimeEvent::NodeCompleted {
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
+                outputs,
+                timestamp: chrono::Utc::now(),
+            }
+        }
+        WorkflowFunctionTerminalResult::Failed { error } => OrchestrationRuntimeEvent::NodeFailed {
+            node_path: coordinate.node_path.clone(),
+            attempt: coordinate.attempt,
+            error,
+            timestamp: chrono::Utc::now(),
+        },
+    }
+}
+
+fn next_recoverable_executor_node(
+    run: &LifecycleRun,
+) -> Option<(RuntimeNodeCoordinate, PlanNodeKind)> {
+    for orchestration in &run.orchestrations {
+        if let Some(node) = find_recoverable_node(&orchestration.node_tree) {
+            return Some((
+                RuntimeNodeCoordinate::new(
+                    run.id,
+                    orchestration.orchestration_id,
+                    node.node_path.clone(),
+                    node.attempt,
+                ),
+                node.kind,
+            ));
+        }
+    }
+    None
+}
+
+fn find_recoverable_node(nodes: &[RuntimeNodeState]) -> Option<&RuntimeNodeState> {
+    for node in nodes {
+        if node.status == RuntimeNodeStatus::Running
+            && matches!(
+                node.kind,
+                PlanNodeKind::Function | PlanNodeKind::LocalEffect
+            )
+        {
+            return Some(node);
+        }
+        if let Some(found) = find_recoverable_node(&node.children) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn running_human_gate_coordinates(run: &LifecycleRun) -> Vec<RuntimeNodeCoordinate> {
+    let mut coordinates = Vec::new();
+    for orchestration in &run.orchestrations {
+        collect_running_human_gates(
+            run.id,
+            orchestration.orchestration_id,
+            &orchestration.node_tree,
+            &mut coordinates,
+        );
+    }
+    coordinates
+}
+
+fn collect_running_human_gates(
+    run_id: Uuid,
+    orchestration_id: Uuid,
+    nodes: &[RuntimeNodeState],
+    coordinates: &mut Vec<RuntimeNodeCoordinate>,
+) {
+    for node in nodes {
+        if node.status == RuntimeNodeStatus::Running && node.kind == PlanNodeKind::HumanGate {
+            coordinates.push(RuntimeNodeCoordinate::new(
+                run_id,
+                orchestration_id,
+                node.node_path.clone(),
+                node.attempt,
+            ));
+        }
+        collect_running_human_gates(run_id, orchestration_id, &node.children, coordinates);
+    }
+}
+
+fn find_runtime_node<'a>(
+    nodes: &'a [RuntimeNodeState],
+    node_path: &str,
+    attempt: u32,
+) -> Option<&'a RuntimeNodeState> {
+    for node in nodes {
+        if node.node_path == node_path && node.attempt == attempt {
+            return Some(node);
+        }
+        if let Some(found) = find_runtime_node(&node.children, node_path, attempt) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn is_executor_terminal(status: RuntimeNodeStatus) -> bool {
+    matches!(
+        status,
+        RuntimeNodeStatus::Completed
+            | RuntimeNodeStatus::Failed
+            | RuntimeNodeStatus::Cancelled
+            | RuntimeNodeStatus::Skipped
+    )
+}
+
+fn executor_effect_error(
+    error: agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+) -> WorkflowApplicationError {
+    match error {
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::PayloadConflict {
+            ..
+        } => WorkflowApplicationError::Conflict(error.to_string()),
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::Persistence(_) => {
+            WorkflowApplicationError::Internal(error.to_string())
+        }
+    }
+}
+
 fn unsupported_attempt_policy(plan_node: &PlanNode) -> Option<(&'static str, String)> {
     let policy = plan_node.iteration_policy.as_ref()?;
     match policy.max_attempts {
@@ -460,18 +794,210 @@ fn unsupported_attempt_policy(plan_node: &PlanNode) -> Option<(&'static str, Str
 }
 
 #[cfg(test)]
+#[derive(Default)]
+struct MemoryWorkflowExecutorEffectRepository {
+    functions: tokio::sync::Mutex<
+        std::collections::BTreeMap<
+            String,
+            agentdash_domain::workflow::WorkflowFunctionEffectRecord,
+        >,
+    >,
+    gate_opens: tokio::sync::Mutex<
+        std::collections::BTreeMap<
+            String,
+            agentdash_domain::workflow::WorkflowHumanGateOpenReceipt,
+        >,
+    >,
+    gate_resolutions: tokio::sync::Mutex<
+        std::collections::BTreeMap<
+            Uuid,
+            agentdash_domain::workflow::WorkflowHumanGateResolutionReceipt,
+        >,
+    >,
+    gates: tokio::sync::Mutex<
+        std::collections::BTreeMap<Uuid, agentdash_domain::workflow::LifecycleGate>,
+    >,
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl WorkflowExecutorEffectRepository for MemoryWorkflowExecutorEffectRepository {
+    async fn prepare_function(
+        &self,
+        request: agentdash_domain::workflow::WorkflowFunctionEffectRequest,
+    ) -> Result<
+        agentdash_domain::workflow::WorkflowFunctionEffectRecord,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        let mut functions = self.functions.lock().await;
+        if let Some(existing) = functions.get(&request.identity.effect_id) {
+            if existing.request != request {
+                return Err(
+                    agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::PayloadConflict {
+                        effect_id: request.identity.effect_id,
+                    },
+                );
+            }
+            return Ok(existing.clone());
+        }
+        let now = chrono::Utc::now();
+        let record = agentdash_domain::workflow::WorkflowFunctionEffectRecord {
+            request,
+            terminal: None,
+            created_at: now,
+            updated_at: now,
+        };
+        functions.insert(record.request.identity.effect_id.clone(), record.clone());
+        Ok(record)
+    }
+
+    async fn commit_function_terminal(
+        &self,
+        request: agentdash_domain::workflow::WorkflowFunctionEffectRequest,
+        terminal: WorkflowFunctionTerminalResult,
+    ) -> Result<
+        agentdash_domain::workflow::WorkflowFunctionEffectRecord,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        let mut functions = self.functions.lock().await;
+        let Some(existing) = functions.get_mut(&request.identity.effect_id) else {
+            return Err(
+                agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::Persistence(
+                    "Function effect was not prepared".to_owned(),
+                ),
+            );
+        };
+        if existing.request != request
+            || existing
+                .terminal
+                .as_ref()
+                .is_some_and(|stored| stored != &terminal)
+        {
+            return Err(
+                    agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::PayloadConflict {
+                    effect_id: request.identity.effect_id,
+                },
+            );
+        }
+        existing.terminal = Some(terminal);
+        existing.updated_at = chrono::Utc::now();
+        Ok(existing.clone())
+    }
+
+    async fn get_function(
+        &self,
+        effect_id: &str,
+    ) -> Result<
+        Option<agentdash_domain::workflow::WorkflowFunctionEffectRecord>,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        Ok(self.functions.lock().await.get(effect_id).cloned())
+    }
+
+    async fn open_human_gate(
+        &self,
+        effect: agentdash_domain::workflow::WorkflowHumanGateOpenEffect,
+    ) -> Result<
+        agentdash_domain::workflow::WorkflowHumanGateOpenReceipt,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        let mut opens = self.gate_opens.lock().await;
+        if let Some(existing) = opens.get(&effect.identity.effect_id) {
+            if existing.effect.identity != effect.identity
+                || existing.effect.payload_digest != effect.payload_digest
+                || existing.effect.gate.id != effect.gate.id
+            {
+                return Err(
+                    agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::PayloadConflict {
+                        effect_id: effect.identity.effect_id,
+                    },
+                );
+            }
+            return Ok(existing.clone());
+        }
+        let receipt = agentdash_domain::workflow::WorkflowHumanGateOpenReceipt {
+            effect: effect.clone(),
+            committed_at: chrono::Utc::now(),
+        };
+        self.gates.lock().await.insert(effect.gate.id, effect.gate);
+        opens.insert(receipt.effect.identity.effect_id.clone(), receipt.clone());
+        Ok(receipt)
+    }
+
+    async fn get_human_gate_open(
+        &self,
+        effect_id: &str,
+    ) -> Result<
+        Option<agentdash_domain::workflow::WorkflowHumanGateOpenReceipt>,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        Ok(self.gate_opens.lock().await.get(effect_id).cloned())
+    }
+
+    async fn resolve_human_gate(
+        &self,
+        effect: agentdash_domain::workflow::WorkflowHumanGateResolutionEffect,
+    ) -> Result<
+        agentdash_domain::workflow::WorkflowHumanGateResolutionReceipt,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        let mut resolutions = self.gate_resolutions.lock().await;
+        if let Some(existing) = resolutions.get(&effect.gate_id) {
+            if existing.effect != effect {
+                return Err(
+                    agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::PayloadConflict {
+                        effect_id: effect.identity.effect_id,
+                    },
+                );
+            }
+            return Ok(existing.clone());
+        }
+        let mut gates = self.gates.lock().await;
+        let gate = gates.get_mut(&effect.gate_id).ok_or_else(|| {
+            agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::Persistence(
+                "HumanGate open receipt does not exist".to_owned(),
+            )
+        })?;
+        gate.payload_json = Some(effect.decision.clone());
+        gate.resolve(effect.resolved_by.clone());
+        let receipt = agentdash_domain::workflow::WorkflowHumanGateResolutionReceipt {
+            effect: effect.clone(),
+            committed_at: chrono::Utc::now(),
+        };
+        resolutions.insert(effect.gate_id, receipt.clone());
+        Ok(receipt)
+    }
+
+    async fn get_human_gate_resolution(
+        &self,
+        gate_id: Uuid,
+    ) -> Result<
+        Option<agentdash_domain::workflow::WorkflowHumanGateResolutionReceipt>,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        Ok(self.gate_resolutions.lock().await.get(&gate_id).cloned())
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use agentdash_domain::{
         DomainError,
         workflow::{
-            ActivationRule, ActivityJoinPolicy, AgentProcedure, AgentProcedureContract,
-            AgentProcedureExecutionSpec, AgentProcedureRepository, AgentReusePolicy, ExecutorSpec,
-            LifecycleGate, OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef,
-            PlanNode, RuntimeNodeStatus, RuntimeSessionPolicy, TransitionCondition,
-            WorkflowAgentCallRuntimeState,
+            ActivationRule, ActivityCompletionPolicy, ActivityJoinPolicy, AgentProcedure,
+            AgentProcedureContract, AgentProcedureExecutionSpec, AgentProcedureRepository,
+            AgentReusePolicy, ApiRequestExecutorSpec, ExecutorSpec, FunctionActivityExecutorSpec,
+            HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleGate,
+            LifecycleGateRepository, OrchestrationLimits, OrchestrationPlanSnapshot,
+            OrchestrationSourceRef, OutputPortDefinition, PlanNode, RuntimeNodeStatus,
+            RuntimeSessionPolicy, TransitionCondition, WorkflowAgentCallRuntimeState,
         },
+    };
+    use agentdash_platform_spi::{
+        ApiRequestOutcome, BashExecOutcome, FunctionEffectObservation, FunctionEffectRawOutcome,
+        FunctionEffectRequest,
     };
     use async_trait::async_trait;
     use chrono::Utc;
@@ -488,6 +1014,7 @@ mod tests {
     struct RunRepo {
         run: Mutex<Option<LifecycleRun>>,
         fail_cas_at_expected_revision: Mutex<Option<u64>>,
+        conflict_cas_at_expected_revision: Mutex<Option<u64>>,
         attempted_claim_ids: Mutex<Vec<String>>,
     }
 
@@ -537,6 +1064,16 @@ mod tests {
             {
                 self.attempted_claim_ids.lock().await.push(claim_id);
             }
+            let mut conflict_at = self.conflict_cas_at_expected_revision.lock().await;
+            if *conflict_at == Some(expected_revision) {
+                *conflict_at = None;
+                return Err(LifecycleRunWriteError::RevisionConflict {
+                    run_id: run.id,
+                    expected_revision,
+                    actual_revision: expected_revision + 1,
+                });
+            }
+            drop(conflict_at);
             let mut fail_at = self.fail_cas_at_expected_revision.lock().await;
             if *fail_at == Some(expected_revision) {
                 *fail_at = None;
@@ -683,6 +1220,63 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingStableFunctionRunner {
+        executions: AtomicUsize,
+        observations: Mutex<std::collections::BTreeMap<String, FunctionEffectObservation>>,
+    }
+
+    #[async_trait]
+    impl FunctionRunner for RecordingStableFunctionRunner {
+        async fn run_api_request(
+            &self,
+            _spec: &ApiRequestExecutorSpec,
+            _context: &Value,
+        ) -> Result<ApiRequestOutcome, String> {
+            panic!("legacy raw FunctionRunner path must not be called")
+        }
+
+        async fn run_bash(
+            &self,
+            _spec: &agentdash_domain::workflow::BashExecExecutorSpec,
+            _context: &Value,
+        ) -> Result<BashExecOutcome, String> {
+            panic!("legacy raw FunctionRunner path must not be called")
+        }
+
+        async fn execute_effect(
+            &self,
+            request: FunctionEffectRequest,
+        ) -> Result<FunctionEffectObservation, String> {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            let outcome = FunctionEffectObservation::Succeeded(
+                FunctionEffectRawOutcome::ApiRequest(ApiRequestOutcome {
+                    status: 200,
+                    body_text: "ok".to_owned(),
+                    body_json: Some(serde_json::json!({"value": 7})),
+                }),
+            );
+            self.observations
+                .lock()
+                .await
+                .insert(request.effect_id, outcome.clone());
+            Ok(outcome)
+        }
+
+        async fn inspect_effect(
+            &self,
+            effect_id: &str,
+        ) -> Result<FunctionEffectObservation, String> {
+            Ok(self
+                .observations
+                .lock()
+                .await
+                .get(effect_id)
+                .cloned()
+                .unwrap_or(FunctionEffectObservation::Unknown))
+        }
+    }
+
     fn run_with_agent_policy(
         reuse: AgentReusePolicy,
         session: RuntimeSessionPolicy,
@@ -731,6 +1325,89 @@ mod tests {
         run
     }
 
+    fn run_with_function_node() -> LifecycleRun {
+        run_with_single_executor_node(
+            PlanNodeKind::Function,
+            ExecutorSpec::Function {
+                spec: FunctionActivityExecutorSpec::ApiRequest(ApiRequestExecutorSpec {
+                    method: "POST".to_owned(),
+                    url_template: "https://example.invalid".to_owned(),
+                    body_template: Some(serde_json::json!({"input": true})),
+                }),
+            },
+            Some(ActivityCompletionPolicy::OutputPorts {
+                required_ports: vec!["result".to_owned()],
+            }),
+            vec![OutputPortDefinition {
+                key: "result".to_owned(),
+                description: "result".to_owned(),
+                gate_strategy: agentdash_domain::workflow::GateStrategy::Existence,
+                gate_params: None,
+            }],
+        )
+    }
+
+    fn run_with_human_gate_node() -> LifecycleRun {
+        run_with_single_executor_node(
+            PlanNodeKind::HumanGate,
+            ExecutorSpec::Human {
+                spec: HumanActivityExecutorSpec::Approval(HumanApprovalExecutorSpec {
+                    form_schema_key: "approval.test".to_owned(),
+                    title: Some("Approve".to_owned()),
+                }),
+            },
+            Some(ActivityCompletionPolicy::HumanDecision {
+                decision_port: "decision".to_owned(),
+            }),
+            vec![OutputPortDefinition {
+                key: "decision".to_owned(),
+                description: "decision".to_owned(),
+                gate_strategy: agentdash_domain::workflow::GateStrategy::Existence,
+                gate_params: None,
+            }],
+        )
+    }
+
+    fn run_with_single_executor_node(
+        kind: PlanNodeKind,
+        executor: ExecutorSpec,
+        completion_policy: Option<ActivityCompletionPolicy>,
+        output_ports: Vec<OutputPortDefinition>,
+    ) -> LifecycleRun {
+        let source_ref = OrchestrationSourceRef::Inline {
+            source_digest: "sha256:executor-effect-test".to_owned(),
+        };
+        let plan = OrchestrationPlanSnapshot {
+            plan_digest: "sha256:executor-effect-plan".to_owned(),
+            plan_version: 1,
+            source_ref: source_ref.clone(),
+            nodes: vec![PlanNode {
+                node_id: "effect".to_owned(),
+                node_path: "effect".to_owned(),
+                parent_node_id: None,
+                kind,
+                label: Some("Effect".to_owned()),
+                executor: Some(executor),
+                input_ports: Vec::new(),
+                output_ports,
+                completion_policy,
+                iteration_policy: None,
+                join_policy: None,
+                result_contract: None,
+                metadata: None,
+            }],
+            entry_node_ids: vec!["effect".to_owned()],
+            activation_rules: Vec::new(),
+            state_exchange_rules: Vec::new(),
+            limits: OrchestrationLimits::default(),
+            metadata: None,
+            created_at: Utc::now(),
+        };
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        run.add_orchestration(activate_root_orchestration(source_ref, plan));
+        run
+    }
+
     fn launcher(
         repo: Arc<RunRepo>,
         dispatch: Arc<RecordingDispatch>,
@@ -741,6 +1418,20 @@ mod tests {
             agent_procedure_repo: Arc::new(UnusedProcedureRepo),
         })
         .with_agent_call_dispatch(dispatch)
+    }
+
+    fn launcher_with_effects(
+        repo: Arc<RunRepo>,
+        effects: Arc<MemoryWorkflowExecutorEffectRepository>,
+    ) -> OrchestrationExecutorLauncher {
+        OrchestrationExecutorLauncher::new_for_test(
+            WorkflowRepositorySet {
+                lifecycle_run_repo: repo,
+                lifecycle_gate_repo: Arc::new(UnusedGateRepo),
+                agent_procedure_repo: Arc::new(UnusedProcedureRepo),
+            },
+            effects,
+        )
     }
 
     fn run_with_continue_successor() -> LifecycleRun {
@@ -1141,6 +1832,201 @@ mod tests {
         assert_eq!(
             serde_json::to_vec(&requests[0]).unwrap(),
             serde_json::to_vec(&requests[1]).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn function_terminal_receipt_reapplies_after_revision_conflict_without_reexecution() {
+        let run = run_with_function_node();
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            conflict_cas_at_expected_revision: Mutex::new(Some(1)),
+            ..Default::default()
+        });
+        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let runner = Arc::new(RecordingStableFunctionRunner::default());
+        let launcher = launcher_with_effects(repo.clone(), effects.clone())
+            .with_function_runner(runner.clone());
+
+        let result = launcher.drain_ready_nodes(run_id).await.expect("drain");
+
+        assert_eq!(result.completed_effect_nodes, vec!["effect"]);
+        assert_eq!(runner.executions.load(Ordering::SeqCst), 1);
+        assert!(
+            effects
+                .get_function(&format!(
+                    "workflow-function:{}:effect#1",
+                    repo.get_by_id(run_id)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .orchestrations[0]
+                        .orchestration_id
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .terminal
+                .is_some()
+        );
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn function_terminal_receipt_survives_crash_before_lifecycle_projection() {
+        let run = run_with_function_node();
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            fail_cas_at_expected_revision: Mutex::new(Some(1)),
+            ..Default::default()
+        });
+        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let runner = Arc::new(RecordingStableFunctionRunner::default());
+        let launcher =
+            launcher_with_effects(repo.clone(), effects).with_function_runner(runner.clone());
+
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect_err("injected projection crash");
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Running
+        );
+        let replay = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("receipt replay");
+        assert_eq!(replay.completed_effect_nodes, vec!["effect"]);
+        assert_eq!(runner.executions.load(Ordering::SeqCst), 1);
+        let duplicate = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("duplicate drain");
+        assert!(duplicate.completed_effect_nodes.is_empty());
+        assert_eq!(runner.executions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_human_gate_open_uses_one_stable_gate_receipt() {
+        let run = run_with_human_gate_node();
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let first = launcher_with_effects(repo.clone(), effects.clone());
+        let second = launcher_with_effects(repo.clone(), effects.clone());
+
+        let (first, second) = tokio::join!(
+            first.drain_ready_nodes(run_id),
+            second.drain_ready_nodes(run_id)
+        );
+        let opened = first.expect("first").opened_human_gates.len()
+            + second.expect("second").opened_human_gates.len();
+        assert_eq!(opened, 1);
+        assert_eq!(effects.gate_opens.lock().await.len(), 1);
+        assert_eq!(effects.gates.lock().await.len(), 1);
+        let node = &repo
+            .get_by_id(run_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .orchestrations[0]
+            .node_tree[0];
+        assert_eq!(node.status, RuntimeNodeStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn human_gate_resolution_receipt_recovers_running_node_after_cas_crash() {
+        let run = run_with_human_gate_node();
+        let run_id = run.id;
+        let orchestration_id = run.orchestrations[0].orchestration_id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let launcher = launcher_with_effects(repo.clone(), effects.clone());
+        let opened = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("open gate")
+            .opened_human_gates
+            .pop()
+            .expect("gate");
+        *repo.fail_cas_at_expected_revision.lock().await = Some(1);
+        let input = SubmitHumanGateDecisionInput {
+            run_id,
+            orchestration_id,
+            node_path: "effect".to_owned(),
+            attempt: 1,
+            decision: serde_json::json!({"approved": true}),
+            resolved_by: "reviewer".to_owned(),
+        };
+
+        launcher
+            .submit_human_gate_decision(input.clone())
+            .await
+            .expect_err("injected projection crash");
+        assert_eq!(effects.gate_resolutions.lock().await.len(), 1);
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Running
+        );
+
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("recover resolution");
+        let replay = launcher
+            .submit_human_gate_decision(input.clone())
+            .await
+            .expect("idempotent decision replay");
+        assert_eq!(replay.gate_id, opened.gate_id);
+        assert_eq!(effects.gate_resolutions.lock().await.len(), 1);
+        let conflicting = SubmitHumanGateDecisionInput {
+            decision: serde_json::json!({"approved": false}),
+            ..input
+        };
+        launcher
+            .submit_human_gate_decision(conflicting)
+            .await
+            .expect_err("different terminal decision must conflict");
+        assert_eq!(effects.gate_resolutions.lock().await.len(), 1);
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Completed
         );
     }
 }

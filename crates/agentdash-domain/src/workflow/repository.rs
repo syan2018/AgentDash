@@ -91,6 +91,8 @@ pub trait LifecycleRunRepository: Send + Sync {
     /// Implementations must require `run.revision == expected_revision + 1`
     /// and persist the aggregate body plus revision in one transaction.
     /// Product Workflow execution must not compose the default implementation.
+    /// The write set is the executor aggregate plus revision; it must preserve
+    /// `channel_registry`, whose independent mutation method owns that column.
     async fn compare_and_swap(
         &self,
         _expected_revision: u64,

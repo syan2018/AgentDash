@@ -107,7 +107,10 @@ pub use workflow::script::WorkflowScriptEvaluator;
 // ─── platform ───────────────────────────────────────────────
 
 pub use platform::auth::{AuthGroup, AuthIdentity, AuthMode};
-pub use platform::function_runner::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
+pub use platform::function_runner::{
+    ApiRequestOutcome, BashExecOutcome, FunctionEffectObservation, FunctionEffectRawOutcome,
+    FunctionEffectRequest, FunctionEffectSpec, FunctionRunner,
+};
 pub use platform::marketplace_source::{
     MarketplaceAssetDetail, MarketplaceAssetListing, MarketplaceAssetPage, MarketplaceAssetQuery,
     MarketplaceFetchedAsset, MarketplaceFetchedAssetPayload, MarketplaceInstallRequirement,

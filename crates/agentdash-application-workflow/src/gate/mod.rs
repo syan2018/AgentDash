@@ -5,8 +5,8 @@ mod resolver;
 
 pub use commands::{
     CompleteChildResultGateCommand, LifecycleGateCommand, OpenCompanionGateCommand,
-    OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveGatePayloadCommand,
-    ResolveParentRequestGateCommand, ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
+    OpenParentRequestGateCommand, ResolveGatePayloadCommand, ResolveParentRequestGateCommand,
+    RespondHumanGateCommand,
 };
 pub use outcome::{
     CompanionChildResultDeliveryIntent, CompanionHumanResponseDeliveryIntent,

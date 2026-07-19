@@ -1125,7 +1125,7 @@ flowchart LR
 | `agentdash-agent-protocol-codegen` | 有条件保留为 canonical protocol 的唯一生成入口 | 同时生成/校验 Rust 与 TypeScript owned roots、schema lock 与 parity；若并入 protocol crate 后仍能保持同一生成边界才可合并 |
 | `agentdash-executor` | 迁空后删除 | Host 与 adapters 已拥有执行职责 |
 | `agentdash-spi` | 移出 Agent 内容并迁名 `agentdash-platform-spi` | 只保留非 Agent 平台 SPI |
-| `agentdash-application-hooks` | 迁空后删除 | Surface/Tool Broker/Agent-native hook 各有 owner |
+| `agentdash-application-hooks` | 保留并收窄为 Product hook policy/effect compiler | Product presets/workflow effects 是 Application 业务；Runtime Surface/Tool Broker/Agent-native hook 只拥有 typed execution seam |
 | `agentdash-application-runtime-session` | crate 已删除；清理 Application/API/contracts/SPI/Relay/gateway 中残留 `RuntimeSession*` 语义 | platform state 不满足 history-maintained Session 定义 |
 | `agentdash-application-runtime-gateway` | 迁名 extension gateway | 避免与 Agent Runtime seam 混淆 |
 | `agentdash-agent-runtime-test-support` | 保留并收窄为共享 conformance harness | Native/Codex/Remote 共用行为测试是独立理由 |

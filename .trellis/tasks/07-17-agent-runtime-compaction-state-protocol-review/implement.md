@@ -308,7 +308,8 @@ cargo test -p agentdash-agent-runtime-host
 - [ ] Agent-native tool/hook 留在完整 Agent；Dash 通过 callback 注入 Core。
 - [ ] Hook 按 HookPoint/timing/blocking/mutation/effect 建模。
 - [ ] 每项 contribution 固定唯一 causal route。
-- [ ] 迁空 `agentdash-application-hooks` 的业务职责，为 W8 删除准备。
+- [ ] 保留 `agentdash-application-hooks` 的 Product presets、workflow policy 与 effects，
+  只把 Runtime callback execution 迁到 Surface/Tool Broker/Agent-native owner。
 
 ### Check
 
@@ -544,7 +545,9 @@ W8 的正式 deletion 入口由以下阶段共同构成：
   私有 generator 和 Product contract 形成第二套 owned conversation language。
 - [ ] 删除 connector 版 `agentdash-executor`。
 - [ ] 将 `agentdash-spi` 清理/迁名为 `agentdash-platform-spi`。
-- [ ] 删除 `agentdash-application-hooks`。
+- [ ] 验证 `agentdash-application-hooks` 只拥有 Product hook policy/effect compilation，
+  production composition 通过 typed plan/callback 接入 Runtime；若仍有 Runtime callback
+  execution，再按 replacement manifest 迁出对应实现。
 - [ ] `agentdash-application-runtime-session` 保持物理缺席；删除
   `agentdash-application-ports`、API、contracts、SPI、Relay/gateway 中平台
   `RuntimeSession*` delivery/live/capability/DTO/event 残留。
@@ -611,7 +614,8 @@ cargo test -p agentdash-infrastructure agent_runtime
 ```powershell
 rg -n "RuntimeJournalFact|RuntimeJournalRecord|journal_records_after|append_presentation" crates packages
 rg -n "AgentConnector|ConnectorCapabilities|ContextActivationDispatch" crates packages
-rg -n "agentdash-agent-types|agentdash-executor|agentdash-application-hooks" Cargo.toml crates
+rg -n "agentdash-agent-types|agentdash-executor" Cargo.toml crates
+rg -n "agentdash_application_hooks" crates/agentdash-api crates/agentdash-infrastructure
 rg -n "BackboneEvent|BackboneEnvelope|PlatformEvent|RuntimeJournal|journal" crates/agentdash-agent-protocol
 rg -n "RuntimeSession|runtime_session" crates/agentdash-application-ports crates/agentdash-application crates/agentdash-api crates/agentdash-contracts crates/agentdash-spi crates/agentdash-relay crates/agentdash-application-runtime-gateway
 rg -n "Session" crates/agentdash-agent-runtime crates/agentdash-agent-runtime-host

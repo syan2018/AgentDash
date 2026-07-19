@@ -109,6 +109,9 @@ Application/Product 领域不属于 Hard Cut，也不是本任务的重构对象
 Workspace、Canvas、Terminal、Wait、Lifecycle 只迁移 Runtime 接入 seam；其业务规则、
 route、worker、权限、gate、mailbox 与用户可见行为必须保持。移除 module export、
 route mount、AppState composition 或 Product caller 不能证明旧 Runtime 已被替代。
+`agentdash-application-hooks` 同样保留 Product presets、workflow policy 与 effects；
+只有其中已经被 typed Surface/Tool Broker/Agent callback 替代的 Runtime execution
+实现可以逐项进入 manifest。
 
 每个候选项必须填写：
 

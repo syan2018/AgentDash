@@ -67,9 +67,9 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] Companion request/respond Product Tool contributions 已接入最终 typed Broker
   catalog，并复用 durable continuation saga、gate、mailbox、preflight 与 pinned
   Product HookPlan。
-- [ ] AgentFrame 声明的 Workspace Module tools 中，list/describe/invoke/present 已通过
-  typed Product command seam 进入 production Broker；operate 等待 request-scoped
-  canonical RuntimeSurfaceUpdate adapter。
+- [x] AgentFrame 声明的 Workspace Module list/describe/operate/invoke/present 均通过
+  typed Product command seam 进入 production Broker；write route 与 canonical
+  RuntimeSurfaceUpdate convergence 具有联合 tracer。
 
 ### Product behavior tests
 
@@ -89,7 +89,7 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] Workflow AgentCall 以稳定 LifecycleAgent/AgentFrame 经 ProductLaunch、canonical
   binding/resource convergence 与 Product mailbox command 调 Runtime，并由 Runtime
   terminal observer 回写 Workflow。
-- [ ] Capability/Runtime Tools 编译为 Runtime Surface / Tool Broker contributions。
+- [x] Capability/Runtime Tools 编译为 Runtime Surface / Tool Broker contributions。
 - [x] MCP discovery/executor 与已迁移的静态 Product/VFS tools 共享同一 typed Runtime Tool
   Broker catalog；Surface compiler只引用可执行 tool requirements，Host callback 经
   Broker执行，MCP server metadata 不作为 context 注入。
@@ -122,20 +122,20 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
   Activate 前独立应用，并覆盖 parent 与 specialist profile 不同的 tracer。
 - [x] Companion Compact / WorkflowOnly / ConstraintsOnly fresh create。
 - [x] Companion channel、gate、adoption、result、mailbox。
-- [ ] Dash collaboration tool spawn/read/wait/result。
+- [x] Dash collaboration tool request/respond 经 final callback/broker 执行，并覆盖稳定
+  effect 与 Broker restart replay；既有 saga suite 覆盖 gate/channel/mailbox/result。
 - [x] Workflow AgentCall，并覆盖重启 inspect 后补齐 Product convergence。
 - [x] Routine trigger → AgentRun → terminal，并覆盖 prepared 状态进程重启恢复。
-- [ ] Workspace Module list/describe/invoke/present 已进入 production Broker；等待 operate
-  接入已完成的 immutable Frame revision、Runtime convergence 与
-  AppliedResourceSurface adapter，并补 presentation feed 纵向 tracer。
+- [x] Workspace Module list/describe/operate/invoke/present 经 final handler/broker；
+  write route 与 Host generation、Product binding、immutable Frame、
+  AppliedResourceSurface、presentation effect 具有联合 tracer。
 - [ ] Canvas read/write/promotion/diagnostics。
 - [ ] VFS surface read/list/search。
 - [x] Lifecycle VFS canonical `events.json` 与 derived indexes。
 - [ ] Terminal create/input/resize/close/projection。
 - [ ] Wait activity 与 gate/terminal convergence。
-- [ ] Complete Agent Tool/Hook callback、permission、deadline、effect correlation 已通过；
-  Product-only Hook effect 已进入最终路径，等待剩余 Product Tool families 接入最终
-  Broker catalog 后闭合本项。
+- [x] Complete Agent Tool/Hook callback、permission、deadline、effect correlation 已通过；
+  Product Tool families 与 Product-only Hook effect 均进入最终 typed 路径。
 - [x] MCP dynamic tool discovery → surface apply → Host callback → Broker execution。
 - [x] Compaction Dash exact / Codex native projection。
 - [x] reconnect cursor tail与gap snapshot reload。

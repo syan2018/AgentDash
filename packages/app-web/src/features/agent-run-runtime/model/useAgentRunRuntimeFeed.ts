@@ -71,7 +71,7 @@ export interface UseAgentRunRuntimeFeedResult {
 }
 
 function runtimeTimestampMs(value: bigint): number {
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+  if (value > 9_007_199_254_740_991n) {
     throw new RangeError("Managed Runtime timestamp exceeds JavaScript safe integer range");
   }
   return Number(value);

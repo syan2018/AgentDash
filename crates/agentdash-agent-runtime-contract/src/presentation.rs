@@ -52,10 +52,9 @@ impl ManagedRuntimePresentationContentBlock {
             schema_version,
             ..
         } = self
+            && (!schema.starts_with("agentdash.") || *schema_version == 0)
         {
-            if !schema.starts_with("agentdash.") || *schema_version == 0 {
-                return Err(ManagedRuntimePresentationViolation::InvalidStructuredSchema);
-            }
+            return Err(ManagedRuntimePresentationViolation::InvalidStructuredSchema);
         }
         Ok(())
     }
@@ -455,6 +454,7 @@ pub enum ManagedRuntimeItemUpdate {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum ManagedRuntimeItemTransition {
     Started {
         presentation: ManagedRuntimeItemPresentation,

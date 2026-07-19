@@ -384,6 +384,7 @@ pub enum ManagedRuntimeProjectionSection {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum ManagedRuntimeSourceProjectionDelta {
     SnapshotReplaced {
         lifecycle: ManagedRuntimeLifecycleStatus,
@@ -421,6 +422,7 @@ pub enum ManagedRuntimeSourceProjectionDelta {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum ManagedRuntimeChangeDelta {
     ThreadNameChanged {
         #[serde(with = "crate::wire_u64")]

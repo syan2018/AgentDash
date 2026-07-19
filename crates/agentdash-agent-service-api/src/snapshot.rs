@@ -217,6 +217,7 @@ pub struct AgentChangesQuery {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum AgentChangePayload {
     ThreadNameChanged {
         thread_name: Option<String>,

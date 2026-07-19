@@ -10,20 +10,22 @@ use agentdash_agent_service_api::{
     AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
     AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentEntityStatus,
     AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentInput, AgentInputContent,
-    AgentInteractionId, AgentInteractionKind, AgentInteractionSnapshot, AgentItemContent,
-    AgentItemId, AgentItemSnapshot, AgentLifecycleCapability, AgentLifecycleStatus,
-    AgentPayloadDigest, AgentProfileDigest, AgentReadQuery, AgentReceiptState,
-    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
-    AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource,
-    AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor, AgentSurfaceCapabilityFacet,
-    AgentSurfaceContributionPayload, AgentSurfaceProfile, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentTurnId, AgentTurnSnapshot,
-    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
-    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
-    AppliedInitialContextEvidence, ApplyBoundAgentSurface, CompleteAgentService,
-    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
-    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
-    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentInteractionId, AgentInteractionRequest, AgentInteractionSnapshot, AgentInteractionStatus,
+    AgentItemBody, AgentItemId, AgentItemPresentation, AgentItemSnapshot,
+    AgentItemTerminalEvidence, AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest,
+    AgentPresentationError, AgentProcessExitEvidence, AgentProfileDigest, AgentReadQuery,
+    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
+    AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
+    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
+    AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload, AgentSurfaceProfile,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentTerminalStatus,
+    AgentTurnId, AgentTurnSnapshot, AppliedAgentCommandReceipt, AppliedAgentSurface,
+    AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
+    AppliedForkAgentReceipt, AppliedInitialContextEvidence, ApplyBoundAgentSurface,
+    CompleteAgentService, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
+    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContributionKind,
+    InitialContextDeliveryFidelity, InitialContextProfile, ResumeAgentCommand,
+    RevokeBoundAgentSurface, SemanticFidelity,
 };
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -913,7 +915,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
                             false,
                         )
                     })?;
-                let result = interaction_result(pending.interaction.kind, response)?;
+                let result = interaction_result(&pending.interaction.request, response)?;
                 if let Err(error) = self.transport.respond(pending.request_id, result).await {
                     if error.outcome_unknown {
                         self.mark_unknown(
@@ -1609,79 +1611,392 @@ fn map_thread_turns(
             .and_then(Value::as_array)
             .ok_or_else(|| protocol_violation("thread/read turn misses items"))?
             .iter()
-            .map(map_item)
+            .map(|item| map_item(item, Some(status)))
             .collect::<Result<Vec<_>, _>>()?;
         mapped.push(AgentTurnSnapshot { id, status, items });
     }
     Ok((mapped, active))
 }
 
-fn map_item(item: &Value) -> Result<AgentItemSnapshot, AgentServiceError> {
+fn map_item(
+    item: &Value,
+    inherited_status: Option<AgentEntityStatus>,
+) -> Result<AgentItemSnapshot, AgentServiceError> {
+    use crate::vendor_generated::codex_v2::thread_item::ThreadItem;
+
     let id = required_id::<AgentItemId>(item, "id", AgentItemId::new)?;
-    let status = entity_status(item.get("status"));
-    let kind = item
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let content = match kind {
-        "userMessage" => AgentItemContent::UserInput {
-            input: AgentInput {
-                content: vec![AgentInputContent::Text {
-                    text: item
-                        .get("content")
-                        .and_then(Value::as_array)
-                        .map(|blocks| {
-                            blocks
-                                .iter()
-                                .filter_map(|block| block.get("text").and_then(Value::as_str))
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        })
-                        .unwrap_or_default(),
-                }],
-            },
+    let explicit_status = entity_status(item.get("status"));
+    let status = if explicit_status == AgentEntityStatus::Accepted {
+        inherited_status.unwrap_or(explicit_status)
+    } else {
+        explicit_status
+    };
+    let vendor: ThreadItem = serde_json::from_value(item.clone()).map_err(|error| {
+        protocol_violation(format!(
+            "unknown or invalid Codex ThreadItem cannot enter canonical history: {error}"
+        ))
+    })?;
+    let body = match vendor {
+        ThreadItem::UserMessage { content, .. } => AgentItemBody::UserMessage {
+            content: content
+                .iter()
+                .map(map_vendor_user_input)
+                .collect::<Result<Vec<_>, _>>()?,
         },
-        "agentMessage" => AgentItemContent::AgentOutput {
-            content: vec![AgentInputContent::Text {
-                text: item
-                    .get("text")
+        ThreadItem::HookPrompt { fragments, .. } => AgentItemBody::HookPrompt {
+            hook_point: "codex".to_owned(),
+            content: fragments
+                .into_iter()
+                .map(
+                    |fragment| agentdash_agent_service_api::AgentContentBlock::Text {
+                        text: fragment.text,
+                    },
+                )
+                .collect(),
+        },
+        ThreadItem::AgentMessage { text, phase, .. } => AgentItemBody::AgentMessage {
+            content: vec![text_block(text)],
+            phase: phase
+                .flatten()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(internal_error)?
+                .and_then(|value| value.as_str().map(ToOwned::to_owned)),
+        },
+        ThreadItem::Plan { text, .. } => AgentItemBody::Plan {
+            explanation: Some(text),
+            steps: Vec::new(),
+        },
+        ThreadItem::Reasoning {
+            content, summary, ..
+        } => AgentItemBody::Reasoning {
+            summary: summary.into_iter().map(text_block).collect(),
+            content: content.into_iter().map(text_block).collect(),
+        },
+        ThreadItem::CommandExecution {
+            command,
+            cwd,
+            aggregated_output,
+            ..
+        } => AgentItemBody::CommandExecution {
+            command,
+            cwd: json_string(&cwd)?,
+            output: aggregated_output
+                .flatten()
+                .into_iter()
+                .map(|text| agentdash_agent_service_api::AgentCommandOutput {
+                    stream: agentdash_agent_service_api::AgentCommandOutputStream::Combined,
+                    text,
+                })
+                .collect(),
+        },
+        ThreadItem::FileChange { changes, .. } => AgentItemBody::FileChange {
+            changes: changes
+                .into_iter()
+                .map(|change| {
+                    let kind = serde_json::to_value(&change.kind).map_err(internal_error)?;
+                    let (change_kind, moved_to) = map_patch_kind(&kind)?;
+                    Ok(agentdash_agent_service_api::AgentFilePatch {
+                        path: change.path,
+                        change_kind,
+                        patch: change.diff,
+                        moved_to,
+                    })
+                })
+                .collect::<Result<Vec<_>, AgentServiceError>>()?,
+            output: Vec::new(),
+        },
+        ThreadItem::McpToolCall {
+            server,
+            tool,
+            arguments,
+            result,
+            error,
+            ..
+        } => AgentItemBody::McpToolCall {
+            server,
+            tool,
+            arguments,
+            result: result
+                .flatten()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(internal_error)?
+                .or(error
+                    .flatten()
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .map_err(internal_error)?),
+            progress: Vec::new(),
+        },
+        ThreadItem::DynamicToolCall {
+            namespace,
+            tool,
+            arguments,
+            content_items,
+            success,
+            ..
+        } => AgentItemBody::DynamicToolCall {
+            namespace: namespace.flatten(),
+            tool,
+            arguments,
+            result: success.flatten().map(|success| json!({"success": success})),
+            progress: content_items
+                .flatten()
+                .unwrap_or_default()
+                .into_iter()
+                .map(map_dynamic_output)
+                .collect(),
+        },
+        ThreadItem::CollabAgentToolCall {
+            tool,
+            receiver_thread_ids,
+            prompt,
+            agents_states,
+            ..
+        } => AgentItemBody::CollaborationToolCall {
+            action: tool.to_string(),
+            target: (!receiver_thread_ids.is_empty()).then(|| receiver_thread_ids.join(",")),
+            prompt: prompt.flatten(),
+            result: Some(serde_json::to_value(agents_states).map_err(internal_error)?),
+        },
+        ThreadItem::SubAgentActivity {
+            agent_thread_id,
+            agent_path,
+            kind,
+            ..
+        } => AgentItemBody::SubagentActivity {
+            agent_id: agent_thread_id,
+            task: agent_path,
+            status: kind.to_string(),
+            result: Vec::new(),
+        },
+        ThreadItem::WebSearch { query, action, .. } => {
+            let action_value = action
+                .flatten()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(internal_error)?;
+            AgentItemBody::WebSearch {
+                action: action_value
+                    .as_ref()
+                    .and_then(|value| value.get("type"))
                     .and_then(Value::as_str)
-                    .unwrap_or_default()
+                    .unwrap_or("search")
                     .to_owned(),
-            }],
-        },
-        "contextCompaction" => AgentItemContent::ContextCompaction,
-        "dynamicToolCall" => AgentItemContent::ToolCall {
-            name: agentdash_agent_service_api::AgentToolName::new(
-                item.get("tool")
-                    .or_else(|| item.get("name"))
+                query: Some(query),
+                url: action_value
+                    .as_ref()
+                    .and_then(|value| value.get("url"))
                     .and_then(Value::as_str)
-                    .unwrap_or("codex.dynamic-tool"),
-            )
-            .map_err(internal_error)?,
-            arguments: item
-                .get("arguments")
-                .cloned()
-                .unwrap_or(Value::Object(Map::new())),
+                    .map(ToOwned::to_owned),
+                results: Vec::new(),
+            }
+        }
+        ThreadItem::ImageView { path, .. } => AgentItemBody::ImageView {
+            path: json_string_required(&path)?,
+            detail: None,
         },
-        _ => AgentItemContent::Extension {
-            namespace: "codex".to_owned(),
-            schema: format!("codex.thread_item.{kind}.v1"),
-            value: json!({
-                "type": kind,
-                "status": item.get("status"),
-            }),
+        ThreadItem::Sleep { duration_ms, .. } => AgentItemBody::Sleep {
+            duration_ms: agentdash_agent_service_api::AgentServiceU64(duration_ms),
+        },
+        ThreadItem::ImageGeneration {
+            result,
+            revised_prompt,
+            saved_path,
+            ..
+        } => {
+            let mut outputs = vec![text_block(result)];
+            if let Some(path) = saved_path.flatten() {
+                outputs.push(
+                    agentdash_agent_service_api::AgentContentBlock::LocalResource {
+                        path: json_string_required(&path)?,
+                        media_type: None,
+                        digest: None,
+                    },
+                );
+            }
+            AgentItemBody::ImageGeneration {
+                prompt: String::new(),
+                revised_prompt: revised_prompt.flatten(),
+                outputs,
+            }
+        }
+        ThreadItem::EnteredReviewMode { review, .. } => AgentItemBody::Review {
+            findings: Vec::new(),
+            summary: Some(review),
+        },
+        ThreadItem::ExitedReviewMode { review, .. } => AgentItemBody::Review {
+            findings: Vec::new(),
+            summary: Some(review),
+        },
+        ThreadItem::ContextCompaction { .. } => AgentItemBody::ContextCompaction {
+            summary: None,
+            source_digest: None,
         },
     };
-    let canonical = serde_json::to_vec(&content).map_err(internal_error)?;
-    let content_digest = AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(canonical)))
-        .map_err(internal_error)?;
+    let presentation = AgentItemPresentation::new(
+        body,
+        item.get("startedAt").and_then(Value::as_u64),
+        item.get("updatedAt").and_then(Value::as_u64),
+        terminal_evidence(status, item)?,
+    )
+    .map_err(internal_error)?;
     Ok(AgentItemSnapshot {
         id,
         status,
-        content,
-        content_digest,
+        presentation,
     })
+}
+
+fn text_block(text: String) -> agentdash_agent_service_api::AgentContentBlock {
+    agentdash_agent_service_api::AgentContentBlock::Text { text }
+}
+
+fn map_vendor_user_input(
+    input: &crate::vendor_generated::codex_v2::thread_item::UserInput,
+) -> Result<agentdash_agent_service_api::AgentContentBlock, AgentServiceError> {
+    use crate::vendor_generated::codex_v2::thread_item::UserInput;
+    Ok(match input {
+        UserInput::Text { text, .. } => text_block(text.clone()),
+        UserInput::Image { url, detail } => agentdash_agent_service_api::AgentContentBlock::Image {
+            media_type: "application/octet-stream".to_owned(),
+            source: url.clone(),
+            detail: detail
+                .as_ref()
+                .and_then(|value| value.as_ref())
+                .map(ToString::to_string),
+            digest: AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(url.as_bytes())))
+                .map_err(internal_error)?,
+        },
+        UserInput::LocalImage { path, detail: _ } => {
+            agentdash_agent_service_api::AgentContentBlock::LocalResource {
+                path: path.clone(),
+                media_type: Some("image/*".to_owned()),
+                digest: None,
+            }
+        }
+        UserInput::Skill { name, path } => {
+            agentdash_agent_service_api::AgentContentBlock::SkillReference {
+                name: name.clone(),
+                path: Some(path.clone()),
+            }
+        }
+        UserInput::Mention { name, path } => {
+            agentdash_agent_service_api::AgentContentBlock::Mention {
+                label: name.clone(),
+                reference: path.clone(),
+            }
+        }
+    })
+}
+
+fn map_dynamic_output(
+    output: crate::vendor_generated::codex_v2::thread_item::DynamicToolCallOutputContentItem,
+) -> agentdash_agent_service_api::AgentContentBlock {
+    use crate::vendor_generated::codex_v2::thread_item::DynamicToolCallOutputContentItem;
+    match output {
+        DynamicToolCallOutputContentItem::InputText { text } => text_block(text),
+        DynamicToolCallOutputContentItem::InputImage { image_url } => {
+            agentdash_agent_service_api::AgentContentBlock::ResourceLink {
+                uri: image_url,
+                title: None,
+                media_type: Some("image/*".to_owned()),
+                digest: None,
+            }
+        }
+    }
+}
+
+fn map_patch_kind(
+    value: &Value,
+) -> Result<
+    (
+        agentdash_agent_service_api::AgentFileChangeKind,
+        Option<String>,
+    ),
+    AgentServiceError,
+> {
+    let discriminant = value
+        .as_str()
+        .or_else(|| value.get("type").and_then(Value::as_str))
+        .ok_or_else(|| protocol_violation("Codex patch kind is not typed"))?;
+    let kind = match discriminant {
+        "add" => agentdash_agent_service_api::AgentFileChangeKind::Add,
+        "delete" => agentdash_agent_service_api::AgentFileChangeKind::Delete,
+        "update" => agentdash_agent_service_api::AgentFileChangeKind::Update,
+        "move" => agentdash_agent_service_api::AgentFileChangeKind::Move,
+        other => {
+            return Err(protocol_violation(format!(
+                "unknown Codex patch kind {other}"
+            )));
+        }
+    };
+    let moved_to = value
+        .get("move_path")
+        .or_else(|| value.get("movePath"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    Ok((kind, moved_to))
+}
+
+fn json_string<T: serde::Serialize>(value: &T) -> Result<Option<String>, AgentServiceError> {
+    let value = serde_json::to_value(value).map_err(internal_error)?;
+    Ok(value.as_str().map(ToOwned::to_owned))
+}
+
+fn json_string_required<T: serde::Serialize>(value: &T) -> Result<String, AgentServiceError> {
+    json_string(value)?.ok_or_else(|| protocol_violation("Codex path is not a string"))
+}
+
+fn terminal_evidence(
+    status: AgentEntityStatus,
+    item: &Value,
+) -> Result<Option<AgentItemTerminalEvidence>, AgentServiceError> {
+    let outcome = match status {
+        AgentEntityStatus::Accepted | AgentEntityStatus::Running => return Ok(None),
+        AgentEntityStatus::Completed => AgentTerminalStatus::Completed,
+        AgentEntityStatus::Failed => AgentTerminalStatus::Failed,
+        AgentEntityStatus::Interrupted => AgentTerminalStatus::Interrupted,
+        AgentEntityStatus::Lost => AgentTerminalStatus::Lost,
+    };
+    let exit_code = item
+        .get("exitCode")
+        .and_then(Value::as_i64)
+        .map(i32::try_from)
+        .transpose()
+        .map_err(|_| protocol_violation("Codex process exit code exceeds i32"))?;
+    let process_exit = (exit_code.is_some() || item.get("processId").is_some()).then(|| {
+        AgentProcessExitEvidence {
+            exit_code,
+            signal: None,
+            success: exit_code == Some(0),
+        }
+    });
+    let error = item
+        .get("error")
+        .filter(|value| !value.is_null())
+        .map(|value| AgentPresentationError {
+            code: "codex_item_failed".to_owned(),
+            message: value
+                .as_str()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| value.to_string()),
+            retryable: false,
+        });
+    Ok(Some(AgentItemTerminalEvidence {
+        outcome,
+        completed_at_ms: item
+            .get("completedAt")
+            .and_then(Value::as_u64)
+            .map(agentdash_agent_service_api::AgentServiceU64),
+        duration_ms: item
+            .get("durationMs")
+            .and_then(Value::as_u64)
+            .map(agentdash_agent_service_api::AgentServiceU64),
+        process_exit,
+        error,
+    }))
 }
 
 fn map_notification(
@@ -1743,9 +2058,31 @@ fn map_notification(
             let item = params
                 .get("item")
                 .ok_or_else(|| protocol_violation("item notification misses item"))?;
-            Ok(AgentChangePayload::ItemChanged {
+            let inherited = match method {
+                "item/completed" => AgentEntityStatus::Completed,
+                "item/started" | "item/updated" => AgentEntityStatus::Running,
+                _ => unreachable!(),
+            };
+            let item = map_item(item, Some(inherited))?;
+            let transition = match method {
+                "item/started" => agentdash_agent_service_api::AgentItemTransition::Started {
+                    presentation: item.presentation.clone(),
+                },
+                "item/updated" => agentdash_agent_service_api::AgentItemTransition::Updated {
+                    update: agentdash_agent_service_api::AgentItemUpdate::BodyReplaced {
+                        body: item.presentation.body.clone(),
+                    },
+                    presentation: item.presentation.clone(),
+                },
+                "item/completed" => agentdash_agent_service_api::AgentItemTransition::Terminal {
+                    presentation: item.presentation.clone(),
+                },
+                _ => unreachable!(),
+            };
+            Ok(AgentChangePayload::ItemTransitioned {
                 turn_id,
-                item: map_item(item)?,
+                item_id: item.id,
+                transition,
             })
         }
         "thread/archived" => Ok(AgentChangePayload::LifecycleChanged {
@@ -1762,13 +2099,98 @@ fn map_server_request(
     method: &str,
     params: &Value,
 ) -> Result<AgentInteractionSnapshot, AgentServiceError> {
-    let kind = match method {
+    let prompt = params
+        .get("prompt")
+        .or_else(|| params.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("Codex requires a typed interaction response")
+        .to_owned();
+    let request = match method {
         "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
-            AgentInteractionKind::Approval
+            AgentInteractionRequest::Approval {
+                prompt,
+                reason: params
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                proposed_action: Some(params.clone()),
+            }
         }
-        "item/tool/requestUserInput" => AgentInteractionKind::UserInput,
-        "mcpServer/elicitation/create" => AgentInteractionKind::McpElicitation,
-        "item/tool/call" => AgentInteractionKind::DynamicTool,
+        "item/tool/requestUserInput" => AgentInteractionRequest::UserInput {
+            prompt,
+            questions: params
+                .get("questions")
+                .and_then(Value::as_array)
+                .map(|questions| {
+                    questions
+                        .iter()
+                        .enumerate()
+                        .map(|(index, question)| {
+                            agentdash_agent_service_api::AgentInteractionQuestion {
+                                id: question
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .map(ToOwned::to_owned)
+                                    .unwrap_or_else(|| format!("question-{index}")),
+                                prompt: question
+                                    .get("question")
+                                    .or_else(|| question.get("prompt"))
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_owned(),
+                                options: question
+                                    .get("options")
+                                    .and_then(Value::as_array)
+                                    .map(|options| {
+                                        options
+                                            .iter()
+                                            .filter_map(|option| {
+                                                option
+                                                    .get("label")
+                                                    .or_else(|| option.get("value"))
+                                                    .and_then(Value::as_str)
+                                                    .map(ToOwned::to_owned)
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                                allows_free_form: true,
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        },
+        "mcpServer/elicitation/create" => AgentInteractionRequest::McpElicitation {
+            server: params
+                .get("server")
+                .or_else(|| params.get("serverName"))
+                .and_then(Value::as_str)
+                .unwrap_or("codex-mcp")
+                .to_owned(),
+            prompt,
+            schema: params
+                .get("schema")
+                .cloned()
+                .unwrap_or_else(|| json!({"type": "object"})),
+        },
+        "item/tool/call" => AgentInteractionRequest::DynamicTool {
+            namespace: params
+                .get("namespace")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            tool: params
+                .get("tool")
+                .or_else(|| params.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or("codex.dynamic-tool")
+                .to_owned(),
+            prompt,
+            arguments: params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+        },
         _ => {
             return Err(service_error(
                 AgentServiceErrorCode::Unsupported,
@@ -1793,39 +2215,37 @@ fn map_server_request(
             .map(AgentItemId::new)
             .transpose()
             .map_err(internal_error)?,
-        kind,
-        prompt: params
-            .get("prompt")
-            .or_else(|| params.get("message"))
-            .and_then(Value::as_str)
-            .unwrap_or("Codex requires a typed interaction response")
-            .to_owned(),
-        resolved: false,
+        request,
+        status: AgentInteractionStatus::Pending,
+        resolution: None,
     })
 }
 
 fn interaction_result(
-    kind: AgentInteractionKind,
+    request: &AgentInteractionRequest,
     response: &agentdash_agent_service_api::AgentInteractionResponse,
 ) -> Result<Value, AgentServiceError> {
     use agentdash_agent_service_api::AgentInteractionResponse;
-    match (kind, response) {
-        (AgentInteractionKind::Approval, AgentInteractionResponse::Approved) => {
+    match (request, response) {
+        (AgentInteractionRequest::Approval { .. }, AgentInteractionResponse::Approved) => {
             Ok(json!({"decision": "accept"}))
         }
-        (AgentInteractionKind::Approval, AgentInteractionResponse::Denied { reason }) => {
+        (AgentInteractionRequest::Approval { .. }, AgentInteractionResponse::Denied { reason }) => {
             Ok(json!({"decision": "decline", "reason": reason}))
         }
-        (AgentInteractionKind::UserInput, AgentInteractionResponse::UserInput { input }) => {
+        (
+            AgentInteractionRequest::UserInput { .. },
+            AgentInteractionResponse::UserInput { input },
+        ) => {
             let (input, additional) = codex_input(input)?;
             Ok(json!({"input": input, "additionalContext": additional}))
         }
         (
-            AgentInteractionKind::DynamicTool,
+            AgentInteractionRequest::DynamicTool { .. },
             AgentInteractionResponse::DynamicToolResult { result },
         ) => Ok(json!({"result": result})),
         (
-            AgentInteractionKind::McpElicitation,
+            AgentInteractionRequest::McpElicitation { .. },
             AgentInteractionResponse::McpElicitation { response },
         ) => Ok(json!({"response": response})),
         _ => Err(service_error(
@@ -2033,6 +2453,26 @@ mod tests {
         assert_eq!(
             codex_thread_history_digest(&first).expect("first digest"),
             codex_thread_history_digest(&repeated).expect("repeated digest")
+        );
+    }
+
+    #[test]
+    fn unknown_vendor_item_is_rejected_before_canonical_history() {
+        let error = map_item(
+            &json!({
+                "type": "futureVendorItem",
+                "id": "item-1",
+                "payload": {"vendor": true}
+            }),
+            None,
+        )
+        .expect_err("unknown vendor item must not become a generic canonical item");
+
+        assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+        assert!(
+            error
+                .message
+                .contains("unknown or invalid Codex ThreadItem")
         );
     }
 }

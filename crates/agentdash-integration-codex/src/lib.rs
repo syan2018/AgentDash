@@ -6,6 +6,8 @@
 mod complete_agent;
 mod process_transport;
 mod registration;
+#[allow(dead_code, clippy::all)]
+mod vendor_generated;
 
 pub use complete_agent::{
     CODEX_APP_SERVER_PROTOCOL_REVISION, CODEX_CHILD_HISTORY_DIGEST_VERSION,

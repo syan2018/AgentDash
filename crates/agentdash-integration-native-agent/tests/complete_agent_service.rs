@@ -2152,8 +2152,8 @@ async fn manual_compaction_is_exposed_as_detailed_history_derived_turn_and_chang
     assert_eq!(snapshot.turns[0].id.as_str(), "compact-1");
     assert_eq!(snapshot.turns[0].items.len(), 1);
     assert!(matches!(
-        snapshot.turns[0].items[0].content,
-        agentdash_agent_service_api::AgentItemContent::ContextCompaction
+        snapshot.turns[0].items[0].presentation.body,
+        agentdash_agent_service_api::AgentItemBody::ContextCompaction { .. }
     ));
 
     let changes = service
@@ -2468,7 +2468,11 @@ async fn resolve_interaction_completes_the_suspended_turn() {
         })
         .await
         .unwrap();
-    assert!(resolved.interactions[0].resolved);
+    assert_eq!(
+        resolved.interactions[0].status,
+        agentdash_agent_service_api::AgentInteractionStatus::Resolved
+    );
+    assert!(resolved.interactions[0].resolution.is_some());
     assert!(resolved.active_turn_id.is_none());
 }
 

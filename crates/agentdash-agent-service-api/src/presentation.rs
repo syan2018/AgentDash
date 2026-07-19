@@ -52,10 +52,9 @@ impl AgentContentBlock {
             schema_version,
             ..
         } = self
+            && (!schema.starts_with("agentdash.") || *schema_version == 0)
         {
-            if !schema.starts_with("agentdash.") || *schema_version == 0 {
-                return Err(AgentPresentationViolation::InvalidStructuredSchema);
-            }
+            return Err(AgentPresentationViolation::InvalidStructuredSchema);
         }
         Ok(())
     }
@@ -450,6 +449,7 @@ pub enum AgentItemUpdate {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum AgentItemTransition {
     Started {
         presentation: AgentItemPresentation,

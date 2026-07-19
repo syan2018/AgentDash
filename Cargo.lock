@@ -223,7 +223,6 @@ name = "agentdash-api"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent",
- "agentdash-agent-protocol",
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-host",
@@ -344,7 +343,6 @@ dependencies = [
 name = "agentdash-application-agentrun"
 version = "0.1.0"
 dependencies = [
- "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-service-api",
  "agentdash-application-ports",
@@ -480,7 +478,6 @@ name = "agentdash-application-vfs"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent",
- "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-application-ports",
  "agentdash-diagnostics",
@@ -515,7 +512,6 @@ dependencies = [
 name = "agentdash-application-workflow"
 version = "0.1.0"
 dependencies = [
- "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-application-ports",
  "agentdash-diagnostics",

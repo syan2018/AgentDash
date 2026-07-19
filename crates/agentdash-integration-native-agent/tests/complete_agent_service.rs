@@ -33,6 +33,7 @@ use agentdash_agent_service_api::{
     InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
     InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
+use agentdash_agent_protocol::BackboneEvent;
 use agentdash_integration_native_agent::{
     DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
     DashCompleteEffectRecord, DashCompleteSourceMetadata, DashCompleteSourceMutation,
@@ -886,18 +887,55 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
     assert_eq!(changes.changes.len(), 9);
     assert_eq!(changes.changes[0].cursor.as_str(), "1:0");
     assert_eq!(changes.changes[1].cursor.as_str(), "2:0");
-    assert!(matches!(
-        changes.changes[3].payload,
-        agentdash_agent_service_api::AgentChangePayload::ActiveTurnChanged {
-            active_turn_id: Some(_)
-        }
-    ));
-    assert!(matches!(
-        changes.changes[8].payload,
-        agentdash_agent_service_api::AgentChangePayload::ActiveTurnChanged {
-            active_turn_id: None
-        }
-    ));
+    assert!(changes.changes.iter().any(|change| matches!(
+        &change.payload,
+        agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+            state,
+            ..
+        } if matches!(
+            state.as_ref(),
+            agentdash_agent_service_api::AgentChangePayload::ActiveTurnChanged {
+                active_turn_id: Some(_)
+            }
+        )
+    )));
+    assert!(changes.changes.iter().any(|change| matches!(
+        &change.payload,
+        agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+            state,
+            ..
+        } if matches!(
+            state.as_ref(),
+            agentdash_agent_service_api::AgentChangePayload::ActiveTurnChanged {
+                active_turn_id: None
+            }
+        )
+    )));
+    let parent_snapshot = service
+        .read(AgentReadQuery {
+            source: parent.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert!(parent_snapshot.conversation_history.iter().any(|record| {
+        matches!(
+            &record.presentation.envelope.event,
+            BackboneEvent::UserInputSubmitted(_)
+        )
+    }));
+    assert!(parent_snapshot.conversation_history.iter().any(|record| {
+        matches!(
+            &record.presentation.envelope.event,
+            BackboneEvent::TurnStarted(_)
+        )
+    }));
+    assert!(parent_snapshot.conversation_history.iter().any(|record| {
+        matches!(
+            &record.presentation.envelope.event,
+            BackboneEvent::TurnCompleted(_)
+        )
+    }));
 
     let fork_command = ForkAgentCommand {
         meta: meta("fork-child", "effect-fork-child"),

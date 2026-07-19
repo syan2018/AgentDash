@@ -59,9 +59,11 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
   observer，并由恢复扫描沿同一 identity 续跑。
 - [x] 恢复 Wait service/provider 与 terminal convergence。
 - [x] 恢复 Workspace Module、Canvas、Terminal control/presentation composition。
-- [ ] 将 Lifecycle/Companion/Wait Product Tool contributions 接入最终 typed Broker
-  catalog；VFS、Task、Workspace Module Present 与 dynamic MCP 已进入 production
-  catalog。
+- [x] Lifecycle/Wait Product Tool contributions 已接入最终 typed Broker catalog；
+  Wait 读取真实 shell terminal registry，Lifecycle 通过 install-once typed binding
+  复用既有 orchestration reducer。
+- [ ] Companion Product Tool contribution 接入最终 typed Broker catalog；VFS、Task、
+  Workspace Module Present 与 dynamic MCP 已进入 production catalog。
 - [ ] 将 AgentFrame 已声明但 production Broker 缺失的
   `workspace_module_list/describe/operate/invoke` 以 typed Product command seam
   等价恢复；`workspace_module_present` 已进入 catalog。

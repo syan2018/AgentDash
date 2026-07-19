@@ -14,6 +14,14 @@
   reducer/renderer 已恢复。
 - [x] Lifecycle canonical history provider 已实现并注册到 VFS kernel。
 - [x] VFS surface route/resolver 已接 Product binding 与 AppliedResourceSurface。
+- [x] Application/Product 模块、API routes 与 AppState composition 已恢复到真实构建图；
+  `agentdash-application --lib` 317/317 通过。
+- [x] Complete Agent / Managed Runtime / Host / Native / Codex / Remote owner suites 通过；
+  AgentRun Product/恢复 suite 234/234 通过。
+- [x] Companion Full/Fresh、首输入、selected frame、gate/channel/task 与
+  `AfterSubagentDispatch` 已进入 durable continuation，并覆盖重启与保存响应丢失。
+- [x] Product RuntimeThread 语义已贯穿 Extension/Canvas/Workspace context、actor、DTO
+  与生成 TypeScript；transport 自有 session identity 在适配边界保持原义。
 - [ ] S4 Product Lane Ready：尚未通过。
 - [ ] 正式 S5 deletion manifest：尚未形成。
 
@@ -21,61 +29,63 @@
 
 ### Application modules
 
-- [ ] 恢复并挂载 `companion`。
-- [ ] 恢复并挂载 `frame_construction`。
-- [ ] 恢复并挂载 `routine`。
-- [ ] 重新挂载仍在源码树中的 `canvas`、`capability`、`runtime_tools`、
+- [x] 恢复并挂载 `companion`。
+- [x] 恢复并挂载 `frame_construction`。
+- [x] 恢复并挂载 `routine`。
+- [x] 重新挂载仍在源码树中的 `canvas`、`capability`、`runtime_tools`、
   `gate_wait_policy`、`wait_activity`。
-- [ ] 恢复旧 Hook presets 所承载的 Product effects inventory。
+- [x] 恢复旧 Hook presets 所承载的 Product effects inventory。
 
 ### API routes
 
-- [ ] 恢复 Companion gate routes。
-- [ ] 恢复 Routine public/secured routes。
-- [ ] 恢复 Canvas routes。
-- [ ] 恢复 Workspace Module routes。
-- [ ] 恢复 Terminal routes。
-- [ ] 保持并验证 VFS surface routes。
-- [ ] 恢复 AgentRun workspace/runtime trace 读取 routes。
+- [x] 恢复 Companion gate routes。
+- [x] 恢复 Routine public/secured routes。
+- [x] 恢复 Canvas routes。
+- [x] 恢复 Workspace Module routes。
+- [x] 恢复 Terminal routes。
+- [x] 保持并验证 VFS surface routes。
+- [x] 恢复 AgentRun workspace/runtime trace 读取 routes。
 
 ### AppState / production composition
 
-- [ ] 恢复 Companion model preflight。
-- [ ] 恢复 collaboration tool contribution。
-- [ ] 恢复 Companion coordinator/worker、parent mailbox delivery、gate wake、
+- [x] 恢复 Companion model preflight。
+- [ ] 将 collaboration tool contribution 接入最终 Runtime Tool Broker production catalog。
+- [x] 恢复 Companion coordinator/worker、parent mailbox delivery、gate wake、
   adoption/result。
 - [ ] 恢复 Routine executor 与 trigger composition。
-- [ ] 恢复 Wait service/provider 与 terminal convergence。
-- [ ] 恢复 Workspace Module、Canvas、Terminal control/presentation composition。
-- [ ] 恢复 Capability/Runtime Tool catalog contributions。
+- [x] 恢复 Wait service/provider 与 terminal convergence。
+- [x] 恢复 Workspace Module、Canvas、Terminal control/presentation composition。
+- [ ] 将 Lifecycle/Companion/Wait Product Tool contributions 接入最终 typed Broker
+  catalog；VFS、Task、Workspace Module 与 dynamic MCP 已进入 production catalog。
 
 ### Product behavior tests
 
-- [ ] 从 oracle 恢复 Companion、Frame Construction、Routine tests。
+- [x] 从 oracle 恢复 Companion、Frame Construction、Routine tests。
 - [ ] 从 oracle 恢复 AgentRun project start/delete/fork/message/workspace/mailbox tests。
 - [ ] 恢复 API route 与 AppState composition tracer tests。
 
 ## C2 — Final Seam Wiring
 
 - [ ] AgentRun create/input/control 只调用 Runtime Contract。
-- [ ] Companion Full 只调用 exact Runtime / Complete Agent Fork。
-- [ ] Companion fresh 只调用 Create + `InitialAgentContextPackage`，随后独立
+- [x] Companion Full 只调用 exact Runtime / Complete Agent Fork。
+- [x] Companion fresh 只调用 Create + `InitialAgentContextPackage`，随后独立
   `SubmitInput`。
-- [ ] Companion/channel/gate/adoption/result 只写 Product repositories。
+- [x] Companion/channel/gate/adoption/result 只写 Product repositories。
 - [ ] Dash collaboration tool 经 Tool Broker 调 Product Companion command。
 - [ ] Routine / Workflow AgentCall 经 AgentRun Product command 调 Runtime。
 - [ ] Capability/Runtime Tools 编译为 Runtime Surface / Tool Broker contributions。
-- [x] MCP discovery/executor 与静态 Product/VFS tools 共享同一 typed Runtime Tool
+- [x] MCP discovery/executor 与已迁移的静态 Product/VFS tools 共享同一 typed Runtime Tool
   Broker catalog；Surface compiler只引用可执行 tool requirements，Host callback 经
   Broker执行，MCP server metadata 不作为 context 注入。
-- [x] Hook Product effects 迁到 typed Product command/callback owner。
+- [ ] Complete Agent Hook 已进入 typed callback owner；Companion 等 Product-only Hook
+  effects 仍需退出旧 aggregate execution shell。
 - [x] Product Hook plan compiler/policy handler进入production composition；只将明确选择
   `AgentCoreCallback` / `DriverNative` 的site映射进Agent surface，空计划或无条件Allow
   不能作为required hook evidence。
-- [ ] Workspace/Canvas/VFS grants 只读 AppliedResourceSurface。
+- [x] Workspace/Canvas/VFS grants 只读 AppliedResourceSurface。
 - [x] Lifecycle VFS mount 进入 AgentRun AppliedResourceSurface materialization。
-- [ ] Terminal control与展示只读写 Product terminal projection/control owner。
-- [ ] AgentRun workspace/runtime trace 读取 canonical Product/Runtime projection。
+- [x] Terminal control与展示只读写 Product terminal projection/control owner。
+- [x] AgentRun workspace/runtime trace 读取 canonical Product/Runtime projection。
 - [x] 所有 conversation presentation 只使用 canonical App Server records。
 - [ ] Product 代码只依赖 Runtime Contract、Product repositories、AppliedResourceSurface
   与 canonical conversation protocol。
@@ -84,11 +94,11 @@
 
 - [ ] Project Agent / AgentRun create、resume、delete。
 - [ ] 普通 input → Complete Agent → canonical Turn/Item/output → UI。
-- [ ] Native exact fork 与 Codex native fork。
-- [ ] Companion Full exact history fork；selected child AgentFrame/surface/profile 在
+- [x] Native exact fork 与 Codex native fork。
+- [x] Companion Full exact history fork；selected child AgentFrame/surface/profile 在
   Activate 前独立应用，并覆盖 parent 与 specialist profile 不同的 tracer。
-- [ ] Companion Compact / WorkflowOnly / ConstraintsOnly fresh create。
-- [ ] Companion channel、gate、adoption、result、mailbox。
+- [x] Companion Compact / WorkflowOnly / ConstraintsOnly fresh create。
+- [x] Companion channel、gate、adoption、result、mailbox。
 - [ ] Dash collaboration tool spawn/read/wait/result。
 - [ ] Workflow AgentCall。
 - [ ] Routine trigger → AgentRun → terminal。
@@ -98,11 +108,14 @@
 - [x] Lifecycle VFS canonical `events.json` 与 derived indexes。
 - [ ] Terminal create/input/resize/close/projection。
 - [ ] Wait activity 与 gate/terminal convergence。
-- [x] Tool/Hook callback、permission、deadline、effect correlation。
+- [ ] Complete Agent Tool/Hook callback、permission、deadline、effect correlation 已通过；
+  等待剩余 Product Tool families 与 Product-only Hook effect 同样进入最终路径。
 - [x] MCP dynamic tool discovery → surface apply → Host callback → Broker execution。
-- [ ] Compaction Dash exact / Codex native projection。
+- [x] Compaction Dash exact / Codex native projection。
 - [x] reconnect cursor tail与gap snapshot reload。
-- [ ] restart/unknown outcome/recovery 使用同一 command/effect/child identity。
+- [x] Runtime、Fork、Companion、selected frame 与现有 Tool/Hook callback 的
+  restart/unknown outcome/recovery 使用同一 command/effect/child identity；Routine、
+  Workflow 与剩余 Product Tool families 完成后重新跑总门禁。
 
 ## C5 — Final Hard Cut
 

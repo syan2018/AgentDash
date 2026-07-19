@@ -2,16 +2,16 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_application_agentrun::agent_run::{AgentRunTerminalRegistry, TerminalOutputSnapshot};
-use agentdash_application_ports::agent_run_runtime::{
-    AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
-    AgentRunRuntimeTarget,
+use agentdash_application_agentrun::agent_run::{
+    AgentRunProductRuntimeBinding, AgentRunProductRuntimeBindingRepository,
+    AgentRunTerminalRegistry, TerminalOutputSnapshot,
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxCreateOutcome, AgentRunMailboxMessage, AgentRunMailboxRepository,
     MailboxMessageStatus, NewAgentRunMailboxMessage,
 };
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, GateWaitPolicyEnvelope, LifecycleAgent,
     LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
@@ -894,6 +894,7 @@ async fn runtime_tool_catalog_includes_wait() {
         WaitRuntimeToolProvider::from_service(test_service(AgentRunTerminalRegistry::new()));
     let composer =
         crate::runtime_tools::provider::RuntimeThreadToolComposer::new(vec![Arc::new(provider)]);
+    let frame_id = Uuid::new_v4();
     let context = ExecutionContext {
         session: agentdash_platform_spi::ExecutionSessionFrame {
             turn_id: "runtime-1".to_string(),
@@ -907,7 +908,22 @@ async fn runtime_tool_catalog_includes_wait() {
             runtime_backend_anchor: None,
             identity: None,
         },
-        turn: agentdash_platform_spi::ExecutionTurnFrame::default(),
+        turn: agentdash_platform_spi::ExecutionTurnFrame {
+            platform_tool_execution: Some(agentdash_platform_spi::PlatformToolExecutionContext {
+                run_id: Uuid::new_v4(),
+                project_id: Uuid::new_v4(),
+                agent_id: Uuid::new_v4(),
+                frame_id,
+                runtime_thread_id: RuntimeThreadId::new("runtime-1").expect("runtime thread id"),
+                invocation: None,
+                launch_evidence_frame_id: frame_id,
+                current_surface_frame_id: frame_id,
+                orchestration_id: None,
+                node_path: None,
+                node_attempt: None,
+            }),
+            ..agentdash_platform_spi::ExecutionTurnFrame::default()
+        },
     };
 
     let tools = composer.build_tools(&context).await.expect("build tools");
@@ -1066,40 +1082,19 @@ impl AgentFrameRepository for NoopAgentFrameRepo {
 struct NoopRuntimeBindingRepo;
 
 #[async_trait]
-impl AgentRunRuntimeBindingRepository for NoopRuntimeBindingRepo {
-    async fn load(
+impl AgentRunProductRuntimeBindingRepository for NoopRuntimeBindingRepo {
+    async fn load_product_binding(
         &self,
-        _target: &AgentRunRuntimeTarget,
-    ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+        _target: &AgentRunTarget,
+    ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
         Ok(None)
     }
 
-    async fn load_by_thread_id(
+    async fn load_product_binding_by_runtime_thread(
         &self,
         _thread_id: &RuntimeThreadId,
-    ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+    ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
         Ok(None)
-    }
-
-    async fn list_by_run(
-        &self,
-        _run_id: Uuid,
-    ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
-        Ok(Vec::new())
-    }
-
-    async fn list_by_agent(
-        &self,
-        _agent_id: Uuid,
-    ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
-        Ok(Vec::new())
-    }
-
-    async fn insert(
-        &self,
-        binding: AgentRunRuntimeBinding,
-    ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
-        Ok(binding)
     }
 }
 

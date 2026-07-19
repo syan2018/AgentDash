@@ -392,19 +392,28 @@ fn decode_cursor(cursor: &str) -> Option<(i64, Uuid)> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
 
     use super::*;
-    use agentdash_agent_runtime_contract::*;
+    use agentdash_agent_runtime_contract::{
+        ManagedRuntimeChangePage, ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
+        ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot,
+        ManagedRuntimeSourceBindingEvidence, RuntimeChangeSequence, RuntimeProjectionRevision,
+        RuntimeSourceRef, SurfaceRevision,
+    };
     use agentdash_application_agentrun::agent_run::{
-        AcceptAgentRunMessage, AgentRunMessageAdmission, AgentRunRuntimeError, AgentRunRuntimeView,
-        ForkAgentRunRuntime, GuardedAgentRunCommand, ReadAgentRunEvents,
-        ResolveAgentRunInteraction, SendAgentRunMessage, SteerAgentRunTurn,
+        AgentRunProductProjectionError, AgentRunProductRuntimeBinding, AgentRunTerminalChangePage,
+        AgentRunTerminalChangeSequence, AgentRunTerminalSnapshot, ProductAgentFrameRef,
     };
     use agentdash_domain::workflow::AgentSource;
     use agentdash_test_support::workflow::{
         MemoryAgentLineageRepository, MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
         MemoryLifecycleSubjectAssociationRepository, MemoryProjectAgentRepository,
+    };
+    use agentdash_workspace_module::workspace_module::presentation_protocol::{
+        WorkspaceModulePresentationAcknowledgeRequest, WorkspaceModulePresentationChange,
+        WorkspaceModulePresentationChangePage, WorkspaceModulePresentationChangeSequence,
+        WorkspaceModulePresentationSnapshot,
     };
     use async_trait::async_trait;
     use chrono::{Duration, Utc};
@@ -415,94 +424,89 @@ mod tests {
     }
 
     #[async_trait]
-    impl AgentRunRuntime for FixtureRuntime {
-        async fn append_presentation(
+    impl AgentRunProductProjectionQueryPort for FixtureRuntime {
+        async fn runtime_snapshot(
             &self,
-            _: agentdash_application_agentrun::agent_run::AppendAgentRunPresentation,
-        ) -> Result<RuntimePresentationAppendReceipt, AgentRunRuntimeError> {
-            Err(AgentRunRuntimeError::BindingNotFound)
+            _: &AgentRunTarget,
+        ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
+            if self.fail_inspect {
+                return Err(AgentRunProductProjectionError::Runtime(
+                    "fixture projection failure".to_string(),
+                ));
+            }
+            self.thread_name
+                .clone()
+                .map(runtime_snapshot)
+                .ok_or(AgentRunProductProjectionError::TargetNotBound)
         }
 
-        async fn inspect(
+        async fn runtime_snapshot_observation(
             &self,
-            target: AgentRunRuntimeTarget,
-        ) -> Result<AgentRunRuntimeView, AgentRunRuntimeError> {
+            target: &AgentRunTarget,
+        ) -> Result<AgentRunProductRuntimeSnapshotObservation, AgentRunProductProjectionError>
+        {
             if self.fail_inspect {
-                return Err(AgentRunRuntimeError::BindingNotFound);
+                return Err(AgentRunProductProjectionError::Runtime(
+                    "fixture projection failure".to_string(),
+                ));
             }
-            Ok(AgentRunRuntimeView {
-                target,
-                binding: None,
-                snapshot: self.thread_name.clone().map(runtime_snapshot),
-                binding_epoch: None,
-                recovery: agentdash_application_agentrun::agent_run::AgentRunRuntimeRecoverySummary::Active,
+            let Some(thread_name) = self.thread_name.clone() else {
+                return Ok(AgentRunProductRuntimeSnapshotObservation::Absent {
+                    requested_target: target.clone(),
+                });
+            };
+            let snapshot = runtime_snapshot(thread_name);
+            Ok(AgentRunProductRuntimeSnapshotObservation::Current {
+                product_binding: runtime_binding(target.clone(), &snapshot),
+                snapshot,
             })
         }
 
-        async fn send_message(
+        async fn runtime_changes(
             &self,
-            _: SendAgentRunMessage,
-        ) -> Result<OperationReceipt, AgentRunRuntimeError> {
-            Err(AgentRunRuntimeError::BindingNotFound)
+            _: &AgentRunTarget,
+            _: Option<RuntimeChangeSequence>,
+        ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
+            Err(AgentRunProductProjectionError::Runtime("unused".into()))
         }
 
-        async fn accept_message(
+        async fn workspace_presentation_snapshot(
             &self,
-            _: AcceptAgentRunMessage,
-        ) -> Result<AgentRunMessageAdmission, AgentRunRuntimeError> {
-            Err(AgentRunRuntimeError::BindingNotFound)
+            _: &AgentRunTarget,
+        ) -> Result<WorkspaceModulePresentationSnapshot, AgentRunProductProjectionError> {
+            Err(AgentRunProductProjectionError::Workspace("unused".into()))
         }
 
-        async fn fork_runtime(
+        async fn workspace_presentation_changes(
             &self,
-            _: ForkAgentRunRuntime,
-        ) -> Result<
-            agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBinding,
-            AgentRunRuntimeError,
-        > {
-            Err(AgentRunRuntimeError::BindingNotFound)
+            _: &AgentRunTarget,
+            _: Option<WorkspaceModulePresentationChangeSequence>,
+            _: usize,
+        ) -> Result<WorkspaceModulePresentationChangePage, AgentRunProductProjectionError> {
+            Err(AgentRunProductProjectionError::Workspace("unused".into()))
         }
 
-        async fn compact_context(
+        async fn acknowledge_workspace_presentation(
             &self,
-            _: GuardedAgentRunCommand,
-        ) -> Result<OperationReceipt, AgentRunRuntimeError> {
-            Err(AgentRunRuntimeError::BindingNotFound)
+            _: WorkspaceModulePresentationAcknowledgeRequest,
+        ) -> Result<WorkspaceModulePresentationChange, AgentRunProductProjectionError> {
+            Err(AgentRunProductProjectionError::Workspace("unused".into()))
         }
 
-        async fn steer_active_turn(
+        async fn terminal_snapshot(
             &self,
-            _: SteerAgentRunTurn,
-        ) -> Result<OperationReceipt, AgentRunRuntimeError> {
-            Err(AgentRunRuntimeError::BindingNotFound)
+            _: &AgentRunTarget,
+        ) -> Result<AgentRunTerminalSnapshot, AgentRunProductProjectionError> {
+            Err(AgentRunProductProjectionError::Terminal("unused".into()))
         }
 
-        async fn interrupt_active_turn(
+        async fn terminal_changes(
             &self,
-            _: GuardedAgentRunCommand,
-        ) -> Result<OperationReceipt, AgentRunRuntimeError> {
-            Err(AgentRunRuntimeError::BindingNotFound)
-        }
-
-        async fn resolve_interaction(
-            &self,
-            _: ResolveAgentRunInteraction,
-        ) -> Result<OperationReceipt, AgentRunRuntimeError> {
-            Err(AgentRunRuntimeError::BindingNotFound)
-        }
-
-        async fn read_context(
-            &self,
-            _: AgentRunRuntimeTarget,
-        ) -> Result<RuntimeContextView, AgentRunRuntimeError> {
-            Err(AgentRunRuntimeError::BindingNotFound)
-        }
-
-        async fn read_events(
-            &self,
-            _: ReadAgentRunEvents,
-        ) -> Result<Box<dyn RuntimeEventStream>, AgentRunRuntimeError> {
-            Err(AgentRunRuntimeError::BindingNotFound)
+            _: &AgentRunTarget,
+            _: Option<AgentRunTerminalChangeSequence>,
+            _: usize,
+        ) -> Result<AgentRunTerminalChangePage, AgentRunProductProjectionError> {
+            Err(AgentRunProductProjectionError::Terminal("unused".into()))
         }
     }
 
@@ -530,7 +534,7 @@ mod tests {
             lineage_repo: lineage_repo.clone(),
             subject_repo: Arc::new(MemoryLifecycleSubjectAssociationRepository::default()),
             project_agent_repo: Arc::new(MemoryProjectAgentRepository::default()),
-            runtime: Arc::new(FixtureRuntime {
+            product_projection: Arc::new(FixtureRuntime {
                 fail_inspect,
                 thread_name: thread_name.map(str::to_string),
             }),
@@ -543,79 +547,51 @@ mod tests {
         }
     }
 
-    fn runtime_snapshot(thread_name: String) -> RuntimeSnapshot {
-        RuntimeSnapshot {
+    fn source_binding() -> ManagedRuntimeSourceBindingEvidence {
+        ManagedRuntimeSourceBindingEvidence {
+            source_ref: RuntimeSourceRef::new("source-list-title").expect("source ref"),
+            committed_at_revision: RuntimeProjectionRevision(1),
+            applied_surface_revision: SurfaceRevision(1),
+            activated_at_revision: Some(RuntimeProjectionRevision(1)),
+        }
+    }
+
+    fn runtime_binding(
+        target: AgentRunTarget,
+        snapshot: &ManagedRuntimeSnapshot,
+    ) -> AgentRunProductRuntimeBinding {
+        AgentRunProductRuntimeBinding {
+            target: target.clone(),
+            runtime_thread_id: snapshot.thread_id.clone(),
+            launch_frame: ProductAgentFrameRef {
+                frame_id: Uuid::new_v4(),
+                agent_id: target.agent_id,
+                revision: 1,
+            },
+            execution_profile_digest: "sha256:list-title-profile".to_string(),
+            source_binding: source_binding(),
+        }
+    }
+
+    fn runtime_snapshot(thread_name: String) -> ManagedRuntimeSnapshot {
+        ManagedRuntimeSnapshot {
             thread_id: "thread-list-title".parse().expect("thread id"),
-            revision: RuntimeRevision(1),
-            latest_event_sequence: EventSequence(1),
+            revision: RuntimeProjectionRevision(1),
+            latest_change_sequence: RuntimeChangeSequence(1),
             captured_at_ms: 1,
-            status: RuntimeThreadStatus::Active,
+            lifecycle: ManagedRuntimeLifecycleStatus::Active,
             thread_name: Some(thread_name),
+            thread_name_source: None,
             active_turn_id: None,
-            active_presentation_turn_id: None,
-            binding_id: "binding-list-title".parse().expect("binding id"),
-            binding_epoch: BindingEpoch(1),
-            profile_digest: "profile-list-title".parse().expect("profile digest"),
-            bound_profile: RuntimeProfile {
-                reference_class: ReferenceRuntimeClass::ManagedThread,
-                input: InputProfile {
-                    modalities: BTreeSet::new(),
-                },
-                instruction: InstructionProfile {
-                    channels: BTreeSet::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                },
-                tools: ToolProfile {
-                    channels: BTreeSet::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                    cancellation: true,
-                },
-                workspace: WorkspaceProfile {
-                    capabilities: BTreeSet::new(),
-                    mechanism: DeliveryMechanism::Native,
-                },
-                interactions: InteractionProfile {
-                    kinds: BTreeSet::new(),
-                    durable_correlation: true,
-                },
-                lifecycle: BTreeSet::new(),
-                hooks: HookProfile {
-                    points: Vec::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                },
-                context: ContextProfile {
-                    capabilities: BTreeSet::new(),
-                    fidelity: ContextFidelity::Opaque,
-                    activation_idempotent: false,
-                },
-                telemetry_config: BTreeSet::new(),
-            },
-            surface: RuntimeSurfaceDescriptor {
-                source_frame_id: "frame-list-title".to_string(),
-                surface_revision: SurfaceRevision(1),
-                surface_digest: "surface-list-title".parse().expect("surface digest"),
-                vfs_digest: "vfs-list-title".to_string(),
-                context_recipe_revision: ContextRecipeRevision(1),
-                context_digest: "context-list-title".parse().expect("context digest"),
-                settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision: ToolSetRevision(0),
-                tool_set_digest: "tools-list-title".to_string(),
-                hook_plan: BoundRuntimeHookPlan {
-                    revision: HookPlanRevision(1),
-                    digest: "hook-list-title".parse().expect("hook digest"),
-                    entries: Vec::new(),
-                },
-                terminal_hook_effect_binding: None,
-            },
-            active_checkpoint_id: None,
-            context_revision: ContextRevision(0),
-            settings_revision: ThreadSettingsRevision(0),
-            tool_set_revision: ToolSetRevision(0),
-            pending_interactions: Vec::new(),
-            pending_interaction_details: Vec::new(),
+            turns: Vec::new(),
+            items: Vec::new(),
+            interactions: Vec::new(),
+            conversation_history: Vec::new(),
+            operations: Vec::new(),
+            source_binding: Some(source_binding()),
+            authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
+            fidelity: ManagedRuntimeProjectionFidelity::Exact,
             command_availability: BTreeMap::new(),
-            transcript: Vec::new(),
-            transcript_fidelity: ContextFidelity::Opaque,
         }
     }
 

@@ -1293,14 +1293,16 @@ fn payload_uuid(payload: &serde_json::Value, key: &str) -> Result<Uuid, Applicat
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{BTreeSet, HashMap, HashSet},
-        str::FromStr,
+        collections::{HashMap, HashSet},
         sync::{Arc, Mutex},
     };
 
-    use agentdash_agent_runtime_contract::*;
-    use agentdash_application_ports::agent_run_runtime::{
-        AgentRunRuntimeBinding, AgentRunRuntimeBindingError,
+    use agentdash_agent_runtime_contract::{
+        ManagedRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
+        RuntimeThreadId, SurfaceRevision,
+    };
+    use agentdash_application_agentrun::agent_run::{
+        AgentRunProductRuntimeBinding, ProductAgentFrameRef,
     };
     use agentdash_domain::{
         DomainError,
@@ -1593,7 +1595,7 @@ mod tests {
 
     #[derive(Default)]
     struct FixtureRuntimeBindingRepo {
-        bindings: Mutex<Vec<AgentRunRuntimeBinding>>,
+        bindings: Mutex<Vec<AgentRunProductRuntimeBinding>>,
     }
 
     impl FixtureRuntimeBindingRepo {
@@ -1604,7 +1606,7 @@ mod tests {
                 if let Some(session_ids) = sessions_by_frame.get(&frame.id)
                     && let Some(runtime_thread_id) = session_ids.last()
                 {
-                    bindings.push(runtime_binding(run_id, frame.agent_id, runtime_thread_id));
+                    bindings.push(runtime_binding(run_id, frame, runtime_thread_id));
                 }
             }
             Self {
@@ -1614,11 +1616,11 @@ mod tests {
     }
 
     #[async_trait]
-    impl AgentRunRuntimeBindingRepository for FixtureRuntimeBindingRepo {
-        async fn load(
+    impl AgentRunProductRuntimeBindingRepository for FixtureRuntimeBindingRepo {
+        async fn load_product_binding(
             &self,
-            target: &AgentRunRuntimeTarget,
-        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            target: &AgentRunTarget,
+        ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
             Ok(self
                 .bindings
                 .lock()
@@ -1627,132 +1629,45 @@ mod tests {
                 .find(|binding| &binding.target == target)
                 .cloned())
         }
-        async fn load_by_thread_id(
+
+        async fn load_product_binding_by_runtime_thread(
             &self,
             thread_id: &RuntimeThreadId,
-        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+        ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
             Ok(self
                 .bindings
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|binding| &binding.thread_id == thread_id)
+                .find(|binding| &binding.runtime_thread_id == thread_id)
                 .cloned())
         }
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
-            Ok(self
-                .bindings
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|binding| binding.target.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-        async fn list_by_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
-            Ok(self
-                .bindings
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|binding| binding.target.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-        async fn insert(
-            &self,
-            binding: AgentRunRuntimeBinding,
-        ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
-            self.bindings.lock().unwrap().push(binding.clone());
-            Ok(binding)
-        }
     }
 
-    fn runtime_id<T: FromStr>(value: &str) -> T
-    where
-        T::Err: std::fmt::Debug,
-    {
-        value.parse().expect("valid runtime id")
-    }
-
-    fn runtime_binding(run_id: Uuid, agent_id: Uuid, thread_id: &str) -> AgentRunRuntimeBinding {
-        AgentRunRuntimeBinding {
-            target: AgentRunRuntimeTarget { run_id, agent_id },
-            presentation_thread_id: runtime_id(&format!("presentation-{thread_id}")),
-            thread_id: runtime_id(thread_id),
-            binding_id: runtime_id(&format!("binding-{thread_id}")),
-            binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
-            driver_generation: RuntimeDriverGeneration(1),
-            source_thread_id: runtime_id(&format!("source-{thread_id}")),
-            profile_digest: runtime_id("profile-gate-control"),
-            profile_provenance: ProfileProvenance {
-                service_digest: runtime_id("service-gate-control"),
-                transport_digest: runtime_id("transport-gate-control"),
-                host_policy_digest: runtime_id("policy-gate-control"),
+    fn runtime_binding(
+        run_id: Uuid,
+        frame: &AgentFrame,
+        thread_id: &str,
+    ) -> AgentRunProductRuntimeBinding {
+        AgentRunProductRuntimeBinding {
+            target: AgentRunTarget {
+                run_id,
+                agent_id: frame.agent_id,
             },
-            bound_profile: RuntimeProfile {
-                reference_class: ReferenceRuntimeClass::ManagedThread,
-                input: InputProfile {
-                    modalities: BTreeSet::new(),
-                },
-                instruction: InstructionProfile {
-                    channels: BTreeSet::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                },
-                tools: ToolProfile {
-                    channels: BTreeSet::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                    cancellation: true,
-                },
-                workspace: WorkspaceProfile {
-                    capabilities: BTreeSet::new(),
-                    mechanism: DeliveryMechanism::Native,
-                },
-                interactions: InteractionProfile {
-                    kinds: BTreeSet::new(),
-                    durable_correlation: true,
-                },
-                lifecycle: BTreeSet::new(),
-                hooks: HookProfile {
-                    points: Vec::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                },
-                context: ContextProfile {
-                    capabilities: BTreeSet::new(),
-                    fidelity: ContextFidelity::Opaque,
-                    activation_idempotent: false,
-                },
-                telemetry_config: BTreeSet::new(),
+            runtime_thread_id: RuntimeThreadId::new(thread_id).expect("runtime thread id"),
+            launch_frame: ProductAgentFrameRef {
+                frame_id: frame.id,
+                agent_id: frame.agent_id,
+                revision: u64::try_from(frame.revision).expect("positive frame revision"),
             },
-            surface: agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
-                source_frame_id: "frame-gate-control".to_string(),
-                surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(1),
-                surface_digest: runtime_id("surface-gate-control"),
-                vfs_digest: "vfs-gate-control".to_string(),
-                context_recipe_revision: agentdash_agent_runtime_contract::ContextRecipeRevision(1),
-                context_digest: runtime_id("context-gate-control"),
-                settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision: ToolSetRevision(0),
-                tool_set_digest: "tools-gate-control".to_string(),
-                hook_plan: BoundRuntimeHookPlan {
-                    revision: HookPlanRevision(1),
-                    digest: runtime_id("hook-gate-control"),
-                    entries: Vec::new(),
-                },
-                terminal_hook_effect_binding: None,
+            execution_profile_digest: "sha256:gate-control-profile".to_string(),
+            source_binding: ManagedRuntimeSourceBindingEvidence {
+                source_ref: RuntimeSourceRef::new(format!("source-{thread_id}"))
+                    .expect("source ref"),
+                committed_at_revision: RuntimeProjectionRevision(1),
+                applied_surface_revision: SurfaceRevision(1),
+                activated_at_revision: Some(RuntimeProjectionRevision(1)),
             },
-            settings_revision: ThreadSettingsRevision(0),
-            context_delivery_target:
-                agentdash_application_ports::agent_run_runtime::AgentRunContextDeliveryTarget {
-                    connector_id: "pi-agent".to_string(),
-                    executor: "PI_AGENT".to_string(),
-                },
         }
     }
 

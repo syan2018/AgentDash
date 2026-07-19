@@ -8,6 +8,7 @@ use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_platform_spi::AgentConfig;
 
 use super::CompanionDispatchTargetPlan;
+use crate::agent_run::PreparedAgentRunProductInputDelivery;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +61,7 @@ pub struct CompanionContinuationRequest {
 pub enum CompanionContinuationPhase {
     Requested,
     RuntimeReady,
+    FirstInputPrepared,
     FirstInputConverged,
     GateConverged,
     ChannelConverged,
@@ -88,6 +90,15 @@ pub struct CompanionFirstInputEvidence {
     pub submitted_by_runtime_protocol: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CompanionPreparedFirstInputEvidence {
+    ProductDelivery {
+        envelope: PreparedAgentRunProductInputDelivery,
+    },
+    FreshRuntimeProtocol,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompanionGateEvidence {
     pub gate_id: Option<Uuid>,
@@ -106,9 +117,10 @@ pub struct CompanionTaskEvidence {
     pub assigned_agent_id: Option<Uuid>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CompanionContinuationEvidence {
     pub runtime: Option<CompanionRuntimeReadyEvidence>,
+    pub prepared_first_input: Option<CompanionPreparedFirstInputEvidence>,
     pub first_input: Option<CompanionFirstInputEvidence>,
     pub gate: Option<CompanionGateEvidence>,
     pub channel: Option<CompanionChannelEvidence>,
@@ -133,6 +145,7 @@ pub struct CompanionContinuationSaga {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompanionContinuationStep {
     InspectRuntime,
+    PrepareFirstInput,
     ConvergeFirstInput,
     ConvergeGate,
     ConvergeChannel,
@@ -236,6 +249,9 @@ impl CompanionContinuationSaga {
         match self.phase {
             CompanionContinuationPhase::Requested => CompanionContinuationStep::InspectRuntime,
             CompanionContinuationPhase::RuntimeReady => {
+                CompanionContinuationStep::PrepareFirstInput
+            }
+            CompanionContinuationPhase::FirstInputPrepared => {
                 CompanionContinuationStep::ConvergeFirstInput
             }
             CompanionContinuationPhase::FirstInputConverged => {
@@ -277,11 +293,23 @@ impl CompanionContinuationSaga {
     }
 
     fn record_first_input(&mut self, evidence: CompanionFirstInputEvidence) -> Result<(), String> {
-        if self.phase != CompanionContinuationPhase::RuntimeReady {
+        if self.phase != CompanionContinuationPhase::FirstInputPrepared {
             return Err("Companion first input is out of order".to_owned());
         }
         self.evidence.first_input = Some(evidence);
         self.phase = CompanionContinuationPhase::FirstInputConverged;
+        Ok(())
+    }
+
+    fn record_prepared_first_input(
+        &mut self,
+        evidence: CompanionPreparedFirstInputEvidence,
+    ) -> Result<(), String> {
+        if self.phase != CompanionContinuationPhase::RuntimeReady {
+            return Err("Companion first input preparation is out of order".to_owned());
+        }
+        self.evidence.prepared_first_input = Some(evidence);
+        self.phase = CompanionContinuationPhase::FirstInputPrepared;
         Ok(())
     }
 
@@ -386,6 +414,11 @@ pub trait CompanionContinuationEffectPort: Send + Sync {
         saga: &CompanionContinuationSaga,
         identity: &CompanionContinuationEffectIdentity,
     ) -> Result<CompanionEffectProgress<CompanionFirstInputEvidence>, String>;
+    async fn prepare_first_input(
+        &self,
+        saga: &CompanionContinuationSaga,
+        identity: &CompanionContinuationEffectIdentity,
+    ) -> Result<CompanionEffectProgress<CompanionPreparedFirstInputEvidence>, String>;
     async fn converge_gate(
         &self,
         saga: &CompanionContinuationSaga,
@@ -452,6 +485,16 @@ impl<'a> CompanionContinuationWorker<'a> {
                     Err(reason) => Err(reason),
                 }
             }
+            CompanionContinuationStep::PrepareFirstInput => {
+                let identity = saga.effect_identity(CompanionContinuationPhase::FirstInputPrepared);
+                match self.effects.prepare_first_input(&saga, &identity).await {
+                    Ok(CompanionEffectProgress::Pending) => return Ok(saga),
+                    Ok(CompanionEffectProgress::Applied(evidence)) => {
+                        saga.record_prepared_first_input(evidence)
+                    }
+                    Err(reason) => Err(reason),
+                }
+            }
             CompanionContinuationStep::ConvergeGate => {
                 let identity = saga.effect_identity(CompanionContinuationPhase::GateConverged);
                 self.effects
@@ -497,6 +540,7 @@ fn phase_slug(phase: CompanionContinuationPhase) -> &'static str {
     match phase {
         CompanionContinuationPhase::Requested => "requested",
         CompanionContinuationPhase::RuntimeReady => "runtime-ready",
+        CompanionContinuationPhase::FirstInputPrepared => "first-input-prepared",
         CompanionContinuationPhase::FirstInputConverged => "first-input-converged",
         CompanionContinuationPhase::GateConverged => "gate-converged",
         CompanionContinuationPhase::ChannelConverged => "channel-converged",
@@ -661,6 +705,55 @@ mod tests {
             ))
         }
 
+        async fn prepare_first_input(
+            &self,
+            saga: &CompanionContinuationSaga,
+            identity: &CompanionContinuationEffectIdentity,
+        ) -> Result<CompanionEffectProgress<CompanionPreparedFirstInputEvidence>, String> {
+            self.record("prepare_first_input", identity);
+            Ok(CompanionEffectProgress::Applied(
+                match saga.request().runtime_protocol {
+                    CompanionContinuationRuntimeProtocol::FullFork => {
+                        CompanionPreparedFirstInputEvidence::ProductDelivery {
+                            envelope: PreparedAgentRunProductInputDelivery {
+                                mailbox_message_id: stable_uuid(
+                                    saga.request().request_id,
+                                    "mailbox",
+                                ),
+                                command_request:
+                                    crate::agent_run::AgentRunProductCommandRequest {
+                                        target: agentdash_domain::agent_run_target::AgentRunTarget {
+                                            run_id: saga.request().child_run_id,
+                                            agent_id: saga.request().child_agent_id,
+                                        },
+                                        client_command_id: identity.idempotency_key.clone(),
+                                        expected_revision:
+                                            agentdash_agent_runtime_contract::RuntimeProjectionRevision(
+                                                7,
+                                            ),
+                                        command:
+                                            crate::agent_run::AgentRunProductCommand::SubmitInput {
+                                                content: vec![
+                                                    agentdash_agent_runtime_contract::ManagedRuntimeContentBlock::Text {
+                                                        text: saga
+                                                            .request()
+                                                            .first_input_text
+                                                            .clone(),
+                                                    },
+                                                ],
+                                            },
+                                    },
+                                steered: false,
+                            },
+                        }
+                    }
+                    CompanionContinuationRuntimeProtocol::FreshCreate => {
+                        CompanionPreparedFirstInputEvidence::FreshRuntimeProtocol
+                    }
+                },
+            ))
+        }
+
         async fn converge_gate(
             &self,
             saga: &CompanionContinuationSaga,
@@ -799,7 +892,7 @@ mod tests {
         request_id: Uuid,
     ) -> CompanionContinuationSaga {
         let worker = CompanionContinuationWorker::new(repository, effects);
-        for _ in 0..8 {
+        for _ in 0..9 {
             let saga = worker.advance(request_id).await.expect("advance");
             if saga.phase() == CompanionContinuationPhase::Succeeded {
                 return saga;
@@ -821,6 +914,10 @@ mod tests {
             .advance(request.request_id)
             .await
             .expect("runtime ready");
+        CompanionContinuationWorker::new(repository.as_ref(), effects.as_ref())
+            .advance(request.request_id)
+            .await
+            .expect("first input prepared");
 
         repository.fail_next_save();
         let failure = CompanionContinuationWorker::new(repository.as_ref(), effects.as_ref())
@@ -839,7 +936,7 @@ mod tests {
         assert_eq!(invocations[0], invocations[1]);
         assert_eq!(
             effects.logical_effects.lock().expect("logical lock").len(),
-            4
+            5
         );
         assert!(
             !terminal
@@ -849,6 +946,22 @@ mod tests {
                 .expect("first input")
                 .submitted_by_runtime_protocol
         );
+        let CompanionPreparedFirstInputEvidence::ProductDelivery { envelope } = terminal
+            .evidence()
+            .prepared_first_input
+            .as_ref()
+            .expect("prepared first input")
+        else {
+            panic!("Full Companion must persist a Product delivery envelope");
+        };
+        assert_eq!(
+            envelope.command_request.expected_revision,
+            agentdash_agent_runtime_contract::RuntimeProjectionRevision(7)
+        );
+        assert!(matches!(
+            envelope.command_request.command,
+            crate::agent_run::AgentRunProductCommand::SubmitInput { .. }
+        ));
     }
 
     #[tokio::test]
@@ -905,6 +1018,7 @@ mod tests {
 
         for expected in [
             CompanionContinuationPhase::RuntimeReady,
+            CompanionContinuationPhase::FirstInputPrepared,
             CompanionContinuationPhase::FirstInputConverged,
             CompanionContinuationPhase::GateConverged,
             CompanionContinuationPhase::ChannelConverged,

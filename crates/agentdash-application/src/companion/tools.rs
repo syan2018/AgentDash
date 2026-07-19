@@ -1548,7 +1548,7 @@ impl CompanionRequestTool {
                 .companion_continuation_effects
                 .as_ref(),
         );
-        for _ in 0..6 {
+        for _ in 0..7 {
             if continuation.phase() == CompanionContinuationPhase::Succeeded
                 || continuation.failure().is_some()
             {

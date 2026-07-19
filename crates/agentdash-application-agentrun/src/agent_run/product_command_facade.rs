@@ -9,7 +9,7 @@ use agentdash_agent_runtime_contract::{
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -51,7 +51,7 @@ pub trait ProductRuntimeCommandClaimRepository: Send + Sync {
     ) -> Result<ManagedRuntimeCommandEnvelope, ProductRuntimeCommandClaimError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentRunProductCommand {
     SubmitInput {
         content: Vec<ManagedRuntimeContentBlock>,
@@ -78,7 +78,7 @@ impl AgentRunProductCommand {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentRunProductCommandRequest {
     pub target: AgentRunTarget,
     pub client_command_id: String,

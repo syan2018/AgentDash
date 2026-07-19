@@ -11,6 +11,7 @@ use agentdash_domain::agent_run_mailbox::{
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
@@ -36,6 +37,19 @@ pub struct AgentRunProductInputDelivery {
     pub queued: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreparedAgentRunProductInputDelivery {
+    pub mailbox_message_id: Uuid,
+    pub command_request: AgentRunProductCommandRequest,
+    pub steered: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentRunProductInputPreparation {
+    Pending { mailbox_message_id: Uuid },
+    Prepared(PreparedAgentRunProductInputDelivery),
+}
+
 #[derive(Debug, Error)]
 pub enum AgentRunProductInputDeliveryError {
     #[error("Product input is empty")]
@@ -54,10 +68,33 @@ pub enum AgentRunProductInputDeliveryError {
 
 #[async_trait]
 pub trait AgentRunProductInputDeliveryPort: Send + Sync {
+    async fn prepare_delivery(
+        &self,
+        command: DeliverAgentRunProductInput,
+    ) -> Result<AgentRunProductInputPreparation, AgentRunProductInputDeliveryError>;
+
+    async fn dispatch_prepared(
+        &self,
+        prepared: PreparedAgentRunProductInputDelivery,
+    ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError>;
+
     async fn deliver(
         &self,
         command: DeliverAgentRunProductInput,
-    ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError>;
+    ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError> {
+        match self.prepare_delivery(command).await? {
+            AgentRunProductInputPreparation::Pending { mailbox_message_id } => {
+                Ok(AgentRunProductInputDelivery {
+                    mailbox_message_id,
+                    operation_receipt: None,
+                    queued: true,
+                })
+            }
+            AgentRunProductInputPreparation::Prepared(prepared) => {
+                self.dispatch_prepared(prepared).await
+            }
+        }
+    }
 
     /// 记录已经由同一 Product durable protocol 提交的输入，不再次调用 Runtime。
     async fn record_dispatched(
@@ -88,6 +125,87 @@ impl AgentRunProductInputDeliveryService {
 
 #[async_trait]
 impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
+    async fn prepare_delivery(
+        &self,
+        command: DeliverAgentRunProductInput,
+    ) -> Result<AgentRunProductInputPreparation, AgentRunProductInputDeliveryError> {
+        let client_command_id = command.client_command_id.trim().to_owned();
+        let managed_content = managed_content(&command.content)?;
+        let mailbox_message = self.persist_message(&command).await?;
+        let observation = self
+            .projection
+            .runtime_snapshot_observation(&command.target)
+            .await
+            .map_err(|error| AgentRunProductInputDeliveryError::Projection(error.to_string()))?;
+        let snapshot = match observation {
+            AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
+                return Ok(AgentRunProductInputPreparation::Pending {
+                    mailbox_message_id: mailbox_message.id,
+                });
+            }
+            AgentRunProductRuntimeSnapshotObservation::Stale(_) => {
+                return Err(AgentRunProductInputDeliveryError::StaleProjection);
+            }
+            AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => snapshot,
+        };
+        let command_kind = if snapshot.active_turn_id.is_some() {
+            ManagedRuntimeCommandKind::Steer
+        } else {
+            ManagedRuntimeCommandKind::SubmitInput
+        };
+        if !matches!(
+            snapshot.command_availability.get(&command_kind),
+            Some(ManagedRuntimeCommandAvailability::Available { .. })
+        ) {
+            return Ok(AgentRunProductInputPreparation::Pending {
+                mailbox_message_id: mailbox_message.id,
+            });
+        }
+        Ok(AgentRunProductInputPreparation::Prepared(
+            PreparedAgentRunProductInputDelivery {
+                mailbox_message_id: mailbox_message.id,
+                command_request: AgentRunProductCommandRequest {
+                    target: command.target,
+                    client_command_id,
+                    expected_revision: snapshot.revision,
+                    command: AgentRunProductCommand::SubmitInput {
+                        content: managed_content,
+                    },
+                },
+                steered: snapshot.active_turn_id.is_some(),
+            },
+        ))
+    }
+
+    async fn dispatch_prepared(
+        &self,
+        prepared: PreparedAgentRunProductInputDelivery,
+    ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError> {
+        let receipt = self
+            .commands
+            .execute(prepared.command_request)
+            .await
+            .map_err(|error| AgentRunProductInputDeliveryError::Command(error.to_string()))?;
+        self.mailbox
+            .mark_message_status(
+                prepared.mailbox_message_id,
+                None,
+                if prepared.steered {
+                    MailboxMessageStatus::Steered
+                } else {
+                    MailboxMessageStatus::Dispatched
+                },
+                None,
+            )
+            .await
+            .map_err(|error| AgentRunProductInputDeliveryError::Mailbox(error.to_string()))?;
+        Ok(AgentRunProductInputDelivery {
+            mailbox_message_id: prepared.mailbox_message_id,
+            operation_receipt: Some(receipt),
+            queued: false,
+        })
+    }
+
     async fn deliver(
         &self,
         command: DeliverAgentRunProductInput,

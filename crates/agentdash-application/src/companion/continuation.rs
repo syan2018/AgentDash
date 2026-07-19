@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use agentdash_application_agentrun::agent_run::{
     AgentRunForkRequestId, AgentRunForkSagaPhase, AgentRunProductInputDeliveryPort,
-    AgentRunProductProtocolPorts, CompanionChannelEvidence, CompanionContinuationEffectIdentity,
-    CompanionContinuationEffectPort, CompanionContinuationRuntimeProtocol,
-    CompanionContinuationSaga, CompanionEffectProgress, CompanionFirstInputEvidence,
-    CompanionFreshPhase, CompanionFreshRequestId, CompanionGateEvidence, CompanionRuntimeReadiness,
+    AgentRunProductInputPreparation, AgentRunProductProtocolPorts, CompanionChannelEvidence,
+    CompanionContinuationEffectIdentity, CompanionContinuationEffectPort,
+    CompanionContinuationRuntimeProtocol, CompanionContinuationSaga, CompanionEffectProgress,
+    CompanionFirstInputEvidence, CompanionFreshPhase, CompanionFreshRequestId,
+    CompanionGateEvidence, CompanionPreparedFirstInputEvidence, CompanionRuntimeReadiness,
     CompanionRuntimeReadyEvidence, CompanionTaskEvidence, DeliverAgentRunProductInput,
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
@@ -168,24 +169,19 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
         identity: &CompanionContinuationEffectIdentity,
     ) -> Result<CompanionEffectProgress<CompanionFirstInputEvidence>, String> {
         let request = saga.request();
-        let content =
-            agentdash_agent_protocol::text_user_input_blocks(request.first_input_text.clone());
-        let source = mailbox_source(request);
-        let command = DeliverAgentRunProductInput {
-            target: AgentRunTarget {
-                run_id: request.child_run_id,
-                agent_id: request.child_agent_id,
-            },
-            origin: MailboxMessageOrigin::Companion,
-            content,
-            source,
-            client_command_id: identity.idempotency_key.clone(),
-        };
         match request.runtime_protocol {
             CompanionContinuationRuntimeProtocol::FullFork => {
+                let CompanionPreparedFirstInputEvidence::ProductDelivery { envelope } = saga
+                    .evidence()
+                    .prepared_first_input
+                    .as_ref()
+                    .ok_or_else(|| "Companion prepared first input is missing".to_owned())?
+                else {
+                    return Err("Full Companion prepared first input has wrong kind".to_owned());
+                };
                 let outcome = self
                     .product_input_delivery
-                    .deliver(command)
+                    .dispatch_prepared(envelope.clone())
                     .await
                     .map_err(|error| error.to_string())?;
                 if outcome.queued {
@@ -202,6 +198,7 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
                 ))
             }
             CompanionContinuationRuntimeProtocol::FreshCreate => {
+                let command = first_input_command(saga, identity);
                 let mailbox_message_id = self
                     .product_input_delivery
                     .record_dispatched(command)
@@ -227,6 +224,37 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
                         runtime_operation_id: operation_id,
                         submitted_by_runtime_protocol: true,
                     },
+                ))
+            }
+        }
+    }
+
+    async fn prepare_first_input(
+        &self,
+        saga: &CompanionContinuationSaga,
+        identity: &CompanionContinuationEffectIdentity,
+    ) -> Result<CompanionEffectProgress<CompanionPreparedFirstInputEvidence>, String> {
+        match saga.request().runtime_protocol {
+            CompanionContinuationRuntimeProtocol::FullFork => {
+                match self
+                    .product_input_delivery
+                    .prepare_delivery(first_input_command(saga, identity))
+                    .await
+                    .map_err(|error| error.to_string())?
+                {
+                    AgentRunProductInputPreparation::Pending { .. } => {
+                        Ok(CompanionEffectProgress::Pending)
+                    }
+                    AgentRunProductInputPreparation::Prepared(envelope) => {
+                        Ok(CompanionEffectProgress::Applied(
+                            CompanionPreparedFirstInputEvidence::ProductDelivery { envelope },
+                        ))
+                    }
+                }
+            }
+            CompanionContinuationRuntimeProtocol::FreshCreate => {
+                Ok(CompanionEffectProgress::Applied(
+                    CompanionPreparedFirstInputEvidence::FreshRuntimeProtocol,
                 ))
             }
         }
@@ -417,5 +445,22 @@ fn mailbox_source(
         route: request.first_input_source.route.clone(),
         display_label_key: request.first_input_source.display_label_key.clone(),
         metadata: request.first_input_source.metadata.clone(),
+    }
+}
+
+fn first_input_command(
+    saga: &CompanionContinuationSaga,
+    identity: &CompanionContinuationEffectIdentity,
+) -> DeliverAgentRunProductInput {
+    let request = saga.request();
+    DeliverAgentRunProductInput {
+        target: AgentRunTarget {
+            run_id: request.child_run_id,
+            agent_id: request.child_agent_id,
+        },
+        origin: MailboxMessageOrigin::Companion,
+        content: agentdash_agent_protocol::text_user_input_blocks(request.first_input_text.clone()),
+        source: mailbox_source(request),
+        client_command_id: identity.idempotency_key.clone(),
     }
 }

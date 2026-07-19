@@ -19,7 +19,7 @@ import {
   RichInput,
   type RichInputRef,
 } from "../../file-reference";
-import type { TokenUsageInfo } from "../model/tokenUsage";
+import type { TokenUsageInfo } from "../model/types";
 import { buildRoundActionModel, type RoundActionModel } from "../model/roundActions";
 import type {
   AgentRunRuntimeInteraction,

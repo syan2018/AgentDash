@@ -82,6 +82,7 @@ enum FieldValidationRule {
     OptionalFiniteNumber,
     NullableString,
     JsonObject,
+    BackboneEnvelope,
     ControlPlaneProjectionChanged,
 }
 
@@ -112,6 +113,7 @@ struct NdjsonEnvelopeValidatorSpec {
 pub fn render_ndjson_stream_validators() -> GeneratedTsFile {
     let mut lines = header_lines();
     lines.push(String::new());
+    lines.push("import type { BackboneEnvelope } from \"./backbone-protocol\";".to_string());
     lines.push("import type { JsonValue } from \"./common-contracts\";".to_string());
     lines.push(
         "import type { ProjectEventStreamEnvelope } from \"./project-contracts\";".to_string(),
@@ -180,6 +182,15 @@ function isJsonValue(value: unknown): value is JsonValue {
 
 function isJsonObject(value: unknown): value is Record<string, JsonValue> {
   return isRecord(value) && Object.values(value).every(isJsonValue);
+}
+
+function isBackboneEnvelope(value: unknown): value is BackboneEnvelope {
+  return isRecord(value) &&
+    isRecord(value.event) &&
+    typeof value.sessionId === "string" &&
+    isRecord(value.source) &&
+    isRecord(value.trace) &&
+    typeof value.observedAt === "string";
 }
 
 function isControlPlaneProjectionChanged(value: unknown): boolean {
@@ -421,8 +432,8 @@ fn session_event_fields() -> Vec<FieldValidationSpec> {
         ),
         field(
             &["notification"],
-            FieldValidationRule::JsonObject,
-            "JSON object",
+            FieldValidationRule::BackboneEnvelope,
+            "BackboneEnvelope",
         ),
     ]
 }
@@ -535,6 +546,7 @@ fn field_condition(field: &FieldValidationSpec) -> String {
         FieldValidationRule::OptionalFiniteNumber => format!("isOptionalFiniteNumber({value})"),
         FieldValidationRule::NullableString => format!("isNullableString({value})"),
         FieldValidationRule::JsonObject => format!("isJsonObject({value})"),
+        FieldValidationRule::BackboneEnvelope => format!("isBackboneEnvelope({value})"),
         FieldValidationRule::ControlPlaneProjectionChanged => {
             format!("isControlPlaneProjectionChanged({value})")
         }
@@ -789,7 +801,7 @@ mod tests {
         assert!(
             rendered
                 .contents
-                .contains("isJsonObject(value.notification)")
+                .contains("isBackboneEnvelope(value.notification)")
         );
         assert!(rendered.contents.contains(
             "export type GeneratedProjectEventStreamStateChangedEnvelope = Extract<ProjectEventStreamEnvelope, { type: \"StateChanged\" }>;"
@@ -832,7 +844,7 @@ mod tests {
         assert!(
             rendered
                 .contents
-                .contains("isJsonObject(value.notification)")
+                .contains("isBackboneEnvelope(value.notification)")
         );
     }
 

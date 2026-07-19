@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
-import type { ControlPlaneProjectionChangeReason } from "../../generated/project-contracts";
+import type { ControlPlaneProjectionChangeReason } from "../../generated/backbone-protocol";
 import type { ProjectEventStreamEnvelope } from "../../generated/project-contracts";
 import { fetchProjectAgentRuns } from "../../services/lifecycle";
 import type { AgentRunListEntryView, ProjectAgentRunListView } from "../../types";
@@ -90,6 +90,7 @@ function agentRunListInvalidated(
         frame_id: null,
         gate_id: null,
         mailbox_message_id: null,
+        delivery_runtime_session_id: null,
       },
     },
   };
@@ -108,6 +109,7 @@ function mailboxInvalidated(projectId: string): ProjectEventStreamEnvelope {
         frame_id: null,
         gate_id: null,
         mailbox_message_id: null,
+        delivery_runtime_session_id: null,
       },
     },
   };

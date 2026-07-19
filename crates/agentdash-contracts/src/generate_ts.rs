@@ -4,6 +4,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use agentdash_agent_protocol::codex_app_server_protocol::{
+    ThreadItem, Turn, TurnError, TurnPlanStep, TurnPlanStepStatus, TurnStatus, UserInput,
+};
+use agentdash_agent_protocol::{
+    AgentDashThreadItem, BackboneEnvelope, CommandExecutionStatus, McpToolCallStatus,
+    PatchApplyStatus,
+};
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunAcceptedRefs, AgentRunCommandOnlyRequest, AgentRunCommandReceipt,
     AgentRunComposerSubmitRequest, AgentRunContextCompactionCommandOutcome,
@@ -319,6 +326,28 @@ fn main() {
             export_all::<DirectoryTreeResponse>(dir);
             export_all::<DirectoryUserResolveResponse>(dir);
             export_all::<DirectoryGroupResolveResponse>(dir);
+        },
+    );
+
+    // --- backbone-protocol.ts (canonical source for codex/agent-protocol types) ---
+    emit_domain(
+        &generated_dir,
+        "backbone-protocol.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<BackboneEnvelope>(dir);
+            export_all::<AgentDashThreadItem>(dir);
+            export_all::<CommandExecutionStatus>(dir);
+            export_all::<McpToolCallStatus>(dir);
+            export_all::<PatchApplyStatus>(dir);
+            export_all::<Turn>(dir);
+            export_all::<ThreadItem>(dir);
+            export_all::<TurnError>(dir);
+            export_all::<TurnPlanStep>(dir);
+            export_all::<TurnPlanStepStatus>(dir);
+            export_all::<TurnStatus>(dir);
+            export_all::<UserInput>(dir);
         },
     );
 

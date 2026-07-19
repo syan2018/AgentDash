@@ -16,6 +16,7 @@ agentdash-agent-runtime-contract = { workspace = true }
 agentdash-agent-service-api = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-domain = { workspace = true }
+agentdash-agent-protocol = { workspace = true }
 agentdash-platform-spi = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }

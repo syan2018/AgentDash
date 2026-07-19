@@ -1268,6 +1268,69 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn canvas_runtime_diagnostics_keep_product_identity_and_canonical_payload() {
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let canvas_id = Uuid::new_v4();
+        let frame_id = Uuid::new_v4();
+        let captured_at = Utc
+            .with_ymd_and_hms(2026, 7, 20, 8, 30, 0)
+            .single()
+            .expect("valid timestamp");
+        let observation = canvas_runtime_observation_to_contract(
+            agentdash_domain::canvas::CanvasRuntimeObservation {
+                observation_id: Uuid::new_v4(),
+                run_id,
+                agent_id,
+                agent_run_canvas_ref: format!("{run_id}:{agent_id}:cvs-diagnostics"),
+                canvas_id,
+                canvas_mount_id: "cvs-diagnostics".to_string(),
+                delivery_trace_ref: Some("runtime_thread:runtime-thread-1".to_string()),
+                current_agent_frame_id: Some(frame_id),
+                frame_id: "browser-frame-1".to_string(),
+                generation: 7,
+                captured_at,
+                status: CanvasRuntimeObservationStatus::Ready,
+                message: Some("ready".to_string()),
+                viewport: CanvasRuntimeViewport {
+                    width: 1280,
+                    height: 720,
+                    device_pixel_ratio: 2.0,
+                },
+                document: CanvasRuntimeDocumentState {
+                    root_empty: false,
+                    body_text_preview: "Dashboard".to_string(),
+                    element_count: 12,
+                    focused_element: Some("#refresh".to_string()),
+                },
+                diagnostics: vec![CanvasRuntimeDiagnostic {
+                    level: "warning".to_string(),
+                    source: "renderer".to_string(),
+                    message: "stale data".to_string(),
+                }],
+                screenshot_ref: Some("blob:screenshot-1".to_string()),
+            },
+        );
+
+        assert_eq!(observation.run_id, run_id.to_string());
+        assert_eq!(observation.agent_id, agent_id.to_string());
+        assert_eq!(observation.canvas_id, canvas_id.to_string());
+        assert_eq!(
+            observation.delivery_trace_ref.as_deref(),
+            Some("runtime_thread:runtime-thread-1")
+        );
+        assert_eq!(
+            observation.current_agent_frame_id,
+            Some(frame_id.to_string())
+        );
+        assert_eq!(observation.status, CanvasRuntimeObservationStatusDto::Ready);
+        assert_eq!(observation.viewport.width, 1280);
+        assert_eq!(observation.document.element_count, 12);
+        assert_eq!(observation.diagnostics[0].source, "renderer");
+        assert_eq!(observation.captured_at, captured_at.to_rfc3339());
+    }
+
     fn canvas_with_access(scope: CanvasScope, access: CanvasAccessProjection) -> CanvasWithAccess {
         let project_id = Uuid::new_v4();
         let canvas = match scope {

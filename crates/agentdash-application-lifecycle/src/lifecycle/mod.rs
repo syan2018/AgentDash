@@ -5,6 +5,7 @@ pub mod dispatch_service;
 pub mod execution_log;
 pub(crate) mod run;
 pub mod run_command_service;
+pub mod run_view_builder;
 mod session_tool_result_cache;
 
 pub use agentdash_application_workflow::WorkflowApplicationError;

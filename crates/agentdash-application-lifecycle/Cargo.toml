@@ -8,6 +8,7 @@ license.workspace = true
 agentdash-agent-protocol = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }
 agentdash-agent-types = { workspace = true }
+agentdash-application-agentrun = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-application-workflow = { workspace = true }

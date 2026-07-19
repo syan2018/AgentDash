@@ -1,5 +1,9 @@
 # Agent Runtime Hard Cut 最终清单
 
+执行本清单前先核对
+[`s5-correction-audit.md`](./s5-correction-audit.md)：Product capability、API route 或
+前端 consumer 缺席不能作为旧实现可删除的证据。
+
 ## 当前基线
 
 - [x] 当前分支已合入 S5 受检基线、Platform Tool/Hook、Product canonical presentation 与 Relay Runtime Wire 四个生产切片（`8ca341a2` → `a6dabf47`）。
@@ -18,6 +22,11 @@
 - [ ] 将前端 feed、terminal、workspace pending、lifecycle view 的 sequence/version 全部统一为 `RuntimeU64` wire string / 应用内 `bigint`。
 - [ ] 将前端 runtime fixture、round action、session projection 与 tests 从 `content/event/compactAgentRunContext` 迁到 canonical `presentation`、typed request 与 Managed Runtime item。
 - [ ] 删除 UI 中已无用途的 companion/runtime 参数与旧 service contract import。
+- [ ] Lifecycle VFS 通过 production-registered `LifecycleMountProvider` 和显式 history
+  query port 读取 Runtime canonical conversation history；`events.json` 保真，派生索引
+  可重建，node artifacts/records 仍由 Lifecycle owner 提供。
+- [ ] `runtime_traces` 等剩余诊断读取迁出 `agent_run_journal`，复用 canonical Product
+  projection，不建立第二套 session persistence reader。
 - [ ] 门禁：`cargo check -p agentdash-api --all-targets`、`pnpm --filter app-web typecheck` 通过。
 
 ### 2. 固定真实生产 composition
@@ -34,8 +43,13 @@
 - [ ] 清除平台层仍持有 agent session/history/context/compaction 语义的 `RuntimeSession` 路径；保留 Complete Agent 内的 `AgentSession = fold(history)`。
 - [ ] 收窄 `agentdash-platform-spi` 的旧 AgentTool / delegate / protocol re-export；Tool capability 仅由 Complete Agent contribution 与 Platform handler 组合。
 - [ ] 将 Codex 私有协议/codegen 与共享 Runtime / Service / Wire / Product contract 明确分开。
-- [ ] 删除 `agentdash-agent-protocol`、`agentdash-agent-protocol-codegen`、`agentdash-agent-types` 三个旧 crate 及所有 source/generated/test consumer。
-- [ ] 从根 `Cargo.toml`、workspace dependency、`Cargo.lock` 与 `package.json` contracts script 中移除旧 crate/codegen。
+- [ ] 删除 `agentdash-agent-types`；将 `agentdash-agent-protocol` 收窄为 canonical App
+  Server standard families + AgentDash typed extensions 的唯一 dependency-light owner，
+  清除其中 Backbone platform/product、Runtime internal 与 journal persistence
+  vocabulary。
+- [ ] 固定 canonical protocol/codegen 的 Rust/TypeScript owned roots、schema lock、
+  freshness 与 parity；根 `Cargo.toml`、`Cargo.lock` 和 `package.json` 只保留这一套生成
+  生态及 Codex integration 私有 vendor generator 的明确边界。
 
 ### 4. 固定 schema 与持久化边界
 
@@ -46,7 +60,8 @@
 ### 5. 最终删除与门禁
 
 - [ ] `rg` 负向门禁归零：旧 crate 名、`RuntimeJournalFact`、旧 RuntimeSession owner、`BackboneEvent/Envelope`、Relay Prompt/SessionEvent、兼容 adapter/fallback。
-- [ ] `cargo metadata --no-deps` 确认 workspace graph 不含三个旧 crate且无反向依赖。
+- [ ] `cargo metadata --no-deps` 确认 workspace graph 不含已删除旧 crate，且
+  `agentdash-agent-protocol` 无 Runtime/Product/vendor transport 反向依赖。
 - [ ] 运行受影响 crate 的定向 tests/check，再运行 workspace Rust check/test、前端 typecheck/tests、contracts check 与 migration tests。
 - [ ] 通过一条真实生产链验证：Product command → Runtime operation/projection/change → Host placement/effect → Complete Agent → Dash Agent history → canonical presentation/UI。
 - [ ] 更新本清单为全通过，并记录仅剩的外部环境阻塞（若有）。
@@ -55,5 +70,6 @@
 
 - `cargo check -p agentdash-api --all-targets`：仅 `agent_runtime_target_projection.rs` 的 6 个旧 projection fixture/contract 编译错误。
 - `pnpm --filter app-web typecheck`：错误集中在 RuntimeU64、canonical presentation、typed Product command、旧 fixture 与旧 compact consumer。
-- 旧 crate 当前仍有三个物理目录；根 workspace 与 `contracts:check` 仍直接引用旧 protocol/codegen。
+- `agentdash-agent-types` 仍待物理删除；canonical protocol/codegen 正在恢复为 Rust/TypeScript
+  单一 owned 协议生态，尚需清除旧 Backbone/platform/runtime 职责并完成 freshness/parity。
 - 初次负向审计仍命中 5 个 journal 路径、61 个 Backbone 文件、3 个旧 Relay variant 文件；`RuntimeSession` 和 AgentTool 的宽泛命中需按最终 owner 判定后清除真实旧路径。

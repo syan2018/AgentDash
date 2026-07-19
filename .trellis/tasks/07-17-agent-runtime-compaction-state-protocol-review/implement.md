@@ -440,6 +440,12 @@ cargo test -p agentdash-agent-runtime-test-support codex
 - [ ] UI 使用 Runtime snapshot + platform change tail。
 - [ ] compaction item 显示 started/completed/failed/lost。
 - [ ] cursor gap 重新读取 snapshot，不全量 journal replay。
+- [ ] Lifecycle VFS 通过显式 `LifecycleHistoryQueryPort` 读取
+  `AgentRunProductProjectionQueryPort`，`session/events.json` 原样暴露 canonical
+  conversation history，messages/tools/writes/summaries/turns 仅作为可重建索引。
+- [ ] 注册真实 `LifecycleMountProvider`；conversation 路径不读取 journal/旧 session
+  表，fork child 不拼 ancestor history；node artifacts/records 继续读取 Lifecycle
+  自有事实。
 
 ### Check
 
@@ -450,6 +456,8 @@ cargo test -p agentdash-agent-runtime-test-support codex
   `SubmitInput` 或不可追踪 prompt 代替 initial package apply evidence。
 - [ ] protocol identity/order 与 Runtime change commit 一致。
 - [ ] UI 不从 worker/journal/API timing 猜 activity。
+- [ ] Lifecycle VFS provider、Product projection query 与 production composition 有
+  tracer test，删除旧 journal reader 后仍能读取 exact canonical records。
 - [ ] 每个 Fork crash boundary 重启后继续同一 saga/child。
 
 ### Verify
@@ -469,6 +477,10 @@ pnpm --filter app-web test -- useSessionFeed
 
 ## 10. W8 — Schema / Crate Hard Cut
 
+S5/W8 的纠偏审计与恢复顺序见
+[`s5-correction-audit.md`](./s5-correction-audit.md)。Hard Cut 的零消费者证据必须来自
+production caller 已切换；取消模块声明、取消 route 或删除 caller 不构成迁移证据。
+
 ### Ownership
 
 - workspace `Cargo.toml` / lockfile
@@ -485,7 +497,13 @@ pnpm --filter app-web test -- useSessionFeed
 - [ ] 验证 W2 已完成 `agentdash-agent`/`agentdash-agent-core` 最终物理 shape；W8 不再
   移动或重写其文件树。
 - [ ] 删除 `agentdash-agent-types`。
-- [ ] 删除拆分后的 `agentdash-agent-protocol`。
+- [ ] 将 `agentdash-agent-protocol` 收窄为 canonical App Server standard families +
+  AgentDash typed extensions 的 dependency-light 唯一 owner；迁出 Backbone
+  platform/product event、Runtime internal state、journal carrier 与 Codex transport
+  私有 DTO。
+- [ ] 固定 `agentdash-agent-protocol-codegen`（或等价的同 owner 生成入口）同时生成并
+  校验 Rust/TypeScript canonical roots、schema lock、freshness 与 parity，禁止 Codex
+  私有 generator 和 Product contract 形成第二套 owned conversation language。
 - [ ] 删除 connector 版 `agentdash-executor`。
 - [ ] 将 `agentdash-spi` 清理/迁名为 `agentdash-platform-spi`。
 - [ ] 删除 `agentdash-application-hooks`。
@@ -551,7 +569,8 @@ cargo test -p agentdash-infrastructure agent_runtime
 ```powershell
 rg -n "RuntimeJournalFact|RuntimeJournalRecord|journal_records_after|append_presentation" crates packages
 rg -n "AgentConnector|ConnectorCapabilities|ContextActivationDispatch" crates packages
-rg -n "agentdash-agent-types|agentdash-agent-protocol|agentdash-executor|agentdash-application-hooks" Cargo.toml crates
+rg -n "agentdash-agent-types|agentdash-executor|agentdash-application-hooks" Cargo.toml crates
+rg -n "BackboneEvent|BackboneEnvelope|PlatformEvent|RuntimeJournal|journal" crates/agentdash-agent-protocol
 rg -n "RuntimeSession|runtime_session" crates/agentdash-application-ports crates/agentdash-application crates/agentdash-api crates/agentdash-contracts crates/agentdash-spi crates/agentdash-relay crates/agentdash-application-runtime-gateway
 rg -n "Session" crates/agentdash-agent-runtime crates/agentdash-agent-runtime-host
 ```

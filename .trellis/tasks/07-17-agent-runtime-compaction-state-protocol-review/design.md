@@ -938,6 +938,32 @@ ID，但：
 - 不把未验证 observation 提升为 authoritative；
 - source reconcile 可以 rebased platform projection，但必须产生 typed change。
 
+### 12.5 Lifecycle VFS history projection
+
+Lifecycle VFS 是 Product 的只读证据入口，不是新的 Agent history store。其唯一会话读取
+链路为：
+
+```text
+AgentRunTarget
+  -> AgentRunProductRuntimeBinding
+  -> AgentRunProductProjectionQueryPort
+  -> Managed Runtime snapshot + canonical conversation history
+  -> LifecycleHistoryProjection
+  -> LifecycleMountProvider
+```
+
+`session/events.json` 原样暴露 snapshot 中 source-ordered canonical conversation
+records；messages、tools、writes、compaction summaries 与 turn slices 是同一 snapshot
+的可重建索引。VFS 不读取 presentation journal、Agent 内部 repository 或旧 session
+表，也不拥有独立 compaction archive。若 query change cursor 出现 gap，Product query
+先按 Runtime 合同重读 snapshot；VFS 不拼接残缺 tail。
+
+Fork child 的 VFS 只查询 child `AgentRunTarget` 对应的 canonical history。因为 exact fork
+已经在 Complete Agent/Runtime source 中形成独立 child history，VFS 不拼 ancestor
+journal。Lifecycle node artifacts、records、orchestration state 与 Agent conversation
+保持同 mount 下的不同事实来源：前者由 Lifecycle/inline file owner 提供，后者只由
+Runtime canonical history projection 提供。
+
 ## 13. Persistence 与事务
 
 ### 13.1 目标 schema 分区
@@ -1095,7 +1121,8 @@ flowchart LR
 | `agentdash-agent-runtime-host` | 保留 | 独立 coordination/recovery owner |
 | `agentdash-agent-runtime-wire` | 保留；framing/codegen 共享，Runtime/Agent 业务 DTO 分 module | Relay 与 Remote Complete Agent 有真实跨进程消费者 |
 | `agentdash-integration-api` | 保留 broader enterprise contract；Agent runtime 部分改依赖/re-export service API | 仍有 auth/directory/external/integration 扩展点 |
-| `agentdash-agent-protocol` | 拆分后删除 | 混合 Backbone/vendor/product/runtime vocabulary |
+| `agentdash-agent-protocol` | 保留并重建为 dependency-light canonical App Server presentation owner | Codex standard families 与 AgentDash typed extensions 需要一个独立于 Runtime、Product 和 vendor transport 的 Rust/TypeScript 共享协议生态 |
+| `agentdash-agent-protocol-codegen` | 有条件保留为 canonical protocol 的唯一生成入口 | 同时生成/校验 Rust 与 TypeScript owned roots、schema lock 与 parity；若并入 protocol crate 后仍能保持同一生成边界才可合并 |
 | `agentdash-executor` | 迁空后删除 | Host 与 adapters 已拥有执行职责 |
 | `agentdash-spi` | 移出 Agent 内容并迁名 `agentdash-platform-spi` | 只保留非 Agent 平台 SPI |
 | `agentdash-application-hooks` | 迁空后删除 | Surface/Tool Broker/Agent-native hook 各有 owner |

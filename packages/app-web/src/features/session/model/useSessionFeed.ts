@@ -39,6 +39,7 @@ export interface UseSessionFeedResult {
   rawEvents: SessionEventEnvelope[];
   historyReplayBoundarySeq: number | null;
   runtimeChanges: ManagedRuntimePlatformChange[];
+  boundTargetKey: string | null;
   isConnected: boolean;
   isLoading: boolean;
   isReceiving: boolean;
@@ -848,6 +849,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     rawEvents,
     historyReplayBoundarySeq,
     runtimeChanges,
+    boundTargetKey,
     providerWaitingSeqs,
     isConnected,
     isLoading,
@@ -889,6 +891,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     rawEvents,
     historyReplayBoundarySeq,
     runtimeChanges,
+    boundTargetKey,
     isConnected,
     isLoading,
     isReceiving,

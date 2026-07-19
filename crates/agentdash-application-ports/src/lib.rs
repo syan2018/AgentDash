@@ -7,6 +7,7 @@ pub mod extension_gateway_setup;
 pub mod extension_runtime;
 pub mod launch;
 pub mod lifecycle_materialization;
+pub mod lifecycle_surface_projection;
 pub mod project_projection_notification;
 pub mod request_digest;
 pub mod vfs_materialization;

@@ -32,6 +32,7 @@ import {
   collectTurnLifecycleEvents,
   computeProjectionRefreshKey,
   isAgentRunWorkspaceActionRunning,
+  liveSideEffectCursor,
   rawEventsBelongToRuntimeStreamTarget,
   resolveExecutorFromHint,
   toExecutorConfigSource,
@@ -282,6 +283,7 @@ export function SessionChatView({
     rawEvents,
     historyReplayBoundarySeq,
     runtimeChanges,
+    boundTargetKey,
     isConnected,
     isLoading,
     error: wsError,
@@ -299,8 +301,13 @@ export function SessionChatView({
     [rawEvents],
   );
   const rawEventsBelongToCurrentSession = useMemo(
-    () => rawEventsBelongToRuntimeStreamTarget({ rawEvents, agentRunTarget }),
-    [agentRunTarget, rawEvents],
+    () =>
+      rawEventsBelongToRuntimeStreamTarget({
+        rawEvents,
+        agentRunTarget,
+        boundTargetKey,
+      }),
+    [agentRunTarget, boundTargetKey, rawEvents],
   );
   const canApplyLiveEventSideEffects =
     hasRuntimeStreamTarget &&
@@ -345,8 +352,16 @@ export function SessionChatView({
   }, [agentRunTargetKey]);
 
   useEffect(() => {
-    if (!hasRuntimeStreamTarget || !rawEventsBelongToCurrentSession || rawEvents.length === 0) return;
-    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? 0;
+    if (
+      !hasRuntimeStreamTarget ||
+      !rawEventsBelongToCurrentSession ||
+      rawEvents.length === 0 ||
+      historyReplayBoundarySeq == null
+    ) return;
+    const afterSeq = liveSideEffectCursor(
+      lastTurnLifecycleEventSeqRef.current,
+      historyReplayBoundarySeq,
+    );
     lastTurnLifecycleEventSeqRef.current = afterSeq;
     const result = collectTurnLifecycleEvents(rawEvents, afterSeq);
     lastTurnLifecycleEventSeqRef.current = result.lastSeenSeq;
@@ -371,7 +386,10 @@ export function SessionChatView({
 
   useEffect(() => {
     if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    const afterSeq = lastSystemEventSeqRef.current ?? historyReplayBoundarySeq;
+    const afterSeq = liveSideEffectCursor(
+      lastSystemEventSeqRef.current,
+      historyReplayBoundarySeq,
+    );
     lastSystemEventSeqRef.current = afterSeq;
     const result = collectAllPlatformEvents(rawEvents, afterSeq);
     lastSystemEventSeqRef.current = result.lastSeenSeq;
@@ -383,7 +401,10 @@ export function SessionChatView({
 
   useEffect(() => {
     if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    const afterSeq = lastTaskToolEventSeqRef.current ?? historyReplayBoundarySeq;
+    const afterSeq = liveSideEffectCursor(
+      lastTaskToolEventSeqRef.current,
+      historyReplayBoundarySeq,
+    );
     lastTaskToolEventSeqRef.current = afterSeq;
     let lastSeenSeq = afterSeq;
     let changed = false;

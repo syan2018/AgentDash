@@ -13,7 +13,7 @@ use agentdash_application_vfs::{
 use agentdash_domain::{
     agent_run_target::AgentRunTarget,
     common::Mount,
-    inline_file::{InlineFileOwnerKind, InlineFileRepository},
+    inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository},
     skill_asset::SkillAssetRepository,
     workflow::{
         LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository, OrchestrationInstance,
@@ -446,14 +446,71 @@ impl MountProvider for LifecycleMountProvider {
 
     async fn write_text(
         &self,
-        _mount: &Mount,
-        _path: &str,
-        _content: &str,
+        mount: &Mount,
+        path: &str,
+        content: &str,
         _ctx: &MountOperationContext,
     ) -> Result<(), MountError> {
-        Err(MountError::NotSupported(
-            "Lifecycle conversation/history projection 是只读视图".to_string(),
-        ))
+        let path =
+            normalize_mount_relative_path(path, false).map_err(MountError::OperationFailed)?;
+        if mount
+            .metadata
+            .get("scope")
+            .and_then(serde_json::Value::as_str)
+            != Some("node_runtime")
+            || !mount_has_node_scope(mount)
+        {
+            return Err(MountError::NotSupported(
+                "Lifecycle canonical conversation/history projection 是只读视图".to_string(),
+            ));
+        }
+        let run = self.load_run(mount).await?;
+        let (_, _, scope) = node_context(mount, &run)?;
+        let segments = path_segments(&path);
+        let file = match segments.as_slice() {
+            ["node", "artifacts", port_key] => {
+                let allowed = mount
+                    .metadata
+                    .get("writable_port_keys")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                    .any(|candidate| candidate == *port_key);
+                if !allowed {
+                    return Err(MountError::OperationFailed(format!(
+                        "当前 node 未声明 output port `{port_key}`"
+                    )));
+                }
+                InlineFile::new(
+                    InlineFileOwnerKind::LifecycleRun,
+                    run.id,
+                    "port_outputs",
+                    scope.port_ref(*port_key).inline_path(),
+                    content,
+                )
+            }
+            ["node", "records", rest @ ..] if !rest.is_empty() => InlineFile::new(
+                InlineFileOwnerKind::LifecycleRun,
+                run.id,
+                "session_records",
+                format!(
+                    "{}/{}",
+                    encode_node_path_segment(&scope.node_path),
+                    rest.join("/")
+                ),
+                content,
+            ),
+            _ => {
+                return Err(MountError::NotSupported(format!(
+                    "Lifecycle node mount 不支持写入路径: {path}"
+                )));
+            }
+        };
+        self.inline_files
+            .upsert_file(&file)
+            .await
+            .map_err(domain_error)
     }
 
     async fn list(
@@ -946,6 +1003,8 @@ mod tests {
                 ),
             ),
         );
+        let expected_record =
+            serde_json::to_value(&record).expect("serialize canonical history fixture");
         let projection = LifecycleHistoryProjection {
             target: target.clone(),
             runtime_thread_id: RuntimeThreadId::new("runtime-thread-1").expect("thread id"),
@@ -1003,11 +1062,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&read.content).expect("events JSON");
         assert_eq!(value["projection_revision"], "7");
         assert_eq!(value["latest_change_sequence"], "11");
-        assert_eq!(value["records"][0]["presentation_id"], "native:history:1");
-        assert_eq!(
-            value["records"][0]["presentation"]["envelope"]["event"]["type"],
-            "user_input_submitted"
-        );
+        assert_eq!(value["records"][0], expected_record);
         assert_eq!(read.version_token.as_deref(), Some("runtime:7:11"));
     }
 }

@@ -4,12 +4,22 @@ import type { ExecutorConfigSource } from "../../executor-selector/model/types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
-import {
-  agentRunJournalSessionId,
-  type AgentRunJournalIdentityTarget,
-} from "../model/agentRunJournalIdentity";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import { extractPlatformEventType, isRecord } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
+
+/**
+ * Snapshot hydration is not eligible for live Product side effects.
+ *
+ * A gap reload may advance the replay boundary while the page and its refs stay mounted, so the
+ * previous live cursor must always be fenced by the latest baseline boundary.
+ */
+export function liveSideEffectCursor(
+  previous: number | null,
+  historyReplayBoundarySeq: number,
+): number {
+  return Math.max(previous ?? historyReplayBoundarySeq, historyReplayBoundarySeq);
+}
 
 export type SessionTurnLifecycleEventType =
   | "turn_started"
@@ -27,15 +37,16 @@ export function isAgentRunWorkspaceActionRunning(input: {
 
 export function rawEventsBelongToRuntimeStreamTarget(input: {
   rawEvents: SessionEventEnvelope[];
-  agentRunTarget?: AgentRunJournalIdentityTarget | null;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
+  boundTargetKey: string | null;
 }): boolean {
-  const expectedSessionId = input.agentRunTarget
-    ? agentRunJournalSessionId(input.agentRunTarget)
+  const expectedTargetKey = input.agentRunTarget
+    ? `${input.agentRunTarget.runId}:${input.agentRunTarget.agentId}`
     : null;
-  if (!expectedSessionId) {
+  if (!expectedTargetKey) {
     return input.rawEvents.length === 0;
   }
-  return input.rawEvents.every((event) => event.session_id === expectedSessionId);
+  return input.boundTargetKey === expectedTargetKey;
 }
 
 export function toExecutorConfigSource(

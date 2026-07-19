@@ -31,7 +31,7 @@ pub enum AppliedVfsOperation {
     Exec,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "path", rename_all = "snake_case")]
 pub enum AppliedVfsPathScope {
     All,
@@ -218,16 +218,14 @@ impl AgentRunAppliedResourceSurface {
                 message: "default mount must reference an applied VFS mount".to_string(),
             });
         }
-        let mut granted_mount_ids = BTreeSet::new();
         for grant in &self.vfs_grants {
             if grant.mount_id.is_empty()
                 || grant.operations.is_empty()
                 || grant.path_scopes.is_empty()
-                || !granted_mount_ids.insert(grant.mount_id.as_str())
             {
                 return Err(AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence {
                     message: format!(
-                        "mount grant `{}` must reference one applied mount exactly once and declare explicit operations and path scopes",
+                        "mount grant `{}` must declare explicit operations and path scopes",
                         grant.mount_id
                     ),
                 });
@@ -665,6 +663,27 @@ mod tests {
             surface.vfs_grants[0].operations,
             BTreeSet::from([AppliedVfsOperation::Read, AppliedVfsOperation::List])
         );
+    }
+
+    #[test]
+    fn permits_operation_specific_grants_for_one_mount() {
+        let target = target();
+        let mut surface = surface(target.clone());
+        surface.vfs_grants.push(AppliedVfsGrant {
+            mount_id: "workspace".to_string(),
+            operations: BTreeSet::from([AppliedVfsOperation::Write]),
+            path_scopes: vec![AppliedVfsPathScope::Prefix("src/generated".to_string())],
+        });
+
+        surface
+            .validate_for(&target)
+            .expect("one mount may carry independently scoped operation grants");
+        assert!(surface.vfs_grants.iter().any(|grant| {
+            grant.grants_operation_on_path(AppliedVfsOperation::Write, "src/generated/output.json")
+        }));
+        assert!(!surface.vfs_grants.iter().any(|grant| {
+            grant.grants_operation_on_path(AppliedVfsOperation::Write, "src/lib.rs")
+        }));
     }
 
     #[test]

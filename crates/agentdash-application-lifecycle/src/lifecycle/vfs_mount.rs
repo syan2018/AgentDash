@@ -34,7 +34,9 @@ pub fn build_agent_run_lifecycle_mount(
     Mount {
         id: "lifecycle".to_string(),
         provider: PROVIDER_LIFECYCLE_VFS.to_string(),
-        backend_id: String::new(),
+        // AppliedResourceSurface requires a stable backing identity for every mount. The
+        // canonical history is backed by the Managed Runtime thread rather than a filesystem.
+        backend_id: format!("managed-runtime:{runtime_thread_id}"),
         root_ref: format!(
             "lifecycle://run/{run_id}/agent/{agent_id}/thread/{}",
             encode_lifecycle_uri_segment(runtime_thread_id)
@@ -85,7 +87,10 @@ pub fn build_lifecycle_mount_with_node_scope(
     Mount {
         id: "lifecycle".to_string(),
         provider: PROVIDER_LIFECYCLE_VFS.to_string(),
-        backend_id: String::new(),
+        backend_id: format!(
+            "lifecycle-node:{run_id}:{orchestration_id}:{}",
+            encode_lifecycle_uri_segment(node_path)
+        ),
         root_ref: format!(
             "lifecycle://run/{run_id}/orchestration/{orchestration_id}/node/{}",
             encode_lifecycle_uri_segment(node_path)

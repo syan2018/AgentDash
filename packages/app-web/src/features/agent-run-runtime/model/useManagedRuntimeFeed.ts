@@ -19,6 +19,7 @@ export interface UseManagedRuntimeFeedOptions {
 export interface UseManagedRuntimeFeedResult {
   snapshot: ManagedRuntimeSnapshot | null;
   changes: ManagedRuntimePlatformChange[];
+  boundTargetKey: string | null;
   lifecycle: ManagedRuntimeFeedLifecycle;
   isLoading: boolean;
   error: Error | null;
@@ -32,6 +33,7 @@ export function useManagedRuntimeFeed({
 }: UseManagedRuntimeFeedOptions): UseManagedRuntimeFeedResult {
   const [snapshot, setSnapshot] = useState<ManagedRuntimeSnapshot | null>(null);
   const [changes, setChanges] = useState<ManagedRuntimePlatformChange[]>([]);
+  const [boundTargetKey, setBoundTargetKey] = useState<string | null>(null);
   const [lifecycle, setLifecycle] =
     useState<ManagedRuntimeFeedLifecycle>("closed");
   const [isLoading, setIsLoading] = useState(false);
@@ -42,13 +44,14 @@ export function useManagedRuntimeFeed({
     connectionRef.current?.close();
     connectionRef.current = null;
     setLifecycle("closed");
+    setBoundTargetKey(null);
   }, []);
 
   const connect = useCallback(() => {
     close();
+    setSnapshot(null);
+    setChanges([]);
     if (!enabled || !agentRunTarget) {
-      setSnapshot(null);
-      setChanges([]);
       setIsLoading(false);
       return;
     }
@@ -61,6 +64,9 @@ export function useManagedRuntimeFeed({
       onBaseline: (loaded) => {
         setSnapshot(loaded);
         setChanges([]);
+        setBoundTargetKey(
+          `${agentRunTarget.runId}:${agentRunTarget.agentId}`,
+        );
         setIsLoading(false);
       },
       onProjection: (projected, appliedChanges) => {
@@ -84,6 +90,7 @@ export function useManagedRuntimeFeed({
   return {
     snapshot,
     changes,
+    boundTargetKey,
     lifecycle,
     isLoading,
     error,

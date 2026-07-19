@@ -31,6 +31,7 @@ export interface UseSessionStreamResult {
   historyReplayBoundarySeq: number | null;
   providerWaitingSeqs: ReadonlyMap<string, number>;
   runtimeChanges: ManagedRuntimePlatformChange[];
+  boundTargetKey: string | null;
   isConnected: boolean;
   isLoading: boolean;
   isReceiving: boolean;
@@ -169,6 +170,7 @@ export function useSessionStream({
     historyReplayBoundarySeq: baselineBoundary,
     providerWaitingSeqs: state.providerWaitingSeqs,
     runtimeChanges: feed.changes,
+    boundTargetKey: feed.boundTargetKey,
     isConnected: feed.lifecycle === "connected",
     isLoading: feed.isLoading,
     isReceiving: feed.snapshot?.active_turn_id != null,

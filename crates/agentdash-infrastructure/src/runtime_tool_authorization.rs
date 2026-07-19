@@ -387,30 +387,45 @@ fn vfs_grant(
     list_all: bool,
 ) -> Result<RuntimeToolResourceGrant, RuntimeToolBrokerError> {
     let mut mounts = Vec::new();
-    for grant in &surface.vfs_grants {
-        if !grant.operations.contains(&required) {
+    for mount in &surface.vfs_mounts {
+        let matching_grants = surface
+            .vfs_grants
+            .iter()
+            .filter(|grant| {
+                grant.mount_id == mount.mount_id && grant.operations.contains(&required)
+            })
+            .collect::<Vec<_>>();
+        if matching_grants.is_empty() {
             continue;
         }
         let paths = requested_paths
             .iter()
-            .filter(|path| path.mount_id == grant.mount_id)
+            .filter(|path| path.mount_id == mount.mount_id)
             .collect::<Vec<_>>();
         if !list_all
             && (paths.is_empty()
                 || paths.iter().any(|path| {
-                    !grant
-                        .path_scopes
-                        .iter()
-                        .any(|scope| scope_allows(scope, &path.relative_path))
+                    !matching_grants.iter().any(|grant| {
+                        grant
+                            .path_scopes
+                            .iter()
+                            .any(|scope| scope_allows(scope, &path.relative_path))
+                    })
                 }))
         {
             continue;
         }
-        let mount = surface
-            .vfs_mounts
+        let mut path_scopes = Vec::new();
+        for scope in matching_grants
             .iter()
-            .find(|mount| mount.mount_id == grant.mount_id)
-            .ok_or_else(|| denied("corrupt_vfs_grant", "VFS grant references an absent mount"))?;
+            .flat_map(|grant| grant.path_scopes.iter())
+            .cloned()
+            .map(map_path_scope)
+        {
+            if !path_scopes.contains(&scope) {
+                path_scopes.push(scope);
+            }
+        }
         mounts.push(RuntimeVfsMountGrant {
             id: mount.mount_id.clone(),
             provider: mount.provider.clone(),
@@ -418,18 +433,8 @@ fn vfs_grant(
             root_ref: mount.root_ref.clone(),
             display_name: mount.display_name.clone(),
             metadata: mount.metadata.clone(),
-            operations: grant
-                .operations
-                .iter()
-                .copied()
-                .map(map_vfs_operation)
-                .collect(),
-            path_scopes: grant
-                .path_scopes
-                .iter()
-                .cloned()
-                .map(map_path_scope)
-                .collect(),
+            operations: vec![map_vfs_operation(required)],
+            path_scopes,
         });
     }
     if mounts.is_empty()
@@ -1015,6 +1020,66 @@ mod tests {
             ))
             .await
             .expect_err("segment prefix expansion must be denied");
+        assert!(matches!(
+            error,
+            RuntimeToolBrokerError::AuthorizationDenied { code, .. }
+                if code == "missing_vfs_grant"
+        ));
+    }
+
+    #[tokio::test]
+    async fn operation_specific_grants_on_one_mount_are_authorized_independently() {
+        let binding = binding();
+        let mut snapshot = snapshot(
+            binding.binding.target.clone(),
+            binding.binding_digest.clone(),
+        );
+        snapshot.surface.vfs_grants = vec![
+            AppliedVfsGrant {
+                mount_id: "main".to_owned(),
+                operations: BTreeSet::from([AppliedVfsOperation::Read, AppliedVfsOperation::List]),
+                path_scopes: vec![AppliedVfsPathScope::All],
+            },
+            AppliedVfsGrant {
+                mount_id: "main".to_owned(),
+                operations: BTreeSet::from([AppliedVfsOperation::Write]),
+                path_scopes: vec![AppliedVfsPathScope::Prefix("node/artifacts".to_owned())],
+            },
+        ];
+        let authorizer = ProductRuntimeToolAuthorizer::new(
+            Arc::new(BindingFixture {
+                value: Some(binding),
+            }),
+            Arc::new(SurfaceFixture {
+                value: Ok(snapshot),
+            }),
+        );
+
+        authorizer
+            .authorize(request_with_arguments(
+                "fs_read",
+                serde_json::json!({"path": "main://session/events.json"}),
+            ))
+            .await
+            .expect("canonical history remains readable");
+        authorizer
+            .authorize(request_with_arguments(
+                "fs_apply_patch",
+                serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Add File: main://node/artifacts/result\n+ok\n*** End Patch\n"
+                }),
+            ))
+            .await
+            .expect("node artifact write is granted");
+        let error = authorizer
+            .authorize(request_with_arguments(
+                "fs_apply_patch",
+                serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Add File: main://session/records/forbidden\n+no\n*** End Patch\n"
+                }),
+            ))
+            .await
+            .expect_err("write outside the node scope must remain denied");
         assert!(matches!(
             error,
             RuntimeToolBrokerError::AuthorizationDenied { code, .. }

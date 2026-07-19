@@ -1,3 +1,4 @@
+pub mod applied_resource_surface;
 mod completion;
 mod dispatch;
 mod dispatch_facade;
@@ -8,11 +9,16 @@ pub(crate) mod run;
 pub mod run_command_service;
 pub mod run_view_builder;
 mod session_tool_result_cache;
+pub mod surface;
 pub mod vfs_catalog;
 pub mod vfs_mount;
 pub mod vfs_provider;
 
 pub use agentdash_application_workflow::WorkflowApplicationError;
+pub use applied_resource_surface::{
+    AgentRunLifecycleAppliedResourceSurfaceCompiler, AgentRunLifecycleMountFacts,
+    AgentRunLifecycleMountFactsQueryPort, install_agent_run_lifecycle_applied_mount,
+};
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use dispatch_facade::LifecycleDispatchFacade;
 pub use dispatch_service::LifecycleDispatchService;
@@ -34,4 +40,5 @@ pub use session_tool_result_cache::{
     SessionToolResultCacheStatusKind, lifecycle_path_for_tool_result,
     readable_aliases_from_item_id,
 };
+pub use surface::AgentRunLifecycleSurfaceProjector;
 pub use vfs_provider::LifecycleMountProvider;

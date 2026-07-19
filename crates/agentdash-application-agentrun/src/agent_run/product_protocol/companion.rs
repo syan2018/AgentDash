@@ -17,10 +17,13 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::agent_run::AgentRunProductRuntimeProvisioningRequest;
+
 use super::{
-    AcceptedRuntimeOperation, AgentRunForkParent, AgentRunForkRequestId, AgentRunForkSaga,
-    AgentRunForkSagaRepository, AgentRunForkSagaRepositoryError, CompiledContextApplication,
-    CompiledContextDeliveryFidelity, PreallocatedAgentRunChild, RequiredInitialContextEvidence,
+    AcceptedRuntimeOperation, AgentRunForkChildProductSelection, AgentRunForkParent,
+    AgentRunForkRequestId, AgentRunForkSaga, AgentRunForkSagaRepository,
+    AgentRunForkSagaRepositoryError, CompiledContextApplication, CompiledContextDeliveryFidelity,
+    PreallocatedAgentRunChild, RequiredInitialContextEvidence,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -594,6 +597,7 @@ pub enum CompanionFreshStep {
 pub struct CompanionFreshSaga {
     identities: CompanionFreshStableIdentities,
     plan: CompanionDispatchTargetPlan,
+    provisioning: AgentRunProductRuntimeProvisioningRequest,
     phase: CompanionFreshPhase,
     version: u64,
     durable_dispatch: Option<CompanionFreshDurableDispatch>,
@@ -616,6 +620,8 @@ pub enum CompanionFreshSagaError {
     EffectIdentityDrift,
     #[error("fresh Companion child identity drifted")]
     ChildIdentityDrift,
+    #[error("fresh Companion provisioning request is invalid: {0}")]
+    InvalidProvisioning(String),
     #[error("fresh Companion Runtime child binding drifted")]
     RuntimeBindingDrift,
     #[error("a known fresh Companion child cannot terminalize as a clean failure")]
@@ -633,9 +639,10 @@ pub enum CompanionFreshSagaError {
 }
 
 impl CompanionFreshSaga {
-    pub fn requested(
+    pub fn requested_with_provisioning(
         identities: CompanionFreshStableIdentities,
         plan: CompanionDispatchTargetPlan,
+        provisioning: AgentRunProductRuntimeProvisioningRequest,
     ) -> Result<Self, CompanionFreshSagaError> {
         if !matches!(
             plan.preparation,
@@ -643,9 +650,16 @@ impl CompanionFreshSaga {
         ) {
             return Err(CompanionFreshSagaError::NotFreshCreate);
         }
+        if provisioning.runtime_thread_id != identities.runtime_thread_id {
+            return Err(CompanionFreshSagaError::ChildIdentityDrift);
+        }
+        provisioning
+            .validate()
+            .map_err(|error| CompanionFreshSagaError::InvalidProvisioning(error.to_string()))?;
         Ok(Self {
             identities,
             plan,
+            provisioning,
             phase: CompanionFreshPhase::Requested,
             version: 0,
             durable_dispatch: None,
@@ -659,6 +673,58 @@ impl CompanionFreshSaga {
             failed: None,
             lost: None,
         })
+    }
+
+    #[cfg(test)]
+    pub fn requested(
+        identities: CompanionFreshStableIdentities,
+        plan: CompanionDispatchTargetPlan,
+    ) -> Result<Self, CompanionFreshSagaError> {
+        use crate::agent_run::{
+            ProductAgentFrameRef, ProductAgentSurfaceFacts, ProductExecutionProfileRef,
+        };
+        use agentdash_domain::agent_run_target::AgentRunTarget;
+
+        let agent_id = Uuid::new_v4();
+        let mut execution_profile = ProductExecutionProfileRef {
+            profile_key: "test".to_owned(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({"executor":"test"}),
+            credential_scope: None,
+        };
+        execution_profile.refresh_digest();
+        let mut surface_facts = ProductAgentSurfaceFacts {
+            surface_revision: 1,
+            surface_digest: String::new(),
+            capability: None,
+            context: None,
+            context_source: None,
+            vfs: None,
+            mcp: None,
+            hook_plan: None,
+        };
+        surface_facts.surface_digest = surface_facts.calculated_digest();
+        let runtime_thread_id = identities.runtime_thread_id.clone();
+        Self::requested_with_provisioning(
+            identities,
+            plan,
+            AgentRunProductRuntimeProvisioningRequest {
+                target: AgentRunTarget {
+                    run_id: Uuid::new_v4(),
+                    agent_id,
+                },
+                runtime_thread_id,
+                idempotency_key: "test-companion-fresh".to_owned(),
+                frame: ProductAgentFrameRef {
+                    frame_id: Uuid::new_v4(),
+                    agent_id,
+                    revision: 1,
+                },
+                execution_profile,
+                surface_facts,
+            },
+        )
     }
 
     pub fn request_id(&self) -> &CompanionFreshRequestId {
@@ -675,6 +741,10 @@ impl CompanionFreshSaga {
 
     pub fn plan(&self) -> &CompanionDispatchTargetPlan {
         &self.plan
+    }
+
+    pub fn provisioning(&self) -> &AgentRunProductRuntimeProvisioningRequest {
+        &self.provisioning
     }
 
     pub fn phase(&self) -> CompanionFreshPhase {
@@ -1193,6 +1263,7 @@ pub struct CompanionFullForkRequest {
     pub request_id: AgentRunForkRequestId,
     pub parent: AgentRunForkParent,
     pub child: PreallocatedAgentRunChild,
+    pub child_product_selection: AgentRunForkChildProductSelection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -1246,8 +1317,13 @@ impl<'a> CompanionDispatchCoordinator<'a> {
         {
             return Err(CompanionDispatchCoordinatorError::FullForkIdentityMismatch);
         }
-        let requested =
-            AgentRunForkSaga::requested(request.request_id.clone(), request.parent, request.child);
+        let requested = AgentRunForkSaga::requested_with_product_selection(
+            request.request_id.clone(),
+            request.parent,
+            request.child,
+            None,
+            Some(request.child_product_selection),
+        );
         match self.fork_repository.create(requested.clone()).await {
             Ok(saga) => Ok(saga),
             Err(AgentRunForkSagaRepositoryError::AlreadyExists) => {
@@ -1259,6 +1335,7 @@ impl<'a> CompanionDispatchCoordinator<'a> {
                 if existing.request_id() != requested.request_id()
                     || existing.parent() != requested.parent()
                     || existing.child() != requested.child()
+                    || existing.child_product_selection() != requested.child_product_selection()
                 {
                     return Err(CompanionDispatchCoordinatorError::ExistingForkSagaDrift);
                 }
@@ -1272,9 +1349,11 @@ impl<'a> CompanionDispatchCoordinator<'a> {
         &self,
         identities: CompanionFreshStableIdentities,
         plan: CompanionDispatchTargetPlan,
+        provisioning: AgentRunProductRuntimeProvisioningRequest,
     ) -> Result<CompanionFreshSaga, CompanionDispatchCoordinatorError> {
         let request_id = identities.request_id.clone();
-        let requested = CompanionFreshSaga::requested(identities, plan)?;
+        let requested =
+            CompanionFreshSaga::requested_with_provisioning(identities, plan, provisioning)?;
         match self.fresh_repository.create(requested.clone()).await {
             Ok(saga) => Ok(saga),
             Err(CompanionFreshRepositoryError::AlreadyExists) => {
@@ -1283,7 +1362,10 @@ impl<'a> CompanionDispatchCoordinator<'a> {
                     .load(&request_id)
                     .await?
                     .ok_or(CompanionFreshRepositoryError::NotFound)?;
-                if existing.identities != requested.identities || existing.plan != requested.plan {
+                if existing.identities != requested.identities
+                    || existing.plan != requested.plan
+                    || existing.provisioning != requested.provisioning
+                {
                     return Err(CompanionDispatchCoordinatorError::ExistingFreshSagaDrift);
                 }
                 Ok(existing)
@@ -1304,7 +1386,11 @@ mod tests {
         CompiledContextContributionApplication, PreparedAgentRunForkGraph,
         RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
     };
+    use crate::agent_run::{
+        ProductAgentFrameRef, ProductAgentSurfaceFacts, ProductExecutionProfileRef,
+    };
     use agentdash_agent_service_api as service_api;
+    use agentdash_domain::agent_run_target::AgentRunTarget;
     use agentdash_domain::workflow::{
         AgentFrame, AgentRunLineage, AgentSource, LifecycleAgent, LifecycleRun,
     };
@@ -1373,6 +1459,16 @@ mod tests {
             activation_effect_id: Uuid::new_v4(),
             first_input_effect_id: Uuid::new_v4(),
         }
+    }
+
+    fn fresh_provisioning(
+        identities: &CompanionFreshStableIdentities,
+        plan: &CompanionDispatchTargetPlan,
+    ) -> AgentRunProductRuntimeProvisioningRequest {
+        CompanionFreshSaga::requested(identities.clone(), plan.clone())
+            .expect("test provisioning")
+            .provisioning()
+            .clone()
     }
 
     #[test]
@@ -1774,10 +1870,11 @@ mod tests {
             .as_ref()
             .expect("CreateAgentCommand.initial_context");
 
-        assert_eq!(
-            serde_json::to_value(canonical).expect("canonical package"),
-            serde_json::to_value(initial_context).expect("compiled package")
-        );
+        let canonical_json = serde_json::to_value(canonical).expect("canonical package");
+        let mut compiled_json = serde_json::to_value(initial_context).expect("compiled package");
+        compiled_json["schema_version"] =
+            serde_json::Value::String(initial_context.schema_version.to_string());
+        assert_eq!(canonical_json, compiled_json);
         assert!(canonical.digest_matches());
         assert_eq!(
             canonical.package_id.as_str(),
@@ -2144,8 +2241,13 @@ mod tests {
         let repository = RecordingCompanionFreshSagaRepository::default();
         let coordinator = CompanionDispatchCoordinator::new(&fork_repository, &repository);
         let identities = stable_fresh_identities();
+        let plan = fresh_plan();
         let created = coordinator
-            .materialize_fresh(identities.clone(), fresh_plan())
+            .materialize_fresh(
+                identities.clone(),
+                plan.clone(),
+                fresh_provisioning(&identities, &plan),
+            )
             .await
             .expect("materialize");
         let runtime = FreshCompleteAgentTargetFixture::default();
@@ -2203,8 +2305,13 @@ mod tests {
         let repository = RecordingCompanionFreshSagaRepository::default();
         let coordinator = CompanionDispatchCoordinator::new(&fork_repository, &repository);
         let identities = stable_fresh_identities();
+        let plan = fresh_plan();
         coordinator
-            .materialize_fresh(identities.clone(), fresh_plan())
+            .materialize_fresh(
+                identities.clone(),
+                plan.clone(),
+                fresh_provisioning(&identities, &plan),
+            )
             .await
             .expect("materialize");
         let runtime = FreshCompleteAgentTargetFixture::losing_responses([
@@ -2259,9 +2366,22 @@ mod tests {
                     context: None,
                     receipt,
                 },
+                AgentRunForkRuntimeOperation::Rebind => {
+                    let mut binding = fresh_binding(None);
+                    binding.applied_surface_revision = SurfaceRevision(1);
+                    RuntimeForkPhaseEvidence::Rebound {
+                        child_thread_id: saga.child().runtime_thread_id.clone(),
+                        child_binding: binding,
+                        receipt,
+                    }
+                }
                 AgentRunForkRuntimeOperation::Activate => RuntimeForkPhaseEvidence::Activated {
                     child_thread_id: saga.child().runtime_thread_id.clone(),
-                    child_binding: fresh_binding(Some(4)),
+                    child_binding: {
+                        let mut binding = fresh_binding(Some(4));
+                        binding.applied_surface_revision = SurfaceRevision(1);
+                        binding
+                    },
                     context: None,
                     receipt,
                 },
@@ -2317,6 +2437,39 @@ mod tests {
             )
             .map_err(|error| error.to_string())
         }
+
+        async fn materialize_child_product_selection(
+            &self,
+            saga: &AgentRunForkSaga,
+        ) -> Result<AgentRunProductRuntimeProvisioningRequest, String> {
+            let selection = saga.child_product_selection().expect("selection");
+            let mut surface_facts = ProductAgentSurfaceFacts {
+                surface_revision: 1,
+                surface_digest: String::new(),
+                capability: None,
+                context: None,
+                context_source: None,
+                vfs: None,
+                mcp: None,
+                hook_plan: None,
+            };
+            surface_facts.surface_digest = surface_facts.calculated_digest();
+            Ok(AgentRunProductRuntimeProvisioningRequest {
+                target: AgentRunTarget {
+                    run_id: saga.child().run_id,
+                    agent_id: saga.child().agent_id,
+                },
+                runtime_thread_id: saga.child().runtime_thread_id.clone(),
+                idempotency_key: selection.idempotency_key.clone(),
+                frame: ProductAgentFrameRef {
+                    frame_id: saga.child().frame_id,
+                    agent_id: saga.child().agent_id,
+                    revision: 1,
+                },
+                execution_profile: selection.execution_profile.clone(),
+                surface_facts,
+            })
+        }
     }
 
     #[tokio::test]
@@ -2344,6 +2497,21 @@ mod tests {
                 agent_id: Uuid::new_v4(),
                 frame_id: Uuid::new_v4(),
                 runtime_thread_id: RuntimeThreadId::new("full-child-thread").expect("child thread"),
+            },
+            child_product_selection: {
+                let mut execution_profile = ProductExecutionProfileRef {
+                    profile_key: "selected".to_owned(),
+                    profile_revision: 1,
+                    profile_digest: String::new(),
+                    configuration: json!({"executor":"selected"}),
+                    credential_scope: None,
+                };
+                execution_profile.refresh_digest();
+                AgentRunForkChildProductSelection {
+                    project_agent_id: Uuid::new_v4(),
+                    execution_profile,
+                    idempotency_key: "full-child-selection".to_owned(),
+                }
             },
         };
         let fork_repository = RecordingAgentRunForkSagaRepository::default();

@@ -19,6 +19,8 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::agent_run::{AgentRunProductRuntimeProvisioningRequest, ProductExecutionProfileRef};
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AgentRunForkRequestId(pub Uuid);
 
@@ -78,6 +80,8 @@ pub enum AgentRunForkSagaPhase {
     RuntimeAdmitted,
     RuntimeProvisioned,
     ProductGraphCommitted,
+    ProductSelectionMaterialized,
+    RuntimeRebound,
     RuntimeActivated,
     Succeeded,
 }
@@ -86,7 +90,15 @@ pub enum AgentRunForkSagaPhase {
 #[serde(rename_all = "snake_case")]
 pub enum AgentRunForkRuntimeOperation {
     Fork,
+    Rebind,
     Activate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRunForkChildProductSelection {
+    pub project_agent_id: Uuid,
+    pub execution_profile: ProductExecutionProfileRef,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -154,6 +166,11 @@ pub enum RuntimeForkPhaseEvidence {
         child_binding: ManagedRuntimeSourceBindingEvidence,
         child_history_digest: RuntimePayloadDigest,
         context: Option<CompiledContextApplication>,
+        receipt: AcceptedRuntimeOperation,
+    },
+    Rebound {
+        child_thread_id: RuntimeThreadId,
+        child_binding: ManagedRuntimeSourceBindingEvidence,
         receipt: AcceptedRuntimeOperation,
     },
     Activated {
@@ -369,6 +386,7 @@ pub struct LostRuntimeOperation {
 pub struct AgentRunForkSagaReceipts {
     pub runtime_admission: Option<AcceptedRuntimeOperation>,
     pub runtime_provisioning: Option<AcceptedRuntimeOperation>,
+    pub runtime_rebind: Option<AcceptedRuntimeOperation>,
     pub runtime_activation: Option<AcceptedRuntimeOperation>,
 }
 
@@ -390,6 +408,8 @@ pub struct AgentRunForkSaga {
     child_binding: Option<ManagedRuntimeSourceBindingEvidence>,
     child_history_digest: Option<RuntimePayloadDigest>,
     required_initial_context: Option<RequiredInitialContextEvidence>,
+    child_product_selection: Option<AgentRunForkChildProductSelection>,
+    materialized_child_product_selection: Option<AgentRunProductRuntimeProvisioningRequest>,
     initial_context_evidence: Option<CompiledContextApplication>,
     receipts: AgentRunForkSagaReceipts,
     graph_commit: Option<ProductGraphCommitEvidence>,
@@ -402,6 +422,7 @@ pub enum AgentRunForkSagaStep {
     DispatchRuntime(AgentRunForkOperationIdentity),
     InspectRuntime(AgentRunForkOperationIdentity),
     CommitProductGraph,
+    MaterializeChildProductSelection,
     MarkSucceeded,
     Terminal,
 }
@@ -481,6 +502,22 @@ impl AgentRunForkSaga {
         child: PreallocatedAgentRunChild,
         required_initial_context: Option<RequiredInitialContextEvidence>,
     ) -> Self {
+        Self::requested_with_product_selection(
+            request_id,
+            parent,
+            child,
+            required_initial_context,
+            None,
+        )
+    }
+
+    pub fn requested_with_product_selection(
+        request_id: AgentRunForkRequestId,
+        parent: AgentRunForkParent,
+        child: PreallocatedAgentRunChild,
+        required_initial_context: Option<RequiredInitialContextEvidence>,
+        child_product_selection: Option<AgentRunForkChildProductSelection>,
+    ) -> Self {
         Self {
             request_id,
             parent,
@@ -492,6 +529,8 @@ impl AgentRunForkSaga {
             child_binding: None,
             child_history_digest: None,
             required_initial_context,
+            child_product_selection,
+            materialized_child_product_selection: None,
             initial_context_evidence: None,
             receipts: AgentRunForkSagaReceipts::default(),
             graph_commit: None,
@@ -517,7 +556,20 @@ impl AgentRunForkSaga {
                 )
             }
             AgentRunForkSagaPhase::RuntimeProvisioned => AgentRunForkSagaStep::CommitProductGraph,
+            AgentRunForkSagaPhase::ProductGraphCommitted
+                if self.child_product_selection.is_some() =>
+            {
+                AgentRunForkSagaStep::MaterializeChildProductSelection
+            }
             AgentRunForkSagaPhase::ProductGraphCommitted => AgentRunForkSagaStep::DispatchRuntime(
+                self.operation_identity(AgentRunForkRuntimeOperation::Activate),
+            ),
+            AgentRunForkSagaPhase::ProductSelectionMaterialized => {
+                AgentRunForkSagaStep::DispatchRuntime(
+                    self.operation_identity(AgentRunForkRuntimeOperation::Rebind),
+                )
+            }
+            AgentRunForkSagaPhase::RuntimeRebound => AgentRunForkSagaStep::DispatchRuntime(
                 self.operation_identity(AgentRunForkRuntimeOperation::Activate),
             ),
             AgentRunForkSagaPhase::RuntimeActivated => AgentRunForkSagaStep::MarkSucceeded,
@@ -581,6 +633,16 @@ impl AgentRunForkSaga {
 
     pub fn initial_context_evidence(&self) -> Option<&CompiledContextApplication> {
         self.initial_context_evidence.as_ref()
+    }
+
+    pub fn child_product_selection(&self) -> Option<&AgentRunForkChildProductSelection> {
+        self.child_product_selection.as_ref()
+    }
+
+    pub fn materialized_child_product_selection(
+        &self,
+    ) -> Option<&AgentRunProductRuntimeProvisioningRequest> {
+        self.materialized_child_product_selection.as_ref()
     }
 
     pub fn receipts(&self) -> &AgentRunForkSagaReceipts {
@@ -678,6 +740,9 @@ impl AgentRunForkSaga {
                         self.receipts.runtime_admission = Some(receipt);
                         self.phase = AgentRunForkSagaPhase::RuntimeAdmitted;
                     }
+                    AgentRunForkRuntimeOperation::Rebind => {
+                        self.receipts.runtime_rebind = Some(receipt);
+                    }
                     AgentRunForkRuntimeOperation::Activate => {
                         self.receipts.runtime_activation = Some(receipt);
                     }
@@ -730,6 +795,20 @@ impl AgentRunForkSaga {
                         self.phase = AgentRunForkSagaPhase::RuntimeProvisioned;
                     }
                     (
+                        AgentRunForkRuntimeOperation::Rebind,
+                        RuntimeForkPhaseEvidence::Rebound {
+                            child_thread_id,
+                            child_binding,
+                            receipt,
+                        },
+                    ) => {
+                        self.ensure_child_thread(&child_thread_id)?;
+                        self.ensure_receipt_identity(&identity, &receipt)?;
+                        self.pin_rebound_binding(&child_binding)?;
+                        self.receipts.runtime_rebind = Some(receipt);
+                        self.phase = AgentRunForkSagaPhase::RuntimeRebound;
+                    }
+                    (
                         AgentRunForkRuntimeOperation::Activate,
                         RuntimeForkPhaseEvidence::Activated {
                             child_thread_id,
@@ -776,6 +855,28 @@ impl AgentRunForkSaga {
         }
         self.graph_commit = Some(evidence);
         self.phase = AgentRunForkSagaPhase::ProductGraphCommitted;
+        Ok(())
+    }
+
+    pub fn record_materialized_child_product_selection(
+        &mut self,
+        provisioning: AgentRunProductRuntimeProvisioningRequest,
+    ) -> Result<(), AgentRunForkSagaError> {
+        let Some(selection) = self.child_product_selection.as_ref() else {
+            return Err(AgentRunForkSagaError::ProductGraphIdentityMismatch);
+        };
+        if self.phase != AgentRunForkSagaPhase::ProductGraphCommitted
+            || provisioning.target.run_id != self.child.run_id
+            || provisioning.target.agent_id != self.child.agent_id
+            || provisioning.runtime_thread_id != self.child.runtime_thread_id
+            || provisioning.execution_profile != selection.execution_profile
+            || provisioning.idempotency_key != selection.idempotency_key
+            || provisioning.validate().is_err()
+        {
+            return Err(AgentRunForkSagaError::ProductGraphIdentityMismatch);
+        }
+        self.materialized_child_product_selection = Some(provisioning);
+        self.phase = AgentRunForkSagaPhase::ProductSelectionMaterialized;
         Ok(())
     }
 
@@ -850,6 +951,7 @@ impl AgentRunForkSaga {
                 self.request_id.0,
                 match operation {
                     AgentRunForkRuntimeOperation::Fork => "fork",
+                    AgentRunForkRuntimeOperation::Rebind => "rebind",
                     AgentRunForkRuntimeOperation::Activate => "activate",
                 }
             ))
@@ -869,9 +971,14 @@ impl AgentRunForkSaga {
             AgentRunForkSagaPhase::Requested | AgentRunForkSagaPhase::RuntimeAdmitted => {
                 Some(AgentRunForkRuntimeOperation::Fork)
             }
-            AgentRunForkSagaPhase::ProductGraphCommitted => {
-                Some(AgentRunForkRuntimeOperation::Activate)
+            AgentRunForkSagaPhase::ProductGraphCommitted => self
+                .child_product_selection
+                .is_none()
+                .then_some(AgentRunForkRuntimeOperation::Activate),
+            AgentRunForkSagaPhase::ProductSelectionMaterialized => {
+                Some(AgentRunForkRuntimeOperation::Rebind)
             }
+            AgentRunForkSagaPhase::RuntimeRebound => Some(AgentRunForkRuntimeOperation::Activate),
             AgentRunForkSagaPhase::RuntimeProvisioned
             | AgentRunForkSagaPhase::RuntimeActivated
             | AgentRunForkSagaPhase::Succeeded => None,
@@ -964,6 +1071,22 @@ impl AgentRunForkSaga {
             || current.source_ref != binding.source_ref
             || current.committed_at_revision != binding.committed_at_revision
             || current.applied_surface_revision != binding.applied_surface_revision
+        {
+            return Err(AgentRunForkSagaError::RuntimeBindingDrift);
+        }
+        self.child_binding = Some(binding.clone());
+        Ok(())
+    }
+
+    fn pin_rebound_binding(
+        &mut self,
+        binding: &ManagedRuntimeSourceBindingEvidence,
+    ) -> Result<(), AgentRunForkSagaError> {
+        let Some(provisioning) = self.materialized_child_product_selection.as_ref() else {
+            return Err(AgentRunForkSagaError::RuntimeBindingDrift);
+        };
+        if binding.activated_at_revision.is_some()
+            || binding.applied_surface_revision.0 != provisioning.surface_facts.surface_revision
         {
             return Err(AgentRunForkSagaError::RuntimeBindingDrift);
         }
@@ -1227,6 +1350,13 @@ pub trait AgentRunForkProductGraphPort: Send + Sync {
         &self,
         saga: &AgentRunForkSaga,
     ) -> Result<PreparedAgentRunForkGraph, String>;
+
+    async fn materialize_child_product_selection(
+        &self,
+        _saga: &AgentRunForkSaga,
+    ) -> Result<AgentRunProductRuntimeProvisioningRequest, String> {
+        Err("child Product selection materialization is not supported".to_owned())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -1315,6 +1445,14 @@ impl<'a> AgentRunForkSagaWorker<'a> {
                     .commit_product_graph(expected_version, saga, graph)
                     .await?);
             }
+            AgentRunForkSagaStep::MaterializeChildProductSelection => {
+                let provisioning = self
+                    .product_graph
+                    .materialize_child_product_selection(&saga)
+                    .await
+                    .map_err(AgentRunForkSagaWorkerError::ProductGraph)?;
+                saga.record_materialized_child_product_selection(provisioning)?;
+            }
             AgentRunForkSagaStep::MarkSucceeded => saga.mark_succeeded()?,
             AgentRunForkSagaStep::Terminal => return Ok(saga),
         }
@@ -1329,6 +1467,7 @@ pub struct MaterializeAgentRunFork {
     pub parent: AgentRunForkParent,
     pub child: PreallocatedAgentRunChild,
     pub required_initial_context: Option<RequiredInitialContextEvidence>,
+    pub child_product_selection: Option<AgentRunForkChildProductSelection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -1366,11 +1505,12 @@ impl<'a> AgentRunForkFacade<'a> {
         &self,
         command: MaterializeAgentRunFork,
     ) -> Result<AgentRunForkSaga, AgentRunForkFacadeError> {
-        let requested = AgentRunForkSaga::requested_with_initial_context(
+        let requested = AgentRunForkSaga::requested_with_product_selection(
             command.request_id.clone(),
             command.parent,
             command.child,
             command.required_initial_context,
+            command.child_product_selection,
         );
         match self.repository.create(requested.clone()).await {
             Ok(saga) => Ok(saga),
@@ -1383,6 +1523,7 @@ impl<'a> AgentRunForkFacade<'a> {
                 if existing.parent() != requested.parent()
                     || existing.child() != requested.child()
                     || existing.required_initial_context != requested.required_initial_context
+                    || existing.child_product_selection != requested.child_product_selection
                 {
                     return Err(AgentRunForkFacadeError::ExistingRequestDrift);
                 }
@@ -1455,6 +1596,11 @@ mod tests {
                 child_history_digest: RuntimePayloadDigest::new("sha256:child-history")
                     .expect("history digest"),
                 context: None,
+                receipt: accepted(&identity),
+            },
+            AgentRunForkRuntimeOperation::Rebind => RuntimeForkPhaseEvidence::Rebound {
+                child_thread_id: saga.child.runtime_thread_id.clone(),
+                child_binding: child_binding(None),
                 receipt: accepted(&identity),
             },
             AgentRunForkRuntimeOperation::Activate => RuntimeForkPhaseEvidence::Activated {
@@ -1549,6 +1695,9 @@ mod tests {
                 AgentRunForkSagaStep::CommitProductGraph => restarted
                     .record_product_graph_commit(graph_evidence(&restarted))
                     .expect("graph"),
+                AgentRunForkSagaStep::MaterializeChildProductSelection => {
+                    panic!("plain fork has no selected Product materialization")
+                }
                 AgentRunForkSagaStep::MarkSucceeded => restarted.mark_succeeded().expect("succeed"),
                 AgentRunForkSagaStep::Terminal => break,
             }
@@ -1945,6 +2094,7 @@ mod tests {
             parent: requested.parent.clone(),
             child: requested.child.clone(),
             required_initial_context: None,
+            child_product_selection: None,
         };
 
         let created = facade
@@ -1963,6 +2113,7 @@ mod tests {
                     parent: requested.parent,
                     child: drifted_child,
                     required_initial_context: None,
+                    child_product_selection: None,
                 })
                 .await,
             Err(AgentRunForkFacadeError::ExistingRequestDrift)

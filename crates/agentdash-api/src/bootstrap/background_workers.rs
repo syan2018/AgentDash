@@ -138,6 +138,8 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
                         diag!(
                             Warn,
                             Subsystem::Api,
+                            operation = "background_workers.agent_run_product_protocol_recovery",
+                            stage = "advance_saga",
                             protocol = failure.protocol,
                             request_id = %failure.request_id,
                             reason = %failure.reason,

@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use crate::vfs::compile_whole_mount_runtime_vfs_access_policy;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductInputDeliveryPort, AgentRunProductLaunchService,
+    AgentRunProductInputDeliveryPort, AgentRunProductLaunchService, AgentRunProductProtocolPorts,
     AgentRunProductRuntimeBindingRepository,
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
@@ -19,6 +19,7 @@ pub struct RuntimeThreadToolServices {
     pub product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
     pub product_runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub product_launch: Arc<AgentRunProductLaunchService>,
+    pub product_protocols: Arc<AgentRunProductProtocolPorts>,
     pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
 }
 

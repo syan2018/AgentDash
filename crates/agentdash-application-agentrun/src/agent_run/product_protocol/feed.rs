@@ -313,7 +313,7 @@ pub fn consume_managed_runtime_change_page(
         }
         previous = change.sequence;
     }
-    if page.gap.is_none() && page.next != previous {
+    if page.gap.is_none() && !page.changes.is_empty() && page.next != previous {
         return Err(ManagedRuntimeFeedContractError::ChangePageNextMismatch);
     }
     Ok(page)
@@ -323,11 +323,10 @@ fn consume_managed_runtime_change_page_for_thread(
     thread_id: &RuntimeThreadId,
     page: ManagedRuntimeChangePage,
 ) -> Result<ManagedRuntimeChangePage, ManagedRuntimeFeedContractError> {
-    let page = consume_managed_runtime_change_page(page)?;
     if &page.thread_id != thread_id {
         return Err(ManagedRuntimeFeedContractError::ChangePageThreadMismatch);
     }
-    Ok(page)
+    consume_managed_runtime_change_page(page)
 }
 
 pub fn managed_runtime_change_page_requires_snapshot_reload(

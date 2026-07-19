@@ -67,12 +67,17 @@ use crate::channel::{
 };
 use crate::runtime_tools::{RuntimeThreadToolServices, SharedRuntimeThreadToolServicesHandle};
 use crate::wait_activity::{WaitActivityService, WaitToolContext};
+use agentdash_agent_runtime_contract::ManagedRuntimeEntityStatus;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductInputDeliveryPort, DeliverAgentRunProductInput,
+    AgentRunProductInputDeliveryPort, CompanionAdoptionMode as ProtocolCompanionAdoptionMode,
+    CompanionContextMode, CompanionContextSourceDraft, CompanionContextSources,
+    CompiledContextAuthority, DeliverAgentRunProductInput, SubmitInput,
+    compile_companion_dispatch_target,
 };
 use agentdash_application_workflow::WorkflowScriptPreflightOutput;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 use agentdash_domain::agent_run_target::AgentRunTarget;
+use sha2::{Digest, Sha256};
 
 pub use agentdash_platform_spi::CompanionSliceMode;
 
@@ -157,7 +162,10 @@ impl<'a> CompanionGateControlFactory<'a> {
             runtime_thread_services.clone(),
         )))
         .with_human_response_mailbox_delivery(Arc::new(
-            AgentRunCompanionMailboxDelivery::new(self.repos.clone(), runtime_thread_services.clone()),
+            AgentRunCompanionMailboxDelivery::new(
+                self.repos.clone(),
+                runtime_thread_services.clone(),
+            ),
         ))
     }
 }
@@ -1333,9 +1341,11 @@ impl CompanionRequestTool {
         )
         .await?;
 
-        let runtime_thread_services =
-            require_runtime_thread_services(&self.runtime_thread_services_handle, "执行 companion request")
-                .await?;
+        let runtime_thread_services = require_runtime_thread_services(
+            &self.runtime_thread_services_handle,
+            "执行 companion request",
+        )
+        .await?;
 
         if let Some(reason) = before_resolution.block_reason.clone() {
             record_subagent_trace(
@@ -1392,7 +1402,14 @@ impl CompanionRequestTool {
                 ),
                 source: "session:parent_environment".to_string(),
             });
-        let dispatch_prompt = build_companion_dispatch_prompt(&dispatch_plan, &dispatch_message);
+        let dispatch_prompt = build_companion_first_input(&dispatch_plan, &dispatch_message);
+        let protocol_plan = compile_durable_companion_plan(
+            &runtime_thread_services,
+            &dispatch_plan,
+            &dispatch_prompt,
+            parent_frame_id,
+        )
+        .await?;
         record_subagent_trace(
             hook_runtime.as_ref(),
             Some(&runtime_thread_services),
@@ -1406,7 +1423,7 @@ impl CompanionRequestTool {
 
         let dispatch_result = CompanionChildDispatchService::new(
             &self.repos,
-            runtime_thread_services.product_launch.as_ref(),
+            runtime_thread_services.product_protocols.as_ref(),
             runtime_thread_services.frame_construction.as_ref(),
         )
         .dispatch_child(CompanionChildDispatchRequest {
@@ -1425,6 +1442,7 @@ impl CompanionRequestTool {
             companion_executor_config,
             parent_session_id: current_session_id.clone(),
             dispatch_prompt: dispatch_prompt.clone(),
+            protocol_plan,
         })
         .await?;
 
@@ -1480,9 +1498,9 @@ impl CompanionRequestTool {
                     "companion channel materialization 失败: {error}"
                 ))
             })?;
-        let mailbox_result = runtime_thread_services
+        let mailbox_message_id = runtime_thread_services
             .product_input_delivery
-            .deliver(DeliverAgentRunProductInput {
+            .record_dispatched(DeliverAgentRunProductInput {
                 target: AgentRunTarget {
                     run_id: dispatch_result.run_ref,
                     agent_id: dispatch_result.agent_ref,
@@ -1500,19 +1518,16 @@ impl CompanionRequestTool {
             .await
             .map_err(|error| {
                 AgentToolError::ExecutionFailed(format!(
-                    "child companion mailbox dispatch 失败: {error}"
+                    "child companion mailbox evidence 写入失败: {error}"
                 ))
             })?;
-        let runtime_operation_id = mailbox_result
-            .operation_receipt
-            .as_ref()
-            .map(|receipt| receipt.operation_id.to_string());
-        let mailbox_message_id = Some(mailbox_result.mailbox_message_id.to_string());
-        let mailbox_outcome = if mailbox_result.queued {
-            "queued"
-        } else {
-            "dispatched"
-        };
+        let runtime_operation_id = dispatch_result
+            .launch_source
+            .dispatch_prompt
+            .is_empty()
+            .then(String::new);
+        let mailbox_message_id = Some(mailbox_message_id.to_string());
+        let mailbox_outcome = "dispatched";
         companion_channel_service(&self.repos)
             .record_delivery_state(
                 &ChannelOwner::LifecycleRun {
@@ -1525,7 +1540,12 @@ impl CompanionRequestTool {
                     target: channel_intent.target.clone(),
                     status: ChannelDeliveryStatus::Materialized,
                     materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
-                        message_id: mailbox_result.mailbox_message_id,
+                        message_id: Uuid::parse_str(
+                            mailbox_message_id
+                                .as_deref()
+                                .expect("mailbox message id was just recorded"),
+                        )
+                        .expect("recorded mailbox message id is UUID"),
                     }),
                     updated_at: Utc::now(),
                 },
@@ -1728,7 +1748,8 @@ impl CompanionRequestTool {
             .require_delivery_runtime_thread_id("向上提审")?
             .to_string();
         let runtime_thread_services =
-            require_runtime_thread_services(&self.runtime_thread_services_handle, "向上提审").await?;
+            require_runtime_thread_services(&self.runtime_thread_services_handle, "向上提审")
+                .await?;
         let gate_control = CompanionGateControlFactory::new(&self.repos)
             .with_agent_run_delivery(&runtime_thread_services);
         let opened = gate_control
@@ -2143,8 +2164,11 @@ impl AgentTool for CompanionRespondTool {
             .tool_context
             .require_delivery_runtime_thread_id("回应 companion 请求")?
             .to_string();
-        let runtime_thread_services =
-            require_runtime_thread_services(&self.runtime_thread_services_handle, "回应 companion 请求").await?;
+        let runtime_thread_services = require_runtime_thread_services(
+            &self.runtime_thread_services_handle,
+            "回应 companion 请求",
+        )
+        .await?;
 
         let reply_target = self.resolve_reply_target(raw.reply_to.as_ref()).await?;
         let request_id = reply_target.request_id.as_str();
@@ -2355,8 +2379,8 @@ impl CompanionRespondTool {
         payload: &serde_json::Value,
         runtime_thread_services: &RuntimeThreadToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
-        let service =
-            CompanionGateControlFactory::new(&self.repos).with_agent_run_delivery(runtime_thread_services);
+        let service = CompanionGateControlFactory::new(&self.repos)
+            .with_agent_run_delivery(runtime_thread_services);
         let Some(result) = service
             .resolve_parent_request(ResolveCompanionParentRequestCommand {
                 request_id: request_id.to_string(),
@@ -2499,8 +2523,8 @@ impl CompanionRespondTool {
         payload: &serde_json::Value,
         runtime_thread_services: &RuntimeThreadToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
-        let service =
-            CompanionGateControlFactory::new(&self.repos).with_agent_run_delivery(runtime_thread_services);
+        let service = CompanionGateControlFactory::new(&self.repos)
+            .with_agent_run_delivery(runtime_thread_services);
         let Some(result) = service
             .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
                 request_id: request_id.to_string(),
@@ -3045,6 +3069,164 @@ pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt
     sections.push(format!("## 派发任务\n{}", user_prompt.trim()));
     sections.push(plan.reply_instruction.render_markdown_section());
     sections.join("\n\n")
+}
+
+fn build_companion_first_input(plan: &CompanionDispatchPlan, user_prompt: &str) -> String {
+    [
+        format!(
+            "[Companion Dispatch]\n- dispatch_id: {}\n- companion_label: {}\n- adoption_mode: {:?}",
+            plan.dispatch_id, plan.companion_label, plan.adoption_mode
+        ),
+        format!("## 派发任务\n{}", user_prompt.trim()),
+        plan.reply_instruction.render_markdown_section(),
+    ]
+    .join("\n\n")
+}
+
+async fn compile_durable_companion_plan(
+    services: &RuntimeThreadToolServices,
+    plan: &CompanionDispatchPlan,
+    first_input: &str,
+    parent_frame_id: Uuid,
+) -> Result<agentdash_application_agentrun::agent_run::CompanionDispatchTargetPlan, AgentToolError>
+{
+    let parent_runtime_thread_id =
+        agentdash_agent_runtime_contract::RuntimeThreadId::new(plan.parent_session_id.clone())
+            .map_err(|error| {
+                AgentToolError::ExecutionFailed(format!(
+                    "父 Agent Runtime thread identity 无效: {error}"
+                ))
+            })?;
+    let snapshot = services
+        .product_protocols
+        .runtime_projection
+        .load_snapshot(&parent_runtime_thread_id)
+        .await
+        .map_err(|error| {
+            AgentToolError::ExecutionFailed(format!(
+                "读取父 Agent Runtime canonical snapshot 失败: {error}"
+            ))
+        })?;
+    let through_turn_id = snapshot
+        .turns
+        .iter()
+        .rev()
+        .find(|turn| turn.status == ManagedRuntimeEntityStatus::Completed)
+        .map(|turn| turn.id.clone());
+
+    let non_constraints = plan
+        .slice
+        .injections
+        .iter()
+        .filter(|injection| injection.slot != "constraint")
+        .collect::<Vec<_>>();
+    let constraints = plan
+        .slice
+        .injections
+        .iter()
+        .filter(|injection| injection.slot == "constraint")
+        .collect::<Vec<_>>();
+    let revision = format!("{:?}", snapshot.revision);
+    let provenance = |authority, kind: &str, value: &serde_json::Value| {
+        let canonical = serde_json::to_vec(value).expect("companion context must serialize");
+        CompanionContextSourceDraft {
+            authority,
+            source_coordinate: format!(
+                "agent-runtime://{}/snapshot/{kind}",
+                parent_runtime_thread_id
+            ),
+            source_revision: revision.clone(),
+            source_digest: format!("sha256:{:x}", Sha256::digest(canonical)),
+        }
+    };
+    let compact_value = serde_json::json!(non_constraints);
+    let compact_summary = (!non_constraints.is_empty()).then(|| {
+        (
+            non_constraints
+                .iter()
+                .map(|injection| format!("### {}\n{}", injection.source, injection.content.trim()))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            provenance(
+                CompiledContextAuthority::AgentSnapshot,
+                "compact",
+                &compact_value,
+            ),
+        )
+    });
+    let workflow_value = serde_json::json!({
+        "schema_version": 1,
+        "injections": non_constraints,
+    });
+    let workflow = (!non_constraints.is_empty()).then(|| {
+        (
+            "agentdash.companion.workflow-context/v1".to_string(),
+            workflow_value.clone(),
+            provenance(
+                CompiledContextAuthority::Workflow,
+                "workflow",
+                &workflow_value,
+            ),
+        )
+    });
+    let constraints_value = serde_json::json!({
+        "schema_version": 1,
+        "injections": constraints,
+    });
+    let constraints = (!constraints.is_empty()).then(|| {
+        (
+            "agentdash.companion.constraint-set/v1".to_string(),
+            constraints_value.clone(),
+            provenance(
+                CompiledContextAuthority::Constraint,
+                "constraints",
+                &constraints_value,
+            ),
+        )
+    });
+    let mode = match plan.slice.mode {
+        CompanionSliceMode::Full => CompanionContextMode::Full,
+        CompanionSliceMode::Compact => CompanionContextMode::Compact,
+        CompanionSliceMode::WorkflowOnly => CompanionContextMode::WorkflowOnly,
+        CompanionSliceMode::ConstraintsOnly => CompanionContextMode::ConstraintsOnly,
+    };
+    let adoption_mode = match plan.adoption_mode {
+        CompanionAdoptionMode::Suggestion => ProtocolCompanionAdoptionMode::Suggestion,
+        CompanionAdoptionMode::BlockingReview => ProtocolCompanionAdoptionMode::BlockingReview,
+        CompanionAdoptionMode::FollowUpRequired => ProtocolCompanionAdoptionMode::FollowUpRequired,
+    };
+    compile_companion_dispatch_target(
+        mode,
+        adoption_mode,
+        SubmitInput {
+            text: first_input.to_string(),
+        },
+        CompanionContextSources {
+            parent_runtime_thread_id,
+            through_turn_id,
+            package_id: stable_companion_uuid(&plan.dispatch_id, "initial-context-package"),
+            compact_summary,
+            workflow,
+            constraints,
+            surface_facts: serde_json::json!({
+                "dispatch_id": plan.dispatch_id,
+                "companion_label": plan.companion_label,
+                "parent_frame_id": parent_frame_id,
+            }),
+        },
+    )
+    .map_err(|error| {
+        AgentToolError::ExecutionFailed(format!("编译 Companion durable target plan 失败: {error}"))
+    })
+}
+
+fn stable_companion_uuid(seed: &str, purpose: &str) -> Uuid {
+    let digest = Sha256::digest(format!("agentdash.companion/v1:{purpose}:{seed}").as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
 }
 
 struct CompanionDispatchConfig<'a> {

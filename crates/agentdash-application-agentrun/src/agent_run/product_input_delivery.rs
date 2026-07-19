@@ -58,6 +58,12 @@ pub trait AgentRunProductInputDeliveryPort: Send + Sync {
         &self,
         command: DeliverAgentRunProductInput,
     ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError>;
+
+    /// 记录已经由同一 Product durable protocol 提交的输入，不再次调用 Runtime。
+    async fn record_dispatched(
+        &self,
+        command: DeliverAgentRunProductInput,
+    ) -> Result<Uuid, AgentRunProductInputDeliveryError>;
 }
 
 pub struct AgentRunProductInputDeliveryService {
@@ -220,6 +226,102 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
             operation_receipt: Some(receipt),
             queued: false,
         })
+    }
+
+    async fn record_dispatched(
+        &self,
+        command: DeliverAgentRunProductInput,
+    ) -> Result<Uuid, AgentRunProductInputDeliveryError> {
+        let mailbox_message = self.persist_message(&command).await?;
+        self.mailbox
+            .mark_message_status(
+                mailbox_message.id,
+                None,
+                MailboxMessageStatus::Dispatched,
+                None,
+            )
+            .await
+            .map_err(|error| AgentRunProductInputDeliveryError::Mailbox(error.to_string()))?;
+        Ok(mailbox_message.id)
+    }
+}
+
+impl AgentRunProductInputDeliveryService {
+    async fn persist_message(
+        &self,
+        command: &DeliverAgentRunProductInput,
+    ) -> Result<
+        agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,
+        AgentRunProductInputDeliveryError,
+    > {
+        let client_command_id = command.client_command_id.trim();
+        if client_command_id.is_empty() || client_command_id.len() > 256 {
+            return Err(AgentRunProductInputDeliveryError::InvalidClientCommandId);
+        }
+        let preview = agentdash_agent_protocol::codex_user_input_to_text(&command.content)
+            .map_err(|_| AgentRunProductInputDeliveryError::EmptyInput)?;
+        let has_images =
+            command.content.iter().any(|block| {
+                matches!(
+                block,
+                agentdash_agent_protocol::codex_app_server_protocol::UserInput::Image { .. }
+                    | agentdash_agent_protocol::codex_app_server_protocol::UserInput::LocalImage {
+                        ..
+                    }
+            )
+            });
+        let payload = serde_json::json!({
+            "schema": "agentdash.product-input/v1",
+            "source": {
+                "namespace": &command.source.namespace,
+                "kind": &command.source.kind,
+                "source_ref": &command.source.source_ref,
+                "correlation_ref": &command.source.correlation_ref,
+                "actor": &command.source.actor,
+                "route": &command.source.route,
+                "display_label_key": &command.source.display_label_key,
+                "metadata": &command.source.metadata,
+            },
+            "content": &command.content,
+        });
+        let request_digest = format!(
+            "sha256:{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&(
+                    "agentdash.product-input-delivery/v1",
+                    &command.target,
+                    client_command_id,
+                    &payload,
+                ))
+                .expect("Product input delivery is serializable")
+            )
+        );
+        match self
+            .mailbox
+            .create_message_idempotent(NewAgentRunMailboxMessage {
+                id: Some(stable_message_id(&command.target, client_command_id)),
+                run_id: command.target.run_id,
+                agent_id: command.target.agent_id,
+                origin: command.origin,
+                source: command.source.clone(),
+                delivery: MailboxDelivery::LaunchOrContinueTurn,
+                barrier: ConsumptionBarrier::ImmediateIfIdle,
+                drain_mode: MailboxDrainMode::One,
+                priority: 0,
+                source_dedup_key: Some(client_command_id.to_string()),
+                delivery_request_digest: request_digest,
+                payload_json: Some(payload),
+                launch_planning_input: None,
+                preview,
+                has_images,
+                retain_payload: true,
+            })
+            .await
+            .map_err(|error| AgentRunProductInputDeliveryError::Mailbox(error.to_string()))?
+        {
+            AgentRunMailboxCreateOutcome::Created(message)
+            | AgentRunMailboxCreateOutcome::Existing(message) => Ok(message),
+        }
     }
 }
 

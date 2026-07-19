@@ -454,24 +454,6 @@ impl AppState {
                 ),
             ))
             .await;
-        let agent_run_product_protocol = Arc::new(AgentRunProductProtocolPorts::new(
-            Arc::new(PostgresAgentRunForkSagaRepository::new(pool.clone())),
-            Arc::new(ProductAgentRunForkRuntimeAdapter::new(
-                complete_agent.runtime.clone(),
-            )),
-            Arc::new(ProductAgentRunForkGraphAdapter::new(
-                repos.lifecycle_run_repo.clone(),
-                repos.lifecycle_agent_repo.clone(),
-                repos.agent_frame_repo.clone(),
-            )),
-            Arc::new(PostgresCompanionFreshSagaRepository::new(pool.clone())),
-            Arc::new(ProductCompanionFreshRuntimeAdapter::new(
-                complete_agent.runtime.clone(),
-            )),
-            Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(
-                complete_agent.runtime.clone(),
-            )),
-        ));
         let lifecycle_surface_projection =
             Arc::new(AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
                 repos.skill_asset_repo.clone(),
@@ -488,6 +470,27 @@ impl AppState {
                     hook_plan_compiler: hook_provider.clone(),
                 },
             ));
+        let agent_run_product_protocol = Arc::new(AgentRunProductProtocolPorts::new(
+            Arc::new(PostgresAgentRunForkSagaRepository::new(pool.clone())),
+            Arc::new(ProductAgentRunForkRuntimeAdapter::with_product_launch(
+                complete_agent.runtime.clone(),
+                product_launch.clone(),
+            )),
+            Arc::new(ProductAgentRunForkGraphAdapter::new(
+                repos.lifecycle_run_repo.clone(),
+                repos.lifecycle_agent_repo.clone(),
+                repos.agent_frame_repo.clone(),
+                frame_construction.clone(),
+            )),
+            Arc::new(PostgresCompanionFreshSagaRepository::new(pool.clone())),
+            Arc::new(ProductCompanionFreshRuntimeAdapter::with_product_launch(
+                complete_agent.runtime.clone(),
+                product_launch.clone(),
+            )),
+            Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(
+                complete_agent.runtime.clone(),
+            )),
+        ));
         let routine_executor = Arc::new(RoutineExecutor::new(
             repos.clone(),
             backend_registry.clone(),

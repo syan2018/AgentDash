@@ -80,6 +80,142 @@ impl AgentRunProductLaunchService {
         }
     }
 
+    /// 幂等完成 fresh Runtime Create 之前的 Host target / surface provisioning。
+    pub async fn prepare_runtime_target(
+        &self,
+        request: &AgentRunProductRuntimeProvisioningRequest,
+    ) -> Result<(), AgentRunProductLaunchError> {
+        request.validate()?;
+        let provisioned = self
+            .provisioning
+            .provision_runtime_target(request.clone())
+            .await?;
+        if provisioned.target != request.target
+            || provisioned.runtime_thread_id != request.runtime_thread_id
+            || provisioned.frame != request.frame
+            || provisioned.profile_digest != request.execution_profile.profile_digest
+            || provisioned.surface_facts_digest != request.surface_facts.surface_digest
+        {
+            return Err(AgentRunProductLaunchError::RuntimeBindingMismatch);
+        }
+        Ok(())
+    }
+
+    /// 在 Create 已有 authoritative source evidence 后，幂等提交 Product pre-activation
+    /// binding 并 materialize resource surface。该步骤必须先于 Activate。
+    pub async fn converge_created_runtime(
+        &self,
+        request: &AgentRunProductRuntimeProvisioningRequest,
+    ) -> Result<AgentRunProductRuntimeBinding, AgentRunProductLaunchError> {
+        let created = self
+            .runtime
+            .read(ManagedRuntimeReadRequest {
+                thread_id: request.runtime_thread_id.clone(),
+            })
+            .await?;
+        let observed_source_binding = created
+            .source_binding
+            .clone()
+            .ok_or(AgentRunProductLaunchError::MissingSourceBinding("Create"))?;
+        if created.thread_id != request.runtime_thread_id
+            || observed_source_binding.applied_surface_revision.0
+                != request.surface_facts.surface_revision
+        {
+            return Err(AgentRunProductLaunchError::RuntimeBindingMismatch);
+        }
+        let mut pre_activation_source_binding = observed_source_binding;
+        pre_activation_source_binding.activated_at_revision = None;
+        let binding = AgentRunProductRuntimeBinding {
+            target: request.target.clone(),
+            runtime_thread_id: request.runtime_thread_id.clone(),
+            launch_frame: request.frame.clone(),
+            execution_profile_digest: request.execution_profile.profile_digest.clone(),
+            source_binding: pre_activation_source_binding,
+        };
+        let binding_digest = binding
+            .calculated_digest()
+            .map_err(AgentRunProductLaunchError::Binding)?;
+        match self
+            .bindings
+            .load_product_binding(&request.target)
+            .await
+            .map_err(AgentRunProductLaunchError::Binding)?
+        {
+            Some(existing)
+                if existing
+                    .calculated_digest()
+                    .map_err(AgentRunProductLaunchError::Binding)?
+                    == binding_digest => {}
+            Some(_) => return Err(AgentRunProductLaunchError::RuntimeBindingMismatch),
+            None => self
+                .bindings
+                .commit_product_binding(&binding)
+                .await
+                .map_err(AgentRunProductLaunchError::Binding)?,
+        }
+        self.resources
+            .materialize(AgentRunAppliedResourceSurfaceMaterializeRequest {
+                target: request.target.clone(),
+                expected_current_snapshot_revision: None,
+                product_binding_digest: binding_digest,
+            })
+            .await
+            .map_err(|error| AgentRunProductLaunchError::ResourceSurface(error.to_string()))?;
+        Ok(binding)
+    }
+
+    /// 在 Runtime Activate evidence 已提交后，幂等 pin Product binding。
+    pub async fn converge_activated_runtime(
+        &self,
+        request: &AgentRunProductRuntimeProvisioningRequest,
+    ) -> Result<AgentRunProductRuntimeBinding, AgentRunProductLaunchError> {
+        let pre_activation = self
+            .bindings
+            .load_product_binding(&request.target)
+            .await
+            .map_err(AgentRunProductLaunchError::Binding)?
+            .ok_or(AgentRunProductLaunchError::RuntimeBindingMismatch)?;
+        let activated = self
+            .runtime
+            .read(ManagedRuntimeReadRequest {
+                thread_id: request.runtime_thread_id.clone(),
+            })
+            .await?;
+        let activated_source = activated
+            .source_binding
+            .clone()
+            .ok_or(AgentRunProductLaunchError::MissingSourceBinding("Activate"))?;
+        if activated.thread_id != request.runtime_thread_id
+            || activated_source.activated_at_revision.is_none()
+            || activated_source.source_ref != pre_activation.source_binding.source_ref
+            || activated_source.committed_at_revision
+                != pre_activation.source_binding.committed_at_revision
+        {
+            return Err(AgentRunProductLaunchError::RuntimeBindingMismatch);
+        }
+        let activated_binding = AgentRunProductRuntimeBinding {
+            source_binding: activated_source,
+            ..pre_activation
+        };
+        let activated_binding_digest = activated_binding
+            .calculated_digest()
+            .map_err(AgentRunProductLaunchError::Binding)?;
+        let resource_snapshot = self
+            .resource_query
+            .applied_resource_surface(&request.target, None)
+            .await
+            .map_err(|error| AgentRunProductLaunchError::ResourceSurface(error.to_string()))?;
+        self.bindings
+            .activate_product_binding(
+                &activated_binding,
+                &activated_binding_digest,
+                resource_snapshot.snapshot_revision,
+            )
+            .await
+            .map_err(AgentRunProductLaunchError::Binding)?;
+        Ok(activated_binding)
+    }
+
     pub async fn launch(
         &self,
         request: AgentRunProductLaunchRequest,

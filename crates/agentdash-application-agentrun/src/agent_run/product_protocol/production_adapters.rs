@@ -14,6 +14,9 @@ use agentdash_agent_runtime_contract::{
     RuntimeIdempotencyKey, RuntimeOperationId, RuntimePayloadDigest, RuntimeProjectionRevision,
     RuntimeThreadId,
 };
+use agentdash_application_ports::agent_frame_materialization::{
+    AgentRunFrameConstructionPort, FrameConstructionCommand,
+};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentRunLineage, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
     LifecycleRunRepository,
@@ -23,16 +26,22 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::agent_run::{
+    AgentRunProductLaunchService, AgentRunProductRuntimeProvisioningRequest, ProductAgentFrameRef,
+    ProductAgentSurfaceFacts,
+};
+
 use super::{
-    AcceptedRuntimeOperation, AgentRunForkGraph, AgentRunForkOperationIdentity,
-    AgentRunForkProductGraphPort, AgentRunForkRuntimeOperation, AgentRunForkRuntimePort,
-    AgentRunForkSaga, AgentRunRuntimeProjectionPort, CompanionFreshEffectEvidence,
-    CompanionFreshEffectOutcome, CompanionFreshOperation, CompanionFreshOperationIdentity,
-    CompanionFreshRuntimePort, CompanionFreshSaga, CompanionRuntimePreparation,
-    CompiledContextApplication, CompiledContextAuthority, CompiledContextContributionApplication,
-    CompiledContextDeliveryFidelity, CompiledFreshContextMode, CompiledInitialContextContribution,
-    CompiledInitialContextPackage, PreparedAgentRunForkGraph, RuntimeForkChildProgress,
-    RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
+    AcceptedRuntimeOperation, AgentRunForkChildProductSelection, AgentRunForkGraph,
+    AgentRunForkOperationIdentity, AgentRunForkProductGraphPort, AgentRunForkRuntimeOperation,
+    AgentRunForkRuntimePort, AgentRunForkSaga, AgentRunRuntimeProjectionPort,
+    CompanionFreshEffectEvidence, CompanionFreshEffectOutcome, CompanionFreshOperation,
+    CompanionFreshOperationIdentity, CompanionFreshRuntimePort, CompanionFreshSaga,
+    CompanionRuntimePreparation, CompiledContextApplication, CompiledContextAuthority,
+    CompiledContextContributionApplication, CompiledContextDeliveryFidelity,
+    CompiledFreshContextMode, CompiledInitialContextContribution, CompiledInitialContextPackage,
+    PreparedAgentRunForkGraph, RuntimeForkChildProgress, RuntimeForkPhaseEvidence,
+    RuntimeOperationOutcome,
 };
 
 const PRODUCT_RUNTIME_CHANGE_PAGE_LIMIT: u32 = 256;
@@ -114,14 +123,81 @@ impl ProductManagedRuntimeCommandAdapter {
     }
 }
 
+enum ProductLaunchConvergence {
+    Required(Arc<AgentRunProductLaunchService>),
+    #[cfg(test)]
+    Noop,
+}
+
+impl ProductLaunchConvergence {
+    async fn prepare(
+        &self,
+        request: &crate::agent_run::AgentRunProductRuntimeProvisioningRequest,
+    ) -> Result<(), String> {
+        match self {
+            Self::Required(service) => service
+                .prepare_runtime_target(request)
+                .await
+                .map_err(|error| error.to_string()),
+            #[cfg(test)]
+            Self::Noop => Ok(()),
+        }
+    }
+
+    async fn created(
+        &self,
+        request: &crate::agent_run::AgentRunProductRuntimeProvisioningRequest,
+    ) -> Result<(), String> {
+        match self {
+            Self::Required(service) => service
+                .converge_created_runtime(request)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+            #[cfg(test)]
+            Self::Noop => Ok(()),
+        }
+    }
+
+    async fn activated(
+        &self,
+        request: &crate::agent_run::AgentRunProductRuntimeProvisioningRequest,
+    ) -> Result<(), String> {
+        match self {
+            Self::Required(service) => service
+                .converge_activated_runtime(request)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+            #[cfg(test)]
+            Self::Noop => Ok(()),
+        }
+    }
+}
+
 /// Product's exact-fork adapter over the final managed Runtime Gateway.
 pub struct ProductAgentRunForkRuntimeAdapter {
     gateway: Arc<dyn ManagedAgentRuntimeGateway>,
+    convergence: ProductLaunchConvergence,
 }
 
 impl ProductAgentRunForkRuntimeAdapter {
+    pub fn with_product_launch(
+        gateway: Arc<dyn ManagedAgentRuntimeGateway>,
+        product_launch: Arc<AgentRunProductLaunchService>,
+    ) -> Self {
+        Self {
+            gateway,
+            convergence: ProductLaunchConvergence::Required(product_launch),
+        }
+    }
+
+    #[cfg(test)]
     pub fn new(gateway: Arc<dyn ManagedAgentRuntimeGateway>) -> Self {
-        Self { gateway }
+        Self {
+            gateway,
+            convergence: ProductLaunchConvergence::Noop,
+        }
     }
 
     fn command(
@@ -135,6 +211,10 @@ impl ProductAgentRunForkRuntimeAdapter {
                     child_thread_id: saga.child().runtime_thread_id.clone(),
                     through_completed_turn_id: Some(saga.parent().through_turn_id.clone()),
                 },
+            ),
+            AgentRunForkRuntimeOperation::Rebind => (
+                saga.child().runtime_thread_id.clone(),
+                ManagedRuntimeCommand::Rebind,
             ),
             AgentRunForkRuntimeOperation::Activate => (
                 saga.child().runtime_thread_id.clone(),
@@ -156,7 +236,9 @@ impl ProductAgentRunForkRuntimeAdapter {
     ) -> &RuntimeThreadId {
         match operation {
             AgentRunForkRuntimeOperation::Fork => &saga.parent().runtime_thread_id,
-            AgentRunForkRuntimeOperation::Activate => &saga.child().runtime_thread_id,
+            AgentRunForkRuntimeOperation::Rebind | AgentRunForkRuntimeOperation::Activate => {
+                &saga.child().runtime_thread_id
+            }
         }
     }
 
@@ -258,6 +340,35 @@ impl ProductAgentRunForkRuntimeAdapter {
                             ))
                         }
                     }
+                }
+                AgentRunForkRuntimeOperation::Rebind => {
+                    let Some(ManagedRuntimeOperationEvidence::Rebind { binding, .. }) = evidence
+                    else {
+                        return Err(
+                            "succeeded Runtime rebind is missing typed Rebind evidence".to_owned()
+                        );
+                    };
+                    let Some(provisioning) = saga.materialized_child_product_selection() else {
+                        return Err(
+                            "Runtime Rebind has no durable child Product selection".to_owned()
+                        );
+                    };
+                    if binding.activated_at_revision.is_some()
+                        || binding.applied_surface_revision.0
+                            != provisioning.surface_facts.surface_revision
+                    {
+                        return Err(
+                            "Runtime Rebind evidence does not match selected child surface"
+                                .to_owned(),
+                        );
+                    }
+                    Ok(RuntimeOperationOutcome::Applied(
+                        RuntimeForkPhaseEvidence::Rebound {
+                            child_thread_id: saga.child().runtime_thread_id.clone(),
+                            child_binding: binding.clone(),
+                            receipt,
+                        },
+                    ))
                 }
                 AgentRunForkRuntimeOperation::Activate => {
                     let Some(ManagedRuntimeOperationEvidence::Activate { binding }) = evidence
@@ -389,6 +500,25 @@ impl ProductAgentRunForkRuntimeAdapter {
         }
         Ok(())
     }
+
+    async fn converge_outcome(
+        &self,
+        saga: &AgentRunForkSaga,
+        outcome: &RuntimeOperationOutcome,
+    ) -> Result<(), String> {
+        let Some(provisioning) = saga.materialized_child_product_selection() else {
+            return Ok(());
+        };
+        match outcome {
+            RuntimeOperationOutcome::Applied(RuntimeForkPhaseEvidence::Rebound { .. }) => {
+                self.convergence.created(provisioning).await
+            }
+            RuntimeOperationOutcome::Applied(RuntimeForkPhaseEvidence::Activated { .. }) => {
+                self.convergence.activated(provisioning).await
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 #[async_trait]
@@ -398,6 +528,12 @@ impl AgentRunForkRuntimePort for ProductAgentRunForkRuntimeAdapter {
         saga: &AgentRunForkSaga,
         identity: &AgentRunForkOperationIdentity,
     ) -> Result<RuntimeOperationOutcome, String> {
+        if identity.operation == AgentRunForkRuntimeOperation::Rebind {
+            let provisioning = saga.materialized_child_product_selection().ok_or_else(|| {
+                "Runtime Rebind has no durable child Product selection".to_owned()
+            })?;
+            self.convergence.prepare(provisioning).await?;
+        }
         let command = Self::command(saga, identity)?;
         let expected_thread = command.thread_id.clone();
         let receipt = self
@@ -412,13 +548,15 @@ impl AgentRunForkRuntimePort for ProductAgentRunForkRuntimeAdapter {
                 "Runtime receipt identity drifted from the dispatched operation".to_owned(),
             );
         }
-        Self::map_outcome(
+        let outcome = Self::map_outcome(
             saga,
             identity,
             receipt.status,
             receipt.evidence.as_ref(),
             receipt.accepted_revision,
-        )
+        )?;
+        self.converge_outcome(saga, &outcome).await?;
+        Ok(outcome)
     }
 
     async fn inspect(
@@ -450,25 +588,40 @@ impl AgentRunForkRuntimePort for ProductAgentRunForkRuntimeAdapter {
         else {
             return Ok(RuntimeOperationOutcome::Unknown);
         };
-        Self::map_outcome(
+        let outcome = Self::map_outcome(
             saga,
             identity,
             operation.status,
             operation.evidence.as_ref(),
             snapshot.revision,
-        )
+        )?;
+        self.converge_outcome(saga, &outcome).await?;
+        Ok(outcome)
     }
 }
 
 /// Product's fresh Companion adapter over the final managed Runtime Gateway.
 pub struct ProductCompanionFreshRuntimeAdapter {
     runtime: ProductManagedRuntimeCommandAdapter,
+    convergence: ProductLaunchConvergence,
 }
 
 impl ProductCompanionFreshRuntimeAdapter {
+    pub fn with_product_launch(
+        gateway: Arc<dyn ManagedAgentRuntimeGateway>,
+        product_launch: Arc<AgentRunProductLaunchService>,
+    ) -> Self {
+        Self {
+            runtime: ProductManagedRuntimeCommandAdapter::new(gateway),
+            convergence: ProductLaunchConvergence::Required(product_launch),
+        }
+    }
+
+    #[cfg(test)]
     pub fn new(gateway: Arc<dyn ManagedAgentRuntimeGateway>) -> Self {
         Self {
             runtime: ProductManagedRuntimeCommandAdapter::new(gateway),
+            convergence: ProductLaunchConvergence::Noop,
         }
     }
 
@@ -617,15 +770,19 @@ impl CompanionFreshRuntimePort for ProductCompanionFreshRuntimeAdapter {
         saga: &CompanionFreshSaga,
         identity: &CompanionFreshOperationIdentity,
     ) -> Result<CompanionFreshEffectOutcome, String> {
+        if identity.operation == CompanionFreshOperation::CreateWithContextPackage {
+            self.convergence.prepare(saga.provisioning()).await?;
+        }
         let command = Self::command(saga, identity)?;
         let observation = self.runtime.execute(command).await?;
-        Self::map_outcome(
+        let outcome = Self::map_outcome(
             saga,
             identity,
             observation.status,
             observation.evidence.as_ref(),
             observation.accepted_revision,
-        )
+        )?;
+        self.converge_product_state(saga, identity, outcome).await
     }
 
     async fn inspect(
@@ -640,13 +797,37 @@ impl CompanionFreshRuntimePort for ProductCompanionFreshRuntimeAdapter {
         else {
             return Ok(CompanionFreshEffectOutcome::Unknown);
         };
-        Self::map_outcome(
+        let outcome = Self::map_outcome(
             saga,
             identity,
             observation.status,
             observation.evidence.as_ref(),
             observation.accepted_revision,
-        )
+        )?;
+        self.converge_product_state(saga, identity, outcome).await
+    }
+}
+
+impl ProductCompanionFreshRuntimeAdapter {
+    async fn converge_product_state(
+        &self,
+        saga: &CompanionFreshSaga,
+        identity: &CompanionFreshOperationIdentity,
+        outcome: CompanionFreshEffectOutcome,
+    ) -> Result<CompanionFreshEffectOutcome, String> {
+        if !matches!(outcome, CompanionFreshEffectOutcome::Applied(_)) {
+            return Ok(outcome);
+        }
+        match identity.operation {
+            CompanionFreshOperation::CreateWithContextPackage => {
+                self.convergence.created(saga.provisioning()).await?;
+            }
+            CompanionFreshOperation::Activate => {
+                self.convergence.activated(saga.provisioning()).await?;
+            }
+            CompanionFreshOperation::SubmitFirstInput => {}
+        }
+        Ok(outcome)
     }
 }
 
@@ -961,6 +1142,7 @@ pub struct ProductAgentRunForkGraphAdapter {
     runs: Arc<dyn LifecycleRunRepository>,
     agents: Arc<dyn LifecycleAgentRepository>,
     frames: Arc<dyn AgentFrameRepository>,
+    frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
 }
 
 impl ProductAgentRunForkGraphAdapter {
@@ -968,11 +1150,13 @@ impl ProductAgentRunForkGraphAdapter {
         runs: Arc<dyn LifecycleRunRepository>,
         agents: Arc<dyn LifecycleAgentRepository>,
         frames: Arc<dyn AgentFrameRepository>,
+        frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     ) -> Self {
         Self {
             runs,
             agents,
             frames,
+            frame_construction,
         }
     }
 
@@ -1050,7 +1234,10 @@ impl ProductAgentRunForkGraphAdapter {
             parent_agent.created_by_user_id.clone(),
         );
         child_agent.id = child.agent_id;
-        child_agent.project_agent_id = parent_agent.project_agent_id;
+        child_agent.project_agent_id = saga
+            .child_product_selection()
+            .map(|selection| selection.project_agent_id)
+            .or(parent_agent.project_agent_id);
         child_agent.bootstrap_status = parent_agent.bootstrap_status.clone();
         child_agent.workspace_title = parent_agent.workspace_title.clone();
         child_agent.workspace_title_source = parent_agent
@@ -1060,11 +1247,20 @@ impl ProductAgentRunForkGraphAdapter {
         child_agent.created_at = parent_agent.updated_at;
         child_agent.updated_at = parent_agent.updated_at;
 
-        let mut child_frame = parent_frame.clone();
+        let mut child_frame = if saga.child_product_selection().is_some() {
+            agentdash_domain::workflow::AgentFrame::new_revision(
+                child.agent_id,
+                1,
+                "agent_run_fork_selection_pending",
+            )
+        } else {
+            let mut inherited = parent_frame.clone();
+            inherited.agent_id = child.agent_id;
+            inherited.revision = 1;
+            inherited.created_by_kind = "agent_run_fork_product_protocol".to_owned();
+            inherited
+        };
         child_frame.id = child.frame_id;
-        child_frame.agent_id = child.agent_id;
-        child_frame.revision = 1;
-        child_frame.created_by_kind = "agent_run_fork_product_protocol".to_owned();
         child_frame.created_by_id = Some(parent_agent.created_by_user_id.clone());
         child_frame.created_at = parent_frame.created_at;
 
@@ -1105,6 +1301,38 @@ impl ProductAgentRunForkGraphAdapter {
         )
         .map_err(|error| ProductAgentRunForkGraphError::InvalidPreparedGraph(error.to_string()))
     }
+
+    fn selected_provisioning(
+        saga: &AgentRunForkSaga,
+        selection: &AgentRunForkChildProductSelection,
+        frame: &agentdash_domain::workflow::AgentFrame,
+    ) -> Result<AgentRunProductRuntimeProvisioningRequest, String> {
+        let child = saga.child();
+        if frame.agent_id != child.agent_id
+            || frame.created_by_kind == "agent_run_fork_selection_pending"
+            || frame.execution_profile_json.as_ref()
+                != Some(&selection.execution_profile.configuration)
+        {
+            return Err("materialized selected child frame evidence drifted".to_owned());
+        }
+        let revision = u64::try_from(frame.revision)
+            .map_err(|_| "materialized child frame revision is invalid".to_owned())?;
+        Ok(AgentRunProductRuntimeProvisioningRequest {
+            target: agentdash_domain::agent_run_target::AgentRunTarget {
+                run_id: child.run_id,
+                agent_id: child.agent_id,
+            },
+            runtime_thread_id: child.runtime_thread_id.clone(),
+            idempotency_key: selection.idempotency_key.clone(),
+            frame: ProductAgentFrameRef {
+                frame_id: frame.id,
+                agent_id: frame.agent_id,
+                revision,
+            },
+            execution_profile: selection.execution_profile.clone(),
+            surface_facts: ProductAgentSurfaceFacts::from_frame(frame),
+        })
+    }
 }
 
 #[async_trait]
@@ -1114,6 +1342,56 @@ impl AgentRunForkProductGraphPort for ProductAgentRunForkGraphAdapter {
         saga: &AgentRunForkSaga,
     ) -> Result<PreparedAgentRunForkGraph, String> {
         self.prepare(saga).await.map_err(|error| error.to_string())
+    }
+
+    async fn materialize_child_product_selection(
+        &self,
+        saga: &AgentRunForkSaga,
+    ) -> Result<AgentRunProductRuntimeProvisioningRequest, String> {
+        let selection = saga
+            .child_product_selection()
+            .ok_or_else(|| "fork saga has no selected child Product intent".to_owned())?;
+        let child = saga.child();
+        let child_agent = self
+            .agents
+            .get(child.agent_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "fork child LifecycleAgent is not committed".to_owned())?;
+        if child_agent.project_agent_id != Some(selection.project_agent_id) {
+            return Err("fork child selected ProjectAgent drifted".to_owned());
+        }
+        if let Some(existing) = self
+            .frames
+            .get_latest(child.agent_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .filter(|frame| frame.created_by_kind != "agent_run_fork_selection_pending")
+        {
+            return Self::selected_provisioning(saga, selection, &existing);
+        }
+        let outcome = self
+            .frame_construction
+            .execute_frame_construction_command(FrameConstructionCommand::DispatchLaunchAnchor {
+                run_id: child.run_id,
+                agent_id: child.agent_id,
+                subject_ref: None,
+                runtime_thread_id: Some(child.runtime_thread_id.to_string()),
+                created_by_id: Some(child_agent.created_by_user_id.clone()),
+                execution_profile: Some(selection.execution_profile.configuration.clone()),
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        let frame_id = outcome.frame_id.ok_or_else(|| {
+            "selected child frame construction returned no frame identity".to_owned()
+        })?;
+        let frame = self
+            .frames
+            .get(frame_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "selected child frame was not durably materialized".to_owned())?;
+        Self::selected_provisioning(saga, selection, &frame)
     }
 }
 
@@ -1134,6 +1412,25 @@ mod tests {
     use agentdash_test_support::workflow::{
         MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
     };
+
+    struct UnusedFrameConstruction;
+
+    #[async_trait]
+    impl AgentRunFrameConstructionPort for UnusedFrameConstruction {
+        async fn execute_frame_construction_command(
+            &self,
+            _command: FrameConstructionCommand,
+        ) -> Result<
+            agentdash_application_ports::agent_frame_materialization::AgentRunFrameSurfaceCommandOutcome,
+            agentdash_application_ports::agent_frame_materialization::AgentRunFrameSurfaceError,
+        >{
+            Err(
+                agentdash_application_ports::agent_frame_materialization::AgentRunFrameSurfaceError::ConstructionRejected {
+                    message: "unused in graph preparation test".to_owned(),
+                },
+            )
+        }
+    }
     use tokio::sync::Mutex;
     use uuid::Uuid;
 
@@ -1413,7 +1710,12 @@ mod tests {
         .expect("record fork provisioning");
 
         (
-            ProductAgentRunForkGraphAdapter::new(runs.clone(), agents.clone(), frames.clone()),
+            ProductAgentRunForkGraphAdapter::new(
+                runs.clone(),
+                agents.clone(),
+                frames.clone(),
+                Arc::new(UnusedFrameConstruction),
+            ),
             saga,
             runs,
             agents,

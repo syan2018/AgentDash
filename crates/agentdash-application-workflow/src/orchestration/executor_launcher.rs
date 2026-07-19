@@ -318,29 +318,31 @@ impl OrchestrationExecutorLauncher {
         );
         let (run, decision) = loop {
             let run = self.load_run(input.run_id).await?;
-            let decision = if run
+            let orchestration = run
                 .orchestrations
                 .iter()
-                .flat_map(|orchestration| orchestration.node_tree.iter())
-                .find(|node| {
-                    node.node_path == coordinate.node_path && node.attempt == coordinate.attempt
-                })
-                .is_some_and(|node| is_executor_terminal(node.status))
-            {
-                let gate_id = run
-                    .orchestrations
-                    .iter()
-                    .flat_map(|orchestration| orchestration.node_tree.iter())
-                    .find(|node| {
-                        node.node_path == coordinate.node_path && node.attempt == coordinate.attempt
-                    })
-                    .map(super::human_gate_launcher::human_gate_id_from_node)
-                    .transpose()?
-                    .ok_or_else(|| {
-                        WorkflowApplicationError::NotFound(
-                            "HumanGate runtime node 不存在".to_owned(),
-                        )
-                    })?;
+                .find(|orchestration| orchestration.orchestration_id == coordinate.orchestration_id)
+                .ok_or_else(|| {
+                    WorkflowApplicationError::NotFound(format!(
+                        "orchestration 不存在: {}",
+                        coordinate.orchestration_id
+                    ))
+                })?;
+            let runtime_node = find_runtime_node(
+                &orchestration.node_tree,
+                &coordinate.node_path,
+                coordinate.attempt,
+            )
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!(
+                    "HumanGate runtime node 不存在: {}#{}",
+                    coordinate.node_path, coordinate.attempt
+                ))
+            })?;
+            let terminal_gate_id = is_executor_terminal(runtime_node.status)
+                .then(|| super::human_gate_launcher::human_gate_id_from_node(runtime_node))
+                .transpose()?;
+            let decision = if let Some(gate_id) = terminal_gate_id {
                 self.human_gate_launcher
                     .inspect_resolution(gate_id)
                     .await?
@@ -1368,6 +1370,29 @@ mod tests {
         )
     }
 
+    fn nest_only_runtime_node(run: &mut LifecycleRun) {
+        let orchestration = &mut run.orchestrations[0];
+        let child = orchestration.node_tree.remove(0);
+        orchestration.node_tree.push(RuntimeNodeState {
+            node_id: "phase".to_owned(),
+            node_path: "phase".to_owned(),
+            kind: PlanNodeKind::Phase,
+            status: RuntimeNodeStatus::Running,
+            attempt: 1,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            executor_run_ref: None,
+            agent_call: None,
+            children: vec![child],
+            phase_path: Vec::new(),
+            started_at: Some(Utc::now()),
+            completed_at: None,
+            error: None,
+            trace_refs: Vec::new(),
+            cache: None,
+        });
+    }
+
     fn run_with_single_executor_node(
         kind: PlanNodeKind,
         executor: ExecutorSpec,
@@ -2028,5 +2053,118 @@ mod tests {
                 .status,
             RuntimeNodeStatus::Completed
         );
+    }
+
+    #[tokio::test]
+    async fn nested_human_gate_terminal_decision_replay_uses_durable_receipt() {
+        let mut run = run_with_human_gate_node();
+        nest_only_runtime_node(&mut run);
+        let run_id = run.id;
+        let orchestration_id = run.orchestrations[0].orchestration_id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let launcher = launcher_with_effects(repo.clone(), effects.clone());
+        let opened = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("open nested gate")
+            .opened_human_gates
+            .pop()
+            .expect("nested gate");
+        let input = SubmitHumanGateDecisionInput {
+            run_id,
+            orchestration_id,
+            node_path: "effect".to_owned(),
+            attempt: 1,
+            decision: serde_json::json!({"approved": true}),
+            resolved_by: "reviewer".to_owned(),
+        };
+
+        launcher
+            .submit_human_gate_decision(input.clone())
+            .await
+            .expect("complete nested gate");
+        let replay = launcher
+            .submit_human_gate_decision(input)
+            .await
+            .expect("replay nested terminal decision");
+
+        assert_eq!(replay.gate_id, opened.gate_id);
+        assert_eq!(effects.gate_resolutions.lock().await.len(), 1);
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .children[0]
+                .status,
+            RuntimeNodeStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn same_node_path_in_distinct_orchestrations_keeps_gate_receipts_isolated() {
+        let mut run = run_with_human_gate_node();
+        let mut other = run_with_human_gate_node().orchestrations.remove(0);
+        other.orchestration_id = Uuid::new_v4();
+        run.orchestrations.push(other);
+        let run_id = run.id;
+        let first_orchestration_id = run.orchestrations[0].orchestration_id;
+        let second_orchestration_id = run.orchestrations[1].orchestration_id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let launcher = launcher_with_effects(repo.clone(), effects.clone());
+        let opened = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("open both gates")
+            .opened_human_gates;
+        assert_eq!(opened.len(), 2);
+        let second_gate_id = opened
+            .iter()
+            .find(|gate| gate.orchestration_id == second_orchestration_id)
+            .expect("second gate")
+            .gate_id;
+        let second_input = SubmitHumanGateDecisionInput {
+            run_id,
+            orchestration_id: second_orchestration_id,
+            node_path: "effect".to_owned(),
+            attempt: 1,
+            decision: serde_json::json!({"approved": true}),
+            resolved_by: "second-reviewer".to_owned(),
+        };
+
+        launcher
+            .submit_human_gate_decision(second_input.clone())
+            .await
+            .expect("resolve second gate");
+        let replay = launcher
+            .submit_human_gate_decision(second_input)
+            .await
+            .expect("replay second gate");
+
+        assert_eq!(replay.gate_id, second_gate_id);
+        assert_eq!(effects.gate_resolutions.lock().await.len(), 1);
+        let stored = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let first = stored
+            .orchestrations
+            .iter()
+            .find(|item| item.orchestration_id == first_orchestration_id)
+            .expect("first orchestration");
+        let second = stored
+            .orchestrations
+            .iter()
+            .find(|item| item.orchestration_id == second_orchestration_id)
+            .expect("second orchestration");
+        assert_eq!(first.node_tree[0].status, RuntimeNodeStatus::Running);
+        assert_eq!(second.node_tree[0].status, RuntimeNodeStatus::Completed);
     }
 }

@@ -141,7 +141,7 @@ impl AppExecutionHookProvider {
         Ok(resolution)
     }
 
-    pub(crate) async fn load_product_hook_snapshot(
+    pub async fn load_product_hook_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
     ) -> Result<AgentFrameHookSnapshot, HookError> {

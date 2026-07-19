@@ -130,6 +130,10 @@ pub struct CompanionRequestParams {
     pub payload: serde_json::Value,
 }
 
+pub fn companion_request_parameters_schema() -> serde_json::Value {
+    schema_value::<CompanionRequestParams>()
+}
+
 async fn require_runtime_thread_services(
     handle: &SharedRuntimeThreadToolServicesHandle,
     action: &str,
@@ -1135,6 +1139,7 @@ pub struct CompanionRequestTool {
     wait_service: WaitActivityService,
     model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
     workflow_script_preflight: Option<Arc<dyn CompanionWorkflowScriptPreflightPort>>,
+    product_effect_id: Option<String>,
 }
 
 pub(crate) struct CompanionRequestToolDeps {
@@ -1146,6 +1151,7 @@ pub(crate) struct CompanionRequestToolDeps {
     pub wait_service: WaitActivityService,
     pub model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
     pub workflow_script_preflight: Option<Arc<dyn CompanionWorkflowScriptPreflightPort>>,
+    pub product_effect_id: Option<String>,
 }
 
 impl CompanionRequestTool {
@@ -1159,6 +1165,7 @@ impl CompanionRequestTool {
             wait_service: deps.wait_service,
             model_preflight: deps.model_preflight,
             workflow_script_preflight: deps.workflow_script_preflight,
+            product_effect_id: deps.product_effect_id,
         }
     }
 }
@@ -1379,6 +1386,7 @@ impl CompanionRequestTool {
         let mut dispatch_plan = build_companion_dispatch_plan(
             hook_runtime.as_ref(),
             &before_resolution,
+            self.product_effect_id.as_deref(),
             &CompanionDispatchConfig {
                 parent_session_id: &current_session_id,
                 parent_turn_id: self.tool_context.turn_id(),
@@ -1840,7 +1848,16 @@ impl CompanionRequestTool {
             ));
         }
 
-        let request_id = format!("human-{}", Uuid::new_v4().simple());
+        let request_id = self
+            .product_effect_id
+            .as_deref()
+            .map(|effect_id| {
+                format!(
+                    "human-{}",
+                    stable_companion_uuid(effect_id, "human-request").simple()
+                )
+            })
+            .unwrap_or_else(|| format!("human-{}", Uuid::new_v4().simple()));
         let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
         let ui_hint = super::payload_types::PayloadTypeRegistry::with_builtins()
             .ui_hint(payload_type)
@@ -2124,6 +2141,10 @@ pub struct CompanionRespondParams {
     /// Structured JSON object payload. Registered response types are validated semantically at runtime.
     #[schemars(schema_with = "companion_response_payload_schema")]
     pub payload: serde_json::Value,
+}
+
+pub fn companion_respond_parameters_schema() -> serde_json::Value {
+    schema_value::<CompanionRespondParams>()
 }
 
 #[derive(Clone)]
@@ -3281,9 +3302,17 @@ struct CompanionDispatchConfig<'a> {
 fn build_companion_dispatch_plan(
     hook_runtime: &dyn agentdash_platform_spi::hooks::HookRuntimeAccess,
     resolution: &agentdash_platform_spi::HookResolution,
+    product_effect_id: Option<&str>,
     config: &CompanionDispatchConfig<'_>,
 ) -> CompanionDispatchPlan {
-    let dispatch_id = format!("dispatch-{}", uuid::Uuid::new_v4().simple());
+    let dispatch_id = product_effect_id
+        .map(|effect_id| {
+            format!(
+                "dispatch-{}",
+                stable_companion_uuid(effect_id, "subagent-dispatch").simple()
+            )
+        })
+        .unwrap_or_else(|| format!("dispatch-{}", uuid::Uuid::new_v4().simple()));
     let slice = build_companion_dispatch_slice(
         &hook_runtime.snapshot(),
         resolution,

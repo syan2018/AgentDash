@@ -42,6 +42,23 @@ impl CompanionToolContext {
         }
     }
 
+    pub(crate) fn from_product_runtime(
+        runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId,
+        turn_id: String,
+        owner: agentdash_platform_spi::PlatformToolExecutionContext,
+        hook_runtime: SharedHookRuntime,
+    ) -> Self {
+        let runtime_thread_id = runtime_thread_id.to_string();
+        Self {
+            canonical_runtime_thread_id: Some(runtime_thread_id.clone()),
+            delivery_runtime_thread_id: Some(runtime_thread_id),
+            turn_id,
+            identity: None,
+            hook_runtime: Some(hook_runtime),
+            owner: Some(owner),
+        }
+    }
+
     pub(crate) fn turn_id(&self) -> &str {
         &self.turn_id
     }

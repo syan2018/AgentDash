@@ -94,6 +94,7 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
                     wait_service,
                     model_preflight: self.model_preflight.clone(),
                     workflow_script_preflight: self.workflow_script_preflight.clone(),
+                    product_effect_id: None,
                 },
             )));
         }

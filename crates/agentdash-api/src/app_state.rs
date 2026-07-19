@@ -11,7 +11,10 @@ use agentdash_agent_runtime_host::{
 };
 use agentdash_agent_service_api::{AgentHostCallbacks, AgentPayloadDigest, AgentServiceInstanceId};
 use agentdash_application::auth::session_service::AuthSessionService;
-use agentdash_application::companion::ApplicationCompanionContinuationEffects;
+use agentdash_application::companion::{
+    ApplicationCompanionContinuationEffects, ApplicationCompanionRuntimeToolService,
+    ApplicationWorkflowScriptPreflightAdapter, CompanionRuntimeToolServiceDeps,
+};
 use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
 };
@@ -25,6 +28,7 @@ use agentdash_application::product_runtime_surface::{
 };
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::{RoutineExecutor, RoutineRuntimeTurnTerminalObserver};
+use agentdash_application::runtime_tools::RuntimeThreadToolServices;
 use agentdash_application::runtime_tools::workspace_module_product::{
     ApplicationWorkspaceModuleRuntimeToolService, WorkspaceModuleRuntimeToolDeps,
     workspace_module_runtime_tool_schema,
@@ -323,6 +327,14 @@ impl AppState {
             ProductRuntimeToolKind::CompleteLifecycleNode,
             agentdash_application_lifecycle::tools::complete_lifecycle_node_parameters_schema(),
         ));
+        let companion_request_runtime_tool = Arc::new(DeferredProductRuntimeToolService::new(
+            ProductRuntimeToolKind::CompanionRequest,
+            agentdash_application::companion::tools::companion_request_parameters_schema(),
+        ));
+        let companion_respond_runtime_tool = Arc::new(DeferredProductRuntimeToolService::new(
+            ProductRuntimeToolKind::CompanionRespond,
+            agentdash_application::companion::tools::companion_respond_parameters_schema(),
+        ));
         let workspace_module_list_runtime_tool = Arc::new(DeferredProductRuntimeToolService::new(
             ProductRuntimeToolKind::WorkspaceModuleList,
             workspace_module_runtime_tool_schema(ProductRuntimeToolKind::WorkspaceModuleList),
@@ -359,6 +371,8 @@ impl AppState {
         runtime_tool_catalog.extend(product_runtime_tool_catalog(vec![
             wait_activity_service.clone() as Arc<dyn ProductRuntimeToolService>,
             lifecycle_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+            companion_request_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+            companion_respond_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_list_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_describe_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_invoke_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
@@ -652,6 +666,38 @@ impl AppState {
         let function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner> = Arc::new(
             agentdash_infrastructure::DefaultFunctionRunner::new(pool.clone()),
         );
+        let workflow_script_preflight = Arc::new(ApplicationWorkflowScriptPreflightAdapter::new(
+            Arc::new(agentdash_infrastructure::RhaiWorkflowScriptEvaluator::new()),
+        ));
+        let companion_runtime_tool_deps = CompanionRuntimeToolServiceDeps {
+            repos: repos.clone(),
+            runtime_bindings: runtime_product_bindings.clone(),
+            runtime_thread_services: RuntimeThreadToolServices {
+                product_input_delivery: product_input_delivery.clone(),
+                product_runtime_bindings: runtime_product_bindings.clone(),
+                product_launch: product_launch.clone(),
+                product_protocols: agent_run_product_protocol.clone(),
+                companion_continuations: companion_continuations.clone(),
+                companion_continuation_effects: companion_continuation_effects.clone(),
+                frame_construction: frame_construction.clone(),
+            },
+            wait_service: wait_activity_service.as_ref().clone(),
+            hook_provider: hook_provider.clone(),
+            model_preflight: None,
+            workflow_script_preflight: Some(workflow_script_preflight),
+        };
+        companion_request_runtime_tool
+            .install(Arc::new(ApplicationCompanionRuntimeToolService::new(
+                ProductRuntimeToolKind::CompanionRequest,
+                companion_runtime_tool_deps.clone(),
+            )))
+            .map_err(anyhow::Error::msg)?;
+        companion_respond_runtime_tool
+            .install(Arc::new(ApplicationCompanionRuntimeToolService::new(
+                ProductRuntimeToolKind::CompanionRespond,
+                companion_runtime_tool_deps,
+            )))
+            .map_err(anyhow::Error::msg)?;
         let workflow_agent_call = Arc::new(PostgresWorkflowAgentCallRepository::new(pool.clone()));
         let workflow_recovery = Arc::new(PostgresWorkflowRecoveryRepository::new(pool));
         let workflow_materialization =

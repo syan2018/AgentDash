@@ -270,9 +270,11 @@ export function SessionChatView({
   const hasRuntimeStreamTarget = agentRunTarget != null;
 
   const {
+    snapshot,
     displayItems,
     turnSegments,
     rawEntries,
+    interactions,
     changes,
     isConnected,
     isLoading,
@@ -552,6 +554,8 @@ export function SessionChatView({
         containerRef={containerRef}
         displayItems={displayItems}
         turnSegments={turnSegments}
+        interactions={interactions}
+        runtimeRevision={snapshot?.revision}
         agentRunTarget={agentRunTarget}
         companionSubagents={companionSubagents}
         hasRuntimeStreamTarget={hasRuntimeStreamTarget}

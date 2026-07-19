@@ -1,26 +1,12 @@
 import { useMemo } from "react";
 
 import type {
-  ManagedRuntimeContentBlock,
-  ManagedRuntimeInteraction,
-  ManagedRuntimeItem,
-} from "../../../generated/agent-runtime-contracts";
-import type {
   ManagedRuntimeCommandAvailability,
   ManagedRuntimePlatformChange,
   ManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-validators";
-import type {
-  AgentDashThreadItem,
-  BackboneEvent,
-  UserInput,
-} from "../../../generated/backbone-protocol";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
-import type {
-  SessionDisplayEntry,
-  SessionDisplayItem,
-  TokenUsageInfo,
-} from "../../session/model/types";
+import type { TokenUsageInfo } from "../../session/model/types";
 import { useManagedRuntimeFeed } from "./useManagedRuntimeFeed";
 
 export interface UseAgentRunRuntimeFeedOptions {
@@ -28,11 +14,15 @@ export interface UseAgentRunRuntimeFeedOptions {
   enabled?: boolean;
 }
 
+export type AgentRunRuntimeItem = ManagedRuntimeSnapshot["items"][number];
+export type AgentRunRuntimeInteraction =
+  ManagedRuntimeSnapshot["interactions"][number];
 export type AgentRunRuntimeTurnStatus =
   | "active"
   | "completed"
   | "failed"
-  | "interrupted";
+  | "interrupted"
+  | "lost";
 
 export interface AgentRunRuntimeTurnActivityStatus {
   kind: "connecting" | "reconnecting" | "retry_exhausted";
@@ -48,18 +38,18 @@ export interface AgentRunRuntimeTurnSegment {
   startedAtMs?: number;
   durationMs?: number;
   activity?: AgentRunRuntimeTurnActivityStatus;
-  items: SessionDisplayItem[];
-  finalOutput: SessionDisplayItem | null;
+  items: AgentRunRuntimeItem[];
+  finalOutput: AgentRunRuntimeItem | null;
 }
 
 export interface UseAgentRunRuntimeFeedResult {
   snapshot: ManagedRuntimeSnapshot | null;
   changes: ManagedRuntimePlatformChange[];
-  interactions: ManagedRuntimeInteraction[];
+  interactions: AgentRunRuntimeInteraction[];
   commandAvailability: ManagedRuntimeSnapshot["command_availability"];
-  displayItems: SessionDisplayItem[];
+  displayItems: AgentRunRuntimeItem[];
   turnSegments: AgentRunRuntimeTurnSegment[];
-  rawEntries: SessionDisplayEntry[];
+  rawEntries: AgentRunRuntimeItem[];
   isConnected: boolean;
   isLoading: boolean;
   isReceiving: boolean;
@@ -70,231 +60,66 @@ export interface UseAgentRunRuntimeFeedResult {
   tokenUsage: TokenUsageInfo | null;
 }
 
-function runtimeTimestampMs(value: bigint): number {
+function runtimeTimestampMs(value: bigint | null): number | undefined {
+  if (value === null) return undefined;
   if (value > 9_007_199_254_740_991n) {
-    throw new RangeError("Managed Runtime timestamp exceeds JavaScript safe integer range");
+    throw new RangeError(
+      "Managed Runtime presentation timestamp exceeds JavaScript safe integer range",
+    );
   }
   return Number(value);
-}
-
-function blockText(block: ManagedRuntimeContentBlock): string {
-  switch (block.kind) {
-    case "text":
-      return block.text;
-    case "image":
-      return `引用图片: ${block.source}`;
-    case "resource":
-      return `引用资源: ${block.uri}`;
-    case "structured":
-      return JSON.stringify(block.value);
-  }
-}
-
-function userInput(block: ManagedRuntimeContentBlock): UserInput {
-  if (block.kind === "image") {
-    return { type: "image", url: block.source };
-  }
-  return {
-    type: "text",
-    text: blockText(block),
-    text_elements: [],
-  };
-}
-
-function itemStatus(
-  item: ManagedRuntimeItem,
-): "inProgress" | "completed" | "failed" {
-  if (item.status === "accepted" || item.status === "running") return "inProgress";
-  return item.status === "completed" ? "completed" : "failed";
-}
-
-function itemEvent(
-  snapshot: ManagedRuntimeSnapshot,
-  item: ManagedRuntimeItem,
-): BackboneEvent {
-  const content = item.content;
-  const capturedAtMs = runtimeTimestampMs(snapshot.captured_at_ms);
-  switch (content.kind) {
-    case "user_input":
-      return {
-        type: "user_input_submitted",
-        payload: {
-          threadId: snapshot.thread_id,
-          turnId: item.turn_id,
-          itemId: item.id,
-          submissionKind: "prompt",
-          source: {
-            namespace: "agentdash.runtime",
-            kind: "managed_runtime_projection",
-            actor: "user",
-            displayLabelKey: "user",
-          },
-          content: content.content.map(userInput),
-        },
-      };
-    case "agent_output":
-      return {
-        type: "agent_message_delta",
-        payload: {
-          delta: content.content.map(blockText).join("\n"),
-          itemId: item.id,
-          threadId: snapshot.thread_id,
-          turnId: item.turn_id,
-        },
-      };
-    case "tool_call":
-    case "tool_result": {
-      const threadItem: AgentDashThreadItem = {
-        type: "dynamicToolCall",
-        id: item.id,
-        tool: content.name,
-        arguments: content.kind === "tool_call" ? content.arguments : {},
-        contentItems:
-          content.kind === "tool_result"
-            ? [{ type: "inputText", text: JSON.stringify(content.result) }]
-            : null,
-        status: itemStatus(item),
-        success: item.status === "completed",
-      };
-      if (item.status === "accepted" || item.status === "running") {
-        return {
-          type: "item_started",
-          payload: {
-            item: threadItem,
-            threadId: snapshot.thread_id,
-            turnId: item.turn_id,
-            startedAtMs: capturedAtMs,
-          },
-        };
-      }
-      return {
-        type: "item_completed",
-        payload: {
-          item: threadItem,
-          threadId: snapshot.thread_id,
-          turnId: item.turn_id,
-          completedAtMs: capturedAtMs,
-        },
-      };
-    }
-    case "context_compaction": {
-      const threadItem: AgentDashThreadItem = {
-        type: "contextCompaction",
-        id: item.id,
-      };
-      if (item.status === "accepted" || item.status === "running") {
-        return {
-          type: "item_started",
-          payload: {
-            item: threadItem,
-            threadId: snapshot.thread_id,
-            turnId: item.turn_id,
-            startedAtMs: capturedAtMs,
-          },
-        };
-      }
-      return {
-        type: "item_completed",
-        payload: {
-          item: threadItem,
-          threadId: snapshot.thread_id,
-          turnId: item.turn_id,
-          completedAtMs: capturedAtMs,
-        },
-      };
-    }
-    case "error":
-      return {
-        type: "error",
-        payload: {
-          error: { message: content.message, additionalDetails: content.code },
-          threadId: snapshot.thread_id,
-          turnId: item.turn_id,
-          willRetry: false,
-        },
-      };
-    case "extension":
-      return {
-        type: "agent_message_delta",
-        payload: {
-          delta: JSON.stringify(content.value),
-          itemId: item.id,
-          threadId: snapshot.thread_id,
-          turnId: item.turn_id,
-        },
-      };
-  }
-}
-
-function displayEntries(snapshot: ManagedRuntimeSnapshot): SessionDisplayEntry[] {
-  const capturedAtMs = runtimeTimestampMs(snapshot.captured_at_ms);
-  return snapshot.items.map((item, index) => {
-    const event = itemEvent(snapshot, item);
-    const accumulatedText =
-      event.type === "agent_message_delta" ? event.payload.delta : undefined;
-    return {
-      id: item.id,
-      sessionId: snapshot.thread_id,
-      timestamp: capturedAtMs,
-      eventSeq: index + 1,
-      timelineOrder: { kind: "durable", seq: index + 1 },
-      itemFreshness:
-        item.status === "accepted" || item.status === "running"
-          ? "started"
-          : "completed",
-      event,
-      turnId: item.turn_id,
-      accumulatedText,
-      isStreaming: item.status === "running",
-    };
-  });
 }
 
 function turnStatus(
   status: ManagedRuntimeSnapshot["turns"][number]["status"],
 ): AgentRunRuntimeTurnStatus {
-  if (status === "failed" || status === "lost") return "failed";
-  if (status === "interrupted") return "interrupted";
-  return status === "completed" ? "completed" : "active";
+  return status === "accepted" || status === "running" ? "active" : status;
 }
 
 function turnSegments(
   snapshot: ManagedRuntimeSnapshot,
-  entries: SessionDisplayEntry[],
 ): AgentRunRuntimeTurnSegment[] {
-  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const byId = new Map(snapshot.items.map((item) => [item.id, item]));
   return snapshot.turns.map((turn) => {
     const items = turn.item_ids
       .map((id) => byId.get(id))
-      .filter((entry): entry is SessionDisplayEntry => entry !== undefined);
-    const finalOutput =
-      [...items]
-        .reverse()
-        .find((entry) => entry.event.type === "agent_message_delta") ?? null;
+      .filter((item): item is AgentRunRuntimeItem => item !== undefined);
+    const firstStartedAt = items
+      .map((item) => item.presentation.started_at_ms)
+      .find((value) => value !== null) ?? null;
+    const terminal = [...items]
+      .reverse()
+      .find((item) => item.presentation.terminal !== null)
+      ?.presentation.terminal;
     return {
       turnId: turn.id,
       status: turnStatus(turn.status),
+      startedAtMs: runtimeTimestampMs(firstStartedAt),
+      durationMs: runtimeTimestampMs(terminal?.duration_ms ?? null),
       items,
-      finalOutput,
+      finalOutput:
+        [...items]
+          .reverse()
+          .find((item) => item.presentation.body.kind === "agent_message") ??
+        null,
     };
   });
 }
 
 export interface AgentRunRuntimeProjection {
-  displayItems: SessionDisplayItem[];
+  displayItems: AgentRunRuntimeItem[];
   turnSegments: AgentRunRuntimeTurnSegment[];
-  rawEntries: SessionDisplayEntry[];
-  interactions: ManagedRuntimeInteraction[];
+  rawEntries: AgentRunRuntimeItem[];
+  interactions: AgentRunRuntimeInteraction[];
 }
 
 export function projectAgentRunRuntimeSnapshot(
   snapshot: ManagedRuntimeSnapshot,
 ): AgentRunRuntimeProjection {
-  const rawEntries = displayEntries(snapshot);
   return {
-    displayItems: rawEntries,
-    turnSegments: turnSegments(snapshot, rawEntries),
-    rawEntries,
+    displayItems: snapshot.items,
+    turnSegments: turnSegments(snapshot),
+    rawEntries: snapshot.items,
     interactions: snapshot.interactions,
   };
 }

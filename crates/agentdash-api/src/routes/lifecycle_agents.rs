@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::RuntimeChangeSequence;
+use agentdash_agent_runtime_contract::{
+    ManagedRuntimeGatewayError, RuntimeChangeSequence,
+};
 use agentdash_application_agentrun::agent_run::{
+    AgentRunProductCommand, AgentRunProductCommandError, AgentRunProductCommandRequest,
     AgentRunProductProjectionError, AgentRunTerminalChangeSequence,
 };
 use agentdash_contracts::agent_run_product_projection as product_projection_contract;
@@ -48,6 +51,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/changes",
             axum::routing::get(get_managed_runtime_changes),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/commands",
+            axum::routing::post(execute_managed_runtime_command),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/snapshot",
@@ -121,6 +128,53 @@ async fn get_managed_runtime_changes(
         .await
         .map(Json)
         .map_err(agent_run_product_projection_error)
+}
+
+async fn execute_managed_runtime_command(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<product_projection_contract::AgentRunProductRuntimeCommandRequest>,
+) -> Result<Json<agentdash_agent_runtime_contract::ManagedRuntimeOperationReceipt>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let command = match body.command {
+        product_projection_contract::AgentRunProductRuntimeCommand::SubmitInput { content } => {
+            AgentRunProductCommand::SubmitInput { content }
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::Interrupt => {
+            AgentRunProductCommand::Interrupt
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::RequestCompaction => {
+            AgentRunProductCommand::RequestCompaction
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::ResolveInteraction {
+            interaction_id,
+            response,
+        } => AgentRunProductCommand::ResolveInteraction {
+            interaction_id,
+            response,
+        },
+    };
+    state
+        .services
+        .agent_run_product_projection_composition
+        .commands
+        .execute(AgentRunProductCommandRequest {
+            target,
+            client_command_id: body.client_command_id,
+            expected_revision: body.expected_revision,
+            command,
+        })
+        .await
+        .map(Json)
+        .map_err(agent_run_product_command_error)
 }
 
 async fn get_workspace_presentation_snapshot(
@@ -310,6 +364,32 @@ fn agent_run_product_projection_error(error: AgentRunProductProjectionError) -> 
         AgentRunProductProjectionError::RuntimeThreadMismatch
         | AgentRunProductProjectionError::RuntimeSourceBindingMismatch
         | AgentRunProductProjectionError::TargetMismatch => ApiError::Internal(error.to_string()),
+    }
+}
+
+fn agent_run_product_command_error(error: AgentRunProductCommandError) -> ApiError {
+    match error {
+        AgentRunProductCommandError::TargetNotBound
+        | AgentRunProductCommandError::TargetMismatch
+        | AgentRunProductCommandError::RuntimeBindingMismatch
+        | AgentRunProductCommandError::ClientCommandConflict
+        | AgentRunProductCommandError::CommandUnavailable { .. }
+        | AgentRunProductCommandError::StaleAvailabilityEvidence { .. }
+        | AgentRunProductCommandError::ActiveTurnMissing
+        | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Conflict { .. })
+        | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Unavailable { .. }) => {
+            ApiError::Conflict(error.to_string())
+        }
+        AgentRunProductCommandError::InvalidClientCommandId
+        | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Invalid { .. }) => {
+            ApiError::BadRequest(error.to_string())
+        }
+        AgentRunProductCommandError::Binding(_)
+        | AgentRunProductCommandError::ClaimPersistence { .. }
+        | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::NotFound)
+        | AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Persistence { .. }) => {
+            ApiError::Internal(error.to_string())
+        }
     }
 }
 

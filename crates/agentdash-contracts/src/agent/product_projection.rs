@@ -1,4 +1,7 @@
-use agentdash_agent_runtime_contract::ManagedRuntimeSourceBindingEvidence;
+use agentdash_agent_runtime_contract::{
+    ManagedRuntimeContentBlock, ManagedRuntimeInteractionResponse, ManagedRuntimeOperationReceipt,
+    ManagedRuntimeSourceBindingEvidence, RuntimeInteractionId, RuntimeProjectionRevision,
+};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -8,6 +11,27 @@ use crate::workspace_module::WorkspaceModulePresentation;
 pub struct AgentRunProjectionTarget {
     pub run_id: String,
     pub agent_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentRunProductRuntimeCommand {
+    SubmitInput {
+        content: Vec<ManagedRuntimeContentBlock>,
+    },
+    Interrupt,
+    RequestCompaction,
+    ResolveInteraction {
+        interaction_id: RuntimeInteractionId,
+        response: ManagedRuntimeInteractionResponse,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct AgentRunProductRuntimeCommandRequest {
+    pub client_command_id: String,
+    pub expected_revision: RuntimeProjectionRevision,
+    pub command: AgentRunProductRuntimeCommand,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -311,6 +335,8 @@ pub struct AgentRunTerminalChangePage {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct AgentRunProductProjectionContractSchema {
+    pub runtime_command: AgentRunProductRuntimeCommandRequest,
+    pub runtime_command_receipt: ManagedRuntimeOperationReceipt,
     pub workspace_snapshot: WorkspaceModulePresentationSnapshot,
     pub workspace_change_page: WorkspaceModulePresentationChangePage,
     pub terminal_snapshot: AgentRunTerminalSnapshot,

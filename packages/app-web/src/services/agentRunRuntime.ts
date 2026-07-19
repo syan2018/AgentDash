@@ -1,11 +1,9 @@
 import { api, type ApiHttpError } from "../api/client";
 import type { SessionProjectionViewResponse } from "../generated/session-contracts";
 import type {
-  AgentRunCommandOnlyRequest,
-  AgentRunContextCompactionCommandResponse,
-  AgentRunToolCallApprovalResponse,
-  AgentRunToolCallRejectionResponse,
-} from "../generated/agent-run-mailbox-contracts";
+  AgentRunProductRuntimeCommand,
+  AgentRunProductRuntimeCommandRequest as AgentRunProductRuntimeCommandRequestWire,
+} from "../generated/agent-run-product-projection-contracts";
 import type {
   ManagedRuntimeInteractionResponse,
 } from "../generated/agent-runtime-contracts";
@@ -64,46 +62,45 @@ export async function fetchAgentRunRuntimeContextProjection(
   }
 }
 
-export async function compactAgentRunContext(
-  runId: string,
-  agentId: string,
-  request: AgentRunCommandOnlyRequest,
-): Promise<AgentRunContextCompactionCommandResponse> {
-  return api.post<AgentRunContextCompactionCommandResponse>(
-    agentRunScopedPath({ runId, agentId }, "/runtime/context/compact"),
-    request,
-  );
+export interface AgentRunProductRuntimeCommandRequest {
+  client_command_id: string;
+  expected_revision: bigint;
+  command: AgentRunProductRuntimeCommand;
 }
 
-export async function approveAgentRunToolCall(
+export async function executeAgentRunRuntimeCommand(
   target: AgentRunRuntimeTarget,
-  toolCallId: string,
-): Promise<AgentRunToolCallApprovalResponse> {
-  return api.post<AgentRunToolCallApprovalResponse>(
-    agentRunScopedPath(target, `/runtime/tool-approvals/${encodeURIComponent(toolCallId)}/approve`),
-    undefined,
+  request: AgentRunProductRuntimeCommandRequest,
+): Promise<ManagedRuntimeOperationReceipt> {
+  const wireRequest: AgentRunProductRuntimeCommandRequestWire = {
+    client_command_id: request.client_command_id,
+    expected_revision: encodeRuntimeU64(
+      request.expected_revision,
+      "$.expected_revision",
+    ),
+    command: request.command,
+  };
+  const payload = await api.post<unknown>(
+    agentRunScopedPath(target, "/runtime/commands"),
+    wireRequest,
   );
-}
-
-export async function rejectAgentRunToolCall(
-  target: AgentRunRuntimeTarget,
-  toolCallId: string,
-  reason?: string,
-): Promise<AgentRunToolCallRejectionResponse> {
-  return api.post<AgentRunToolCallRejectionResponse>(
-    agentRunScopedPath(target, `/runtime/tool-approvals/${encodeURIComponent(toolCallId)}/reject`),
-    { reason: reason ?? null },
-  );
+  return decodeManagedRuntimeOperationReceipt(payload);
 }
 
 export async function respondAgentRunInteraction(
   target: AgentRunRuntimeTarget,
   interactionId: string,
   response: ManagedRuntimeInteractionResponse,
+  clientCommandId: string,
+  expectedRevision: bigint,
 ): Promise<ManagedRuntimeOperationReceipt> {
-  const payload = await api.post<unknown>(
-    agentRunScopedPath(target, `/runtime/interactions/${encodeURIComponent(interactionId)}/respond`),
-    response,
-  );
-  return decodeManagedRuntimeOperationReceipt(payload);
+  return executeAgentRunRuntimeCommand(target, {
+    client_command_id: clientCommandId,
+    expected_revision: expectedRevision,
+    command: {
+      kind: "resolve_interaction",
+      interaction_id: interactionId,
+      response,
+    },
+  });
 }

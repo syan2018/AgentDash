@@ -1,5 +1,6 @@
 import type {
   ManagedRuntimeChangePage,
+  ManagedRuntimeItem,
   ManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-validators";
 
@@ -105,6 +106,43 @@ function replaceById<T extends { readonly id: string }>(
   return next;
 }
 
+type SemanticItemTransition = Extract<
+  Extract<
+    ManagedRuntimeChangePage["changes"][number]["delta"],
+    { kind: "source_projection_changed" }
+  >["delta"],
+  { kind: "item_transitioned" }
+>["transition"];
+
+function applyItemTransition(
+  items: readonly ManagedRuntimeItem[],
+  itemId: string,
+  transition: SemanticItemTransition,
+): ManagedRuntimeItem[] {
+  const current = items.find((item) => item.id === itemId);
+  if (!current) {
+    throw new ManagedRuntimeFeedProtocolError(
+      `managed Runtime item transition references unknown item ${itemId}`,
+    );
+  }
+  const status =
+    transition.kind === "terminal"
+      ? transition.presentation.terminal?.outcome
+      : transition.kind === "started"
+        ? "running"
+        : current.status;
+  if (!status) {
+    throw new ManagedRuntimeFeedProtocolError(
+      `terminal managed Runtime item ${itemId} has no terminal outcome`,
+    );
+  }
+  return replaceById(items, {
+    ...current,
+    status,
+    presentation: transition.presentation,
+  });
+}
+
 /**
  * Fold only canonical Runtime deltas. Source observation metadata never
  * manufactures projection state; the matching typed source projection delta
@@ -125,6 +163,13 @@ export function applyManagedRuntimeChangePage(
     switch (delta.kind) {
       case "source_observation_applied":
       case "surface_evidence_changed":
+        break;
+      case "thread_name_changed":
+        next = {
+          ...next,
+          thread_name: delta.thread_name,
+          thread_name_source: delta.thread_name === null ? null : delta.source,
+        };
         break;
       case "runtime_lifecycle_changed":
         next = { ...next, lifecycle: delta.lifecycle };
@@ -173,6 +218,16 @@ export function applyManagedRuntimeChangePage(
             break;
           case "items_changed":
             next = { ...next, items: sourceDelta.items };
+            break;
+          case "item_transitioned":
+            next = {
+              ...next,
+              items: applyItemTransition(
+                next.items,
+                sourceDelta.item_id,
+                sourceDelta.transition,
+              ),
+            };
             break;
           case "interactions_changed":
           case "surface_changed":

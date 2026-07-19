@@ -14,7 +14,10 @@ use agentdash_workspace_module::workspace_module::presentation_protocol::{
 use async_trait::async_trait;
 use thiserror::Error;
 
-use super::product_protocol::AgentRunRuntimeProjectionPort;
+use super::product_protocol::{
+    AgentRunRuntimeProjectionPort, consume_managed_runtime_change_page,
+    consume_managed_runtime_snapshot,
+};
 use super::terminal_projection_protocol::{
     AgentRunTerminalChangePage, AgentRunTerminalChangeSequence,
     AgentRunTerminalProjectionRepository, AgentRunTerminalSnapshot,
@@ -115,6 +118,8 @@ impl AgentRunProductProjectionGateway {
             .load_snapshot(&binding.runtime_thread_id)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
+        let snapshot = consume_managed_runtime_snapshot(snapshot)
+            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
         if snapshot.thread_id != binding.runtime_thread_id {
             return Err(AgentRunProductProjectionError::RuntimeThreadMismatch);
         }
@@ -153,6 +158,8 @@ impl AgentRunProductProjectionGateway {
             .load_snapshot(&binding.runtime_thread_id)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
+        let snapshot = consume_managed_runtime_snapshot(snapshot)
+            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
         let reason = if snapshot.thread_id != binding.runtime_thread_id {
             Some(AgentRunProductRuntimeSnapshotStaleReason::RuntimeThreadMismatch)
         } else if snapshot.source_binding.as_ref() != Some(&binding.source_binding) {
@@ -187,6 +194,8 @@ impl AgentRunProductProjectionGateway {
             .load_snapshot(&binding.runtime_thread_id)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
+        let snapshot = consume_managed_runtime_snapshot(snapshot)
+            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
         if snapshot.thread_id != binding.runtime_thread_id {
             return Err(AgentRunProductProjectionError::RuntimeThreadMismatch);
         }
@@ -198,6 +207,8 @@ impl AgentRunProductProjectionGateway {
             .load_changes(&binding.runtime_thread_id, after)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
+        let page = consume_managed_runtime_change_page(page)
+            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
         if page.thread_id != binding.runtime_thread_id
             || page
                 .changes

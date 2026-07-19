@@ -261,10 +261,20 @@ use agentdash_contracts::workspace_module::{
 use ts_rs::TS;
 
 const AGENT_RUN_PRODUCT_RUNTIME_IMPORTS: &[(&str, &str)] = &[
+    ("ManagedRuntimeContentBlock", "./agent-runtime-contracts"),
+    (
+        "ManagedRuntimeInteractionResponse",
+        "./agent-runtime-contracts",
+    ),
+    (
+        "ManagedRuntimeOperationReceipt",
+        "./agent-runtime-contracts",
+    ),
     (
         "ManagedRuntimeSourceBindingEvidence",
         "./agent-runtime-contracts",
     ),
+    ("RuntimeInteractionId", "./agent-runtime-contracts"),
     ("RuntimeSourceRef", "./agent-runtime-contracts"),
     ("RuntimeProjectionRevision", "./agent-runtime-contracts"),
     ("SurfaceRevision", "./agent-runtime-contracts"),

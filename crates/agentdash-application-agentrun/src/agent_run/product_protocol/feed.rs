@@ -2,7 +2,9 @@ use agentdash_agent_runtime_contract::managed_projection::{
     ManagedRuntimeChangeGap, ManagedRuntimeChangePage, ManagedRuntimeSnapshot,
 };
 use agentdash_agent_runtime_contract::{
-    RuntimeChangeSequence, RuntimeProjectionRevision, RuntimeThreadId,
+    ManagedRuntimeChangeDelta, ManagedRuntimeEntityStatus, ManagedRuntimeItemTransition,
+    ManagedRuntimeSourceProjectionDelta, ManagedRuntimeTerminalStatus, RuntimeChangeSequence,
+    RuntimeProjectionRevision, RuntimeThreadId,
 };
 use thiserror::Error;
 
@@ -18,6 +20,12 @@ pub enum ManagedRuntimeFeedContractError {
         decided_at: RuntimeProjectionRevision,
         snapshot_revision: RuntimeProjectionRevision,
     },
+    #[error("Runtime item `{item_id}` has an invalid canonical presentation")]
+    InvalidItemPresentation { item_id: String },
+    #[error("Runtime interaction `{interaction_id}` has an invalid request/status/resolution tuple")]
+    InvalidInteraction { interaction_id: String },
+    #[error("Runtime thread name and source evidence must be present or absent together")]
+    ThreadNameEvidenceMismatch,
     #[error("change page contains a change for a different Runtime thread")]
     ChangeThreadMismatch,
     #[error("Runtime change page belongs to a different Runtime thread")]
@@ -46,6 +54,64 @@ pub enum ManagedRuntimeFeedContractError {
     },
     #[error("change page next cursor does not match its committed tail")]
     ChangePageNextMismatch,
+}
+
+fn validate_items_and_interactions(
+    items: &[agentdash_agent_runtime_contract::ManagedRuntimeItem],
+    interactions: &[agentdash_agent_runtime_contract::ManagedRuntimeInteraction],
+) -> Result<(), ManagedRuntimeFeedContractError> {
+    for item in items {
+        if item.presentation.validate_for_status(item.status).is_err() {
+            return Err(ManagedRuntimeFeedContractError::InvalidItemPresentation {
+                item_id: item.id.as_str().to_owned(),
+            });
+        }
+    }
+    for interaction in interactions {
+        if !interaction.validate() {
+            return Err(ManagedRuntimeFeedContractError::InvalidInteraction {
+                interaction_id: interaction.id.as_str().to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_transition(
+    item_id: &agentdash_agent_runtime_contract::RuntimeItemId,
+    transition: &ManagedRuntimeItemTransition,
+) -> Result<(), ManagedRuntimeFeedContractError> {
+    let presentation = match transition {
+        ManagedRuntimeItemTransition::Started { presentation }
+        | ManagedRuntimeItemTransition::Updated { presentation, .. }
+        | ManagedRuntimeItemTransition::Terminal { presentation } => presentation,
+    };
+    let status = match transition {
+        ManagedRuntimeItemTransition::Started { .. }
+        | ManagedRuntimeItemTransition::Updated { .. } => ManagedRuntimeEntityStatus::Running,
+        ManagedRuntimeItemTransition::Terminal { .. } => match presentation
+            .terminal
+            .as_ref()
+            .map(|terminal| terminal.outcome)
+        {
+            Some(ManagedRuntimeTerminalStatus::Completed) => ManagedRuntimeEntityStatus::Completed,
+            Some(ManagedRuntimeTerminalStatus::Failed) => ManagedRuntimeEntityStatus::Failed,
+            Some(ManagedRuntimeTerminalStatus::Interrupted) => {
+                ManagedRuntimeEntityStatus::Interrupted
+            }
+            Some(ManagedRuntimeTerminalStatus::Lost) => ManagedRuntimeEntityStatus::Lost,
+            None => {
+                return Err(ManagedRuntimeFeedContractError::InvalidItemPresentation {
+                    item_id: item_id.as_str().to_owned(),
+                });
+            }
+        },
+    };
+    presentation.validate_for_status(status).map_err(|_| {
+        ManagedRuntimeFeedContractError::InvalidItemPresentation {
+            item_id: item_id.as_str().to_owned(),
+        }
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -158,6 +224,10 @@ fn validate_contiguous_tail(
 pub fn consume_managed_runtime_snapshot(
     snapshot: ManagedRuntimeSnapshot,
 ) -> Result<ManagedRuntimeSnapshot, ManagedRuntimeFeedContractError> {
+    validate_items_and_interactions(&snapshot.items, &snapshot.interactions)?;
+    if snapshot.thread_name.is_some() != snapshot.thread_name_source.is_some() {
+        return Err(ManagedRuntimeFeedContractError::ThreadNameEvidenceMismatch);
+    }
     for (command, availability) in &snapshot.command_availability {
         let decided_at = availability.evidence().decided_at_revision;
         if decided_at != snapshot.revision {
@@ -207,7 +277,41 @@ pub fn consume_managed_runtime_change_page(
                 },
             );
         }
+        match &change.delta {
+            ManagedRuntimeChangeDelta::ThreadNameChanged {
+                thread_name,
+                source: _,
+                ..
+            } if thread_name.as_deref().is_some_and(str::is_empty) => {
+                return Err(ManagedRuntimeFeedContractError::ThreadNameEvidenceMismatch);
+            }
+            ManagedRuntimeChangeDelta::SourceProjectionChanged { delta, .. } => match delta {
+                ManagedRuntimeSourceProjectionDelta::SnapshotReplaced {
+                    items,
+                    interactions,
+                    ..
+                } => validate_items_and_interactions(items, interactions)?,
+                ManagedRuntimeSourceProjectionDelta::ItemsChanged { items } => {
+                    validate_items_and_interactions(items, &[])?
+                }
+                ManagedRuntimeSourceProjectionDelta::ItemTransitioned {
+                    item_id,
+                    transition,
+                } => validate_transition(item_id, transition)?,
+                ManagedRuntimeSourceProjectionDelta::InteractionsChanged { interactions } => {
+                    validate_items_and_interactions(&[], interactions)?
+                }
+                ManagedRuntimeSourceProjectionDelta::LifecycleChanged { .. }
+                | ManagedRuntimeSourceProjectionDelta::ActiveTurnChanged { .. }
+                | ManagedRuntimeSourceProjectionDelta::TurnsChanged { .. }
+                | ManagedRuntimeSourceProjectionDelta::SurfaceChanged { .. } => {}
+            },
+            _ => {}
+        }
         previous = change.sequence;
+    }
+    if page.gap.is_none() && page.next != previous {
+        return Err(ManagedRuntimeFeedContractError::ChangePageNextMismatch);
     }
     Ok(page)
 }

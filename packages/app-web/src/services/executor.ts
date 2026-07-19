@@ -1,30 +1,10 @@
 import { api } from "../api/client";
 import type { ProjectAgentExecutor } from "../generated/project-agent-contracts";
 import type { CompanionGateRespondResponse } from "../generated/companion-contracts";
-import {
-  approveAgentRunToolCall,
-  rejectAgentRunToolCall,
-  type AgentRunRuntimeTarget,
-} from "./agentRunRuntime";
 
 export type ExecutorProfile = string;
 
 export type ExecutorConfig = ProjectAgentExecutor;
-
-export async function approveToolCallForAgentRun(
-  target: AgentRunRuntimeTarget,
-  toolCallId: string,
-) {
-  return approveAgentRunToolCall(target, toolCallId);
-}
-
-export async function rejectToolCallForAgentRun(
-  target: AgentRunRuntimeTarget,
-  toolCallId: string,
-  reason?: string,
-) {
-  return rejectAgentRunToolCall(target, toolCallId, reason);
-}
 
 export async function respondCompanionRequest(
   gateId: string,

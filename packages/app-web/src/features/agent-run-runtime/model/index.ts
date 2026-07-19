@@ -19,6 +19,8 @@ export {
   commandIsAvailable,
   projectAgentRunRuntimeSnapshot,
   useAgentRunRuntimeFeed,
+  type AgentRunRuntimeInteraction,
+  type AgentRunRuntimeItem,
   type AgentRunRuntimeProjection,
   type AgentRunRuntimeTurnActivityStatus,
   type AgentRunRuntimeTurnSegment,

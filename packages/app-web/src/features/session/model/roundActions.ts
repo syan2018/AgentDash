@@ -1,6 +1,4 @@
 import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import type { SessionDisplayEntry } from "./types";
 import type { AgentRunRuntimeTurnSegment } from "../../agent-run-runtime";
 
 export interface RoundActionModel {
@@ -15,33 +13,40 @@ export interface RoundActionModel {
   };
 }
 
-type AgentMessageEvent = Extract<BackboneEvent, { type: "agent_message_delta" }>;
-type AgentMessageDisplayEntry = SessionDisplayEntry & { event: AgentMessageEvent };
-
-function isAgentMessageEntry(value: unknown): value is AgentMessageDisplayEntry {
-  return Boolean(
-    value
-      && typeof value === "object"
-      && "event" in value
-      && (value as SessionDisplayEntry).event.type === "agent_message_delta",
-  );
-}
-
 export function lastAgentReplyText(segment: AgentRunRuntimeTurnSegment): string {
   const output = segment.finalOutput;
-  if (!isAgentMessageEntry(output)) return "";
-  return (output.accumulatedText ?? output.event.payload.delta ?? "").trim();
+  if (output?.presentation.body.kind !== "agent_message") return "";
+  return output.presentation.body.content
+    .map((block) => {
+      switch (block.kind) {
+        case "text":
+          return block.text;
+        case "image":
+          return block.source;
+        case "local_resource":
+          return block.path;
+        case "resource_link":
+          return block.uri;
+        case "skill_reference":
+          return block.name;
+        case "mention":
+          return block.label;
+        case "structured":
+          return JSON.stringify(block.value);
+      }
+    })
+    .join("\n")
+    .trim();
 }
 
 export function forkPointRefFromFinalAgentReply(
   segment: AgentRunRuntimeTurnSegment,
 ): SessionMessageRefDto | undefined {
-  const output = segment.finalOutput;
-  if (!isAgentMessageEntry(output)) return undefined;
-  const turnId = output.turnId ?? segment.turnId;
-  const entryIndex = output.entryIndex;
-  if (!turnId || entryIndex == null) return undefined;
-  return { turn_id: turnId, entry_index: entryIndex };
+  // Canonical Runtime item identity does not contain the mailbox entry index
+  // required by the legacy fork DTO. Fork remains unavailable until its
+  // command contract accepts Runtime item identity directly.
+  void segment;
+  return undefined;
 }
 
 export function buildRoundActionModel(segment: AgentRunRuntimeTurnSegment): RoundActionModel {

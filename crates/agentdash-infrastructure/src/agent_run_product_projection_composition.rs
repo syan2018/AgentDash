@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::ManagedAgentRuntimeGateway;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductProjectionGateway, AgentRunProductProjectionQueryPort,
+    AgentRunProductCommandFacade, AgentRunProductProjectionGateway,
+    AgentRunProductProjectionQueryPort,
     AgentRunThreadNameProjectionObserver, ProductAgentRunRuntimeProjectionAdapter,
 };
 use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
@@ -11,7 +12,7 @@ use sqlx::PgPool;
 
 use crate::{
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
-    PostgresWorkspaceModulePresentationStore,
+    PostgresProductRuntimeCommandClaimRepository, PostgresWorkspaceModulePresentationStore,
     managed_runtime_product_change_delivery::{
         ManagedRuntimeProductChangeConsumer, PostgresManagedRuntimeProductChangeDelivery,
     },
@@ -24,6 +25,7 @@ use crate::{
 /// projection state through their dedicated PostgreSQL units of work.
 pub struct AgentRunProductProjectionComposition {
     pub gateway: Arc<dyn AgentRunProductProjectionQueryPort>,
+    pub commands: Arc<AgentRunProductCommandFacade>,
     pub runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
     pub workspace_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
     pub terminals: Arc<PostgresAgentRunTerminalProjectionStore>,
@@ -42,10 +44,18 @@ impl AgentRunProductProjectionComposition {
         let runtime_bindings = Arc::new(PostgresAgentRunProductRuntimeBindingRepository::new(
             pool.clone(),
         ));
+        let runtime_command_claims =
+            Arc::new(PostgresProductRuntimeCommandClaimRepository::new(pool.clone()));
         let workspace_presentations =
             Arc::new(PostgresWorkspaceModulePresentationStore::new(pool.clone()));
         let terminals = Arc::new(PostgresAgentRunTerminalProjectionStore::new(pool.clone()));
-        let runtime_projection = Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(runtime));
+        let runtime_projection =
+            Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(runtime.clone()));
+        let commands = Arc::new(AgentRunProductCommandFacade::new(
+            runtime_bindings.clone(),
+            runtime,
+            runtime_command_claims,
+        ));
         let thread_name_observer = Arc::new(AgentRunThreadNameProjectionObserver::new(
             runtime_bindings.clone(),
             runtime_projection.clone(),
@@ -71,6 +81,7 @@ impl AgentRunProductProjectionComposition {
             ));
         Ok(Self {
             gateway,
+            commands,
             runtime_bindings,
             workspace_presentations,
             terminals,

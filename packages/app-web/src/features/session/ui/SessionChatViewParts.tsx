@@ -20,15 +20,19 @@ import {
   RichInput,
   type RichInputRef,
 } from "../../file-reference";
-import { isAggregatedGroup, isAggregatedThinkingGroup, isDisplayEntry } from "../model/types";
-import type { SessionDisplayItem, SessionDisplayEntry, TokenUsageInfo } from "../model/types";
+import type { TokenUsageInfo } from "../model/types";
 import { buildRoundActionModel, type RoundActionModel } from "../model/roundActions";
 import type {
+  AgentRunRuntimeInteraction,
+  AgentRunRuntimeItem,
   AgentRunRuntimeTurnActivityStatus,
   AgentRunRuntimeTurnSegment,
 } from "../../agent-run-runtime";
+import {
+  ManagedRuntimeInteractionView,
+  ManagedRuntimeItemView,
+} from "../../agent-run-runtime/ui/ManagedRuntimePresentation";
 import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
-import { SessionEntry } from "./SessionEntry";
 import type { SessionChatCommandModel, SessionChatCommandState } from "./SessionChatViewTypes";
 import type { ImageAttachment } from "./composer/useImageAttachments";
 import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
@@ -74,12 +78,6 @@ function removeReferenceMarkers(prompt: string, relPath: string): string {
   next = next.replace(/[ \t]+\n/g, "\n");
   next = next.replace(/\n{3,}/g, "\n\n");
   return next;
-}
-
-function getItemKey(item: SessionDisplayItem): string {
-  if (isAggregatedGroup(item)) return item.groupKey;
-  if (isAggregatedThinkingGroup(item)) return item.groupKey;
-  return item.id;
 }
 
 /**
@@ -238,6 +236,8 @@ export function SessionChatStream({
   containerRef,
   displayItems,
   turnSegments,
+  interactions,
+  runtimeRevision,
   agentRunTarget,
   companionSubagents,
   hasRuntimeStreamTarget,
@@ -248,8 +248,10 @@ export function SessionChatStream({
   onScroll,
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
-  displayItems: SessionDisplayItem[];
+  displayItems: AgentRunRuntimeItem[];
   turnSegments?: AgentRunRuntimeTurnSegment[];
+  interactions?: AgentRunRuntimeInteraction[];
+  runtimeRevision?: bigint;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   hasRuntimeStreamTarget: boolean;
@@ -271,6 +273,14 @@ export function SessionChatStream({
       ) : (hasRuntimeStreamTarget && displayItems.length > 0) || streamPrefixContent ? (
         <div className="mx-auto w-full max-w-4xl space-y-1.5 px-5 py-6">
           {streamPrefixContent}
+          {agentRunTarget && runtimeRevision !== undefined && interactions?.map((interaction) => (
+            <ManagedRuntimeInteractionView
+              key={interaction.id}
+              interaction={interaction}
+              target={agentRunTarget}
+              expectedRevision={runtimeRevision}
+            />
+          ))}
           {turnSegments && turnSegments.length > 0 ? (
             turnSegments.map((segment, idx) => (
               <TurnSection
@@ -283,17 +293,12 @@ export function SessionChatStream({
               />
             ))
           ) : (
-            displayItems.map((item, idx) => {
-              const key = getItemKey(item);
-              const followed = isToolGroup(item) && hasFollowingAgentMessage(displayItems, idx);
+            displayItems.map((item) => {
               return (
-                <div key={key}>
-                  <SessionEntry
+                <div key={item.id}>
+                  <ManagedRuntimeItemView
                     item={item}
-                    agentRunTarget={agentRunTarget}
-                    companionSubagents={companionSubagents}
-                    isStreaming={key === streamingEntryId}
-                    followedByMessage={followed}
+                    isStreaming={item.id === streamingEntryId}
                   />
                 </div>
               );
@@ -314,29 +319,6 @@ export function SessionChatStream({
       )}
     </div>
   );
-}
-
-/** 判断 displayItem 是否是 agent 文本消息 */
-function isAgentMessage(item: SessionDisplayItem): boolean {
-  if (!isDisplayEntry(item)) return false;
-  return (item as SessionDisplayEntry).event.type === "agent_message_delta";
-}
-
-/** 判断当前 item 是否是 aggregated tool group */
-function isToolGroup(item: SessionDisplayItem): boolean {
-  return isAggregatedGroup(item);
-}
-
-/** 列表中某 tool group 后面是否紧跟 agent message */
-function hasFollowingAgentMessage(items: SessionDisplayItem[], idx: number): boolean {
-  for (let i = idx + 1; i < items.length; i++) {
-    const next = items[i]!;
-    if (isAgentMessage(next)) return true;
-    if (isToolGroup(next)) continue;
-    if (isAggregatedThinkingGroup(next)) continue;
-    break;
-  }
-  return false;
 }
 
 function formatTurnDuration(ms: number): string {
@@ -360,6 +342,8 @@ function terminalTurnLabel(status: AgentRunRuntimeTurnSegment["status"]): string
       return "执行失败";
     case "interrupted":
       return "执行已中断";
+    case "lost":
+      return "执行状态已丢失";
     default:
       return null;
   }
@@ -448,17 +432,12 @@ function TurnSection({
             <span className="h-px flex-1 bg-border/40" />
           </button>
         )}
-        {segment.items.map((item, idx) => {
-          const key = getItemKey(item);
-          const followed = isToolGroup(item) && hasFollowingAgentMessage(segment.items, idx);
+        {segment.items.map((item) => {
           return (
-            <div key={key}>
-              <SessionEntry
+            <div key={item.id}>
+              <ManagedRuntimeItemView
                 item={item}
-                agentRunTarget={agentRunTarget}
-                companionSubagents={companionSubagents}
-                isStreaming={key === streamingEntryId}
-                followedByMessage={followed}
+                isStreaming={item.id === streamingEntryId}
               />
             </div>
           );
@@ -484,11 +463,9 @@ function TurnSection({
         <span className="h-px flex-1 bg-border/40" />
       </button>
       {segment.finalOutput && (
-        <SessionEntry
+        <ManagedRuntimeItemView
           item={segment.finalOutput}
-          agentRunTarget={agentRunTarget}
-          companionSubagents={companionSubagents}
-          isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
+          isStreaming={segment.finalOutput.id === streamingEntryId}
         />
       )}
       <RoundActionToolbar

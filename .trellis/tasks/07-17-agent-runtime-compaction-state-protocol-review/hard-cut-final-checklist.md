@@ -65,11 +65,11 @@
 - [ ] Dash collaboration tool 经 Tool Broker 调 Product Companion command。
 - [ ] Routine / Workflow AgentCall 经 AgentRun Product command 调 Runtime。
 - [ ] Capability/Runtime Tools 编译为 Runtime Surface / Tool Broker contributions。
-- [ ] MCP discovery/executor 与静态 Product/VFS tools 共享同一 typed Runtime Tool
+- [x] MCP discovery/executor 与静态 Product/VFS tools 共享同一 typed Runtime Tool
   Broker catalog；Surface compiler只引用可执行 tool requirements，Host callback 经
   Broker执行，MCP server metadata 不作为 context 注入。
-- [ ] Hook Product effects 迁到 typed Product command/callback owner。
-- [ ] Product Hook plan compiler/policy handler进入production composition；只将明确选择
+- [x] Hook Product effects 迁到 typed Product command/callback owner。
+- [x] Product Hook plan compiler/policy handler进入production composition；只将明确选择
   `AgentCoreCallback` / `DriverNative` 的site映射进Agent surface，空计划或无条件Allow
   不能作为required hook evidence。
 - [ ] Workspace/Canvas/VFS grants 只读 AppliedResourceSurface。
@@ -98,8 +98,8 @@
 - [x] Lifecycle VFS canonical `events.json` 与 derived indexes。
 - [ ] Terminal create/input/resize/close/projection。
 - [ ] Wait activity 与 gate/terminal convergence。
-- [ ] Tool/Hook callback、permission、deadline、effect correlation。
-- [ ] MCP dynamic tool discovery → surface apply → Host callback → Broker execution。
+- [x] Tool/Hook callback、permission、deadline、effect correlation。
+- [x] MCP dynamic tool discovery → surface apply → Host callback → Broker execution。
 - [ ] Compaction Dash exact / Codex native projection。
 - [x] reconnect cursor tail与gap snapshot reload。
 - [ ] restart/unknown outcome/recovery 使用同一 command/effect/child identity。

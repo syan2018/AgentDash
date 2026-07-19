@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use agentdash_application_shared_library::IntegrationEmbeddedLibraryAssetSeed;
 use agentdash_integration_api::{
-    AgentDashIntegration, AgentRuntimeDriverContribution, AgentRuntimeTrustManifest, AuthProvider,
+    AgentDashIntegration, AuthProvider, CompleteAgentRegistrationContribution,
     IdentityDirectoryProvider, LibraryAssetType, MarketplaceSourceDescriptor,
     MarketplaceSourceProvider, MemoryDiscoveryProvider, SkillDiscoveryProvider,
 };
@@ -23,8 +23,7 @@ pub fn builtin_integrations() -> Vec<Box<dyn AgentDashIntegration>> {
 /// 宿主先汇总所有集成注册，再基于此统一构建运行时，避免“先构建、后塞集成”的假扩展点。
 pub(crate) struct HostIntegrationRegistration {
     pub vfs_providers: Vec<Box<dyn VfsDiscoveryProvider>>,
-    pub runtime_driver_contributions: Vec<AgentRuntimeDriverContribution>,
-    pub runtime_trust_manifests: Vec<AgentRuntimeTrustManifest>,
+    pub complete_agent_registrations: Vec<CompleteAgentRegistrationContribution>,
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
     pub identity_directory_provider: Option<Arc<dyn IdentityDirectoryProvider>>,
     pub mount_providers: Vec<Arc<dyn MountProvider>>,
@@ -63,11 +62,6 @@ pub(crate) enum IntegrationRegistrationError {
         definition_id: String,
         first_owner: String,
         second_owner: String,
-    },
-    #[error("Host Integration `{integration_name}` 的 Agent Runtime 信任清单非法: {message}")]
-    InvalidAgentRuntimeTrustManifest {
-        integration_name: String,
-        message: String,
     },
     #[error(
         "Marketplace Source `{source_key}` 重复注册：`{first_owner}` 与 `{second_owner}` 不能同时声明同一来源"
@@ -110,9 +104,9 @@ pub(crate) fn collect_integration_registration(
     integrations: Vec<Box<dyn AgentDashIntegration>>,
 ) -> Result<HostIntegrationRegistration, IntegrationRegistrationError> {
     let mut vfs_providers = Vec::new();
-    let mut runtime_driver_contributions = Vec::new();
-    let mut runtime_trust_manifests = Vec::new();
+    let mut complete_agent_registrations = Vec::new();
     let mut runtime_definition_owners: HashMap<String, String> = HashMap::new();
+    let mut runtime_instance_owners: HashMap<String, String> = HashMap::new();
     let mut auth_provider: Option<Arc<dyn AuthProvider>> = None;
     let mut auth_provider_integration: Option<String> = None;
     let mut identity_directory_provider: Option<Arc<dyn IdentityDirectoryProvider>> = None;
@@ -145,15 +139,9 @@ pub(crate) fn collect_integration_registration(
 
         vfs_providers.extend(integration.vfs_providers());
 
-        let integration_runtime_contributions = integration.agent_runtime_drivers();
-        let integration_runtime_manifests = integration.agent_runtime_trust_manifests();
-        validate_runtime_trust_manifests(
-            &integration_name,
-            &integration_runtime_contributions,
-            &integration_runtime_manifests,
-        )?;
-        for contribution in integration_runtime_contributions {
-            let definition_id = contribution.definition.provenance.definition_id.to_string();
+        for contribution in integration.complete_agent_registrations() {
+            let facts = contribution.facts();
+            let definition_id = facts.declared_descriptor().definition_id.to_string();
             if let Some(first_owner) =
                 runtime_definition_owners.insert(definition_id.clone(), integration_name.clone())
             {
@@ -165,9 +153,20 @@ pub(crate) fn collect_integration_registration(
                     },
                 );
             }
-            runtime_driver_contributions.push(contribution);
+            let instance_id = facts.instance_id().to_string();
+            if let Some(first_owner) =
+                runtime_instance_owners.insert(instance_id.clone(), integration_name.clone())
+            {
+                return Err(
+                    IntegrationRegistrationError::DuplicateAgentServiceDefinition {
+                        definition_id: instance_id,
+                        first_owner,
+                        second_owner: integration_name.clone(),
+                    },
+                );
+            }
+            complete_agent_registrations.push(contribution);
         }
-        runtime_trust_manifests.extend(integration_runtime_manifests);
 
         let mp = integration.mount_providers();
         if !mp.is_empty() {
@@ -331,8 +330,7 @@ pub(crate) fn collect_integration_registration(
 
     Ok(HostIntegrationRegistration {
         vfs_providers,
-        runtime_driver_contributions,
-        runtime_trust_manifests,
+        complete_agent_registrations,
         auth_provider,
         identity_directory_provider,
         mount_providers,
@@ -342,81 +340,6 @@ pub(crate) fn collect_integration_registration(
         extra_skill_dirs,
         library_asset_seeds,
     })
-}
-
-fn validate_runtime_trust_manifests(
-    integration_name: &str,
-    contributions: &[AgentRuntimeDriverContribution],
-    manifests: &[AgentRuntimeTrustManifest],
-) -> Result<(), IntegrationRegistrationError> {
-    let definitions = contributions
-        .iter()
-        .map(|contribution| {
-            (
-                contribution.definition.provenance.definition_id.as_str(),
-                &contribution.definition,
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    if definitions.len() != contributions.len() {
-        return Err(
-            IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest {
-                integration_name: integration_name.to_string(),
-                message: "同一 Integration 内重复声明了 service definition".to_string(),
-            },
-        );
-    }
-    let mut seen = HashMap::new();
-    for manifest in manifests {
-        let definition_id = manifest.provenance.definition_id.as_str();
-        if seen.insert(definition_id, ()).is_some() {
-            return Err(
-                IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest {
-                    integration_name: integration_name.to_string(),
-                    message: format!("definition `{definition_id}` 存在重复信任清单"),
-                },
-            );
-        }
-        let Some(definition) = definitions.get(definition_id) else {
-            return Err(
-                IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest {
-                    integration_name: integration_name.to_string(),
-                    message: format!("信任清单引用了未贡献的 definition `{definition_id}`"),
-                },
-            );
-        };
-        if manifest.provenance != definition.provenance
-            || manifest.driver_build_digest != definition.provenance.build_digest.as_str()
-            || !definition
-                .supported_protocol_revisions
-                .contains(&manifest.protocol_revision)
-            || manifest.verified_profile != definition.service_profile_upper_bound
-            || manifest.suite_revision.trim().is_empty()
-        {
-            return Err(
-                IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest {
-                    integration_name: integration_name.to_string(),
-                    message: format!(
-                        "definition `{definition_id}` 的 provenance、build、protocol、profile 或 suite 与 driver contribution 不一致"
-                    ),
-                },
-            );
-        }
-    }
-    if seen.len() != definitions.len() {
-        let missing = definitions
-            .keys()
-            .find(|definition_id| !seen.contains_key(**definition_id))
-            .copied()
-            .unwrap_or("unknown");
-        return Err(
-            IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest {
-                integration_name: integration_name.to_string(),
-                message: format!("definition `{missing}` 缺少编译期信任清单"),
-            },
-        );
-    }
-    Ok(())
 }
 
 fn validate_marketplace_source_descriptor(
@@ -509,18 +432,6 @@ mod tests {
     struct MemoryProviderIntegration {
         name: &'static str,
         provider_key: &'static str,
-    }
-
-    struct RuntimeIntegrationWithoutManifest(Vec<AgentRuntimeDriverContribution>);
-
-    impl AgentDashIntegration for RuntimeIntegrationWithoutManifest {
-        fn name(&self) -> &str {
-            "runtime-without-manifest"
-        }
-
-        fn agent_runtime_drivers(&self) -> Vec<AgentRuntimeDriverContribution> {
-            self.0.clone()
-        }
     }
 
     impl AgentDashIntegration for SeedIntegration {
@@ -995,38 +906,22 @@ mod tests {
     }
 
     #[test]
-    fn collects_first_party_runtime_trust_manifest() {
+    fn collects_first_party_complete_agent_registration() {
         let registration = collect_integration_registration(
             agentdash_first_party_integrations::builtin_integrations(),
         )
         .expect("first-party integrations collect");
 
-        assert_eq!(
-            registration.runtime_trust_manifests.len(),
-            registration.runtime_driver_contributions.len()
+        assert!(
+            registration
+                .complete_agent_registrations
+                .iter()
+                .any(|contribution| contribution
+                    .facts()
+                    .declared_descriptor()
+                    .definition_id
+                    .as_str()
+                    == "builtin.codex-app-server")
         );
-        assert!(registration.runtime_trust_manifests.iter().any(|manifest| {
-            manifest.provenance.definition_id.as_str() == "builtin.codex-app-server"
-        }));
-    }
-
-    #[test]
-    fn rejects_runtime_driver_without_compile_time_trust_manifest() {
-        let contributions = agentdash_first_party_integrations::builtin_integrations()
-            .into_iter()
-            .flat_map(|integration| integration.agent_runtime_drivers())
-            .collect::<Vec<_>>();
-        assert!(!contributions.is_empty());
-
-        let error = collect_integration_registration(vec![Box::new(
-            RuntimeIntegrationWithoutManifest(contributions),
-        )])
-        .err()
-        .expect("Runtime driver without manifest must fail");
-
-        assert!(matches!(
-            error,
-            IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest { .. }
-        ));
     }
 }

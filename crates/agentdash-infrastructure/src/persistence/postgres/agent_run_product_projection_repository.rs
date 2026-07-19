@@ -11,6 +11,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunTerminalProjectionHead, AgentRunTerminalProjectionRepository,
     AgentRunTerminalProjectionRevision, AgentRunTerminalProjectionStoreError,
     AgentRunTerminalProjectionUnitOfWork, AgentRunTerminalSnapshot,
+    AgentRunTerminalSourceProjectionLookup,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_workspace_module::workspace_module::presentation_protocol::{
@@ -721,6 +722,48 @@ impl AgentRunTerminalProjectionRepository for PostgresAgentRunTerminalProjection
                 gap: None,
             },
         )
+    }
+}
+
+#[async_trait]
+impl AgentRunTerminalSourceProjectionLookup for PostgresAgentRunTerminalProjectionStore {
+    async fn load_source_projection(
+        &self,
+        terminal_id: &agentdash_application_agentrun::agent_run::AgentRunTerminalId,
+        terminal_owner_epoch_id: &agentdash_application_agentrun::agent_run::AgentRunTerminalOwnerEpochId,
+        backend_id: &str,
+    ) -> Result<Option<AgentRunTerminalProjection>, AgentRunTerminalProjectionStoreError> {
+        let value = sqlx::query_scalar::<_, Value>(
+            "SELECT projection FROM agent_run_terminal_projection
+             WHERE terminal_id=$1
+               AND projection#>>'{owner,terminal_owner_epoch_id}'=$2
+               AND projection#>>'{owner,backend_id}'=$3",
+        )
+        .bind(terminal_id.as_str())
+        .bind(terminal_owner_epoch_id.as_str())
+        .bind(backend_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(terminal_db_error)?;
+        value
+            .map(|value| decode(value).map_err(terminal_serde_error))
+            .transpose()
+    }
+
+    async fn list_backend_source_projections(
+        &self,
+        backend_id: &str,
+    ) -> Result<Vec<AgentRunTerminalProjection>, AgentRunTerminalProjectionStoreError> {
+        let values = sqlx::query_scalar::<_, Value>(
+            "SELECT projection FROM agent_run_terminal_projection
+             WHERE projection#>>'{owner,backend_id}'=$1
+             ORDER BY terminal_id",
+        )
+        .bind(backend_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(terminal_db_error)?;
+        decode_all(values).map_err(terminal_serde_error)
     }
 }
 

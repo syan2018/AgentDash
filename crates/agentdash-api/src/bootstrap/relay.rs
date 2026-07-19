@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::relay::registry::BackendRegistry;
-use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
 
 pub(crate) struct RelayBootstrapOutput {
     pub backend_registry: Arc<BackendRegistry>,
@@ -12,18 +11,17 @@ pub(crate) struct RelayBootstrapOutput {
     pub setup_action_transport:
         Arc<dyn agentdash_application_ports::backend_transport::BackendTransport>,
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
-    pub terminal_registry: Arc<AgentRunTerminalRegistry>,
 }
 
 pub(crate) fn build_relay_runtime(channel_capacity: usize) -> RelayBootstrapOutput {
     let backend_registry = BackendRegistry::new();
     let (backend_runtime_events, _) = broadcast::channel(channel_capacity);
-    let mcp_probe_relay: Arc<dyn agentdash_platform_spi::McpRelayProvider> = backend_registry.clone();
+    let mcp_probe_relay: Arc<dyn agentdash_platform_spi::McpRelayProvider> =
+        backend_registry.clone();
     let setup_action_transport: Arc<
         dyn agentdash_application_ports::backend_transport::BackendTransport,
     > = backend_registry.clone();
     let shell_output_registry = agentdash_relay::ShellOutputRegistry::new();
-    let terminal_registry = AgentRunTerminalRegistry::new();
 
     RelayBootstrapOutput {
         backend_registry,
@@ -31,6 +29,5 @@ pub(crate) fn build_relay_runtime(channel_capacity: usize) -> RelayBootstrapOutp
         mcp_probe_relay,
         setup_action_transport,
         shell_output_registry,
-        terminal_registry,
     }
 }

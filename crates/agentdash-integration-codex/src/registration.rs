@@ -70,11 +70,7 @@ impl AgentDashIntegration for CodexCompleteAgentIntegration {
 }
 
 pub fn codex_complete_agent_contribution() -> CompleteAgentRegistrationContribution {
-    let declared_descriptor = CodexCompleteAgentService::descriptor_for(
-        AgentServiceDefinitionId::new(CODEX_COMPLETE_AGENT_DEFINITION_ID)
-            .expect("static Codex Complete Agent definition id"),
-        "Codex App Server",
-    );
+    let declared_descriptor = codex_complete_agent_descriptor();
     CompleteAgentRegistrationContribution::new(
         declared_descriptor,
         AgentServiceInstanceId::new(CODEX_COMPLETE_AGENT_INSTANCE_ID)
@@ -94,6 +90,14 @@ pub fn codex_complete_agent_contribution() -> CompleteAgentRegistrationContribut
         Arc::new(CodexProcessCompleteAgentFactory),
     )
     .expect("static Codex Complete Agent contribution")
+}
+
+pub fn codex_complete_agent_descriptor() -> agentdash_agent_service_api::AgentServiceDescriptor {
+    CodexCompleteAgentService::descriptor_for(
+        AgentServiceDefinitionId::new(CODEX_COMPLETE_AGENT_DEFINITION_ID)
+            .expect("static Codex Complete Agent definition id"),
+        "Codex App Server",
+    )
 }
 
 /// Host-ready registration for one Codex App Server Complete Agent instance.

@@ -17,4 +17,5 @@ pub use registration::{
     CODEX_COMPLETE_AGENT_CONFORMANCE_SUITE, CODEX_COMPLETE_AGENT_DEFINITION_ID,
     CODEX_COMPLETE_AGENT_INSTANCE_ID, CodexCompleteAgentIntegration,
     CodexCompleteAgentRegistration, codex_complete_agent_contribution,
+    codex_complete_agent_descriptor,
 };

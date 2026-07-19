@@ -8,13 +8,13 @@ use agentdash_application::workspace::WorkspaceDetectionError;
 use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
 use agentdash_application_runtime_gateway::{
-    ExtensionRuntimeActionProvider, McpCallToolProvider, McpListToolsProvider, McpProbeSetupPort,
-    McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput,
-    McpProbeTransportProvider, RuntimeGateway, RuntimeGatewaySetupError, RuntimeSessionMcpAccess,
-    WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
-    WorkspaceBrowseDirectoryProvider, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
-    WorkspaceDetectGitOutput, WorkspaceDetectGitProvider, WorkspaceDetectGitSetupPort,
-    WorkspaceDetectInput, WorkspaceDetectOutput, WorkspaceDetectProvider, WorkspaceDetectSetupPort,
+    ExtensionRuntimeActionProvider, McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput,
+    McpProbeTransportInput, McpProbeTransportOutput, McpProbeTransportProvider, RuntimeGateway,
+    RuntimeGatewaySetupError, WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput,
+    WorkspaceBrowseDirectoryOutput, WorkspaceBrowseDirectoryProvider,
+    WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
+    WorkspaceDetectGitProvider, WorkspaceDetectGitSetupPort, WorkspaceDetectInput,
+    WorkspaceDetectOutput, WorkspaceDetectProvider, WorkspaceDetectSetupPort,
     WorkspaceDiscoverByIdentityCandidateOutput, WorkspaceDiscoverByIdentityInput,
     WorkspaceDiscoverByIdentityOutput, WorkspaceDiscoverByIdentityProvider,
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
@@ -34,7 +34,6 @@ pub(crate) fn build_runtime_gateway(
     setup_action_transport: Arc<
         dyn agentdash_application_ports::backend_transport::BackendTransport,
     >,
-    session_mcp_access: Arc<dyn RuntimeSessionMcpAccess>,
     extension_installations: Arc<dyn ProjectExtensionInstallationRepository>,
     extension_action_transport: Arc<dyn ExtensionRuntimeActionTransport>,
 ) -> Arc<RuntimeGateway> {
@@ -60,10 +59,6 @@ pub(crate) fn build_runtime_gateway(
             .with_provider(Arc::new(WorkspaceDiscoverByIdentityProvider::new(
                 workspace_setup,
             )))
-            .with_provider(Arc::new(McpListToolsProvider::new(
-                session_mcp_access.clone(),
-            )))
-            .with_provider(Arc::new(McpCallToolProvider::new(session_mcp_access)))
             .with_dynamic_provider(Arc::new(ExtensionRuntimeActionProvider::new(
                 extension_installations,
                 extension_action_transport,

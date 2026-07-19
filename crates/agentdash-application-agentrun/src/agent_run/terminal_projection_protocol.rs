@@ -54,6 +54,10 @@ impl AgentRunTerminalOwnerEpochId {
         }
         Ok(Self(value))
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -865,6 +869,21 @@ pub trait AgentRunTerminalProjectionRepository: Send + Sync {
         after: Option<AgentRunTerminalChangeSequence>,
         limit: usize,
     ) -> Result<AgentRunTerminalChangePage, AgentRunTerminalProjectionStoreError>;
+}
+
+#[async_trait]
+pub trait AgentRunTerminalSourceProjectionLookup: Send + Sync {
+    async fn load_source_projection(
+        &self,
+        terminal_id: &AgentRunTerminalId,
+        terminal_owner_epoch_id: &AgentRunTerminalOwnerEpochId,
+        backend_id: &str,
+    ) -> Result<Option<AgentRunTerminalProjection>, AgentRunTerminalProjectionStoreError>;
+
+    async fn list_backend_source_projections(
+        &self,
+        backend_id: &str,
+    ) -> Result<Vec<AgentRunTerminalProjection>, AgentRunTerminalProjectionStoreError>;
 }
 
 #[async_trait]

@@ -116,7 +116,7 @@ fn reconcile_inventory(
     };
     let requested_epoch = transparent_string(&request.terminal_owner_epoch_id)?;
     if local.terminal_owner_epoch_id != requested_epoch {
-        let mut changed_owner = central.owner;
+        let mut changed_owner = central.owner.clone();
         changed_owner.terminal_owner_epoch_id =
             agentdash_application_agentrun::agent_run::AgentRunTerminalOwnerEpochId::new(
                 local.terminal_owner_epoch_id.clone(),

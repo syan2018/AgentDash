@@ -11,6 +11,7 @@ fn main() {
     ensure_no_implicit_bindings();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let ts_path = root.join("packages/app-web/src/generated/agent-service-api.ts");
+    let codecs_path = root.join("packages/app-web/src/generated/agent-service-codecs.ts");
     let schema_path = root.join("schemas/agent-service-api.schema.json");
     let temp = tempfile::tempdir().expect("create Complete Agent Service generation directory");
     AgentServiceApiSchema::export_all_to(temp.path())
@@ -36,8 +37,11 @@ fn main() {
             .expect("serialize Complete Agent Service JSON Schema")
     );
     check_or_write(&ts_path, &typescript, check);
+    check_or_write(&codecs_path, AGENT_SERVICE_CODECS, check);
     check_or_write(&schema_path, &json_schema, check);
 }
+
+const AGENT_SERVICE_CODECS: &str = include_str!("agent_service_codecs.ts");
 
 fn required_service_type_names() -> BTreeSet<String> {
     [

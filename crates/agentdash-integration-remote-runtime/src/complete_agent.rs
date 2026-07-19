@@ -25,11 +25,29 @@ use agentdash_agent_service_api::{
     RevokeBoundAgentSurface,
 };
 use async_trait::async_trait;
+use thiserror::Error;
 
 use crate::{RemoteRuntimeTransportError, RuntimeWirePlacement, RuntimeWirePlacementEvent};
 
 type PendingResponse =
     tokio::sync::oneshot::Sender<Result<RuntimeWireAgentServiceResponse, AgentServiceError>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum RuntimeWireFrameAllocationError {
+    #[error("Runtime Wire frame identity space is exhausted")]
+    Exhausted,
+}
+
+fn allocate_frame_id(
+    last_allocated: &AtomicU64,
+) -> Result<RuntimeWireFrameId, RuntimeWireFrameAllocationError> {
+    let previous = last_allocated
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_add(1)
+        })
+        .map_err(|_| RuntimeWireFrameAllocationError::Exhausted)?;
+    Ok(RuntimeWireFrameId(previous + 1))
+}
 
 /// Complete Agent proxy bound to one remote service instance.
 ///
@@ -64,7 +82,7 @@ impl RemoteCompleteAgentService {
             target,
             placement,
             callbacks,
-            next_frame_id: AtomicU64::new(1),
+            next_frame_id: AtomicU64::new(0),
             pending: tokio::sync::Mutex::new(HashMap::new()),
             cached_effects: tokio::sync::Mutex::new(HashMap::new()),
             callback_effects: tokio::sync::Mutex::new(HashMap::new()),
@@ -135,11 +153,14 @@ impl RemoteCompleteAgentService {
                 }
                 return Ok(());
             }
-            if envelope.frame_id.0 != previous.0 + 1 {
+            let expected = previous
+                .0
+                .checked_add(1)
+                .ok_or_else(|| protocol(RuntimeWireFrameAllocationError::Exhausted.to_string()))?;
+            if envelope.frame_id.0 != expected {
                 return Err(protocol(format!(
                     "remote Complete Agent frame gap: expected {}, received {}",
-                    previous.0 + 1,
-                    envelope.frame_id.0
+                    expected, envelope.frame_id.0
                 )));
             }
         } else if envelope.frame_id.0 != 1 {
@@ -369,7 +390,8 @@ impl RemoteCompleteAgentService {
         self.placement
             .send(RuntimeWireEnvelope {
                 protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
-                frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
+                frame_id: allocate_frame_id(&self.next_frame_id)
+                    .map_err(frame_allocation_service_error)?,
                 critical,
                 frame,
             })
@@ -390,7 +412,8 @@ impl RemoteCompleteAgentService {
         request
             .validate_generation()
             .map_err(|error| stale_generation(error.to_string()))?;
-        let frame_id = RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed));
+        let frame_id =
+            allocate_frame_id(&self.next_frame_id).map_err(frame_allocation_service_error)?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending.lock().await.insert(frame_id.0, tx);
         if let Err(error) = self
@@ -913,7 +936,8 @@ impl RuntimeWireAgentHostCallbackClient {
         request: RuntimeWireAgentHostCallbackRequest,
     ) -> Result<RuntimeWireAgentHostCallbackResponse, AgentHostCallbackError> {
         let deadline = callback_deadline(&request)?;
-        let frame_id = RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed));
+        let frame_id =
+            allocate_frame_id(&self.next_frame_id).map_err(frame_allocation_callback_error)?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending.lock().await.insert(frame_id.0, tx);
         if self
@@ -1020,7 +1044,7 @@ impl RuntimeWireAgentServiceEndpoint {
             service_instance_id,
             binding_generation,
             service,
-            next_frame_id: Arc::new(AtomicU64::new(1)),
+            next_frame_id: Arc::new(AtomicU64::new(0)),
             pending_callbacks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             callback_effects: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             published_changes: tokio::sync::Mutex::new(HashMap::new()),
@@ -1102,12 +1126,14 @@ impl RuntimeWireAgentServiceEndpoint {
             }
         };
         let cursor = change.cursor.clone();
+        let frame_id =
+            allocate_frame_id(&self.next_frame_id).map_err(frame_allocation_service_error)?;
         self.outbound_tx
             .read()
             .await
             .send(RuntimeWireEnvelope {
                 protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
-                frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
+                frame_id,
                 critical: true,
                 frame: RuntimeWireFrame::Notification(Box::new(
                     RuntimeWireNotification::AgentChange(Box::new(
@@ -1129,16 +1155,16 @@ impl RuntimeWireAgentServiceEndpoint {
         &self,
         request_frame_id: RuntimeWireFrameId,
         response: RuntimeWireAgentServiceResponse,
-    ) -> RuntimeWireEnvelope {
-        RuntimeWireEnvelope {
+    ) -> Result<RuntimeWireEnvelope, RuntimeWireFrameAllocationError> {
+        Ok(RuntimeWireEnvelope {
             protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
-            frame_id: RuntimeWireFrameId(self.next_frame_id.fetch_add(1, Ordering::Relaxed)),
+            frame_id: allocate_frame_id(&self.next_frame_id)?,
             critical: true,
             frame: RuntimeWireFrame::Response {
                 request_frame_id,
                 response: RuntimeWireResponse::AgentService(response),
             },
-        }
+        })
     }
 
     fn validate_target(
@@ -1195,10 +1221,16 @@ impl RuntimeWirePlacement for RuntimeWireAgentServiceEndpoint {
                     });
                 };
                 let response = self.dispatch(*request).await;
+                let response = self.response(envelope.frame_id, response).map_err(|error| {
+                    RemoteRuntimeTransportError::Protocol {
+                        reason: error.to_string(),
+                        critical: true,
+                    }
+                })?;
                 self.outbound_tx
                     .read()
                     .await
-                    .send(self.response(envelope.frame_id, response))
+                    .send(response)
                     .map_err(|_| RemoteRuntimeTransportError::Unavailable {
                         reason: "Complete Agent endpoint receiver is closed".to_owned(),
                         retryable: true,
@@ -1464,6 +1496,20 @@ fn callback_duplicate_conflict() -> AgentHostCallbackError {
     )
 }
 
+fn frame_allocation_service_error(error: RuntimeWireFrameAllocationError) -> AgentServiceError {
+    unavailable(error.to_string(), false)
+}
+
+fn frame_allocation_callback_error(
+    error: RuntimeWireFrameAllocationError,
+) -> AgentHostCallbackError {
+    host_callback_error(
+        AgentHostCallbackErrorCode::Unavailable,
+        error.to_string(),
+        false,
+    )
+}
+
 fn callback_error_response(
     request: &RuntimeWireAgentHostCallbackRequest,
     error: AgentHostCallbackError,
@@ -1508,5 +1554,33 @@ fn transport_error(error: RemoteRuntimeTransportError) -> AgentServiceError {
             unavailable(reason, retryable)
         }
         RemoteRuntimeTransportError::Protocol { reason, .. } => protocol(reason),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_allocator_uses_the_full_u64_domain_then_reports_exhaustion() {
+        let allocator = AtomicU64::new(u64::MAX - 1);
+
+        assert_eq!(
+            allocate_frame_id(&allocator),
+            Ok(RuntimeWireFrameId(u64::MAX))
+        );
+        assert_eq!(
+            allocate_frame_id(&allocator),
+            Err(RuntimeWireFrameAllocationError::Exhausted)
+        );
+        assert_eq!(allocator.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn frame_allocator_starts_at_one_without_reserving_a_wire_coordinate() {
+        let allocator = AtomicU64::new(0);
+
+        assert_eq!(allocate_frame_id(&allocator), Ok(RuntimeWireFrameId(1)));
+        assert_eq!(allocate_frame_id(&allocator), Ok(RuntimeWireFrameId(2)));
     }
 }

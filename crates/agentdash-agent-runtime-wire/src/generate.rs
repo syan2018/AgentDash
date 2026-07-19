@@ -12,6 +12,7 @@ fn main() {
     ensure_no_implicit_bindings();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let ts_path = root.join("packages/app-web/src/generated/agent-runtime-wire.ts");
+    let codecs_path = root.join("packages/app-web/src/generated/agent-runtime-wire-codecs.ts");
     let contract_ts_path = root.join("packages/app-web/src/generated/agent-runtime-contracts.ts");
     let service_ts_path = root.join("packages/app-web/src/generated/agent-service-api.ts");
     let schema_path = root.join("schemas/agent-runtime-wire.schema.json");
@@ -76,8 +77,11 @@ fn main() {
             .expect("serialize Runtime Wire JSON Schema")
     );
     check_or_write(&ts_path, &typescript, check);
+    check_or_write(&codecs_path, RUNTIME_WIRE_CODECS, check);
     check_or_write(&schema_path, &json_schema, check);
 }
+
+const RUNTIME_WIRE_CODECS: &str = include_str!("runtime_wire_codecs.ts");
 
 fn wire_owned_type_names() -> BTreeSet<String> {
     [

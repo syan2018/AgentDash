@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_ports::vfs_surface_runtime::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource,
 };
@@ -9,7 +10,6 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     auth::{ProjectPermission, load_project_with_permission},
-    routes::runtime_traces::ensure_runtime_trace_permission,
     rpc::ApiError,
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
@@ -34,28 +34,42 @@ pub(crate) async fn resolve_surface_bundle(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
     );
-    let bundle = state
-        .services
-        .vfs_surface_resolver
-        .resolve_surface_bundle(&runtime_projection, source)
-        .await?;
-    ensure_surface_permission(state, current_user, source, bundle.project_id, permission).await?;
+    let bundle = if let ResolvedVfsSurfaceSource::SessionRuntime { session_id } = source {
+        let thread_id = RuntimeThreadId::new(session_id.clone())
+            .map_err(|error| ApiError::BadRequest(format!("runtime thread id 非法: {error}")))?;
+        let binding = state
+            .services
+            .agent_run_product_runtime_bindings
+            .load_product_binding_by_runtime_thread(&thread_id)
+            .await
+            .map_err(ApiError::Internal)?
+            .ok_or_else(|| {
+                ApiError::Conflict(format!(
+                    "runtime thread 缺少 canonical Product binding: {session_id}"
+                ))
+            })?;
+        state
+            .services
+            .vfs_surface_resolver
+            .resolve_agent_run_surface_bundle(&runtime_projection, source, &binding.target)
+            .await?
+    } else {
+        state
+            .services
+            .vfs_surface_resolver
+            .resolve_surface_bundle(&runtime_projection, source)
+            .await?
+    };
+    ensure_surface_permission(state, current_user, bundle.project_id, permission).await?;
     Ok((bundle.surface, bundle.vfs))
 }
 
 async fn ensure_surface_permission(
     state: &Arc<AppState>,
     current_user: &agentdash_integration_api::AuthIdentity,
-    source: &ResolvedVfsSurfaceSource,
     project_id: Uuid,
     permission: ProjectPermission,
 ) -> Result<(), ApiError> {
-    if let ResolvedVfsSurfaceSource::SessionRuntime { session_id } = source {
-        ensure_runtime_trace_permission(state.as_ref(), current_user, session_id, permission)
-            .await?;
-        return Ok(());
-    }
-
     load_project_with_permission(state.as_ref(), current_user, project_id, permission).await?;
     Ok(())
 }

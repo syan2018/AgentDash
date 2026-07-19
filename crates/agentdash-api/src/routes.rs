@@ -27,6 +27,7 @@ pub mod stories;
 pub mod story_runs;
 pub mod task_plan;
 pub mod vfs;
+pub mod vfs_surfaces;
 pub mod workflows;
 pub mod workspaces;
 
@@ -88,6 +89,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(extension_package_artifacts::router())
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         .merge(vfs::router())
+        .merge(vfs_surfaces::router())
         .merge(file_picker::router())
         .merge(execution_profiles::router())
         .layer(middleware::from_fn_with_state(

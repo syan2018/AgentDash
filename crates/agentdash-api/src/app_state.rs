@@ -18,6 +18,7 @@ use agentdash_application::context::{
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::task::tools::ApplicationRuntimeTaskToolService;
+use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommandFacade, AgentRunProductProjectionQueryPort,
     AgentRunTerminalSourceReconcilePort, ProductMailboxFacade, ProductManagedRuntimeCommandAdapter,
@@ -121,6 +122,7 @@ pub struct ServiceSet {
     pub terminal_source_reconcile: Arc<dyn AgentRunTerminalSourceReconcilePort>,
     pub terminal_projection_producer: Arc<RelayAgentRunTerminalProjectionProducer>,
     pub vfs_service: Arc<VfsService>,
+    pub vfs_surface_resolver: Arc<VfsSurfaceResolver>,
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
     pub extra_skill_dirs: Vec<std::path::PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
@@ -213,6 +215,11 @@ impl AppState {
 
         let product_persistence =
             Arc::new(AgentRunProductPersistenceComposition::build(pool.clone()));
+        let vfs_surface_resolver = Arc::new(VfsSurfaceResolver::new(VfsSurfaceResolverDeps {
+            repos: repos.clone(),
+            vfs_service: vfs_service.clone(),
+            applied_resource_surfaces: product_persistence.applied_resource_surfaces.clone(),
+        }));
         let runtime_product_bindings = Arc::new(
             PostgresAgentRunProductRuntimeBindingRepository::new(pool.clone()),
         );
@@ -376,6 +383,7 @@ impl AppState {
                 terminal_source_reconcile,
                 terminal_projection_producer,
                 vfs_service,
+                vfs_surface_resolver,
                 vfs_mutation_dispatcher,
                 extra_skill_dirs: integration_registration.extra_skill_dirs,
                 skill_discovery_providers: integration_registration.skill_discovery_providers,

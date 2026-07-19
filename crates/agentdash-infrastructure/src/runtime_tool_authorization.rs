@@ -417,7 +417,7 @@ fn vfs_grant(
             backend_id: mount.backend_id.clone(),
             root_ref: mount.root_ref.clone(),
             display_name: mount.display_name.clone(),
-            metadata: Value::Null,
+            metadata: mount.metadata.clone(),
             operations: grant
                 .operations
                 .iter()
@@ -945,6 +945,13 @@ mod tests {
                     .any(|mount| mount.operations.contains(&operation)),
                 "{tool} must carry {operation:?}"
             );
+            assert!(
+                vfs.mounts
+                    .iter()
+                    .all(|mount| mount.metadata.get("run_id").is_some()
+                        && mount.metadata.get("agent_id").is_some()),
+                "{tool} must preserve typed mount identity metadata"
+            );
             assert_eq!(grant.applied_surface.vfs_digest, "vfs-test");
             assert_eq!(grant.applied_surface.task_digest, "task-test");
             assert_eq!(grant.applied_surface.product_binding_digest, "binding-test");
@@ -1135,6 +1142,10 @@ mod tests {
             projection_revision: 1,
             captured_at_ms: 1,
         };
+        let mount_metadata = serde_json::json!({
+            "run_id": target.run_id,
+            "agent_id": target.agent_id,
+        });
         AgentRunAppliedResourceSurfaceSnapshot {
             snapshot_revision: 1,
             surface: AgentRunAppliedResourceSurface {
@@ -1155,6 +1166,7 @@ mod tests {
                     ]),
                     default_write: false,
                     display_name: "Main".to_owned(),
+                    metadata: mount_metadata,
                 }],
                 default_mount_id: Some("main".to_owned()),
                 vfs_grants: vec![AppliedVfsGrant {

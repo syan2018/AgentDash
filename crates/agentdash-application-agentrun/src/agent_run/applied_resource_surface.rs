@@ -88,6 +88,7 @@ pub struct AppliedVfsMount {
     pub capabilities: BTreeSet<AppliedVfsOperation>,
     pub default_write: bool,
     pub display_name: String,
+    pub metadata: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -599,6 +600,10 @@ mod tests {
 
     fn surface(target: AgentRunTarget) -> AgentRunAppliedResourceSurface {
         let project_id = Uuid::new_v4();
+        let mount_metadata = serde_json::json!({
+            "run_id": target.run_id,
+            "agent_id": target.agent_id,
+        });
         AgentRunAppliedResourceSurface {
             target,
             project_id,
@@ -615,6 +620,7 @@ mod tests {
                 ]),
                 default_write: false,
                 display_name: "Workspace".to_string(),
+                metadata: mount_metadata,
             }],
             default_mount_id: Some("workspace".to_string()),
             vfs_grants: vec![AppliedVfsGrant {

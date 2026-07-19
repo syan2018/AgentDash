@@ -29,6 +29,7 @@ pub mod task;
 pub mod vfs {
     pub use agentdash_application_vfs::*;
 }
+pub mod vfs_surface_resolver;
 pub mod workspace;
 
 pub use error::ApplicationError;

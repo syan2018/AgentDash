@@ -1643,6 +1643,11 @@ mod tests {
         marker: &str,
         evidence_revision: u64,
     ) -> AgentRunAppliedResourceSurface {
+        let mount_metadata = serde_json::json!({
+            "run_id": target.run_id,
+            "agent_id": target.agent_id,
+            "marker": marker,
+        });
         AgentRunAppliedResourceSurface {
             target,
             project_id,
@@ -1658,6 +1663,7 @@ mod tests {
                 ]),
                 default_write: true,
                 display_name: marker.to_owned(),
+                metadata: mount_metadata,
             }],
             default_mount_id: Some("workspace".to_owned()),
             vfs_grants: vec![AppliedVfsGrant {
@@ -1890,6 +1896,14 @@ mod tests {
             .await
             .expect("query current complete surface");
         assert_eq!(current.snapshot_revision, 2);
+        assert_eq!(
+            current.surface.vfs_mounts[0].metadata["run_id"],
+            json!(target.run_id)
+        );
+        assert_eq!(
+            current.surface.vfs_mounts[0].metadata["agent_id"],
+            json!(target.agent_id)
+        );
         assert!(matches!(
             surface_repo
                 .applied_resource_surface(&target, Some(1))

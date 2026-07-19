@@ -5,9 +5,10 @@ use agentdash_domain::common::error::DomainError;
 use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
     AgentProcedure, AgentProcedureRepository, DefinitionSource, LifecycleRun,
-    LifecycleRunRepository, LifecycleRunStatus, LifecycleRunTopology, LifecycleTaskPlanItem,
-    OrchestrationInstance, WorkflowGraph, WorkflowGraphRepository, WorkflowTemplateInstallBundle,
-    WorkflowTemplateInstallRepository, WorkflowTemplateInstallResult,
+    LifecycleRunRepository, LifecycleRunStatus, LifecycleRunTopology, LifecycleRunWriteError,
+    LifecycleTaskPlanItem, OrchestrationInstance, WorkflowGraph, WorkflowGraphRepository,
+    WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    WorkflowTemplateInstallResult,
 };
 
 use super::json_document::{from_jsonb, to_jsonb};
@@ -33,8 +34,8 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,created_by_user_id,topology,orchestrations,tasks,status,execution_log,channel_registry,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,created_by_user_id,topology,orchestrations,tasks,status,execution_log,channel_registry,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,revision,project_id,created_by_user_id,topology,orchestrations,tasks,status,execution_log,channel_registry,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,revision,project_id,created_by_user_id,topology,orchestrations,tasks,status,execution_log,channel_registry,created_at,updated_at,last_activity_at";
 
 #[async_trait::async_trait]
 impl AgentProcedureRepository for PostgresWorkflowRepository {
@@ -423,9 +424,12 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
         ))
         .bind(run.id.to_string())
+        .bind(i64::try_from(run.revision).map_err(|error| {
+            DomainError::InvalidConfig(format!("LifecycleRun revision exceeds BIGINT: {error}"))
+        })?)
         .bind(run.project_id.to_string())
         .bind(&run.created_by_user_id)
         .bind(topology_to_db(run.topology))
@@ -509,6 +513,88 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
             .bind(chrono::Utc::now()).bind(run.last_activity_at).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)
+    }
+
+    async fn compare_and_swap(
+        &self,
+        expected_revision: u64,
+        run: &LifecycleRun,
+    ) -> Result<(), LifecycleRunWriteError> {
+        let next_revision = expected_revision.checked_add(1).ok_or_else(|| {
+            LifecycleRunWriteError::Persistence(DomainError::InvalidConfig(
+                "LifecycleRun revision overflow".to_owned(),
+            ))
+        })?;
+        if run.revision != next_revision {
+            return Err(LifecycleRunWriteError::Persistence(
+                DomainError::InvalidConfig(format!(
+                    "LifecycleRun {} proposed revision {} must equal expected revision {} + 1",
+                    run.id, run.revision, expected_revision
+                )),
+            ));
+        }
+        let expected_revision_i64 = i64::try_from(expected_revision).map_err(|error| {
+            LifecycleRunWriteError::Persistence(DomainError::InvalidConfig(format!(
+                "LifecycleRun expected revision exceeds BIGINT: {error}"
+            )))
+        })?;
+        let next_revision_i64 = i64::try_from(next_revision).map_err(|error| {
+            LifecycleRunWriteError::Persistence(DomainError::InvalidConfig(format!(
+                "LifecycleRun next revision exceeds BIGINT: {error}"
+            )))
+        })?;
+        let result = sqlx::query(
+            "UPDATE lifecycle_runs
+             SET revision=$1,project_id=$2,created_by_user_id=$3,topology=$4,
+                 orchestrations=$5,tasks=$6,status=$7,execution_log=$8,
+                 updated_at=$9,last_activity_at=$10
+             WHERE id=$11 AND revision=$12",
+        )
+        .bind(next_revision_i64)
+        .bind(run.project_id.to_string())
+        .bind(&run.created_by_user_id)
+        .bind(topology_to_db(run.topology))
+        .bind(to_jsonb(
+            &run.orchestrations,
+            "lifecycle_runs.orchestrations",
+        )?)
+        .bind(to_jsonb(&run.tasks, "lifecycle_runs.tasks")?)
+        .bind(lifecycle_run_status_to_db(run.status))
+        .bind(to_jsonb(
+            &run.execution_log,
+            "lifecycle_runs.execution_log",
+        )?)
+        .bind(run.updated_at)
+        .bind(run.last_activity_at)
+        .bind(run.id.to_string())
+        .bind(expected_revision_i64)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        if result.rows_affected() == 1 {
+            return Ok(());
+        }
+        let actual_revision =
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM lifecycle_runs WHERE id=$1")
+                .bind(run.id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db_err)?
+                .ok_or_else(|| {
+                    LifecycleRunWriteError::Persistence(DomainError::NotFound {
+                        entity: "lifecycle_run",
+                        id: run.id.to_string(),
+                    })
+                })?;
+        Err(LifecycleRunWriteError::RevisionConflict {
+            run_id: run.id,
+            expected_revision,
+            actual_revision: u64::try_from(actual_revision).map_err(|error| {
+                LifecycleRunWriteError::Persistence(DomainError::InvalidConfig(format!(
+                    "lifecycle_runs.revision is invalid: {error}"
+                )))
+            })?,
+        })
     }
 
     async fn load_channel_registry(
@@ -676,6 +762,7 @@ impl TryFrom<WorkflowGraphRow> for WorkflowGraph {
 #[derive(sqlx::FromRow)]
 struct LifecycleRunRow {
     id: String,
+    revision: i64,
     project_id: String,
     created_by_user_id: String,
     topology: String,
@@ -694,6 +781,9 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
     fn try_from(row: LifecycleRunRow) -> Result<Self, Self::Error> {
         Ok(LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
+            revision: u64::try_from(row.revision).map_err(|error| {
+                DomainError::InvalidConfig(format!("lifecycle_runs.revision is invalid: {error}"))
+            })?,
             project_id: parse_uuid(&row.project_id, "project")?,
             created_by_user_id: row.created_by_user_id,
             topology: parse_topology(&row.topology)?,
@@ -864,6 +954,7 @@ mod workflow_claim_tests {
         let now = chrono::Utc::now();
         LifecycleRunRow {
             id: uuid::Uuid::new_v4().to_string(),
+            revision: 0,
             project_id: uuid::Uuid::new_v4().to_string(),
             created_by_user_id: "fixture-user".to_string(),
             topology: "plain".to_string(),

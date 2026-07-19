@@ -6,6 +6,8 @@ use crate::app_state::AppState;
 
 const RUNTIME_PRODUCT_CHANGE_BATCH_LIMIT: usize = 64;
 const RUNTIME_PRODUCT_CHANGE_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const WORKFLOW_RECOVERY_BATCH_LIMIT: usize = 64;
+const WORKFLOW_RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
     let auth_session_service = state.services.auth_session_service.clone();
@@ -29,6 +31,51 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
                         context = &context,
                         error = &err,
                         "清理过期认证会话失败"
+                    );
+                }
+            }
+        }
+    });
+
+    let workflow_recovery = state.services.workflow_recovery.clone();
+    let orchestration_launcher = state.services.orchestration_executor_launcher.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(WORKFLOW_RECOVERY_POLL_INTERVAL);
+        loop {
+            interval.tick().await;
+            let run_ids = match workflow_recovery
+                .list_recoverable_run_ids(WORKFLOW_RECOVERY_BATCH_LIMIT)
+                .await
+            {
+                Ok(run_ids) => run_ids,
+                Err(error) => {
+                    let context = DiagnosticErrorContext::new(
+                        "background_workers.workflow_recovery",
+                        "list_recoverable_run_ids",
+                    );
+                    diag_error!(
+                        Warn,
+                        Subsystem::Api,
+                        context = &context,
+                        error = &error,
+                        "扫描可恢复 Workflow executor 失败"
+                    );
+                    continue;
+                }
+            };
+            for run_id in run_ids {
+                if let Err(error) = orchestration_launcher.drain_ready_nodes(run_id).await {
+                    let context = DiagnosticErrorContext::new(
+                        "background_workers.workflow_recovery",
+                        "drain_ready_nodes",
+                    );
+                    diag_error!(
+                        Warn,
+                        Subsystem::Api,
+                        context = &context,
+                        error = &error,
+                        run_id = %run_id,
+                        "恢复 Workflow executor 失败"
                     );
                 }
             }

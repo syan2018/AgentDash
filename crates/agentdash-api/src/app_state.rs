@@ -23,9 +23,11 @@ use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfi
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductProjectionQueryPort, AgentRunTerminalSourceReconcilePort,
+    ProductManagedRuntimeCommandAdapter, build_durable_workflow_agent_call_dispatch,
 };
 use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeChannelInvoker};
 use agentdash_application_vfs::{MountProviderRegistry, VfsMutationDispatcher, VfsService};
+use agentdash_application_workflow::OrchestrationExecutorLauncher;
 use agentdash_contracts::project::ProjectEventStreamEnvelope;
 use agentdash_diagnostics::DiagnosticBuffer;
 use agentdash_domain::llm_provider::LlmSecretCodec;
@@ -33,7 +35,8 @@ use agentdash_infrastructure::AgentRunProductProjectionComposition;
 use agentdash_infrastructure::{
     CompleteAgentComposition, PinnedCompleteAgentVerificationCatalog,
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
-    PostgresWorkspaceModulePresentationStore,
+    PostgresWorkflowAgentCallRepository, PostgresWorkflowExecutorEffectRepository,
+    PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, AuthMode, MarketplaceSourceProvider, MemoryDiscoveryProvider,
@@ -148,7 +151,8 @@ pub struct ServiceSet {
     pub extension_gateway: Arc<ExtensionGateway>,
     pub extension_runtime_channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
-    pub function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner>,
+    pub orchestration_executor_launcher: OrchestrationExecutorLauncher,
+    pub workflow_recovery: Arc<PostgresWorkflowRecoveryRepository>,
 }
 
 pub struct AppConfig {
@@ -236,7 +240,7 @@ impl AppState {
 
         let product = Arc::new(
             AgentRunProductProjectionComposition::build(
-                pool,
+                pool.clone(),
                 complete_agent.runtime.clone(),
                 repos.lifecycle_run_repo.clone(),
                 project_projection_notifications,
@@ -267,8 +271,24 @@ impl AppState {
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         ));
-        let function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner> =
-            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new());
+        let workflow_effects =
+            Arc::new(PostgresWorkflowExecutorEffectRepository::new(pool.clone()));
+        let function_runner: Arc<dyn agentdash_platform_spi::FunctionRunner> = Arc::new(
+            agentdash_infrastructure::DefaultFunctionRunner::new(pool.clone()),
+        );
+        let workflow_agent_call = Arc::new(PostgresWorkflowAgentCallRepository::new(pool.clone()));
+        let workflow_recovery = Arc::new(PostgresWorkflowRecoveryRepository::new(pool));
+        let workflow_agent_call_dispatch = build_durable_workflow_agent_call_dispatch(
+            workflow_agent_call.clone(),
+            workflow_agent_call,
+            ProductManagedRuntimeCommandAdapter::new(complete_agent.runtime.clone()),
+        );
+        let orchestration_executor_launcher = OrchestrationExecutorLauncher::new_durable(
+            repos.to_workflow_repository_set(),
+            workflow_effects,
+            function_runner,
+        )
+        .with_agent_call_dispatch(workflow_agent_call_dispatch);
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
         let llm_provider_secret: Arc<dyn LlmSecretCodec> = Arc::new(
             agentdash_infrastructure::LlmProviderSecretCipher::from_env_or_create_default()?,
@@ -314,7 +334,8 @@ impl AppState {
                 extension_gateway,
                 extension_runtime_channel_invoker,
                 extension_package_artifact_storage,
-                function_runner,
+                orchestration_executor_launcher,
+                workflow_recovery,
             },
             config: AppConfig {
                 platform_config,

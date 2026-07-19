@@ -37,6 +37,207 @@ DROP TABLE IF EXISTS agent_runtime_surface_snapshot CASCADE;
 DROP TABLE IF EXISTS agent_run_runtime_recovery_intent CASCADE;
 DROP TABLE IF EXISTS agent_run_runtime_binding_lineage CASCADE;
 DROP TABLE IF EXISTS agent_run_runtime_thread_anchor CASCADE;
+DROP TABLE IF EXISTS workflow_agent_call_product_graph_effects CASCADE;
+DROP TABLE IF EXISTS workflow_agent_call_product_effects CASCADE;
+DROP TABLE IF EXISTS workflow_agent_call_product_sagas CASCADE;
+DROP TABLE IF EXISTS workflow_executor_effects CASCADE;
+
+ALTER TABLE lifecycle_runs
+    ADD COLUMN revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0);
+
+CREATE TABLE workflow_executor_effects (
+    effect_id TEXT PRIMARY KEY CHECK (btrim(effect_id) <> ''),
+    effect_kind TEXT NOT NULL CHECK (
+        effect_kind IN ('function', 'human_gate_open', 'human_gate_resolution')
+    ),
+    lifecycle_run_id TEXT NOT NULL REFERENCES lifecycle_runs(id) ON DELETE CASCADE,
+    orchestration_id TEXT NOT NULL CHECK (btrim(orchestration_id) <> ''),
+    node_path TEXT NOT NULL CHECK (btrim(node_path) <> ''),
+    attempt BIGINT NOT NULL CHECK (attempt > 0),
+    payload_digest TEXT NOT NULL CHECK (btrim(payload_digest) <> ''),
+    request JSONB CHECK (request IS NULL OR jsonb_typeof(request) = 'object'),
+    state TEXT NOT NULL CHECK (state IN ('prepared', 'terminal')),
+    gate_id TEXT REFERENCES lifecycle_gates(id) ON DELETE CASCADE,
+    runner_state TEXT NOT NULL DEFAULT 'not_applied' CHECK (
+        runner_state IN (
+            'not_applied',
+            'accepted',
+            'in_flight',
+            'succeeded',
+            'failed',
+            'lost'
+        )
+    ),
+    runner_claim_id TEXT CHECK (
+        runner_claim_id IS NULL OR btrim(runner_claim_id) <> ''
+    ),
+    runner_claim_owner TEXT CHECK (
+        runner_claim_owner IS NULL OR btrim(runner_claim_owner) <> ''
+    ),
+    runner_lease_expires_at TIMESTAMPTZ,
+    runner_evidence JSONB CHECK (
+        runner_evidence IS NULL OR jsonb_typeof(runner_evidence) = 'object'
+    ),
+    runner_late_evidence JSONB CHECK (
+        runner_late_evidence IS NULL OR jsonb_typeof(runner_late_evidence) = 'object'
+    ),
+    runner_receipt JSONB CHECK (
+        runner_receipt IS NULL OR jsonb_typeof(runner_receipt) = 'object'
+    ),
+    receipt JSONB CHECK (receipt IS NULL OR jsonb_typeof(receipt) = 'object'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (lifecycle_run_id, orchestration_id, node_path, attempt, effect_kind),
+    UNIQUE (gate_id, effect_kind),
+    CHECK (
+        (effect_kind = 'function' AND gate_id IS NULL AND request IS NOT NULL)
+        OR (effect_kind IN ('human_gate_open', 'human_gate_resolution') AND gate_id IS NOT NULL)
+    ),
+    CHECK (
+        (state = 'prepared' AND receipt IS NULL)
+        OR (state = 'terminal' AND receipt IS NOT NULL)
+    ),
+    CHECK (
+        (runner_state = 'not_applied'
+            AND runner_claim_id IS NULL
+            AND runner_claim_owner IS NULL
+            AND runner_lease_expires_at IS NULL
+            AND runner_evidence IS NULL
+            AND runner_receipt IS NULL)
+        OR (runner_state IN ('accepted', 'in_flight')
+            AND runner_claim_id IS NOT NULL
+            AND runner_claim_owner IS NOT NULL
+            AND runner_lease_expires_at IS NOT NULL
+            AND runner_evidence IS NOT NULL
+            AND runner_receipt IS NOT NULL)
+        OR (runner_state IN ('succeeded', 'failed')
+            AND runner_claim_id IS NOT NULL
+            AND runner_claim_owner IS NOT NULL
+            AND runner_lease_expires_at IS NOT NULL
+            AND runner_evidence IS NOT NULL
+            AND runner_receipt IS NOT NULL)
+        OR (runner_state = 'lost'
+            AND runner_claim_id IS NOT NULL
+            AND runner_claim_owner IS NOT NULL
+            AND runner_lease_expires_at IS NOT NULL
+            AND runner_evidence IS NOT NULL
+            AND runner_receipt IS NULL)
+    )
+);
+
+CREATE TABLE workflow_agent_call_product_sagas (
+    request_id TEXT PRIMARY KEY CHECK (btrim(request_id) <> ''),
+    lifecycle_run_id TEXT NOT NULL REFERENCES lifecycle_runs(id) ON DELETE CASCADE,
+    orchestration_id TEXT NOT NULL CHECK (btrim(orchestration_id) <> ''),
+    node_path TEXT NOT NULL CHECK (btrim(node_path) <> ''),
+    attempt BIGINT NOT NULL CHECK (attempt > 0),
+    payload_digest TEXT NOT NULL CHECK (btrim(payload_digest) <> ''),
+    request JSONB NOT NULL CHECK (jsonb_typeof(request) = 'object'),
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    runtime_thread_id TEXT NOT NULL CHECK (btrim(runtime_thread_id) <> ''),
+    phase_plan JSONB NOT NULL CHECK (jsonb_typeof(phase_plan) = 'array'),
+    receipts JSONB NOT NULL CHECK (jsonb_typeof(receipts) = 'array'),
+    in_flight TEXT CHECK (
+        in_flight IS NULL OR in_flight IN (
+            'materialize_target',
+            'create_runtime',
+            'activate_runtime',
+            'commit_binding',
+            'submit_input'
+        )
+    ),
+    source_binding JSONB CHECK (
+        source_binding IS NULL OR (
+            jsonb_typeof(source_binding) = 'object'
+            AND COALESCE(btrim(source_binding ->> 'source_ref'), '') <> ''
+            AND (source_binding ->> 'committed_at_revision') IS NOT NULL
+            AND (source_binding ->> 'applied_surface_revision') IS NOT NULL
+        )
+    ),
+    mailbox_state TEXT CHECK (
+        mailbox_state IS NULL OR mailbox_state IN ('queued', 'submitted')
+    ),
+    version BIGINT NOT NULL DEFAULT 0 CHECK (version >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (lifecycle_run_id, orchestration_id, node_path, attempt)
+);
+
+CREATE TABLE workflow_agent_call_product_effects (
+    effect_id TEXT PRIMARY KEY CHECK (btrim(effect_id) <> ''),
+    request_id TEXT NOT NULL
+        REFERENCES workflow_agent_call_product_sagas(request_id) ON DELETE CASCADE,
+    phase TEXT NOT NULL CHECK (
+        phase IN (
+            'materialize_target',
+            'create_runtime',
+            'activate_runtime',
+            'commit_binding',
+            'submit_input'
+        )
+    ),
+    runtime_operation_id TEXT,
+    payload_digest TEXT NOT NULL CHECK (btrim(payload_digest) <> ''),
+    state TEXT NOT NULL CHECK (state IN ('dispatched', 'applied')),
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    runtime_thread_id TEXT NOT NULL CHECK (btrim(runtime_thread_id) <> ''),
+    evidence JSONB CHECK (evidence IS NULL OR jsonb_typeof(evidence) = 'object'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (request_id, phase),
+    UNIQUE (runtime_operation_id),
+    CHECK (
+        (
+            phase IN ('create_runtime', 'activate_runtime', 'submit_input')
+            AND runtime_operation_id IS NOT NULL
+        )
+        OR (
+            phase IN ('materialize_target', 'commit_binding')
+            AND runtime_operation_id IS NULL
+        )
+    ),
+    CHECK (
+        (state = 'dispatched' AND evidence IS NULL)
+        OR (state = 'applied' AND evidence IS NOT NULL)
+    )
+);
+
+CREATE TABLE workflow_agent_call_product_graph_effects (
+    effect_id TEXT PRIMARY KEY CHECK (btrim(effect_id) <> ''),
+    request_id TEXT NOT NULL
+        REFERENCES workflow_agent_call_product_sagas(request_id) ON DELETE CASCADE,
+    payload_digest TEXT NOT NULL CHECK (btrim(payload_digest) <> ''),
+    effect_kind TEXT NOT NULL CHECK (
+        effect_kind IN ('materialize_target', 'commit_runtime_binding')
+    ),
+    target_run_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    runtime_thread_id TEXT,
+    binding JSONB CHECK (
+        binding IS NULL OR (
+            jsonb_typeof(binding) = 'object'
+            AND COALESCE(btrim(binding ->> 'source_ref'), '') <> ''
+            AND (binding ->> 'committed_at_revision') IS NOT NULL
+            AND (binding ->> 'applied_surface_revision') IS NOT NULL
+        )
+    ),
+    ledger_payload JSONB NOT NULL CHECK (jsonb_typeof(ledger_payload) = 'object'),
+    committed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (request_id, effect_kind),
+    FOREIGN KEY (target_agent_id)
+        REFERENCES lifecycle_agents(id) ON DELETE CASCADE,
+    CHECK (
+        (effect_kind = 'materialize_target' AND runtime_thread_id IS NULL AND binding IS NULL)
+        OR (
+            effect_kind = 'commit_runtime_binding'
+            AND runtime_thread_id IS NOT NULL
+            AND btrim(runtime_thread_id) <> ''
+            AND binding IS NOT NULL
+        )
+    )
+);
 
 ALTER TABLE lifecycle_agents
     ADD CONSTRAINT lifecycle_agents_id_run_project_key UNIQUE (id, run_id, project_id);

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_workflow::{
     OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher,
 };
@@ -9,7 +8,6 @@ use agentdash_domain::workflow::{
     LifecycleGateRepository, LifecycleRun, LifecycleRunRepository, LifecycleRunStartIntent,
     LifecycleSubjectAssociationRepository, WorkflowGraphRef, WorkflowGraphRepository,
 };
-use agentdash_platform_spi::FunctionRunner;
 use uuid::Uuid;
 
 use crate::SharedPlatformConfig;
@@ -32,7 +30,6 @@ pub struct ContinueLifecycleRunResult {
 #[derive(Clone)]
 pub struct LifecycleRunCommandService {
     deps: LifecycleRunCommandDeps,
-    function_runner: Option<Arc<dyn FunctionRunner>>,
 }
 
 #[derive(Clone)]
@@ -44,21 +41,12 @@ pub struct LifecycleRunCommandDeps {
     pub association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub gate_repo: Arc<dyn LifecycleGateRepository>,
     pub lineage_repo: Arc<dyn AgentLineageRepository>,
-    pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     pub orchestration_launcher: OrchestrationExecutorLauncher,
 }
 
 impl LifecycleRunCommandService {
     pub fn new(deps: LifecycleRunCommandDeps, _platform_config: SharedPlatformConfig) -> Self {
-        Self {
-            deps,
-            function_runner: None,
-        }
-    }
-
-    pub fn with_function_runner(mut self, runner: Arc<dyn FunctionRunner>) -> Self {
-        self.function_runner = Some(runner);
-        self
+        Self { deps }
     }
 
     pub async fn create_lifecycle_run(
@@ -73,8 +61,7 @@ impl LifecycleRunCommandService {
             self.deps.association_repo.as_ref(),
             self.deps.gate_repo.as_ref(),
             self.deps.lineage_repo.as_ref(),
-        )
-        .with_frame_construction_port(self.deps.frame_construction.as_ref());
+        );
         let dispatch_result = dispatch_service
             .start_lifecycle_run(&LifecycleRunStartIntent {
                 project_id: command.project_id,
@@ -89,11 +76,11 @@ impl LifecycleRunCommandService {
         &self,
         run_id: Uuid,
     ) -> Result<ContinueLifecycleRunResult, WorkflowApplicationError> {
-        let mut launcher = self.deps.orchestration_launcher.clone();
-        if let Some(function_runner) = &self.function_runner {
-            launcher = launcher.with_function_runner(function_runner.clone());
-        }
-        let drain_result = launcher.drain_ready_nodes(run_id).await?;
+        let drain_result = self
+            .deps
+            .orchestration_launcher
+            .drain_ready_nodes(run_id)
+            .await?;
         let run = self.load_run(run_id).await?;
         Ok(ContinueLifecycleRunResult { run, drain_result })
     }

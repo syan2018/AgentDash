@@ -19,7 +19,6 @@ import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceControlPlane } from "../features/agent-run-workspace/model/useAgentRunWorkspaceControlPlane";
 import {
   refreshAgentRunListState,
-  useAgentRunListState,
 } from "../features/agent/agent-run-list-state-store";
 import {
   WorkspacePanel,
@@ -47,7 +46,6 @@ import type {
   Story,
   StoryNavigationState,
 } from "../types";
-import { collectCompanionSubagentRefs } from "./AgentRunWorkspacePage.companionRefs";
 
 // ─── AgentRunWorkspacePage ────────────────────────────────────────
 
@@ -257,11 +255,6 @@ export function AgentRunWorkspacePage({
       ? (ownerProject?.name?.trim() || "")
     : "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
-  const agentRunListState = useAgentRunListState(ownerProjectId);
-  const companionSubagents = useMemo(
-    () => collectCompanionSubagentRefs(agentRunListState.entries, currentRunId),
-    [agentRunListState.entries, currentRunId],
-  );
   const refreshAgentRunList = useCallback((reason: string) => {
     refreshAgentRunListState(ownerProjectId ?? draftProjectIdValue, reason);
   }, [draftProjectIdValue, ownerProjectId]);
@@ -465,9 +458,8 @@ export function AgentRunWorkspacePage({
   const chatModel = useMemo(() => ({
     ...controlPlaneChatModel,
     agentRunTarget: agentRunRuntimeTarget,
-    companionSubagents,
     workspaceId: chatWorkspaceId,
-  }), [agentRunRuntimeTarget, chatWorkspaceId, companionSubagents, controlPlaneChatModel]);
+  }), [agentRunRuntimeTarget, chatWorkspaceId, controlPlaneChatModel]);
 
   const handleBackToOwner = useCallback(() => {
     if (!effectiveReturnTarget) return;

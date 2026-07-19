@@ -6,7 +6,7 @@ import type {
   ManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-validators";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
-import type { TokenUsageInfo } from "../../session/model/types";
+import type { TokenUsageInfo } from "../../session/model/tokenUsage";
 import { useManagedRuntimeFeed } from "./useManagedRuntimeFeed";
 
 export interface UseAgentRunRuntimeFeedOptions {

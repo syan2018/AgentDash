@@ -1,5 +1,12 @@
-import type { CompanionSubagentKnownAgentRef } from "../features/session/model/companionSubagentDispatch";
 import type { AgentRunListChild, AgentRunWorkspaceListEntry } from "../types";
+
+export interface CompanionSubagentKnownAgentRef {
+  run_id: string;
+  agent_id: string;
+  display_title: string;
+  delivery_status: string;
+  last_activity_at: string;
+}
 
 export function collectCompanionSubagentRefs(
   entries: AgentRunWorkspaceListEntry[],

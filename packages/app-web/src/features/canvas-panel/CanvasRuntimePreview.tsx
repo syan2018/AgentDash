@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import type { UserInput } from "../../generated/backbone-protocol";
+import type { AgentInputContent } from "../../generated/agent-service-api";
 import type { JsonValue } from "../../generated/common-contracts";
 import {
   invokeCanvasRuntimeAction,
@@ -884,22 +884,23 @@ function isInteractionEvent(value: unknown): value is InteractionSnapshotEnvelop
   );
 }
 
-function isUserInputArray(value: unknown): value is UserInput[] {
+function isUserInputArray(value: unknown): value is AgentInputContent[] {
   return Array.isArray(value) && value.every(isUserInput);
 }
 
-function isUserInput(value: unknown): value is UserInput {
-  if (!isRecord(value) || typeof value.type !== "string") return false;
-  switch (value.type) {
+function isUserInput(value: unknown): value is AgentInputContent {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  switch (value.kind) {
     case "text":
-      return typeof value.text === "string" && Array.isArray(value.text_elements);
+      return typeof value.text === "string";
     case "image":
-      return typeof value.url === "string";
-    case "localImage":
-      return typeof value.path === "string";
-    case "skill":
-    case "mention":
-      return typeof value.name === "string" && typeof value.path === "string";
+      return typeof value.media_type === "string"
+        && typeof value.source === "string"
+        && typeof value.digest === "string";
+    case "resource":
+      return typeof value.uri === "string";
+    case "structured":
+      return typeof value.schema === "string" && isJsonValue(value.value);
     default:
       return false;
   }

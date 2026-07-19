@@ -9,7 +9,7 @@ import {
   fetchAgentRunRuntimeContextProjection,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
-import type { TokenUsageInfo } from "../model/types";
+import type { TokenUsageInfo } from "../model/tokenUsage";
 import {
   newClientCommandId,
 } from "./sessionProjectionCompactionAction";

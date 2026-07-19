@@ -6,6 +6,17 @@
 
 DROP TABLE IF EXISTS agent_runtime_terminal_application_effect_outbox CASCADE;
 DROP TABLE IF EXISTS agent_run_runtime_binding CASCADE;
+DROP TABLE IF EXISTS agent_run_command_receipts CASCADE;
+DROP TABLE IF EXISTS agent_run_delivery_bindings CASCADE;
+DROP TABLE IF EXISTS runtime_session_compaction_requests CASCADE;
+DROP TABLE IF EXISTS runtime_session_execution_anchors CASCADE;
+DROP TABLE IF EXISTS runtime_session_delivery_commands CASCADE;
+DROP TABLE IF EXISTS runtime_session_projection_segments CASCADE;
+DROP TABLE IF EXISTS runtime_session_projection_heads CASCADE;
+DROP TABLE IF EXISTS runtime_session_lineage CASCADE;
+DROP TABLE IF EXISTS runtime_session_compactions CASCADE;
+DROP TABLE IF EXISTS runtime_session_events CASCADE;
+DROP TABLE IF EXISTS runtime_sessions CASCADE;
 DROP TABLE IF EXISTS agent_context_activation_dispatch CASCADE;
 DROP TABLE IF EXISTS agent_context_activation CASCADE;
 DROP TABLE IF EXISTS agent_context_candidate CASCADE;

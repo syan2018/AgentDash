@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use agentdash_application_lifecycle::{
     ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandDeps,
-    LifecycleRunCommandService, run_view_builder,
+    LifecycleRunCommandService,
 };
 use agentdash_application_workflow::{
     ActivityLifecycleCatalogService, OrchestrationExecutorDrainResult, ScriptCompiler,
@@ -35,7 +35,7 @@ use agentdash_domain::workflow::{
     WorkflowScriptProvenanceSource, workflow_script_source_digest,
 };
 
-use super::lifecycle_contracts::lifecycle_run_view_to_contract;
+use super::lifecycle_contracts::{lifecycle_run_view_query_error, lifecycle_run_view_to_contract};
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
@@ -512,7 +512,6 @@ pub async fn submit_orchestration_human_decision(
     )
     .await?;
 
-    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let result = state
         .services
         .orchestration_executor_launcher
@@ -527,7 +526,12 @@ pub async fn submit_orchestration_human_decision(
                 .unwrap_or_else(|| current_user.user_id.to_string()),
         })
         .await?;
-    let view = run_view_builder::build_lifecycle_run_view(&lifecycle_repos, &result.run).await?;
+    let view = state
+        .services
+        .lifecycle_run_views
+        .lifecycle_run_view(result.run.id)
+        .await
+        .map_err(lifecycle_run_view_query_error)?;
     Ok(Json(SubmitOrchestrationHumanDecisionResponse {
         run: lifecycle_run_view_to_contract(view),
         gate_id: result.gate_id.to_string(),
@@ -827,11 +831,13 @@ async fn lifecycle_run_to_contract_view(
     state: &Arc<AppState>,
     run: &LifecycleRun,
 ) -> Result<LifecycleRunView, ApiError> {
-    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
-    run_view_builder::build_lifecycle_run_view(&lifecycle_repos, run)
+    state
+        .services
+        .lifecycle_run_views
+        .lifecycle_run_view(run.id)
         .await
         .map(lifecycle_run_view_to_contract)
-        .map_err(ApiError::from)
+        .map_err(lifecycle_run_view_query_error)
 }
 
 fn lifecycle_command_service(state: &Arc<AppState>) -> LifecycleRunCommandService {

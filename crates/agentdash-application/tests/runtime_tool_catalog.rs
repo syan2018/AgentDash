@@ -245,7 +245,6 @@ fn repository_set(pool: sqlx::PgPool) -> RepositorySet {
         agent_lineage_repo,
         agent_run_lineage_repo,
         agent_run_fork_graph_store: Arc::new(PostgresAgentRunForkGraphStore::new(pool.clone())),
-        agent_run_delete_store: Arc::new(PostgresAgentRunDeleteStore::new(pool.clone())),
         agent_run_runtime_binding_repo: runtime_binding_repo,
         agent_run_runtime_provisioner: Arc::new(SharedAgentRunRuntimeProvisionerHandle::default()),
         workflow_agent_run_delivery:

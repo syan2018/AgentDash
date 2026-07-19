@@ -163,7 +163,7 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
       }
 
       const nextAgents = new Map(s.agents);
-      for (const agent of lifecycleRun.agents) {
+      for (const { agent } of lifecycleRun.agents) {
         nextAgents.set(agent.agent_ref.agent_id, agent);
       }
 

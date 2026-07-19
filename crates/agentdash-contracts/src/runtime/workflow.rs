@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
 
+use agentdash_agent_runtime_contract::{
+    ManagedRuntimeSnapshot, ManagedRuntimeSourceBindingEvidence, RuntimeThreadId,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -986,6 +989,187 @@ pub struct AgentRunView {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleAgentRuntimeBindingView {
+    pub target: AgentRunRefDto,
+    #[ts(type = "RuntimeThreadId")]
+    pub runtime_thread_id: RuntimeThreadId,
+    #[ts(type = "ManagedRuntimeSourceBindingEvidence")]
+    pub source_binding: ManagedRuntimeSourceBindingEvidence,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleRuntimeTraceAbsenceReason {
+    ProductBindingMissing,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleRuntimeTraceStaleReason {
+    ProductBindingTargetMismatch,
+    ProjectionBindingMissing,
+    ProductBindingChanged,
+    RuntimeThreadMismatch,
+    RuntimeSourceBindingMismatch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleRuntimeTraceFenceEvidenceView {
+    pub expected_target: AgentRunRefDto,
+    pub observed_target: Option<AgentRunRefDto>,
+    #[ts(type = "RuntimeThreadId | null")]
+    pub expected_runtime_thread_id: Option<RuntimeThreadId>,
+    #[ts(type = "RuntimeThreadId | null")]
+    pub observed_runtime_thread_id: Option<RuntimeThreadId>,
+    #[ts(type = "ManagedRuntimeSourceBindingEvidence | null")]
+    pub expected_source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
+    #[ts(type = "ManagedRuntimeSourceBindingEvidence | null")]
+    pub observed_source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
+    #[ts(type = "ManagedRuntimeSnapshot | null")]
+    pub observed_snapshot: Option<ManagedRuntimeSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum LifecycleRuntimeExecutionTraceView {
+    Absent {
+        target: AgentRunRefDto,
+        reason: LifecycleRuntimeTraceAbsenceReason,
+    },
+    Current {
+        binding: LifecycleAgentRuntimeBindingView,
+        #[ts(type = "ManagedRuntimeSnapshot")]
+        snapshot: ManagedRuntimeSnapshot,
+    },
+    Stale {
+        reason: LifecycleRuntimeTraceStaleReason,
+        evidence: LifecycleRuntimeTraceFenceEvidenceView,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleRuntimeNodeKind {
+    Activity,
+    AgentCall,
+    Function,
+    LocalEffect,
+    ExtensionAction,
+    HumanGate,
+    Phase,
+    ParallelGroup,
+    Pipeline,
+    Barrier,
+    Subworkflow,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleRuntimeNodeStatus {
+    Pending,
+    Ready,
+    Claiming,
+    Running,
+    Blocked,
+    Completed,
+    Failed,
+    Cancelled,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleNodePortValueView {
+    pub port_key: String,
+    #[ts(type = "JsonValue")]
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleRuntimeNodeErrorView {
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+    #[ts(type = "JsonValue | null")]
+    pub detail: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LifecycleRuntimeTraceRefView {
+    RuntimeThread {
+        thread_id: String,
+    },
+    AgentRun {
+        run_id: String,
+        agent_id: String,
+    },
+    FunctionRun {
+        run_id: String,
+    },
+    HumanDecision {
+        decision_id: String,
+    },
+    EffectInvocation {
+        effect_id: String,
+        effect_kind: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleRuntimeNodeView {
+    pub node_id: String,
+    pub node_path: String,
+    pub kind: LifecycleRuntimeNodeKind,
+    pub status: LifecycleRuntimeNodeStatus,
+    pub attempt: u32,
+    #[serde(default)]
+    pub inputs: Vec<LifecycleNodePortValueView>,
+    #[serde(default)]
+    pub outputs: Vec<LifecycleNodePortValueView>,
+    pub executor_run_ref: Option<ExecutorRunRef>,
+    pub agent_call_target: Option<AgentRunRefDto>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub error: Option<LifecycleRuntimeNodeErrorView>,
+    #[serde(default)]
+    pub trace_refs: Vec<LifecycleRuntimeTraceRefView>,
+    #[ts(type = "JsonValue")]
+    pub artifacts: Value,
+    #[serde(default)]
+    pub children: Vec<LifecycleRuntimeNodeView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleExecutionAttemptView {
+    pub orchestration_id: String,
+    pub node_path: String,
+    pub attempt: u32,
+    pub status: String,
+    pub observed_at: String,
+    #[ts(type = "JsonValue")]
+    pub artifacts: Value,
+    pub runtime_node: LifecycleRuntimeNodeView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleAgentExecutionView {
+    pub agent: AgentRunView,
+    pub runtime: LifecycleRuntimeExecutionTraceView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_attempt: Option<LifecycleExecutionAttemptView>,
+    #[serde(default)]
+    pub attempts: Vec<LifecycleExecutionAttemptView>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleRunTopology {
@@ -1005,11 +1189,9 @@ pub struct LifecycleRunView {
     #[serde(default)]
     pub active_runtime_node_refs: Vec<ActiveRuntimeNodeRefDto>,
     #[serde(default)]
-    pub agents: Vec<AgentRunView>,
+    pub agents: Vec<LifecycleAgentExecutionView>,
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
-    #[serde(default)]
-    pub runtime_trace_refs: Vec<RuntimeSessionRefDto>,
     #[serde(default)]
     pub execution_log: Vec<LifecycleExecutionEntry>,
     pub created_at: String,
@@ -1360,22 +1542,10 @@ pub struct AgentRunWorkspaceView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct SubjectRuntimeAttemptView {
-    pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: AgentRunRefDto,
-    pub runtime_session_ref: RuntimeSessionRefDto,
-    pub launch_frame_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub current_frame_id: Option<String>,
-    pub orchestration_id: String,
-    pub node_path: String,
-    pub attempt: u32,
-    pub status: String,
-    pub observed_at: String,
-    pub runtime_node: RuntimeNodeView,
-    #[serde(default)]
-    pub artifacts: Value,
+pub struct SubjectExecutionAttemptView {
+    pub target: AgentRunRefDto,
+    pub runtime: LifecycleRuntimeExecutionTraceView,
+    pub attempt: LifecycleExecutionAttemptView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1388,12 +1558,12 @@ pub struct SubjectExecutionView {
     pub runs: Vec<LifecycleRunView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub current_agent: Option<AgentRunView>,
+    pub current_agent: Option<LifecycleAgentExecutionView>,
     #[serde(default)]
-    pub runtime_attempts: Vec<SubjectRuntimeAttemptView>,
+    pub attempts: Vec<SubjectExecutionAttemptView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub latest_runtime_node: Option<RuntimeNodeView>,
+    pub current_attempt: Option<SubjectExecutionAttemptView>,
     #[serde(default)]
     pub artifacts: Value,
 }
@@ -1500,7 +1670,7 @@ pub struct ProjectAgentRunListView {
 pub struct ProjectActiveAgentsView {
     pub project_id: String,
     pub runs: Vec<LifecycleRunView>,
-    pub agents: Vec<AgentRunView>,
+    pub agents: Vec<LifecycleAgentExecutionView>,
 }
 
 fn bool_true() -> bool {

@@ -26,6 +26,9 @@ use agentdash_application_agentrun::agent_run::{
     ProductManagedRuntimeCommandAdapter, build_durable_workflow_agent_call_dispatch,
 };
 use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeChannelInvoker};
+use agentdash_application_lifecycle::run_view_builder::{
+    LifecycleRunViewQueryDeps, LifecycleRunViewQueryPort, LifecycleRunViewQueryService,
+};
 use agentdash_application_vfs::{MountProviderRegistry, VfsMutationDispatcher, VfsService};
 use agentdash_application_workflow::OrchestrationExecutorLauncher;
 use agentdash_contracts::project::ProjectEventStreamEnvelope;
@@ -130,6 +133,7 @@ pub struct ServiceSet {
     pub agent_run_product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
     pub agent_run_product_projection_composition: Arc<AgentRunProductProjectionComposition>,
     pub agent_run_product_runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
+    pub lifecycle_run_views: Arc<dyn LifecycleRunViewQueryPort>,
     pub workspace_module_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
     pub terminal_projections: Arc<PostgresAgentRunTerminalProjectionStore>,
     pub terminal_source_reconcile: Arc<dyn AgentRunTerminalSourceReconcilePort>,
@@ -258,6 +262,15 @@ impl AppState {
             product.terminals.clone(),
             terminal_source_reconcile.clone(),
         ));
+        let lifecycle_run_views: Arc<dyn LifecycleRunViewQueryPort> = Arc::new(
+            LifecycleRunViewQueryService::new(LifecycleRunViewQueryDeps {
+                lifecycle_runs: repos.lifecycle_run_repo.clone(),
+                lifecycle_agents: repos.lifecycle_agent_repo.clone(),
+                subject_associations: repos.lifecycle_subject_association_repo.clone(),
+                product_bindings: product.runtime_bindings.clone(),
+                product_projection: product.gateway.clone(),
+            }),
+        );
 
         let extension_gateway = crate::bootstrap::extension_gateway::build_extension_gateway(
             mcp_probe_relay,
@@ -313,6 +326,7 @@ impl AppState {
                 agent_run_product_projection: product.gateway.clone(),
                 agent_run_product_projection_composition: product.clone(),
                 agent_run_product_runtime_bindings: product.runtime_bindings.clone(),
+                lifecycle_run_views,
                 workspace_module_presentations: product.workspace_presentations.clone(),
                 terminal_projections: product.terminals.clone(),
                 terminal_source_reconcile,

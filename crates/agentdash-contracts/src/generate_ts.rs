@@ -225,12 +225,17 @@ use agentdash_contracts::workflow::{
     ConversationModelConfigView, ConversationWaitingItemView, DefinitionSource,
     DeleteAgentProcedureResponse, DeleteAgentRunResponse, DeleteHookPresetResponse,
     DeleteWorkflowGraphResponse, EffectiveSessionContract, HookPresetResponse, HookPresetsResponse,
-    LaunchedAgentNodeDto, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
-    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
+    LaunchedAgentNodeDto, LifecycleAgentExecutionView, LifecycleAgentRuntimeBindingView,
+    LifecycleExecutionAttemptView, LifecycleExecutionEntry, LifecycleNodePortValueView,
+    LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView,
+    LifecycleRuntimeExecutionTraceView, LifecycleRuntimeNodeErrorView, LifecycleRuntimeNodeKind,
+    LifecycleRuntimeNodeStatus, LifecycleRuntimeNodeView, LifecycleRuntimeTraceAbsenceReason,
+    LifecycleRuntimeTraceFenceEvidenceView, LifecycleRuntimeTraceRefView,
+    LifecycleRuntimeTraceStaleReason, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
     OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
     PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
     ProjectAgentRunListView, RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionRefDto,
-    RuntimeSessionTraceView, SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
+    RuntimeSessionTraceView, SubjectExecutionAttemptView, SubjectExecutionView, SubjectRefDto,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
     WorkflowGraphResponse, WorkflowHookTrigger, WorkflowScriptApiEndpointDto,
@@ -263,6 +268,15 @@ const AGENT_RUN_PRODUCT_RUNTIME_IMPORTS: &[(&str, &str)] = &[
     ("RuntimeSourceRef", "./agent-runtime-contracts"),
     ("RuntimeProjectionRevision", "./agent-runtime-contracts"),
     ("SurfaceRevision", "./agent-runtime-contracts"),
+];
+
+const LIFECYCLE_RUNTIME_IMPORTS: &[(&str, &str)] = &[
+    ("ManagedRuntimeSnapshot", "./agent-runtime-contracts"),
+    (
+        "ManagedRuntimeSourceBindingEvidence",
+        "./agent-runtime-contracts",
+    ),
+    ("RuntimeThreadId", "./agent-runtime-contracts"),
 ];
 
 fn main() {
@@ -814,10 +828,11 @@ fn main() {
 
     // --- workflow-contracts.ts ---
     let workflow_footer = workflow_contracts_footer();
-    emit_domain_with_footer(
+    emit_domain_with_external_imports_and_footer(
         &generated_dir,
         "workflow-contracts.ts",
         &mut upstream,
+        LIFECYCLE_RUNTIME_IMPORTS,
         check,
         Some(&workflow_footer),
         |dir| {
@@ -841,6 +856,19 @@ fn main() {
             export_all::<RuntimeNodeView>(dir);
             export_all::<ActiveRuntimeNodeRefDto>(dir);
             export_all::<OrchestrationInstanceView>(dir);
+            export_all::<LifecycleAgentRuntimeBindingView>(dir);
+            export_all::<LifecycleRuntimeTraceAbsenceReason>(dir);
+            export_all::<LifecycleRuntimeTraceStaleReason>(dir);
+            export_all::<LifecycleRuntimeTraceFenceEvidenceView>(dir);
+            export_all::<LifecycleRuntimeExecutionTraceView>(dir);
+            export_all::<LifecycleRuntimeNodeKind>(dir);
+            export_all::<LifecycleRuntimeNodeStatus>(dir);
+            export_all::<LifecycleNodePortValueView>(dir);
+            export_all::<LifecycleRuntimeNodeErrorView>(dir);
+            export_all::<LifecycleRuntimeTraceRefView>(dir);
+            export_all::<LifecycleRuntimeNodeView>(dir);
+            export_all::<LifecycleExecutionAttemptView>(dir);
+            export_all::<LifecycleAgentExecutionView>(dir);
             export_all::<LifecycleRunView>(dir);
             export_all::<SubmitOrchestrationHumanDecisionRequest>(dir);
             export_all::<SubmitOrchestrationHumanDecisionResponse>(dir);
@@ -877,7 +905,7 @@ fn main() {
             export_all::<AgentRunResourceSurfaceCoordinateView>(dir);
             export_all::<AgentRunLineageRef>(dir);
             export_all::<AgentRunWorkspaceView>(dir);
-            export_all::<SubjectRuntimeAttemptView>(dir);
+            export_all::<SubjectExecutionAttemptView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);
@@ -1126,6 +1154,26 @@ fn emit_domain_with_external_imports(
     }
 }
 
+fn emit_domain_with_external_imports_and_footer(
+    dir: &Path,
+    filename: &str,
+    upstream: &mut BTreeMap<String, String>,
+    external_imports: &[(&str, &str)],
+    check: bool,
+    footer: Option<&str>,
+    export: impl FnOnce(&Path),
+) {
+    let mut domain_upstream = upstream.clone();
+    for (name, source) in external_imports {
+        domain_upstream.insert((*name).to_string(), (*source).to_string());
+    }
+    let types = write_domain_dedup(&dir.join(filename), &domain_upstream, check, footer, export);
+    let source = format!("./{}", filename.strip_suffix(".ts").unwrap());
+    for name in types {
+        upstream.insert(name, source.clone());
+    }
+}
+
 fn emit_domain_with_footer(
     dir: &Path,
     filename: &str,
@@ -1280,6 +1328,38 @@ fn collect_ts_files(dir: &std::path::Path, out: &mut BTreeMap<String, String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_contract_reuses_canonical_runtime_identity_and_snapshot_types() {
+        let generated_dir = tempfile::tempdir().expect("generated dir");
+        let out = generated_dir.path().join("workflow-contracts.ts");
+        let runtime_upstream = LIFECYCLE_RUNTIME_IMPORTS
+            .iter()
+            .map(|(name, source)| ((*name).to_string(), (*source).to_string()))
+            .collect();
+
+        let exported = write_domain_dedup(&out, &runtime_upstream, false, None, |dir| {
+            export_all::<LifecycleAgentRuntimeBindingView>(dir);
+            export_all::<LifecycleRuntimeExecutionTraceView>(dir);
+            export_all::<LifecycleAgentExecutionView>(dir);
+            export_all::<LifecycleRunView>(dir);
+        });
+
+        let generated = fs::read_to_string(out).expect("lifecycle contract");
+        assert!(generated.contains(
+            "import type { ManagedRuntimeSnapshot, ManagedRuntimeSourceBindingEvidence, RuntimeThreadId } from \"./agent-runtime-contracts\";"
+        ));
+        for runtime_owned in [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeSourceBindingEvidence",
+            "RuntimeThreadId",
+        ] {
+            assert!(
+                !exported.contains(runtime_owned),
+                "Lifecycle contract must not redeclare Runtime-owned {runtime_owned}"
+            );
+        }
+    }
 
     #[test]
     fn product_projection_contract_reuses_the_canonical_runtime_type_closure() {

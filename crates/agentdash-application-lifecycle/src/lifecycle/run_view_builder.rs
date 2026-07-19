@@ -958,6 +958,8 @@ mod tests {
         };
         ManagedRuntimeSnapshot {
             thread_id: RuntimeThreadId::new(thread).unwrap(),
+            thread_name: None,
+            thread_name_source: None,
             revision: RuntimeProjectionRevision(7),
             latest_change_sequence: RuntimeChangeSequence(5),
             captured_at_ms: 10,

@@ -1,5 +1,4 @@
 pub mod agent_frame_materialization;
-pub mod agent_run_delete;
 pub mod agent_run_fork;
 pub mod agent_run_message_submission;
 pub mod agent_run_permission;
@@ -8,7 +7,6 @@ pub mod extension_gateway_setup;
 pub mod extension_runtime;
 pub mod launch;
 pub mod lifecycle_materialization;
-pub mod lifecycle_read_model;
 pub mod project_projection_notification;
 pub mod request_digest;
 pub mod vfs_materialization;

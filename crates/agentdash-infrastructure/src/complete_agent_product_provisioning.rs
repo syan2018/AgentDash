@@ -600,11 +600,13 @@ fn hook_actions(source: &BTreeSet<HookAction>) -> Option<BTreeSet<AgentHookActio
         actions.insert(match action {
             HookAction::Observe => AgentHookAction::Observe,
             HookAction::AddContext => AgentHookAction::AddContext,
-            HookAction::Block | HookAction::RequestApproval => AgentHookAction::AllowOrDeny,
+            HookAction::Block => AgentHookAction::AllowOrDeny,
             HookAction::RewriteInput => AgentHookAction::RewriteInput,
             HookAction::RewriteResult => AgentHookAction::RewriteResult,
             HookAction::EmitEffect => AgentHookAction::EmitEffect,
-            HookAction::ContinueTurn | HookAction::RefreshSurface => return None,
+            HookAction::RequestApproval | HookAction::ContinueTurn | HookAction::RefreshSurface => {
+                return None;
+            }
         });
     }
     Some(actions)
@@ -884,5 +886,31 @@ mod tests {
                 .get(&AgentHookMutationKind::RewriteInput),
             Some(&SemanticFidelity::Exact)
         );
+    }
+
+    #[test]
+    fn interactive_approval_is_not_relabelled_as_one_phase_allow_or_deny() {
+        let requirement = AgentFrameHookRequirement {
+            definition_id:
+                agentdash_application_ports::agent_frame_hook_plan::HookDefinitionId::new(
+                    "approval-hook",
+                )
+                .unwrap(),
+            requirement:
+                agentdash_application_ports::agent_frame_hook_plan::HookRequirement {
+                    point: HookPoint::BeforeTool,
+                    actions: BTreeSet::from([HookAction::RequestApproval]),
+                    minimum_strength: SemanticStrength::ExactSynchronous,
+                    failure_policy:
+                        agentdash_application_ports::agent_frame_hook_plan::HookFailurePolicy::FailClosed,
+                    required: true,
+                },
+            site: HookExecutionSite::AgentCoreCallback,
+        };
+
+        assert!(matches!(
+            hook_requirement(&requirement),
+            Err(AgentRunProductRuntimeProvisioningError::Incompatible { .. })
+        ));
     }
 }

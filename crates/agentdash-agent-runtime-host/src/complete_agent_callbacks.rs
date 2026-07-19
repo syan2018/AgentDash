@@ -1010,7 +1010,10 @@ fn ensure_hook_decision_allowed(
     decision: &AgentHookDecision,
 ) -> Result<(), AgentHostCallbackError> {
     let action = match decision {
-        AgentHookDecision::Allow | AgentHookDecision::Deny { .. } => AgentHookAction::AllowOrDeny,
+        // `Allow` is also the neutral continue/no-op result for non-blocking mutation/effect
+        // hooks. It does not claim that the surface exposes a blocking policy action.
+        AgentHookDecision::Allow => return Ok(()),
+        AgentHookDecision::Deny { .. } => AgentHookAction::AllowOrDeny,
         AgentHookDecision::ReplaceInput { .. } => AgentHookAction::RewriteInput,
         AgentHookDecision::ReplaceResult { .. } => AgentHookAction::RewriteResult,
         AgentHookDecision::AddContext { .. } => AgentHookAction::AddContext,
@@ -1118,6 +1121,15 @@ mod tests {
         CompleteAgentBinding, CompleteAgentHostCommit, CompleteAgentHostRepository,
         CompleteAgentHostSnapshot, CompleteAgentRuntimeTarget, apply_complete_agent_host_commit,
     };
+
+    #[test]
+    fn neutral_allow_is_valid_for_non_blocking_hook_actions() {
+        let mut call = hook_call();
+        call.allowed_actions = BTreeSet::from([AgentHookAction::EmitEffect]);
+
+        ensure_hook_decision_allowed(&call, &AgentHookDecision::Allow)
+            .expect("neutral allow must not fabricate blocking capability");
+    }
 
     #[derive(Default)]
     struct FixtureCallbackRepository {

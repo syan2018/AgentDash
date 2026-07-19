@@ -11,8 +11,6 @@ import {
 } from "../../../services/agentRunRuntime";
 import type { TokenUsageInfo } from "../model/types";
 import {
-  commandPrecondition,
-  contextCompactionOutcomeMessage,
   newClientCommandId,
 } from "./sessionProjectionCompactionAction";
 
@@ -281,14 +279,17 @@ export function SessionProjectionViewPanel({
     }
     setCompactAction({ kind: "pending", message: "提交中" });
     try {
-      const response = await compactAgentRunContext(agentRunTarget.runId, agentRunTarget.agentId, {
-        client_command_id: newClientCommandId(),
-        command: commandPrecondition(compactContextCommand),
-      });
-      const failedOutcome = response.outcome === "blocked" || response.outcome === "failed";
+      const response = await compactAgentRunContext(
+        agentRunTarget,
+        newClientCommandId(),
+      );
+      const failedOutcome =
+        response.status === "failed"
+        || response.status === "interrupted"
+        || response.status === "lost";
       setCompactAction({
         kind: failedOutcome ? "error" : "success",
-        message: contextCompactionOutcomeMessage(response),
+        message: failedOutcome ? "压缩请求失败" : "压缩请求已接受",
       });
       onRefresh?.();
     } catch (err) {

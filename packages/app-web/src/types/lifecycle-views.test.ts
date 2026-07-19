@@ -5,7 +5,10 @@ import type {
   LifecycleAgentExecutionView,
   LifecycleRunView,
 } from "../generated/workflow-contracts";
+import type { RuntimeU64 } from "../generated/agent-runtime-contracts";
 import { lifecycleRuntimeTraceSummaries } from "./lifecycle-views";
+
+const runtimeU64 = (value: number): RuntimeU64 => String(value) as RuntimeU64;
 
 function agent(agentId: string): AgentRunView {
   return {
@@ -59,15 +62,15 @@ describe("lifecycleRuntimeTraceSummaries", () => {
             observed_runtime_thread_id: "thread-stale",
             expected_source_binding: {
               source_ref: "source-expected",
-              committed_at_revision: 6,
-              applied_surface_revision: 5,
-              activated_at_revision: 6,
+              committed_at_revision: runtimeU64(6),
+              applied_surface_revision: runtimeU64(5),
+              activated_at_revision: runtimeU64(6),
             },
             observed_source_binding: {
               source_ref: "source-stale",
-              committed_at_revision: 7,
-              applied_surface_revision: 5,
-              activated_at_revision: 7,
+              committed_at_revision: runtimeU64(7),
+              applied_surface_revision: runtimeU64(5),
+              activated_at_revision: runtimeU64(7),
             },
             observed_snapshot: null,
           },

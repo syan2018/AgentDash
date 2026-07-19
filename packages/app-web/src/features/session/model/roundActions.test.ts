@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { SessionDisplayEntry } from "./types";
-import type { AgentRunRuntimeTurnSegment } from "../../agent-run-runtime";
+import type {
+  AgentRunRuntimeItem,
+  AgentRunRuntimeTurnSegment,
+} from "../../agent-run-runtime";
 import {
   buildRoundActionModel,
   lastAgentReplyText,
@@ -11,29 +13,34 @@ function agentEntry(params: {
   text: string;
   turnId: string;
   entryIndex: number;
-}): SessionDisplayEntry {
+}): AgentRunRuntimeItem {
   return {
     id: params.id,
-    sessionId: "session-1",
-    timestamp: 1,
-    eventSeq: params.entryIndex + 1,
-    event: {
-      type: "agent_message_delta",
-      payload: {
-        threadId: "thread-1",
-        turnId: params.turnId,
-        itemId: params.id,
-        delta: params.text,
+    turn_id: params.turnId,
+    status: "completed",
+    presentation: {
+      body: {
+        kind: "agent_message",
+        content: [{ kind: "text", text: params.text }],
+        phase: null,
       },
+      started_at_ms: BigInt(params.entryIndex),
+      updated_at_ms: BigInt(params.entryIndex + 1),
+      terminal: {
+        outcome: "completed",
+        completed_at_ms: BigInt(params.entryIndex + 1),
+        duration_ms: 1n,
+        process_exit: null,
+        error: null,
+      },
+      body_digest: `sha256:${params.id}:body`,
+      presentation_digest: `sha256:${params.id}:presentation`,
     },
-    turnId: params.turnId,
-    entryIndex: params.entryIndex,
-    accumulatedText: params.text,
   };
 }
 
 function segment(
-  items: SessionDisplayEntry[],
+  items: AgentRunRuntimeItem[],
   status: AgentRunRuntimeTurnSegment["status"] = "completed",
 ): AgentRunRuntimeTurnSegment {
   return {
@@ -62,7 +69,7 @@ describe("round action model", () => {
     expect(lastAgentReplyText(segment([first, last]))).toBe("final answer\nwith detail");
   });
 
-  it("builds a stable fork point from a completed round final MessageRef", () => {
+  it("does not manufacture a mailbox MessageRef from Runtime item identity", () => {
     const model = buildRoundActionModel(segment([
       agentEntry({
         id: "assistant-final",
@@ -72,10 +79,8 @@ describe("round action model", () => {
       }),
     ]));
 
-    expect(model.forkFromHere).toMatchObject({
-      enabled: true,
-      forkPointRef: { turn_id: "turn-42", entry_index: 7 },
-    });
+    expect(model.forkFromHere.enabled).toBe(false);
+    expect(model.forkFromHere.forkPointRef).toBeUndefined();
   });
 
   it("disables fork for active or incomplete boundaries with a reason", () => {

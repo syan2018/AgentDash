@@ -1,8 +1,19 @@
 import type {
   ManagedRuntimeChangePage,
-  ManagedRuntimeItem,
   ManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-validators";
+import type {
+  ManagedRuntimeItem as ManagedRuntimeItemWire,
+  RuntimeU64,
+} from "../../../generated/agent-runtime-contracts";
+
+type DecodeRuntimeU64<T> =
+  T extends RuntimeU64 ? bigint
+    : T extends readonly (infer Item)[] ? DecodeRuntimeU64<Item>[]
+      : T extends object ? { [Key in keyof T]: DecodeRuntimeU64<T[Key]> }
+        : T;
+
+type ManagedRuntimeItem = DecodeRuntimeU64<ManagedRuntimeItemWire>;
 
 export class ManagedRuntimeFeedProtocolError extends Error {}
 

@@ -38,25 +38,30 @@ describe("AgentRun runtime service", () => {
     });
   });
 
-  it("submits context compaction as command-only intent", async () => {
-    await compactAgentRunContext("run/1", "agent/1", {
-      client_command_id: "command-compact",
-      command: {
-        command_id: "snapshot:compact",
-        command_kind: "compact_context",
-        stale_guard: { snapshot_id: "snapshot", run_id: "run/1", agent_id: "agent/1" },
-      },
+  it("submits context compaction through the typed Product Runtime command", async () => {
+    mocks.apiGetMock.mockResolvedValue(
+      encodeManagedRuntimeSnapshot(managedRuntimeTestFixtures.snapshots.completed),
+    );
+    mocks.apiPostMock.mockResolvedValue({
+      operation_id: "operation-compaction",
+      thread_id: "runtime-thread-child",
+      accepted_revision: "7",
+      status: "accepted",
+      evidence: null,
+      duplicate: false,
     });
 
+    await compactAgentRunContext(
+      { runId: "run/1", agentId: "agent/1" },
+      "command-compact",
+    );
+
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/runtime/context/compact",
+      "/agent-runs/run%2F1/agents/agent%2F1/runtime/commands",
       {
         client_command_id: "command-compact",
-        command: {
-          command_id: "snapshot:compact",
-          command_kind: "compact_context",
-          stale_guard: { snapshot_id: "snapshot", run_id: "run/1", agent_id: "agent/1" },
-        },
+        expected_revision: "6",
+        command: { kind: "request_compaction" },
       },
     );
   });
@@ -148,12 +153,22 @@ describe("AgentRun runtime service", () => {
       { runId: "run/1", agentId: "agent/1" },
       "interaction/1",
       { kind: "denied", reason: null },
+      "command-interaction-1",
+      9n,
     )).resolves.toMatchObject({
       accepted_revision: 18_446_744_073_709_551_615n,
     });
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/runtime/interactions/interaction%2F1/respond",
-      { kind: "denied", reason: null },
+      "/agent-runs/run%2F1/agents/agent%2F1/runtime/commands",
+      {
+        client_command_id: "command-interaction-1",
+        expected_revision: "9",
+        command: {
+          kind: "resolve_interaction",
+          interaction_id: "interaction/1",
+          response: { kind: "denied", reason: null },
+        },
+      },
     );
   });
 });

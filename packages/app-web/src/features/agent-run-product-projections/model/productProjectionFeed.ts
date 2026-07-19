@@ -9,18 +9,18 @@ export type ProductProjectionFeedLifecycle =
 
 export interface ProductProjectionSnapshot {
   target: AgentRunProjectionTarget;
-  latest_change_sequence: number;
+  latest_change_sequence: bigint;
 }
 
 export interface ProductProjectionChange {
   target: AgentRunProjectionTarget;
-  sequence: number;
+  sequence: bigint;
 }
 
 export interface ProductProjectionChangePage<TChange extends ProductProjectionChange> {
   target: AgentRunProjectionTarget;
   changes: TChange[];
-  next: number;
+  next: bigint;
   gap?: unknown | null;
 }
 
@@ -40,7 +40,7 @@ export interface ProductProjectionFeedDependencies<
   TPage extends ProductProjectionChangePage<TChange>,
 > {
   fetchSnapshot: (target: AgentRunRuntimeTarget) => Promise<TSnapshot>;
-  fetchChanges: (target: AgentRunRuntimeTarget, after?: number) => Promise<TPage>;
+  fetchChanges: (target: AgentRunRuntimeTarget, after?: bigint) => Promise<TPage>;
   schedule: (callback: () => void) => unknown;
   cancel: (handle: unknown) => void;
 }
@@ -72,7 +72,7 @@ export function connectProductProjectionFeed<
 ): ProductProjectionFeedConnection {
   let closed = false;
   let scheduled: unknown;
-  let cursor: number | null = null;
+  let cursor: bigint | null = null;
   let baselineLoaded = false;
 
   const notifyLifecycle = (lifecycle: ProductProjectionFeedLifecycle): void => {
@@ -106,12 +106,12 @@ export function connectProductProjectionFeed<
         await loadSnapshot("gap_reload");
       } else {
         const changes = page.changes.filter((change) => change.sequence > cursor!);
-        let expected = cursor + 1;
+        let expected = cursor + 1n;
         for (const change of changes) {
           if (change.sequence !== expected) {
             throw new Error("Product projection change sequence is not contiguous");
           }
-          expected += 1;
+          expected += 1n;
         }
         const appliedSequence = changes.at(-1)?.sequence ?? cursor;
         if (page.next !== appliedSequence) {

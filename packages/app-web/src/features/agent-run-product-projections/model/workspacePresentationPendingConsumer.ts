@@ -7,7 +7,7 @@ import type {
 
 export interface WorkspacePresentationPendingConsumerDependencies {
   fulfill: (intent: WorkspaceModulePresentationIntent) => Promise<void>;
-  acknowledge: (intentId: string, observedChangeSequence: number) => Promise<unknown>;
+  acknowledge: (intentId: string, observedChangeSequence: bigint) => Promise<unknown>;
   scheduleRetry: (callback: () => void) => unknown;
   cancelRetry: (handle: unknown) => void;
   onError: (error: Error) => void;

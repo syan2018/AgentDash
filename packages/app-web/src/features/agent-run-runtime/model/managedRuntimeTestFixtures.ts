@@ -48,6 +48,19 @@ function runtimeSnapshot(
   revision: bigint,
   latestChangeSequence: bigint,
 ): ManagedRuntimeSnapshot {
+  const terminal =
+    status === "completed"
+      || status === "failed"
+      || status === "interrupted"
+      || status === "lost"
+      ? {
+          outcome: status,
+          completed_at_ms: 1001n + revision,
+          duration_ms: 1n,
+          process_exit: null,
+          error: null,
+        }
+      : null;
   return {
     thread_id: "runtime-thread-child",
     revision,
@@ -67,8 +80,18 @@ function runtimeSnapshot(
         id: "item-compaction",
         turn_id: "turn-compaction",
         status,
-        content: { kind: "context_compaction" },
-        content_digest: `sha256:compaction-${revision}`,
+        presentation: {
+          body: {
+            kind: "context_compaction",
+            summary: null,
+            source_digest: `sha256:compaction-${revision}`,
+          },
+          started_at_ms: 1000n + revision,
+          updated_at_ms: 1001n + revision,
+          terminal,
+          body_digest: `sha256:compaction-body-${revision}`,
+          presentation_digest: `sha256:compaction-presentation-${revision}`,
+        },
       },
     ],
     interactions: [],

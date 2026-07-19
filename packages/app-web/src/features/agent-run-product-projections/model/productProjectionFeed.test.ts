@@ -4,19 +4,19 @@ import { connectProductProjectionFeed } from "./productProjectionFeed";
 
 interface Snapshot {
   target: { run_id: string; agent_id: string };
-  latest_change_sequence: number;
+  latest_change_sequence: bigint;
   marker: string;
 }
 
 interface Change {
   target: { run_id: string; agent_id: string };
-  sequence: number;
+  sequence: bigint;
 }
 
 interface Page {
   target: { run_id: string; agent_id: string };
   changes: Change[];
-  next: number;
+  next: bigint;
   gap?: object | null;
 }
 
@@ -53,11 +53,11 @@ function harness(
 describe("connectProductProjectionFeed", () => {
   it("keeps snapshot hydration separate from imperative tail changes", async () => {
     const fixture = harness(
-      [{ target: wireTarget, latest_change_sequence: 4, marker: "baseline" }],
+      [{ target: wireTarget, latest_change_sequence: 4n, marker: "baseline" }],
       [{
         target: wireTarget,
-        changes: [{ target: wireTarget, sequence: 5 }],
-        next: 5,
+        changes: [{ target: wireTarget, sequence: 5n }],
+        next: 5n,
       }],
     );
     const onSnapshot = vi.fn();
@@ -74,7 +74,7 @@ describe("connectProductProjectionFeed", () => {
       "initial",
     );
     expect(onChanges).toHaveBeenCalledWith([
-      expect.objectContaining({ sequence: 5 }),
+      expect.objectContaining({ sequence: 5n }),
     ]);
     connection.close();
   });
@@ -82,13 +82,13 @@ describe("connectProductProjectionFeed", () => {
   it("reloads a durable snapshot when the change source reports a gap", async () => {
     const fixture = harness(
       [
-        { target: wireTarget, latest_change_sequence: 4, marker: "initial" },
-        { target: wireTarget, latest_change_sequence: 9, marker: "reloaded" },
+        { target: wireTarget, latest_change_sequence: 4n, marker: "initial" },
+        { target: wireTarget, latest_change_sequence: 9n, marker: "reloaded" },
       ],
       [{
         target: wireTarget,
         changes: [],
-        next: 9,
+        next: 9n,
         gap: { earliest_available: 7 },
       }],
     );
@@ -111,11 +111,11 @@ describe("connectProductProjectionFeed", () => {
 
   it("rejects a projection page from a different AgentRun target", async () => {
     const fixture = harness(
-      [{ target: wireTarget, latest_change_sequence: 4, marker: "baseline" }],
+      [{ target: wireTarget, latest_change_sequence: 4n, marker: "baseline" }],
       [{
         target: { run_id: "other", agent_id: "agent-1" },
         changes: [],
-        next: 4,
+        next: 4n,
       }],
     );
     const onError = vi.fn();
@@ -136,11 +136,11 @@ describe("connectProductProjectionFeed", () => {
 
   it("rejects a cursor jump after duplicate changes are filtered", async () => {
     const fixture = harness(
-      [{ target: wireTarget, latest_change_sequence: 4, marker: "baseline" }],
+      [{ target: wireTarget, latest_change_sequence: 4n, marker: "baseline" }],
       [{
         target: wireTarget,
-        changes: [{ target: wireTarget, sequence: 4 }],
-        next: 5,
+        changes: [{ target: wireTarget, sequence: 4n }],
+        next: 5n,
       }],
     );
     const onChanges = vi.fn();
@@ -168,7 +168,7 @@ describe("connectProductProjectionFeed", () => {
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce({
         target: wireTarget,
-        latest_change_sequence: 4,
+        latest_change_sequence: 4n,
         marker: "reconnected",
       });
     const onSnapshot = vi.fn();
@@ -181,7 +181,7 @@ describe("connectProductProjectionFeed", () => {
         fetchChanges: vi.fn(async () => ({
           target: wireTarget,
           changes: [],
-          next: 4,
+          next: 4n,
         })),
         schedule: (callback) => {
           scheduled.push(callback);

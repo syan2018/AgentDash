@@ -4,6 +4,7 @@ import type {
   AgentRunTerminalChange,
   AgentRunTerminalSnapshot,
 } from "../../../generated/agent-run-product-projection-contracts";
+import type { RuntimeU64 } from "../../../generated/agent-runtime-contracts";
 import { useTerminalStore } from "../../session/model/useTerminalStore";
 import {
   projectAgentRunTerminalChanges,
@@ -11,15 +12,16 @@ import {
 } from "./terminalProjectionConsumer";
 
 const target = { run_id: "run-1", agent_id: "agent-1" };
+const runtimeU64 = (value: number): RuntimeU64 => String(value) as RuntimeU64;
 const owner = {
   terminal_owner_epoch_id: "epoch-1",
   target,
   runtime_thread_id: "thread-1",
   source_binding: {
     source_ref: "source-1",
-    committed_at_revision: 1,
-    applied_surface_revision: 3,
-    activated_at_revision: 2,
+    committed_at_revision: runtimeU64(1),
+    applied_surface_revision: runtimeU64(3),
+    activated_at_revision: runtimeU64(2),
   },
   backend_id: "backend-1",
 };
@@ -38,23 +40,28 @@ describe("terminal Product projection consumer", () => {
   it("hydrates retained ordered output and keeps availability orthogonal to process state", () => {
     const snapshot: AgentRunTerminalSnapshot = {
       target,
-      revision: 3,
-      latest_change_sequence: 3,
-      captured_at_ms: 10,
+      revision: 3n,
+      latest_change_sequence: 3n,
+      captured_at_ms: 10n,
       terminals: [{
         terminal_id: "terminal-1",
         owner,
+        mount_id: null,
+        cwd: null,
         capability: "interactive",
-        max_output_bytes: 262_144,
+        max_output_bytes: 262_144n,
         state: "running",
         availability: "online",
-        latest_source_sequence: 7,
-        created_at_ms: 1,
+        latest_source_sequence: 7n,
+        exit_code: null,
+        process_id: null,
+        created_at_ms: 1n,
+        exited_at_ms: null,
         output: {
-          next_sequence: 4,
+          next_sequence: 4n,
           retained_output: "ordered output",
           truncated: false,
-          omitted_bytes: 0,
+          omitted_bytes: 0n,
         },
       }],
     };
@@ -63,8 +70,8 @@ describe("terminal Product projection consumer", () => {
     const offline: AgentRunTerminalChange = {
       change_id: "change-4",
       target,
-      sequence: 4,
-      revision: 4,
+      sequence: 4n,
+      revision: 4n,
       origin: {
         kind: "product_fact",
         change_kind: "backend_availability",
@@ -75,7 +82,7 @@ describe("terminal Product projection consumer", () => {
         terminal_id: "terminal-1",
         owner,
         availability: "offline",
-        changed_at_ms: 11,
+        changed_at_ms: 11n,
       },
     };
     projectAgentRunTerminalChanges([offline]);
@@ -92,19 +99,19 @@ describe("terminal Product projection consumer", () => {
     const change: AgentRunTerminalChange = {
       change_id: "change-1",
       target,
-      sequence: 1,
-      revision: 1,
+      sequence: 1n,
+      revision: 1n,
       origin: {
         kind: "source_fact",
         terminal_owner_epoch_id: "epoch-1",
-        source_sequence: 1,
+        source_sequence: 1n,
       },
       payload_digest: "sha256:one",
       delta: {
         kind: "output_appended",
         terminal_id: "terminal-1",
         owner,
-        output_sequence: 1,
+        output_sequence: 1n,
         stream: "pty",
         data: "one",
       },
@@ -118,20 +125,20 @@ describe("terminal Product projection consumer", () => {
     projectAgentRunTerminalChanges([{
       change_id: "change-2",
       target,
-      sequence: 2,
-      revision: 2,
+      sequence: 2n,
+      revision: 2n,
       origin: {
         kind: "source_fact",
         terminal_owner_epoch_id: "epoch-1",
-        source_sequence: 2,
+        source_sequence: 2n,
       },
       payload_digest: "sha256:omitted",
       delta: {
         kind: "output_omitted",
         terminal_id: "terminal-1",
         owner,
-        output_sequence: 2,
-        omitted_bytes: 4_096,
+        output_sequence: 2n,
+        omitted_bytes: 4_096n,
         retained_output: "retained tail",
       },
     }]);

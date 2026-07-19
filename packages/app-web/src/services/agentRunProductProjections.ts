@@ -234,7 +234,7 @@ export function isAgentRunTerminalChangePage(
         && isNonNegativeInteger(value.gap.snapshot_revision)));
 }
 
-function changePath(route: string, after?: number, limit = 256): string {
+function changePath(route: string, after?: bigint, limit = 256): string {
   const params = new URLSearchParams({ limit: String(limit) });
   if (after !== undefined) params.set("after", String(after));
   return `${route}?${params.toString()}`;
@@ -254,7 +254,7 @@ export async function fetchWorkspacePresentationSnapshot(
 
 export async function fetchWorkspacePresentationChanges(
   target: AgentRunRuntimeTarget,
-  after?: number,
+  after?: bigint,
 ): Promise<WorkspaceModulePresentationChangePage> {
   const value = await api.get<unknown>(
     agentRunScopedPath(target, changePath("/workspace-presentations/changes", after)),
@@ -268,14 +268,14 @@ export async function fetchWorkspacePresentationChanges(
 export async function acknowledgeWorkspacePresentation(
   target: AgentRunRuntimeTarget,
   intentId: string,
-  observedChangeSequence: number,
+  observedChangeSequence: bigint,
 ): Promise<WorkspaceModulePresentationChangePage["changes"][number]> {
   const value = await api.post<unknown>(
     agentRunScopedPath(
       target,
       `/workspace-presentations/${encodeURIComponent(intentId)}/ack`,
     ),
-    { observed_change_sequence: observedChangeSequence },
+    { observed_change_sequence: Number(observedChangeSequence) },
   );
   if (!isWorkspaceModulePresentationChange(value)) {
     throw new Error("Workspace presentation acknowledgement 响应不符合 Product contract");
@@ -297,7 +297,7 @@ export async function fetchAgentRunTerminalSnapshot(
 
 export async function fetchAgentRunTerminalChanges(
   target: AgentRunRuntimeTarget,
-  after?: number,
+  after?: bigint,
 ): Promise<AgentRunTerminalChangePage> {
   const value = await api.get<unknown>(
     agentRunScopedPath(target, changePath("/runtime/terminals/changes", after)),

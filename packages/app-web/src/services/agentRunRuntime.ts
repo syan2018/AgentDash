@@ -87,6 +87,21 @@ export async function executeAgentRunRuntimeCommand(
   return decodeManagedRuntimeOperationReceipt(payload);
 }
 
+export async function compactAgentRunContext(
+  target: AgentRunRuntimeTarget,
+  clientCommandId: string,
+): Promise<ManagedRuntimeOperationReceipt> {
+  const snapshot = await fetchManagedRuntimeSnapshot(target);
+  if (snapshot.command_availability.request_compaction?.status !== "available") {
+    throw new Error("Managed Runtime 当前不接受 context compaction");
+  }
+  return executeAgentRunRuntimeCommand(target, {
+    client_command_id: clientCommandId,
+    expected_revision: snapshot.revision,
+    command: { kind: "request_compaction" },
+  });
+}
+
 export async function respondAgentRunInteraction(
   target: AgentRunRuntimeTarget,
   interactionId: string,

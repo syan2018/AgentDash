@@ -18,8 +18,11 @@ function registerTerminal(terminal: AgentRunTerminalProjection): void {
     state: terminal.state,
     availability: terminal.availability,
     exitCode: terminal.exit_code ?? undefined,
-    createdAt: terminal.created_at_ms,
-    exitedAt: terminal.exited_at_ms ?? undefined,
+    createdAt: Number(terminal.created_at_ms),
+    exitedAt:
+      terminal.exited_at_ms === null
+        ? undefined
+        : Number(terminal.exited_at_ms),
   });
 }
 
@@ -60,7 +63,7 @@ export function projectAgentRunTerminalChanges(
           .getState()
           .projectOutputEvent(
             streamIdentity,
-            change.sequence,
+            Number(change.sequence),
             delta.terminal_id,
             delta.data,
           );
@@ -75,7 +78,7 @@ export function projectAgentRunTerminalChanges(
           .getState()
           .projectStateEvent(
             streamIdentity,
-            change.sequence,
+            Number(change.sequence),
             delta.terminal_id,
             delta.state,
             delta.exit_code ?? undefined,

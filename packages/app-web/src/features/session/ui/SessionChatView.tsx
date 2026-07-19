@@ -82,7 +82,6 @@ export function SessionChatView({
     statusBarRunId,
     statusBarAgentId,
     injectedInputValue,
-    companionSubagents,
   } = model;
   const {
     submitComposer,
@@ -557,7 +556,6 @@ export function SessionChatView({
         interactions={interactions}
         runtimeRevision={snapshot?.revision}
         agentRunTarget={agentRunTarget}
-        companionSubagents={companionSubagents}
         hasRuntimeStreamTarget={hasRuntimeStreamTarget}
         isLoading={isLoading}
         streamingEntryId={streamingEntryId}

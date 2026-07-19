@@ -18,7 +18,6 @@ import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { ImageAttachment } from "./composer/useImageAttachments";
 import type { OpenSessionWorkspacePanel } from "./SessionWorkspacePanelActionContext";
-import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 
 export interface PromptTemplate {
   id: string;
@@ -74,7 +73,6 @@ export interface SessionChatMailboxModel {
 
 export interface SessionChatModel {
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   workspaceId?: string | null;
   executorHint?: string | null;
   agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null;

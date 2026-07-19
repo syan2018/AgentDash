@@ -107,7 +107,7 @@ describe("AgentRun Product projection service", () => {
     await expect(acknowledgeWorkspacePresentation(
       { runId: "run/1", agentId: "agent/1" },
       "intent/1",
-      4,
+      4n,
     )).resolves.toBe(fulfilled);
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/workspace-presentations/intent%2F1/ack",

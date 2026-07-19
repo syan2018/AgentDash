@@ -48,10 +48,26 @@ pub enum FunctionEffectRawOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FunctionEffectObservation {
-    Unknown,
+    /// No durable dispatch intent exists. This is the only observation that
+    /// authorizes Workflow to call `execute_effect`.
+    NotApplied,
+    /// The durable dispatch intent was accepted. The external side effect may
+    /// already have happened, so recovery may only inspect/reconcile it.
     Accepted,
+    /// A worker owns the durable dispatch intent. Claim or lease expiry does
+    /// not prove that repeating the external side effect is safe.
+    InFlight,
     Succeeded(FunctionEffectRawOutcome),
-    Failed { message: String, retryable: bool },
+    Failed {
+        message: String,
+        retryable: bool,
+    },
+    /// The durable intent cannot be reconciled with its external outcome.
+    /// Workflow must block the node for explicit operator resolution.
+    Lost {
+        reason: String,
+        evidence: Value,
+    },
 }
 
 /// Executes function-activity side effects against a rendered template context.
@@ -74,9 +90,15 @@ pub trait FunctionRunner: Send + Sync {
         context: &Value,
     ) -> Result<BashExecOutcome, String>;
 
-    /// Stable effect protocol used by Workflow production execution. The
-    /// implementation must durably deduplicate `effect_id` + payload digest
-    /// and make terminal observations inspectable after restart.
+    /// Accepts a stable Function effect only after `inspect_effect` returned
+    /// `NotApplied`.
+    ///
+    /// The implementation must atomically commit a durable dispatch intent,
+    /// keyed by `effect_id` + payload digest, before crossing the HTTP/process
+    /// boundary. Once that intent exists, it must return/inspect as
+    /// `Accepted`, `InFlight`, terminal, or `Lost`; it must never expose the
+    /// effect as `NotApplied` again. A claim or lease can coordinate one
+    /// worker, but expiry never authorizes automatic external re-execution.
     async fn execute_effect(
         &self,
         _request: FunctionEffectRequest,
@@ -84,6 +106,10 @@ pub trait FunctionRunner: Send + Sync {
         Err("stable Function effect protocol is not implemented".to_owned())
     }
 
+    /// Reads the durable runner lifecycle. `NotApplied` proves that no dispatch
+    /// intent was committed. `Accepted`/`InFlight` are inspect-only states.
+    /// Sources that cannot prove a terminal outcome after dispatch must
+    /// converge to `Lost` with durable reason/evidence.
     async fn inspect_effect(&self, _effect_id: &str) -> Result<FunctionEffectObservation, String> {
         Err("stable Function effect inspection is not implemented".to_owned())
     }

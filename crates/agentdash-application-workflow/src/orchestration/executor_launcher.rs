@@ -7,7 +7,7 @@ use agentdash_domain::workflow::{
     WorkflowFunctionTerminalResult,
 };
 use agentdash_platform_spi::FunctionRunner;
-use serde_json::Value;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{WorkflowApplicationError, WorkflowRepositorySet};
@@ -15,7 +15,7 @@ use crate::{WorkflowApplicationError, WorkflowRepositorySet};
 use super::agent_call::{
     WorkflowAgentCallDispatchPort, WorkflowAgentCallLaunchOutcome, WorkflowAgentCallLauncher,
 };
-use super::function_node_runner::FunctionNodeRunner;
+use super::function_node_runner::{FunctionDispatchOutcome, FunctionNodeRunner};
 use super::human_gate_launcher::{HumanGateLauncher, HumanGateOpenOutcome};
 use super::ready_node::{ReadyNodeView, RuntimeNodeCoordinate};
 use super::runtime::{OrchestrationRuntimeEvent, apply_orchestration_event_to_run};
@@ -174,6 +174,9 @@ impl OrchestrationExecutorLauncher {
                             }
                             Ok(Some(FunctionLaunchTerminal::Failed)) => {
                                 result.failed_nodes.push(node_path);
+                                continue;
+                            }
+                            Ok(Some(FunctionLaunchTerminal::Blocked)) => {
                                 continue;
                             }
                             Ok(None) => return Ok(result),
@@ -440,13 +443,28 @@ impl OrchestrationExecutorLauncher {
         let terminal = match record.terminal {
             Some(terminal) => terminal,
             None => {
-                let Some(terminal) = self
+                let terminal = match self
                     .function_node_runner
                     .dispatch(&prepared)
                     .await
                     .map_err(|error| WorkflowApplicationError::Internal(error.message))?
-                else {
-                    return Ok(None);
+                {
+                    FunctionDispatchOutcome::Pending => return Ok(None),
+                    FunctionDispatchOutcome::Terminal(terminal) => terminal,
+                    FunctionDispatchOutcome::Lost { reason, evidence } => {
+                        self.apply_event(
+                            run,
+                            coordinate.orchestration_id,
+                            function_lost_event(
+                                &coordinate,
+                                &prepared.request.payload_digest,
+                                reason,
+                                evidence,
+                            ),
+                        )
+                        .await?;
+                        return Ok(Some(FunctionLaunchTerminal::Blocked));
+                    }
                 };
                 self.repos
                     .executor_effect_repo
@@ -610,6 +628,7 @@ impl OrchestrationExecutorLauncher {
 enum FunctionLaunchTerminal {
     Completed,
     Failed,
+    Blocked,
 }
 
 fn function_effect_id(coordinate: &RuntimeNodeCoordinate) -> String {
@@ -650,6 +669,30 @@ fn function_terminal_event(
             error,
             timestamp: chrono::Utc::now(),
         },
+    }
+}
+
+fn function_lost_event(
+    coordinate: &RuntimeNodeCoordinate,
+    payload_digest: &str,
+    reason: String,
+    evidence: Value,
+) -> OrchestrationRuntimeEvent {
+    OrchestrationRuntimeEvent::NodeBlocked {
+        node_path: coordinate.node_path.clone(),
+        attempt: coordinate.attempt,
+        error: RuntimeNodeError {
+            code: "function_effect_outcome_lost".to_owned(),
+            message: reason.clone(),
+            retryable: false,
+            detail: Some(coordinate.detail_with([
+                ("effect_id", json!(function_effect_id(coordinate))),
+                ("payload_digest", json!(payload_digest)),
+                ("reason", json!(reason)),
+                ("evidence", evidence),
+            ])),
+        },
+        timestamp: chrono::Utc::now(),
     }
 }
 
@@ -1222,10 +1265,54 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
     struct RecordingStableFunctionRunner {
         executions: AtomicUsize,
         observations: Mutex<std::collections::BTreeMap<String, FunctionEffectObservation>>,
+        execute_observation: FunctionEffectObservation,
+        lose_receipt_after_side_effect: bool,
+    }
+
+    impl Default for RecordingStableFunctionRunner {
+        fn default() -> Self {
+            Self {
+                executions: AtomicUsize::new(0),
+                observations: Mutex::new(std::collections::BTreeMap::new()),
+                execute_observation: FunctionEffectObservation::Succeeded(
+                    FunctionEffectRawOutcome::ApiRequest(ApiRequestOutcome {
+                        status: 200,
+                        body_text: "ok".to_owned(),
+                        body_json: Some(serde_json::json!({"value": 7})),
+                    }),
+                ),
+                lose_receipt_after_side_effect: false,
+            }
+        }
+    }
+
+    impl RecordingStableFunctionRunner {
+        fn observing(effect_id: String, observation: FunctionEffectObservation) -> Self {
+            Self {
+                observations: Mutex::new(std::collections::BTreeMap::from([(
+                    effect_id,
+                    observation,
+                )])),
+                ..Self::default()
+            }
+        }
+
+        fn returning(execute_observation: FunctionEffectObservation) -> Self {
+            Self {
+                execute_observation,
+                ..Self::default()
+            }
+        }
+
+        fn losing_receipt() -> Self {
+            Self {
+                lose_receipt_after_side_effect: true,
+                ..Self::default()
+            }
+        }
     }
 
     #[async_trait]
@@ -1251,13 +1338,14 @@ mod tests {
             request: FunctionEffectRequest,
         ) -> Result<FunctionEffectObservation, String> {
             self.executions.fetch_add(1, Ordering::SeqCst);
-            let outcome = FunctionEffectObservation::Succeeded(
-                FunctionEffectRawOutcome::ApiRequest(ApiRequestOutcome {
-                    status: 200,
-                    body_text: "ok".to_owned(),
-                    body_json: Some(serde_json::json!({"value": 7})),
-                }),
-            );
+            if self.lose_receipt_after_side_effect {
+                self.observations
+                    .lock()
+                    .await
+                    .insert(request.effect_id, FunctionEffectObservation::InFlight);
+                return Err("runner receipt lost after external side effect".to_owned());
+            }
+            let outcome = self.execute_observation.clone();
             self.observations
                 .lock()
                 .await
@@ -1275,7 +1363,7 @@ mod tests {
                 .await
                 .get(effect_id)
                 .cloned()
-                .unwrap_or(FunctionEffectObservation::Unknown))
+                .unwrap_or(FunctionEffectObservation::NotApplied))
         }
     }
 
@@ -1861,7 +1949,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn function_terminal_receipt_reapplies_after_revision_conflict_without_reexecution() {
+    async fn function_not_applied_dispatches_once_then_terminal_receipt_reapplies() {
         let run = run_with_function_node();
         let run_id = run.id;
         let repo = Arc::new(RunRepo {
@@ -1904,6 +1992,179 @@ mod tests {
                 .node_tree[0]
                 .status,
             RuntimeNodeStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn function_accepted_recovery_only_inspects_without_execution() {
+        let run = run_with_function_node();
+        let run_id = run.id;
+        let orchestration_id = run.orchestrations[0].orchestration_id;
+        let effect_id = function_effect_id(&RuntimeNodeCoordinate::new(
+            run_id,
+            orchestration_id,
+            "effect",
+            1,
+        ));
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let runner = Arc::new(RecordingStableFunctionRunner::observing(
+            effect_id.clone(),
+            FunctionEffectObservation::Accepted,
+        ));
+        let launcher =
+            launcher_with_effects(repo.clone(), effects).with_function_runner(runner.clone());
+
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("accepted effect remains pending");
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("accepted recovery remains inspect-only");
+        runner
+            .observations
+            .lock()
+            .await
+            .insert(effect_id, FunctionEffectObservation::InFlight);
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("in-flight recovery remains inspect-only");
+
+        assert_eq!(runner.executions.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Running
+        );
+    }
+
+    #[tokio::test]
+    async fn function_lost_observation_blocks_after_receipt_loss_without_reexecution() {
+        let run = run_with_function_node();
+        let run_id = run.id;
+        let orchestration_id = run.orchestrations[0].orchestration_id;
+        let effect_id = function_effect_id(&RuntimeNodeCoordinate::new(
+            run_id,
+            orchestration_id,
+            "effect",
+            1,
+        ));
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let first_runner = Arc::new(RecordingStableFunctionRunner::losing_receipt());
+        let first_launcher = launcher_with_effects(repo.clone(), effects.clone())
+            .with_function_runner(first_runner.clone());
+
+        first_launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("receipt loss leaves effect inspect-only");
+        assert_eq!(first_runner.executions.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Running
+        );
+
+        *repo.fail_cas_at_expected_revision.lock().await = Some(1);
+        let recovery_runner = Arc::new(RecordingStableFunctionRunner::observing(
+            effect_id,
+            FunctionEffectObservation::Lost {
+                reason: "HTTP source has no idempotency receipt to inspect".to_owned(),
+                evidence: serde_json::json!({
+                    "transport": "http",
+                    "dispatch_intent_revision": 9,
+                }),
+            },
+        ));
+        let recovery_launcher = launcher_with_effects(repo.clone(), effects)
+            .with_function_runner(recovery_runner.clone());
+        recovery_launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect_err("injected Blocked projection crash");
+        let recovered = recovery_launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("Lost observation reapplies as Blocked");
+        assert!(recovered.failed_nodes.is_empty());
+        let duplicate = recovery_launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("duplicate drain");
+        assert!(duplicate.failed_nodes.is_empty());
+        assert_eq!(first_runner.executions.load(Ordering::SeqCst), 1);
+        assert_eq!(recovery_runner.executions.load(Ordering::SeqCst), 0);
+        let stored = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let node = &stored.orchestrations[0].node_tree[0];
+        assert_eq!(node.status, RuntimeNodeStatus::Blocked);
+        let error = node.error.as_ref().expect("Lost evidence");
+        assert_eq!(error.code, "function_effect_outcome_lost");
+        assert!(!error.retryable);
+        assert_eq!(
+            error
+                .detail
+                .as_ref()
+                .and_then(|detail| detail.pointer("/evidence/dispatch_intent_revision")),
+            Some(&serde_json::json!(9))
+        );
+    }
+
+    #[tokio::test]
+    async fn function_failed_terminal_receipt_reapplies_without_reexecution() {
+        let run = run_with_function_node();
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            fail_cas_at_expected_revision: Mutex::new(Some(1)),
+            ..Default::default()
+        });
+        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let runner = Arc::new(RecordingStableFunctionRunner::returning(
+            FunctionEffectObservation::Failed {
+                message: "remote command rejected".to_owned(),
+                retryable: false,
+            },
+        ));
+        let launcher =
+            launcher_with_effects(repo.clone(), effects).with_function_runner(runner.clone());
+
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect_err("injected Failed projection crash");
+        let replay = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("Failed receipt replay");
+
+        assert_eq!(replay.failed_nodes, vec!["effect"]);
+        assert_eq!(runner.executions.load(Ordering::SeqCst), 1);
+        let stored = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let node = &stored.orchestrations[0].node_tree[0];
+        assert_eq!(node.status, RuntimeNodeStatus::Failed);
+        assert_eq!(
+            node.error.as_ref().map(|error| error.code.as_str()),
+            Some("function_effect_failed")
         );
     }
 

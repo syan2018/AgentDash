@@ -23,6 +23,12 @@ pub(super) struct PreparedFunctionEffect {
     plan_node: PlanNode,
 }
 
+pub(super) enum FunctionDispatchOutcome {
+    Pending,
+    Terminal(WorkflowFunctionTerminalResult),
+    Lost { reason: String, evidence: Value },
+}
+
 impl FunctionNodeRunner {
     pub(super) fn new() -> Self {
         Self { runner: None }
@@ -134,7 +140,7 @@ impl FunctionNodeRunner {
     pub(super) async fn dispatch(
         &self,
         prepared: &PreparedFunctionEffect,
-    ) -> Result<Option<WorkflowFunctionTerminalResult>, RuntimeNodeError> {
+    ) -> Result<FunctionDispatchOutcome, RuntimeNodeError> {
         let runner = self.runner.as_ref().ok_or_else(|| RuntimeNodeError {
             code: "function_effect_protocol_not_composed".to_string(),
             message: "orchestration executor 缺少 durable Function effect protocol".to_string(),
@@ -146,7 +152,7 @@ impl FunctionNodeRunner {
             .await
             .map_err(effect_protocol_error)?;
         let observation = match inspected {
-            FunctionEffectObservation::Unknown => {
+            FunctionEffectObservation::NotApplied => {
                 let spec = match prepared.request.spec.clone() {
                     FunctionActivityExecutorSpec::ApiRequest(spec) => {
                         FunctionEffectSpec::ApiRequest(spec)
@@ -172,12 +178,14 @@ impl FunctionNodeRunner {
             observation => observation,
         };
         Ok(match observation {
-            FunctionEffectObservation::Unknown | FunctionEffectObservation::Accepted => None,
+            FunctionEffectObservation::NotApplied
+            | FunctionEffectObservation::Accepted
+            | FunctionEffectObservation::InFlight => FunctionDispatchOutcome::Pending,
             FunctionEffectObservation::Succeeded(raw) => {
-                Some(raw_terminal(&prepared.plan_node, raw))
+                FunctionDispatchOutcome::Terminal(raw_terminal(&prepared.plan_node, raw))
             }
             FunctionEffectObservation::Failed { message, retryable } => {
-                Some(WorkflowFunctionTerminalResult::Failed {
+                FunctionDispatchOutcome::Terminal(WorkflowFunctionTerminalResult::Failed {
                     error: RuntimeNodeError {
                         code: "function_effect_failed".to_owned(),
                         message,
@@ -185,6 +193,9 @@ impl FunctionNodeRunner {
                         detail: None,
                     },
                 })
+            }
+            FunctionEffectObservation::Lost { reason, evidence } => {
+                FunctionDispatchOutcome::Lost { reason, evidence }
             }
         })
     }

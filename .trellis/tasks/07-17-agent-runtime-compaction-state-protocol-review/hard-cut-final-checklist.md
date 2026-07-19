@@ -100,7 +100,9 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 ## C3/C4 — Product parity tracer
 
 - [ ] Project Agent / AgentRun create、resume、delete。
-- [ ] 普通 input → Complete Agent → canonical Turn/Item/output → UI。
+- [ ] 普通 input → Complete Agent → canonical Turn/Item/output → UI；Native Dash history
+  已证明产生 canonical input/Turn start/Turn complete，等待 production
+  AgentRun/API/frontend 纵向 consumer。
 - [x] Native exact fork 与 Codex native fork。
 - [x] Companion Full exact history fork；selected child AgentFrame/surface/profile 在
   Activate 前独立应用，并覆盖 parent 与 specialist profile 不同的 tracer。

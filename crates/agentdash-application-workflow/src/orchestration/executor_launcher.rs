@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agentdash_domain::workflow::{
     ArtifactAliasPolicy, ExecutorRunRef, LifecycleGateRepository, LifecycleRun,
-    LifecycleRunRepository, PlanNode, PlanNodeKind, RuntimeNodeError,
+    LifecycleRunRepository, LifecycleRunWriteError, PlanNode, PlanNodeKind, RuntimeNodeError,
 };
 use agentdash_platform_spi::FunctionRunner;
 use serde_json::Value;
@@ -162,8 +162,14 @@ impl OrchestrationExecutorLauncher {
                 PlanNodeKind::AgentCall => {
                     match self.agent_call_launcher.launch(&run, &coordinate).await? {
                         WorkflowAgentCallLaunchOutcome::Prepared { event } => {
-                            self.apply_event(run, coordinate.orchestration_id, event)
-                                .await?;
+                            match self
+                                .apply_event(run, coordinate.orchestration_id, event)
+                                .await
+                            {
+                                Ok(_) => {}
+                                Err(WorkflowApplicationError::Conflict(_)) => continue,
+                                Err(error) => return Err(error),
+                            }
                         }
                         WorkflowAgentCallLaunchOutcome::Pending => return Ok(result),
                         WorkflowAgentCallLaunchOutcome::Accepted {
@@ -171,37 +177,14 @@ impl OrchestrationExecutorLauncher {
                             runtime_thread_id,
                             dispatch_event,
                         } => {
-                            let run = if let Some(event) = dispatch_event {
-                                self.apply_event(run, coordinate.orchestration_id, event)
-                                    .await?
-                            } else {
-                                run
-                            };
-                            let run = self
-                                .apply_event(
-                                    run,
-                                    coordinate.orchestration_id,
-                                    OrchestrationRuntimeEvent::NodeClaimed {
-                                        node_path: coordinate.node_path.clone(),
-                                        attempt: coordinate.attempt,
-                                        timestamp: chrono::Utc::now(),
-                                    },
-                                )
-                                .await?;
-                            self.apply_event(
-                                run,
-                                coordinate.orchestration_id,
-                                OrchestrationRuntimeEvent::NodeStarted {
-                                    node_path: coordinate.node_path.clone(),
-                                    attempt: coordinate.attempt,
-                                    executor_run_ref: Some(ExecutorRunRef::AgentRun {
-                                        run_id: target.run_id,
-                                        agent_id: target.agent_id,
-                                    }),
-                                    timestamp: chrono::Utc::now(),
-                                },
-                            )
-                            .await?;
+                            match self
+                                .apply_event(run, coordinate.orchestration_id, dispatch_event)
+                                .await
+                            {
+                                Ok(_) => {}
+                                Err(WorkflowApplicationError::Conflict(_)) => continue,
+                                Err(error) => return Err(error),
+                            }
                             result.launched_agent_nodes.push(LaunchedAgentNode {
                                 run_id: target.run_id,
                                 agent_id: target.agent_id,
@@ -402,9 +385,25 @@ impl OrchestrationExecutorLauncher {
         orchestration_id: Uuid,
         event: OrchestrationRuntimeEvent,
     ) -> Result<LifecycleRun, WorkflowApplicationError> {
-        let (run, _) = apply_orchestration_event_to_run(run, orchestration_id, event)
+        let expected_revision = run.revision;
+        let (run, outcome) = apply_orchestration_event_to_run(run, orchestration_id, event)
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
-        self.repos.lifecycle_run_repo.update(&run).await?;
+        if outcome.idempotent_replay {
+            return Ok(run);
+        }
+        self.repos
+            .lifecycle_run_repo
+            .compare_and_swap(expected_revision, &run)
+            .await
+            .map_err(|error| match error {
+                LifecycleRunWriteError::RevisionConflict { .. } => {
+                    WorkflowApplicationError::Conflict(error.to_string())
+                }
+                LifecycleRunWriteError::Persistence(error) => error.into(),
+                LifecycleRunWriteError::CasNotImplemented => {
+                    WorkflowApplicationError::Internal(error.to_string())
+                }
+            })?;
         Ok(run)
     }
 
@@ -467,10 +466,11 @@ mod tests {
     use agentdash_domain::{
         DomainError,
         workflow::{
-            AgentProcedure, AgentProcedureContract, AgentProcedureExecutionSpec,
-            AgentProcedureRepository, AgentReusePolicy, ExecutorSpec, LifecycleGate,
-            OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNode,
-            RuntimeSessionPolicy,
+            ActivationRule, ActivityJoinPolicy, AgentProcedure, AgentProcedureContract,
+            AgentProcedureExecutionSpec, AgentProcedureRepository, AgentReusePolicy, ExecutorSpec,
+            LifecycleGate, OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef,
+            PlanNode, RuntimeNodeStatus, RuntimeSessionPolicy, TransitionCondition,
+            WorkflowAgentCallRuntimeState,
         },
     };
     use async_trait::async_trait;
@@ -481,12 +481,14 @@ mod tests {
     use crate::orchestration::{
         WorkflowAgentCallDispatchError, WorkflowAgentCallDispatchOutcome,
         WorkflowAgentCallDispatchPort, WorkflowAgentCallMailboxState, WorkflowAgentCallRequest,
-        activate_root_orchestration,
+        WorkflowAgentCallTargetIntent, activate_root_orchestration,
     };
 
     #[derive(Default)]
     struct RunRepo {
         run: Mutex<Option<LifecycleRun>>,
+        fail_cas_at_expected_revision: Mutex<Option<u64>>,
+        attempted_claim_ids: Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -520,6 +522,39 @@ mod tests {
         }
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             *self.run.lock().await = Some(run.clone());
+            Ok(())
+        }
+        async fn compare_and_swap(
+            &self,
+            expected_revision: u64,
+            run: &LifecycleRun,
+        ) -> Result<(), LifecycleRunWriteError> {
+            if let Some(claim_id) = run
+                .orchestrations
+                .iter()
+                .flat_map(|orchestration| orchestration.node_tree.iter())
+                .find_map(|node| node.agent_call.as_ref()?.claim_id.clone())
+            {
+                self.attempted_claim_ids.lock().await.push(claim_id);
+            }
+            let mut fail_at = self.fail_cas_at_expected_revision.lock().await;
+            if *fail_at == Some(expected_revision) {
+                *fail_at = None;
+                return Err(LifecycleRunWriteError::Persistence(
+                    DomainError::InvalidConfig("injected CAS commit failure".to_owned()),
+                ));
+            }
+            drop(fail_at);
+            let mut stored = self.run.lock().await;
+            let actual_revision = stored.as_ref().map_or(0, |item| item.revision);
+            if actual_revision != expected_revision || run.revision != expected_revision + 1 {
+                return Err(LifecycleRunWriteError::RevisionConflict {
+                    run_id: run.id,
+                    expected_revision,
+                    actual_revision,
+                });
+            }
+            *stored = Some(run.clone());
             Ok(())
         }
         async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
@@ -619,13 +654,30 @@ mod tests {
         ) -> Result<WorkflowAgentCallDispatchOutcome, WorkflowAgentCallDispatchError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let target = request.target_intent.target().clone();
+            let authority = match &request.target_intent {
+                crate::orchestration::WorkflowAgentCallTargetIntent::CreateNew { .. } => (
+                    "runtime-thread-workflow-1".to_owned(),
+                    agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef {
+                        source_ref: "source:workflow-agent".to_owned(),
+                        committed_at_revision: 2,
+                        applied_surface_revision: 3,
+                        activated_at_revision: Some(4),
+                    },
+                ),
+                crate::orchestration::WorkflowAgentCallTargetIntent::ContinueCurrent {
+                    runtime_thread_id,
+                    source_binding,
+                    ..
+                } => (runtime_thread_id.clone(), source_binding.clone()),
+            };
             self.requests.lock().await.push(request);
             if self.pending_once.swap(false, Ordering::SeqCst) {
                 return Ok(WorkflowAgentCallDispatchOutcome::Pending);
             }
             Ok(WorkflowAgentCallDispatchOutcome::Accepted {
                 target,
-                runtime_thread_id: "runtime-thread-workflow-1".to_owned(),
+                runtime_thread_id: authority.0,
+                source_binding: authority.1,
                 mailbox_state: WorkflowAgentCallMailboxState::Submitted,
             })
         }
@@ -691,6 +743,123 @@ mod tests {
         .with_agent_call_dispatch(dispatch)
     }
 
+    fn run_with_continue_successor() -> LifecycleRun {
+        let mut run = run_with_agent_policy(
+            AgentReusePolicy::CreateActivityAgent,
+            RuntimeSessionPolicy::CreateNew,
+        );
+        let orchestration = &mut run.orchestrations[0];
+        let mut plan_node = orchestration.plan_snapshot.nodes[0].clone();
+        plan_node.node_id = "continue".to_owned();
+        plan_node.node_path = "continue".to_owned();
+        plan_node.executor = Some(ExecutorSpec::AgentProcedure {
+            procedure: AgentProcedureExecutionSpec::Snapshot {
+                procedure_key: Some("continue".to_owned()),
+                name: Some("Continue".to_owned()),
+                contract: Box::new(AgentProcedureContract::default()),
+                source_ref: None,
+                contract_digest: None,
+            },
+            agent_reuse_policy: AgentReusePolicy::ContinueCurrentAgent,
+            runtime_session_policy: RuntimeSessionPolicy::DeliverToCurrentTrace,
+        });
+        orchestration.plan_snapshot.nodes.push(plan_node);
+        orchestration
+            .plan_snapshot
+            .activation_rules
+            .push(ActivationRule::Transition {
+                rule_id: "create-to-continue".to_owned(),
+                from_node_id: "agent".to_owned(),
+                to_node_id: "continue".to_owned(),
+                condition: TransitionCondition::Always,
+                join_policy: ActivityJoinPolicy::All,
+                max_traversals: None,
+                source_path: None,
+            });
+        let mut runtime_node = orchestration.node_tree[0].clone();
+        runtime_node.node_id = "continue".to_owned();
+        runtime_node.node_path = "continue".to_owned();
+        runtime_node.status = RuntimeNodeStatus::Pending;
+        runtime_node.executor_run_ref = None;
+        runtime_node.agent_call = None;
+        runtime_node.started_at = None;
+        runtime_node.trace_refs.clear();
+        orchestration.node_tree.push(runtime_node);
+        run
+    }
+
+    fn run_with_ambiguous_predecessor_authorities() -> LifecycleRun {
+        let mut run = run_with_continue_successor();
+        let run_id = run.id;
+        let orchestration = &mut run.orchestrations[0];
+        let first_target = agentdash_domain::agent_run_target::AgentRunTarget {
+            run_id,
+            agent_id: Uuid::new_v4(),
+        };
+        let first = &mut orchestration.node_tree[0];
+        first.status = RuntimeNodeStatus::Completed;
+        first.started_at = Some(Utc::now());
+        first.executor_run_ref = Some(ExecutorRunRef::AgentRun {
+            run_id: first_target.run_id,
+            agent_id: first_target.agent_id,
+        });
+        first.agent_call = Some(WorkflowAgentCallRuntimeState {
+            request_id: "first".to_owned(),
+            payload_digest: "sha256:first".to_owned(),
+            target: first_target,
+            request: serde_json::json!({}),
+            prepared_at: Utc::now(),
+            dispatched_at: Some(Utc::now()),
+            runtime_thread_id: Some("thread:first".to_owned()),
+            source_binding: Some(
+                agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef {
+                    source_ref: "source:first".to_owned(),
+                    committed_at_revision: 1,
+                    applied_surface_revision: 2,
+                    activated_at_revision: Some(3),
+                },
+            ),
+            claim_id: Some("claim:first".to_owned()),
+        });
+
+        let mut second_plan = orchestration.plan_snapshot.nodes[0].clone();
+        second_plan.node_id = "agent-2".to_owned();
+        second_plan.node_path = "agent-2".to_owned();
+        orchestration.plan_snapshot.nodes.push(second_plan);
+        orchestration
+            .plan_snapshot
+            .activation_rules
+            .push(ActivationRule::Transition {
+                rule_id: "second-to-continue".to_owned(),
+                from_node_id: "agent-2".to_owned(),
+                to_node_id: "continue".to_owned(),
+                condition: TransitionCondition::Always,
+                join_policy: ActivityJoinPolicy::All,
+                max_traversals: None,
+                source_path: None,
+            });
+        let mut second = orchestration.node_tree[0].clone();
+        let second_target = agentdash_domain::agent_run_target::AgentRunTarget {
+            run_id,
+            agent_id: Uuid::new_v4(),
+        };
+        second.node_id = "agent-2".to_owned();
+        second.node_path = "agent-2".to_owned();
+        second.executor_run_ref = Some(ExecutorRunRef::AgentRun {
+            run_id: second_target.run_id,
+            agent_id: second_target.agent_id,
+        });
+        let history = second.agent_call.as_mut().expect("second history");
+        history.target = second_target;
+        history.runtime_thread_id = Some("thread:second".to_owned());
+        history.source_binding.as_mut().expect("binding").source_ref = "source:second".to_owned();
+        orchestration.node_tree.push(second);
+        orchestration.node_tree[1].status = RuntimeNodeStatus::Ready;
+        orchestration.dispatch.ready_node_ids = vec!["continue".to_owned()];
+        orchestration.status = agentdash_domain::workflow::OrchestrationStatus::Running;
+        run
+    }
+
     #[tokio::test]
     async fn drain_persists_prepared_dispatched_and_agent_run_identity() {
         let run = run_with_agent_policy(
@@ -700,6 +869,7 @@ mod tests {
         let run_id = run.id;
         let repo = Arc::new(RunRepo {
             run: Mutex::new(Some(run)),
+            ..Default::default()
         });
         let dispatch = Arc::new(RecordingDispatch::default());
         let result = launcher(repo.clone(), dispatch.clone())
@@ -742,6 +912,7 @@ mod tests {
         let run_id = run.id;
         let repo = Arc::new(RunRepo {
             run: Mutex::new(Some(run)),
+            ..Default::default()
         });
         let dispatch = Arc::new(RecordingDispatch::default());
         let result = launcher(repo, dispatch.clone())
@@ -754,6 +925,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn continue_current_missing_authority_blocks_before_product_effect() {
+        let run = run_with_agent_policy(
+            AgentReusePolicy::ContinueCurrentAgent,
+            RuntimeSessionPolicy::DeliverToCurrentTrace,
+        );
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let result = launcher(repo, dispatch.clone())
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("drain");
+
+        assert_eq!(result.failed_nodes, vec!["agent"]);
+        assert_eq!(dispatch.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn continue_current_ambiguous_authority_blocks_before_product_effect() {
+        let run = run_with_ambiguous_predecessor_authorities();
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let result = launcher(repo, dispatch.clone())
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("drain");
+
+        assert_eq!(result.failed_nodes, vec!["continue"]);
+        assert_eq!(dispatch.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn pending_retry_replays_byte_identical_durable_request() {
         let run = run_with_agent_policy(
             AgentReusePolicy::CreateActivityAgent,
@@ -762,6 +972,7 @@ mod tests {
         let run_id = run.id;
         let repo = Arc::new(RunRepo {
             run: Mutex::new(Some(run)),
+            ..Default::default()
         });
         let dispatch = Arc::new(RecordingDispatch {
             pending_once: AtomicBool::new(true),
@@ -772,7 +983,159 @@ mod tests {
         let first = launcher.drain_ready_nodes(run_id).await.expect("pending");
         assert!(first.launched_agent_nodes.is_empty());
         let second = launcher.drain_ready_nodes(run_id).await.expect("retry");
-        assert_eq!(second.launched_agent_nodes.len(), 1);
+        assert_eq!(second.launched_agent_nodes.len(), 1, "{second:?}");
+        let requests = dispatch.requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            serde_json::to_vec(&requests[0]).unwrap(),
+            serde_json::to_vec(&requests[1]).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn continue_current_traces_unique_started_predecessor_authority() {
+        let run = run_with_continue_successor();
+        let run_id = run.id;
+        let orchestration_id = run.orchestrations[0].orchestration_id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let launcher = launcher(repo.clone(), dispatch.clone());
+
+        let first = launcher.drain_ready_nodes(run_id).await.expect("create");
+        assert_eq!(first.launched_agent_nodes.len(), 1);
+        let stored = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let expected_revision = stored.revision;
+        let (completed, _) = apply_orchestration_event_to_run(
+            stored,
+            orchestration_id,
+            OrchestrationRuntimeEvent::NodeCompleted {
+                node_path: "agent".to_owned(),
+                attempt: 1,
+                outputs: Vec::new(),
+                timestamp: Utc::now(),
+            },
+        )
+        .expect("complete predecessor");
+        repo.compare_and_swap(expected_revision, &completed)
+            .await
+            .expect("commit completion");
+
+        let second = launcher.drain_ready_nodes(run_id).await.expect("continue");
+        assert_eq!(second.launched_agent_nodes.len(), 1, "{second:?}");
+        let requests = dispatch.requests.lock().await;
+        let first_target = requests[0].target_intent.target().clone();
+        let WorkflowAgentCallTargetIntent::ContinueCurrent {
+            target,
+            runtime_thread_id,
+            source_binding,
+        } = &requests[1].target_intent
+        else {
+            panic!("successor must continue current authority");
+        };
+        assert_eq!(target, &first_target);
+        assert_eq!(runtime_thread_id, "runtime-thread-workflow-1");
+        assert_eq!(source_binding.source_ref, "source:workflow-agent");
+    }
+
+    #[tokio::test]
+    async fn concurrent_drains_commit_one_atomic_agent_start() {
+        let run = run_with_agent_policy(
+            AgentReusePolicy::CreateActivityAgent,
+            RuntimeSessionPolicy::CreateNew,
+        );
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let first_launcher = launcher(repo.clone(), dispatch.clone());
+        let second_launcher = launcher(repo.clone(), dispatch);
+
+        let (first, second) = tokio::join!(
+            first_launcher.drain_ready_nodes(run_id),
+            second_launcher.drain_ready_nodes(run_id)
+        );
+        let launched = first.expect("first drain").launched_agent_nodes.len()
+            + second.expect("second drain").launched_agent_nodes.len();
+        assert_eq!(launched, 1);
+        let stored = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let node = &stored.orchestrations[0].node_tree[0];
+        assert_eq!(node.status, RuntimeNodeStatus::Running);
+        assert!(node.agent_call.as_ref().unwrap().claim_id.is_some());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_run_cas_rejects_stale_writer() {
+        let run = run_with_agent_policy(
+            AgentReusePolicy::CreateActivityAgent,
+            RuntimeSessionPolicy::CreateNew,
+        );
+        let repo = RunRepo {
+            run: Mutex::new(Some(run.clone())),
+            ..Default::default()
+        };
+        let mut winner = run.clone();
+        winner.revision += 1;
+        repo.compare_and_swap(0, &winner).await.expect("winner");
+        let mut stale = run;
+        stale.revision += 1;
+        let error = repo
+            .compare_and_swap(0, &stale)
+            .await
+            .expect_err("stale writer");
+        assert!(matches!(
+            error,
+            LifecycleRunWriteError::RevisionConflict {
+                expected_revision: 0,
+                actual_revision: 1,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn accepted_product_effect_replays_with_stable_claim_after_cas_failure() {
+        let run = run_with_agent_policy(
+            AgentReusePolicy::CreateActivityAgent,
+            RuntimeSessionPolicy::CreateNew,
+        );
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            fail_cas_at_expected_revision: Mutex::new(Some(1)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let launcher = launcher(repo.clone(), dispatch.clone());
+
+        let first_error = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect_err("atomic start CAS failure");
+        assert!(matches!(first_error, WorkflowApplicationError::Internal(_)));
+        let prepared = repo.get_by_id(run_id).await.unwrap().unwrap();
+        assert_eq!(prepared.revision, 1);
+        assert!(
+            prepared.orchestrations[0].node_tree[0]
+                .agent_call
+                .as_ref()
+                .unwrap()
+                .claim_id
+                .is_none()
+        );
+
+        let replay = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("replay accepted Product saga");
+        assert_eq!(replay.launched_agent_nodes.len(), 1);
+        let claim_ids = repo.attempted_claim_ids.lock().await;
+        assert_eq!(claim_ids.len(), 2);
+        assert_eq!(claim_ids[0], claim_ids[1]);
         let requests = dispatch.requests.lock().await;
         assert_eq!(requests.len(), 2);
         assert_eq!(

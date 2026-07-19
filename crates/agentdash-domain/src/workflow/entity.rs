@@ -157,6 +157,9 @@ pub enum LifecycleRunTopology {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRun {
     pub id: Uuid,
+    /// Aggregate revision used by repository compare-and-swap writes.
+    #[serde(default)]
+    pub revision: u64,
     pub project_id: Uuid,
     #[serde(default = "default_created_by_user_id")]
     pub created_by_user_id: String,
@@ -186,6 +189,7 @@ impl LifecycleRun {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
+            revision: 0,
             project_id,
             created_by_user_id: normalize_created_by_user_id(created_by_user_id),
             topology: LifecycleRunTopology::WorkflowGraph,
@@ -208,6 +212,7 @@ impl LifecycleRun {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
+            revision: 0,
             project_id,
             created_by_user_id: normalize_created_by_user_id(created_by_user_id),
             topology: LifecycleRunTopology::Plain,

@@ -363,8 +363,20 @@ pub struct WorkflowAgentCallRuntimeState {
     pub dispatched_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_binding: Option<WorkflowAgentCallSourceBindingRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WorkflowAgentCallSourceBindingRef {
+    pub source_ref: String,
+    pub committed_at_revision: u64,
+    pub applied_surface_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activated_at_revision: Option<u64>,
+}
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeNodeStatus {

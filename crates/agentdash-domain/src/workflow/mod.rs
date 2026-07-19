@@ -49,8 +49,8 @@ pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef}
 pub use repository::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
     AgentRunLineageRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository, WorkflowGraphRepository,
-    WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    LifecycleRunRepository, LifecycleRunWriteError, LifecycleSubjectAssociationRepository,
+    WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
 pub use validation::{validate_agent_procedure, validate_workflow_graph};
@@ -73,9 +73,10 @@ pub use value_objects::{
     StateExchangeRule, StateExchangeSnapshot, TaskPlanStatus, TaskPriority,
     ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState,
     TransitionCondition, ValidationIssue, ValidationSeverity, WorkflowAgentCallRuntimeState,
-    WorkflowContextBinding, WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec,
-    WorkflowScriptApiEndpoint, WorkflowScriptBashCommand, WorkflowScriptCapabilitySummary,
-    WorkflowScriptDefinition, WorkflowScriptDefinitionScope, WorkflowScriptDefinitionStatus,
+    WorkflowAgentCallSourceBindingRef, WorkflowContextBinding, WorkflowHookRuleSpec,
+    WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowScriptApiEndpoint,
+    WorkflowScriptBashCommand, WorkflowScriptCapabilitySummary, WorkflowScriptDefinition,
+    WorkflowScriptDefinitionScope, WorkflowScriptDefinitionStatus,
     WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
     WorkflowSessionTerminalState, mcp_capability_key, mcp_tool_capability_path,
     reduce_tool_capability_directives, workflow_script_source_digest,

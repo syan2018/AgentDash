@@ -3,9 +3,9 @@ use std::{collections::BTreeSet, sync::Arc};
 use agentdash_domain::{
     agent_run_target::AgentRunTarget,
     workflow::{
-        AgentProcedureContract, AgentProcedureExecutionSpec, AgentProcedureRepository,
-        AgentReusePolicy, ExecutorRunRef, ExecutorSpec, LifecycleRun, RuntimeSessionPolicy,
-        RuntimeTraceRef,
+        ActivationRule, AgentProcedureContract, AgentProcedureExecutionSpec,
+        AgentProcedureRepository, AgentReusePolicy, ExecutorRunRef, ExecutorSpec, LifecycleRun,
+        RuntimeNodeState, RuntimeSessionPolicy, WorkflowAgentCallSourceBindingRef,
     },
 };
 use async_trait::async_trait;
@@ -36,14 +36,20 @@ pub struct WorkflowAgentCallIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkflowAgentCallTargetIntent {
-    CreateNew { target: AgentRunTarget },
-    ContinueCurrent { target: AgentRunTarget },
+    CreateNew {
+        target: AgentRunTarget,
+    },
+    ContinueCurrent {
+        target: AgentRunTarget,
+        runtime_thread_id: String,
+        source_binding: WorkflowAgentCallSourceBindingRef,
+    },
 }
 
 impl WorkflowAgentCallTargetIntent {
     pub fn target(&self) -> &AgentRunTarget {
         match self {
-            Self::CreateNew { target } | Self::ContinueCurrent { target } => target,
+            Self::CreateNew { target } | Self::ContinueCurrent { target, .. } => target,
         }
     }
 }
@@ -105,6 +111,7 @@ pub enum WorkflowAgentCallDispatchOutcome {
     Accepted {
         target: AgentRunTarget,
         runtime_thread_id: String,
+        source_binding: WorkflowAgentCallSourceBindingRef,
         mailbox_state: WorkflowAgentCallMailboxState,
     },
 }
@@ -193,31 +200,27 @@ impl WorkflowAgentCallLauncher {
             (
                 AgentReusePolicy::ContinueCurrentAgent,
                 RuntimeSessionPolicy::DeliverToCurrentTrace,
-            ) => {
-                let target = ready
-                    .runtime_node
-                    .agent_call
-                    .as_ref()
-                    .map(|history| history.target.clone())
-                    .or_else(|| current_target(ready.runtime_node))
-                    .ok_or_else(|| {
-                        WorkflowApplicationError::Conflict(
-                            "ContinueCurrent AgentCall 缺少可证明 authority 的当前 AgentRun target"
-                                .to_owned(),
-                        )
-                    });
-                let target = match target {
-                    Ok(target) => target,
-                    Err(_) => {
-                        return Ok(WorkflowAgentCallLaunchOutcome::blocked(
-                            "current_agent_run_authority_missing",
-                            "ContinueCurrent AgentCall 缺少可证明 authority 的当前 AgentRun target",
-                            false,
-                        ));
-                    }
-                };
-                WorkflowAgentCallTargetIntent::ContinueCurrent { target }
-            }
+            ) => match current_authority(run, coordinate, ready.runtime_node) {
+                Ok(authority) => WorkflowAgentCallTargetIntent::ContinueCurrent {
+                    target: authority.target,
+                    runtime_thread_id: authority.runtime_thread_id,
+                    source_binding: authority.source_binding,
+                },
+                Err(CurrentAuthorityError::Missing) => {
+                    return Ok(WorkflowAgentCallLaunchOutcome::blocked(
+                        "current_agent_run_authority_missing",
+                        "ContinueCurrent AgentCall 缺少已派发 predecessor 的完整 Runtime authority",
+                        false,
+                    ));
+                }
+                Err(CurrentAuthorityError::Ambiguous) => {
+                    return Ok(WorkflowAgentCallLaunchOutcome::blocked(
+                        "current_agent_run_authority_ambiguous",
+                        "ContinueCurrent AgentCall 找到多个已派发 predecessor Runtime authority",
+                        false,
+                    ));
+                }
+            },
             _ => {
                 return Ok(WorkflowAgentCallLaunchOutcome::blocked(
                     "agent_executor_policy_not_supported",
@@ -282,6 +285,8 @@ impl WorkflowAgentCallLauncher {
                     payload_digest: request.payload_digest.clone(),
                     target,
                     request: serde_json::to_value(&request).expect("AgentCall request serializes"),
+                    runtime_thread_id: request.target_intent.runtime_thread_id().map(str::to_owned),
+                    source_binding: request.target_intent.source_binding().cloned(),
                     timestamp: chrono::Utc::now(),
                 },
             });
@@ -299,10 +304,32 @@ impl WorkflowAgentCallLauncher {
         if let (Some(runtime_thread_id), Some(_)) =
             (&history.runtime_thread_id, history.dispatched_at)
         {
+            let Some(source_binding) = history.source_binding.clone() else {
+                return Ok(WorkflowAgentCallLaunchOutcome::blocked(
+                    "agent_call_runtime_authority_incomplete",
+                    "durable AgentCall history 缺少 Runtime source binding",
+                    false,
+                ));
+            };
             return Ok(WorkflowAgentCallLaunchOutcome::Accepted {
-                target,
+                target: target.clone(),
                 runtime_thread_id: runtime_thread_id.clone(),
-                dispatch_event: None,
+                dispatch_event: OrchestrationRuntimeEvent::AgentCallStarted {
+                    node_path: coordinate.node_path.clone(),
+                    attempt: coordinate.attempt,
+                    request_id: request.identity.request_id,
+                    payload_digest: request.payload_digest,
+                    target,
+                    runtime_thread_id: runtime_thread_id.clone(),
+                    source_binding,
+                    claim_id: history.claim_id.clone().unwrap_or_else(|| {
+                        format!(
+                            "workflow-agent-call-claim:{}:{}#{}",
+                            coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
+                        )
+                    }),
+                    timestamp: chrono::Utc::now(),
+                },
             });
         }
 
@@ -320,6 +347,7 @@ impl WorkflowAgentCallLauncher {
             Ok(WorkflowAgentCallDispatchOutcome::Accepted {
                 target: accepted_target,
                 runtime_thread_id,
+                source_binding,
                 ..
             }) => {
                 if accepted_target != target {
@@ -329,18 +357,37 @@ impl WorkflowAgentCallLauncher {
                         false,
                     ));
                 }
+                if let WorkflowAgentCallTargetIntent::ContinueCurrent {
+                    runtime_thread_id: expected_thread,
+                    source_binding: expected_binding,
+                    ..
+                } = &request.target_intent
+                    && (&runtime_thread_id != expected_thread
+                        || &source_binding != expected_binding)
+                {
+                    return Ok(WorkflowAgentCallLaunchOutcome::blocked(
+                        "agent_call_runtime_authority_drift",
+                        "Product dispatch 返回了不同的 current Runtime authority",
+                        false,
+                    ));
+                }
                 Ok(WorkflowAgentCallLaunchOutcome::Accepted {
                     target: accepted_target.clone(),
                     runtime_thread_id: runtime_thread_id.clone(),
-                    dispatch_event: Some(OrchestrationRuntimeEvent::AgentCallDispatched {
+                    dispatch_event: OrchestrationRuntimeEvent::AgentCallStarted {
                         node_path: coordinate.node_path.clone(),
                         attempt: coordinate.attempt,
                         request_id: request.identity.request_id,
                         payload_digest: request.payload_digest,
                         target: accepted_target,
                         runtime_thread_id,
+                        source_binding,
+                        claim_id: format!(
+                            "workflow-agent-call-claim:{}:{}#{}",
+                            coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
+                        ),
                         timestamp: chrono::Utc::now(),
-                    }),
+                    },
                 })
             }
             Err(error) => Ok(WorkflowAgentCallLaunchOutcome::blocked(
@@ -378,19 +425,109 @@ impl WorkflowAgentCallLauncher {
     }
 }
 
-fn current_target(node: &agentdash_domain::workflow::RuntimeNodeState) -> Option<AgentRunTarget> {
-    match node.executor_run_ref.as_ref() {
-        Some(ExecutorRunRef::AgentRun { run_id, agent_id }) => Some(AgentRunTarget {
-            run_id: *run_id,
-            agent_id: *agent_id,
-        }),
-        _ => node.trace_refs.iter().find_map(|trace| match trace {
-            RuntimeTraceRef::AgentRun { run_id, agent_id } => Some(AgentRunTarget {
-                run_id: *run_id,
-                agent_id: *agent_id,
-            }),
-            _ => None,
-        }),
+impl WorkflowAgentCallTargetIntent {
+    pub fn runtime_thread_id(&self) -> Option<&str> {
+        match self {
+            Self::CreateNew { .. } => None,
+            Self::ContinueCurrent {
+                runtime_thread_id, ..
+            } => Some(runtime_thread_id),
+        }
+    }
+
+    pub fn source_binding(&self) -> Option<&WorkflowAgentCallSourceBindingRef> {
+        match self {
+            Self::CreateNew { .. } => None,
+            Self::ContinueCurrent { source_binding, .. } => Some(source_binding),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CurrentAgentAuthority {
+    target: AgentRunTarget,
+    runtime_thread_id: String,
+    source_binding: WorkflowAgentCallSourceBindingRef,
+}
+
+enum CurrentAuthorityError {
+    Missing,
+    Ambiguous,
+}
+
+fn current_authority(
+    run: &LifecycleRun,
+    coordinate: &RuntimeNodeCoordinate,
+    current_node: &RuntimeNodeState,
+) -> Result<CurrentAgentAuthority, CurrentAuthorityError> {
+    if let Some(history) = current_node.agent_call.as_ref() {
+        if let (Some(runtime_thread_id), Some(source_binding)) =
+            (&history.runtime_thread_id, &history.source_binding)
+        {
+            return Ok(CurrentAgentAuthority {
+                target: history.target.clone(),
+                runtime_thread_id: runtime_thread_id.clone(),
+                source_binding: source_binding.clone(),
+            });
+        }
+    }
+    let orchestration = run
+        .orchestrations
+        .iter()
+        .find(|item| item.orchestration_id == coordinate.orchestration_id)
+        .ok_or(CurrentAuthorityError::Missing)?;
+    let predecessor_ids = orchestration
+        .plan_snapshot
+        .activation_rules
+        .iter()
+        .flat_map(|rule| match rule {
+            ActivationRule::Transition {
+                from_node_id,
+                to_node_id,
+                ..
+            } if to_node_id.as_str() == current_node.node_id.as_str() => vec![from_node_id.clone()],
+            ActivationRule::Dependency {
+                node_id,
+                depends_on_node_ids,
+            } if node_id.as_str() == current_node.node_id.as_str() => depends_on_node_ids.clone(),
+            _ => Vec::new(),
+        })
+        .collect::<BTreeSet<_>>();
+    let mut authorities = Vec::new();
+    collect_predecessor_authorities(&orchestration.node_tree, &predecessor_ids, &mut authorities);
+    authorities.sort();
+    authorities.dedup();
+    match authorities.as_slice() {
+        [authority] => Ok(authority.clone()),
+        [] => Err(CurrentAuthorityError::Missing),
+        _ => Err(CurrentAuthorityError::Ambiguous),
+    }
+}
+
+fn collect_predecessor_authorities(
+    nodes: &[RuntimeNodeState],
+    predecessor_ids: &BTreeSet<String>,
+    authorities: &mut Vec<CurrentAgentAuthority>,
+) {
+    for node in nodes {
+        if predecessor_ids.contains(&node.node_id)
+            && node.started_at.is_some()
+            && let Some(ExecutorRunRef::AgentRun { run_id, agent_id }) = &node.executor_run_ref
+            && let Some(history) = &node.agent_call
+            && history.dispatched_at.is_some()
+            && let (Some(runtime_thread_id), Some(source_binding)) =
+                (&history.runtime_thread_id, &history.source_binding)
+        {
+            authorities.push(CurrentAgentAuthority {
+                target: AgentRunTarget {
+                    run_id: *run_id,
+                    agent_id: *agent_id,
+                },
+                runtime_thread_id: runtime_thread_id.clone(),
+                source_binding: source_binding.clone(),
+            });
+        }
+        collect_predecessor_authorities(&node.children, predecessor_ids, authorities);
     }
 }
 
@@ -448,7 +585,7 @@ pub(super) enum WorkflowAgentCallLaunchOutcome {
     Accepted {
         target: AgentRunTarget,
         runtime_thread_id: String,
-        dispatch_event: Option<OrchestrationRuntimeEvent>,
+        dispatch_event: OrchestrationRuntimeEvent,
     },
     Blocked {
         code: String,

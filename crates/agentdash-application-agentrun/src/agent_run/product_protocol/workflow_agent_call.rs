@@ -1,5 +1,6 @@
-use std::sync::Arc;
+#[cfg(test)]
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
     ManagedRuntimeCommand, ManagedRuntimeCommandEnvelope, ManagedRuntimeContentBlock,
@@ -13,19 +14,18 @@ use agentdash_agent_runtime_contract::{
 };
 use agentdash_application_workflow::{
     WorkflowAgentCallContentBlock, WorkflowAgentCallDispatchError,
-    WorkflowAgentCallDispatchOutcome, WorkflowAgentCallDispatchPort,
-    WorkflowAgentCallMailboxState, WorkflowAgentCallRequest,
+    WorkflowAgentCallDispatchOutcome, WorkflowAgentCallDispatchPort, WorkflowAgentCallMailboxState,
+    WorkflowAgentCallRequest, WorkflowAgentCallTargetIntent,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
+use agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::ProductManagedRuntimeCommandAdapter;
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowAgentCallProductPhase {
     MaterializeTarget,
@@ -36,13 +36,14 @@ pub enum WorkflowAgentCallProductPhase {
 }
 
 impl WorkflowAgentCallProductPhase {
-    const ORDER: [Self; 5] = [
+    const CREATE_NEW_ORDER: [Self; 5] = [
         Self::MaterializeTarget,
         Self::CreateRuntime,
         Self::ActivateRuntime,
         Self::CommitBinding,
         Self::SubmitInput,
     ];
+    const CONTINUE_CURRENT_ORDER: [Self; 1] = [Self::SubmitInput];
 
     fn slug(self) -> &'static str {
         match self {
@@ -84,18 +85,39 @@ impl WorkflowAgentCallProductSaga {
         if !request.validate_payload_digest() {
             return Err("Workflow AgentCall payload digest is invalid".to_owned());
         }
-        let runtime_thread_id = RuntimeThreadId::new(format!(
-            "workflow-agent-call:{}",
-            request.identity.request_id
-        ))
-        .map_err(|error| error.to_string())?;
+        let (runtime_thread_id, source_binding) = match &request.target_intent {
+            WorkflowAgentCallTargetIntent::CreateNew { .. } => (
+                RuntimeThreadId::new(format!(
+                    "workflow-agent-call:{}",
+                    request.identity.request_id
+                ))
+                .map_err(|error| error.to_string())?,
+                None,
+            ),
+            WorkflowAgentCallTargetIntent::ContinueCurrent {
+                runtime_thread_id,
+                source_binding,
+                ..
+            } => {
+                if source_binding.activated_at_revision.is_none() {
+                    return Err(
+                        "ContinueCurrent authority does not prove Runtime activation".to_owned(),
+                    );
+                }
+                (
+                    RuntimeThreadId::new(runtime_thread_id.clone())
+                        .map_err(|error| error.to_string())?,
+                    Some(runtime_binding_from_workflow(source_binding)?),
+                )
+            }
+        };
         Ok(Self {
             request,
             runtime_thread_id,
             version: 0,
             receipts: Vec::new(),
             in_flight: None,
-            source_binding: None,
+            source_binding,
             mailbox_state: None,
         })
     }
@@ -112,9 +134,9 @@ impl WorkflowAgentCallProductSaga {
         let runtime_operation_id = match phase {
             WorkflowAgentCallProductPhase::CreateRuntime
             | WorkflowAgentCallProductPhase::ActivateRuntime
-            | WorkflowAgentCallProductPhase::SubmitInput => {
-                Some(RuntimeOperationId::new(effect_id.clone()).map_err(|error| error.to_string())?)
-            }
+            | WorkflowAgentCallProductPhase::SubmitInput => Some(
+                RuntimeOperationId::new(effect_id.clone()).map_err(|error| error.to_string())?,
+            ),
             WorkflowAgentCallProductPhase::MaterializeTarget
             | WorkflowAgentCallProductPhase::CommitBinding => None,
         };
@@ -125,9 +147,21 @@ impl WorkflowAgentCallProductSaga {
     }
 
     fn next_phase(&self) -> Option<WorkflowAgentCallProductPhase> {
-        WorkflowAgentCallProductPhase::ORDER
-            .into_iter()
+        self.phase_plan()
+            .iter()
+            .copied()
             .find(|phase| !self.receipts.iter().any(|receipt| receipt.phase == *phase))
+    }
+
+    fn phase_plan(&self) -> &'static [WorkflowAgentCallProductPhase] {
+        match self.request.target_intent {
+            WorkflowAgentCallTargetIntent::CreateNew { .. } => {
+                &WorkflowAgentCallProductPhase::CREATE_NEW_ORDER
+            }
+            WorkflowAgentCallTargetIntent::ContinueCurrent { .. } => {
+                &WorkflowAgentCallProductPhase::CONTINUE_CURRENT_ORDER
+            }
+        }
     }
 
     fn mark_dispatched(&mut self, phase: WorkflowAgentCallProductPhase) -> Result<(), String> {
@@ -151,6 +185,20 @@ impl WorkflowAgentCallProductSaga {
             return Err("Workflow AgentCall phase was not durably dispatched".to_owned());
         }
         let identity = self.phase_identity(phase)?;
+        match (phase, source_binding.as_ref()) {
+            (WorkflowAgentCallProductPhase::CreateRuntime, Some(binding))
+                if binding.activated_at_revision.is_none() => {}
+            (WorkflowAgentCallProductPhase::ActivateRuntime, Some(binding))
+                if binding.activated_at_revision.is_some() => {}
+            (WorkflowAgentCallProductPhase::SubmitInput, None)
+            | (WorkflowAgentCallProductPhase::MaterializeTarget, None)
+            | (WorkflowAgentCallProductPhase::CommitBinding, None) => {}
+            _ => {
+                return Err(format!(
+                    "Workflow AgentCall phase {phase:?} returned invalid binding evidence"
+                ));
+            }
+        }
         self.receipts.push(WorkflowAgentCallProductPhaseReceipt {
             phase,
             identity,
@@ -191,14 +239,71 @@ pub enum WorkflowAgentCallProductRepositoryError {
     Persistence(String),
 }
 
+/// W8 durable storage contract. The adapter migration is mechanical from this
+/// record: one row per request identity, with the whole saga body protected by
+/// the scalar `version` CAS.
+pub const WORKFLOW_AGENT_CALL_PRODUCT_SAGA_TABLE: &str = "workflow_agent_call_product_sagas";
+pub const WORKFLOW_AGENT_CALL_PRODUCT_SAGA_PRIMARY_KEY: &[&str] = &["request_id"];
+pub const WORKFLOW_AGENT_CALL_PRODUCT_SAGA_UNIQUE_KEYS: &[&[&str]] = &[&[
+    "lifecycle_run_id",
+    "orchestration_id",
+    "node_path",
+    "attempt",
+]];
+pub const WORKFLOW_AGENT_CALL_PRODUCT_SAGA_COLUMNS: &[&str] = &[
+    "request_id:text not null",
+    "lifecycle_run_id:uuid not null",
+    "orchestration_id:uuid not null",
+    "node_path:text not null",
+    "attempt:bigint not null",
+    "payload_digest:text not null",
+    "request:jsonb not null",
+    "target_run_id:uuid not null",
+    "target_agent_id:uuid not null",
+    "runtime_thread_id:text not null",
+    "phase_plan:jsonb not null",
+    "receipts:jsonb not null",
+    "in_flight:text null",
+    "source_binding:jsonb null",
+    "mailbox_state:text null",
+    "version:bigint not null",
+    "created_at:timestamptz not null",
+    "updated_at:timestamptz not null",
+];
+pub const WORKFLOW_AGENT_CALL_PRODUCT_EFFECT_TABLE: &str = "workflow_agent_call_product_effects";
+pub const WORKFLOW_AGENT_CALL_PRODUCT_EFFECT_PRIMARY_KEY: &[&str] = &["effect_id"];
+pub const WORKFLOW_AGENT_CALL_PRODUCT_EFFECT_UNIQUE_KEYS: &[&[&str]] =
+    &[&["request_id", "phase"], &["runtime_operation_id"]];
+pub const WORKFLOW_AGENT_CALL_PRODUCT_EFFECT_COLUMNS: &[&str] = &[
+    "effect_id:text not null",
+    "request_id:text not null references workflow_agent_call_product_sagas(request_id)",
+    "phase:text not null",
+    "runtime_operation_id:text null",
+    "payload_digest:text not null",
+    "state:text not null",
+    "target_run_id:uuid not null",
+    "target_agent_id:uuid not null",
+    "runtime_thread_id:text not null",
+    "evidence:jsonb null",
+    "created_at:timestamptz not null",
+    "updated_at:timestamptz not null",
+];
+
 #[async_trait]
 pub trait WorkflowAgentCallProductSagaRepository: Send + Sync {
-    /// Atomically inserts the prepared saga or returns the byte-identical existing saga.
+    /// Transaction contract: insert the full prepared row with version=0, or
+    /// lock/read the primary-key row and return it only when identity,
+    /// payload_digest, request JSON, target and RuntimeThreadId are identical.
     async fn prepare(
         &self,
         saga: WorkflowAgentCallProductSaga,
     ) -> Result<WorkflowAgentCallProductSaga, WorkflowAgentCallProductRepositoryError>;
 
+    /// Transaction contract: `UPDATE ... SET <complete saga>, version=version+1
+    /// WHERE request_id=? AND version=?`; zero rows is VersionConflict. Receipts
+    /// must retain unique `(request_id, phase)` identities, Runtime operation
+    /// ids are unique, binding evidence never regresses, and Submit acceptance
+    /// is durable before Accepted is returned.
     async fn save(
         &self,
         expected_version: u64,
@@ -206,25 +311,25 @@ pub trait WorkflowAgentCallProductSagaRepository: Send + Sync {
     ) -> Result<WorkflowAgentCallProductSaga, WorkflowAgentCallProductRepositoryError>;
 }
 
+#[cfg(test)]
 #[derive(Default)]
 pub struct InMemoryWorkflowAgentCallProductSagaRepository {
     sagas: tokio::sync::Mutex<BTreeMap<String, WorkflowAgentCallProductSaga>>,
 }
 
+#[cfg(test)]
 impl InMemoryWorkflowAgentCallProductSagaRepository {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub async fn load(
-        &self,
-        request_id: &str,
-    ) -> Option<WorkflowAgentCallProductSaga> {
+    pub async fn load(&self, request_id: &str) -> Option<WorkflowAgentCallProductSaga> {
         self.sagas.lock().await.get(request_id).cloned()
     }
 }
 
 #[async_trait]
+#[cfg(test)]
 impl WorkflowAgentCallProductSagaRepository for InMemoryWorkflowAgentCallProductSagaRepository {
     async fn prepare(
         &self,
@@ -252,18 +357,15 @@ impl WorkflowAgentCallProductSagaRepository for InMemoryWorkflowAgentCallProduct
     ) -> Result<WorkflowAgentCallProductSaga, WorkflowAgentCallProductRepositoryError> {
         let request_id = saga.request.identity.request_id.clone();
         let mut sagas = self.sagas.lock().await;
-        let existing = sagas
-            .get(&request_id)
-            .ok_or_else(|| {
-                WorkflowAgentCallProductRepositoryError::Persistence(
-                    "prepared saga does not exist".to_owned(),
-                )
-            })?;
+        let existing = sagas.get(&request_id).ok_or_else(|| {
+            WorkflowAgentCallProductRepositoryError::Persistence(
+                "prepared saga does not exist".to_owned(),
+            )
+        })?;
         if existing.version != expected_version {
             return Err(WorkflowAgentCallProductRepositoryError::VersionConflict);
         }
-        if existing.request != saga.request
-            || existing.runtime_thread_id != saga.runtime_thread_id
+        if existing.request != saga.request || existing.runtime_thread_id != saga.runtime_thread_id
         {
             return Err(WorkflowAgentCallProductRepositoryError::PayloadConflict);
         }
@@ -288,6 +390,97 @@ pub trait WorkflowAgentCallProductGraphPort: Send + Sync {
         binding: &ManagedRuntimeSourceBindingEvidence,
         effect_id: &str,
     ) -> Result<(), String>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowAgentCallTargetMaterialization {
+    pub request_id: String,
+    pub payload_digest: String,
+    pub target: AgentRunTarget,
+    pub effect_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowAgentCallBindingCommit {
+    pub target: AgentRunTarget,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub binding: ManagedRuntimeSourceBindingEvidence,
+    pub effect_id: String,
+}
+
+/// Durable Product graph contract implemented in W8. Each method is one
+/// transaction: insert the effect ledger identity, apply the graph mutation,
+/// and return the identical committed fact on replay. An existing effect_id
+/// with different payload is a permanent conflict.
+#[async_trait]
+pub trait WorkflowAgentCallProductGraphRepository: Send + Sync {
+    async fn materialize_target_idempotent(
+        &self,
+        mutation: WorkflowAgentCallTargetMaterialization,
+    ) -> Result<WorkflowAgentCallTargetMaterialization, String>;
+
+    async fn commit_runtime_binding_idempotent(
+        &self,
+        mutation: WorkflowAgentCallBindingCommit,
+    ) -> Result<WorkflowAgentCallBindingCommit, String>;
+}
+
+#[derive(Clone)]
+pub struct DurableWorkflowAgentCallProductGraphAdapter {
+    repository: Arc<dyn WorkflowAgentCallProductGraphRepository>,
+}
+
+impl DurableWorkflowAgentCallProductGraphAdapter {
+    pub fn new(repository: Arc<dyn WorkflowAgentCallProductGraphRepository>) -> Self {
+        Self { repository }
+    }
+}
+
+#[async_trait]
+impl WorkflowAgentCallProductGraphPort for DurableWorkflowAgentCallProductGraphAdapter {
+    async fn materialize_target(
+        &self,
+        request: &WorkflowAgentCallRequest,
+        effect_id: &str,
+    ) -> Result<(), String> {
+        let expected = WorkflowAgentCallTargetMaterialization {
+            request_id: request.identity.request_id.clone(),
+            payload_digest: request.payload_digest.clone(),
+            target: request.target_intent.target().clone(),
+            effect_id: effect_id.to_owned(),
+        };
+        let committed = self
+            .repository
+            .materialize_target_idempotent(expected.clone())
+            .await?;
+        if committed != expected {
+            return Err("Product graph materialization evidence drifted".to_owned());
+        }
+        Ok(())
+    }
+
+    async fn commit_runtime_binding(
+        &self,
+        target: &AgentRunTarget,
+        runtime_thread_id: &RuntimeThreadId,
+        binding: &ManagedRuntimeSourceBindingEvidence,
+        effect_id: &str,
+    ) -> Result<(), String> {
+        let expected = WorkflowAgentCallBindingCommit {
+            target: target.clone(),
+            runtime_thread_id: runtime_thread_id.clone(),
+            binding: binding.clone(),
+            effect_id: effect_id.to_owned(),
+        };
+        let committed = self
+            .repository
+            .commit_runtime_binding_idempotent(expected.clone())
+            .await?;
+        if committed != expected {
+            return Err("Product graph binding evidence drifted".to_owned());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -478,13 +671,9 @@ impl ProductWorkflowAgentCallRuntimeAdapter {
             },
             ManagedRuntimeOperationStatus::Failed
             | ManagedRuntimeOperationStatus::Interrupted
-            | ManagedRuntimeOperationStatus::Lost => Ok(
-                WorkflowAgentCallRuntimeOutcome::Failed {
-                    reason: format!(
-                        "Workflow AgentCall Runtime operation ended with {status:?}"
-                    ),
-                },
-            ),
+            | ManagedRuntimeOperationStatus::Lost => Ok(WorkflowAgentCallRuntimeOutcome::Failed {
+                reason: format!("Workflow AgentCall Runtime operation ended with {status:?}"),
+            }),
         }
     }
 }
@@ -497,7 +686,10 @@ impl WorkflowAgentCallRuntimePort for ProductWorkflowAgentCallRuntimeAdapter {
         phase: WorkflowAgentCallProductPhase,
         identity: &WorkflowAgentCallProductPhaseIdentity,
     ) -> Result<WorkflowAgentCallRuntimeOutcome, String> {
-        let observation = self.runtime.execute(Self::command(saga, phase, identity)?).await?;
+        let observation = self
+            .runtime
+            .execute(Self::command(saga, phase, identity)?)
+            .await?;
         Self::map_observation(phase, observation.status, observation.evidence)
     }
 
@@ -530,6 +722,7 @@ pub struct ProductWorkflowAgentCallDispatchService {
 }
 
 impl ProductWorkflowAgentCallDispatchService {
+    #[cfg(test)]
     pub fn new(
         repository: Arc<dyn WorkflowAgentCallProductSagaRepository>,
         product_graph: Arc<dyn WorkflowAgentCallProductGraphPort>,
@@ -582,6 +775,15 @@ impl ProductWorkflowAgentCallDispatchService {
                 return Ok(WorkflowAgentCallDispatchOutcome::Accepted {
                     target: saga.target().clone(),
                     runtime_thread_id: saga.runtime_thread_id.to_string(),
+                    source_binding: workflow_binding_from_runtime(
+                        saga.source_binding.as_ref().ok_or_else(|| {
+                            WorkflowAgentCallDispatchError::new(
+                                "agent_call_runtime_binding_missing",
+                                "accepted AgentCall 缺少 Runtime source binding",
+                                false,
+                            )
+                        })?,
+                    ),
                     mailbox_state: saga
                         .mailbox_state
                         .unwrap_or(WorkflowAgentCallMailboxState::Submitted),
@@ -602,7 +804,8 @@ impl ProductWorkflowAgentCallDispatchService {
                         .await
                         .map_err(retryable_product_effect)?;
                     let expected_version = saga.version;
-                    saga.mark_applied(phase, false, None).map_err(invalid_saga)?;
+                    saga.mark_applied(phase, false, None)
+                        .map_err(invalid_saga)?;
                     saga = self.save(expected_version, saga).await?;
                 }
                 WorkflowAgentCallProductPhase::CommitBinding => {
@@ -623,7 +826,8 @@ impl ProductWorkflowAgentCallDispatchService {
                         .await
                         .map_err(retryable_product_effect)?;
                     let expected_version = saga.version;
-                    saga.mark_applied(phase, false, None).map_err(invalid_saga)?;
+                    saga.mark_applied(phase, false, None)
+                        .map_err(invalid_saga)?;
                     saga = self.save(expected_version, saga).await?;
                 }
                 WorkflowAgentCallProductPhase::CreateRuntime
@@ -693,6 +897,25 @@ impl WorkflowAgentCallDispatchPort for ProductWorkflowAgentCallDispatchService {
     }
 }
 
+/// The only production construction path for Workflow AgentCall dispatch.
+/// Callers must provide durable saga and Product graph repositories; the
+/// in-memory saga store is compiled for tests only.
+pub fn build_durable_workflow_agent_call_dispatch(
+    saga_repository: Arc<dyn WorkflowAgentCallProductSagaRepository>,
+    product_graph_repository: Arc<dyn WorkflowAgentCallProductGraphRepository>,
+    managed_runtime: ProductManagedRuntimeCommandAdapter,
+) -> Arc<dyn WorkflowAgentCallDispatchPort> {
+    let graph = Arc::new(DurableWorkflowAgentCallProductGraphAdapter::new(
+        product_graph_repository,
+    ));
+    let runtime = Arc::new(ProductWorkflowAgentCallRuntimeAdapter::new(managed_runtime));
+    Arc::new(ProductWorkflowAgentCallDispatchService {
+        repository: saga_repository,
+        product_graph: graph,
+        runtime,
+    })
+}
+
 fn repository_dispatch_error(
     error: WorkflowAgentCallProductRepositoryError,
 ) -> WorkflowAgentCallDispatchError {
@@ -736,6 +959,37 @@ fn retryable_runtime_effect(message: String) -> WorkflowAgentCallDispatchError {
 pub fn workflow_agent_call_request_fingerprint(request: &WorkflowAgentCallRequest) -> String {
     let canonical = serde_json::to_vec(request).expect("Workflow AgentCall request serializes");
     format!("sha256:{:x}", Sha256::digest(canonical))
+}
+
+fn workflow_binding_from_runtime(
+    binding: &ManagedRuntimeSourceBindingEvidence,
+) -> WorkflowAgentCallSourceBindingRef {
+    WorkflowAgentCallSourceBindingRef {
+        source_ref: binding.source_ref.to_string(),
+        committed_at_revision: binding.committed_at_revision.0,
+        applied_surface_revision: binding.applied_surface_revision.0,
+        activated_at_revision: binding.activated_at_revision.map(|revision| revision.0),
+    }
+}
+
+fn runtime_binding_from_workflow(
+    binding: &WorkflowAgentCallSourceBindingRef,
+) -> Result<ManagedRuntimeSourceBindingEvidence, String> {
+    Ok(ManagedRuntimeSourceBindingEvidence {
+        source_ref: agentdash_agent_runtime_contract::RuntimeSourceRef::new(
+            binding.source_ref.clone(),
+        )
+        .map_err(|error| error.to_string())?,
+        committed_at_revision: agentdash_agent_runtime_contract::RuntimeProjectionRevision(
+            binding.committed_at_revision,
+        ),
+        applied_surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(
+            binding.applied_surface_revision,
+        ),
+        activated_at_revision: binding
+            .activated_at_revision
+            .map(agentdash_agent_runtime_contract::RuntimeProjectionRevision),
+    })
 }
 
 #[cfg(test)]
@@ -786,12 +1040,15 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingRuntime {
-        executions: tokio::sync::Mutex<Vec<(
-            WorkflowAgentCallProductPhase,
-            WorkflowAgentCallProductPhaseIdentity,
-        )>>,
-        observations:
-            tokio::sync::Mutex<BTreeMap<WorkflowAgentCallProductPhase, WorkflowAgentCallRuntimeOutcome>>,
+        executions: tokio::sync::Mutex<
+            Vec<(
+                WorkflowAgentCallProductPhase,
+                WorkflowAgentCallProductPhaseIdentity,
+            )>,
+        >,
+        observations: tokio::sync::Mutex<
+            BTreeMap<WorkflowAgentCallProductPhase, WorkflowAgentCallRuntimeOutcome>,
+        >,
         lose_create_receipt_once: tokio::sync::Mutex<bool>,
     }
 
@@ -914,8 +1171,11 @@ mod tests {
         let repository = Arc::new(InMemoryWorkflowAgentCallProductSagaRepository::new());
         let graph = Arc::new(RecordingProductGraph::default());
         let runtime = Arc::new(RecordingRuntime::with_create_receipt_loss().await);
-        let service =
-            ProductWorkflowAgentCallDispatchService::new(repository.clone(), graph.clone(), runtime.clone());
+        let service = ProductWorkflowAgentCallDispatchService::new(
+            repository.clone(),
+            graph.clone(),
+            runtime.clone(),
+        );
         let request = request();
 
         let outcome = service.dispatch(request.clone()).await.expect("dispatch");
@@ -935,7 +1195,7 @@ mod tests {
                 .iter()
                 .map(|receipt| receipt.phase)
                 .collect::<Vec<_>>(),
-            WorkflowAgentCallProductPhase::ORDER
+            WorkflowAgentCallProductPhase::CREATE_NEW_ORDER
         );
         assert_eq!(graph.materializations.lock().await.len(), 1);
         assert_eq!(graph.commits.lock().await.len(), 1);
@@ -952,10 +1212,16 @@ mod tests {
         let repository = Arc::new(InMemoryWorkflowAgentCallProductSagaRepository::new());
         let graph = Arc::new(RecordingProductGraph::default());
         let runtime = Arc::new(RecordingRuntime::default());
-        let service =
-            ProductWorkflowAgentCallDispatchService::new(repository, graph.clone(), runtime.clone());
+        let service = ProductWorkflowAgentCallDispatchService::new(
+            repository,
+            graph.clone(),
+            runtime.clone(),
+        );
         let original = request();
-        service.dispatch(original.clone()).await.expect("first dispatch");
+        service
+            .dispatch(original.clone())
+            .await
+            .expect("first dispatch");
 
         let mut conflicting = original;
         conflicting.input.push(WorkflowAgentCallContentBlock::Text {
@@ -969,5 +1235,58 @@ mod tests {
         assert_eq!(error.code, "agent_call_payload_conflict");
         assert_eq!(graph.materializations.lock().await.len(), 1);
         assert_eq!(runtime.executions.lock().await.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn continue_current_submits_only_to_durable_authority_thread() {
+        let repository = Arc::new(InMemoryWorkflowAgentCallProductSagaRepository::new());
+        let graph = Arc::new(RecordingProductGraph::default());
+        let runtime = Arc::new(RecordingRuntime::default());
+        let service = ProductWorkflowAgentCallDispatchService::new(
+            repository.clone(),
+            graph.clone(),
+            runtime.clone(),
+        );
+        let mut request = request();
+        let target = request.target_intent.target().clone();
+        request.target_intent = WorkflowAgentCallTargetIntent::ContinueCurrent {
+            target,
+            runtime_thread_id: "existing-runtime-thread".to_owned(),
+            source_binding: workflow_binding_from_runtime(&RecordingRuntime::binding(true)),
+        };
+        request = request.with_calculated_payload_digest();
+
+        let outcome = service.dispatch(request.clone()).await.expect("dispatch");
+
+        assert!(matches!(
+            outcome,
+            WorkflowAgentCallDispatchOutcome::Accepted {
+                runtime_thread_id,
+                ..
+            } if runtime_thread_id == "existing-runtime-thread"
+        ));
+        assert!(graph.materializations.lock().await.is_empty());
+        assert!(graph.commits.lock().await.is_empty());
+        assert_eq!(
+            runtime
+                .executions
+                .lock()
+                .await
+                .iter()
+                .map(|(phase, _)| *phase)
+                .collect::<Vec<_>>(),
+            vec![WorkflowAgentCallProductPhase::SubmitInput]
+        );
+        assert_eq!(
+            repository
+                .load(&request.identity.request_id)
+                .await
+                .expect("saga")
+                .receipts
+                .iter()
+                .map(|receipt| receipt.phase)
+                .collect::<Vec<_>>(),
+            WorkflowAgentCallProductPhase::CONTINUE_CURRENT_ORDER
+        );
     }
 }

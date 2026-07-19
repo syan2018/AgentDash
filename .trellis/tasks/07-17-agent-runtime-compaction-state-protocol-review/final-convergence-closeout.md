@@ -153,6 +153,7 @@ flowchart LR
 | Fresh Companion context | Create + `InitialAgentContextPackage` + first SubmitInput |
 | Companion relation / channel / gate / adoption / result | Product repositories |
 | Collaboration tool | Runtime Tool Broker -> Product Companion command |
+| MCP dynamic tools | MCP discovery/executor -> Runtime Tool Broker typed catalog -> Host callback |
 | Routine / Workflow AgentCall | AgentRun Product command |
 | Instructions / tools / hooks / workspace | Agent Surface -> Bound/Applied Surface |
 | VFS permissions | AppliedResourceSurface |
@@ -182,6 +183,8 @@ flowchart LR
 6. Workflow AgentCall 和 Routine 只通过 AgentRun Product command；
 7. Compaction 由 Dash/Codex 各自执行，平台只发 command并投影可证明结果；
 8. Tool/Hook callback 经 Host route、deadline、idempotency 和 generation fence 往返。
+9. MCP tool schemas来自Broker可执行catalog，同一catalog负责surface declaration与实际
+   execution；MCP server metadata 不进入Agent context。
 
 退出条件：
 

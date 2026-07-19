@@ -1026,3 +1026,32 @@
   `hard-cut-final-checklist.md` 已对齐 Product parity 与 replacement evidence。
 - 当前真实阶段：C0 完成，下一步进入 C1 Product Integrity；正式 deletion manifest 在
   C1–C4 tracer 闭合后形成。
+
+## 2026-07-19 Product 控制面恢复进度
+
+- 删除链审计确认完整 Product 控制面最后基线为 `58c537b7`。`c3cc58b9` 先切断
+  AgentRun exports，`8d22d6cf` 再移除 Application Product modules，`a535ae01` 再移除
+  Router/AppState production composition，后续物理删除不能作为零消费者证据。
+- `93f1181f` 已建立 Product-owned `AgentRunProductRuntimeProvisioningPort`：Application
+  只提交 AgentRun target、Runtime thread、AgentFrame/执行配置引用与 surface facts；
+  Complete Agent selection、Host target registration、surface admission 与 source binding
+  留在 final Runtime/Host owner。
+- `9eaf25a8` 已固定 Application/Product 不属于 Hard Cut。Companion、Frame、Routine、
+  Workflow、Workspace、Canvas、Terminal、Wait、Lifecycle 只迁移 Runtime 接入 seam，
+  业务规则、route、worker、权限、gate、mailbox 与用户可见行为必须保持。
+- 当前 C1/C2 并行进行：
+  - Product owner 以 `58c537b7` 恢复 Companion/Frame/Routine、Project Agent start、
+    routes、AppState 与行为测试，并把旧 seam 映射到 final owners；
+  - Complete Agent owner闭合 Dash/Codex/Remote registration、Host target provisioning 与
+    Runtime create path；
+  - Read-model owner闭合 Lifecycle AppliedResourceSurface materialization、canonical
+    history 与 AgentRun workspace consumer。
+- C2 审计确认 MCP 必须进入 final Runtime Tool Broker：Surface compiler 与 Broker 共享
+  typed dynamic catalog，Host callback 执行同一 catalog 中的 MCP tool；server metadata
+  不能伪装为 context。Complete Agent owner已直接吸收该纵向闭环。
+- C2 审计确认 Product Hook plan compiler/policy handler当前没有production composition；
+  `EmptyPlanCompiler`与无条件Allow不构成能力证据。Product owner负责恢复真实Product
+  policy/effects，Complete Agent只映射明确属于Agent callback/native的hook site。
+- 下一 checkpoint 只在 Product module/router/composition 进入真实构建图，且
+  Project Agent create → provisioning → Managed Runtime → Complete Agent 的 focused tracer
+  成立后形成。

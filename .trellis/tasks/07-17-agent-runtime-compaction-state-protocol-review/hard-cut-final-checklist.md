@@ -49,6 +49,9 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] 恢复 Terminal routes。
 - [x] 保持并验证 VFS surface routes。
 - [x] 恢复 AgentRun workspace/runtime trace 读取 routes。
+- [ ] 恢复 AgentRun composer submit、mailbox read/control、cancel、fork 与 fork-submit
+  interaction routes，并只映射现有 ProductMailboxFacade/workspace query/final fork
+  protocol。
 
 ### AppState / production composition
 
@@ -117,6 +120,7 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
   Product aggregate Delete 逐一 Close 并复读 canonical Closed 后删除 LifecycleRun，且与
   ProjectAgent 模板删除保持独立。
 - [ ] ProjectAgent direct AgentRun create Product saga、POST route 与首输入纵向 tracer。
+- [ ] AgentRun composer/message/mailbox/cancel/fork/fork-submit API interaction tracer。
 - [ ] 普通 input → Complete Agent → canonical Turn/Item/output → UI；Native Dash history
   已证明产生 canonical input/Turn start/Turn complete，等待 production
   AgentRun/API/frontend 纵向 consumer。

@@ -1019,7 +1019,7 @@
           "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
         },
         {
-          "path": "crates/agentdash-application-agentrun/src/agent_run/thread_name_projection.rs",
+          "path": "crates/agentdash-application-agentrun/src/agent_run/product_protocol/thread_name_projection.rs",
           "owner": "Product / Protocol",
           "symbols_remove": [
             "RuntimeJournalFact",
@@ -1031,7 +1031,7 @@
             "ManagedRuntimeSnapshot",
             "ManagedRuntimeChangePage"
           ],
-          "replacement": "crates/agentdash-application-agentrun/src/agent_run/thread_name_projection.rs 将 RuntimeJournalFact, RuntimeJournalRecord caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/product_protocol/thread_name_projection.rs 从 ManagedRuntimePlatformChange 与 canonical ManagedRuntimeSnapshot 校验 source evidence，并只发布 Product title invalidation。",
           "prerequisites": [
             "W8 saga repositories",
             "AgentRunRuntimeProjectionPort production binding"

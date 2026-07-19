@@ -1101,8 +1101,116 @@ fn callback_invariant(reason: &str) -> CompleteAgentCallbackStoreError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use agentdash_agent_runtime::{ManagedRuntimeFacts, ManagedRuntimeStateRevision};
+    use agentdash_agent_runtime_contract::{
+        ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
+        ManagedRuntimeCommandKind, ManagedRuntimeLifecycleStatus,
+        ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
+        ManagedRuntimeSnapshot, ManagedRuntimeThreadNameSource, RuntimeChangeSequence,
+        RuntimePayloadDigest, RuntimeProjectionRevision,
+    };
+
+    fn thread_name_facts(
+        thread_id: RuntimeThreadId,
+        revision: u64,
+        thread_name: Option<&str>,
+    ) -> ManagedRuntimeFacts {
+        let revision = RuntimeProjectionRevision(revision);
+        let evidence = ManagedRuntimeAvailabilityEvidence {
+            decided_at_revision: revision,
+            blocking_operation_id: None,
+            bound_surface_revision: None,
+            applied_surface_revision: None,
+        };
+        ManagedRuntimeFacts {
+            projection: Some(ManagedRuntimeSnapshot {
+                thread_id,
+                revision,
+                latest_change_sequence: RuntimeChangeSequence(0),
+                captured_at_ms: revision.0,
+                lifecycle: ManagedRuntimeLifecycleStatus::Active,
+                active_turn_id: None,
+                turns: Vec::new(),
+                items: Vec::new(),
+                interactions: Vec::new(),
+                thread_name: thread_name.map(str::to_owned),
+                thread_name_source: Some(ManagedRuntimeThreadNameSource {
+                    authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
+                    fidelity: ManagedRuntimeProjectionFidelity::Exact,
+                    source_identity_digest: RuntimePayloadDigest::new("sha256:thread-name-source")
+                        .expect("source digest"),
+                    source_revision_digest: Some(
+                        RuntimePayloadDigest::new("sha256:thread-name-revision")
+                            .expect("revision digest"),
+                    ),
+                    observed_at_ms: revision.0,
+                }),
+                operations: Vec::new(),
+                source_binding: None,
+                authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
+                fidelity: ManagedRuntimeProjectionFidelity::Exact,
+                command_availability: ManagedRuntimeCommandKind::ALL
+                    .into_iter()
+                    .map(|command| {
+                        (
+                            command,
+                            ManagedRuntimeCommandAvailability::Available {
+                                evidence: evidence.clone(),
+                            },
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>(),
+            }),
+            ..ManagedRuntimeFacts::default()
+        }
+    }
+
+    async fn isolated_thread_name_pool()
+    -> (PgPool, Option<crate::postgres_runtime::PostgresRuntime>) {
+        if crate::persistence::postgres::test_database_url().is_some() {
+            return (
+                crate::persistence::postgres::test_pg_pool("Runtime thread name persistence")
+                    .await
+                    .expect("configured PostgreSQL test pool"),
+                None,
+            );
+        }
+        let data_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/runtime-thread-name-postgres-tests");
+        let runtime = crate::postgres_runtime::PostgresRuntime::resolve_embedded_at_data_root(
+            "runtime-thread-name-tests",
+            8,
+            data_root,
+        )
+        .await
+        .expect("start embedded PostgreSQL for Runtime thread name tests");
+        let database_name = format!("runtime_thread_name_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE DATABASE {database_name}"))
+            .execute(&runtime.pool)
+            .await
+            .expect("create isolated Runtime thread name database");
+        let options = runtime
+            .pool
+            .connect_options()
+            .as_ref()
+            .clone()
+            .database(&database_name);
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(4)
+            .connect_with(options)
+            .await
+            .expect("connect isolated Runtime thread name database");
+        crate::migration::run_postgres_migrations(&pool)
+            .await
+            .expect("migrate isolated Runtime thread name database");
+        crate::migration::assert_postgres_schema_ready(&pool)
+            .await
+            .expect("Runtime thread name schema readiness");
+        (pool, Some(runtime))
+    }
 
     #[tokio::test]
     async fn final_repositories_replay_exact_facts_without_advancing_revision() {
@@ -1161,5 +1269,62 @@ mod tests {
             .await
             .expect("replay exact callback facts");
         assert_eq!(callback_replay, callback_before);
+    }
+
+    #[tokio::test]
+    async fn runtime_thread_name_set_clear_replays_from_canonical_facts_and_rejects_projection_drift()
+     {
+        let (pool, _runtime) = isolated_thread_name_pool().await;
+        let thread_id = RuntimeThreadId::new(format!("runtime-name-{}", uuid::Uuid::new_v4()))
+            .expect("valid Runtime thread identity");
+        let runtime = PostgresManagedRuntimeStateRepository::new(pool.clone());
+        let set = runtime
+            .commit(ManagedRuntimeStateCommit {
+                thread_id: thread_id.clone(),
+                expected_revision: ManagedRuntimeStateRevision(0),
+                facts: thread_name_facts(thread_id.clone(), 1, Some("Canonical title")),
+            })
+            .await
+            .expect("persist source-authoritative thread name");
+        assert_eq!(
+            set.facts
+                .projection
+                .as_ref()
+                .and_then(|projection| projection.thread_name.as_deref()),
+            Some("Canonical title")
+        );
+        assert!(
+            set.facts
+                .projection
+                .as_ref()
+                .and_then(|projection| projection.thread_name_source.as_ref())
+                .is_some()
+        );
+
+        let cleared = runtime
+            .commit(ManagedRuntimeStateCommit {
+                thread_id: thread_id.clone(),
+                expected_revision: ManagedRuntimeStateRevision(1),
+                facts: thread_name_facts(thread_id.clone(), 2, None),
+            })
+            .await
+            .expect("persist authoritative thread name clear");
+        let cleared_projection = cleared.facts.projection.as_ref().expect("clear projection");
+        assert_eq!(cleared_projection.thread_name, None);
+        assert!(cleared_projection.thread_name_source.is_some());
+
+        sqlx::query(
+            "UPDATE agent_runtime_projection
+             SET projection=jsonb_set(projection,'{thread_name}','\"drift\"'::JSONB,TRUE)
+             WHERE thread_id=$1",
+        )
+        .bind(thread_id.as_str())
+        .execute(&pool)
+        .await
+        .expect("tamper normalized projection");
+        assert!(matches!(
+            runtime.load(&thread_id).await,
+            Err(ManagedRuntimeStateStoreError::Invariant { .. })
+        ));
     }
 }

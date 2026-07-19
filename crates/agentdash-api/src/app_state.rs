@@ -52,6 +52,7 @@ const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
 const PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY: usize = 256;
 const PLATFORM_MCP_BASE_URL_ENV: &str = "AGENTDASH_MCP_BASE_URL";
 const COMPLETE_AGENT_LEASE_DURATION_MS: u64 = 30_000;
+pub(crate) const RUNTIME_PRODUCT_CHANGE_LEASE_DURATION_MS: u64 = 30_000;
 
 fn configured_platform_mcp_base_url() -> Option<String> {
     resolve_platform_mcp_base_url(std::env::var(PLATFORM_MCP_BASE_URL_ENV).ok())
@@ -124,6 +125,7 @@ pub struct ServiceSet {
     pub managed_runtime: Arc<dyn ManagedAgentRuntimeGateway>,
     pub complete_agent_callbacks: Arc<dyn AgentHostCallbacks>,
     pub agent_run_product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
+    pub agent_run_product_projection_composition: Arc<AgentRunProductProjectionComposition>,
     pub agent_run_product_runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
     pub workspace_module_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
     pub terminal_projections: Arc<PostgresAgentRunTerminalProjectionStore>,
@@ -184,7 +186,7 @@ impl AppState {
 
         let (project_control_plane_events, _project_control_plane_rx) =
             broadcast::channel(PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY);
-        let _project_projection_notifications = Arc::new(
+        let project_projection_notifications = Arc::new(
             ProjectProjectionNotificationPublisher::new(project_control_plane_events.clone()),
         );
 
@@ -215,12 +217,13 @@ impl AppState {
         let vfs_service = vfs_bootstrap.vfs_service;
         let vfs_mutation_dispatcher = vfs_bootstrap.vfs_mutation_dispatcher;
 
+        let host_incarnation_id = format!("agentdash-api-host-{}", uuid::Uuid::new_v4());
         let complete_agent = Arc::new(CompleteAgentComposition::build(
             pool.clone(),
             Arc::new(UnsupportedAgentNativeCallbacks),
             Arc::new(UnsupportedAgentNativeCallbacks),
             Arc::new(builtin_complete_agent_verifier()?),
-            format!("agentdash-api-host-{}", uuid::Uuid::new_v4()),
+            host_incarnation_id.clone(),
             format!("agentdash-api-runtime-{}", uuid::Uuid::new_v4()),
             COMPLETE_AGENT_LEASE_DURATION_MS,
         )?);
@@ -231,8 +234,17 @@ impl AppState {
             complete_agent.register_contribution(contribution).await?;
         }
 
-        let product =
-            AgentRunProductProjectionComposition::build(pool, complete_agent.runtime.clone());
+        let product = Arc::new(
+            AgentRunProductProjectionComposition::build(
+                pool,
+                complete_agent.runtime.clone(),
+                repos.lifecycle_run_repo.clone(),
+                project_projection_notifications,
+                format!("{host_incarnation_id}:agent-run-product-change"),
+                RUNTIME_PRODUCT_CHANGE_LEASE_DURATION_MS,
+            )
+            .map_err(anyhow::Error::msg)?,
+        );
         let terminal_source_reconcile: Arc<dyn AgentRunTerminalSourceReconcilePort> =
             Arc::new(RelayAgentRunTerminalSourceReconcile::new(
                 backend_registry.clone(),
@@ -278,10 +290,11 @@ impl AppState {
                 complete_agent_callbacks: complete_agent.host_callbacks(),
                 managed_runtime: complete_agent.runtime.clone(),
                 complete_agent,
-                agent_run_product_projection: product.gateway,
-                agent_run_product_runtime_bindings: product.runtime_bindings,
-                workspace_module_presentations: product.workspace_presentations,
-                terminal_projections: product.terminals,
+                agent_run_product_projection: product.gateway.clone(),
+                agent_run_product_projection_composition: product.clone(),
+                agent_run_product_runtime_bindings: product.runtime_bindings.clone(),
+                workspace_module_presentations: product.workspace_presentations.clone(),
+                terminal_projections: product.terminals.clone(),
                 terminal_source_reconcile,
                 terminal_projection_producer,
                 vfs_service,

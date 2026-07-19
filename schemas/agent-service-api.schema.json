@@ -1493,6 +1493,16 @@
             "$ref": "#/$defs/AgentInteractionSnapshot"
           }
         },
+        "thread_name": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentThreadNameSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "source_info": {
           "$ref": "#/$defs/AgentSnapshotSource"
         },
@@ -1763,6 +1773,23 @@
         "dynamic_tool"
       ]
     },
+    "AgentThreadNameSnapshot": {
+      "type": "object",
+      "properties": {
+        "thread_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_info": {
+          "$ref": "#/$defs/AgentSnapshotSource"
+        }
+      },
+      "required": [
+        "source_info"
+      ]
+    },
     "AgentSnapshotSource": {
       "type": "object",
       "properties": {
@@ -1947,6 +1974,28 @@
     },
     "AgentChangePayload": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "thread_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_info": {
+              "$ref": "#/$defs/AgentSnapshotSource"
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_name_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "source_info"
+          ]
+        },
         {
           "type": "object",
           "properties": {

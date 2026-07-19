@@ -30,6 +30,7 @@ use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Row, Transaction};
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct PostgresAgentRunProductRuntimeBindingRepository {
@@ -100,6 +101,37 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         }
         tx.commit().await.map_err(string_db_error)
     }
+
+    pub async fn load_product_binding_by_runtime_thread(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+    ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
+        let row = sqlx::query(
+            "SELECT target_run_id,target_agent_id,runtime_thread_id,source_ref,
+                    source_committed_revision,source_applied_surface_revision,
+                    source_activated_revision
+             FROM agent_run_product_runtime_binding
+             WHERE runtime_thread_id=$1",
+        )
+        .bind(runtime_thread_id.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(string_db_error)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let run_id = Uuid::parse_str(
+            &row.try_get::<String, _>("target_run_id")
+                .map_err(string_db_error)?,
+        )
+        .map_err(|error| error.to_string())?;
+        let agent_id = Uuid::parse_str(
+            &row.try_get::<String, _>("target_agent_id")
+                .map_err(string_db_error)?,
+        )
+        .map_err(|error| error.to_string())?;
+        map_product_binding_row(AgentRunTarget { run_id, agent_id }, row).map(Some)
+    }
 }
 
 #[async_trait]
@@ -122,46 +154,53 @@ impl AgentRunProductRuntimeBindingRepository for PostgresAgentRunProductRuntimeB
         let Some(row) = row else {
             return Ok(None);
         };
-        let runtime_thread_id = RuntimeThreadId::new(
-            row.try_get::<String, _>("runtime_thread_id")
-                .map_err(string_db_error)?,
-        )
-        .map_err(|error| error.to_string())?;
-        let source_ref = RuntimeSourceRef::new(
-            row.try_get::<String, _>("source_ref")
-                .map_err(string_db_error)?,
-        )
-        .map_err(|error| error.to_string())?;
-        let committed = row
-            .try_get::<i64, _>("source_committed_revision")
-            .map_err(string_db_error)?;
-        let applied = row
-            .try_get::<i64, _>("source_applied_surface_revision")
-            .map_err(string_db_error)?;
-        let activated = row
-            .try_get::<Option<i64>, _>("source_activated_revision")
-            .map_err(string_db_error)?;
-        Ok(Some(AgentRunProductRuntimeBinding {
-            target: target.clone(),
-            runtime_thread_id,
-            source_binding: ManagedRuntimeSourceBindingEvidence {
-                source_ref,
-                committed_at_revision: RuntimeProjectionRevision(
-                    u64::try_from(committed).map_err(|error| error.to_string())?,
-                ),
-                applied_surface_revision: SurfaceRevision(
-                    u64::try_from(applied).map_err(|error| error.to_string())?,
-                ),
-                activated_at_revision: activated
-                    .map(|revision| {
-                        u64::try_from(revision)
-                            .map(RuntimeProjectionRevision)
-                            .map_err(|error| error.to_string())
-                    })
-                    .transpose()?,
-            },
-        }))
+        map_product_binding_row(target.clone(), row).map(Some)
     }
+}
+
+fn map_product_binding_row(
+    target: AgentRunTarget,
+    row: sqlx::postgres::PgRow,
+) -> Result<AgentRunProductRuntimeBinding, String> {
+    let runtime_thread_id = RuntimeThreadId::new(
+        row.try_get::<String, _>("runtime_thread_id")
+            .map_err(string_db_error)?,
+    )
+    .map_err(|error| error.to_string())?;
+    let source_ref = RuntimeSourceRef::new(
+        row.try_get::<String, _>("source_ref")
+            .map_err(string_db_error)?,
+    )
+    .map_err(|error| error.to_string())?;
+    let committed = row
+        .try_get::<i64, _>("source_committed_revision")
+        .map_err(string_db_error)?;
+    let applied = row
+        .try_get::<i64, _>("source_applied_surface_revision")
+        .map_err(string_db_error)?;
+    let activated = row
+        .try_get::<Option<i64>, _>("source_activated_revision")
+        .map_err(string_db_error)?;
+    Ok(AgentRunProductRuntimeBinding {
+        target,
+        runtime_thread_id,
+        source_binding: ManagedRuntimeSourceBindingEvidence {
+            source_ref,
+            committed_at_revision: RuntimeProjectionRevision(
+                u64::try_from(committed).map_err(|error| error.to_string())?,
+            ),
+            applied_surface_revision: SurfaceRevision(
+                u64::try_from(applied).map_err(|error| error.to_string())?,
+            ),
+            activated_at_revision: activated
+                .map(|revision| {
+                    u64::try_from(revision)
+                        .map(RuntimeProjectionRevision)
+                        .map_err(|error| error.to_string())
+                })
+                .transpose()?,
+        },
+    })
 }
 
 #[derive(Clone)]

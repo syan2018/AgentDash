@@ -17,7 +17,7 @@ export type AgentChange = { cursor: AgentSourceCursor, source_revision: AgentSou
 
 export type AgentChangePage = { source: AgentSourceCoordinate, changes: Array<AgentChange>, next: AgentSourceCursor | null, gap: boolean, };
 
-export type AgentChangePayload = { "kind": "lifecycle_changed", status: AgentLifecycleStatus, } | { "kind": "turn_changed", turn: AgentTurnSnapshot, } | { "kind": "active_turn_changed", active_turn_id: AgentTurnId | null, } | { "kind": "item_changed", turn_id: AgentTurnId, item: AgentItemSnapshot, } | { "kind": "interaction_changed", interaction: AgentInteractionSnapshot, } | { "kind": "surface_applied", applied: AppliedAgentSurface, } | { "kind": "snapshot_invalidated", reason: string, };
+export type AgentChangePayload = { "kind": "thread_name_changed", thread_name: string | null, source_info: AgentSnapshotSource, } | { "kind": "lifecycle_changed", status: AgentLifecycleStatus, } | { "kind": "turn_changed", turn: AgentTurnSnapshot, } | { "kind": "active_turn_changed", active_turn_id: AgentTurnId | null, } | { "kind": "item_changed", turn_id: AgentTurnId, item: AgentItemSnapshot, } | { "kind": "interaction_changed", interaction: AgentInteractionSnapshot, } | { "kind": "surface_applied", applied: AppliedAgentSurface, } | { "kind": "snapshot_invalidated", reason: string, };
 
 export type AgentChangesQuery = { source: AgentSourceCoordinate, after: AgentSourceCursor | null, limit: number, };
 
@@ -137,7 +137,7 @@ export type AgentServiceErrorCode = "invalid_argument" | "not_found" | "conflict
 
 export type AgentServiceInstanceId = string;
 
-export type AgentSnapshot = { source: AgentSourceCoordinate, revision: AgentSnapshotRevision, lifecycle: AgentLifecycleStatus, active_turn_id: AgentTurnId | null, turns: Array<AgentTurnSnapshot>, interactions: Array<AgentInteractionSnapshot>, source_info: AgentSnapshotSource, applied_surface: AppliedAgentSurface | null, initial_context: AppliedInitialContextEvidence | null, };
+export type AgentSnapshot = { source: AgentSourceCoordinate, revision: AgentSnapshotRevision, lifecycle: AgentLifecycleStatus, active_turn_id: AgentTurnId | null, turns: Array<AgentTurnSnapshot>, interactions: Array<AgentInteractionSnapshot>, thread_name: AgentThreadNameSnapshot | null, source_info: AgentSnapshotSource, applied_surface: AppliedAgentSurface | null, initial_context: AppliedInitialContextEvidence | null, };
 
 export type AgentSnapshotAuthority = "agent_authoritative" | "agent_observed" | "derived";
 
@@ -174,6 +174,8 @@ export type AgentSurfaceSemanticFacet = { "kind": "instruction" } | { "kind": "t
 export type AgentSurfaceSnapshot = { revision: AgentSurfaceRevision, digest: AgentSurfaceDigest, requirements: Array<AgentSurfaceRequirement>, };
 
 export type AgentTerminalOutcome = "succeeded" | "failed" | "interrupted" | "closed" | "lost";
+
+export type AgentThreadNameSnapshot = { thread_name: string | null, source_info: AgentSnapshotSource, };
 
 export type AgentToolDelivery = "prompt_declaration" | "runtime_broker_callback" | "agent_native_callback" | "agent_native_registry";
 

@@ -32,6 +32,18 @@ export function isManagedRuntimeSnapshot(value: unknown): value is ManagedRuntim
     && Array.isArray(value.turns)
     && Array.isArray(value.items)
     && Array.isArray(value.interactions)
+    && (value.thread_name === null || isNonEmptyString(value.thread_name))
+    && (value.thread_name_source === null || (
+      isRecord(value.thread_name_source)
+      && isNonEmptyString(value.thread_name_source.authority)
+      && isNonEmptyString(value.thread_name_source.fidelity)
+      && isNonEmptyString(value.thread_name_source.source_identity_digest)
+      && (
+        value.thread_name_source.source_revision_digest === null
+        || isNonEmptyString(value.thread_name_source.source_revision_digest)
+      )
+      && isWireInteger(value.thread_name_source.observed_at_ms)
+    ))
     && Array.isArray(value.operations)
     && isNonEmptyString(value.authority)
     && isNonEmptyString(value.fidelity)

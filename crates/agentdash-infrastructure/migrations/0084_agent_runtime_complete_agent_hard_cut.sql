@@ -475,6 +475,46 @@ CREATE TABLE agent_runtime_outbox (
         REFERENCES agent_runtime_change(thread_id, sequence) ON DELETE CASCADE
 );
 
+CREATE TABLE agent_runtime_product_change_delivery (
+    thread_id TEXT NOT NULL,
+    sequence BIGINT NOT NULL CHECK (sequence > 0),
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'claimed', 'delivered')),
+    claim_owner TEXT,
+    claim_token UUID,
+    claim_expires_at TIMESTAMPTZ,
+    attempt_count BIGINT NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    last_error TEXT,
+    delivered_at TIMESTAMPTZ,
+    PRIMARY KEY (thread_id, sequence),
+    FOREIGN KEY (thread_id, sequence)
+        REFERENCES agent_runtime_outbox(thread_id, sequence) ON DELETE CASCADE,
+    CHECK (
+        (
+            status = 'claimed'
+            AND claim_owner IS NOT NULL
+            AND btrim(claim_owner) <> ''
+            AND claim_token IS NOT NULL
+            AND claim_expires_at IS NOT NULL
+            AND delivered_at IS NULL
+        )
+        OR (
+            status = 'pending'
+            AND claim_owner IS NULL
+            AND claim_token IS NULL
+            AND claim_expires_at IS NULL
+            AND delivered_at IS NULL
+        )
+        OR (
+            status = 'delivered'
+            AND claim_owner IS NULL
+            AND claim_token IS NULL
+            AND claim_expires_at IS NULL
+            AND delivered_at IS NOT NULL
+        )
+    )
+);
+
 CREATE TABLE agent_runtime_surface_snapshot (
     thread_id TEXT NOT NULL REFERENCES agent_runtime_state_revision(thread_id) ON DELETE CASCADE,
     surface_revision BIGINT NOT NULL CHECK (surface_revision >= 0),

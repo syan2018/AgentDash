@@ -3034,6 +3034,22 @@
             "$ref": "#/$defs/ManagedRuntimeInteraction"
           }
         },
+        "thread_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread_name_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ManagedRuntimeThreadNameSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "operations": {
           "type": "array",
           "items": {
@@ -3359,6 +3375,54 @@
         "resolved"
       ]
     },
+    "ManagedRuntimeThreadNameSource": {
+      "type": "object",
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/ManagedRuntimeProjectionAuthority"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/ManagedRuntimeProjectionFidelity"
+        },
+        "source_identity_digest": {
+          "type": "string"
+        },
+        "source_revision_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_at_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "authority",
+        "fidelity",
+        "source_identity_digest",
+        "observed_at_ms"
+      ]
+    },
+    "ManagedRuntimeProjectionAuthority": {
+      "type": "string",
+      "enum": [
+        "source_authoritative",
+        "source_observed",
+        "runtime_derived"
+      ]
+    },
+    "ManagedRuntimeProjectionFidelity": {
+      "type": "string",
+      "enum": [
+        "unsupported",
+        "observed",
+        "approximation",
+        "exact"
+      ]
+    },
     "ManagedRuntimeOperation": {
       "type": "object",
       "properties": {
@@ -3388,23 +3452,6 @@
       "required": [
         "id",
         "status"
-      ]
-    },
-    "ManagedRuntimeProjectionAuthority": {
-      "type": "string",
-      "enum": [
-        "source_authoritative",
-        "source_observed",
-        "runtime_derived"
-      ]
-    },
-    "ManagedRuntimeProjectionFidelity": {
-      "type": "string",
-      "enum": [
-        "unsupported",
-        "observed",
-        "approximation",
-        "exact"
       ]
     },
     "ManagedRuntimeCommandAvailability": {
@@ -3608,6 +3655,40 @@
               "format": "uint64",
               "minimum": 0
             },
+            "thread_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "$ref": "#/$defs/ManagedRuntimeThreadNameSource"
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_name_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "source_change_sequence",
+            "source_projection_revision",
+            "source"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_change_sequence": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "source_projection_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
             "source_identity_digest": {
               "type": "string"
             },
@@ -3795,6 +3876,7 @@
       "type": "string",
       "enum": [
         "snapshot",
+        "thread_name",
         "lifecycle",
         "active_turn",
         "turns",
@@ -4821,6 +4903,16 @@
             "$ref": "#/$defs/AgentInteractionSnapshot"
           }
         },
+        "thread_name": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentThreadNameSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "source_info": {
           "$ref": "#/$defs/AgentSnapshotSource"
         },
@@ -5091,6 +5183,23 @@
         "dynamic_tool"
       ]
     },
+    "AgentThreadNameSnapshot": {
+      "type": "object",
+      "properties": {
+        "thread_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_info": {
+          "$ref": "#/$defs/AgentSnapshotSource"
+        }
+      },
+      "required": [
+        "source_info"
+      ]
+    },
     "AgentSnapshotSource": {
       "type": "object",
       "properties": {
@@ -5278,6 +5387,28 @@
     },
     "AgentChangePayload": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "thread_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_info": {
+              "$ref": "#/$defs/AgentSnapshotSource"
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_name_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "source_info"
+          ]
+        },
         {
           "type": "object",
           "properties": {

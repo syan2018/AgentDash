@@ -2,6 +2,7 @@ mod agent_run_product_projection_composition;
 mod complete_agent_composition;
 pub mod function_runner;
 pub mod hooks;
+mod managed_runtime_product_change_delivery;
 pub mod mcp;
 pub mod migration;
 pub mod persistence;

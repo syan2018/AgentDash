@@ -9,6 +9,7 @@ mod companion;
 mod feed;
 mod fork_saga;
 mod production_adapters;
+mod thread_name_projection;
 
 use agentdash_domain::workflow::{AgentFrame, AgentRunLineage, LifecycleAgent, LifecycleRun};
 
@@ -25,3 +26,4 @@ pub use companion::*;
 pub use feed::*;
 pub use fork_saga::*;
 pub use production_adapters::*;
+pub use thread_name_projection::*;

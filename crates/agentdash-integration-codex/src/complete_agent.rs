@@ -1015,6 +1015,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
             ));
         }
         let (turns, active_turn_id) = map_thread_turns(&result)?;
+        let thread_name = response_thread_name(&result)?;
         let mut state = self.state.write().await;
         let source = state
             .sources
@@ -1039,6 +1040,15 @@ impl CompleteAgentService for CodexCompleteAgentService {
             active_turn_id,
             turns,
             interactions,
+            thread_name: Some(agentdash_agent_service_api::AgentThreadNameSnapshot {
+                thread_name,
+                source_info: AgentSnapshotSource {
+                    authority: AgentSnapshotAuthority::AgentAuthoritative,
+                    source_revision: None,
+                    fidelity: SemanticFidelity::Exact,
+                    observed_at_ms: now_ms(),
+                },
+            }),
             source_info: AgentSnapshotSource {
                 authority: AgentSnapshotAuthority::AgentObserved,
                 // App Server does not expose a stable durable snapshot/context revision.
@@ -1418,7 +1428,7 @@ impl CodexCompleteAgentService {
                 Ok(AgentChangePayload::InteractionChanged { interaction })
             }
             CodexAppServerObservation::Notification { method, params, .. } => {
-                map_notification(&method, &params)
+                map_notification(source, &method, &params)
             }
         }
     }
@@ -1493,6 +1503,19 @@ fn response_thread_source(result: &Value) -> Result<AgentSourceCoordinate, Agent
         .and_then(Value::as_str)
         .ok_or_else(|| protocol_violation("Codex response misses thread.id"))?;
     AgentSourceCoordinate::new(thread_id).map_err(internal_error)
+}
+
+fn response_thread_name(result: &Value) -> Result<Option<String>, AgentServiceError> {
+    match result.pointer("/thread/name") {
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.clone())),
+        Some(Value::Null) | None => Ok(None),
+        Some(Value::String(_)) => Err(protocol_violation(
+            "thread/read returned a blank thread name",
+        )),
+        Some(_) => Err(protocol_violation(
+            "thread/read returned a non-string thread name",
+        )),
+    }
 }
 
 fn codex_thread_history_digest(result: &Value) -> Result<AgentPayloadDigest, AgentServiceError> {
@@ -1661,8 +1684,47 @@ fn map_item(item: &Value) -> Result<AgentItemSnapshot, AgentServiceError> {
     })
 }
 
-fn map_notification(method: &str, params: &Value) -> Result<AgentChangePayload, AgentServiceError> {
+fn map_notification(
+    source: &AgentSourceCoordinate,
+    method: &str,
+    params: &Value,
+) -> Result<AgentChangePayload, AgentServiceError> {
     match method {
+        "thread/name/updated" => {
+            let notification_source = required_id::<AgentSourceCoordinate>(
+                params,
+                "threadId",
+                AgentSourceCoordinate::new,
+            )?;
+            if &notification_source != source {
+                return Err(protocol_violation(
+                    "thread/name/updated belongs to a different source thread",
+                ));
+            }
+            let thread_name = match params.get("threadName") {
+                Some(Value::String(value)) if !value.trim().is_empty() => Some(value.clone()),
+                Some(Value::Null) | None => None,
+                Some(Value::String(_)) => {
+                    return Err(protocol_violation(
+                        "thread/name/updated returned a blank thread name",
+                    ));
+                }
+                Some(_) => {
+                    return Err(protocol_violation(
+                        "thread/name/updated returned a non-string thread name",
+                    ));
+                }
+            };
+            Ok(AgentChangePayload::ThreadNameChanged {
+                thread_name,
+                source_info: AgentSnapshotSource {
+                    authority: AgentSnapshotAuthority::AgentAuthoritative,
+                    source_revision: None,
+                    fidelity: SemanticFidelity::Exact,
+                    observed_at_ms: now_ms(),
+                },
+            })
+        }
         "turn/started" | "turn/completed" => {
             let turn = params
                 .get("turn")

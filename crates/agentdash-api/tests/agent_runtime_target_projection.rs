@@ -118,6 +118,8 @@ fn snapshot(
             ),
         }],
         interactions: Vec::new(),
+        thread_name: None,
+        thread_name_source: None,
         operations: vec![ManagedRuntimeOperation {
             id: id("operation-compaction", RuntimeOperationId::new),
             turn_id: Some(turn_id),

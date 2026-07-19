@@ -11,17 +11,17 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeLifecycleStatus, ManagedRuntimeOperation, ManagedRuntimePlatformChange,
     ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
     ManagedRuntimeProjectionSection, ManagedRuntimeSnapshot, ManagedRuntimeSourceProjectionDelta,
-    ManagedRuntimeTurn, RuntimeChangeSequence, RuntimeInteractionId, RuntimeItemId,
-    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
-    SurfaceRevision,
+    ManagedRuntimeThreadNameSource, ManagedRuntimeTurn, RuntimeChangeSequence,
+    RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest, RuntimeProjectionRevision,
+    RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_agent_service_api::{
     AgentChangePage, AgentChangePayload, AgentChangesQuery, AgentEntityStatus, AgentInteractionId,
     AgentInteractionSnapshot, AgentItemId, AgentItemSnapshot, AgentLifecycleStatus, AgentReadQuery,
     AgentServiceError, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
     AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
-    AgentSourceRevision, AgentTurnId, AgentTurnSnapshot, AppliedAgentSurface,
-    AppliedInitialContextEvidence, CompleteAgentService,
+    AgentSourceRevision, AgentThreadNameSnapshot, AgentTurnId, AgentTurnSnapshot,
+    AppliedAgentSurface, AppliedInitialContextEvidence, CompleteAgentService,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -55,6 +55,8 @@ pub struct NormalizedAgentProjection {
     pub turns: BTreeMap<AgentTurnId, NormalizedAgentTurn>,
     pub items: BTreeMap<AgentItemId, NormalizedAgentItem>,
     pub interactions: BTreeMap<AgentInteractionId, AgentInteractionSnapshot>,
+    pub thread_name: Option<String>,
+    pub thread_name_source: Option<AgentSnapshotSource>,
     pub source_info: AgentSnapshotSource,
     pub source_cursor: Option<AgentSourceCursor>,
     pub applied_surface: Option<AppliedAgentSurface>,
@@ -504,6 +506,14 @@ fn prepare_snapshot_observation(
             return Ok(None);
         }
     }
+    let mut changed_sections = BTreeSet::from([ManagedRuntimeProjectionSection::Snapshot]);
+    if normalized.thread_name_source.is_some()
+        && existing.is_none_or(|current| {
+            current.thread_name_source.is_none() || current.thread_name != normalized.thread_name
+        })
+    {
+        changed_sections.insert(ManagedRuntimeProjectionSection::ThreadName);
+    }
     Ok(Some(PreparedCompleteAgentObservation {
         observations: vec![PreparedSourceObservation {
             payload: NormalizedAgentPlatformChangePayload::SnapshotReplaced {
@@ -513,7 +523,7 @@ fn prepare_snapshot_observation(
                 source_revision: normalized.source_info.source_revision.clone(),
                 source_cursor: normalized.source_cursor.clone(),
             },
-            changed_sections: BTreeSet::from([ManagedRuntimeProjectionSection::Snapshot]),
+            changed_sections,
         }],
         projection: normalized,
         captured_at_ms,
@@ -601,6 +611,7 @@ fn normalize_snapshot(
     source_cursor: Option<AgentSourceCursor>,
     platform_revision: u64,
 ) -> Result<NormalizedAgentProjection, CompleteAgentStateError> {
+    let (thread_name, thread_name_source) = normalize_thread_name(snapshot.thread_name)?;
     let mut turns = BTreeMap::new();
     let mut items = BTreeMap::new();
     for turn in snapshot.turns {
@@ -640,11 +651,31 @@ fn normalize_snapshot(
         turns,
         items,
         interactions,
+        thread_name,
+        thread_name_source,
         source_info: snapshot.source_info,
         source_cursor,
         applied_surface: snapshot.applied_surface,
         initial_context: snapshot.initial_context,
     })
+}
+
+fn normalize_thread_name(
+    thread_name: Option<AgentThreadNameSnapshot>,
+) -> Result<(Option<String>, Option<AgentSnapshotSource>), CompleteAgentStateError> {
+    let Some(thread_name) = thread_name else {
+        return Ok((None, None));
+    };
+    if thread_name
+        .thread_name
+        .as_ref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(CompleteAgentStateError::InvalidSnapshot {
+            reason: "thread name must be non-blank when present".to_owned(),
+        });
+    }
+    Ok((thread_name.thread_name, Some(thread_name.source_info)))
 }
 
 fn insert_turn(
@@ -728,6 +759,8 @@ fn same_snapshot_revision_facts(
         && left.turns == right.turns
         && left.items == right.items
         && left.interactions == right.interactions
+        && left.thread_name == right.thread_name
+        && left.thread_name_source == right.thread_name_source
         && left.applied_surface == right.applied_surface
         && left.initial_context == right.initial_context
 }
@@ -751,6 +784,8 @@ fn same_projection_facts(
         && left.turns == right.turns
         && left.items == right.items
         && left.interactions == right.interactions
+        && left.thread_name == right.thread_name
+        && left.thread_name_source == right.thread_name_source
         && left.source_info == right.source_info
         && left.source_cursor == right.source_cursor
         && left.applied_surface == right.applied_surface
@@ -782,6 +817,21 @@ fn apply_source_change(
     payload: &AgentChangePayload,
 ) -> Result<(), CompleteAgentStateError> {
     match payload {
+        AgentChangePayload::ThreadNameChanged {
+            thread_name,
+            source_info,
+        } => {
+            if thread_name
+                .as_ref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
+                return Err(CompleteAgentStateError::InvalidChange {
+                    reason: "thread name must be non-blank when present".to_owned(),
+                });
+            }
+            projection.thread_name = thread_name.clone();
+            projection.thread_name_source = Some(source_info.clone());
+        }
         AgentChangePayload::LifecycleChanged { status } => projection.lifecycle = *status,
         AgentChangePayload::TurnChanged { turn } => {
             if let Some(existing) = projection.turns.remove(&turn.id) {
@@ -855,6 +905,11 @@ fn changed_sections(
 ) -> BTreeSet<ManagedRuntimeProjectionSection> {
     let mut sections = BTreeSet::new();
     match payload {
+        AgentChangePayload::ThreadNameChanged { .. }
+            if before.thread_name_source.is_none() || before.thread_name != after.thread_name =>
+        {
+            sections.insert(ManagedRuntimeProjectionSection::ThreadName);
+        }
         AgentChangePayload::LifecycleChanged { .. } if before.lifecycle != after.lifecycle => {
             sections.insert(ManagedRuntimeProjectionSection::Lifecycle);
         }
@@ -889,7 +944,8 @@ fn changed_sections(
         {
             sections.insert(ManagedRuntimeProjectionSection::Surface);
         }
-        AgentChangePayload::SnapshotInvalidated { .. }
+        AgentChangePayload::ThreadNameChanged { .. }
+        | AgentChangePayload::SnapshotInvalidated { .. }
         | AgentChangePayload::LifecycleChanged { .. }
         | AgentChangePayload::ActiveTurnChanged { .. }
         | AgentChangePayload::InteractionChanged { .. }
@@ -1379,18 +1435,23 @@ pub(crate) fn validate_complete_agent_source_facts(
             matches!(
                 change.delta,
                 ManagedRuntimeChangeDelta::SourceProjectionChanged { .. }
+                    | ManagedRuntimeChangeDelta::ThreadNameChanged { .. }
             )
             .then_some((&change.delta, change.revision))
         })
         .collect::<Vec<_>>();
     if actual_projection_changes.len() != expected_projection_changes.len()
         || expected_projection_changes.iter().any(|expected| {
-            let ManagedRuntimeChangeDelta::SourceProjectionChanged {
-                source_projection_revision,
-                ..
-            } = expected
-            else {
-                unreachable!("source projection helper always returns its typed wrapper");
+            let source_projection_revision = match expected {
+                ManagedRuntimeChangeDelta::SourceProjectionChanged {
+                    source_projection_revision,
+                    ..
+                }
+                | ManagedRuntimeChangeDelta::ThreadNameChanged {
+                    source_projection_revision,
+                    ..
+                } => source_projection_revision,
+                _ => unreachable!("source projection helper always returns a typed source delta"),
             };
             actual_projection_changes
                 .iter()
@@ -1479,9 +1540,17 @@ fn validate_appended_source_sections(
     for change in appended {
         match &change.payload {
             NormalizedAgentPlatformChangePayload::SnapshotReplaced { .. } => {
-                if change.changed_sections
-                    != BTreeSet::from([ManagedRuntimeProjectionSection::Snapshot])
-                {
+                let mut expected = BTreeSet::from([ManagedRuntimeProjectionSection::Snapshot]);
+                if candidate.source_projection.as_ref().is_some_and(|after| {
+                    after.thread_name_source.is_some()
+                        && projection.as_ref().is_none_or(|before| {
+                            before.thread_name_source.is_none()
+                                || before.thread_name != after.thread_name
+                        })
+                }) {
+                    expected.insert(ManagedRuntimeProjectionSection::ThreadName);
+                }
+                if change.changed_sections != expected {
                     return Err(ManagedRuntimeStateStoreError::Invariant {
                         reason: "snapshot observation changed-section evidence is invalid"
                             .to_owned(),
@@ -1680,6 +1749,12 @@ pub fn project_managed_runtime_snapshot(
         turns,
         items,
         interactions,
+        thread_name: projection.thread_name.clone(),
+        thread_name_source: projection
+            .thread_name_source
+            .as_ref()
+            .map(|source_info| project_thread_name_source(source_info, identities.source()))
+            .transpose()?,
         operations: input.operations,
         source_binding: None,
         authority: project_authority(projection.source_info.authority),
@@ -1790,6 +1865,18 @@ fn project_source_projection_deltas(
         .changed_sections
         .iter()
         .map(|section| {
+            if *section == ManagedRuntimeProjectionSection::ThreadName {
+                let source_info = projection
+                    .thread_name_source
+                    .as_ref()
+                    .ok_or(CompleteAgentRuntimeProjectionError::InvalidSourceProjectionSection)?;
+                return Ok(ManagedRuntimeChangeDelta::ThreadNameChanged {
+                    source_change_sequence: change.sequence,
+                    source_projection_revision: RuntimeProjectionRevision(change.platform_revision),
+                    thread_name: projection.thread_name.clone(),
+                    source: project_thread_name_source(source_info, identities.source())?,
+                });
+            }
             let delta = project_source_projection_section(
                 &change.payload,
                 projection,
@@ -1848,6 +1935,9 @@ fn project_source_projection_section(
     };
 
     match section {
+        ManagedRuntimeProjectionSection::ThreadName => {
+            Err(CompleteAgentRuntimeProjectionError::InvalidSourceProjectionSection)
+        }
         ManagedRuntimeProjectionSection::Snapshot => {
             Ok(ManagedRuntimeSourceProjectionDelta::SnapshotReplaced {
                 lifecycle: project_lifecycle(projection.lifecycle),
@@ -1903,7 +1993,11 @@ fn source_payload_can_change_section(
 ) -> bool {
     match payload {
         NormalizedAgentPlatformChangePayload::SnapshotReplaced { .. } => {
-            section == ManagedRuntimeProjectionSection::Snapshot
+            matches!(
+                section,
+                ManagedRuntimeProjectionSection::Snapshot
+                    | ManagedRuntimeProjectionSection::ThreadName
+            )
         }
         NormalizedAgentPlatformChangePayload::SourceChangeApplied {
             payload: source_payload,
@@ -1911,6 +2005,9 @@ fn source_payload_can_change_section(
         } => matches!(
             (source_payload.as_ref(), section),
             (
+                AgentChangePayload::ThreadNameChanged { .. },
+                ManagedRuntimeProjectionSection::ThreadName
+            ) | (
                 AgentChangePayload::LifecycleChanged { .. },
                 ManagedRuntimeProjectionSection::Lifecycle
             ) | (
@@ -1931,6 +2028,23 @@ fn source_payload_can_change_section(
             )
         ),
     }
+}
+
+fn project_thread_name_source(
+    source_info: &AgentSnapshotSource,
+    source: &AgentSourceCoordinate,
+) -> Result<ManagedRuntimeThreadNameSource, CompleteAgentRuntimeProjectionError> {
+    Ok(ManagedRuntimeThreadNameSource {
+        authority: project_authority(source_info.authority),
+        fidelity: project_fidelity(source_info.fidelity),
+        source_identity_digest: opaque_digest(source.as_str())?,
+        source_revision_digest: source_info
+            .source_revision
+            .as_ref()
+            .map(|revision| opaque_digest(revision.as_str()))
+            .transpose()?,
+        observed_at_ms: source_info.observed_at_ms,
+    })
 }
 
 fn source_observation_delta(
@@ -2349,6 +2463,171 @@ mod tests {
                 .sequence,
             2
         );
+    }
+
+    #[tokio::test]
+    async fn thread_name_snapshot_set_duplicate_and_clear_have_one_semantic_delta_each() {
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
+        let reconciler = fixture_reconciler(repository.clone());
+        reconciler
+            .reconcile_snapshot(snapshot_with_thread_name(1, Some(Some("初始标题"))), None)
+            .await
+            .expect("initial named snapshot");
+
+        let set_cursor = cursor("name-cursor-1");
+        reconciler
+            .reconcile_change_page(
+                &AgentChangesQuery {
+                    source: source(),
+                    after: None,
+                    limit: 1,
+                },
+                AgentChangePage {
+                    source: source(),
+                    changes: vec![agentdash_agent_service_api::AgentChange {
+                        cursor: set_cursor.clone(),
+                        source_revision: Some(
+                            AgentSourceRevision::new("source-name-rev-2").expect("revision"),
+                        ),
+                        occurred_at_ms: 2,
+                        payload: AgentChangePayload::ThreadNameChanged {
+                            thread_name: Some("更新标题".to_owned()),
+                            source_info: AgentSnapshotSource {
+                                authority: AgentSnapshotAuthority::AgentAuthoritative,
+                                source_revision: Some(
+                                    AgentSourceRevision::new("name-rev-2").expect("revision"),
+                                ),
+                                fidelity: SemanticFidelity::Exact,
+                                observed_at_ms: 2,
+                            },
+                        },
+                    }],
+                    next: Some(set_cursor.clone()),
+                    gap: false,
+                },
+            )
+            .await
+            .expect("set name");
+
+        let duplicate_cursor = cursor("name-cursor-2");
+        reconciler
+            .reconcile_change_page(
+                &AgentChangesQuery {
+                    source: source(),
+                    after: Some(set_cursor),
+                    limit: 1,
+                },
+                AgentChangePage {
+                    source: source(),
+                    changes: vec![agentdash_agent_service_api::AgentChange {
+                        cursor: duplicate_cursor.clone(),
+                        source_revision: Some(
+                            AgentSourceRevision::new("source-name-rev-3").expect("revision"),
+                        ),
+                        occurred_at_ms: 3,
+                        payload: AgentChangePayload::ThreadNameChanged {
+                            thread_name: Some("更新标题".to_owned()),
+                            source_info: AgentSnapshotSource {
+                                authority: AgentSnapshotAuthority::AgentAuthoritative,
+                                source_revision: Some(
+                                    AgentSourceRevision::new("name-rev-3").expect("revision"),
+                                ),
+                                fidelity: SemanticFidelity::Exact,
+                                observed_at_ms: 3,
+                            },
+                        },
+                    }],
+                    next: Some(duplicate_cursor.clone()),
+                    gap: false,
+                },
+            )
+            .await
+            .expect("duplicate name observation");
+
+        let clear_cursor = cursor("name-cursor-3");
+        reconciler
+            .reconcile_change_page(
+                &AgentChangesQuery {
+                    source: source(),
+                    after: Some(duplicate_cursor),
+                    limit: 1,
+                },
+                AgentChangePage {
+                    source: source(),
+                    changes: vec![agentdash_agent_service_api::AgentChange {
+                        cursor: clear_cursor.clone(),
+                        source_revision: Some(
+                            AgentSourceRevision::new("source-name-rev-4").expect("revision"),
+                        ),
+                        occurred_at_ms: 4,
+                        payload: AgentChangePayload::ThreadNameChanged {
+                            thread_name: None,
+                            source_info: AgentSnapshotSource {
+                                authority: AgentSnapshotAuthority::AgentAuthoritative,
+                                source_revision: Some(
+                                    AgentSourceRevision::new("name-rev-4").expect("revision"),
+                                ),
+                                fidelity: SemanticFidelity::Exact,
+                                observed_at_ms: 4,
+                            },
+                        },
+                    }],
+                    next: Some(clear_cursor),
+                    gap: false,
+                },
+            )
+            .await
+            .expect("clear name");
+
+        let state = fixture_state(&repository).await;
+        let projection = state.facts.projection.expect("managed projection");
+        assert_eq!(projection.thread_name, None);
+        assert!(projection.thread_name_source.is_some());
+        let name_changes = state
+            .facts
+            .changes
+            .iter()
+            .filter_map(|change| match &change.delta {
+                ManagedRuntimeChangeDelta::ThreadNameChanged { thread_name, .. } => {
+                    Some(thread_name.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            name_changes,
+            vec![
+                Some("初始标题".to_owned()),
+                Some("更新标题".to_owned()),
+                None
+            ]
+        );
+        for pair in state.facts.changes.windows(2) {
+            assert_eq!(pair[1].sequence.0, pair[0].sequence.0 + 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn authoritative_initial_clear_is_a_typed_thread_name_projection() {
+        let repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
+        fixture_reconciler(repository.clone())
+            .reconcile_snapshot(snapshot_with_thread_name(1, Some(None)), None)
+            .await
+            .expect("initial authoritative clear");
+
+        let state = fixture_state(&repository).await;
+        let projection = state.facts.projection.expect("managed projection");
+        assert_eq!(projection.thread_name, None);
+        assert!(projection.thread_name_source.is_some());
+        assert!(state.facts.changes.iter().any(|change| {
+            matches!(
+                &change.delta,
+                ManagedRuntimeChangeDelta::ThreadNameChanged {
+                    thread_name: None,
+                    ..
+                }
+            )
+        }));
     }
 
     #[tokio::test]
@@ -3440,6 +3719,7 @@ mod tests {
                 }],
             }],
             interactions: Vec::new(),
+            thread_name: None,
             source_info: AgentSnapshotSource {
                 authority,
                 source_revision: Some(
@@ -3451,6 +3731,25 @@ mod tests {
             applied_surface: None,
             initial_context: None,
         }
+    }
+
+    fn snapshot_with_thread_name(
+        revision: u64,
+        thread_name: Option<Option<&str>>,
+    ) -> AgentSnapshot {
+        let mut snapshot = snapshot(revision, AgentSnapshotAuthority::AgentAuthoritative);
+        snapshot.thread_name = thread_name.map(|thread_name| AgentThreadNameSnapshot {
+            thread_name: thread_name.map(str::to_owned),
+            source_info: AgentSnapshotSource {
+                authority: AgentSnapshotAuthority::AgentAuthoritative,
+                source_revision: Some(
+                    AgentSourceRevision::new(format!("name-rev-{revision}")).expect("revision"),
+                ),
+                fidelity: SemanticFidelity::Exact,
+                observed_at_ms: revision,
+            },
+        });
+        snapshot
     }
 
     fn source() -> AgentSourceCoordinate {

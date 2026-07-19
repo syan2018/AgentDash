@@ -765,6 +765,121 @@ async fn live_server_request_maps_to_interaction_and_resolves_through_the_same_r
 }
 
 #[tokio::test]
+async fn thread_read_and_name_notifications_map_source_authoritative_set_and_clear() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport
+        .push_response(
+            "thread/read",
+            json!({
+                "thread": {
+                    "id": "thread-parent",
+                    "name": "Codex 标题",
+                    "turns": []
+                }
+            }),
+        )
+        .await;
+
+    let snapshot = service
+        .read(AgentReadQuery {
+            source: source.clone(),
+            at_revision: None,
+        })
+        .await
+        .expect("thread/read");
+    let name = snapshot.thread_name.expect("Codex name section");
+    assert_eq!(name.thread_name.as_deref(), Some("Codex 标题"));
+    assert_eq!(
+        name.source_info.authority,
+        agentdash_agent_service_api::AgentSnapshotAuthority::AgentAuthoritative
+    );
+    assert_eq!(name.source_info.fidelity, SemanticFidelity::Exact);
+
+    transport
+        .observations
+        .lock()
+        .await
+        .push_back(CodexAppServerObservationPage {
+            observations: vec![
+                CodexAppServerObservation::Notification {
+                    sequence: 4,
+                    method: "thread/name/updated".to_owned(),
+                    params: json!({
+                        "threadId": "thread-parent",
+                        "threadName": "更新标题"
+                    }),
+                },
+                CodexAppServerObservation::Notification {
+                    sequence: 5,
+                    method: "thread/name/updated".to_owned(),
+                    params: json!({
+                        "threadId": "thread-parent",
+                        "threadName": null
+                    }),
+                },
+            ],
+            next_sequence: Some(5),
+            gap: false,
+        });
+    let changes = service
+        .changes(AgentChangesQuery {
+            source,
+            after: None,
+            limit: 16,
+        })
+        .await
+        .expect("name changes");
+    assert!(matches!(
+        &changes.changes[0].payload,
+        agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+            thread_name: Some(value),
+            ..
+        } if value == "更新标题"
+    ));
+    assert!(matches!(
+        &changes.changes[1].payload,
+        agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+            thread_name: None,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn thread_name_notification_for_another_source_is_rejected() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport
+        .observations
+        .lock()
+        .await
+        .push_back(CodexAppServerObservationPage {
+            observations: vec![CodexAppServerObservation::Notification {
+                sequence: 4,
+                method: "thread/name/updated".to_owned(),
+                params: json!({
+                    "threadId": "another-thread",
+                    "threadName": "错误来源"
+                }),
+            }],
+            next_sequence: Some(4),
+            gap: false,
+        });
+    let error = service
+        .changes(AgentChangesQuery {
+            source,
+            after: None,
+            limit: 16,
+        })
+        .await
+        .expect_err("wrong source name");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
+}
+
+#[tokio::test]
 async fn historical_snapshot_revision_is_rejected_before_app_server_read() {
     let transport = Arc::new(RecordingTransport::default());
     let service = service(transport.clone()).await;

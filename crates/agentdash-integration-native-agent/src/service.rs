@@ -729,6 +729,9 @@ impl CompleteAgentService for DashAgentCompleteService {
                 .iter()
                 .map(|(id, interaction)| interaction_snapshot(id, interaction))
                 .collect::<Result<Vec<_>, _>>()?,
+            // Dash Agent history currently has no naming entry/fold rule, so the Complete Agent
+            // seam must report the capability as absent instead of deriving a title from prompts.
+            thread_name: None,
             source_info: AgentSnapshotSource {
                 authority: AgentSnapshotAuthority::AgentAuthoritative,
                 source_revision: Some(

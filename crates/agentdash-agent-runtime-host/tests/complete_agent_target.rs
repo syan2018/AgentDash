@@ -537,6 +537,7 @@ impl CompleteAgentService for FixtureService {
             active_turn_id: None,
             turns: Vec::new(),
             interactions: Vec::new(),
+            thread_name: None,
             source_info: AgentSnapshotSource {
                 authority: AgentSnapshotAuthority::AgentAuthoritative,
                 source_revision: Some(

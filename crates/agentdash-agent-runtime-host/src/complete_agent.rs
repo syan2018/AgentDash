@@ -3241,6 +3241,7 @@ mod tests {
                 active_turn_id: None,
                 turns: Vec::new(),
                 interactions: Vec::new(),
+                thread_name: None,
                 source_info: agentdash_agent_service_api::AgentSnapshotSource {
                     authority:
                         agentdash_agent_service_api::AgentSnapshotAuthority::AgentAuthoritative,

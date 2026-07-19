@@ -117,6 +117,7 @@ mod tests {
             "AgentAppliedEffectOutcome",
             "AgentHostCallbackMeta",
             "AgentChange",
+            "AgentThreadNameSnapshot",
             "AgentHostCallbackBinding",
             "AgentCreateEvidence",
             "AgentSurfaceContributionKind",
@@ -136,6 +137,7 @@ mod tests {
         assert!(!typescript.contains("bigint"));
         assert!(typescript.contains("deadline_at_ms: number"));
         assert!(typescript.contains("occurred_at_ms: number"));
+        assert!(typescript.contains("\"thread_name_changed\""));
     }
 
     fn read_typescript(directory: &Path) -> String {

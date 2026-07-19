@@ -31,6 +31,17 @@ pub enum ManagedRuntimeProjectionFidelity {
     Exact,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ManagedRuntimeThreadNameSource {
+    pub authority: ManagedRuntimeProjectionAuthority,
+    pub fidelity: ManagedRuntimeProjectionFidelity,
+    pub source_identity_digest: RuntimePayloadDigest,
+    pub source_revision_digest: Option<RuntimePayloadDigest>,
+    #[ts(type = "number")]
+    pub observed_at_ms: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ManagedRuntimeLifecycleStatus {
@@ -363,6 +374,8 @@ pub struct ManagedRuntimeSnapshot {
     pub turns: Vec<ManagedRuntimeTurn>,
     pub items: Vec<ManagedRuntimeItem>,
     pub interactions: Vec<ManagedRuntimeInteraction>,
+    pub thread_name: Option<String>,
+    pub thread_name_source: Option<ManagedRuntimeThreadNameSource>,
     pub operations: Vec<ManagedRuntimeOperation>,
     pub source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
     pub authority: ManagedRuntimeProjectionAuthority,
@@ -377,6 +390,7 @@ pub struct ManagedRuntimeSnapshot {
 #[serde(rename_all = "snake_case")]
 pub enum ManagedRuntimeProjectionSection {
     Snapshot,
+    ThreadName,
     Lifecycle,
     ActiveTurn,
     Turns,
@@ -421,6 +435,13 @@ pub enum ManagedRuntimeSourceProjectionDelta {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ManagedRuntimeChangeDelta {
+    ThreadNameChanged {
+        #[ts(type = "number")]
+        source_change_sequence: u64,
+        source_projection_revision: RuntimeProjectionRevision,
+        thread_name: Option<String>,
+        source: ManagedRuntimeThreadNameSource,
+    },
     SourceObservationApplied {
         #[ts(type = "number")]
         source_change_sequence: u64,
@@ -548,6 +569,8 @@ mod tests {
                     content_digest: id("sha256:item", RuntimePayloadDigest::new),
                 }],
                 interactions: Vec::new(),
+                thread_name: None,
+                thread_name_source: None,
                 operations: Vec::new(),
                 source_binding: None,
                 authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
@@ -585,6 +608,8 @@ mod tests {
         let schema = serde_json::to_string(&schema).expect("serialize schema");
         for required in [
             "thread_id",
+            "thread_name",
+            "thread_name_source",
             "turn_id",
             "item_id",
             "operations",
@@ -596,6 +621,7 @@ mod tests {
         assert!(!schema.contains("AgentSourceCoordinate"));
         assert!(!schema.contains("AgentTurnId"));
         assert!(!schema.contains("AgentItemId"));
+        assert!(schema.contains("thread_name_changed"));
     }
 
     #[test]

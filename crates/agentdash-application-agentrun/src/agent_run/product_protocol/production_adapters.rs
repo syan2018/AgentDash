@@ -1177,6 +1177,8 @@ mod tests {
             turns: Vec::new(),
             items: Vec::new(),
             interactions: Vec::new(),
+            thread_name: None,
+            thread_name_source: None,
             operations: vec![operation],
             source_binding: None,
             authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,

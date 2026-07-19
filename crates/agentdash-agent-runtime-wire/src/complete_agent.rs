@@ -457,4 +457,40 @@ mod tests {
             Some("agent_change")
         );
     }
+
+    #[test]
+    fn source_authoritative_thread_name_set_and_clear_round_trip_losslessly() {
+        for thread_name in [Some("远程标题".to_owned()), None] {
+            let notification = RuntimeWireAgentChangeNotification {
+                target: target(12),
+                source: id("source-1", AgentSourceCoordinate::new),
+                change: AgentChange {
+                    cursor: id(
+                        if thread_name.is_some() {
+                            "cursor-name-set"
+                        } else {
+                            "cursor-name-clear"
+                        },
+                        agentdash_agent_service_api::AgentSourceCursor::new,
+                    ),
+                    source_revision: None,
+                    occurred_at_ms: 99,
+                    payload: agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+                        thread_name: thread_name.clone(),
+                        source_info: agentdash_agent_service_api::AgentSnapshotSource {
+                            authority:
+                                agentdash_agent_service_api::AgentSnapshotAuthority::AgentAuthoritative,
+                            source_revision: None,
+                            fidelity: agentdash_agent_service_api::SemanticFidelity::Exact,
+                            observed_at_ms: 99,
+                        },
+                    },
+                },
+            };
+            let encoded = serde_json::to_vec(&notification).expect("serialize name change");
+            let decoded: RuntimeWireAgentChangeNotification =
+                serde_json::from_slice(&encoded).expect("deserialize name change");
+            assert_eq!(decoded, notification);
+        }
+    }
 }

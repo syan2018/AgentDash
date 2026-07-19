@@ -223,6 +223,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                 agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
                     run_id: agent.run_id,
                     agent_id: agent.id,
+                    target_frame_id: None,
                     subject_ref: plan.subject_ref.clone(),
                     runtime_thread_id: Some(delivery_runtime_ref.to_string()),
                     created_by_id: Some(delivery_runtime_ref.to_string()),

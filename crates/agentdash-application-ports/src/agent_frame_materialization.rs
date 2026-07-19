@@ -25,6 +25,7 @@ pub enum FrameConstructionCommand {
     DispatchLaunchAnchor {
         run_id: Uuid,
         agent_id: Uuid,
+        target_frame_id: Option<Uuid>,
         subject_ref: Option<SubjectRef>,
         runtime_thread_id: Option<String>,
         created_by_id: Option<String>,

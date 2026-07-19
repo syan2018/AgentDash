@@ -81,6 +81,7 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
         let FrameConstructionCommand::DispatchLaunchAnchor {
             run_id,
             agent_id,
+            target_frame_id,
             subject_ref,
             runtime_thread_id,
             created_by_id,
@@ -114,6 +115,33 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
         let runtime_thread_id = runtime_thread_id
             .ok_or_else(|| construction_rejected("DispatchLaunchAnchor 缺少 runtime_thread_id"))?;
 
+        if let Some(frame_id) = target_frame_id
+            && let Some(frame) = self
+                .repos
+                .agent_frame_repo
+                .get(frame_id)
+                .await
+                .map_err(construction_rejected)?
+        {
+            if frame.agent_id != agent.id
+                || frame.created_by_kind != "dispatch_launch_anchor"
+                || frame.created_by_id != created_by_id
+                || frame.execution_profile_json.as_ref() != execution_profile.as_ref()
+            {
+                return Err(construction_rejected(
+                    "target_frame_id 已存在但不属于同一 launch anchor intent",
+                ));
+            }
+            validate_project_agent_launch_surface(&frame)?;
+            let mut outcome =
+                AgentRunFrameSurfaceCommandOutcome::new(AgentFrameWriteRole::FrameConstruction);
+            outcome.frame_id = Some(frame.id);
+            outcome.agent_id = Some(frame.agent_id);
+            outcome.runtime_thread_id = Some(runtime_thread_id);
+            outcome.wrote_frame_revision = false;
+            return Ok(outcome);
+        }
+
         let executor_config_override = execution_profile
             .map(serde_json::from_value::<AgentConfig>)
             .transpose()
@@ -122,7 +150,10 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
                     "AgentRun effective execution profile 无法解析: {error}"
                 ))
             })?;
-        let builder = AgentFrameBuilder::new_launch_anchor(agent.id, created_by_id);
+        let mut builder = AgentFrameBuilder::new_launch_anchor(agent.id, created_by_id);
+        if let Some(frame_id) = target_frame_id {
+            builder = builder.with_frame_id(frame_id);
+        }
         let (builder, _extras) = compose_project_agent_owner_frame(
             &self.composition_context(),
             ProjectAgentOwnerCompositionInput {

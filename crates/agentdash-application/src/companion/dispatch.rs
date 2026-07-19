@@ -290,6 +290,10 @@ impl<'a> CompanionChildDispatchService<'a> {
                     child: child.clone(),
                     child_product_selection: AgentRunForkChildProductSelection {
                         project_agent_id: request.selected_project_agent_id,
+                        materialized_frame_id: stable_uuid(
+                            &request.dispatch_id,
+                            "full-selected-frame",
+                        ),
                         execution_profile,
                         idempotency_key: format!("companion:{}:full-runtime", request.dispatch_id),
                     },

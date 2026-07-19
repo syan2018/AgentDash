@@ -97,6 +97,7 @@ pub enum AgentRunForkRuntimeOperation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRunForkChildProductSelection {
     pub project_agent_id: Uuid,
+    pub materialized_frame_id: Uuid,
     pub execution_profile: ProductExecutionProfileRef,
     pub idempotency_key: String,
 }
@@ -869,6 +870,7 @@ impl AgentRunForkSaga {
             || provisioning.target.run_id != self.child.run_id
             || provisioning.target.agent_id != self.child.agent_id
             || provisioning.runtime_thread_id != self.child.runtime_thread_id
+            || provisioning.frame.frame_id != selection.materialized_frame_id
             || provisioning.execution_profile != selection.execution_profile
             || provisioning.idempotency_key != selection.idempotency_key
             || provisioning.validate().is_err()

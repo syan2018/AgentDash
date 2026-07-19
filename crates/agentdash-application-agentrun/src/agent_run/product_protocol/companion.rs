@@ -2510,6 +2510,7 @@ mod tests {
                 execution_profile.refresh_digest();
                 AgentRunForkChildProductSelection {
                     project_agent_id: Uuid::new_v4(),
+                    materialized_frame_id: Uuid::new_v4(),
                     execution_profile,
                     idempotency_key: "full-child-selection".to_owned(),
                 }

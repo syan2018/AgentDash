@@ -131,6 +131,11 @@ impl AgentFrameBuilder {
         self.frame_id
     }
 
+    pub fn with_frame_id(mut self, frame_id: Uuid) -> Self {
+        self.frame_id = frame_id;
+        self
+    }
+
     pub fn with_context(mut self, context_slice: serde_json::Value) -> Self {
         self.context_slice = Some(context_slice);
         self

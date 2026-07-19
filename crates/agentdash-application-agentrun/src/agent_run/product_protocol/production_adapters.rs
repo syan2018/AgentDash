@@ -1309,7 +1309,8 @@ impl ProductAgentRunForkGraphAdapter {
     ) -> Result<AgentRunProductRuntimeProvisioningRequest, String> {
         let child = saga.child();
         if frame.agent_id != child.agent_id
-            || frame.created_by_kind == "agent_run_fork_selection_pending"
+            || frame.id != selection.materialized_frame_id
+            || frame.created_by_kind != "dispatch_launch_anchor"
             || frame.execution_profile_json.as_ref()
                 != Some(&selection.execution_profile.configuration)
         {
@@ -1363,10 +1364,9 @@ impl AgentRunForkProductGraphPort for ProductAgentRunForkGraphAdapter {
         }
         if let Some(existing) = self
             .frames
-            .get_latest(child.agent_id)
+            .get(selection.materialized_frame_id)
             .await
             .map_err(|error| error.to_string())?
-            .filter(|frame| frame.created_by_kind != "agent_run_fork_selection_pending")
         {
             return Self::selected_provisioning(saga, selection, &existing);
         }
@@ -1375,6 +1375,7 @@ impl AgentRunForkProductGraphPort for ProductAgentRunForkGraphAdapter {
             .execute_frame_construction_command(FrameConstructionCommand::DispatchLaunchAnchor {
                 run_id: child.run_id,
                 agent_id: child.agent_id,
+                target_frame_id: Some(selection.materialized_frame_id),
                 subject_ref: None,
                 runtime_thread_id: Some(child.runtime_thread_id.to_string()),
                 created_by_id: Some(child_agent.created_by_user_id.clone()),
@@ -1442,6 +1443,66 @@ mod tests {
         CompanionFreshStep, PreallocatedAgentRunChild, RuntimeForkPhaseEvidence,
         RuntimeOperationOutcome, SubmitInput, compile_companion_dispatch_target,
     };
+
+    struct DurableSelectedFrameConstruction {
+        frames: Arc<MemoryAgentFrameRepository>,
+        commands: Mutex<Vec<FrameConstructionCommand>>,
+    }
+
+    impl DurableSelectedFrameConstruction {
+        fn new(frames: Arc<MemoryAgentFrameRepository>) -> Self {
+            Self {
+                frames,
+                commands: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AgentRunFrameConstructionPort for DurableSelectedFrameConstruction {
+        async fn execute_frame_construction_command(
+            &self,
+            command: FrameConstructionCommand,
+        ) -> Result<
+            agentdash_application_ports::agent_frame_materialization::AgentRunFrameSurfaceCommandOutcome,
+            agentdash_application_ports::agent_frame_materialization::AgentRunFrameSurfaceError,
+        >{
+            self.commands.lock().await.push(command.clone());
+            let FrameConstructionCommand::DispatchLaunchAnchor {
+                agent_id,
+                target_frame_id,
+                runtime_thread_id,
+                created_by_id,
+                execution_profile,
+                ..
+            } = command
+            else {
+                unreachable!("selected fork only constructs a launch anchor")
+            };
+            let mut frame = AgentFrame::new_revision_with_id(
+                target_frame_id.expect("stable selected frame id"),
+                agent_id,
+                2,
+                "dispatch_launch_anchor",
+            );
+            frame.created_by_id = created_by_id;
+            frame.execution_profile_json = execution_profile;
+            self.frames.create(&frame).await.map_err(|error| {
+                agentdash_application_ports::agent_frame_materialization::AgentRunFrameSurfaceError::ConstructionRejected {
+                    message: error.to_string(),
+                }
+            })?;
+            let mut outcome =
+                agentdash_application_ports::agent_frame_materialization::AgentRunFrameSurfaceCommandOutcome::new(
+                    agentdash_application_ports::agent_frame_materialization::AgentFrameWriteRole::FrameConstruction,
+                );
+            outcome.frame_id = Some(frame.id);
+            outcome.agent_id = Some(agent_id);
+            outcome.runtime_thread_id = runtime_thread_id;
+            outcome.wrote_frame_revision = true;
+            Ok(outcome)
+        }
+    }
 
     #[derive(Default)]
     struct RecordingManagedRuntimeGateway {
@@ -1627,7 +1688,11 @@ mod tests {
         }
     }
 
-    async fn fixture() -> (
+    async fn fixture(
+        child_product_selection: Option<AgentRunForkChildProductSelection>,
+        frames: Arc<MemoryAgentFrameRepository>,
+        frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    ) -> (
         ProductAgentRunForkGraphAdapter,
         AgentRunForkSaga,
         Arc<MemoryLifecycleRunRepository>,
@@ -1636,7 +1701,6 @@ mod tests {
     ) {
         let runs = Arc::new(MemoryLifecycleRunRepository::default());
         let agents = Arc::new(MemoryLifecycleAgentRepository::default());
-        let frames = Arc::new(MemoryAgentFrameRepository::default());
         let parent_run = LifecycleRun::new_plain_for_user(Uuid::new_v4(), "user-1");
         let parent_agent = LifecycleAgent::new_root_for_user(
             parent_run.id,
@@ -1645,7 +1709,12 @@ mod tests {
             "user-1",
         );
         let mut parent_frame = AgentFrame::new_initial(parent_agent.id);
+        parent_frame.effective_capability_json = Some(json!({"tools": ["read"]}));
+        parent_frame.context_slice_json = Some(json!({"history": "parent"}));
+        parent_frame.vfs_surface_json = Some(json!({"mounts": ["workspace"]}));
+        parent_frame.mcp_surface_json = Some(json!({"servers": ["platform"]}));
         parent_frame.execution_profile_json = Some(json!({"model": "test"}));
+        parent_frame.hook_plan = Some(json!({"hooks": ["before_tool"]}));
         runs.create(&parent_run).await.expect("store parent run");
         agents
             .create(&parent_agent)
@@ -1656,7 +1725,7 @@ mod tests {
             .await
             .expect("store parent frame");
 
-        let mut saga = AgentRunForkSaga::requested(
+        let mut saga = AgentRunForkSaga::requested_with_product_selection(
             AgentRunForkRequestId(Uuid::new_v4()),
             AgentRunForkParent {
                 run_id: parent_run.id,
@@ -1678,6 +1747,8 @@ mod tests {
                 )
                 .expect("child thread"),
             },
+            None,
+            child_product_selection,
         );
         let AgentRunForkSagaStep::DispatchRuntime(identity) = saga.next_step() else {
             panic!("fork dispatch");
@@ -1714,7 +1785,7 @@ mod tests {
                 runs.clone(),
                 agents.clone(),
                 frames.clone(),
-                Arc::new(UnusedFrameConstruction),
+                frame_construction,
             ),
             saga,
             runs,
@@ -1725,7 +1796,9 @@ mod tests {
 
     #[tokio::test]
     async fn prepares_complete_stable_graph_without_publishing_rows() {
-        let (adapter, saga, runs, agents, frames) = fixture().await;
+        let frames = Arc::new(MemoryAgentFrameRepository::default());
+        let (adapter, saga, runs, agents, frames) =
+            fixture(None, frames, Arc::new(UnusedFrameConstruction)).await;
 
         let first = adapter
             .prepare_child_graph_commit(&saga)
@@ -1751,12 +1824,98 @@ mod tests {
             graph.child_frame.execution_profile_json,
             Some(json!({"model": "test"}))
         );
+        assert_eq!(
+            graph.child_frame.effective_capability_json,
+            Some(json!({"tools": ["read"]}))
+        );
+        assert_eq!(
+            graph.child_frame.context_slice_json,
+            Some(json!({"history": "parent"}))
+        );
+        assert_eq!(
+            graph.child_frame.vfs_surface_json,
+            Some(json!({"mounts": ["workspace"]}))
+        );
+        assert_eq!(
+            graph.child_frame.mcp_surface_json,
+            Some(json!({"servers": ["platform"]}))
+        );
+        assert_eq!(
+            graph.child_frame.hook_plan,
+            Some(json!({"hooks": ["before_tool"]}))
+        );
         assert_eq!(graph.lineage.parent_run_id, saga.parent().run_id);
         assert_eq!(graph.lineage.child_frame_id, Some(saga.child().frame_id));
 
         assert!(runs.get_by_id(saga.child().run_id).await.unwrap().is_none());
         assert!(agents.get(saga.child().agent_id).await.unwrap().is_none());
         assert!(frames.get(saga.child().frame_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn selected_frame_reclaims_the_exact_saga_effect_after_save_loss() {
+        let mut execution_profile = crate::agent_run::ProductExecutionProfileRef {
+            profile_key: "dash-selected".to_owned(),
+            profile_revision: 3,
+            profile_digest: String::new(),
+            configuration: json!({"model": "selected"}),
+            credential_scope: None,
+        };
+        execution_profile.refresh_digest();
+        let selection = AgentRunForkChildProductSelection {
+            project_agent_id: Uuid::new_v4(),
+            materialized_frame_id: Uuid::new_v4(),
+            execution_profile,
+            idempotency_key: format!("fork-selection:{}", Uuid::new_v4()),
+        };
+        let frames = Arc::new(MemoryAgentFrameRepository::default());
+        let construction = Arc::new(DurableSelectedFrameConstruction::new(frames.clone()));
+        let (adapter, mut saga, runs, agents, fixture_frames) =
+            fixture(Some(selection.clone()), frames, construction.clone()).await;
+        assert_eq!(fixture_frames.debug_list().await.len(), 1);
+
+        let prepared = adapter
+            .prepare_child_graph_commit(&saga)
+            .await
+            .expect("prepare selected graph");
+        let graph = prepared.graph();
+        runs.create(&graph.child_run)
+            .await
+            .expect("publish child run");
+        agents
+            .create(&graph.child_agent)
+            .await
+            .expect("publish child agent");
+        fixture_frames
+            .create(&graph.child_frame)
+            .await
+            .expect("publish pending frame");
+        saga.record_product_graph_commit(prepared.commit_evidence(saga.version() + 1))
+            .expect("record graph commit");
+
+        let first = adapter
+            .materialize_child_product_selection(&saga)
+            .await
+            .expect("materialize selected frame");
+        let replayed = adapter
+            .materialize_child_product_selection(&saga)
+            .await
+            .expect("reclaim after effect success and saga save loss");
+
+        assert_eq!(first, replayed);
+        assert_eq!(first.idempotency_key, selection.idempotency_key);
+        assert_eq!(first.frame.frame_id, selection.materialized_frame_id);
+        assert_eq!(construction.commands.lock().await.len(), 1);
+        let materialized = fixture_frames
+            .get(first.frame.frame_id)
+            .await
+            .expect("load selected frame")
+            .expect("selected frame");
+        assert_eq!(materialized.created_by_id.as_deref(), Some("user-1"));
+        assert_eq!(
+            materialized.execution_profile_json,
+            Some(json!({"model": "selected"}))
+        );
     }
 
     #[tokio::test]

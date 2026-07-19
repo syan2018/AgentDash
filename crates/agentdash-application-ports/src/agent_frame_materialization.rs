@@ -1,5 +1,7 @@
 use std::sync::{Arc, OnceLock};
 
+use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::canvas::CanvasDataBinding;
 use agentdash_domain::workflow::SubjectRef;
 use async_trait::async_trait;
@@ -47,7 +49,20 @@ impl FrameConstructionCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RuntimeSurfaceUpdateRequest {
+pub struct RuntimeSurfaceUpdateRequest {
+    pub target: AgentRunTarget,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub change: RuntimeSurfaceChange,
+}
+
+impl RuntimeSurfaceUpdateRequest {
+    pub fn surface_kind(&self) -> RuntimeSurfaceKind {
+        self.change.surface_kind()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeSurfaceChange {
     CanvasBindingChanged {
         canvas_mount_id: String,
         binding: CanvasDataBinding,
@@ -77,7 +92,7 @@ pub enum RuntimeSurfaceUpdateRequest {
     },
 }
 
-impl RuntimeSurfaceUpdateRequest {
+impl RuntimeSurfaceChange {
     pub fn surface_kind(&self) -> RuntimeSurfaceKind {
         match self {
             Self::CanvasBindingChanged { .. } | Self::CanvasVisibilityRequested { .. } => {

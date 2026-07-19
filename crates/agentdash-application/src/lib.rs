@@ -23,6 +23,7 @@ pub mod mcp_preset;
 pub mod mcp_relay_adapter;
 pub mod platform_config;
 pub mod product_runtime_surface;
+pub mod product_runtime_surface_update;
 pub mod project;
 pub mod repository_set;
 pub mod routine;

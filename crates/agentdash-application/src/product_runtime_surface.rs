@@ -96,24 +96,30 @@ impl ProductAgentRunFactsResolver {
                 "Lifecycle AgentRun facts do not match Product target",
             ));
         }
-        let frame = self
+        let launch_frame = self
             .repos
             .agent_frame_repo
             .get(binding.launch_frame.frame_id)
             .await
             .map_err(|error| repository(error.to_string()))?
             .ok_or(AgentRunAppliedResourceSurfaceWriteError::Missing)?;
-        if frame.agent_id != agent.id
-            || u64::try_from(frame.revision).ok() != Some(binding.launch_frame.revision)
+        if launch_frame.agent_id != agent.id
+            || u64::try_from(launch_frame.revision).ok() != Some(binding.launch_frame.revision)
         {
             return Err(conflict(
                 "immutable launch AgentFrame does not match Product binding",
             ));
         }
-        let surface = ProductAgentSurfaceFacts::from_frame(&frame);
-        if surface.surface_revision != binding.source_binding.applied_surface_revision.0 {
+        let frame = self
+            .repos
+            .agent_frame_repo
+            .get_latest(agent.id)
+            .await
+            .map_err(|error| repository(error.to_string()))?
+            .ok_or(AgentRunAppliedResourceSurfaceWriteError::Missing)?;
+        if frame.agent_id != agent.id || frame.revision < launch_frame.revision {
             return Err(conflict(
-                "launch AgentFrame revision does not match Runtime applied surface",
+                "current AgentFrame does not descend from the immutable launch frame",
             ));
         }
         let vfs = frame

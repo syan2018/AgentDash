@@ -2,7 +2,11 @@
 
 ## 0. 执行入口
 
-本任务当前保持 `planning`。开始实现前必须：
+本任务已经进入执行阶段。当前按 W7/S4 Product lane、S5 final activation 与 S6 final
+conformance 的关键路径收尾，完整状态评估和阶段出口以
+[`final-convergence-closeout.md`](./final-convergence-closeout.md) 为准。
+
+首次开始实现前的规划 gate 为：
 
 1. 用户审阅并批准 `prd.md`、`design.md`、`transition-architecture.md`、本文件与
    manifests；
@@ -17,6 +21,9 @@
 父任务是唯一 Trellis lifecycle/branch/archive 单元。`workstreams/README.md` 只提供并行
 验收索引；依赖关系以本文件为准，安全迁移边界和派发协议以
 `transition-architecture.md` 为准。
+
+Product 业务以 `c3cc58b9` 和既有行为测试为 oracle；恢复时保留业务规则，只把旧
+RuntimeSession/journal/Backbone seam 适配到最终 owner。
 
 ## 1. 依赖图
 
@@ -415,6 +422,13 @@ cargo test -p agentdash-agent-runtime-test-support codex
 
 ### Implement
 
+- [ ] 以 `c3cc58b9` 建立 Product capability/file/route/composition/test oracle；
+  Companion、Frame Construction、Routine、Workspace、Canvas、Terminal、VFS、Wait、
+  Capability、Workflow 与 AgentRun commands 均有恢复条目。
+- [ ] 恢复 Product 源码、routes、AppState composition 和测试；业务条件、权限、
+  payload、gate/adoption 与用户可见副作用保持 oracle 语义。
+- [ ] 为恢复代码建立旧 seam → final owner compile ledger；适配只发生在依赖边界，
+  不重新实现 Product 领域。
 - [ ] AgentRun 只通过 Runtime Contract execute/read/changes。
 - [ ] Application/AgentRun 建立唯一 durable `AgentRunForkSaga` repository/table/state
   machine，预分配 child product IDs。
@@ -446,9 +460,18 @@ cargo test -p agentdash-agent-runtime-test-support codex
 - [ ] 注册真实 `LifecycleMountProvider`；conversation 路径不读取 journal/旧 session
   表，fork child 不拼 ancestor history；node artifacts/records 继续读取 Lifecycle
   自有事实。
+- [ ] 恢复 Routine、Workspace Module、Canvas、Terminal、Wait、Capability/Runtime
+  Tools、AgentRun workspace/runtime trace 的 production routes 与 composition，并分别
+  接 Product repositories、Runtime Surface/Tool Broker、AppliedResourceSurface、
+  terminal projection 和 canonical Runtime history。
+- [ ] 恢复旧 Hook presets 所表达的 Companion result、gate wake、context inheritance、
+  lifecycle advance 等 Product effect；这些 effect 落到明确 Product command/callback
+  owner 后，旧脚本引擎才满足删除条件。
 
 ### Check
 
+- [ ] Product capability parity inventory 中每一项均有 route/tool caller、application
+  behavior、final owner、projection consumer 和 tracer evidence。
 - [ ] Application 无 Host/service/Dash/Codex 依赖。
 - [ ] 需要 fork 的 product path admission 要求 exact fork。
 - [ ] Companion fork 与 fresh context 有不同 command/receipt/test。
@@ -477,9 +500,18 @@ pnpm --filter app-web test -- useSessionFeed
 
 ## 10. W8 — Schema / Crate Hard Cut
 
-S5/W8 的纠偏审计与恢复顺序见
-[`s5-correction-audit.md`](./s5-correction-audit.md)。Hard Cut 的零消费者证据必须来自
-production caller 已切换；取消模块声明、取消 route 或删除 caller 不构成迁移证据。
+S5/W8 的完整收尾顺序见
+[`final-convergence-closeout.md`](./final-convergence-closeout.md)。Hard Cut 的
+零消费者证据来自 replacement、production caller、composition、persistence、
+projection 与 behavior tracer 的共同闭合。
+
+W8 的正式 deletion 入口由以下阶段共同构成：
+
+1. C0：冻结 Product behavior oracle 与 capability inventory；
+2. C1：恢复 Product 源码、route、composition 与 tests；
+3. C2：把 Product 代码适配到 final owners；
+4. C3/C4：Product capability 与 read-model tracers 全部通过；
+5. C5：只删除 replacement manifest 证据完整的 legacy implementation。
 
 ### Ownership
 
@@ -491,6 +523,11 @@ production caller 已切换；取消模块声明、取消 route 或删除 caller
 
 ### Implement
 
+- [ ] 为每个 deletion candidate 建立 replacement manifest：target implementation、
+  callers、composition、repository/schema、projection、behavior tracer、negative
+  evidence。
+- [ ] 以 Product capability inventory 审核 activation history；Product 能力归 W7，
+  具备完整 replacement evidence 的 legacy implementation 归 W8。
 - [ ] Consolidate final forward migration，建立 Product/Runtime/Host/Dash/external projection
   分区、`agent_run_fork_saga`、DashAgentCommit 与 callback/effect constraints。
 - [ ] 生产 composition 切到唯一 final repositories/services。
@@ -520,6 +557,10 @@ production caller 已切换；取消模块声明、取消 route 或删除 caller
 
 ### Check
 
+- [ ] 每个物理删除都能引用完整 replacement manifest；缺少任一 evidence 的条目不进入
+  deletion diff。
+- [ ] Companion、Routine、Workflow、Workspace、Canvas、Terminal、VFS、Wait、
+  Lifecycle 与 canonical Session 产品行为没有因 crate/path 删除而消失。
 - [ ] 每个 crate 都有 design §1.3 的独立理由。
 - [ ] migration 无兼容 view、dual write、fallback 或旧数据 backfill。
 - [ ] W8 是唯一正式 migration owner；W2/W3 没有需要改写的历史 migration。

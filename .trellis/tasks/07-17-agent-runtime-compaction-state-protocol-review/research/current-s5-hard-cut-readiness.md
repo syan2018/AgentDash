@@ -1,5 +1,10 @@
 # S5 Atomic Hard Cut 就绪审计
 
+> 历史阶段记录，当前收尾以 `final-convergence-closeout.md` 为准。Product lane 的最终
+> checkpoint 还需要 Companion、Routine、Workspace/Canvas/Terminal、Lifecycle VFS、
+> Wait、Capability 与 canonical UI 的 production caller/tracer。本文保留当时的 owner
+> input，供 final replacement manifest 参考。
+
 ## 1. 审计范围与结论
 
 本审计最初基于 S3 完成后的代码，现已按 S4 Product target lane 集成后的

@@ -1,75 +1,145 @@
-# Agent Runtime Hard Cut 最终清单
+# Agent Runtime S5 Hard Cut 最终清单
 
-执行本清单前先核对
-[`s5-correction-audit.md`](./s5-correction-audit.md)：Product capability、API route 或
-前端 consumer 缺席不能作为旧实现可删除的证据。
+本清单以
+[`final-convergence-closeout.md`](./final-convergence-closeout.md) 为执行依据。S5
+只删除本任务已经
+正确替代并通过真实 consumer/tracer 证明的旧实现。
 
-## 当前基线
+## 当前真实状态
 
-- [x] 当前分支已合入 S5 受检基线、Platform Tool/Hook、Product canonical presentation 与 Relay Runtime Wire 四个生产切片（`8ca341a2` → `a6dabf47`）。
-- [x] `AppState` 已组合 Product persistence、final runtime tool catalog、Product authorizer、Platform handler，并向 Complete Agent 注册 tool contribution。
-- [x] Cloud / Local Runtime Wire placement 生产路径与 Relay bootstrap 已存在。
-- [x] 数据库只有一个 `0084_agent_runtime_complete_agent_hard_cut.sql`，已建立 Product / Runtime / Host / Dash Agent 最终分区及 fork、companion、placement、binding、effect、outbox 等状态表。
-- [x] `agentdash-executor`、`agentdash-application-hooks`、旧 application runtime gateway/session crate 已物理删除；SPI 与 extension gateway 已迁入新 owner。
-- [x] 当前工作树审计基线为 `a6dabf47`；旧 Product 草稿 `909a9a23` 仅作审计参考，不整体迁入。
+- [x] C0：工作树干净，Product behavior oracle 与 capability inventory 已固定。
+- [x] Product behavior oracle 固定为 `c3cc58b9`。
+- [x] Complete Agent / Managed Runtime / Host / Dash/Core 的已验证基础保留。
+- [x] canonical App Server protocol owner、source projector、Runtime carrier 与前端
+  reducer/renderer 已恢复。
+- [x] Lifecycle canonical history provider 已实现并注册到 VFS kernel。
+- [x] VFS surface route/resolver 已接 Product binding 与 AppliedResourceSurface。
+- [ ] S4 Product Lane Ready：尚未通过。
+- [ ] 正式 S5 deletion manifest：尚未形成。
 
-## 剩余 Hard Cut
+## C1 — Product Integrity
 
-### 1. 收敛 canonical Product / API / frontend consumer
+### Application modules
 
-- [ ] 修复 `agentdash-api/tests/agent_runtime_target_projection.rs` 的 6 个旧 contract 断点：删除 `ManagedRuntimeItemContent`、`content`、`content_digest`、`ItemUpserted` 假设，补齐 `evidence` 与 `source_binding`。
-- [ ] 将 Product command / mailbox 调用统一到生成的 typed contract，确保 Product 事实只经 Application 写入，Runtime projection/change 只表达平台事实。
-- [ ] 将前端 feed、terminal、workspace pending、lifecycle view 的 sequence/version 全部统一为 `RuntimeU64` wire string / 应用内 `bigint`。
-- [ ] 将前端 runtime fixture、round action、session projection 与 tests 从 `content/event/compactAgentRunContext` 迁到 canonical `presentation`、typed request 与 Managed Runtime item。
-- [ ] 删除 UI 中已无用途的 companion/runtime 参数与旧 service contract import。
-- [ ] Lifecycle VFS 通过 production-registered `LifecycleMountProvider` 和显式 history
-  query port 读取 Runtime canonical conversation history；`events.json` 保真，派生索引
-  可重建，node artifacts/records 仍由 Lifecycle owner 提供。
-- [ ] `runtime_traces` 等剩余诊断读取迁出 `agent_run_journal`，复用 canonical Product
-  projection，不建立第二套 session persistence reader。
-- [ ] 门禁：`cargo check -p agentdash-api --all-targets`、`pnpm --filter app-web typecheck` 通过。
+- [ ] 恢复并挂载 `companion`。
+- [ ] 恢复并挂载 `frame_construction`。
+- [ ] 恢复并挂载 `routine`。
+- [ ] 重新挂载仍在源码树中的 `canvas`、`capability`、`runtime_tools`、
+  `gate_wait_policy`、`wait_activity`。
+- [ ] 恢复旧 Hook presets 所承载的 Product effects inventory。
 
-### 2. 固定真实生产 composition
+### API routes
 
-- [ ] 核验 Native / Codex / Remote Complete Agent 的注册、driver、connector、Host binding 与 placement 都从同一 production composition 到达，不保留测试专用或旁路 owner。
-- [ ] 核验 Tool / Hook 的 `AppState` composition 与 PostgreSQL source/effect pin；读取、恢复、回调和重连均走唯一持久化事实。
-- [ ] 核验 fork / companion / compaction / recovery 从 Product command 到 Runtime、Host、Complete Agent、Dash Agent history 的闭环。
-- [ ] 核验 Relay placement / Runtime Wire 已由真实 caller 使用，再删除旧 Prompt / SessionEvent relay variant 与 registry 分支。
+- [ ] 恢复 Companion gate routes。
+- [ ] 恢复 Routine public/secured routes。
+- [ ] 恢复 Canvas routes。
+- [ ] 恢复 Workspace Module routes。
+- [ ] 恢复 Terminal routes。
+- [ ] 保持并验证 VFS surface routes。
+- [ ] 恢复 AgentRun workspace/runtime trace 读取 routes。
 
-### 3. 删除旧协议与错误 owner
+### AppState / production composition
 
-- [ ] 删除 workspace module 与 application 中剩余 `RuntimeJournalFact` / `RuntimeJournalRecord` / `journal_records_after` / `append_presentation` 路径；canonical presentation 只由最终 Product/Runtime contract 表达。
-- [ ] 将仍依赖 `BackboneEvent` / `BackboneEnvelope` 的真实生产 consumer 迁到 Runtime / Service / Wire / Product owner；生成代码、fixture 与测试同步迁移。
-- [ ] 清除平台层仍持有 agent session/history/context/compaction 语义的 `RuntimeSession` 路径；保留 Complete Agent 内的 `AgentSession = fold(history)`。
-- [ ] 收窄 `agentdash-platform-spi` 的旧 AgentTool / delegate / protocol re-export；Tool capability 仅由 Complete Agent contribution 与 Platform handler 组合。
-- [ ] 将 Codex 私有协议/codegen 与共享 Runtime / Service / Wire / Product contract 明确分开。
-- [ ] 删除 `agentdash-agent-types`；将 `agentdash-agent-protocol` 收窄为 canonical App
-  Server standard families + AgentDash typed extensions 的唯一 dependency-light owner，
-  清除其中 Backbone platform/product、Runtime internal 与 journal persistence
-  vocabulary。
-- [ ] 固定 canonical protocol/codegen 的 Rust/TypeScript owned roots、schema lock、
-  freshness 与 parity；根 `Cargo.toml`、`Cargo.lock` 和 `package.json` 只保留这一套生成
-  生态及 Codex integration 私有 vendor generator 的明确边界。
+- [ ] 恢复 Companion model preflight。
+- [ ] 恢复 collaboration tool contribution。
+- [ ] 恢复 Companion coordinator/worker、parent mailbox delivery、gate wake、
+  adoption/result。
+- [ ] 恢复 Routine executor 与 trigger composition。
+- [ ] 恢复 Wait service/provider 与 terminal convergence。
+- [ ] 恢复 Workspace Module、Canvas、Terminal control/presentation composition。
+- [ ] 恢复 Capability/Runtime Tool catalog contributions。
 
-### 4. 固定 schema 与持久化边界
+### Product behavior tests
 
-- [ ] 审核 0084 的唯一键、revision/version 单调约束、source/projection/change/outbox 关联及 fork/companion/placement/binding/effect 不变量。
-- [ ] 确保 repository 和生产 reader 只使用 0084 最终表，不再读写 0070 等历史 schema 的旧 Runtime/session/journal 表。
-- [ ] 更新 PostgreSQL migration/repository tests，验证重放、幂等、并发 CAS、outbox claim 与恢复路径。
+- [ ] 从 oracle 恢复 Companion、Frame Construction、Routine tests。
+- [ ] 从 oracle 恢复 AgentRun project start/delete/fork/message/workspace/mailbox tests。
+- [ ] 恢复 API route 与 AppState composition tracer tests。
 
-### 5. 最终删除与门禁
+## C2 — Final Seam Wiring
 
-- [ ] `rg` 负向门禁归零：旧 crate 名、`RuntimeJournalFact`、旧 RuntimeSession owner、`BackboneEvent/Envelope`、Relay Prompt/SessionEvent、兼容 adapter/fallback。
-- [ ] `cargo metadata --no-deps` 确认 workspace graph 不含已删除旧 crate，且
-  `agentdash-agent-protocol` 无 Runtime/Product/vendor transport 反向依赖。
-- [ ] 运行受影响 crate 的定向 tests/check，再运行 workspace Rust check/test、前端 typecheck/tests、contracts check 与 migration tests。
-- [ ] 通过一条真实生产链验证：Product command → Runtime operation/projection/change → Host placement/effect → Complete Agent → Dash Agent history → canonical presentation/UI。
-- [ ] 更新本清单为全通过，并记录仅剩的外部环境阻塞（若有）。
+- [ ] AgentRun create/input/control 只调用 Runtime Contract。
+- [ ] Companion Full 只调用 exact Runtime / Complete Agent Fork。
+- [ ] Companion fresh 只调用 Create + `InitialAgentContextPackage`，随后独立
+  `SubmitInput`。
+- [ ] Companion/channel/gate/adoption/result 只写 Product repositories。
+- [ ] Dash collaboration tool 经 Tool Broker 调 Product Companion command。
+- [ ] Routine / Workflow AgentCall 经 AgentRun Product command 调 Runtime。
+- [ ] Capability/Runtime Tools 编译为 Runtime Surface / Tool Broker contributions。
+- [ ] Hook Product effects 迁到 typed Product command/callback owner。
+- [ ] Workspace/Canvas/VFS grants 只读 AppliedResourceSurface。
+- [ ] Lifecycle VFS mount 进入 AgentRun AppliedResourceSurface materialization。
+- [ ] Terminal control与展示只读写 Product terminal projection/control owner。
+- [ ] AgentRun workspace/runtime trace 读取 canonical Product/Runtime projection。
+- [ ] 所有 conversation presentation 只使用 canonical App Server records。
+- [ ] Product 代码只依赖 Runtime Contract、Product repositories、AppliedResourceSurface
+  与 canonical conversation protocol。
 
-## 已知定向失败基线
+## C3/C4 — Product parity tracer
 
-- `cargo check -p agentdash-api --all-targets`：仅 `agent_runtime_target_projection.rs` 的 6 个旧 projection fixture/contract 编译错误。
-- `pnpm --filter app-web typecheck`：错误集中在 RuntimeU64、canonical presentation、typed Product command、旧 fixture 与旧 compact consumer。
-- `agentdash-agent-types` 仍待物理删除；canonical protocol/codegen 正在恢复为 Rust/TypeScript
-  单一 owned 协议生态，尚需清除旧 Backbone/platform/runtime 职责并完成 freshness/parity。
-- 初次负向审计仍命中 5 个 journal 路径、61 个 Backbone 文件、3 个旧 Relay variant 文件；`RuntimeSession` 和 AgentTool 的宽泛命中需按最终 owner 判定后清除真实旧路径。
+- [ ] Project Agent / AgentRun create、resume、delete。
+- [ ] 普通 input → Complete Agent → canonical Turn/Item/output → UI。
+- [ ] Native exact fork 与 Codex native fork。
+- [ ] Companion Full exact fork。
+- [ ] Companion Compact / WorkflowOnly / ConstraintsOnly fresh create。
+- [ ] Companion channel、gate、adoption、result、mailbox。
+- [ ] Dash collaboration tool spawn/read/wait/result。
+- [ ] Workflow AgentCall。
+- [ ] Routine trigger → AgentRun → terminal。
+- [ ] Workspace Module read/write/presentation。
+- [ ] Canvas read/write/promotion/diagnostics。
+- [ ] VFS surface read/list/search。
+- [ ] Lifecycle VFS canonical `events.json` 与 derived indexes。
+- [ ] Terminal create/input/resize/close/projection。
+- [ ] Wait activity 与 gate/terminal convergence。
+- [ ] Tool/Hook callback、permission、deadline、effect correlation。
+- [ ] Compaction Dash exact / Codex native projection。
+- [ ] reconnect cursor tail与gap snapshot reload。
+- [ ] restart/unknown outcome/recovery 使用同一 command/effect/child identity。
+
+## C5 — Final Hard Cut
+
+每个候选项必须填写：
+
+```text
+Legacy:
+Target replacement:
+Production callers:
+Composition:
+Repository/schema:
+Projection/consumer:
+Behavior tracer:
+Negative evidence:
+```
+
+候选范围：
+
+- [ ] platform `RuntimeSession*` delivery/live/capability/DTO/event。
+- [ ] universal `RuntimeJournalFact` / journal persistence/readers。
+- [ ] 已被 Complete Agent Host 替代的 connector/driver/executor。
+- [ ] 已被 Tool Broker / AgentHostCallbacks 替代的 Hook execution owner。
+- [ ] `agentdash-agent-types` 中已迁到最终 owner 的类型。
+- [ ] protocol 中 Backbone platform/product、Runtime internal、journal carrier。
+- [ ] Relay Prompt/SessionEvent legacy variants。
+- [ ] 无消费者的 SPI Agent delegate/re-export。
+- [ ] 旧 schema tables/fields/indexes。
+
+## 最终门禁
+
+- [ ] final migration、repositories 和 production composition 使用同一 schema。
+- [ ] canonical Rust/TypeScript protocol roots、schema lock、freshness 与 parity 通过。
+- [ ] `cargo metadata` 符合最终 crate DAG。
+- [ ] 旧 owner negative search 只剩 migration 删除语句或历史任务文档。
+- [ ] Rust affected crates/tests 通过。
+- [ ] PostgreSQL behavior、CAS、outbox、recovery tests 通过。
+- [ ] frontend typecheck、session tests 与 Product feature tests 通过。
+- [ ] 一条真实 production tracer 覆盖：
+
+```text
+Product command
+  -> Managed Runtime operation/change
+  -> Host placement/effect
+  -> Complete Agent
+  -> Agent-owned history
+  -> canonical conversation
+  -> Product API/UI/VFS consumer
+```

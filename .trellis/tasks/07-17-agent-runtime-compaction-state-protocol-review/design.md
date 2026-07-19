@@ -1146,6 +1146,8 @@ flowchart LR
 本任务采用“合同与物理边界先行，target lane 独立验证，最后原子 hard cut”的顺序。
 Current → Target 全景图、功能连续性矩阵、S0–S6 gate 和完整派发流程以
 [`transition-architecture.md`](transition-architecture.md) 为规范性迁移设计。
+当前分支的实际完成度、剩余纵向路径与 C0–C6 收尾 gate 以
+[`final-convergence-closeout.md`](final-convergence-closeout.md) 为执行索引。
 
 1. 固定 Runtime Contract、Complete Agent Service API、profile 与 conformance；
 2. 拆出 AgentCore，建立 Dash Agent history-maintained AgentSession；
@@ -1191,6 +1193,13 @@ contract/Runtime/Host/Surface，Dash/Native 负责 Dash Agent/Core/Native，Exte
 Agents 负责 Codex/Remote，Product/Protocol 负责 AgentRun/Companion/API/UI；Hard Cut
 只拥有 migration、workspace/composition、集成与删除热点。S5 稳定结果中只有一条
 production path、一个事实 owner 和一套 canonical schema/contract。
+
+S5 的 deletion manifest 必须由 replacement evidence 推导：target implementation、
+production callers、composition、repository/schema、projection consumer、behavior
+tracer 与 old-symbol negative evidence 缺一不可。取消 Product module、route 或 caller
+不会形成迁移证据。若审计发现 Product lane 尚未完整，先以切换前实现和测试为业务
+oracle 恢复 Product 行为，再把旧 Runtime/Journal/Session seam 适配到最终 owner；Hard
+Cut 不重新设计 Product 领域。
 
 实施只使用主会话内嵌 subagent 工具，不建立 Trellis channel。除 Cargo/lockfile、正式
 migration、production composition、canonical generated contracts、breaking public

@@ -1008,3 +1008,20 @@
   worktrees while preserving branches/commits, keep every dirty worktree untouched, and resume with
   shorter visible checkpoint intervals. `f5fa039f` remains an internal staging tip rather than a
   false S5 stable checkpoint because production composition is not yet complete.
+
+## 2026-07-19 Final convergence closeout
+
+- 当前分支已统一回到单目录、单分支执行；本轮未创建 worktree。
+- canonical protocol、presentation carrier、Lifecycle canonical history provider 与 VFS
+  surface 已形成 `3eb78e80`、`6e05a0f5`、`cd775331`、`e176ae10`、`be874b73`
+  checkpoints。
+- 当前 S4 的剩余范围已收敛为 Companion、Routine、Workspace/Canvas/Terminal、
+  Lifecycle VFS、Wait、Capability 与 canonical UI 的 production caller/tracer。
+- 已清理未提交的 Companion PG repository / graph helper 实验改动，工作树恢复干净。
+- Product behavior oracle 固定为 `c3cc58b9`。后续先从 oracle 恢复 Product 源码、routes、
+  composition 与 tests，再只在旧依赖点机械适配 Runtime Contract、Tool Broker、
+  Product repositories、AppliedResourceSurface 与 canonical projection。
+- `final-convergence-closeout.md` 已固定 C0–C6 全分支收尾路径；
+  `hard-cut-final-checklist.md` 已对齐 Product parity 与 replacement evidence。
+- 当前真实阶段：C0 完成，下一步进入 C1 Product Integrity；正式 deletion manifest 在
+  C1–C4 tracer 闭合后形成。

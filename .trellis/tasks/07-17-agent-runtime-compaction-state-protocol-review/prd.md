@@ -485,11 +485,19 @@ infrastructure adapter 理由。
   vendor/product 类型泄漏；
 - W1–W9 只作为需求、依赖与验收分解；实施派发使用粗粒度纵向 bundle，可交接的稳定
   边界使用 S0–S6 checkpoint，三者不得机械地一一对应；
+- 当前分支的实际完成度、C0–C6 收尾关键路径、Product capability tracer matrix 与
+  crate 收尾以 `final-convergence-closeout.md` 为执行索引；
 - S0–S4 允许在隔离 test composition 中建立 target lane，但不得提前改变 production
   composition、canonical generated contract、正式 repository/schema 或默认 caller；
 - S5 把 caller、contract/crate identity、composition、repository/schema、projection
   与 legacy deletion 作为一个 cutover unit 激活。S5 完成后必须只有一条 production
   path、一个事实 owner 和一套 canonical schema/contract；
+- S5 deletion 只接受 replacement manifest 中已经同时证明 target implementation、
+  production caller、composition、repository/schema、projection consumer、behavior
+  tracer 与 negative evidence 的旧实现。取消 module/route/caller 不构成零消费者证据；
+- S4 Product lane 必须覆盖 Companion、Routine、Workflow、Workspace、Canvas、Terminal、
+  VFS、Wait、Lifecycle 与 canonical UI 的既有产品能力。审计发现过早 activation 时，
+  先从切换前 oracle 恢复业务源码与测试，再只把旧 seam 适配到最终 owner；
 - 每个 stable checkpoint 都通过真实 tracer bullet 证明 direct run、fork、Companion、
   compaction、tool/hook、reconnect/recovery 与协议投影仍有完整路径，不能只以编译通过或
   negative search 代替。
@@ -601,4 +609,5 @@ infrastructure adapter 理由。
 - [ ] AC21. `transition-architecture.md` 中 Current → Target、S0–S6、activation-ready
   change set、S5 cutover unit、粗粒度内嵌 subagent 派发和 finding 返工路由已被
   `design.md`、`implement.md` 与 manifests 引用；每个 checkpoint 都有单一路径、唯一
-  owner、tracer bullet 与独立 check 证据。
+  owner、tracer bullet 与独立 check 证据；S5 的每个物理删除都有完整 replacement
+  manifest，Product capability 缺席不会被当作 migration evidence。

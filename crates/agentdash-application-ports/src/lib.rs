@@ -1,7 +1,6 @@
 pub mod agent_frame_hook_plan;
 pub mod agent_frame_materialization;
 pub mod agent_run_fork;
-pub mod agent_run_message_submission;
 pub mod agent_run_permission;
 pub mod agent_run_surface;
 pub mod backend_transport;

@@ -25,10 +25,9 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunCommandReceiptRepository, AgentRunLineageRepository,
-    GateResultDeliveryMarkerRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository, WorkflowGraphRepository,
-    WorkflowTemplateInstallRepository,
+    AgentRunLineageRepository, GateResultDeliveryMarkerRepository, LifecycleAgentRepository,
+    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    WorkflowGraphRepository, WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 
@@ -74,7 +73,6 @@ pub struct RepositorySet {
     pub gate_result_delivery_marker_repo: Arc<dyn GateResultDeliveryMarkerRepository>,
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     pub agent_run_lineage_repo: Arc<dyn AgentRunLineageRepository>,
-    pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,

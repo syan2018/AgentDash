@@ -4,9 +4,6 @@ use sqlx::PgPool;
 const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_lineages",
     "agent_procedures",
-    "agent_run_mailbox_messages",
-    "agent_run_mailbox_states",
-    "agent_run_product_command_receipts",
     "auth_sessions",
     "backend_execution_leases",
     "backend_workspace_inventory",
@@ -62,6 +59,9 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
 ];
 
 const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "agent_run_mailbox_messages",
+    "agent_run_mailbox_states",
+    "agent_run_product_command_receipts",
     "agent_run_fork_saga",
     "agent_run_fork_graph",
     "companion_fresh_saga",

@@ -86,11 +86,11 @@ use agentdash_infrastructure::{
     CompleteAgentComposition, CompleteAgentCompositionError,
     CompleteAgentProductRuntimeProvisioner, CompleteAgentServiceSelectionCatalog,
     DeferredProductRuntimeToolService, PinnedCompleteAgentVerificationCatalog,
-    PostgresAgentRunForkGraphStore, PostgresAgentRunMailboxRepository,
-    PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
-    PostgresCompanionContinuationSagaRepository, PostgresWorkflowExecutorEffectRepository,
-    PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
-    ProcessShellTerminalRegistry, ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
+    PostgresAgentRunForkGraphStore, PostgresAgentRunProductRuntimeBindingRepository,
+    PostgresAgentRunTerminalProjectionStore, PostgresCompanionContinuationSagaRepository,
+    PostgresWorkflowExecutorEffectRepository, PostgresWorkflowRecoveryRepository,
+    PostgresWorkspaceModulePresentationStore, ProcessShellTerminalRegistry,
+    ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
     ProductionCompleteAgentServiceSelector, WorkspaceModulePresentRuntimeTool,
     final_runtime_tool_catalog, product_runtime_tool_catalog,
 };
@@ -340,7 +340,6 @@ impl AppState {
             repos.agent_frame_repo.clone(),
             runtime_product_bindings.clone(),
             repos.lifecycle_gate_repo.clone(),
-            Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone())),
             shell_terminal_registry.activity_registry(),
         ));
         let lifecycle_runtime_tool = Arc::new(DeferredProductRuntimeToolService::new(
@@ -557,7 +556,6 @@ impl AppState {
                 subject_associations: repos.lifecycle_subject_association_repo.clone(),
                 lifecycle_gates: repos.lifecycle_gate_repo.clone(),
                 agent_lineage: repos.agent_lineage_repo.clone(),
-                receipts: repos.agent_run_command_receipt_repo.clone(),
                 frame_construction: frame_construction.clone(),
                 product_launch: product_launch.clone(),
                 product_input: product_input_delivery.clone(),

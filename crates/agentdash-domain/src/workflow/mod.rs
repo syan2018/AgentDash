@@ -1,7 +1,6 @@
 mod agent_frame;
 mod agent_lineage;
 mod agent_run_lineage;
-mod command_receipt;
 pub mod dispatch;
 mod entity;
 mod gate_result_delivery_marker;
@@ -17,10 +16,6 @@ mod workflow_executor_effect;
 pub use agent_frame::{AgentFrame, AgentFrameSurfaceDocument};
 pub use agent_lineage::AgentLineage;
 pub use agent_run_lineage::AgentRunLineage;
-pub use command_receipt::{
-    AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind, AgentRunCommandReceipt,
-    AgentRunCommandReceiptRepository, AgentRunCommandStatus, NewAgentRunCommandReceipt,
-};
 pub use dispatch::{
     AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy, AgentRuntimeRefs, CapabilityPolicy,
     ContextPolicy, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, GatePolicy,

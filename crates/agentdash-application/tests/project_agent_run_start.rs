@@ -1,9 +1,6 @@
-use std::{
-    collections::BTreeMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use agentdash_agent_runtime_contract::{
@@ -26,13 +23,10 @@ use agentdash_application_ports::agent_frame_materialization::{
     AgentRunFrameSurfaceError, FrameConstructionCommand,
 };
 use agentdash_domain::{
-    DomainError,
     agent::{ProjectAgent, ProjectAgentRepository},
     common::AgentConfig,
     workflow::{
-        AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunCommandClaim,
-        AgentRunCommandReceipt, AgentRunCommandReceiptRepository, AgentRunCommandStatus,
-        LifecycleAgentRepository, LifecycleRunRepository, NewAgentRunCommandReceipt,
+        AgentFrame, AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
     },
 };
 use agentdash_platform_spi::{AuthIdentity, AuthMode};
@@ -43,159 +37,9 @@ use agentdash_test_support::workflow::{
     MemoryWorkflowGraphRepository,
 };
 use async_trait::async_trait;
-use chrono::Utc;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use uuid::Uuid;
-
-#[derive(Default)]
-struct RecordingReceipts {
-    by_identity: Mutex<BTreeMap<(String, String, String), AgentRunCommandReceipt>>,
-    by_id: Mutex<BTreeMap<Uuid, (String, String, String)>>,
-}
-
-#[async_trait]
-impl AgentRunCommandReceiptRepository for RecordingReceipts {
-    async fn claim(
-        &self,
-        receipt: NewAgentRunCommandReceipt,
-    ) -> Result<AgentRunCommandClaim, DomainError> {
-        let key = (
-            receipt.scope_kind.clone(),
-            receipt.scope_key.clone(),
-            receipt.client_command_id.clone(),
-        );
-        let mut values = self.by_identity.lock().await;
-        if let Some(existing) = values.get(&key) {
-            if existing.command_kind != receipt.command_kind
-                || existing.request_digest != receipt.request_digest
-            {
-                return Err(DomainError::Conflict {
-                    entity: "agent_run_command_receipt",
-                    constraint: "request_digest",
-                    message: "client command identity was reused for another request".to_owned(),
-                });
-            }
-            return Ok(AgentRunCommandClaim::Duplicate(existing.clone()));
-        }
-        let now = Utc::now();
-        let stored = AgentRunCommandReceipt {
-            id: Uuid::new_v4(),
-            scope_kind: receipt.scope_kind,
-            scope_key: receipt.scope_key,
-            command_kind: receipt.command_kind,
-            client_command_id: receipt.client_command_id,
-            request_digest: receipt.request_digest,
-            status: AgentRunCommandStatus::Pending,
-            mailbox_message_id: None,
-            accepted_refs: None,
-            result_json: None,
-            error_message: None,
-            created_at: now,
-            updated_at: now,
-            accepted_at: None,
-            failed_at: None,
-        };
-        self.by_id.lock().await.insert(stored.id, key.clone());
-        values.insert(key, stored.clone());
-        Ok(AgentRunCommandClaim::Created(stored))
-    }
-
-    async fn mark_accepted(
-        &self,
-        id: Uuid,
-        accepted_refs: AgentRunAcceptedRefs,
-    ) -> Result<AgentRunCommandReceipt, DomainError> {
-        self.mutate(id, |receipt| {
-            receipt.status = AgentRunCommandStatus::Accepted;
-            receipt.accepted_refs = Some(accepted_refs);
-            receipt.accepted_at = Some(Utc::now());
-        })
-        .await
-    }
-
-    async fn attach_mailbox_message(
-        &self,
-        id: Uuid,
-        mailbox_message_id: Uuid,
-    ) -> Result<AgentRunCommandReceipt, DomainError> {
-        self.mutate(id, |receipt| {
-            receipt.mailbox_message_id = Some(mailbox_message_id);
-        })
-        .await
-    }
-
-    async fn store_result_json(
-        &self,
-        id: Uuid,
-        result_json: serde_json::Value,
-    ) -> Result<AgentRunCommandReceipt, DomainError> {
-        self.mutate(id, |receipt| receipt.result_json = Some(result_json))
-            .await
-    }
-
-    async fn accept_with_result(
-        &self,
-        id: Uuid,
-        accepted_refs: AgentRunAcceptedRefs,
-        result_json: serde_json::Value,
-    ) -> Result<AgentRunCommandReceipt, DomainError> {
-        self.mutate(id, |receipt| {
-            receipt.status = AgentRunCommandStatus::Accepted;
-            receipt.accepted_refs = Some(accepted_refs);
-            receipt.result_json = Some(result_json);
-            receipt.accepted_at.get_or_insert_with(Utc::now);
-        })
-        .await
-    }
-
-    async fn mark_terminal_failed(
-        &self,
-        id: Uuid,
-        error_message: String,
-    ) -> Result<AgentRunCommandReceipt, DomainError> {
-        self.mutate(id, |receipt| {
-            receipt.status = AgentRunCommandStatus::TerminalFailed;
-            receipt.error_message = Some(error_message);
-            receipt.failed_at = Some(Utc::now());
-        })
-        .await
-    }
-
-    async fn get(&self, id: Uuid) -> Result<Option<AgentRunCommandReceipt>, DomainError> {
-        let key = self.by_id.lock().await.get(&id).cloned();
-        let Some(key) = key else {
-            return Ok(None);
-        };
-        Ok(self.by_identity.lock().await.get(&key).cloned())
-    }
-}
-
-impl RecordingReceipts {
-    async fn mutate(
-        &self,
-        id: Uuid,
-        mutate: impl FnOnce(&mut AgentRunCommandReceipt),
-    ) -> Result<AgentRunCommandReceipt, DomainError> {
-        let key =
-            self.by_id
-                .lock()
-                .await
-                .get(&id)
-                .cloned()
-                .ok_or_else(|| DomainError::NotFound {
-                    entity: "agent_run_command_receipt",
-                    id: id.to_string(),
-                })?;
-        let mut values = self.by_identity.lock().await;
-        let receipt = values
-            .get_mut(&key)
-            .expect("receipt id index and identity map stay aligned");
-        mutate(receipt);
-        receipt.updated_at = Utc::now();
-        Ok(receipt.clone())
-    }
-}
 
 struct StableFrameConstruction {
     frames: Arc<MemoryAgentFrameRepository>,
@@ -330,7 +174,18 @@ impl AgentRunProductInputDeliveryPort for RecordingInput {
         &self,
         command: DeliverAgentRunProductInput,
     ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError> {
-        self.commands.lock().await.push(command.clone());
+        let mut commands = self.commands.lock().await;
+        if commands.iter().any(|existing| {
+            existing.target == command.target
+                && existing.client_command_id == command.client_command_id
+                && existing.content != command.content
+        }) {
+            return Err(AgentRunProductInputDeliveryError::Command(
+                "concrete Agent rejected a reused effect identity with different input".to_owned(),
+            ));
+        }
+        commands.push(command.clone());
+        drop(commands);
         if self.fail_first.swap(false, Ordering::SeqCst) {
             return Err(AgentRunProductInputDeliveryError::Command(
                 "injected lost input receipt".to_owned(),
@@ -416,7 +271,6 @@ impl Fixture {
             subject_associations: Arc::new(MemoryLifecycleSubjectAssociationRepository::default()),
             lifecycle_gates: Arc::new(MemoryLifecycleGateRepository::default()),
             agent_lineage: Arc::new(MemoryAgentLineageRepository::default()),
-            receipts: Arc::new(RecordingReceipts::default()),
             frame_construction,
             product_launch: launch.clone(),
             product_input: input.clone(),
@@ -453,7 +307,7 @@ impl Fixture {
 }
 
 #[tokio::test]
-async fn launch_unknown_outcome_retries_same_product_graph_and_replays_frozen_result() {
+async fn launch_unknown_outcome_retries_same_product_graph_and_agent_effects() {
     let fixture = Fixture::new(true, false).await;
     let command = fixture.command("client-1", "review this");
     fixture
@@ -510,8 +364,8 @@ async fn launch_unknown_outcome_retries_same_product_graph_and_replays_frozen_re
         .expect("terminal replay");
     assert!(replay.duplicate);
     assert_eq!(replay.outcome, recovered.outcome);
-    assert_eq!(fixture.launch.requests.lock().await.len(), 2);
-    assert_eq!(fixture.input.commands.lock().await.len(), 1);
+    assert_eq!(fixture.launch.requests.lock().await.len(), 3);
+    assert_eq!(fixture.input.commands.lock().await.len(), 2);
 }
 
 #[tokio::test]
@@ -539,7 +393,7 @@ async fn lost_initial_input_receipt_retries_same_input_after_active_runtime_laun
 }
 
 #[tokio::test]
-async fn client_command_id_reuse_with_another_semantic_request_is_rejected_before_second_graph() {
+async fn client_command_id_reuse_with_another_input_is_rejected_by_the_agent_effect_owner() {
     let fixture = Fixture::new(false, false).await;
     fixture
         .service
@@ -550,12 +404,9 @@ async fn client_command_id_reuse_with_another_semantic_request_is_rejected_befor
         .service
         .start(fixture.command("client-3", "different"))
         .await
-        .expect_err("digest conflict");
-    assert!(matches!(
-        error,
-        agentdash_application::ApplicationError::Conflict(_)
-    ));
-    assert_eq!(fixture.launch.requests.lock().await.len(), 1);
+        .expect_err("Agent effect identity conflict");
+    assert!(error.to_string().contains("reused effect identity"));
+    assert_eq!(fixture.launch.requests.lock().await.len(), 2);
     assert_eq!(fixture.input.commands.lock().await.len(), 1);
 }
 

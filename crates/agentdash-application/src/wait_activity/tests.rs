@@ -7,17 +7,12 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunTerminalRegistry, TerminalOutputSnapshot,
 };
 use agentdash_domain::DomainError;
-use agentdash_domain::agent_run_mailbox::{
-    AgentRunMailboxCreateOutcome, AgentRunMailboxMessage, AgentRunMailboxRepository,
-    MailboxMessageStatus, NewAgentRunMailboxMessage,
-};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, GateWaitPolicyEnvelope, LifecycleAgent,
     LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
 };
 use async_trait::async_trait;
-use chrono::Utc;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -899,7 +894,6 @@ fn test_service_with_gate_repo(
         Arc::new(NoopAgentFrameRepo),
         Arc::new(NoopRuntimeBindingRepo),
         gate_repo,
-        Arc::new(NoopMailboxRepo),
         terminal_registry,
     )
 }
@@ -1050,137 +1044,5 @@ impl AgentRunProductRuntimeBindingRepository for NoopRuntimeBindingRepo {
         _thread_id: &RuntimeThreadId,
     ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
         Ok(None)
-    }
-}
-
-struct NoopMailboxRepo;
-
-#[async_trait]
-impl AgentRunMailboxRepository for NoopMailboxRepo {
-    async fn create_message(
-        &self,
-        _message: NewAgentRunMailboxMessage,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        Err(DomainError::InvalidConfig("noop".to_string()))
-    }
-
-    async fn create_message_idempotent(
-        &self,
-        _message: NewAgentRunMailboxMessage,
-    ) -> Result<AgentRunMailboxCreateOutcome, DomainError> {
-        Err(DomainError::InvalidConfig("noop".to_string()))
-    }
-
-    async fn get_message(&self, _id: Uuid) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
-        Ok(None)
-    }
-
-    async fn list_messages(
-        &self,
-        _run_id: Uuid,
-        _agent_id: Uuid,
-    ) -> Result<Vec<AgentRunMailboxMessage>, DomainError> {
-        Ok(Vec::new())
-    }
-
-    async fn claim_next(
-        &self,
-        _request: agentdash_domain::agent_run_mailbox::AgentRunMailboxClaimRequest,
-    ) -> Result<Vec<AgentRunMailboxMessage>, DomainError> {
-        Ok(Vec::new())
-    }
-
-    async fn claim_reconciliation(
-        &self,
-        _run_id: Uuid,
-        _agent_id: Uuid,
-        _claim_token: Uuid,
-        _claim_expires_at: chrono::DateTime<Utc>,
-    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
-        Ok(None)
-    }
-
-    async fn release_reconciliation_claim(
-        &self,
-        _id: Uuid,
-        _claim_token: Uuid,
-        _last_error: String,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        Err(DomainError::InvalidConfig("noop".to_string()))
-    }
-
-    async fn recover_expired_consuming(
-        &self,
-        _now: chrono::DateTime<Utc>,
-    ) -> Result<u64, DomainError> {
-        Ok(0)
-    }
-
-    async fn mark_message_status(
-        &self,
-        _id: Uuid,
-        _claim_token: Option<Uuid>,
-        _status: MailboxMessageStatus,
-        _last_error: Option<String>,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        Err(DomainError::InvalidConfig("noop".to_string()))
-    }
-
-    async fn promote_message(
-        &self,
-        _run_id: Uuid,
-        _agent_id: Uuid,
-        _id: Uuid,
-        _priority: i32,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        Err(DomainError::InvalidConfig("noop".to_string()))
-    }
-
-    async fn delete_message(
-        &self,
-        _id: Uuid,
-    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
-        Ok(None)
-    }
-
-    async fn cleanup_user_payload(&self, _id: Uuid) -> Result<(), DomainError> {
-        Ok(())
-    }
-
-    async fn pause_state(
-        &self,
-        _run_id: Uuid,
-        _agent_id: Uuid,
-        _reason: String,
-        _message: Option<String>,
-    ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
-        Err(DomainError::InvalidConfig("noop".to_string()))
-    }
-
-    async fn resume_state(
-        &self,
-        _run_id: Uuid,
-        _agent_id: Uuid,
-    ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
-        Err(DomainError::InvalidConfig("noop".to_string()))
-    }
-
-    async fn get_state(
-        &self,
-        _run_id: Uuid,
-        _agent_id: Uuid,
-    ) -> Result<Option<agentdash_domain::agent_run_mailbox::AgentRunMailboxState>, DomainError>
-    {
-        Ok(None)
-    }
-
-    async fn move_message_after(
-        &self,
-        _id: Uuid,
-        _after_id: Option<Uuid>,
-        _run_id: Uuid,
-        _agent_id: Uuid,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        Err(DomainError::InvalidConfig("noop".to_string()))
     }
 }

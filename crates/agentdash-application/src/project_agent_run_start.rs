@@ -18,11 +18,9 @@ use agentdash_domain::{
     common::AgentConfig,
     workflow::{
         AgentFrameRepository, AgentLaunchIntent, AgentLineageRepository, AgentPolicy,
-        AgentRunAcceptedRefs, AgentRunCommandKind, AgentRunCommandReceiptRepository,
         CapabilityPolicy, ContextPolicy, ExecutionSource, LifecycleAgentRepository,
         LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-        NewAgentRunCommandReceipt, RunPolicy, RuntimePolicy, SubjectRef, WorkflowGraphRef,
-        WorkflowGraphRepository,
+        RunPolicy, RuntimePolicy, SubjectRef, WorkflowGraphRef, WorkflowGraphRepository,
     },
 };
 use agentdash_platform_spi::AuthIdentity;
@@ -31,8 +29,6 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{ApplicationError, lifecycle::LifecycleDispatchService};
-
-const START_SCOPE_KIND: &str = "project_agent_run_start";
 
 #[derive(Debug, Clone)]
 pub struct ProjectAgentRunStartCommand {
@@ -97,7 +93,6 @@ pub struct ProjectAgentRunStartDeps {
     pub subject_associations: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub lifecycle_gates: Arc<dyn LifecycleGateRepository>,
     pub agent_lineage: Arc<dyn AgentLineageRepository>,
-    pub receipts: Arc<dyn AgentRunCommandReceiptRepository>,
     pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     pub product_launch: Arc<dyn AgentRunProductLaunchPort>,
     pub product_input: Arc<dyn AgentRunProductInputDeliveryPort>,
@@ -152,48 +147,17 @@ impl ProjectAgentRunStartService {
                     ConversationModelConfigSourceModel::ProjectAgentPreset,
                 )
             });
-        let request_digest = request_digest(
-            &command,
-            &subject_ref,
-            &effective_config,
-            &effective_executor,
-        )?;
-        let claim = self
-            .deps
-            .receipts
-            .claim(NewAgentRunCommandReceipt {
-                scope_kind: START_SCOPE_KIND.to_owned(),
-                scope_key: format!("{}:{}", command.project_id, command.project_agent_id),
-                command_kind: AgentRunCommandKind::ProjectAgentStart,
-                client_command_id: command.client_command_id.trim().to_owned(),
-                request_digest,
-            })
-            .await?;
-        let receipt = claim.receipt().clone();
-        if let Some(result_json) = receipt.result_json {
-            let outcome = serde_json::from_value(result_json).map_err(|error| {
-                ApplicationError::Internal(format!(
-                    "Project AgentRun start durable result 无法读取: {error}"
-                ))
-            })?;
-            return Ok(ProjectAgentRunStartResult {
-                outcome,
-                duplicate: true,
-            });
-        }
-        if receipt.status == agentdash_domain::workflow::AgentRunCommandStatus::TerminalFailed {
-            return Err(ApplicationError::Internal(
-                receipt
-                    .error_message
-                    .unwrap_or_else(|| "Project AgentRun start failed".to_owned()),
-            ));
-        }
-
         let identities = StableStartIdentities::derive(
             command.project_id,
             command.project_agent_id,
             command.client_command_id.trim(),
         )?;
+        let duplicate = self
+            .deps
+            .lifecycle_runs
+            .get_by_id(identities.run_id)
+            .await?
+            .is_some();
         let execution_profile_json = serde_json::to_value(&effective_config)
             .map_err(|error| ApplicationError::BadRequest(error.to_string()))?;
         let dispatch = LifecycleDispatchService::new(
@@ -251,22 +215,6 @@ impl ProjectAgentRunStartService {
         let runtime_thread_id = RuntimeThreadId::new(identities.runtime_id.to_string())
             .map_err(|error| ApplicationError::Internal(error.to_string()))?;
 
-        // Product graph identities become durable evidence before Create reaches Runtime.
-        self.deps
-            .receipts
-            .mark_accepted(
-                receipt.id,
-                AgentRunAcceptedRefs {
-                    run_id: identities.run_id,
-                    agent_id: identities.agent_id,
-                    frame_id: Some(identities.frame_id),
-                    frame_revision: Some(frame.revision),
-                    runtime_thread_id: Some(runtime_thread_id.to_string()),
-                    runtime_operation_id: None,
-                },
-            )
-            .await?;
-
         let mut profile = ProductExecutionProfileRef {
             profile_key: effective_config.executor.clone(),
             profile_revision: 1,
@@ -292,7 +240,7 @@ impl ProjectAgentRunStartService {
                         agent_id: identities.agent_id,
                     },
                     runtime_thread_id: runtime_thread_id.clone(),
-                    idempotency_key: format!("project-agent-run-start:{}", receipt.id),
+                    idempotency_key: format!("project-agent-run-start:{}", identities.run_id),
                     frame: ProductAgentFrameRef {
                         frame_id: frame.id,
                         agent_id: frame.agent_id,
@@ -322,7 +270,7 @@ impl ProjectAgentRunStartService {
                 content: command.input,
                 source: MailboxSourceIdentity::composer()
                     .with_source_ref(command.identity.user_id.clone())
-                    .with_correlation_ref(receipt.id.to_string()),
+                    .with_correlation_ref(command.client_command_id.trim().to_owned()),
                 origin: MailboxMessageOrigin::User,
                 client_command_id: format!("{}:initial-input", command.client_command_id.trim()),
             })
@@ -347,27 +295,7 @@ impl ProjectAgentRunStartService {
             effective_executor: effective_executor_snapshot(effective_executor),
             agent_summary: project_agent_summary(project_agent_context),
         };
-        let result_json = serde_json::to_value(&outcome)
-            .map_err(|error| ApplicationError::Internal(error.to_string()))?;
-        self.deps
-            .receipts
-            .accept_with_result(
-                receipt.id,
-                AgentRunAcceptedRefs {
-                    run_id: identities.run_id,
-                    agent_id: identities.agent_id,
-                    frame_id: Some(identities.frame_id),
-                    frame_revision: Some(frame.revision),
-                    runtime_thread_id: Some(runtime_thread_id.to_string()),
-                    runtime_operation_id: outcome.runtime_operation_id.clone(),
-                },
-                result_json,
-            )
-            .await?;
-        Ok(ProjectAgentRunStartResult {
-            outcome,
-            duplicate: claim.duplicate(),
-        })
+        Ok(ProjectAgentRunStartResult { outcome, duplicate })
     }
 }
 
@@ -446,35 +374,6 @@ fn validate_subject(project_id: Uuid, subject: &SubjectRef) -> Result<(), Applic
             "不支持的 ProjectAgent subject kind: {kind}"
         ))),
     }
-}
-
-fn request_digest(
-    command: &ProjectAgentRunStartCommand,
-    subject: &SubjectRef,
-    effective_config: &AgentConfig,
-    effective_executor: &ConversationEffectiveExecutorConfigModel,
-) -> Result<String, ApplicationError> {
-    agentdash_agent_runtime_contract::canonical_json_sha256(&serde_json::json!({
-        "schema": "agentdash.project-agent-run-start/v1",
-        "project_id": command.project_id,
-        "project_agent_id": command.project_agent_id,
-        "input": command.input,
-        "subject": {
-            "kind": subject.kind,
-            "id": subject.id,
-        },
-        "effective_config": effective_config,
-        "effective_executor": {
-            "executor": effective_executor.executor,
-            "provider_id": effective_executor.provider_id,
-            "model_id": effective_executor.model_id,
-            "agent_id": effective_executor.agent_id,
-            "thinking_level": effective_executor.thinking_level,
-            "source": model_source_name(effective_executor.source),
-        },
-        "backend_selection": command.backend_selection,
-    }))
-    .map_err(|error| ApplicationError::Internal(error.to_string()))
 }
 
 fn workflow_graph_ref(

@@ -14,13 +14,13 @@ import type {
   AgentRunMessageCommandResponse,
   BackendSelectionRequestDto,
   SessionMessageRefDto,
-} from "../../../generated/agent-run-mailbox-contracts";
+} from "../../../generated/agent-run-interaction-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   cancelAgentRun,
   forkAgentRun,
   submitAgentRunComposerInput,
-} from "../../../services/agentRunMailbox";
+} from "../../../services/agentRunInteraction";
 import type {
   CreateProjectAgentRunRequest,
   ProjectAgentRunStartResult,

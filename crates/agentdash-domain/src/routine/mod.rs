@@ -4,7 +4,7 @@ mod value_objects;
 
 pub use entity::{
     DispatchStrategy, Routine, RoutineDispatchRefs, RoutineExecution, RoutineExecutionStatus,
-    RoutineMailboxDispatchRefs, RoutineTriggerConfig,
+    RoutineInputHandoffRefs, RoutineTriggerConfig,
 };
 pub use repository::{RoutineExecutionRepository, RoutineRepository};
 pub use value_objects::{

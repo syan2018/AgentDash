@@ -10,7 +10,7 @@ import type { ProjectEventStreamEnvelope } from "../../../generated/project-cont
 import type {
   ConversationCommandKind,
   ConversationCommandStaleGuardView,
-} from "../../../generated/agent-run-mailbox-contracts";
+} from "../../../generated/agent-run-interaction-contracts";
 import type { ProjectAgentSummary } from "../../../types";
 import {
   type AgentRunChatSubmitIntent,

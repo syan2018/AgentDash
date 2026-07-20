@@ -102,19 +102,19 @@ pub enum DispatchStrategy {
 pub struct RoutineDispatchRefs {
     pub runtime_refs: AgentRuntimeRefs,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mailbox_refs: Option<RoutineMailboxDispatchRefs>,
+    pub input_handoff_refs: Option<RoutineInputHandoffRefs>,
 }
 
 impl RoutineDispatchRefs {
     pub fn new(runtime_refs: AgentRuntimeRefs) -> Self {
         Self {
             runtime_refs,
-            mailbox_refs: None,
+            input_handoff_refs: None,
         }
     }
 
-    pub fn with_mailbox_refs(mut self, mailbox_refs: RoutineMailboxDispatchRefs) -> Self {
-        self.mailbox_refs = Some(mailbox_refs);
+    pub fn with_input_handoff_refs(mut self, input_handoff_refs: RoutineInputHandoffRefs) -> Self {
+        self.input_handoff_refs = Some(input_handoff_refs);
         self
     }
 
@@ -143,10 +143,10 @@ impl RoutineDispatchRefs {
     }
 }
 
-/// Mailbox delivery refs for Routine executions that reuse an existing AgentRun.
+/// Input handoff refs for Routine executions that reuse an existing AgentRun.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RoutineMailboxDispatchRefs {
-    pub mailbox_message_id: Uuid,
+pub struct RoutineInputHandoffRefs {
+    pub handoff_id: Uuid,
     pub client_command_id: String,
     pub outcome: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -195,8 +195,8 @@ impl RoutineExecution {
         }
     }
 
-    /// Intent 已提交至 Product AgentRun mailbox，记录可恢复的 dispatch receipt。
-    /// `Dispatched` 表示输入已被 AgentRun 接受，真正 terminal 从 Runtime turn projection 派生。
+    /// 输入已交给目标 Agent，并记录可恢复的交接收据。
+    /// `Dispatched` 表示输入已被 Agent 接受，真正 terminal 从 Agent observation 派生。
     pub fn mark_dispatched(&mut self, refs: RoutineDispatchRefs, resolved_prompt: String) {
         self.dispatch_refs = Some(refs);
         self.resolved_prompt = Some(resolved_prompt);
@@ -205,7 +205,7 @@ impl RoutineExecution {
     }
 
     /// Product graph 与 frozen input intent 已持久化，可以在进程重启后从相同
-    /// AgentRun target 继续完成 Runtime launch / mailbox delivery。
+    /// AgentRun target 继续完成输入交接。
     pub fn mark_dispatch_prepared(&mut self, refs: RoutineDispatchRefs, resolved_prompt: String) {
         self.dispatch_refs = Some(refs);
         self.resolved_prompt = Some(resolved_prompt);
@@ -248,8 +248,8 @@ impl RoutineExecution {
 pub enum RoutineExecutionStatus {
     #[default]
     Pending,
-    /// 输入已成功提交到 Product AgentRun mailbox，Agent 正在执行。
-    /// 真正的 terminal status 从 Runtime turn projection 派生。
+    /// 输入已成功提交给目标 Agent。
+    /// 真正的 terminal status 从 Agent observation 派生。
     Dispatched,
     Completed,
     Failed,

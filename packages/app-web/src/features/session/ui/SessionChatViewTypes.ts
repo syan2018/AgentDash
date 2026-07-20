@@ -5,7 +5,7 @@ import type { ConversationEffectiveExecutorConfigView } from "../../../generated
 import type {
   BackendSelectionRequestDto,
   SessionMessageRefDto,
-} from "../../../generated/agent-run-mailbox-contracts";
+} from "../../../generated/agent-run-interaction-contracts";
 import type {
   ConversationCommandView,
   ConversationWaitingItemView,

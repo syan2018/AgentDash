@@ -19,11 +19,11 @@ export type AgentRunCommandReceipt = { client_command_id: string, status: string
 
 export type AgentRunComposerSubmitRequest = {
 /**
- * canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
+ * canonical 用户输入，由后端同步交给具体 Agent。
  */
 input: Array<AgentInputContent>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue,
 /**
- * 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
+ * 投递意图：`"steer"` 表示用户明确要求注入 active turn。
  */
 delivery_intent?: string, backend_selection?: BackendSelectionRequestDto, };
 

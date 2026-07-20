@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::agent_run_mailbox::{
+use crate::agent_run_interaction::{
     AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse,
     BackendSelectionRequestDto,
 };

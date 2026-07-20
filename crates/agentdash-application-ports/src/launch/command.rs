@@ -63,7 +63,7 @@ impl LaunchInputSource {
         let namespace = namespace.into();
         let kind = kind.into();
         Self {
-            display_label_key: format!("mailbox.source.{namespace}.{kind}"),
+            display_label_key: format!("agent_input.source.{namespace}.{kind}"),
             namespace,
             kind,
             source_ref: None,

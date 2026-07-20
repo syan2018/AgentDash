@@ -13,7 +13,7 @@ use agentdash_application_hooks::AppExecutionHookProvider;
 use agentdash_application_ports::agent_frame_hook_plan::{HookExecutionSite, HookPoint};
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
-use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
+use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::channel::{
     ChannelDeliveryState, ChannelDeliveryStatus, ChannelOwner, ChannelParticipantRef,
@@ -161,7 +161,7 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
                     .map_err(|error| error.to_string())?;
                 Ok(CompanionEffectProgress::Applied(
                     CompanionFirstInputEvidence {
-                        mailbox_message_id: outcome.mailbox_message_id,
+                        input_handoff_id: outcome.handoff_id,
                         runtime_operation_id: Some(
                             outcome.operation_receipt.operation_id.to_string(),
                         ),
@@ -171,14 +171,14 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
             }
             CompanionContinuationRuntimeProtocol::FreshCreate => {
                 let command = first_input_command(saga, identity);
-                let mailbox_message_id = self
+                let input_handoff_id = self
                     .product_input_delivery
                     .record_dispatched(command)
                     .await
                     .map_err(|error| error.to_string())?;
                 Ok(CompanionEffectProgress::Applied(
                     CompanionFirstInputEvidence {
-                        mailbox_message_id,
+                        input_handoff_id,
                         runtime_operation_id: Some(format!(
                             "companion-fresh:{}:submit-first-input",
                             request.runtime_protocol_request_id
@@ -276,7 +276,7 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
             .first_input
             .as_ref()
             .ok_or_else(|| "Companion first input evidence is missing".to_owned())?;
-        let source = mailbox_source(request);
+        let source = agent_input_source(request);
         let input_text = request.first_input_text.clone();
         let channel_id = ensure_companion_agent_channel(
             &self.repos,
@@ -302,9 +302,6 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
         intent.id = identity.effect_id;
         intent.message.id = stable_message_id(identity.effect_id);
         companion_channel_service(&self.repos)
-            .materialize_delivery_to_mailbox(&intent)
-            .map_err(|error| error.to_string())?;
-        companion_channel_service(&self.repos)
             .record_delivery_state(
                 &ChannelOwner::LifecycleRun {
                     run_id: request.parent_run_id,
@@ -315,8 +312,9 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
                     message_id: intent.message.id,
                     target: intent.target,
                     status: ChannelDeliveryStatus::Materialized,
-                    materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
-                        message_id: first_input.mailbox_message_id,
+                    materialized_ref: Some(MaterializedDeliveryRef::AgentInput {
+                        handoff_id: first_input.input_handoff_id,
+                        operation_id: first_input.runtime_operation_id.clone(),
                     }),
                     updated_at: Utc::now(),
                 },
@@ -326,7 +324,7 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
         Ok(CompanionChannelEvidence {
             channel_id,
             delivery_id: intent.id,
-            mailbox_message_id: first_input.mailbox_message_id,
+            input_handoff_id: first_input.input_handoff_id,
         })
     }
 
@@ -432,8 +430,8 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
                         "gate_ref": gate.gate_id,
                         "runtime_thread_id": runtime.child_runtime_thread_id,
                         "runtime_operation_id": first_input.runtime_operation_id,
-                        "mailbox_message_id": first_input.mailbox_message_id,
-                        "mailbox_outcome": "dispatched",
+                        "input_handoff_id": first_input.input_handoff_id,
+                        "input_outcome": "dispatched",
                         "slice_mode": request.slice_mode,
                         "adoption_mode": request.adoption_mode,
                         "task_id": request.task_id,
@@ -486,10 +484,10 @@ fn stable_message_id(effect_id: Uuid) -> Uuid {
     Uuid::from_bytes(bytes)
 }
 
-fn mailbox_source(
+fn agent_input_source(
     request: &agentdash_application_agentrun::agent_run::CompanionContinuationRequest,
-) -> MailboxSourceIdentity {
-    MailboxSourceIdentity {
+) -> AgentInputSourceIdentity {
+    AgentInputSourceIdentity {
         namespace: request.first_input_source.namespace.clone(),
         kind: request.first_input_source.kind.clone(),
         source_ref: request.first_input_source.source_ref.clone(),
@@ -511,11 +509,11 @@ fn first_input_command(
             run_id: request.child_run_id,
             agent_id: request.child_agent_id,
         },
-        origin: MailboxMessageOrigin::Companion,
+        origin: AgentInputOrigin::Companion,
         content: vec![agentdash_agent_service_api::AgentInputContent::Text {
             text: request.first_input_text.clone(),
         }],
-        source: mailbox_source(request),
+        source: agent_input_source(request),
         client_command_id: identity.idempotency_key.clone(),
     }
 }

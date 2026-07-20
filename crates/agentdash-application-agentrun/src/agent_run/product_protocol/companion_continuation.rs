@@ -85,7 +85,7 @@ pub struct CompanionRuntimeReadyEvidence {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanionFirstInputEvidence {
-    pub mailbox_message_id: Uuid,
+    pub input_handoff_id: Uuid,
     pub runtime_operation_id: Option<String>,
     pub submitted_by_runtime_protocol: bool,
 }
@@ -107,7 +107,7 @@ pub struct CompanionGateEvidence {
 pub struct CompanionChannelEvidence {
     pub channel_id: Uuid,
     pub delivery_id: Uuid,
-    pub mailbox_message_id: Uuid,
+    pub input_handoff_id: Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,13 +258,13 @@ impl CompanionContinuation {
     }
 
     fn record_channel(&mut self, evidence: CompanionChannelEvidence) -> Result<(), String> {
-        let mailbox_message_id = self
+        let input_handoff_id = self
             .evidence
             .first_input
             .as_ref()
-            .map(|evidence| evidence.mailbox_message_id);
+            .map(|evidence| evidence.input_handoff_id);
         if self.phase != CompanionContinuationPhase::GateConverged
-            || mailbox_message_id != Some(evidence.mailbox_message_id)
+            || input_handoff_id != Some(evidence.input_handoff_id)
         {
             return Err("Companion channel evidence does not match the input".to_owned());
         }

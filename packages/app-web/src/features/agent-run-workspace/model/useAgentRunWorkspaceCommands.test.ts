@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   AgentRunForkResponse,
   AgentRunMessageCommandResponse,
-} from "../../../generated/agent-run-mailbox-contracts";
+} from "../../../generated/agent-run-interaction-contracts";
 import {
   forkAgentRunFromMessageRef,
   resolveAgentRunCommandRedirect,

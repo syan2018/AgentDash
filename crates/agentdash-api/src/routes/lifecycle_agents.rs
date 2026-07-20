@@ -12,7 +12,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductForkResult, AgentRunProductForkService, AgentRunProductInputDeliveryError,
     AgentRunProductProjectionError, AgentRunTerminalChangeSequence, DeliverAgentRunProductInput,
 };
-use agentdash_contracts::agent_run_mailbox::{
+use agentdash_contracts::agent_run_interaction::{
     AgentRunCommandOnlyRequest, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
     AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkResponse,
     AgentRunForkSubmitRequest, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
@@ -119,7 +119,7 @@ async fn fork_agent_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<agentdash_contracts::agent_run_mailbox::AgentRunForkRequest>,
+    Json(body): Json<agentdash_contracts::agent_run_interaction::AgentRunForkRequest>,
 ) -> Result<Json<AgentRunForkResponse>, ApiError> {
     let target = authorize_agent_run_target(
         state.as_ref(),
@@ -183,8 +183,8 @@ async fn fork_submit_agent_run(
         .deliver(DeliverAgentRunProductInput {
             target: child.clone(),
             content: body.input,
-            source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
-            origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User,
+            source: agentdash_domain::agent_input::AgentInputSourceIdentity::composer(),
+            origin: agentdash_domain::agent_input::AgentInputOrigin::User,
             client_command_id: body.client_command_id.clone(),
         })
         .await
@@ -389,8 +389,8 @@ async fn submit_agent_run_composer_input(
         .deliver(DeliverAgentRunProductInput {
             target: target.clone(),
             content: body.input,
-            source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
-            origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User,
+            source: agentdash_domain::agent_input::AgentInputSourceIdentity::composer(),
+            origin: agentdash_domain::agent_input::AgentInputOrigin::User,
             client_command_id: body.client_command_id.clone(),
         })
         .await

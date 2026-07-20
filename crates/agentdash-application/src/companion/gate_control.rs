@@ -202,13 +202,12 @@ pub struct CompanionHumanResponseMailboxDeliveryCommand {
 
 #[derive(Debug, Clone)]
 pub struct CompanionParentMailboxDeliveryResult {
-    pub mailbox_message_id: Option<Uuid>,
-    pub accepted_runtime_operation_id: Option<String>,
+    pub input_handoff_id: Option<Uuid>,
+    pub accepted_operation_id: Option<String>,
     pub command_receipt_client_command_id: String,
     pub command_receipt_status: String,
     pub command_receipt_duplicate: bool,
     pub outcome: String,
-    pub runtime_operation_id: Option<String>,
 }
 
 #[async_trait]
@@ -1855,13 +1854,12 @@ mod tests {
         duplicate: bool,
     ) -> CompanionParentMailboxDeliveryResult {
         CompanionParentMailboxDeliveryResult {
-            mailbox_message_id: Some(Uuid::new_v4()),
-            accepted_runtime_operation_id: Some("operation-test".to_string()),
+            input_handoff_id: Some(Uuid::new_v4()),
+            accepted_operation_id: Some("operation-test".to_string()),
             command_receipt_client_command_id: client_command_id.into(),
             command_receipt_status: "accepted".to_string(),
             command_receipt_duplicate: duplicate,
             outcome: "queued".to_string(),
-            runtime_operation_id: Some("operation-parent-1".to_string()),
         }
     }
 

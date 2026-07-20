@@ -69,7 +69,7 @@ describe("round action model", () => {
     expect(lastAgentReplyText(segment([first, last]))).toBe("final answer\nwith detail");
   });
 
-  it("does not manufacture a mailbox MessageRef from Runtime item identity", () => {
+  it("does not manufacture a MessageRef from Runtime item identity", () => {
     const model = buildRoundActionModel(segment([
       agentEntry({
         id: "assistant-final",

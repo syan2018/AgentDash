@@ -2,7 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentInputContent } from "./agent-run-mailbox-contracts";
+import type { AgentInputContent } from "./agent-run-interaction-contracts";
 
 export type CanvasAccessDto = { can_view: boolean, can_edit_source: boolean, can_publish: boolean, can_manage_shared: boolean, can_copy: boolean, runtime_write_allowed: boolean, };
 

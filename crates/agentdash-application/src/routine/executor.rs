@@ -8,7 +8,7 @@ use agentdash_application_agentrun::agent_run::{
     ProductAgentSurfaceFacts, ProductExecutionProfileRef,
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
-use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
+use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -18,7 +18,7 @@ use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::project::Project;
 use agentdash_domain::routine::{
-    Routine, RoutineDispatchRefs, RoutineExecution, RoutineMailboxDispatchRefs,
+    Routine, RoutineDispatchRefs, RoutineExecution, RoutineInputHandoffRefs,
 };
 use agentdash_domain::workflow::{
     AgentRuntimeRefs, OrchestrationBindingRefs, SubjectExecutionDispatchResult,
@@ -301,7 +301,7 @@ impl RoutineExecutor {
 
         if let Some(target) = reuse_resolution.target.as_ref() {
             return self
-                .execute_reuse_with_mailbox(routine, prompt, execution, target)
+                .execute_reuse_with_input_handoff(routine, prompt, execution, target)
                 .await;
         }
 
@@ -361,7 +361,7 @@ impl RoutineExecutor {
         let refs = execution.dispatch_refs.as_ref().ok_or_else(|| {
             ApplicationError::Internal("Routine recovery 缺少 AgentRun target refs".to_string())
         })?;
-        if refs.mailbox_refs.is_some() {
+        if refs.input_handoff_refs.is_some() {
             return Ok(());
         }
         let prompt = execution.resolved_prompt.clone().ok_or_else(|| {
@@ -441,19 +441,19 @@ impl RoutineExecutor {
             .product_input_delivery
             .deliver(DeliverAgentRunProductInput {
                 target,
-                origin: MailboxMessageOrigin::System,
+                origin: AgentInputOrigin::System,
                 content: vec![agentdash_agent_service_api::AgentInputContent::Text {
                     text: prompt.to_string(),
                 }],
-                source: MailboxSourceIdentity::routine_trigger()
+                source: AgentInputSourceIdentity::routine_trigger()
                     .with_source_ref(routine.id.to_string())
                     .with_correlation_ref(execution.id.to_string()),
                 client_command_id: client_command_id.clone(),
             })
             .await
             .map_err(|error| ApplicationError::Internal(error.to_string()))?;
-        let mailbox_refs = RoutineMailboxDispatchRefs {
-            mailbox_message_id: result.mailbox_message_id,
+        let input_handoff_refs = RoutineInputHandoffRefs {
+            handoff_id: result.handoff_id,
             client_command_id,
             outcome: "dispatched".to_string(),
             runtime_operation_id: Some(result.operation_receipt.operation_id.to_string()),
@@ -462,12 +462,12 @@ impl RoutineExecutor {
             .dispatch_refs
             .clone()
             .ok_or_else(|| ApplicationError::Internal("Routine dispatch refs missing".into()))?
-            .with_mailbox_refs(mailbox_refs);
+            .with_input_handoff_refs(input_handoff_refs);
         execution.mark_dispatched(refs, prompt.to_string());
         Ok(())
     }
 
-    async fn execute_reuse_with_mailbox(
+    async fn execute_reuse_with_input_handoff(
         &self,
         routine: &Routine,
         prompt: &str,
@@ -492,7 +492,7 @@ impl RoutineExecutor {
             run_id = %target.run_id,
             agent_id = %target.agent_id,
             frame_id = %target.frame_id,
-            "Routine reuse trigger accepted by AgentRun mailbox"
+            "Routine reuse trigger accepted by the target Agent"
         );
 
         Ok(())

@@ -408,7 +408,7 @@ mod tests {
                     execution
                         .dispatch_refs
                         .as_ref()
-                        .and_then(|refs| refs.mailbox_refs.as_ref())
+                        .and_then(|refs| refs.input_handoff_refs.as_ref())
                         .and_then(|refs| refs.runtime_operation_id.as_deref())
                         == Some(runtime_operation_id)
                 })

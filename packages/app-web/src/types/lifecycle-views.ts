@@ -2,7 +2,7 @@ export type {
   AgentFrameRefDto,
   AgentRunRefDto,
   LifecycleRunRefDto,
-} from "../generated/agent-run-mailbox-contracts";
+} from "../generated/agent-run-interaction-contracts";
 export type {
   SubjectRefDto,
 } from "../generated/project-agent-contracts";

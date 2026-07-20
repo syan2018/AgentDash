@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 
 import { SessionProjectionView } from "./SessionProjectionView";
 
-import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
+import type { SessionMessageRefDto } from "../../../generated/agent-run-interaction-contracts";
 import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";

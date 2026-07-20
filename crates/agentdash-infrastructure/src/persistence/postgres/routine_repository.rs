@@ -206,7 +206,7 @@ struct ExecutionRow {
     dispatch_frame_id: Option<String>,
     dispatch_orchestration_id: Option<String>,
     dispatch_node_path: Option<String>,
-    dispatch_mailbox: Option<serde_json::Value>,
+    dispatch_input_handoff: Option<serde_json::Value>,
     status: String,
     started_at: chrono::DateTime<chrono::Utc>,
     completed_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -245,10 +245,10 @@ impl TryFrom<ExecutionRow> for RoutineExecution {
                     parse_uuid(&frame_id, "routine_executions.dispatch_frame_id")?,
                     orchestration_binding,
                 ));
-                Some(match row.dispatch_mailbox {
-                    Some(mailbox) => refs.with_mailbox_refs(from_jsonb(
-                        mailbox,
-                        "routine_executions.dispatch_mailbox",
+                Some(match row.dispatch_input_handoff {
+                    Some(input_handoff) => refs.with_input_handoff_refs(from_jsonb(
+                        input_handoff,
+                        "routine_executions.dispatch_input_handoff",
                     )?),
                     None => refs,
                 })
@@ -278,7 +278,7 @@ impl TryFrom<ExecutionRow> for RoutineExecution {
 impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
     async fn create(&self, execution: &RoutineExecution) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO routine_executions (id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_mailbox, status, started_at, completed_at, error, entity_key)
+            "INSERT INTO routine_executions (id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_input_handoff, status, started_at, completed_at, error, entity_key)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
         )
         .bind(execution.id.to_string())
@@ -306,8 +306,8 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
             execution
                 .dispatch_refs
                 .as_ref()
-                .and_then(|refs| refs.mailbox_refs.as_ref()),
-            "routine_executions.dispatch_mailbox",
+                .and_then(|refs| refs.input_handoff_refs.as_ref()),
+            "routine_executions.dispatch_input_handoff",
         )?)
         .bind(status_to_str(execution.status))
         .bind(execution.started_at)
@@ -322,7 +322,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
 
     async fn get_by_id(&self, id: Uuid) -> Result<Option<RoutineExecution>, DomainError> {
         let row: Option<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_mailbox, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_input_handoff, status, started_at, completed_at, error, entity_key
              FROM routine_executions WHERE id = $1",
         )
         .bind(id.to_string())
@@ -334,7 +334,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
 
     async fn update(&self, execution: &RoutineExecution) -> Result<(), DomainError> {
         sqlx::query(
-            "UPDATE routine_executions SET trigger_payload=$2, resolved_prompt=$3, dispatch_run_id=$4, dispatch_agent_id=$5, dispatch_frame_id=$6, dispatch_orchestration_id=$7, dispatch_node_path=$8, dispatch_mailbox=$9, status=$10, completed_at=$11, error=$12, entity_key=$13
+            "UPDATE routine_executions SET trigger_payload=$2, resolved_prompt=$3, dispatch_run_id=$4, dispatch_agent_id=$5, dispatch_frame_id=$6, dispatch_orchestration_id=$7, dispatch_node_path=$8, dispatch_input_handoff=$9, status=$10, completed_at=$11, error=$12, entity_key=$13
              WHERE id=$1",
         )
         .bind(execution.id.to_string())
@@ -360,8 +360,8 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
             execution
                 .dispatch_refs
                 .as_ref()
-                .and_then(|refs| refs.mailbox_refs.as_ref()),
-            "routine_executions.dispatch_mailbox",
+                .and_then(|refs| refs.input_handoff_refs.as_ref()),
+            "routine_executions.dispatch_input_handoff",
         )?)
         .bind(status_to_str(execution.status))
         .bind(execution.completed_at)
@@ -380,7 +380,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         offset: u32,
     ) -> Result<Vec<RoutineExecution>, DomainError> {
         let rows: Vec<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_mailbox, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_input_handoff, status, started_at, completed_at, error, entity_key
              FROM routine_executions WHERE routine_id = $1 ORDER BY started_at DESC LIMIT $2 OFFSET $3",
         )
         .bind(routine_id.to_string())
@@ -394,7 +394,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
 
     async fn list_recoverable(&self, limit: u32) -> Result<Vec<RoutineExecution>, DomainError> {
         let rows: Vec<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_mailbox, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_input_handoff, status, started_at, completed_at, error, entity_key
              FROM routine_executions
              WHERE status = 'pending' AND dispatch_run_id IS NOT NULL
              ORDER BY started_at
@@ -412,9 +412,9 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         runtime_operation_id: &str,
     ) -> Result<Option<RoutineExecution>, DomainError> {
         let row: Option<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_mailbox, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_input_handoff, status, started_at, completed_at, error, entity_key
              FROM routine_executions
-             WHERE dispatch_mailbox->>'runtime_operation_id' = $1
+             WHERE dispatch_input_handoff->>'runtime_operation_id' = $1
              LIMIT 1",
         )
         .bind(runtime_operation_id)
@@ -430,7 +430,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         entity_key: &str,
     ) -> Result<Option<RoutineExecution>, DomainError> {
         let row: Option<ExecutionRow> = sqlx::query_as(
-            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_mailbox, status, started_at, completed_at, error, entity_key
+            "SELECT id, routine_id, trigger_source, trigger_payload, resolved_prompt, dispatch_run_id, dispatch_agent_id, dispatch_frame_id, dispatch_orchestration_id, dispatch_node_path, dispatch_input_handoff, status, started_at, completed_at, error, entity_key
              FROM routine_executions WHERE routine_id = $1 AND entity_key = $2 ORDER BY started_at DESC LIMIT 1",
         )
         .bind(routine_id.to_string())

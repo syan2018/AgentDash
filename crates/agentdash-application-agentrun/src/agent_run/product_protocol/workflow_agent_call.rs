@@ -12,7 +12,7 @@ use agentdash_application_workflow::{
     WorkflowAgentCallDispatchOutcome, WorkflowAgentCallDispatchPort, WorkflowAgentCallRequest,
     WorkflowAgentCallTargetIntent,
 };
-use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
+use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
@@ -144,10 +144,10 @@ impl ProductWorkflowAgentCallDispatchService {
             .deliver(DeliverAgentRunProductInput {
                 target: request.target_intent.target().clone(),
                 content: workflow_input_blocks(&request.input),
-                source: MailboxSourceIdentity::workflow_orchestrator()
+                source: AgentInputSourceIdentity::workflow_orchestrator()
                     .with_source_ref(request.identity.node_path.clone())
                     .with_correlation_ref(request.identity.request_id.clone()),
-                origin: MailboxMessageOrigin::System,
+                origin: AgentInputOrigin::System,
                 client_command_id: request.identity.request_id.clone(),
             })
             .await

@@ -2,7 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto } from "./agent-run-mailbox-contracts";
+import type { AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto } from "./agent-run-interaction-contracts";
 import type { ManagedRuntimeSnapshot, RuntimeThreadId } from "./agent-runtime-contracts";
 import type { ConversationEffectiveExecutorConfigView, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";

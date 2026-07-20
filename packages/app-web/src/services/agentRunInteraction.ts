@@ -7,7 +7,7 @@ import type {
   AgentRunForkSubmitRequest,
   AgentRunComposerSubmitRequest,
   AgentRunMessageCommandResponse,
-} from "../generated/agent-run-mailbox-contracts";
+} from "../generated/agent-run-interaction-contracts";
 import { agentRunScopedPath } from "./agentRunRuntime";
 
 export async function submitAgentRunComposerInput(

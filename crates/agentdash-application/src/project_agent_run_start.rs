@@ -13,7 +13,7 @@ use agentdash_application_agentrun::agent_run::{
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_domain::{
     agent::ProjectAgentRepository,
-    agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity},
+    agent_input::{AgentInputOrigin, AgentInputSourceIdentity},
     agent_run_target::AgentRunTarget,
     common::AgentConfig,
     workflow::{
@@ -70,7 +70,7 @@ pub struct ProjectAgentRunStartOutcome {
     pub frame_revision: i32,
     pub runtime_thread_id: String,
     pub runtime_operation_id: Option<String>,
-    pub mailbox_message_id: Uuid,
+    pub input_handoff_id: Uuid,
     pub subject_kind: String,
     pub subject_id: Uuid,
     pub effective_executor: ProjectAgentRunStartEffectiveExecutor,
@@ -267,10 +267,10 @@ impl ProjectAgentRunStartService {
                     agent_id: identities.agent_id,
                 },
                 content: command.input,
-                source: MailboxSourceIdentity::composer()
+                source: AgentInputSourceIdentity::composer()
                     .with_source_ref(command.identity.user_id.clone())
                     .with_correlation_ref(command.client_command_id.trim().to_owned()),
-                origin: MailboxMessageOrigin::User,
+                origin: AgentInputOrigin::User,
                 client_command_id: format!("{}:initial-input", command.client_command_id.trim()),
             })
             .await
@@ -284,7 +284,7 @@ impl ProjectAgentRunStartService {
             frame_revision: frame.revision,
             runtime_thread_id: runtime_thread_id.to_string(),
             runtime_operation_id: Some(input.operation_receipt.operation_id.to_string()),
-            mailbox_message_id: input.mailbox_message_id,
+            input_handoff_id: input.handoff_id,
             subject_kind: subject_ref.kind,
             subject_id: subject_ref.id,
             effective_executor: effective_executor_snapshot(effective_executor),

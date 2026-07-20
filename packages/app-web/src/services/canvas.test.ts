@@ -189,7 +189,7 @@ describe("canvas service", () => {
     );
   });
 
-  it("submits Canvas user intent to AgentRun mailbox route", async () => {
+  it("submits Canvas user intent to the AgentRun input route", async () => {
     const bridge = bridgeIdentity();
     const response = { outcome: "queued" };
     mocks.post.mockResolvedValueOnce(response);

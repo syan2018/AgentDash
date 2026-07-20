@@ -4,7 +4,7 @@ use agentdash_application::project_agent_run_start::{
     ProjectAgentRunStartCommand, ProjectAgentRunStartResult as ApplicationStartResult,
 };
 use agentdash_contracts::{
-    agent_run_mailbox::{
+    agent_run_interaction::{
         AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandOutcome,
         AgentRunMessageCommandResponse,
     },

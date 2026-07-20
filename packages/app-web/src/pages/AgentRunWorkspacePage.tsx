@@ -35,7 +35,7 @@ import {
   listProjectBackendAccess,
   type ProjectBackendAccess,
 } from "../services/backendAccess";
-import type { BackendSelectionRequestDto } from "../generated/agent-run-mailbox-contracts";
+import type { BackendSelectionRequestDto } from "../generated/agent-run-interaction-contracts";
 import type {
   BackendConfig,
   RuntimeTraceAgentContext,

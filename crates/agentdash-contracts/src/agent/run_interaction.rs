@@ -86,14 +86,14 @@ pub struct AgentRunAcceptedRefs {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunComposerSubmitRequest {
-    /// canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
+    /// canonical 用户输入，由后端同步交给具体 Agent。
     pub input: Vec<AgentInputContent>,
     pub client_command_id: String,
     pub command: AgentRunCommandPreconditionView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,
-    /// 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
+    /// 投递意图：`"steer"` 表示用户明确要求注入 active turn。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub delivery_intent: Option<String>,
@@ -281,7 +281,6 @@ mod tests {
         };
 
         let value = serde_json::to_value(response).expect("serialize launched response");
-        assert!(value.get("mailbox_message").is_none());
         assert!(value.get("accepted_refs").is_none());
     }
 }

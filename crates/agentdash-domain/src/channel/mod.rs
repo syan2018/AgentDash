@@ -6,7 +6,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::DomainError;
-use crate::agent_run_mailbox::MailboxSourceIdentity;
+use crate::agent_input::AgentInputSourceIdentity;
 
 pub const CHANNEL_REGISTRY_SCHEMA_VERSION: u32 = 1;
 
@@ -838,10 +838,8 @@ impl ChannelAddress {
     }
 }
 
-pub fn channel_address_to_mailbox_source_identity(
-    address: &ChannelAddress,
-) -> MailboxSourceIdentity {
-    let mut source = MailboxSourceIdentity::new(
+pub fn channel_address_to_agent_input_source(address: &ChannelAddress) -> AgentInputSourceIdentity {
+    let mut source = AgentInputSourceIdentity::new(
         address.namespace.clone(),
         address.kind.clone(),
         address.actor.clone(),
@@ -859,7 +857,7 @@ pub fn channel_address_to_mailbox_source_identity(
         source = source.with_metadata(metadata.clone());
     }
     source.with_display_label_key(format!(
-        "mailbox.source.{}.{}",
+        "agent_input.source.{}.{}",
         address.namespace, address.kind
     ))
 }
@@ -967,7 +965,7 @@ impl ChannelDeliveryIntent {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChannelDeliveryTarget {
-    Mailbox { run_id: Uuid, agent_id: Uuid },
+    AgentInput { run_id: Uuid, agent_id: Uuid },
     LifecycleGate { gate_id: Uuid },
     ExternalBinding { binding_id: ChannelBindingId },
     Notification { user_id: String },
@@ -1016,10 +1014,20 @@ pub enum ChannelDeliveryStatus {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MaterializedDeliveryRef {
-    MailboxMessage { message_id: Uuid },
-    LifecycleGate { gate_id: Uuid },
-    PublishOutbox { outbox_id: Uuid },
-    ProviderEvent { provider: String, event_ref: String },
+    AgentInput {
+        handoff_id: Uuid,
+        operation_id: Option<String>,
+    },
+    LifecycleGate {
+        gate_id: Uuid,
+    },
+    PublishOutbox {
+        outbox_id: Uuid,
+    },
+    ProviderEvent {
+        provider: String,
+        event_ref: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1331,7 +1339,7 @@ mod tests {
     }
 
     #[test]
-    fn address_does_not_default_to_mailbox_display_key() {
+    fn address_does_not_default_to_input_display_key() {
         let address = ChannelAddress::new("companion", "dispatch", "agent")
             .with_source_ref("dispatch-1")
             .with_correlation_ref("corr-1")
@@ -1342,20 +1350,20 @@ mod tests {
     }
 
     #[test]
-    fn address_mapper_preserves_mailbox_display_key_semantics() {
+    fn address_mapper_derives_agent_input_display_key() {
         let address = ChannelAddress::new("terminal", "hook_auto_resume", "system")
             .with_source_ref("effect-1")
             .with_correlation_ref("runtime:turn:1")
             .with_display_label_key("channel.source.terminal.hook_auto_resume");
 
-        let source = channel_address_to_mailbox_source_identity(&address);
+        let source = channel_address_to_agent_input_source(&address);
 
         assert_eq!(source.namespace, "terminal");
         assert_eq!(source.kind, "hook_auto_resume");
         assert_eq!(source.source_ref.as_deref(), Some("effect-1"));
         assert_eq!(
             source.display_label_key,
-            "mailbox.source.terminal.hook_auto_resume"
+            "agent_input.source.terminal.hook_auto_resume"
         );
     }
 
@@ -1397,7 +1405,7 @@ mod tests {
         ChannelDeliveryState {
             delivery_id,
             message_id,
-            target: ChannelDeliveryTarget::Mailbox {
+            target: ChannelDeliveryTarget::AgentInput {
                 run_id: Uuid::new_v4(),
                 agent_id: Uuid::new_v4(),
             },

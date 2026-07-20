@@ -688,15 +688,15 @@ struct GateResultDeliveryMarkerRow {
     target_run_id: Option<String>,
     target_agent_id: Option<String>,
     target_waiter_ref: Option<String>,
-    mailbox_message_id: Option<String>,
-    accepted_runtime_operation_id: Option<String>,
+    input_handoff_id: Option<String>,
+    accepted_operation_id: Option<String>,
     claim_token: Option<String>,
     claim_expires_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
 
-const GATE_RESULT_DELIVERY_MARKER_COLS: &str = "gate_id,result_attempt,status,target_run_id,target_agent_id,target_waiter_ref,mailbox_message_id,accepted_runtime_operation_id,claim_token,claim_expires_at,created_at,updated_at";
+const GATE_RESULT_DELIVERY_MARKER_COLS: &str = "gate_id,result_attempt,status,target_run_id,target_agent_id,target_waiter_ref,input_handoff_id,accepted_operation_id,claim_token,claim_expires_at,created_at,updated_at";
 
 impl TryFrom<GateResultDeliveryMarkerRow> for GateResultDeliveryMarker {
     type Error = DomainError;
@@ -715,11 +715,11 @@ impl TryFrom<GateResultDeliveryMarkerRow> for GateResultDeliveryMarker {
                 "gate_result_delivery_markers.target_agent_id",
             )?,
             target_waiter_ref: row.target_waiter_ref,
-            mailbox_message_id: opt_uuid(
-                row.mailbox_message_id.as_ref(),
-                "gate_result_delivery_markers.mailbox_message_id",
+            input_handoff_id: opt_uuid(
+                row.input_handoff_id.as_ref(),
+                "gate_result_delivery_markers.input_handoff_id",
             )?,
-            accepted_runtime_operation_id: row.accepted_runtime_operation_id,
+            accepted_operation_id: row.accepted_operation_id,
             claim_token: opt_uuid(
                 row.claim_token.as_ref(),
                 "gate_result_delivery_markers.claim_token",
@@ -878,7 +878,7 @@ impl GateResultDeliveryMarkerRepository for PostgresLifecycleGateRepository {
                     (status='pending' AND (claim_expires_at IS NULL OR claim_expires_at < $8))
                     OR (
                         status='queued_for_parent_continuation'
-                        AND mailbox_message_id IS NULL
+                        AND input_handoff_id IS NULL
                         AND (claim_expires_at IS NULL OR claim_expires_at < $8)
                     )
                  )
@@ -923,8 +923,8 @@ impl GateResultDeliveryMarkerRepository for PostgresLifecycleGateRepository {
         let row = sqlx::query_as::<_, GateResultDeliveryMarkerRow>(&format!(
             r#"UPDATE gate_result_delivery_markers
                SET status=$4,
-                   mailbox_message_id=$5,
-                   accepted_runtime_operation_id=$6,
+                   input_handoff_id=$5,
+                   accepted_operation_id=$6,
                    claim_token=NULL,
                    claim_expires_at=NULL,
                    updated_at=$7
@@ -935,8 +935,8 @@ impl GateResultDeliveryMarkerRepository for PostgresLifecycleGateRepository {
         .bind(request.result_attempt)
         .bind(request.claim_token.to_string())
         .bind(status.as_str())
-        .bind(request.mailbox_message_id.map(|id| id.to_string()))
-        .bind(request.accepted_runtime_operation_id)
+        .bind(request.input_handoff_id.map(|id| id.to_string()))
+        .bind(request.accepted_operation_id)
         .bind(Utc::now())
         .fetch_optional(&self.pool)
         .await
@@ -1275,15 +1275,15 @@ mod tests {
             GateResultDeliveryStatus::QueuedForParentContinuation
         );
 
-        let mailbox_message_id = Uuid::new_v4();
-        let runtime_operation_id = "operation-gate-continuation".to_string();
+        let input_handoff_id = Uuid::new_v4();
+        let operation_id = "operation-gate-continuation".to_string();
         let completed = repo
             .complete_parent_continuation(CompleteGateResultParentContinuationRequest {
                 gate_id: gate.id,
                 result_attempt: 1,
                 claim_token,
-                mailbox_message_id: Some(mailbox_message_id),
-                accepted_runtime_operation_id: Some(runtime_operation_id.clone()),
+                input_handoff_id: Some(input_handoff_id),
+                accepted_operation_id: Some(operation_id.clone()),
                 dispatched_to_parent: false,
             })
             .await
@@ -1292,11 +1292,8 @@ mod tests {
             completed.status,
             GateResultDeliveryStatus::QueuedForParentContinuation
         );
-        assert_eq!(completed.mailbox_message_id, Some(mailbox_message_id));
-        assert_eq!(
-            completed.accepted_runtime_operation_id,
-            Some(runtime_operation_id)
-        );
+        assert_eq!(completed.input_handoff_id, Some(input_handoff_id));
+        assert_eq!(completed.accepted_operation_id, Some(operation_id));
 
         let replay = repo
             .claim_parent_continuation(ClaimGateResultParentContinuationRequest {
@@ -1310,6 +1307,6 @@ mod tests {
             .await
             .expect("duplicate parent replay");
         assert!(!replay.claimed());
-        assert_eq!(replay.marker().mailbox_message_id, Some(mailbox_message_id));
+        assert_eq!(replay.marker().input_handoff_id, Some(input_handoff_id));
     }
 }

@@ -2,7 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentFrameRefDto, AgentInputContent, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse, AgentRunRefDto, BackendSelectionRequestDto, LifecycleRunRefDto } from "./agent-run-mailbox-contracts";
+import type { AgentFrameRefDto, AgentInputContent, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse, AgentRunRefDto, BackendSelectionRequestDto, LifecycleRunRefDto } from "./agent-run-interaction-contracts";
 
 export type AgentRunModelSelectionRequest = { provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, };
 

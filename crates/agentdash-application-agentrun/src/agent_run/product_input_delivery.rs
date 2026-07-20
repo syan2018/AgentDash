@@ -4,7 +4,7 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeContentBlock, ManagedRuntimeOperationReceipt,
 };
 use agentdash_agent_service_api::AgentInputContent;
-use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
+use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -18,22 +18,21 @@ use super::{AgentRunProductCommand, AgentRunProductCommandFacade, AgentRunProduc
 pub struct DeliverAgentRunProductInput {
     pub target: AgentRunTarget,
     pub content: Vec<AgentInputContent>,
-    pub source: MailboxSourceIdentity,
-    pub origin: MailboxMessageOrigin,
+    pub source: AgentInputSourceIdentity,
+    pub origin: AgentInputOrigin,
     pub client_command_id: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct AgentRunProductInputDelivery {
-    /// Deterministic handoff identity retained for Product workflow evidence. It is not a durable
-    /// mailbox row and has no independent lifecycle.
-    pub mailbox_message_id: Uuid,
+    /// Deterministic identity retained by the owning Product workflow as input-handoff evidence.
+    pub handoff_id: Uuid,
     pub operation_receipt: ManagedRuntimeOperationReceipt,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PreparedAgentRunProductInputDelivery {
-    pub mailbox_message_id: Uuid,
+    pub handoff_id: Uuid,
     pub command_request: AgentRunProductCommandRequest,
     pub steered: bool,
 }
@@ -105,10 +104,10 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
     ) -> Result<AgentRunProductInputPreparation, AgentRunProductInputDeliveryError> {
         let client_command_id = validate_client_command_id(&command.client_command_id)?;
         let content = managed_content(&command.content)?;
-        let mailbox_message_id = stable_handoff_id(&command.target, client_command_id);
+        let handoff_id = stable_handoff_id(&command.target, client_command_id);
         Ok(AgentRunProductInputPreparation::Prepared(
             PreparedAgentRunProductInputDelivery {
-                mailbox_message_id,
+                handoff_id,
                 command_request: AgentRunProductCommandRequest {
                     target: command.target,
                     client_command_id: client_command_id.to_owned(),
@@ -130,7 +129,7 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
             .await
             .map_err(|error| AgentRunProductInputDeliveryError::Command(error.to_string()))?;
         Ok(AgentRunProductInputDelivery {
-            mailbox_message_id: prepared.mailbox_message_id,
+            handoff_id: prepared.handoff_id,
             operation_receipt: receipt,
         })
     }

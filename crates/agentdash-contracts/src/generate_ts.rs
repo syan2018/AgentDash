@@ -11,7 +11,7 @@ use agentdash_agent_protocol::{
     AgentDashThreadItem, BackboneEnvelope, CanonicalConversationRecord, CommandExecutionStatus,
     McpToolCallStatus, PatchApplyStatus,
 };
-use agentdash_contracts::agent_run_mailbox::{
+use agentdash_contracts::agent_run_interaction::{
     AgentRunAcceptedRefs, AgentRunCommandOnlyRequest, AgentRunCommandReceipt,
     AgentRunComposerSubmitRequest, AgentRunContextCompactionCommandOutcome,
     AgentRunContextCompactionCommandResponse, AgentRunForkLineageView, AgentRunForkOutcomeView,
@@ -347,10 +347,10 @@ fn main() {
         },
     );
 
-    // --- agent-run-mailbox-contracts.ts ---
+    // --- agent-run-interaction-contracts.ts ---
     emit_domain(
         &generated_dir,
-        "agent-run-mailbox-contracts.ts",
+        "agent-run-interaction-contracts.ts",
         &mut upstream,
         check,
         |dir| {

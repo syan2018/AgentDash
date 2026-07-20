@@ -15,8 +15,8 @@ import {
   forkAgentRun,
   submitAgentRunForkInput,
   submitAgentRunComposerInput,
-} from "./agentRunMailbox";
-import type { AgentRunCommandPreconditionView } from "../generated/agent-run-mailbox-contracts";
+} from "./agentRunInteraction";
+import type { AgentRunCommandPreconditionView } from "../generated/agent-run-interaction-contracts";
 
 function command(kind: AgentRunCommandPreconditionView["command_kind"]): AgentRunCommandPreconditionView {
   return {

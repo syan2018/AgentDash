@@ -1,4 +1,4 @@
-import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
+import type { SessionMessageRefDto } from "../../../generated/agent-run-interaction-contracts";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type {
   AgentRunRuntimeItem,

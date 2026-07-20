@@ -89,7 +89,7 @@ describe("deriveSessionInputSourceView", () => {
       kind: "result",
       actor: "agent",
       route: "parent",
-      displayLabelKey: "mailbox.source.companion.result",
+      displayLabelKey: "agent_input.source.companion.result",
     });
 
     expect(source.presentation).toBe("companion");

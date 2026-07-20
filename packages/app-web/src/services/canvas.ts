@@ -1,5 +1,5 @@
 import { api } from "../api/client";
-import type { AgentRunMessageCommandResponse } from "../generated/agent-run-mailbox-contracts";
+import type { AgentRunMessageCommandResponse } from "../generated/agent-run-interaction-contracts";
 import type { AgentInputContent } from "../generated/agent-service-api";
 import type { JsonValue } from "../generated/common-contracts";
 import type {

@@ -4,7 +4,7 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
-use agentdash_domain::agent_run_mailbox::MailboxSourceIdentity;
+use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::channel::{
     Channel, ChannelAddress, ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryStatus,
     ChannelDeliveryTarget, ChannelMedium, ChannelMessage, ChannelOwner, ChannelParticipant,
@@ -203,8 +203,8 @@ fn companion_wake_source(
     gate_id: Uuid,
     request_id: &str,
     metadata: serde_json::Value,
-) -> MailboxSourceIdentity {
-    MailboxSourceIdentity::new("companion", kind, actor)
+) -> AgentInputSourceIdentity {
+    AgentInputSourceIdentity::new("companion", kind, actor)
         .with_source_ref(gate_id.to_string())
         .with_correlation_ref(request_id.to_string())
         .with_route(route)
@@ -317,7 +317,7 @@ fn dedup_channel_aliases(aliases: Vec<String>) -> Vec<String> {
     deduped
 }
 
-fn channel_address_from_mailbox_source(source: &MailboxSourceIdentity) -> ChannelAddress {
+fn channel_address_from_agent_input_source(source: &AgentInputSourceIdentity) -> ChannelAddress {
     let mut address = ChannelAddress::new(
         source.namespace.clone(),
         source.kind.clone(),
@@ -343,11 +343,11 @@ pub(crate) fn companion_channel_delivery_intent(
     run_id: Uuid,
     agent_id: Uuid,
     sender: ChannelParticipantRef,
-    source: &MailboxSourceIdentity,
+    source: &AgentInputSourceIdentity,
     payload_kind: &'static str,
     input_text: &str,
 ) -> ChannelDeliveryIntent {
-    let address = channel_address_from_mailbox_source(source);
+    let address = channel_address_from_agent_input_source(source);
     let mut message = ChannelMessage::new(
         channel_id,
         sender,
@@ -355,7 +355,10 @@ pub(crate) fn companion_channel_delivery_intent(
         address,
     );
     message.correlation_ref = source.correlation_ref.clone();
-    ChannelDeliveryIntent::new(message, ChannelDeliveryTarget::Mailbox { run_id, agent_id })
+    ChannelDeliveryIntent::new(
+        message,
+        ChannelDeliveryTarget::AgentInput { run_id, agent_id },
+    )
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -680,13 +683,12 @@ fn companion_parent_mailbox_delivery_details(
     delivery: &CompanionParentMailboxDeliveryResult,
 ) -> serde_json::Value {
     serde_json::json!({
-        "mailbox_message_id": delivery.mailbox_message_id.map(|id| id.to_string()),
-        "runtime_operation_id": delivery.accepted_runtime_operation_id,
+        "input_handoff_id": delivery.input_handoff_id.map(|id| id.to_string()),
+        "operation_id": delivery.accepted_operation_id,
         "command_receipt_client_command_id": delivery.command_receipt_client_command_id.clone(),
         "command_receipt_status": delivery.command_receipt_status.clone(),
         "command_receipt_duplicate": delivery.command_receipt_duplicate,
         "outcome": delivery.outcome.clone(),
-        "runtime_operation_id": delivery.runtime_operation_id.clone(),
     })
 }
 
@@ -774,8 +776,8 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 gate_id: command.gate_id,
                 result_attempt: GATE_RESULT_DELIVERY_ATTEMPT,
                 claim_token: marker_claim_token,
-                mailbox_message_id: mailbox_result.mailbox_message_id,
-                accepted_runtime_operation_id: mailbox_result.accepted_runtime_operation_id.clone(),
+                input_handoff_id: mailbox_result.input_handoff_id,
+                accepted_operation_id: mailbox_result.accepted_operation_id.clone(),
                 dispatched_to_parent,
             })
             .await?;
@@ -934,7 +936,7 @@ struct CompanionMailboxDeliveryInput {
     run_id: Uuid,
     agent_id: Uuid,
     sender: ChannelParticipantRef,
-    source: MailboxSourceIdentity,
+    source: AgentInputSourceIdentity,
     payload_kind: &'static str,
     input_text: String,
     client_command_id: String,
@@ -954,8 +956,6 @@ async fn deliver_companion_mailbox_message(
         input.payload_kind,
         &input.input_text,
     );
-    let _materialized =
-        companion_channel_service(repos).materialize_delivery_to_mailbox(&channel_intent)?;
     let client_command_id = input.client_command_id.clone();
     let target = AgentRunTarget {
         run_id: input.run_id,
@@ -964,7 +964,7 @@ async fn deliver_companion_mailbox_message(
     let delivery = product_input_delivery
         .deliver(DeliverAgentRunProductInput {
             target,
-            origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::Companion,
+            origin: AgentInputOrigin::Companion,
             content: vec![agentdash_agent_service_api::AgentInputContent::Text {
                 text: input.input_text,
             }],
@@ -973,7 +973,7 @@ async fn deliver_companion_mailbox_message(
         })
         .await
         .map_err(|error| crate::ApplicationError::Internal(error.to_string()))?;
-    let mailbox_message_id = Some(delivery.mailbox_message_id);
+    let input_handoff_id = Some(delivery.handoff_id);
     companion_channel_service(repos)
         .record_delivery_state(
             &ChannelOwner::LifecycleRun {
@@ -985,8 +985,9 @@ async fn deliver_companion_mailbox_message(
                 message_id: channel_intent.message.id,
                 target: channel_intent.target.clone(),
                 status: ChannelDeliveryStatus::Materialized,
-                materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
-                    message_id: delivery.mailbox_message_id,
+                materialized_ref: Some(MaterializedDeliveryRef::AgentInput {
+                    handoff_id: delivery.handoff_id,
+                    operation_id: Some(delivery.operation_receipt.operation_id.to_string()),
                 }),
                 updated_at: Utc::now(),
             },
@@ -994,13 +995,12 @@ async fn deliver_companion_mailbox_message(
         .await?;
 
     Ok(CompanionParentMailboxDeliveryResult {
-        mailbox_message_id,
-        accepted_runtime_operation_id: None,
+        input_handoff_id,
+        accepted_operation_id: Some(delivery.operation_receipt.operation_id.to_string()),
         command_receipt_client_command_id: client_command_id,
         command_receipt_status: "accepted".to_string(),
         command_receipt_duplicate: delivery.operation_receipt.duplicate,
         outcome: "dispatched".to_string(),
-        runtime_operation_id: Some(delivery.operation_receipt.operation_id.to_string()),
     })
 }
 
@@ -1010,13 +1010,12 @@ fn marker_delivery_replay_result(
     duplicate: bool,
 ) -> CompanionParentMailboxDeliveryResult {
     CompanionParentMailboxDeliveryResult {
-        mailbox_message_id: marker.mailbox_message_id,
-        accepted_runtime_operation_id: marker.accepted_runtime_operation_id.clone(),
+        input_handoff_id: marker.input_handoff_id,
+        accepted_operation_id: marker.accepted_operation_id.clone(),
         command_receipt_client_command_id: client_command_id,
         command_receipt_status: marker.status.as_str().to_string(),
         command_receipt_duplicate: duplicate,
         outcome: marker.status.as_str().to_string(),
-        runtime_operation_id: None,
     }
 }
 
@@ -1423,7 +1422,7 @@ impl CompanionRequestTool {
         .await;
 
         let source_ref = dispatch_plan.dispatch_id.clone();
-        let source = MailboxSourceIdentity::new("companion", "dispatch", "agent")
+        let source = AgentInputSourceIdentity::new("companion", "dispatch", "agent")
             .with_source_ref(source_ref)
             .with_correlation_ref(dispatch_plan.dispatch_id.clone())
             .with_route("sub")
@@ -2396,14 +2395,13 @@ impl CompanionRespondTool {
                         "uri": child_messages_uri(result.child_agent_id),
                     },
                 },
-                "mailbox": {
-                    "mailbox_message_id": result.child_mailbox_delivery.mailbox_message_id.map(|id| id.to_string()),
-                    "runtime_operation_id": result.child_mailbox_delivery.accepted_runtime_operation_id,
+                "input_handoff": {
+                    "handoff_id": result.child_mailbox_delivery.input_handoff_id.map(|id| id.to_string()),
+                    "operation_id": result.child_mailbox_delivery.accepted_operation_id,
                     "command_receipt_client_command_id": result.child_mailbox_delivery.command_receipt_client_command_id,
                     "command_receipt_status": result.child_mailbox_delivery.command_receipt_status,
                     "command_receipt_duplicate": result.child_mailbox_delivery.command_receipt_duplicate,
                     "outcome": result.child_mailbox_delivery.outcome,
-                    "runtime_operation_id": result.child_mailbox_delivery.runtime_operation_id,
                 },
                 "payload": result.payload,
             })),
@@ -2530,14 +2528,13 @@ impl CompanionRespondTool {
                         "uri": child_messages_uri(result.parent_agent_id),
                     },
                 },
-                "mailbox": {
-                    "mailbox_message_id": result.parent_mailbox_delivery.mailbox_message_id.map(|id| id.to_string()),
-                    "runtime_operation_id": result.parent_mailbox_delivery.accepted_runtime_operation_id,
+                "input_handoff": {
+                    "handoff_id": result.parent_mailbox_delivery.input_handoff_id.map(|id| id.to_string()),
+                    "operation_id": result.parent_mailbox_delivery.accepted_operation_id,
                     "command_receipt_client_command_id": result.parent_mailbox_delivery.command_receipt_client_command_id,
                     "command_receipt_status": result.parent_mailbox_delivery.command_receipt_status,
                     "command_receipt_duplicate": result.parent_mailbox_delivery.command_receipt_duplicate,
                     "outcome": result.parent_mailbox_delivery.outcome,
-                    "runtime_operation_id": result.parent_mailbox_delivery.runtime_operation_id,
                 },
                 "payload": result.payload,
             })),
@@ -3828,15 +3825,14 @@ mod companion_tests {
 
     fn mailbox_delivery_fixture() -> super::CompanionParentMailboxDeliveryResult {
         super::CompanionParentMailboxDeliveryResult {
-            mailbox_message_id: Some(
-                Uuid::parse_str("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee").expect("mailbox uuid"),
+            input_handoff_id: Some(
+                Uuid::parse_str("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee").expect("handoff uuid"),
             ),
-            accepted_runtime_operation_id: Some("operation-test".to_string()),
+            accepted_operation_id: Some("operation-test".to_string()),
             command_receipt_client_command_id: "client-command-1".to_string(),
             command_receipt_status: "accepted".to_string(),
             command_receipt_duplicate: false,
             outcome: "launched".to_string(),
-            runtime_operation_id: Some("operation-parent-1".to_string()),
         }
     }
 
@@ -3882,8 +3878,8 @@ mod companion_tests {
             serde_json::json!(child_messages_uri(child_agent_id))
         );
         assert_eq!(
-            details["mailbox"]["runtime_operation_id"],
-            serde_json::json!("operation-parent-1")
+            details["input_handoff"]["operation_id"],
+            serde_json::json!("operation-test")
         );
     }
 

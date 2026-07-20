@@ -133,17 +133,17 @@ export type SessionInputSourceView = {
 };
 
 const INPUT_SOURCE_LABELS: Record<string, string> = {
-  "mailbox.source.core.composer": "用户输入",
-  "mailbox.source.core.canvas_action": "Canvas",
-  "mailbox.source.core.draft_start": "草稿输入",
-  "mailbox.source.core.local_relay_prompt": "本机输入",
-  "mailbox.source.companion.dispatch": "Companion 派发",
-  "mailbox.source.companion.result": "Companion 结果",
-  "mailbox.source.companion.parent_request": "Parent 请求",
-  "mailbox.source.companion.parent_response": "Parent 回应",
-  "mailbox.source.companion.human_response": "用户回应",
-  "mailbox.source.companion.parent_resume": "Parent 续跑",
-  "mailbox.source.workflow.orchestrator": "Workflow",
+  "agent_input.source.core.composer": "用户输入",
+  "agent_input.source.core.canvas_action": "Canvas",
+  "agent_input.source.core.draft_start": "草稿输入",
+  "agent_input.source.core.local_relay_prompt": "本机输入",
+  "agent_input.source.companion.dispatch": "Companion 派发",
+  "agent_input.source.companion.result": "Companion 结果",
+  "agent_input.source.companion.parent_request": "Parent 请求",
+  "agent_input.source.companion.parent_response": "Parent 回应",
+  "agent_input.source.companion.human_response": "用户回应",
+  "agent_input.source.companion.parent_resume": "Parent 续跑",
+  "agent_input.source.workflow.orchestrator": "Workflow",
 };
 
 export function deriveSessionInputSourceView(
@@ -154,9 +154,9 @@ export function deriveSessionInputSourceView(
   const actor = source?.actor?.trim() || "user";
   const route = source?.route ?? null;
   const displayLabelKey =
-    source?.displayLabelKey?.trim() || `mailbox.source.${namespace}.${kind}`;
+    source?.displayLabelKey?.trim() || `agent_input.source.${namespace}.${kind}`;
   const explicitLabel = INPUT_SOURCE_LABELS[displayLabelKey];
-  const namespaceKindLabel = INPUT_SOURCE_LABELS[`mailbox.source.${namespace}.${kind}`];
+  const namespaceKindLabel = INPUT_SOURCE_LABELS[`agent_input.source.${namespace}.${kind}`];
   const label =
     explicitLabel ??
     namespaceKindLabel ??

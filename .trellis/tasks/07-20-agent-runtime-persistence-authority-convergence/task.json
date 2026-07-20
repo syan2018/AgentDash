@@ -1,0 +1,31 @@
+{
+  "id": "agent-runtime-persistence-authority-convergence",
+  "name": "agent-runtime-persistence-authority-convergence",
+  "title": "Agent Runtime 持久化职责与事实边界清理",
+  "description": "删除 Product、Runtime、Host 对 Agent 执行事实的重复维护，使 Runtime/Host 回归纯内存协调层；Product 不提供离线输入队列，只保存业务定义与 Agent source 关联，concrete Complete Agent 独占执行历史与 effect authority。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "cross-layer",
+  "package": null,
+  "priority": "P1",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-07-20",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/agent-runtime-final-convergence-plan",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/",
+    ".trellis/tasks/archive/2026-07/07-12-canonical-runtime-session-presentation-convergence/",
+    ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/",
+    ".trellis/tasks/07-20-database-persistence-boundary-cleanup/"
+  ],
+  "notes": "规划阶段；Product 已确认不承诺 Agent 离线异步可靠输入投递，输入采用同步 Agent handoff。",
+  "meta": {}
+}

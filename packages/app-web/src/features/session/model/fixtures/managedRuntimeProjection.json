@@ -10,6 +10,7 @@
       "turns": [
         {
           "id": "turn-compaction",
+          "source_turn_id": "source-turn-1",
           "status": "completed",
           "item_ids": [
             "item-compaction"
@@ -168,6 +169,7 @@
       "turns": [
         {
           "id": "turn-compaction",
+          "source_turn_id": "source-turn-1",
           "status": "failed",
           "item_ids": [
             "item-compaction"
@@ -326,6 +328,7 @@
       "turns": [
         {
           "id": "turn-compaction",
+          "source_turn_id": "source-turn-1",
           "status": "lost",
           "item_ids": [
             "item-compaction"
@@ -495,6 +498,7 @@
       "turns": [
         {
           "id": "turn-compaction",
+          "source_turn_id": "source-turn-1",
           "status": "running",
           "item_ids": [
             "item-compaction"

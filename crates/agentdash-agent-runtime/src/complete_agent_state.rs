@@ -3908,13 +3908,14 @@ mod tests {
                 .decided_at_revision,
             RuntimeProjectionRevision(1)
         );
-        let json = serde_json::to_string(&snapshot).expect("serialize managed snapshot");
-        for source_coordinate in ["source-1", "turn-1", "item-1"] {
-            assert!(
-                !json.contains(&format!("\"{source_coordinate}\"")),
-                "source coordinate leaked: {source_coordinate}"
-            );
-        }
+        let json = serde_json::to_value(&snapshot).expect("serialize managed snapshot");
+        assert_eq!(json["thread_id"], "runtime-thread-7");
+        assert_eq!(json["turns"][0]["id"], "runtime-turn-11");
+        assert_eq!(json["turns"][0]["source_turn_id"], "turn-1");
+        assert_eq!(json["items"][0]["id"], "runtime-item-13");
+        assert_eq!(json["items"][0]["turn_id"], "runtime-turn-11");
+        assert!(json.get("source").is_none());
+        assert!(json["items"][0].get("source_item_id").is_none());
 
         identities
             .bind_turn(

@@ -17,7 +17,6 @@ use crate::rpc::ApiError;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ApiCurrentRuntimeSurface {
-    pub project_id: Uuid,
     pub vfs: Vfs,
 }
 
@@ -67,7 +66,6 @@ pub(crate) async fn resolve_current_runtime_surface_for_project_for_api(
     )
     .await?;
     Ok(ApiCurrentRuntimeSurface {
-        project_id: surface.project_id,
         vfs: applied_vfs(&surface),
     })
 }
@@ -96,9 +94,7 @@ pub(crate) async fn resolve_current_runtime_surface_with_backend_for_agent_run_f
         .lifecycle_agent_repo
         .get(target.agent_id)
         .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("LifecycleAgent 不存在: {}", target.agent_id))
-        })?;
+        .ok_or_else(|| ApiError::NotFound(format!("LifecycleAgent 不存在: {}", target.agent_id)))?;
     if agent.run_id != run.id || agent.project_id != run.project_id {
         return Err(ApiError::Conflict(format!(
             "LifecycleAgent {} 不属于 LifecycleRun {}",
@@ -140,7 +136,6 @@ pub(crate) async fn resolve_current_runtime_surface_with_backend_for_agent_run_f
         project_id: applied.project_id,
         runtime_thread_id: binding.runtime_thread_id.to_string(),
         surface: ApiCurrentRuntimeSurface {
-            project_id: applied.project_id,
             vfs: applied_vfs(&applied),
         },
         runtime_backend_anchor: anchor,

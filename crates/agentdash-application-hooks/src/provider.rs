@@ -334,15 +334,12 @@ mod tests {
         EffectiveSessionContract, WorkflowHookRuleSpec, WorkflowHookTrigger,
     };
     use agentdash_platform_spi::hooks::{
-        AgentFrameHookEvaluationQuery, AgentFrameHookSnapshot, HookControlTarget, HookResolution,
+        AgentFrameHookEvaluationQuery, AgentFrameHookSnapshot, HookControlTarget,
         RuntimeAdapterProvenance,
     };
     use agentdash_platform_spi::{ActiveWorkflowMeta, HookTrigger};
     use async_trait::async_trait;
 
-    use super::super::rules::{HookEvaluationContext, HookRuleEvaluationQuery, apply_hook_rules};
-    use super::super::script_engine::HookScriptEngine;
-    use super::super::test_fixtures::snapshot_with_workflow;
     use super::super::test_script_evaluator::TestHookScriptEvaluator;
     use super::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
 
@@ -382,59 +379,6 @@ mod tests {
             },
             site: HookExecutionSite::ToolBroker,
         }
-    }
-
-    #[tokio::test]
-    async fn before_tool_rewrite_records_resolution() {
-        let snapshot = snapshot_with_workflow("implement", "session_ended");
-        let query = HookRuleEvaluationQuery::from_frame_query(AgentFrameHookEvaluationQuery {
-            target: HookControlTarget {
-                run_id: uuid::Uuid::new_v4(),
-                agent_id: uuid::Uuid::new_v4(),
-                frame_id: uuid::Uuid::new_v4(),
-            },
-            provenance: RuntimeAdapterProvenance::runtime_thread(
-                snapshot.runtime_adapter_runtime_thread_id.clone(),
-                None,
-                "provider_test",
-            ),
-            trigger: HookTrigger::BeforeTool,
-            tool_name: Some("shell_exec".to_string()),
-            tool_call_id: Some("call-shell-1".to_string()),
-            subagent_type: None,
-            snapshot: Some(snapshot.clone()),
-            payload: Some(serde_json::json!({
-                "default_mount_root_ref": "/tmp/test-workspace",
-                "args": {
-                    "cwd": "/tmp/test-workspace/crates/agentdash-agent",
-                    "command": "cargo test"
-                }
-            })),
-            token_stats: None,
-        });
-        let mut resolution = HookResolution::default();
-        apply_hook_rules(
-            HookEvaluationContext {
-                snapshot: &snapshot,
-                query: &query,
-            },
-            &mut resolution,
-            &HookScriptEngine::new(Arc::new(TestHookScriptEvaluator::new(&[]))),
-        );
-
-        assert_eq!(
-            resolution
-                .rewritten_tool_input
-                .as_ref()
-                .and_then(|value| value.get("cwd"))
-                .and_then(serde_json::Value::as_str),
-            Some("crates/agentdash-agent")
-        );
-        assert!(
-            resolution
-                .matched_rule_keys
-                .contains(&"tool:shell_exec:rewrite_absolute_cwd".to_string())
-        );
     }
 
     #[tokio::test]

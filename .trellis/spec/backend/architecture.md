@@ -23,23 +23,23 @@
 | `agentdash-api` | HTTP 路由模块、API-only DTO、中间件、AppState 装配 |
 | `agentdash-application` | 产品用例编排与 AgentFrame/product fact source adapters |
 | `agentdash-application-workflow` | Workflow catalog、builtin templates、graph/script compiler、orchestration reducer 与 executor launcher |
-| `agentdash-application-hooks` | Hook policy provider、preset registry、hook script service 与 `ExecutionHookProvider` implementation |
+| `agentdash-application-hooks` | Product Hook preset、policy、script 与 typed Product/Complete Agent evaluation |
 | `agentdash-application-shared-library` | Shared Library seed、external marketplace import/refresh、Project install/publish/source-status use cases |
 | `agentdash-domain` | 实体、值对象、Repository trait、领域错误 |
 | `agentdash-infrastructure` | PostgreSQL / SQLite 持久化实现 |
-| `agentdash-agent-runtime-contract` | AgentDash-owned canonical Thread/Turn/Item/Interaction、command、snapshot 与 capability contract |
-| `agentdash-agent-runtime` | Managed Runtime 状态机、上下文/压缩、Hook orchestration 与 Tool Broker |
-| `agentdash-agent-runtime-host` | Integration service instance、offer、binding、driver lease 与 conformance host |
-| `agentdash-agent-runtime-wire` | Cloud/Local 与 remote enterprise driver 的 typed RuntimeWire transport |
-| `agentdash-integration-native-agent` | 内建 Agent Core 的 Runtime Driver adapter |
-| `agentdash-integration-codex` | Codex App Server Protocol 的 Runtime Driver adapter |
-| `agentdash-integration-remote-runtime` | 远端 Agent service 的通用 placement proxy，不拥有 Agent 业务语义 |
+| `agentdash-agent-runtime-contract` | Application ↔ Managed Runtime command、snapshot、change 与 availability contract |
+| `agentdash-agent-runtime` | Managed Runtime operation、admission、normalized projection、change/outbox 与 Tool Broker |
+| `agentdash-agent-runtime-host` | Complete Agent service instance、offer、binding、generation、effect 与 recovery host |
+| `agentdash-agent-runtime-wire` | Cloud/Local 与 Remote Complete Agent 的 typed bidirectional transport |
+| `agentdash-integration-native-agent` | Dash Agent 的 Complete Agent service adapter |
+| `agentdash-integration-codex` | Codex App Server 到 Complete Agent service 的 anti-corruption adapter |
+| `agentdash-integration-remote-runtime` | 远端 Complete Agent service placement proxy，不拥有 Agent 业务语义 |
 | `agentdash-llm-provider` | Native Agent 使用的 provider bridge 与 credential-scoped resolver |
-| `agentdash-executor` | 非 Agent Runtime 的执行与 MCP adapter substrate |
 | `agentdash-platform-spi` | 平台 feature、Hook policy、VFS/MCP 与 tool source ports |
-| `agentdash-agent` | 无平台会话事实的 Agent Loop core |
-| `agentdash-agent-types` | Agent 领域通用类型 |
-| `agentdash-agent-protocol` | Backbone Protocol 与协议适配 |
+| `agentdash-agent-core` | 无隐藏持久状态的 provider/tool loop |
+| `agentdash-agent` | Dash Agent ordered history、fork、compaction 与 lifecycle |
+| `agentdash-agent-service-api` | Host ↔ Complete Agent 的 dependency-light typed seam |
+| `agentdash-agent-protocol` | AgentDash-owned canonical conversation standard families 与 typed extensions |
 | `agentdash-relay` | Cloud/Local WebSocket relay 协议 |
 | `agentdash-local` | 本机后端 |
 | `agentdash-local-tauri` | Tauri 桌面托管壳，管理本机 runtime 与 external/sidecar Dashboard API 进程边界 |
@@ -50,15 +50,16 @@ Agent runtime module baseline：
 | --- | --- |
 | `agentdash-application-agentrun::runtime_facade` | 产品 coordinate/command 到 canonical Runtime 的唯一 facade |
 | `agentdash-infrastructure::agent_runtime_composition` | PostgreSQL Managed Runtime、Business Surface、Integration Host、driver callbacks 与 durable workers 的生产装配 |
-| `agentdash-agent-runtime-host` | definition -> instance -> verified offer -> durable binding -> driver generation 生命周期 |
-| `agentdash-agent-runtime` | canonical operation journal、snapshot/event cursor、context head、compaction saga、HookRun/effect 与 tool call exactly-once |
-| `agentdash-agent/src/agent_loop.rs` | Native adapter 内部使用的纯 Agent loop，不拥有 AgentDash Thread/Turn/context persistence |
+| `agentdash-agent-runtime-host` | definition -> instance -> verified offer -> durable binding -> Complete Agent effect/inspect/reconcile |
+| `agentdash-agent-runtime` | canonical operation、snapshot/change cursor、projection、outbox 与 broker call exactly-once |
+| `agentdash-agent` | Dash Agent history-maintained AgentSession 与 lifecycle ledger |
+| `agentdash-agent-core` | Dash Agent 内部使用的纯 Agent loop，不拥有 Runtime/Product/Agent persistence |
 
 ## AppState Bootstrap
 
 `agentdash-api/src/bootstrap/` 承载 API 宿主的装配切片。每个 bootstrap 模块接收启动期输入，返回后续装配真实需要的 output struct，让 `AppState::new_with_plugins` 表达高层构造顺序。
 
-Repository bootstrap 负责 PostgreSQL repository 实例化、composition-root `RepositorySet` 聚合、session persistence port、auth session service，以及启动期 Shared Library seed。这样 API 宿主依赖的是启动期装配结果；进入 route helper 或 application service 后，必须拆成具名 use-case deps，而不是继续传递全量 set。
+Repository bootstrap 负责 PostgreSQL repository 实例化、composition-root `RepositorySet` 聚合、Product/Runtime/Host/Agent owner-specific ports、auth session service，以及启动期 Shared Library seed。这样 API 宿主依赖的是启动期装配结果；进入 route helper 或 application service 后，必须拆成具名 use-case deps，而不是继续传递全量 set。
 
 Relay bootstrap 负责创建 backend registry、backend runtime event channel、shell output registry 与 terminal cache。VFS bootstrap 基于 repository ports、session persistence、relay registry 和插件 mount providers 构建 mount provider registry、VFS service、mutation dispatcher、runtime tool provider 与 materializing MCP relay。这样 session runtime 装配只消费 VFS/relay 的明确输出。
 
@@ -83,7 +84,7 @@ Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService`
 ## Local Decisions
 
 - Repository trait 按 aggregate 边界定义，原因是持久化接口应反映领域一致性边界，而不是表结构。
-- Session 事件、terminal effect outbox 与 runtime command store 的持久化 contract 放在 `agentdash-platform-spi::session_persistence`，原因是这些 record 同时服务 application runtime 与 infrastructure adapter，不能把 infrastructure 绑定到 application 编排模块。
+- Product command/mailbox、Managed Runtime operation/change/outbox、Host effect/binding 与 Dash Agent history 分别由其 typed owner contract 定义，原因是这些事实具有不同事务和恢复权威，不能再聚合进平台 `SessionPersistence`。
 - `RepositorySet` 只作为 application/bootstrap composition result 保留，原因是启动期需要统一持有 repository ports；业务用例使用具名 deps struct，原因是 constructor 签名必须暴露真实 aggregate 依赖，避免 service locator 进入 application 逻辑。
 - PostgreSQL migration 与 SQLite 初始化策略分开维护，原因是云端业务库需要统一可审计 schema 历史，本机会话缓存则由本机 runtime 拥有 per-user 初始化生命周期。
 - Project 授权放在 domain，原因是角色、主体 grant 与 template 可见性属于 Project 聚合语义，MCP 与 API 都需要在不反向依赖 application 的情况下复用同一判定。`ProjectAuthorizationContext` 保留认证身份的 `user_id` 与 `subject` 别名，原因是企业目录解析、登录态 claim 与授权持久化可能使用不同但等价的用户标识，Project 角色判定需要在同一领域入口完成身份收束。Backend 授权放在 application，原因是 backend scope 可能需要组合 Backend 与 Project repository，属于跨聚合用例编排。

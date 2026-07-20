@@ -1,7 +1,7 @@
 use agentdash_platform_spi::hooks::{
     HookRuntimeAccess, RuntimeAdapterProvenance, SharedHookRuntime,
 };
-use agentdash_platform_spi::{AgentToolError, AuthIdentity, ExecutionContext};
+use agentdash_platform_spi::{AgentToolError, AuthIdentity};
 use uuid::Uuid;
 
 #[derive(Clone, Copy)]
@@ -23,25 +23,6 @@ pub(crate) struct CompanionToolContext {
 }
 
 impl CompanionToolContext {
-    pub(crate) fn from_execution_context(context: &ExecutionContext) -> Self {
-        let owner = context.turn.platform_tool_execution.clone();
-        let canonical_runtime_thread_id = owner
-            .as_ref()
-            .map(|owner| owner.runtime_thread_id.to_string());
-        let delivery_runtime_thread_id = owner
-            .as_ref()
-            .map(|owner| owner.runtime_thread_id.to_string());
-
-        Self {
-            canonical_runtime_thread_id,
-            delivery_runtime_thread_id,
-            turn_id: context.session.turn_id.clone(),
-            identity: context.session.identity.clone(),
-            hook_runtime: context.turn.hook_runtime.clone(),
-            owner,
-        }
-    }
-
     pub(crate) fn from_product_runtime(
         runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId,
         turn_id: String,

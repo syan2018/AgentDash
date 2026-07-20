@@ -3,7 +3,6 @@ mod service;
 mod sources;
 #[cfg(test)]
 mod tests;
-mod tool;
 mod types;
 
 pub use service::{WaitActivityDeps, WaitActivityRepositories, WaitActivityService};

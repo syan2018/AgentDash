@@ -1,225 +1,94 @@
-# Managed Agent Runtime Context 与 Compaction
+# Complete Agent Context 与 Compaction
 
-本文定义Managed Runtime拥有的模型上下文、checkpoint、activation与managed compaction合同。它与产品Thread transcript分属不同read model；数据库adapter、Driver Host和Agent Adapter必须消费这些对象，不能另建上下文事实源。
+## 1. Scope
 
-## Scenario: Durable Context 与 Managed Compaction Saga
+本规范约束 Complete Agent context、initial context package、compaction 与 Managed Runtime
+projection 的 owner 边界。
 
-### 1. Scope / Trigger
+## 2. Ownership
 
-当实现ContextRecipe、context materialization、checkpoint/head、manual/automatic compaction、driver activation、recovery scan或context read时，适用本合同。目标是让“模型下一轮实际看到什么”拥有可验证revision/digest/fidelity，并让driver side effect与数据库head CAS之间的crash可恢复。
+- 完整 Agent 独占自己的 history、context、fork、compaction 与 resume authority。
+- Dash Agent 以 ordered history 维护 `AgentSession`；context materialization 和
+  compaction 都是 history-derived lifecycle。
+- Codex 使用原生 ThreadStore、`thread/read`、`thread/compact` 与 history replacement。
+- Managed Runtime 只拥有 command admission、operation、normalized snapshot/change、
+  source evidence 与 availability，不保存可反向恢复外部 Agent 的 context head。
+- Product 只编译 initial context contribution 和 Agent Surface requirement，不读取或改写
+  Agent 内部 repository。
 
-### 2. Signatures
+## 3. Initial context
 
-Context command固定业务identity与base：
+Fresh create 可以原子携带 `InitialAgentContextPackage`。Package 必须包含 stable package
+identity、schema version、mode、typed contributions、逐项 authority/revision/digest
+provenance 与整体 digest。
 
-```rust
-RuntimeCommand::ContextCompact {
-    thread_id: RuntimeThreadId,
-    compaction_id: ContextCompactionId,
-    trigger: ContextCompactionTrigger,
-    expected_base_checkpoint_id: Option<ContextCheckpointId>,
-    expected_context_revision: ContextRevision,
-}
-```
+- contribution 至少区分 compact summary、workflow context 与 constraint set；
+- Workspace/VFS、Tool、Hook、credential 与 capability grant 继续通过
+  `AgentSurfaceSnapshot -> BoundAgentSurface -> AppliedAgentSurface` 交付；
+- receipt/inspect 必须返回 applied package digest 和真实
+  `TypedNative | CanonicalRendered | Unsupported` fidelity；
+- Runtime 在 applied evidence 到达前不激活 source；
+- 派发任务作为 create 之后的首个普通 `SubmitInput`，不能代替 initial context 安装。
 
-Thread与Context使用同一个深Gateway的typed query/result：
+## 4. Compaction capability
 
-```rust
-enum RuntimeSnapshotQuery {
-    Thread { thread_id: RuntimeThreadId, at_revision: Option<RuntimeRevision> },
-    Context { thread_id: RuntimeThreadId, at_revision: Option<ContextRevision> },
-}
-
-enum RuntimeSnapshotResult {
-    Thread(RuntimeSnapshot),
-    Context(RuntimeContextView),
-}
-```
-
-Durable compaction lifecycle：
+Complete Agent 逐项声明：
 
 ```text
-ContextPreparationWorkItem::Pending
-  -> ContextCandidate + immutable ContextCheckpoint
-  -> ContextActivation::Prepared + stable activation dispatch intent
-  -> ContextActivation::Applied { digest, driver_context_revision }
-  -> ActiveContextHead CAS
-  -> ContextActivation::Terminal + Operation terminal
+AgentOwnedNative | ExactContextRevision | ObservedOnly | Unsupported
 ```
 
-### 3. Contracts
+required compaction 只有匹配的 exact/native 能力可以通过 admission。ObservedOnly 只允许
+投影 Agent 自发 activity；Unsupported 在任何 side effect 前 typed reject。
 
-- `ContextRecipe`记录recipe revision、settings/tool revision provenance与source item IDs；`MaterializedContext`记录typed blocks、digest和真实`ContextFidelity`。
-- Thread read返回按canonical Item lifecycle形成的final transcript，fidelity为`EventProjected`；Context read返回active head/checkpoint/materialized blocks及其真实fidelity，两者不互相替代。
-- `Opaque` context不能建立或推进platform-managed active head；driver opaque compact只写telemetry。
-- ContextCompact acceptance与`ContextPreparationWorkItem::Pending`在同一`RuntimeCommit`持久化，recovery worker通过pending scan发现accepted-but-unprepared operation。
-- 同一Thread只允许一个nonterminal managed compaction work；第二条command在任何driver side effect前返回typed `ContextCompactionInProgress`。
-- prepare必须验证operation command、thread、compaction ID、trigger、base checkpoint/context revision与durable work item完全一致。
-- checkpoint/candidate immutable；activation ID、dispatch intent与driver revision使用typed稳定坐标。NotApplied重投同一activation intent，不追加重复outbox。
-- Applied confirmation先durable持久化，head CAS在后续事务完成；crash后由recoverable activation scan继续，不重复apply新identity。
-- active head必须引用真实checkpoint，且revision、digest、settings/tool provenance、fidelity完全相同；head revision严格增加1。
-- compaction admission在写入自身OperationAccepted前冻结`source_end_event_sequence`。candidate只压缩该边界及以前的source items；之后的durable user/assistant/tool facts作为tail在cold rebind时接到active checkpoint之后。
-- transcript投影保留完整tool-call/result配对与typed item；command-owned presentation携带owning operation ID，使当前TurnStart输入不会同时作为历史和本轮prompt重复送入provider。
-- pre-apply并发由per-thread durable slot拒绝；post-apply digest/base/observation不可验证时Thread进入`Desynchronized`、Operation进入`Lost`并阻止新Turn。
-- activation terminal保留Applied digest与typed driver context revision，duplicate ack只能验证原事实，不能覆盖terminal。
+## 5. Dash Agent semantics
 
-### 4. Validation & Error Matrix
-
-| 条件 | 必须结果 |
-| --- | --- |
-| ContextCompact acceptance事务失败 | Operation、event、preparation work全部零落地 |
-| 同Thread已有active compaction | `ContextCompactionInProgress`，无candidate/activation/side effect |
-| prepare identity/trigger/base与accepted command不一致 | typed context invariant/operation mismatch，零side effect |
-| candidate/checkpoint ID复用于不同内容 | `ContextStoreInvariant` |
-| activation ID复用于不同payload | `ContextStoreInvariant` |
-| Prepared收到NotApplied | 同activation ID重投幂等dispatch intent |
-| Applied收到相同ack | 幂等成功，不新增journal |
-| Applied/Terminal收到不同digest或driver revision | typed mismatch；不覆盖原事实 |
-| Applied后active base/head改变 | `Desynchronized + Lost`，保留现有head且阻止新Turn |
-| head CAS事务失败 | Applied事实保留，head不变，recovery可再次finalize |
-| Opaque materialization尝试prepare managed checkpoint | typed拒绝 |
-| compaction acceptance之后又写入新user/tool facts | checkpoint边界不漂移；新facts只作为durable tail replay |
-| cold recovery已有active checkpoint | provision surface、binding descriptor、tool/hook/workspace与provider transcript统一覆盖为active head版本 |
-| Driver伪造checkpoint/activation/head/compaction terminal事件 | critical protocol violation + quarantine + Lost收敛 |
-
-### 5. Good/Base/Bad Cases
-
-- Good：manual command acceptance写Pending work；worker prepare candidate并dispatch稳定activation；driver applied ack落库后进程崩溃，recovery扫描Applied记录并完成head CAS。
-- Good：automatic与manual只改变trigger provenance，复用相同状态机和事务边界。
-- Base：Driver报告opaque native compact，Runtime记录telemetry，active head与context revision保持不变。
-- Bad：acceptance后只依靠当前调用栈继续prepare；进程崩溃会留下永远无法发现的active Operation。
-- Bad：两个candidate都发给同一Driver后再靠head CAS选赢家；CAS只能决定数据库head，无法证明Driver live context与赢家一致。
-
-### 6. Tests Required
-
-- acceptance failure与pending recovery scan测试，断言accepted-but-unprepared可发现。
-- operation/compaction/thread/trigger/base correlation测试，断言任一不一致均在side effect前拒绝。
-- per-thread active compaction唯一测试，断言第二条command无candidate/outbox。
-- prepare failure injection测试，断言checkpoint/candidate/activation/dispatch/head零部分落地。
-- activation retry/duplicate ack/illegal transition测试，断言stable identity与terminal不可回退。
-- applied-before-head-CAS crash测试，断言recovery可重入且Operation exactly-once terminal。
-- fidelity测试，断言Thread=`EventProjected`、Context使用checkpoint真实fidelity、Opaque不推进head。
-- boundary recovery测试断言`source_end_event_sequence`在acceptance前冻结，kept tool pair不拆分，active checkpoint与之后tail在rebind时按原顺序合并。
-- production recovery测试从Runtime context snapshot覆盖materialized driver surface、descriptor与callable registry，防止重启后回到启动时旧surface。
-- PostgreSQL adapter在02C复用以上behavior suite，并补partial unique、claim/lease/`SKIP LOCKED`与真实并发事务测试。
-
-目标门禁：
-
-```powershell
-cargo test -p agentdash-agent-runtime -p agentdash-agent-runtime-contract
-cargo clippy -p agentdash-agent-runtime -p agentdash-agent-runtime-contract --all-targets -- -D warnings
-pnpm contracts:check
-pnpm frontend:check
-```
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```rust
-accept_operation(command).await?;
-driver.activate(candidate).await?;
-save_head(candidate.checkpoint).await?;
-```
-
-调用栈承担了recovery与顺序，一旦任一步crash就无法判断side effect和head事实。
-
-#### Correct
+Dash Agent compaction 以 history transform 表达：
 
 ```text
-accept + Pending work (transaction)
-  -> prepare candidate/checkpoint/activation intent (transaction)
-  -> driver apply stable activation ID
-  -> persist Applied observation (transaction)
-  -> CAS head + activation/operation terminal (transaction)
+source history revision
+  -> CompactionStarted
+  -> summary + retained suffix + provenance
+  -> CompactionApplied(new history revision)
+  -> CompactionCompleted
 ```
 
-每个跨系统side effect前后都有durable事实和可扫描恢复入口。
+command inbox、provider effect、retry 与 recovery ledger 位于 `AgentSession` 外。一次
+`DashAgentCommit` 原子提交 effect settlement、history append/head CAS、derived change
+与下一 continuation intent。
 
-## Context presentation projection
+Manual compaction：
 
-Materialized context、tool/workspace surface 与 ContextFrame presentation 必须由同一次 Business Agent Surface 编译产生。ContextFrame 是面向会话流的审计/展示事实，不是 Driver 模型输入，也不能反向成为 tool availability 或 context head 的事实源。
+- normal Turn active 时 durable queued，但不创建伪 Turn/Item；
+- compaction active 时新输入 deferred，不 steer 进 maintenance activity；
+- terminal 后由独立 promotion 选择下一 command。
 
-- compiled surface artifact 按 exact binding / surface revision / digest 保存 presentation plan，使 ThreadStart、recovery 与 replay 使用同一版本事实。
-- bootstrap frame 随首个 ThreadStart 提交；typed surface delta 随 SurfaceAdopt 提交；managed compaction summary 随 checkpoint/head activation 提交。
-- workflow transition phase 是可选 presentation metadata。存在时用于展示 node path；非 Workflow surface update 使用通用 Runtime Surface Update，不得因缺失 phase 拒绝 adoption。
-- ContextFrame identity 使用 operation/source frame/revision/ordinal 等稳定坐标；timestamp 与可选 phase 不参与 identity，相同 operation 重放必须产生相同 frame ID 与 digest。
-- ContextFrame 与所属 canonical mutation共享 Runtime UoW、revision 与 idempotency；presentation failure 必须阻止对应 surface/head/Hook mutation 接受。
-- Native、Codex、Remote adapter 只消费 materialized driver surface，不构造 ContextFrame，也不读取 AgentFrame repository。
+Automatic overflow 使用独立 A/B/C identity：
 
-这些约束让执行面与展示面保持同源，同时保留 adapter 对 vendor protocol 的纯翻译职责。
+- A 为失败的 Agent Turn；
+- B 为独立 compaction activity；
+- C 为独立 continuation intent/Turn；
+- B terminal 不隐式创建 C；
+- clean failure exactly-once terminalize C，Lost 阻塞 promotion。
 
-## Scenario: Runtime Surface 候选编译与 adopted head
+## 6. Codex 与其它 Agent
 
-### 1. Scope / Trigger
+Codex adapter 发送 native compact command并映射可证明的
+`ContextCompaction started/completed/failed/lost` 与 snapshot；Runtime 不安装 Dash
+ContextRevision。其它 Agent 只按 descriptor 中声明的真实 capability 接入。
 
-当AgentFrame mutation需要更新Canvas、Tool、Hook、VFS或其他Runtime Surface时，编译与adoption必须显式区分“本次候选Frame”和“当前已采用Surface”。这两个版本分别用于生成新Surface与执行Runtime revision guard，不能由同一个模糊的current查询推断。
+## 7. Presentation
 
-### 2. Signatures
+Runtime committed projection/change 保存完整 typed compaction body、identity、source
+revision、fidelity 与 terminal evidence。Canonical conversation projector保持同一 item
+identity和顺序；前端从 item lifecycle渲染 running/succeeded/failed/lost，不固定解释为
+completed。
 
-```rust
-enum NativeAgentRunSurfaceCompileTarget {
-    LatestPersistedAgentFrame,
-    ExactAgentFrame(Uuid),
-}
+## 8. Tests
 
-trait AgentRunRuntimeSurfaceHead {
-    async fn surface_head(
-        &self,
-        thread_id: &RuntimeThreadId,
-    ) -> Result<RuntimeSurfaceDescriptor, AgentRunRuntimeSurfaceQueryError>;
-}
-
-async fn AgentFrameRepository::get_latest(
-    &self,
-    agent_id: Uuid,
-) -> Result<Option<AgentFrame>, DomainError>;
-```
-
-`LatestPersistedAgentFrame`只服务尚未存在Managed Runtime snapshot的首次provision；运行中mutation通过`ExactAgentFrame(frame_id)`传递candidate坐标。活动Surface查询通过`AgentRunRuntimeSurfaceHead`读取thread snapshot的descriptor。
-
-### 3. Contracts
-
-- `AgentFrameRepository::get_latest`表示某Agent最高持久化revision，不表达已adopted状态。
-- Runtime binding中的surface descriptor是启动与恢复定位事实；运行期间的adopted head由Managed Runtime thread snapshot拥有。
-- Surface mutation生成candidate AgentFrame后，把exact frame ID贯穿adopter、compiler与business source；一次source projection同时返回编译Surface及其AgentFrame facts，后续context materialization复用该projection。
-- Runtime以snapshot中的active surface revision执行adoption guard；成功commit后，新的snapshot descriptor成为唯一活动head。
-- 首次provision允许显式选择latest persisted Frame，因为此时尚无Runtime head；该模式不参与运行中adoption。
-
-### 4. Validation & Error Matrix
-
-| 条件 | 必须结果 |
-| --- | --- |
-| exact candidate Frame不存在或不属于目标Agent | typed surface query failure；不提交Runtime mutation |
-| candidate缺少capability/VFS/MCP/Hook closure | typed missing-closure failure；active head不变 |
-| Runtime snapshot不存在但执行活动Surface查询 | typed runtime-surface-unavailable |
-| expected active revision与Runtime snapshot不一致 | Runtime revision conflict；candidate保持持久化但不成为active |
-| binding、snapshot与latest persisted分别指向F1/F2/F3 | 活动查询返回F2；exact candidate编译按调用方坐标返回目标Frame |
-
-### 5. Good / Base / Bad Cases
-
-- Good：Canvas mutation持久化F2，compiler按`ExactAgentFrame(F2)`产生candidate；Runtime以snapshot F1作guard并commit F2，后续活动查询读取snapshot F2。
-- Base：首次启动尚无snapshot，provision显式选择`LatestPersistedAgentFrame`并创建初始Runtime surface。
-- Bad：compiler先从binding取F1，再从repository最高revision取F2并比较；两个不同语义的事实源会制造必然的revision mismatch。
-
-### 6. Tests Required
-
-- 三版本单元测试：binding=F1、snapshot adopted=F2、repository latest=F3，断言活动Surface与capability查询只投影F2。
-- exact candidate contract测试：adopter收到F2时，compiler观察到`ExactAgentFrame(F2)`。
-- production composition测试：Managed Runtime head adapter接到真实snapshot query，工具调用完成到final assistant terminal。
-- adoption conflict测试：stale expected revision不得改变snapshot active surface descriptor。
-
-### 7. Wrong vs Correct
-
-```rust
-// Wrong: 编译阶段重新发现一个语义不明确的“当前”Frame。
-let binding_surface = binding.surface;
-let frame = frame_repo.get_latest(agent_id).await?;
-
-// Correct: active guard和candidate source分别使用各自的显式坐标。
-let expected_active = runtime_surface_head.surface_head(&thread_id).await?;
-let candidate = compiler
-    .compile(NativeAgentRunSurfaceCompileTarget::ExactAgentFrame(frame_id), request)
-    .await?;
-runtime.adopt(expected_active.revision, candidate).await?;
-```
+- Fresh create package digest/fidelity、unknown outcome 与 first-input ordering。
+- Dash history replay、manual queue、A/B/C、clean failure/Lost 与 atomic commit。
+- Codex native compaction source mapping与 gap snapshot reconcile。
+- Unsupported/Observed 不满足 required exact。
+- Runtime reconnect只读 snapshot revision + durable change tail，不 replay presentation
+  journal 或 Agent 内部 history。

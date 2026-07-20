@@ -37,7 +37,6 @@ pub mod workflows;
 pub mod workspace_module;
 pub mod workspaces;
 mod agent_run_workspace;
-mod runtime_traces;
 
 use std::{path::PathBuf, sync::Arc};
 

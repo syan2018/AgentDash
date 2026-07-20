@@ -22,7 +22,6 @@ pub(crate) struct VfsBootstrapOutput {
     pub vfs_service: Arc<VfsService>,
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
     pub vfs_materialization_service: Arc<VfsMaterializationService>,
-    pub mcp_relay_provider: Arc<dyn agentdash_platform_spi::McpRelayProvider>,
     pub lifecycle_history_query: DeferredLifecycleHistoryQuery,
 }
 
@@ -80,19 +79,11 @@ pub(crate) fn build_vfs_kernel(
             vfs_service.clone(),
             materialization_transport,
         ));
-    let mcp_relay_provider: Arc<dyn agentdash_platform_spi::McpRelayProvider> = Arc::new(
-        crate::vfs_materialization::MaterializingMcpRelayProvider::new(
-            backend_registry,
-            materialization_service.clone(),
-        ),
-    );
-
     VfsBootstrapOutput {
         mount_provider_registry,
         vfs_service,
         vfs_mutation_dispatcher,
         vfs_materialization_service: materialization_service,
-        mcp_relay_provider,
         lifecycle_history_query,
     }
 }

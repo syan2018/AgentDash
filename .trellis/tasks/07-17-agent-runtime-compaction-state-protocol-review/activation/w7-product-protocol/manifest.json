@@ -2,8 +2,8 @@
   "generator": "schemars::schema_for!(ManagedRuntimeProjectionSchema)",
   "canonical_root": "agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeProjectionSchema",
   "schema_path": "managed-runtime-projection.schema.json",
-  "schema_sha256": "9d5e9adc2aa81c4c11ee6f1df66b75e7754caef21d132fb2efe7126fce8bd659",
+  "schema_sha256": "2c721cbfc7592906df79cd77e2840e1299a72eaaf5ef80e3eb47e89034e75727",
   "frontend_fixture_path": "packages/app-web/src/features/session/model/fixtures/managedRuntimeProjection.json",
-  "frontend_fixture_sha256": "def682da5f9350945bbbe21094c560f88a8b080f17915d5d24728e9297c83adb",
+  "frontend_fixture_sha256": "4adf8f99d9df98c03658f97dfcd113359a562bb98a64b366d8b40382d18c61be",
   "reproduction_command": "$env:AGENTDASH_UPDATE_W7_ACTIVATION_ARTIFACTS='1'; cargo test -p agentdash-api --test agent_runtime_target_projection task_local_generated_artifacts_match_canonical_schema_and_frontend_fixture -- --exact"
 }

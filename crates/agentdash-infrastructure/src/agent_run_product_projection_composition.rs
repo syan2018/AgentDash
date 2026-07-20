@@ -20,6 +20,7 @@ use crate::{
 pub struct AgentRunProductProjectionComposition {
     pub gateway: Arc<dyn AgentRunProductProjectionQueryPort>,
     pub commands: Arc<AgentRunProductCommandFacade>,
+    pub agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
     pub runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
     pub workspace_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
     pub terminals: Arc<PostgresAgentRunTerminalProjectionStore>,
@@ -65,10 +66,11 @@ impl AgentRunProductProjectionComposition {
         workspace_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
     ) -> Result<Self, String> {
         let terminals = Arc::new(PostgresAgentRunTerminalProjectionStore::new(pool));
-        let agents = Arc::new(LiveCompleteAgentResolver {
-            catalog: live_agents,
-            provisioner,
-        });
+        let agents: Arc<dyn AgentRunCompleteAgentResolverPort> =
+            Arc::new(LiveCompleteAgentResolver {
+                catalog: live_agents,
+                provisioner,
+            });
         let commands = Arc::new(AgentRunProductCommandFacade::new(
             runtime_bindings.clone(),
             agents.clone(),
@@ -76,7 +78,7 @@ impl AgentRunProductProjectionComposition {
         let gateway: Arc<dyn AgentRunProductProjectionQueryPort> =
             Arc::new(AgentRunProductProjectionGateway::new(
                 runtime_bindings.clone(),
-                agents,
+                agents.clone(),
                 workspace_presentations.clone(),
                 workspace_presentations.clone(),
                 terminals.clone(),
@@ -84,6 +86,7 @@ impl AgentRunProductProjectionComposition {
         Ok(Self {
             gateway,
             commands,
+            agents,
             runtime_bindings,
             workspace_presentations,
             terminals,

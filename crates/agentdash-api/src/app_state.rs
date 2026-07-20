@@ -5,7 +5,6 @@ use sqlx::PgPool;
 use tokio::sync::broadcast;
 
 use agentdash_agent_runtime::{PlatformToolBroker, RuntimeToolExecutor};
-use agentdash_agent_runtime_contract::ManagedAgentRuntimeGateway;
 use agentdash_agent_runtime_host::{
     CompleteAgentHostError, CompleteAgentLiveCatalog, CompleteAgentLiveCatalogError,
     CompleteAgentVerificationMethod, CompleteAgentVerificationRecord, RuntimePlatformToolHandler,
@@ -114,7 +113,6 @@ const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
 const PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY: usize = 256;
 const PLATFORM_MCP_BASE_URL_ENV: &str = "AGENTDASH_MCP_BASE_URL";
 const RUNTIME_WIRE_TRUST_CATALOG_ENV: &str = "AGENTDASH_RUNTIME_WIRE_TRUST_CATALOG";
-const COMPLETE_AGENT_LEASE_DURATION_MS: u64 = 30_000;
 
 fn configured_platform_mcp_base_url() -> Option<String> {
     resolve_platform_mcp_base_url(std::env::var(PLATFORM_MCP_BASE_URL_ENV).ok())
@@ -186,7 +184,6 @@ pub struct ServiceSet {
     pub complete_agent: Arc<CompleteAgentComposition>,
     pub complete_agent_verifier: Arc<PinnedCompleteAgentVerificationCatalog>,
     pub complete_agent_selections: Arc<CompleteAgentServiceSelectionCatalog>,
-    pub managed_runtime: Arc<dyn ManagedAgentRuntimeGateway>,
     pub complete_agent_callbacks: Arc<dyn AgentHostCallbacks>,
     pub agent_run_product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
     pub agent_run_product_projection_composition: Arc<AgentRunProductProjectionComposition>,
@@ -438,8 +435,6 @@ impl AppState {
             runtime_hook_handler,
             complete_agent_verifier.clone(),
             host_incarnation_id.clone(),
-            format!("agentdash-api-runtime-{}", uuid::Uuid::new_v4()),
-            COMPLETE_AGENT_LEASE_DURATION_MS,
         )?);
         for contribution in integration_registration
             .complete_agent_registrations
@@ -580,7 +575,8 @@ impl AppState {
             )),
             product_launch.clone(),
             Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(
-                complete_agent.runtime.clone(),
+                runtime_product_bindings.clone(),
+                product.agents.clone(),
             )),
         ));
         let companion_continuations: Arc<dyn CompanionContinuationSagaRepository> = Arc::new(
@@ -776,7 +772,6 @@ impl AppState {
             repos,
             services: ServiceSet {
                 complete_agent_callbacks: complete_agent.host_callbacks(),
-                managed_runtime: complete_agent.runtime.clone(),
                 complete_agent,
                 complete_agent_verifier,
                 complete_agent_selections,

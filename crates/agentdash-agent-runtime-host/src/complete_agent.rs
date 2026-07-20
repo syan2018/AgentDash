@@ -11,11 +11,9 @@ use agentdash_agent_runtime::{
     ManagedRuntimeAgentBinding, ManagedRuntimeCreateOutcome, ManagedRuntimeDispatchContext,
     ManagedRuntimeForkOutcome, ManagedRuntimeLifecycleError, ManagedRuntimeLifecycleInspection,
     ManagedRuntimeLifecyclePort, ManagedRuntimeRebindOutcome, ManagedRuntimeResumeOutcome,
-    ManagedRuntimeStateRepository, bind_complete_agent_surface, production_managed_runtime_gateway,
+    bind_complete_agent_surface,
 };
-use agentdash_agent_runtime_contract::{
-    ManagedAgentRuntimeGateway, ManagedRuntimeGatewayError, RuntimeThreadId,
-};
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentChangePage,
     AgentChangesQuery, AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentCommandReceipt,
@@ -2370,15 +2368,6 @@ impl CompleteAgentHost {
             })
             .await?)
     }
-}
-
-pub fn complete_agent_managed_runtime_gateway(
-    repository: Arc<dyn ManagedRuntimeStateRepository>,
-    host: Arc<CompleteAgentHost>,
-    dispatch_owner: impl Into<String>,
-    lease_duration_ms: u64,
-) -> Result<Arc<dyn ManagedAgentRuntimeGateway>, ManagedRuntimeGatewayError> {
-    production_managed_runtime_gateway(repository, host, dispatch_owner, lease_duration_ms)
 }
 
 #[async_trait]

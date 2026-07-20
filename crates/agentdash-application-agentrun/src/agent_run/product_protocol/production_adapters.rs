@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
+use agentdash_agent_runtime::project_authoritative_agent_snapshot;
 use agentdash_agent_runtime_contract::{
-    ManagedAgentRuntimeGateway, ManagedRuntimeChangesRequest, ManagedRuntimeContentBlock,
-    ManagedRuntimeContextAuthority, ManagedRuntimeContextProvenance,
-    ManagedRuntimeInitialContextContribution, ManagedRuntimeInitialContextContributionContent,
-    ManagedRuntimeInitialContextMode, ManagedRuntimeInitialContextPackage,
-    ManagedRuntimeReadRequest, ManagedRuntimeSnapshot, RuntimeChangeSequence,
+    ManagedRuntimeChangePage, ManagedRuntimeContentBlock, ManagedRuntimeContextAuthority,
+    ManagedRuntimeContextProvenance, ManagedRuntimeInitialContextContribution,
+    ManagedRuntimeInitialContextContributionContent, ManagedRuntimeInitialContextMode,
+    ManagedRuntimeInitialContextPackage, ManagedRuntimeSnapshot, RuntimeChangeSequence,
     RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
     RuntimeContextSourceRevision, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId,
 };
 use agentdash_agent_service_api::{
-    AgentEffectIdentity, AgentForkPoint, AgentReceiptState, AgentTurnId,
+    AgentEffectIdentity, AgentForkPoint, AgentReadQuery, AgentReceiptState, AgentTurnId,
     AppliedInitialContextEvidence, InitialContextDeliveryFidelity,
 };
 use agentdash_application_ports::agent_frame_materialization::{
@@ -26,7 +26,7 @@ use serde_json::json;
 use thiserror::Error;
 
 use crate::agent_run::{
-    AgentRunProductLaunchRequest, AgentRunProductLaunchService,
+    AgentRunCompleteAgentResolverPort, AgentRunProductLaunchRequest, AgentRunProductLaunchService,
     AgentRunProductRuntimeBindingRepository, AgentRunProductRuntimeProvisioningRequest,
     ProductAgentFrameRef, ProductAgentSurfaceFacts,
 };
@@ -42,8 +42,6 @@ use super::{
     CompiledFreshContextMode, CompiledInitialContextContribution, CompiledInitialContextPackage,
     PreparedAgentRunForkGraph, RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
 };
-
-const PRODUCT_RUNTIME_CHANGE_PAGE_LIMIT: u32 = 256;
 
 /// Direct concrete-Agent fork protocol adapter.
 ///
@@ -333,14 +331,18 @@ fn map_agent_initial_context_evidence(
     })
 }
 
-/// Lossless Product read adapter for the canonical Runtime snapshot/change protocol.
+/// Product protocol read adapter backed by the Product association and authoritative Agent read.
 pub struct ProductAgentRunRuntimeProjectionAdapter {
-    gateway: Arc<dyn ManagedAgentRuntimeGateway>,
+    bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+    agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
 }
 
 impl ProductAgentRunRuntimeProjectionAdapter {
-    pub fn new(gateway: Arc<dyn ManagedAgentRuntimeGateway>) -> Self {
-        Self { gateway }
+    pub fn new(
+        bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+        agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
+    ) -> Self {
+        Self { bindings, agents }
     }
 }
 
@@ -350,15 +352,26 @@ impl AgentRunRuntimeProjectionPort for ProductAgentRunRuntimeProjectionAdapter {
         &self,
         thread_id: &RuntimeThreadId,
     ) -> Result<ManagedRuntimeSnapshot, String> {
-        let snapshot = self
-            .gateway
-            .read(ManagedRuntimeReadRequest {
-                thread_id: thread_id.clone(),
+        let binding = self
+            .bindings
+            .load_product_binding_by_runtime_thread(thread_id)
+            .await?
+            .ok_or_else(|| format!("Product binding for Runtime thread {thread_id} is missing"))?;
+        let service = self
+            .agents
+            .resolve(&binding.agent.service_instance_id)
+            .await?;
+        let snapshot = service
+            .read(AgentReadQuery {
+                source: binding.agent.source,
+                at_revision: None,
             })
             .await
             .map_err(|error| error.to_string())?;
+        let snapshot = project_authoritative_agent_snapshot(thread_id.clone(), snapshot)
+            .map_err(|error| error.to_string())?;
         if &snapshot.thread_id != thread_id {
-            return Err("Runtime Gateway returned a snapshot for another thread".to_owned());
+            return Err("Complete Agent returned a snapshot for another thread".to_owned());
         }
         Ok(snapshot)
     }
@@ -368,24 +381,13 @@ impl AgentRunRuntimeProjectionPort for ProductAgentRunRuntimeProjectionAdapter {
         thread_id: &RuntimeThreadId,
         after: Option<RuntimeChangeSequence>,
     ) -> Result<agentdash_agent_runtime_contract::ManagedRuntimeChangePage, String> {
-        let page = self
-            .gateway
-            .changes(ManagedRuntimeChangesRequest {
-                thread_id: thread_id.clone(),
-                after,
-                limit: PRODUCT_RUNTIME_CHANGE_PAGE_LIMIT,
-            })
-            .await
-            .map_err(|error| error.to_string())?;
-        if &page.thread_id != thread_id
-            || page
-                .changes
-                .iter()
-                .any(|change| &change.thread_id != thread_id)
-        {
-            return Err("Runtime Gateway returned changes for another thread".to_owned());
-        }
-        Ok(page)
+        let next = after.unwrap_or(RuntimeChangeSequence(0));
+        Ok(ManagedRuntimeChangePage {
+            thread_id: thread_id.clone(),
+            changes: Vec::new(),
+            next,
+            gap: None,
+        })
     }
 }
 

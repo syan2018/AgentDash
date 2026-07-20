@@ -1,7 +1,5 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use agentdash_agent_runtime::ProcessManagedRuntimeStateRepository;
-use agentdash_agent_runtime_contract::{ManagedAgentRuntimeGateway, ManagedRuntimeGatewayError};
 use agentdash_agent_runtime_host::{
     CompleteAgentCallbackBroker, CompleteAgentHookHandler, CompleteAgentHost,
     CompleteAgentHostError, CompleteAgentLiveSelection, CompleteAgentPlacement,
@@ -10,7 +8,7 @@ use agentdash_agent_runtime_host::{
     CompleteAgentVerificationRecord, CompleteAgentVerificationRequest,
     CompleteAgentVerifiedBuildEvidence, CompleteAgentVerifiedServiceRegistration,
     ProcessCompleteAgentCallbackRepository, ProcessCompleteAgentHostRepository,
-    ProcessCompleteAgentLiveCatalog, complete_agent_managed_runtime_gateway,
+    ProcessCompleteAgentLiveCatalog,
 };
 use agentdash_agent_service_api::{AgentHostCallbacks, AgentServiceInstanceId};
 use agentdash_integration_api::{
@@ -23,8 +21,6 @@ use tokio::sync::RwLock;
 
 #[derive(Debug, Error)]
 pub enum CompleteAgentCompositionError {
-    #[error(transparent)]
-    Runtime(#[from] ManagedRuntimeGatewayError),
     #[error(transparent)]
     Host(#[from] CompleteAgentHostError),
     #[error(transparent)]
@@ -257,13 +253,11 @@ fn template_matches(
 /// Concrete Agents own source history and effect inspection. Runtime/Host state intentionally
 /// disappears with this process, fencing old routes and forcing authoritative reconstruction.
 pub struct CompleteAgentComposition {
-    pub runtime_repository: Arc<ProcessManagedRuntimeStateRepository>,
     pub host_repository: Arc<ProcessCompleteAgentHostRepository>,
     pub callback_repository: Arc<ProcessCompleteAgentCallbackRepository>,
     pub live_catalog: Arc<ProcessCompleteAgentLiveCatalog>,
     pub host: Arc<CompleteAgentHost>,
     pub callbacks: Arc<CompleteAgentCallbackBroker>,
-    pub runtime: Arc<dyn ManagedAgentRuntimeGateway>,
     verifier: Arc<dyn CompleteAgentRegistrationVerifier>,
     host_incarnation_id: String,
 }
@@ -274,14 +268,11 @@ impl CompleteAgentComposition {
         hook_handler: Arc<dyn CompleteAgentHookHandler>,
         verifier: Arc<dyn CompleteAgentRegistrationVerifier>,
         host_incarnation_id: impl Into<String>,
-        dispatch_owner: impl Into<String>,
-        lease_duration_ms: u64,
     ) -> Result<Self, CompleteAgentCompositionError> {
         let host_incarnation_id = host_incarnation_id.into();
         if host_incarnation_id.trim().is_empty() {
             return Err(CompleteAgentCompositionError::InvalidHostIncarnation);
         }
-        let runtime_repository = Arc::new(ProcessManagedRuntimeStateRepository::new());
         let host_repository = Arc::new(ProcessCompleteAgentHostRepository::new());
         let callback_repository = Arc::new(ProcessCompleteAgentCallbackRepository::new());
         let live_catalog = Arc::new(ProcessCompleteAgentLiveCatalog::new());
@@ -295,20 +286,12 @@ impl CompleteAgentComposition {
             host_repository.clone(),
             callback_repository.clone(),
         ));
-        let runtime = complete_agent_managed_runtime_gateway(
-            runtime_repository.clone(),
-            host.clone(),
-            dispatch_owner,
-            lease_duration_ms,
-        )?;
         Ok(Self {
-            runtime_repository,
             host_repository,
             callback_repository,
             live_catalog,
             host,
             callbacks,
-            runtime,
             verifier,
             host_incarnation_id,
         })

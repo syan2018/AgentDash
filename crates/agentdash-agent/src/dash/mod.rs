@@ -6,9 +6,10 @@ mod store;
 
 pub use core_execution::{
     DashBeforeToolDecision, DashCancellation, DashCoreContext, DashCoreError, DashCoreEvent,
-    DashCoreOutput, DashCoreTurn, DashCoreTurnResult, DashExecutionCallbacks, DashFinishReason,
-    DashMessage, DashMessageRole, DashProvider, DashProviderEvent, DashProviderEventStream,
-    DashProviderRequest, DashToolCall, DashToolCallbacks, DashToolDefinition, DashToolResult,
+    DashCoreOutput, DashCoreTurn, DashCoreTurnResult, DashExecutionCallbacks, DashExecutionFailure,
+    DashFinishReason, DashMessage, DashMessageRole, DashProvider, DashProviderEvent,
+    DashProviderEventStream, DashProviderRequest, DashToolCall, DashToolCallbacks,
+    DashToolDefinition, DashToolResult,
 };
 pub use history::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId,

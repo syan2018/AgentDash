@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use super::DashExecutionFailure;
 use thiserror::Error;
 
 macro_rules! string_id {
@@ -158,7 +160,7 @@ pub enum HistoryPayload {
     },
     TurnFailed {
         turn_id: AgentTurnId,
-        error: String,
+        error: DashExecutionFailure,
         lost: bool,
     },
     TurnInterrupted {
@@ -743,7 +745,11 @@ fn apply_payload(
         HistoryPayload::TurnCompleted { turn_id } => {
             terminalize_turn(state, turn_id, ActivityStatus::Completed)?;
         }
-        HistoryPayload::TurnFailed { turn_id, lost, .. } => {
+        HistoryPayload::TurnFailed {
+            turn_id,
+            error: _,
+            lost,
+        } => {
             terminalize_turn(
                 state,
                 turn_id,

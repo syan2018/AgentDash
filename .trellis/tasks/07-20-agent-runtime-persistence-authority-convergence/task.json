@@ -26,6 +26,6 @@
     ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/",
     ".trellis/tasks/07-20-database-persistence-boundary-cleanup/"
   ],
-  "notes": "规划阶段；Product 已确认不承诺 Agent 离线异步可靠输入投递，输入采用同步 Agent handoff。",
+  "notes": "实施中；Product 输入采用同步 Agent handoff。首个 owner slice 已让 Dash terminal history 与 Complete Agent read 保留真实 error code/message/retryability，并以 0095 hard cut 清理无法补证的旧 Dash execution facts。",
   "meta": {}
 }

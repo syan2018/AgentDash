@@ -9,9 +9,9 @@ use agentdash_agent_service_api::{
     AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandCapability,
     AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
     AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentEntityStatus,
-    AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentInput, AgentInputContent,
-    AgentInteractionId, AgentInteractionRequest, AgentInteractionSnapshot, AgentInteractionStatus,
-    AgentItemBody, AgentItemId, AgentItemPresentation, AgentItemSnapshot,
+    AgentExecutionFailure, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentInput,
+    AgentInputContent, AgentInteractionId, AgentInteractionRequest, AgentInteractionSnapshot,
+    AgentInteractionStatus, AgentItemBody, AgentItemId, AgentItemPresentation, AgentItemSnapshot,
     AgentItemTerminalEvidence, AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest,
     AgentPresentationError, AgentProcessExitEvidence, AgentProfileDigest, AgentReadQuery,
     AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
@@ -1812,7 +1812,25 @@ fn map_thread_turns(
             .iter()
             .map(|item| map_item(item, Some(status)))
             .collect::<Result<Vec<_>, _>>()?;
-        mapped.push(AgentTurnSnapshot { id, status, items });
+        let error = turn
+            .get("error")
+            .filter(|value| !value.is_null())
+            .map(|value| AgentExecutionFailure {
+                code: "codex_turn_failed".to_owned(),
+                message: value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .or_else(|| value.as_str())
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| value.to_string()),
+                retryable: None,
+            });
+        mapped.push(AgentTurnSnapshot {
+            id,
+            status,
+            items,
+            error,
+        });
     }
     Ok((mapped, active))
 }
@@ -2513,6 +2531,11 @@ fn map_notification_turn(
     turn: crate::vendor_generated::codex_v2::server_notification::Turn,
 ) -> Result<AgentTurnSnapshot, AgentServiceError> {
     let status = project_codex_turn_status(turn.status);
+    let error = turn.error.flatten().map(|error| AgentExecutionFailure {
+        code: "codex_turn_failed".to_owned(),
+        message: error.message,
+        retryable: None,
+    });
     let items = turn
         .items
         .into_iter()
@@ -2525,6 +2548,7 @@ fn map_notification_turn(
         id: AgentTurnId::new(turn.id).map_err(internal_error)?,
         status,
         items,
+        error,
     })
 }
 

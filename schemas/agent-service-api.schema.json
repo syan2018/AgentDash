@@ -1582,6 +1582,16 @@
           "items": {
             "$ref": "#/$defs/AgentItemSnapshot"
           }
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentExecutionFailure"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2717,6 +2727,27 @@
         "code",
         "message",
         "retryable"
+      ]
+    },
+    "AgentExecutionFailure": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message"
       ]
     },
     "AgentInteractionSnapshot": {

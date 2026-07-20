@@ -14,7 +14,8 @@
 ## Phase 1 — 建立无 durable Runtime projection 的 tracer bullet
 
 - [ ] 将 Dash execution production callbacks 从 Noop 替换为真实 Agent live change sink。
-- [ ] 保留真实 `DashCoreError` code/message/retryability，写入 Agent terminal history 与 diagnostic。
+- [x] 保留真实 `DashCoreError` code/message/retryability，写入 Agent terminal history，并经
+  Complete Agent authoritative read 暴露同一 terminal evidence。
 - [ ] 建立 Complete Agent `read` → in-memory normalize → AgentRun conversation snapshot。
 - [ ] 建立 Complete Agent live callback/change → in-memory broadcast → frontend stream。
 - [ ] 重连时从 Complete Agent authoritative snapshot/history 恢复，不读取 Runtime state document。

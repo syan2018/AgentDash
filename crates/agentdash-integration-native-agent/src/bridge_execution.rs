@@ -312,6 +312,7 @@ fn bridge_request(
             DashMessageRole::Tool => {
                 let Some(tool_call_id) = message.tool_call_id else {
                     return Err(DashCoreError::Provider {
+                        code: "provider_transcript_invalid".to_owned(),
                         message: "provider-visible tool result is missing tool_call_id".to_owned(),
                         retryable: false,
                     });
@@ -364,6 +365,16 @@ fn map_bridge_error(error: BridgeError) -> DashCoreError {
         DashCoreError::Cancelled
     } else {
         DashCoreError::Provider {
+            code: if provider_code.is_empty() {
+                match classification.kind {
+                    ProviderErrorKind::Retryable => "provider_retryable_error",
+                    ProviderErrorKind::Fatal => "provider_fatal_error",
+                    ProviderErrorKind::Aborted => "provider_aborted",
+                }
+                .to_owned()
+            } else {
+                provider_code
+            },
             message,
             retryable: classification.kind == ProviderErrorKind::Retryable,
         }

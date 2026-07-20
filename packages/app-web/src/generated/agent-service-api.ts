@@ -68,6 +68,8 @@ export type AgentEffectInspectionState = { "kind": "not_applied" } | { "kind": "
 
 export type AgentEntityStatus = "accepted" | "running" | "completed" | "failed" | "interrupted" | "lost";
 
+export type AgentExecutionFailure = { code: string, message: string, retryable: boolean | null, };
+
 export type AgentFileChangeKind = "add" | "update" | "delete" | "move";
 
 export type AgentFilePatch = { path: string, change_kind: AgentFileChangeKind, patch: string, moved_to: string | null, };
@@ -238,7 +240,7 @@ export type AgentToolUpdateSemantics = "unsupported" | "binding_only" | "hot_upd
 
 export type AgentTurnId = string;
 
-export type AgentTurnSnapshot = { id: AgentTurnId, status: AgentEntityStatus, items: Array<AgentItemSnapshot>, };
+export type AgentTurnSnapshot = { id: AgentTurnId, status: AgentEntityStatus, items: Array<AgentItemSnapshot>, error: AgentExecutionFailure | null, };
 
 export type AppliedAgentCommandReceipt = { command_id: AgentCommandId, effect_id: AgentEffectIdentity, source: AgentSourceCoordinate, terminal: AgentTerminalOutcome | null, snapshot_revision: AgentSnapshotRevision | null, initial_context: AppliedInitialContextEvidence | null, };
 

@@ -2276,19 +2276,24 @@ fn submit_envelope(
 
 #[tokio::test]
 async fn provider_failed_and_lost_are_terminal_and_inspectable() {
-    for (name, error, expected) in [
+    for (name, error, expected, expected_code, expected_retryable) in [
         (
             "failed",
             DashCoreError::Provider {
+                code: "rate_limit".into(),
                 message: "retry later".into(),
                 retryable: true,
             },
             AgentTerminalOutcome::Failed,
+            "rate_limit",
+            true,
         ),
         (
             "lost",
             DashCoreError::ProviderStreamDisconnected,
             AgentTerminalOutcome::Lost,
+            "provider_stream_disconnected",
+            false,
         ),
     ] {
         let service = service_with_provider(Arc::new(ErrorProvider { error }));
@@ -2316,6 +2321,24 @@ async fn provider_failed_and_lost_are_terminal_and_inspectable() {
                 outcome: AgentAppliedEffectOutcome::Command { receipt }
             } if receipt.terminal == Some(expected)
         ));
+        let snapshot = service
+            .read(AgentReadQuery {
+                source,
+                at_revision: None,
+            })
+            .await
+            .unwrap();
+        let failure = snapshot.turns[0]
+            .error
+            .as_ref()
+            .expect("terminal Agent snapshot must retain the Dash failure");
+        assert_eq!(failure.code, expected_code);
+        assert_eq!(failure.retryable, Some(expected_retryable));
+        assert!(failure.message.contains(if name == "failed" {
+            "retry later"
+        } else {
+            "stream disconnected"
+        }));
     }
 }
 
@@ -2645,6 +2668,7 @@ async fn automatic_continuation_c_failure_and_lost_settle_original_and_clear_act
         (
             "failed",
             DashCoreError::Provider {
+                code: "continuation_failed".into(),
                 message: "continuation failed".into(),
                 retryable: true,
             },

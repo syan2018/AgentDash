@@ -146,12 +146,21 @@ pub enum AgentItemFoldError {
     Presentation(#[from] crate::AgentPresentationViolation),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentExecutionFailure {
+    pub code: String,
+    pub message: String,
+    pub retryable: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentTurnSnapshot {
     pub id: AgentTurnId,
     pub status: AgentEntityStatus,
     pub items: Vec<AgentItemSnapshot>,
+    pub error: Option<AgentExecutionFailure>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

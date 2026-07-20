@@ -71,6 +71,10 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - AgentCore callback facets只表达真实inner-loop Hook点，业务Hook plan/rule仍由Runtime拥有。Native driver不得查询workflow/project/repository。
 - Context read/Thread projection使用typed inspect。Managed compaction只接受Runtime已durable candidate activation，验证activation/checkpoint/digest后幂等应用；Native Core不拥有AgentDash自动压缩策略或checkpoint事实源。
 - Turn、steer、interrupt、settings与tool replace按binding/request维度幂等。Active-turn fence在成功、mapper error、sink error、Agent task error与cancel所有路径都必须finally清理；失败turn不能继续被steer/interrupt命中。
+- Dash provider/Core 失败以 `code + message + retryable` 作为 Agent-owned terminal evidence
+  写入 native history，并由 Complete Agent snapshot/change 原样投影。原因是 Agent history
+  是执行结果的恢复权威；如果先压缩成通用错误文案，Runtime、Product 与 UI 都无法在重连后
+  恢复已经丢失的失败语义。
 - `ThreadStart`/`TurnStart` 的 canonical Turn identity 由 Managed Runtime 根据 accepted operation分配，并通过`DriverCommandEnvelope.runtime_turn_id`交给Driver。Native只生成`DriverTurnId`作为source coordinate；普通事件、Tool callback与Hook callback都必须同时保留这两套坐标，不能把source ID转换成Runtime ID。
 - `TurnStart` acceptance已经把canonical `TurnStarted`写入Runtime projection；Driver回报相同`runtime_turn_id`的`TurnStarted`是同身份ack，不新增第二条lifecycle transition。不同identity仍属于critical protocol violation。
 - Driver一旦已经发送`TurnTerminal`，底层Agent task返回同一失败只能形成成功的dispatch completion；否则durable outbox会把已终态命令当成“acceptance前拒绝”重派。只有尚未产生authoritative terminal的Rejected/Lost才向dispatch caller返回错误。

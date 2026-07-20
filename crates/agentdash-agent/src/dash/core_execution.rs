@@ -15,6 +15,13 @@ use tokio_util::sync::CancellationToken;
 
 use super::{AgentItemId, AgentTurnId, HistoryContribution, HistoryEntryId, HistoryPayload};
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DashExecutionFailure {
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DashMessageRole {
@@ -150,8 +157,12 @@ pub enum DashCoreError {
     InvalidProviderTerminal,
     #[error("Dash Agent provider round limit reached: {max_rounds}")]
     ProviderRoundLimit { max_rounds: u32 },
-    #[error("Dash Agent provider failed: {message}")]
-    Provider { message: String, retryable: bool },
+    #[error("Dash Agent provider failed ({code}): {message}")]
+    Provider {
+        code: String,
+        message: String,
+        retryable: bool,
+    },
     #[error("Dash Agent tool callback failed: {message}")]
     Tool { message: String, retryable: bool },
     #[error("Dash Agent execution callback failed: {message}")]
@@ -166,6 +177,20 @@ pub enum DashCoreError {
 }
 
 impl DashCoreError {
+    pub fn code(&self) -> &str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::ProviderStreamDisconnected => "provider_stream_disconnected",
+            Self::InvalidProviderTerminal => "invalid_provider_terminal",
+            Self::ProviderRoundLimit { .. } => "provider_round_limit",
+            Self::Provider { code, .. } => code,
+            Self::Tool { .. } => "tool_error",
+            Self::Callback { .. } => "execution_callback_error",
+            Self::InteractionRequired { .. } => "interaction_required",
+            Self::ContextOverflow => "context_overflow",
+        }
+    }
+
     pub fn retryable(&self) -> bool {
         matches!(
             self,
@@ -178,6 +203,14 @@ impl DashCoreError {
             }
         )
     }
+
+    pub fn failure(&self) -> DashExecutionFailure {
+        DashExecutionFailure {
+            code: self.code().to_owned(),
+            message: self.to_string(),
+            retryable: self.retryable(),
+        }
+    }
 }
 
 #[async_trait]
@@ -189,6 +222,7 @@ pub trait DashProvider: Send + Sync {
 
     async fn steer(&self, _turn_id: &AgentTurnId, _input: &str) -> Result<(), DashCoreError> {
         Err(DashCoreError::Provider {
+            code: "steering_unsupported".to_owned(),
             message: "provider does not accept in-flight steering".into(),
             retryable: false,
         })
@@ -579,9 +613,15 @@ fn core_error(error: DashCoreError) -> CoreError {
         DashCoreError::ProviderRoundLimit { max_rounds } => {
             CoreError::ProviderRoundLimit { max_rounds }
         }
-        DashCoreError::Provider { message, retryable } => {
-            CoreError::Provider { message, retryable }
-        }
+        DashCoreError::Provider {
+            code,
+            message,
+            retryable,
+        } => CoreError::Provider {
+            code,
+            message,
+            retryable,
+        },
         DashCoreError::Tool { message, retryable } => CoreError::Tool { message, retryable },
         DashCoreError::Callback { message } => CoreError::Callback { message },
         DashCoreError::InteractionRequired {
@@ -603,9 +643,15 @@ fn dash_error(error: CoreError) -> DashCoreError {
         CoreError::ProviderRoundLimit { max_rounds } => {
             DashCoreError::ProviderRoundLimit { max_rounds }
         }
-        CoreError::Provider { message, retryable } => {
-            DashCoreError::Provider { message, retryable }
-        }
+        CoreError::Provider {
+            code,
+            message,
+            retryable,
+        } => DashCoreError::Provider {
+            code,
+            message,
+            retryable,
+        },
         CoreError::Tool { message, retryable } => DashCoreError::Tool { message, retryable },
         CoreError::Callback { message } => DashCoreError::Callback { message },
         CoreError::InteractionRequired {

@@ -184,8 +184,12 @@ pub enum CoreError {
     InvalidProviderTerminal,
     #[error("达到 provider round 上限 {max_rounds}")]
     ProviderRoundLimit { max_rounds: u32 },
-    #[error("provider 失败: {message}")]
-    Provider { message: String, retryable: bool },
+    #[error("provider 失败 ({code}): {message}")]
+    Provider {
+        code: String,
+        message: String,
+        retryable: bool,
+    },
     #[error("tool callback 失败: {message}")]
     Tool { message: String, retryable: bool },
     #[error("core callback 失败: {message}")]

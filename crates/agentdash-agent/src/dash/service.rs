@@ -603,7 +603,7 @@ impl DashAgentService {
                 receipt
             }
             Err(DashCoreError::Cancelled) => {
-                self.finish_failed_turn(&request, &turn_id, DashTerminalOutcome::Interrupted, false)
+                self.finish_failed_turn(&request, &turn_id, DashTerminalOutcome::Interrupted, None)
                     .await?
             }
             Err(DashCoreError::InteractionRequired {
@@ -639,13 +639,12 @@ impl DashAgentService {
             }
             Err(error) => {
                 let lost = matches!(error, DashCoreError::ProviderStreamDisconnected);
-                let retryable = error.retryable();
                 let terminal = if lost {
                     DashTerminalOutcome::Lost
                 } else {
                     DashTerminalOutcome::Failed
                 };
-                self.finish_failed_turn(&request, &turn_id, terminal, retryable)
+                self.finish_failed_turn(&request, &turn_id, terminal, Some(error.failure()))
                     .await?
             }
         };
@@ -697,7 +696,7 @@ impl DashAgentService {
                         entry_id: HistoryEntryId::new(format!("{prefix}:A-overflow")),
                         payload: HistoryPayload::TurnFailed {
                             turn_id: overflow_turn_id.clone(),
-                            error: "context_overflow".into(),
+                            error: DashCoreError::ContextOverflow.failure(),
                             lost: false,
                         },
                     }],
@@ -926,7 +925,7 @@ impl DashAgentService {
                             entry_id: HistoryEntryId::new(format!("{prefix}:C-failed")),
                             payload: HistoryPayload::TurnFailed {
                                 turn_id: continuation_turn_id.clone(),
-                                error: error.to_string(),
+                                error: error.failure(),
                                 lost,
                             },
                         }],
@@ -1337,10 +1336,11 @@ impl DashAgentService {
         request: &DashCommandRequest,
         turn_id: &AgentTurnId,
         terminal: DashTerminalOutcome,
-        retryable: bool,
+        failure: Option<super::DashExecutionFailure>,
     ) -> Result<DashCommandReceipt, DashServiceError> {
         let lost = terminal == DashTerminalOutcome::Lost;
         let interrupted = terminal == DashTerminalOutcome::Interrupted;
+        let retryable = failure.as_ref().is_some_and(|failure| failure.retryable);
         let (_, receipt) = self
             .update_repository(|repository| {
                 repository.store.commit(DashAgentCommit {
@@ -1373,11 +1373,9 @@ impl DashAgentService {
                         } else {
                             HistoryPayload::TurnFailed {
                                 turn_id: turn_id.clone(),
-                                error: if retryable {
-                                    "retryable execution failure".into()
-                                } else {
-                                    "execution failure".into()
-                                },
+                                error: failure
+                                    .clone()
+                                    .expect("failed turn requires failure evidence"),
                                 lost,
                             }
                         },

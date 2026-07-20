@@ -50,7 +50,7 @@ pub(crate) fn entry_records(
             events.push(BackboneEvent::TurnStarted(serde_json::from_value(
                 serde_json::json!({
                     "threadId": session_id,
-                    "turn": turn_json(state, turn_id)?,
+                    "turn": turn_json(state, turn_id, None)?,
                 }),
             )?));
         }
@@ -125,13 +125,19 @@ pub(crate) fn entry_records(
                 completed_at_ms: 0,
             }));
         }
-        HistoryPayload::TurnCompleted { turn_id }
-        | HistoryPayload::TurnFailed { turn_id, .. }
-        | HistoryPayload::TurnInterrupted { turn_id } => {
+        HistoryPayload::TurnCompleted { turn_id } | HistoryPayload::TurnInterrupted { turn_id } => {
             events.push(BackboneEvent::TurnCompleted(serde_json::from_value(
                 serde_json::json!({
                     "threadId": session_id,
-                    "turn": turn_json(state, turn_id)?,
+                    "turn": turn_json(state, turn_id, None)?,
+                }),
+            )?));
+        }
+        HistoryPayload::TurnFailed { turn_id, error, .. } => {
+            events.push(BackboneEvent::TurnCompleted(serde_json::from_value(
+                serde_json::json!({
+                    "threadId": session_id,
+                    "turn": turn_json(state, turn_id, Some(error))?,
                 }),
             )?));
         }
@@ -226,6 +232,7 @@ fn item(
 fn turn_json(
     state: &AgentHistoryState,
     turn_id: &agentdash_agent::dash::AgentTurnId,
+    failure: Option<&agentdash_agent::dash::DashExecutionFailure>,
 ) -> Result<serde_json::Value, serde_json::Error> {
     let turn = state.turns.get(turn_id).expect("folded turn must exist");
     let items = state
@@ -234,6 +241,15 @@ fn turn_json(
         .filter(|(_, item_state)| item_state.turn_id == *turn_id)
         .map(|(item_id, _)| item(state, item_id))
         .collect::<Result<Vec<_>, _>>()?;
+    let error = failure.map(|failure| {
+        serde_json::json!({
+            "message": failure.message,
+            "additionalDetails": format!(
+                "code={}; retryable={}",
+                failure.code, failure.retryable
+            ),
+        })
+    });
     Ok(serde_json::json!({
         "id": turn_id.0,
         "items": items,
@@ -241,7 +257,7 @@ fn turn_json(
         "startedAt": null,
         "completedAt": null,
         "durationMs": null,
-        "error": null,
+        "error": error,
     }))
 }
 

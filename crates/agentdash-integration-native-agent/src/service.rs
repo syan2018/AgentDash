@@ -8,9 +8,9 @@ use agentdash_agent::dash::{
     AgentTurnId as DashTurnId, BranchId, CommandId, CompactionId, CompactionMode, CompactionState,
     ContextDeliveryFidelity, DashAgentChange, DashAgentChangePayload, DashAgentRepositoryState,
     DashAgentRepositoryStore, DashAgentService, DashChangeCursor, DashCommandRequest,
-    DashExecutionDependencies, DashPublicCommand, DashReceiptState, DashServiceError, DashSurface,
-    DashTerminalOutcome, DashToolDefinition, ForkCutoff, HistoryPayload,
-    InitialContextContribution, InitialContextInstallation, InitialContextMode,
+    DashExecutionDependencies, DashExecutionFailure, DashPublicCommand, DashReceiptState,
+    DashServiceError, DashSurface, DashTerminalOutcome, DashToolDefinition, ForkCutoff,
+    HistoryPayload, InitialContextContribution, InitialContextInstallation, InitialContextMode,
     InteractionId as DashInteractionId, InteractionState, ItemDetails,
 };
 use agentdash_agent_service_api::{
@@ -18,9 +18,9 @@ use agentdash_agent_service_api::{
     AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandCapability,
     AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
     AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentEntityStatus,
-    AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentHookBlockingSemantics,
-    AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming,
-    AgentHostCallbackBinding, AgentHostCallbacks, AgentInput, AgentInputContent,
+    AgentExecutionFailure, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
+    AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet,
+    AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbacks, AgentInput, AgentInputContent,
     AgentInteractionRequest, AgentInteractionResolution, AgentInteractionSnapshot,
     AgentInteractionStatus, AgentItemBody, AgentItemPresentation, AgentItemSnapshot,
     AgentItemTerminalEvidence, AgentItemTransition, AgentItemUpdate, AgentLifecycleCapability,
@@ -720,7 +720,13 @@ impl CompleteAgentService for DashAgentCompleteService {
             turns: history_state
                 .turns
                 .keys()
-                .map(|turn_id| turn_snapshot(&history_state, turn_id))
+                .map(|turn_id| {
+                    turn_snapshot(
+                        &history_state,
+                        turn_id,
+                        turn_failure(&read.history, turn_id),
+                    )
+                })
                 .chain(
                     history_state
                         .compactions
@@ -1379,6 +1385,7 @@ fn entity_status(status: ActivityStatus) -> AgentEntityStatus {
 fn turn_snapshot(
     state: &AgentHistoryState,
     turn_id: &DashTurnId,
+    failure: Option<&DashExecutionFailure>,
 ) -> Result<AgentTurnSnapshot, AgentServiceError> {
     let turn = state
         .turns
@@ -1393,7 +1400,30 @@ fn turn_snapshot(
             .filter(|(_, item)| item.turn_id == *turn_id)
             .map(|(id, item)| item_snapshot(id, item))
             .collect::<Result<Vec<_>, _>>()?,
+        error: failure.map(|failure| AgentExecutionFailure {
+            code: failure.code.clone(),
+            message: failure.message.clone(),
+            retryable: Some(failure.retryable),
+        }),
     })
+}
+
+fn turn_failure<'a>(
+    history: &'a AgentHistory,
+    turn_id: &DashTurnId,
+) -> Option<&'a DashExecutionFailure> {
+    history
+        .entries()
+        .iter()
+        .rev()
+        .find_map(|entry| match &entry.payload {
+            HistoryPayload::TurnFailed {
+                turn_id: failed_turn,
+                error,
+                ..
+            } if failed_turn == turn_id => Some(error),
+            _ => None,
+        })
 }
 
 fn item_snapshot(
@@ -1509,6 +1539,7 @@ fn compaction_snapshot(
             )
             .map_err(internal)?,
         }],
+        error: None,
     })
 }
 
@@ -1536,16 +1567,18 @@ fn change_payload(
     match payload {
         HistoryPayload::TurnStarted { turn_id }
         | HistoryPayload::TurnCompleted { turn_id }
-        | HistoryPayload::TurnFailed { turn_id, .. }
         | HistoryPayload::TurnInterrupted { turn_id } => Ok(AgentChangePayload::TurnChanged {
-            turn: turn_snapshot(state, turn_id)?,
+            turn: turn_snapshot(state, turn_id, None)?,
+        }),
+        HistoryPayload::TurnFailed { turn_id, error, .. } => Ok(AgentChangePayload::TurnChanged {
+            turn: turn_snapshot(state, turn_id, Some(error))?,
         }),
         HistoryPayload::AgentOutput {
             turn_id,
             item_id: None,
             ..
         } => Ok(AgentChangePayload::TurnChanged {
-            turn: turn_snapshot(state, turn_id)?,
+            turn: turn_snapshot(state, turn_id, None)?,
         }),
         HistoryPayload::ItemStarted {
             turn_id, item_id, ..
@@ -1896,7 +1929,7 @@ mod tests {
                 .unwrap();
         }
         let state = history.state().unwrap();
-        let snapshot = turn_snapshot(&state, &turn_id).unwrap();
+        let snapshot = turn_snapshot(&state, &turn_id, None).unwrap();
         assert_eq!(snapshot.status, AgentEntityStatus::Completed);
         assert!(matches!(
             snapshot.items[0].presentation.body,

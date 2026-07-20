@@ -4094,6 +4094,7 @@ mod tests {
                                     id: AgentTurnId::new("turn-1").expect("turn"),
                                     status: AgentEntityStatus::Completed,
                                     items: Vec::new(),
+                                    error: None,
                                 },
                             },
                         },
@@ -4753,6 +4754,7 @@ mod tests {
                     )
                     .expect("presentation"),
                 }],
+                error: None,
             }],
             interactions: Vec::new(),
             thread_name: None,

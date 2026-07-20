@@ -10,7 +10,7 @@ use agentdash_agent::dash::{
     DashCoreEvent, DashExecutionCallbacks, DashExecutionConsistency, DashExecutionDependencies,
     DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
     DashProviderRequest, DashPublicCommand, DashReceiptState, DashServiceError, DashSurface,
-    DashTerminalOutcome, DashToolCall, DashToolCallbacks, DashToolResult, EffectId,
+    DashTerminalOutcome, DashToolCall, DashToolCallbacks, DashToolResult, EffectId, HistoryPayload,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -82,6 +82,7 @@ impl DashProvider for RetryableProvider {
         _: DashProviderRequest,
     ) -> Result<DashProviderEventStream, DashCoreError> {
         Err(DashCoreError::Provider {
+            code: "rate_limit".into(),
             message: "temporary provider failure".into(),
             retryable: true,
         })
@@ -165,7 +166,23 @@ async fn retryable_provider_failure_is_terminal_and_inspectable_outside_session(
         inspection.state,
         DashReceiptState::Terminal(DashTerminalOutcome::Failed)
     );
-    let serialized = serde_json::to_value(service.read().await.unwrap().state).unwrap();
+    let read = service.read().await.unwrap();
+    let failure = read
+        .history
+        .entries()
+        .iter()
+        .find_map(|entry| match &entry.payload {
+            HistoryPayload::TurnFailed { error, .. } => Some(error),
+            _ => None,
+        })
+        .expect("failed turn must retain its execution failure");
+    assert_eq!(failure.code, "rate_limit");
+    assert_eq!(
+        failure.message,
+        "Dash Agent provider failed (rate_limit): temporary provider failure"
+    );
+    assert!(failure.retryable);
+    let serialized = serde_json::to_value(read.state).unwrap();
     let object = serialized.as_object().unwrap();
     assert!(!object.contains_key("effects"));
     assert!(!object.contains_key("commands"));
@@ -426,6 +443,7 @@ async fn automatic_continuation_c_failure_matrix_terminalizes_effect_and_clears_
         (
             "c-failed",
             DashCoreError::Provider {
+                code: "continuation_failed".into(),
                 message: "continuation failed".into(),
                 retryable: true,
             },

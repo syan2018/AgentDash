@@ -6,8 +6,6 @@ use crate::app_state::AppState;
 
 const WORKFLOW_RECOVERY_BATCH_LIMIT: usize = 64;
 const WORKFLOW_RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const COMPANION_CONTINUATION_RECOVERY_BATCH_LIMIT: usize = 64;
-const COMPANION_CONTINUATION_RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
     let auth_session_service = state.services.auth_session_service.clone();
@@ -31,53 +29,6 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
                         context = &context,
                         error = &err,
                         "清理过期认证会话失败"
-                    );
-                }
-            }
-        }
-    });
-
-    let companion_continuations = state.services.companion_continuations.clone();
-    let companion_continuation_effects = state.services.companion_continuation_effects.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(COMPANION_CONTINUATION_RECOVERY_POLL_INTERVAL);
-        loop {
-            interval.tick().await;
-            let request_ids = match companion_continuations
-                .list_recoverable(COMPANION_CONTINUATION_RECOVERY_BATCH_LIMIT)
-                .await
-            {
-                Ok(request_ids) => request_ids,
-                Err(error) => {
-                    let context = DiagnosticErrorContext::new(
-                        "background_workers.companion_continuation",
-                        "list_recoverable",
-                    );
-                    diag_error!(
-                        Warn,
-                        Subsystem::Api,
-                        context = &context,
-                        error = &error,
-                        "扫描可恢复 Companion continuation 失败"
-                    );
-                    continue;
-                }
-            };
-            let worker =
-                agentdash_application_agentrun::agent_run::CompanionContinuationWorker::new(
-                    companion_continuations.as_ref(),
-                    companion_continuation_effects.as_ref(),
-                );
-            for request_id in request_ids {
-                if let Err(error) = worker.advance(request_id).await {
-                    diag!(
-                        Warn,
-                        Subsystem::Api,
-                        operation = "background_workers.companion_continuation",
-                        stage = "advance_saga",
-                        request_id = %request_id,
-                        error = %error,
-                        "恢复 Companion continuation 失败"
                     );
                 }
             }

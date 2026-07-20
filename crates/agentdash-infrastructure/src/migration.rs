@@ -65,6 +65,7 @@ const RETIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_run_fork_saga",
     "agent_run_fork_graph",
     "companion_fresh_saga",
+    "companion_continuation_saga",
     "workflow_agent_call_product_sagas",
     "workflow_agent_call_product_effects",
     "workflow_agent_call_product_graph_effects",

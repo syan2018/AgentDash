@@ -73,10 +73,10 @@ use agentdash_agent_runtime_contract::ManagedRuntimeEntityStatus;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductInputDeliveryPort, CompanionAdoptionMode as ProtocolCompanionAdoptionMode,
     CompanionContextMode, CompanionContextSourceDraft, CompanionContextSources,
-    CompanionContinuationInputSource, CompanionContinuationPhase,
-    CompanionContinuationRepositoryError, CompanionContinuationRequest, CompanionContinuationSaga,
-    CompanionContinuationWorker, CompiledContextAuthority, DeliverAgentRunProductInput,
-    SubmitInput, companion_after_dispatch_hook_effect_identity, compile_companion_dispatch_target,
+    CompanionContinuationInputSource, CompanionContinuationPhase, CompanionContinuationRequest,
+    CompiledContextAuthority, DeliverAgentRunProductInput, SubmitInput,
+    companion_after_dispatch_hook_effect_identity, compile_companion_dispatch_target,
+    run_companion_continuation,
 };
 use agentdash_application_workflow::WorkflowScriptPreflightOutput;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
@@ -1533,91 +1533,24 @@ impl CompanionRequestTool {
                 continuation_request_id,
             ),
         };
-        let requested = CompanionContinuationSaga::requested(continuation_request.clone())
-            .map_err(AgentToolError::ExecutionFailed)?;
-        let mut continuation = match runtime_thread_services
-            .companion_continuations
-            .create(requested)
-            .await
-        {
-            Ok(saga) => saga,
-            Err(CompanionContinuationRepositoryError::AlreadyExists) => {
-                let existing = runtime_thread_services
-                    .companion_continuations
-                    .load(continuation_request.request_id)
-                    .await
-                    .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-                    .ok_or_else(|| {
-                        AgentToolError::ExecutionFailed(
-                            "Companion continuation duplicate 丢失持久化事实".to_owned(),
-                        )
-                    })?;
-                if existing.request() != &continuation_request {
-                    return Err(AgentToolError::ExecutionFailed(
-                        "Companion continuation duplicate 与原始请求不一致".to_owned(),
-                    ));
-                }
-                existing
-            }
-            Err(error) => return Err(AgentToolError::ExecutionFailed(error.to_string())),
-        };
-        let worker = CompanionContinuationWorker::new(
-            runtime_thread_services.companion_continuations.as_ref(),
+        let continuation = run_companion_continuation(
+            continuation_request,
             runtime_thread_services
                 .companion_continuation_effects
                 .as_ref(),
-        );
-        for _ in 0..8 {
-            if continuation.phase() == CompanionContinuationPhase::Succeeded
-                || continuation.failure().is_some()
-            {
-                break;
-            }
-            let previous_version = continuation.version();
-            match worker.advance(continuation_request.request_id).await {
-                Ok(advanced) => continuation = advanced,
-                Err(CompanionContinuationRepositoryError::Conflict) => {
-                    continuation = runtime_thread_services
-                        .companion_continuations
-                        .load(continuation_request.request_id)
-                        .await
-                        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-                        .ok_or_else(|| {
-                            AgentToolError::ExecutionFailed(
-                                "Companion continuation CAS 后丢失持久化事实".to_owned(),
-                            )
-                        })?;
-                }
-                Err(CompanionContinuationRepositoryError::Unavailable(_)) => break,
-                Err(error) => return Err(AgentToolError::ExecutionFailed(error.to_string())),
-            }
-            if continuation.version() == previous_version {
-                break;
-            }
-        }
-        if let Some(failure) = continuation.failure() {
-            return Err(AgentToolError::ExecutionFailed(format!(
-                "Companion continuation 在 {:?} 失败: {}",
-                failure.phase, failure.reason
-            )));
-        }
+        )
+        .await
+        .map_err(AgentToolError::ExecutionFailed)?;
         let gate_id = continuation
             .evidence()
             .gate
             .as_ref()
             .and_then(|evidence| evidence.gate_id);
         if continuation.phase() != CompanionContinuationPhase::Succeeded {
-            return Ok(companion_subagent_agent_tool_result(
-                CompanionSubagentVisibleResult {
-                    companion_label: &companion_label,
-                    child_agent_id,
-                    gate_id,
-                    status: "running",
-                    summary: "Companion 派发已持久化，正在恢复后置业务效果",
-                    timed_out: None,
-                    result_preview: None,
-                },
-            ));
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "Companion 派发未在当前调用内完成（phase={:?}）；请使用相同调用 identity 重试",
+                continuation.phase()
+            )));
         }
 
         // ─── Wait 路径: 轮询 durable LifecycleGate ─────────────────────

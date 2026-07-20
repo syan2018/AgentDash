@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use agentdash_application_agentrun::agent_run::{
     AgentFrameSurfaceExt, AgentRunProductInputDeliveryPort, AgentRunProductLaunchService,
     AgentRunProductProtocolPorts, AgentRunProductRuntimeBindingRepository,
-    CompanionContinuationEffectPort, CompanionContinuationSagaRepository,
+    CompanionContinuationEffectPort,
 };
 use agentdash_application_hooks::AppExecutionHookProvider;
 use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
@@ -44,7 +44,6 @@ pub struct RuntimeThreadToolServices {
     pub product_runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub product_launch: Arc<AgentRunProductLaunchService>,
     pub product_protocols: Arc<AgentRunProductProtocolPorts>,
-    pub companion_continuations: Arc<dyn CompanionContinuationSagaRepository>,
     pub companion_continuation_effects: Arc<dyn CompanionContinuationEffectPort>,
     pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
 }

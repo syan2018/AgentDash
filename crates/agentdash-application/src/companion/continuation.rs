@@ -3,8 +3,8 @@ use std::sync::Arc;
 use agentdash_application_agentrun::agent_run::{
     AgentFrameSurfaceExt, AgentRunProductInputDeliveryPort, AgentRunProductInputPreparation,
     AgentRunProductLaunchError, AgentRunProductProtocolPorts, CompanionAfterDispatchHookEvidence,
-    CompanionChannelEvidence, CompanionContinuationEffectIdentity, CompanionContinuationEffectPort,
-    CompanionContinuationRuntimeProtocol, CompanionContinuationSaga, CompanionEffectProgress,
+    CompanionChannelEvidence, CompanionContinuation, CompanionContinuationEffectIdentity,
+    CompanionContinuationEffectPort, CompanionContinuationRuntimeProtocol, CompanionEffectProgress,
     CompanionFirstInputEvidence, CompanionGateEvidence, CompanionPreparedFirstInputEvidence,
     CompanionRuntimeReadiness, CompanionRuntimeReadyEvidence, CompanionTaskEvidence,
     DeliverAgentRunProductInput,
@@ -67,7 +67,7 @@ impl ApplicationCompanionContinuationEffects {
 impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects {
     async fn converge_runtime(
         &self,
-        saga: &CompanionContinuationSaga,
+        saga: &CompanionContinuation,
     ) -> Result<CompanionRuntimeReadiness, String> {
         let request = saga.request();
         let target = AgentRunTarget {
@@ -140,7 +140,7 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
 
     async fn converge_first_input(
         &self,
-        saga: &CompanionContinuationSaga,
+        saga: &CompanionContinuation,
         identity: &CompanionContinuationEffectIdentity,
     ) -> Result<CompanionEffectProgress<CompanionFirstInputEvidence>, String> {
         let request = saga.request();
@@ -195,7 +195,7 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
 
     async fn prepare_first_input(
         &self,
-        saga: &CompanionContinuationSaga,
+        saga: &CompanionContinuation,
         identity: &CompanionContinuationEffectIdentity,
     ) -> Result<CompanionEffectProgress<CompanionPreparedFirstInputEvidence>, String> {
         match saga.request().runtime_protocol {
@@ -219,7 +219,7 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
 
     async fn converge_gate(
         &self,
-        saga: &CompanionContinuationSaga,
+        saga: &CompanionContinuation,
         _identity: &CompanionContinuationEffectIdentity,
     ) -> Result<CompanionGateEvidence, String> {
         let request = saga.request();
@@ -270,7 +270,7 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
 
     async fn converge_channel(
         &self,
-        saga: &CompanionContinuationSaga,
+        saga: &CompanionContinuation,
         identity: &CompanionContinuationEffectIdentity,
     ) -> Result<CompanionChannelEvidence, String> {
         let request = saga.request();
@@ -335,7 +335,7 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
 
     async fn converge_task(
         &self,
-        saga: &CompanionContinuationSaga,
+        saga: &CompanionContinuation,
         _identity: &CompanionContinuationEffectIdentity,
     ) -> Result<CompanionTaskEvidence, String> {
         let request = saga.request();
@@ -360,7 +360,7 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
 
     async fn converge_after_dispatch_hook(
         &self,
-        saga: &CompanionContinuationSaga,
+        saga: &CompanionContinuation,
         identity: &CompanionContinuationEffectIdentity,
     ) -> Result<CompanionEffectProgress<CompanionAfterDispatchHookEvidence>, String> {
         let request = saga.request();
@@ -505,7 +505,7 @@ fn mailbox_source(
 }
 
 fn first_input_command(
-    saga: &CompanionContinuationSaga,
+    saga: &CompanionContinuation,
     identity: &CompanionContinuationEffectIdentity,
 ) -> DeliverAgentRunProductInput {
     let request = saga.request();

@@ -49,10 +49,10 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductInputDeliveryPort, AgentRunProductInputDeliveryService,
     AgentRunProductLaunchService, AgentRunProductProjectionQueryPort, AgentRunProductProtocolPorts,
     AgentRunTerminalSourceReconcilePort, CompanionContinuationEffectPort,
-    CompanionContinuationSagaRepository, ProcessAgentRunForkSagaRepository,
-    ProcessCompanionFreshSagaRepository, ProductAgentRunForkGraphAdapter,
-    ProductAgentRunForkRuntimeAdapter, ProductAgentRunRuntimeSnapshotAdapter,
-    ProductCompanionFreshRuntimeAdapter, build_workflow_agent_call_dispatch,
+    ProcessAgentRunForkSagaRepository, ProcessCompanionFreshSagaRepository,
+    ProductAgentRunForkGraphAdapter, ProductAgentRunForkRuntimeAdapter,
+    ProductAgentRunRuntimeSnapshotAdapter, ProductCompanionFreshRuntimeAdapter,
+    build_workflow_agent_call_dispatch,
 };
 use agentdash_application_extension_gateway::{
     ExtensionGateway, ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeChannelInvoker,
@@ -86,10 +86,9 @@ use agentdash_infrastructure::{
     CompleteAgentProductRuntimeProvisioner, CompleteAgentServiceSelectionCatalog,
     DeferredProductRuntimeToolService, PinnedCompleteAgentVerificationCatalog,
     PostgresAgentRunForkGraphStore, PostgresAgentRunProductRuntimeBindingRepository,
-    PostgresAgentRunTerminalProjectionStore, PostgresCompanionContinuationSagaRepository,
-    PostgresWorkflowExecutorEffectRepository, PostgresWorkflowRecoveryRepository,
-    PostgresWorkspaceModulePresentationStore, ProcessShellTerminalRegistry,
-    ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
+    PostgresAgentRunTerminalProjectionStore, PostgresWorkflowExecutorEffectRepository,
+    PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
+    ProcessShellTerminalRegistry, ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
     ProductionCompleteAgentServiceSelector, WorkspaceModulePresentRuntimeTool,
     final_runtime_tool_catalog, product_runtime_tool_catalog,
 };
@@ -192,8 +191,6 @@ pub struct ServiceSet {
     pub agent_run_product_commands: Arc<AgentRunProductCommandFacade>,
     pub agent_run_product_launch: Arc<AgentRunProductLaunchService>,
     pub agent_run_product_protocol: Arc<AgentRunProductProtocolPorts>,
-    pub companion_continuations: Arc<dyn CompanionContinuationSagaRepository>,
-    pub companion_continuation_effects: Arc<dyn CompanionContinuationEffectPort>,
     pub agent_run_product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
     pub project_agent_run_start: Arc<ProjectAgentRunStartService>,
     pub agent_run_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
@@ -579,9 +576,6 @@ impl AppState {
                 product.agents.clone(),
             )),
         ));
-        let companion_continuations: Arc<dyn CompanionContinuationSagaRepository> = Arc::new(
-            PostgresCompanionContinuationSagaRepository::new(pool.clone()),
-        );
         let companion_continuation_effects: Arc<dyn CompanionContinuationEffectPort> =
             Arc::new(ApplicationCompanionContinuationEffects::new(
                 repos.clone(),
@@ -695,7 +689,6 @@ impl AppState {
                 product_runtime_bindings: runtime_product_bindings.clone(),
                 product_launch: product_launch.clone(),
                 product_protocols: agent_run_product_protocol.clone(),
-                companion_continuations: companion_continuations.clone(),
                 companion_continuation_effects: companion_continuation_effects.clone(),
                 frame_construction: frame_construction.clone(),
             },
@@ -782,8 +775,6 @@ impl AppState {
                 agent_run_product_commands: product_commands,
                 agent_run_product_launch: product_launch,
                 agent_run_product_protocol,
-                companion_continuations,
-                companion_continuation_effects,
                 agent_run_product_input_delivery: product_input_delivery,
                 project_agent_run_start,
                 agent_run_frame_construction: frame_construction,

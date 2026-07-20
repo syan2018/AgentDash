@@ -14,6 +14,7 @@ use agentdash_agent::dash::{
     DashProviderEventStream, DashProviderRequest, DashServiceError, DashToolCall,
     DashToolCallbacks, DashToolResult,
 };
+use agentdash_agent_protocol::{BackboneEvent, codex_app_server_protocol as codex};
 use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentChangesQuery,
     AgentCommand, AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentContextPackageId,
@@ -33,7 +34,6 @@ use agentdash_agent_service_api::{
     InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
     InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
-use agentdash_agent_protocol::BackboneEvent;
 use agentdash_integration_native_agent::{
     DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
     DashCompleteEffectRecord, DashCompleteSourceMetadata, DashCompleteSourceMutation,
@@ -2203,9 +2203,40 @@ async fn manual_compaction_is_exposed_as_detailed_history_derived_turn_and_chang
         .await
         .unwrap();
     assert_eq!(changes.changes.len(), 3);
+    let (turn, presentation) = changes
+        .changes
+        .iter()
+        .find_map(|change| match &change.payload {
+            agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+                state,
+                presentation,
+            } => match state.as_ref() {
+                agentdash_agent_service_api::AgentChangePayload::TurnChanged { turn }
+                    if turn.id.as_str() == "compact-1" =>
+                {
+                    Some((turn, presentation))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("compaction start must be one atomic state and presentation observation");
+    assert_eq!(turn.items.len(), 1);
     assert!(matches!(
-        changes.changes[0].payload,
-        agentdash_agent_service_api::AgentChangePayload::TurnChanged { .. }
+        turn.items[0].presentation.body,
+        agentdash_agent_service_api::AgentItemBody::ContextCompaction { .. }
+    ));
+    assert_eq!(presentation.len(), 1);
+    assert!(matches!(
+        &presentation[0].presentation.envelope.event,
+        BackboneEvent::ItemStarted(started)
+            if started.thread_id == "dash-compaction"
+                && started.turn_id == "compact-1"
+                && matches!(
+                    started.item.as_codex(),
+                    Some(codex::ThreadItem::ContextCompaction { id })
+                        if id == "compact-1"
+                )
     ));
 }
 

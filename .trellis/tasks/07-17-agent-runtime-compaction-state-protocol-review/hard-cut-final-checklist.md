@@ -335,7 +335,9 @@ Product command
 
 S6 在 `c4c26d20` 后的同一集成 HEAD 上完成 `pnpm contracts:check`、`cargo metadata`、
 迁移/test-support guards、受影响 Rust crates、PostgreSQL 串行套件与最终
-`pnpm check:quick`（5/5）。`pnpm --filter app-web check` 的 typecheck 通过；其全仓
+`pnpm check:quick`（5/5）。14-crate directed matrix 累计 1125 tests 通过，其中
+Native Complete Agent conformance 19/19、Native crate 25/25、Remote 19/19，
+PostgreSQL/infrastructure 串行 100/100。`pnpm --filter app-web check` 的 typecheck 通过；其全仓
 ESLint 仍报告 34 个 `c4c26d20` 已存在的 React hooks baseline errors，而 S6 前端源码
 差异只有 canonical JSON fixture，因此这些错误不作为本轮 Runtime 改动的归因结果。
 

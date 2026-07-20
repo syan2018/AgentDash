@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 66
-- **Last Active**: 2026-07-17
+- **Total Sessions**: 67
+- **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~441 | Active |
+| `journal-2.md` | ~499 | Active |
 | `journal-1.md` | ~1971 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 67 | 2026-07-21 | 收敛 Agent Runtime 持久化权威 | `4e0d90e7e`, `8931a3dc5`, `8b3234b9f`, `9d0e7d7cc`, `ff923b9ec`, `64983279e`, `5abb0e34e`, `cef35ce46`, `279a16fe7`, `24bf539be`, `56e0ec6de`, `9952756ae`, `21ab42055`, `ea04a568e`, `30397c2be`, `6e4f54a2e`, `43dcb31f1`, `d1c34c834`, `4fc73e14d`, `28fa2f0d6`, `ec104c6bd`, `171811bf9`, `328e0f315`, `7078fb072`, `0affa2ce8`, `bd397e441` | `codex/agent-runtime-final-convergence-plan` |
 | 66 | 2026-07-17 | 统一 Managed Agent 会话名称事件与 AgentRun 标题投影 | `4dabce3fb` | `codex/agent-runtime-architecture-convergence` |
 | 65 | 2026-07-17 | 收敛内嵌 Skill 资产与 Workspace Module 展示闭环 | `a3a064035`, `8e22afb81`, `4d56eb3a2` | `codex/agent-runtime-architecture-convergence` |
 | 64 | 2026-07-11 | Agent Runtime 架构收敛与生产切换 | `1330a8560`, `b43d2be53`, `63dbd623b`, `0806457db`, `ef4bdec6f`, `b47164bc5`, `e934c287e`, `af21f9d7c` | `codex/agent-runtime-architecture-convergence` |

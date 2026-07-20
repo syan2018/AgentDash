@@ -439,3 +439,61 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 67: 收敛 Agent Runtime 持久化权威
+
+**Date**: 2026-07-21
+**Task**: 收敛 Agent Runtime 持久化权威
+**Branch**: `codex/agent-runtime-final-convergence-plan`
+
+### Summary
+
+以Product owner document与concrete Agent authority替代Runtime/Host重复持久化；删除投影、变更、输入队列与恢复账本，接通Agent authoritative read/live，完成schema 105现有库与空库迁移验证并归档07-20任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4e0d90e7e` | (see git log) |
+| `8931a3dc5` | (see git log) |
+| `8b3234b9f` | (see git log) |
+| `9d0e7d7cc` | (see git log) |
+| `ff923b9ec` | (see git log) |
+| `64983279e` | (see git log) |
+| `5abb0e34e` | (see git log) |
+| `cef35ce46` | (see git log) |
+| `279a16fe7` | (see git log) |
+| `24bf539be` | (see git log) |
+| `56e0ec6de` | (see git log) |
+| `9952756ae` | (see git log) |
+| `21ab42055` | (see git log) |
+| `ea04a568e` | (see git log) |
+| `30397c2be` | (see git log) |
+| `6e4f54a2e` | (see git log) |
+| `43dcb31f1` | (see git log) |
+| `d1c34c834` | (see git log) |
+| `4fc73e14d` | (see git log) |
+| `28fa2f0d6` | (see git log) |
+| `ec104c6bd` | (see git log) |
+| `171811bf9` | (see git log) |
+| `328e0f315` | (see git log) |
+| `7078fb072` | (see git log) |
+| `0affa2ce8` | (see git log) |
+| `bd397e441` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

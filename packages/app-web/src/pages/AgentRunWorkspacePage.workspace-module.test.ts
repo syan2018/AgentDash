@@ -85,13 +85,7 @@ function workspaceView(
         commands,
         keyboard,
       },
-      mailbox: {
-        visible_message_count: 0,
-        paused: false,
-        user_attention: false,
-        messages: [],
-        waiting_items: [],
-      },
+      waiting_items: [],
       diagnostics: [],
     },
   };

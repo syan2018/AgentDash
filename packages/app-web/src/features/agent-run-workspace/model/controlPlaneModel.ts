@@ -150,7 +150,6 @@ function planControlPlaneProjectionChanged(
 
   switch (change.projection) {
     case "workspace":
-    case "mailbox":
     case "waiting":
     case "delivery":
     case "title":

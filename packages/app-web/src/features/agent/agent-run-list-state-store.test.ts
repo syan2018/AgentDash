@@ -91,25 +91,23 @@ function agentRunListInvalidated(
         agent_id: "agent-1",
         frame_id: null,
         gate_id: null,
-        mailbox_message_id: null,
       },
     },
   };
 }
 
-function mailboxInvalidated(projectId: string): ProjectEventStreamEnvelope {
+function workspaceInvalidated(projectId: string): ProjectEventStreamEnvelope {
   return {
     type: "ControlPlaneProjectionChanged",
     data: {
       project_id: projectId,
       change: {
-        projection: "mailbox",
-        reason: "mailbox_state_changed",
+        projection: "workspace",
+        reason: "agent_run_activity_changed",
         run_id: "run-1",
         agent_id: "agent-1",
         frame_id: null,
         gate_id: null,
-        mailbox_message_id: null,
       },
     },
   };
@@ -275,7 +273,10 @@ describe("agent-run list state store", () => {
     mockedFetchProjectAgentRuns.mockResolvedValueOnce(listView([entry]));
 
     await useAgentRunListStateStore.getState().ensureFirstPage("project-1");
-    await invalidateAgentRunListStateForProjectEvent(mailboxInvalidated("project-1"), "project-1");
+    await invalidateAgentRunListStateForProjectEvent(
+      workspaceInvalidated("project-1"),
+      "project-1",
+    );
 
     expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(1);
   });

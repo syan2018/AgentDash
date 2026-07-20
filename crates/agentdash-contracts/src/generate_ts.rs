@@ -16,12 +16,9 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunComposerSubmitRequest, AgentRunContextCompactionCommandOutcome,
     AgentRunContextCompactionCommandResponse, AgentRunForkLineageView, AgentRunForkOutcomeView,
     AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
-    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
     AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
     AgentRunToolCallApprovalResponse, AgentRunToolCallRejectionResponse, BackendSelectionModeDto,
-    BackendSelectionRequestDto, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
-    MailboxMessageOrigin, MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity,
-    MailboxStateView, SteeringStopEffect,
+    BackendSelectionRequestDto,
 };
 use agentdash_contracts::agent_run_product_projection::{
     AgentRunProductProjectionContractSchema, WorkspaceModulePresentationAcknowledgeRequest,
@@ -221,24 +218,23 @@ use agentdash_contracts::workflow::{
     ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
     ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
-    ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
-    ConversationModelConfigView, ConversationWaitingItemView, DefinitionSource,
-    DeleteAgentProcedureResponse, DeleteAgentRunResponse, DeleteHookPresetResponse,
-    DeleteWorkflowGraphResponse, EffectiveSessionContract, HookPresetResponse, HookPresetsResponse,
-    LaunchedAgentNodeDto, LifecycleAgentExecutionView, LifecycleAgentRuntimeBindingView,
-    LifecycleExecutionAttemptView, LifecycleExecutionEntry, LifecycleNodePortValueView,
-    LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView,
-    LifecycleRuntimeExecutionTraceView, LifecycleRuntimeNodeErrorView, LifecycleRuntimeNodeKind,
-    LifecycleRuntimeNodeStatus, LifecycleRuntimeNodeView, LifecycleRuntimeTraceAbsenceReason,
-    LifecycleRuntimeTraceRefView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
-    OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
-    PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
-    ProjectAgentRunListView, RegisterHookPresetResponse, RuntimeNodeView, RuntimeThreadRefDto,
-    SubjectExecutionAttemptView, SubjectExecutionView, SubjectRefDto,
-    SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
-    ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
-    WorkflowGraphResponse, WorkflowHookTrigger, WorkflowScriptApiEndpointDto,
-    WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
+    ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
+    ConversationWaitingItemView, DefinitionSource, DeleteAgentProcedureResponse,
+    DeleteAgentRunResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
+    EffectiveSessionContract, HookPresetResponse, HookPresetsResponse, LaunchedAgentNodeDto,
+    LifecycleAgentExecutionView, LifecycleAgentRuntimeBindingView, LifecycleExecutionAttemptView,
+    LifecycleExecutionEntry, LifecycleNodePortValueView, LifecycleRunRefDto, LifecycleRunStatus,
+    LifecycleRunTopology, LifecycleRunView, LifecycleRuntimeExecutionTraceView,
+    LifecycleRuntimeNodeErrorView, LifecycleRuntimeNodeKind, LifecycleRuntimeNodeStatus,
+    LifecycleRuntimeNodeView, LifecycleRuntimeTraceAbsenceReason, LifecycleRuntimeTraceRefView,
+    LifecycleSubjectAssociationDto, OpenedHumanGateDto, OrchestrationExecutorDrainResultDto,
+    OrchestrationInstanceView, PlatformMcpScopeDto, PreflightWorkflowScriptRequest,
+    PreflightWorkflowScriptResponse, ProjectActiveAgentsView, ProjectAgentRunListView,
+    RegisterHookPresetResponse, RuntimeNodeView, RuntimeThreadRefDto, SubjectExecutionAttemptView,
+    SubjectExecutionView, SubjectRefDto, SubmitOrchestrationHumanDecisionRequest,
+    SubmitOrchestrationHumanDecisionResponse, ToolClusterDto, ToolDescriptorDto, ToolSourceDto,
+    ValidateHookScriptResponse, ValidationIssue, WorkflowGraphResponse, WorkflowHookTrigger,
+    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
     WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
     WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
@@ -358,18 +354,9 @@ fn main() {
         &mut upstream,
         check,
         |dir| {
-            export_all::<MailboxMessageStatus>(dir);
-            export_all::<MailboxMessageOrigin>(dir);
-            export_all::<MailboxSourceIdentity>(dir);
-            export_all::<SteeringStopEffect>(dir);
-            export_all::<MailboxDelivery>(dir);
-            export_all::<ConsumptionBarrier>(dir);
-            export_all::<MailboxDrainMode>(dir);
             export_all::<AgentRunMessageAcceptedRefs>(dir);
             export_all::<AgentRunToolCallApprovalResponse>(dir);
             export_all::<AgentRunToolCallRejectionResponse>(dir);
-            export_all::<MailboxMessageView>(dir);
-            export_all::<MailboxStateView>(dir);
             export_all::<AgentRunComposerSubmitRequest>(dir);
             export_all::<BackendSelectionModeDto>(dir);
             export_all::<BackendSelectionRequestDto>(dir);
@@ -380,9 +367,6 @@ fn main() {
             export_all::<AgentRunCommandOnlyRequest>(dir);
             export_all::<AgentRunContextCompactionCommandOutcome>(dir);
             export_all::<AgentRunContextCompactionCommandResponse>(dir);
-            export_all::<AgentRunMailboxMoveRequest>(dir);
-            export_all::<AgentRunMailboxMessageContentView>(dir);
-            export_all::<AgentRunMailboxView>(dir);
             export_all::<AgentRunForkRequest>(dir);
             export_all::<AgentRunForkSubmitRequest>(dir);
             export_all::<AgentRunForkLineageView>(dir);
@@ -901,7 +885,6 @@ fn main() {
             export_all::<ConversationCommandSetView>(dir);
             export_all::<ConversationExecutionView>(dir);
             export_all::<ConversationWaitingItemView>(dir);
-            export_all::<ConversationMailboxSnapshotView>(dir);
             export_all::<AgentConversationSnapshot>(dir);
             export_all::<AgentConversationIdentity>(dir);
             export_all::<AgentConversationLifecycleContext>(dir);

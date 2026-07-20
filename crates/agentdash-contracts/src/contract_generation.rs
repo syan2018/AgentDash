@@ -200,9 +200,7 @@ function isControlPlaneProjectionChanged(value: unknown): boolean {
   if (!isNonEmptyString(value.run_id)) return false;
   if (!isNonEmptyString(value.agent_id)) return false;
   if (!(isOptionalString(value.frame_id) || value.frame_id === null)) return false;
-  if (!(isOptionalString(value.gate_id) || value.gate_id === null)) return false;
-  return isOptionalString(value.mailbox_message_id) ||
-    value.mailbox_message_id === null;
+  return isOptionalString(value.gate_id) || value.gate_id === null;
 }
 "#,
     );

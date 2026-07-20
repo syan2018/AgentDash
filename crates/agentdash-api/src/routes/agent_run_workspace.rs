@@ -2,11 +2,6 @@ use agentdash_application_agentrun::agent_run::runtime_capability::project_capab
 use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, AgentRunProductRuntimeSnapshotObservation, workspace as app_workspace,
 };
-use agentdash_contracts::agent_run_mailbox::{
-    ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
-    MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
-    SteeringStopEffect,
-};
 use agentdash_contracts::workflow::{
     AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunLineageRef, AgentRunOwnershipView,
@@ -16,9 +11,9 @@ use agentdash_contracts::workflow::{
     ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
     ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
-    ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
-    ConversationModelConfigView, ConversationWaitingItemView, LifecycleRunRefDto,
-    LifecycleSubjectAssociationDto, RuntimeThreadRefDto, SubjectRefDto, ValidationSeverity,
+    ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
+    ConversationWaitingItemView, LifecycleRunRefDto, LifecycleSubjectAssociationDto,
+    RuntimeThreadRefDto, SubjectRefDto, ValidationSeverity,
 };
 use agentdash_domain::{
     agent_run_target::AgentRunTarget,
@@ -60,7 +55,6 @@ pub(crate) async fn load(
                 .lifecycle_subject_association_repo
                 .as_ref(),
             lifecycle_gate_repo: state.repos.lifecycle_gate_repo.as_ref(),
-            settings_repo: state.repos.settings_repo.as_ref(),
             inline_file_repo: state.repos.inline_file_repo.as_ref(),
         },
         &runtime_projection,
@@ -192,112 +186,11 @@ async fn lineage_ref(
     })
 }
 
-pub(crate) fn mailbox_message_contract(
-    message: agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,
-) -> MailboxMessageView {
-    use agentdash_domain::agent_run_mailbox as domain;
-
-    let can_delete = matches!(
-        message.status,
-        domain::MailboxMessageStatus::Accepted
-            | domain::MailboxMessageStatus::Queued
-            | domain::MailboxMessageStatus::ReadyToConsume
-            | domain::MailboxMessageStatus::Paused
-            | domain::MailboxMessageStatus::Blocked
-    );
-    let user_turn_message = message.origin == domain::MailboxMessageOrigin::User
-        && message.delivery == domain::MailboxDelivery::LaunchOrContinueTurn;
-    MailboxMessageView {
-        id: message.id.to_string(),
-        origin: match message.origin {
-            domain::MailboxMessageOrigin::User => MailboxMessageOrigin::User,
-            domain::MailboxMessageOrigin::System => MailboxMessageOrigin::System,
-            domain::MailboxMessageOrigin::Hook => MailboxMessageOrigin::Hook,
-            domain::MailboxMessageOrigin::Companion => MailboxMessageOrigin::Companion,
-            domain::MailboxMessageOrigin::Workflow => MailboxMessageOrigin::Workflow,
-        },
-        source: MailboxSourceIdentity {
-            namespace: message.source.namespace.clone(),
-            kind: message.source.kind.clone(),
-            source_ref: message.source.source_ref.clone(),
-            correlation_ref: message.source.correlation_ref.clone(),
-            actor: message.source.actor.clone(),
-            route: message.source.route.clone(),
-            display_label_key: message.source.display_label_key.clone(),
-            metadata: message.source.metadata.clone(),
-        },
-        delivery: match &message.delivery {
-            domain::MailboxDelivery::LaunchOrContinueTurn => MailboxDelivery::LaunchOrContinueTurn,
-            domain::MailboxDelivery::SteerActiveTurn { stop_effect } => {
-                MailboxDelivery::SteerActiveTurn {
-                    stop_effect: match stop_effect {
-                        domain::SteeringStopEffect::None => SteeringStopEffect::None,
-                        domain::SteeringStopEffect::ContinueOnStop => {
-                            SteeringStopEffect::ContinueOnStop
-                        }
-                    },
-                }
-            }
-            domain::MailboxDelivery::ResumeLaunchSource { launch_source } => {
-                MailboxDelivery::ResumeLaunchSource {
-                    launch_source: launch_source.clone(),
-                }
-            }
-        },
-        barrier: match message.barrier {
-            domain::ConsumptionBarrier::ImmediateIfIdle => ConsumptionBarrier::ImmediateIfIdle,
-            domain::ConsumptionBarrier::AgentLoopTurnBoundary => {
-                ConsumptionBarrier::AgentLoopTurnBoundary
-            }
-            domain::ConsumptionBarrier::AgentRunTurnBoundary => {
-                ConsumptionBarrier::AgentRunTurnBoundary
-            }
-            domain::ConsumptionBarrier::ManualResume => ConsumptionBarrier::ManualResume,
-        },
-        drain_mode: match message.drain_mode {
-            domain::MailboxDrainMode::One => MailboxDrainMode::One,
-            domain::MailboxDrainMode::All => MailboxDrainMode::All,
-        },
-        status: match message.status {
-            domain::MailboxMessageStatus::Accepted => MailboxMessageStatus::Accepted,
-            domain::MailboxMessageStatus::Queued => MailboxMessageStatus::Queued,
-            domain::MailboxMessageStatus::ReadyToConsume => MailboxMessageStatus::ReadyToConsume,
-            domain::MailboxMessageStatus::Consuming => MailboxMessageStatus::Consuming,
-            domain::MailboxMessageStatus::Dispatched => MailboxMessageStatus::Dispatched,
-            domain::MailboxMessageStatus::Steered => MailboxMessageStatus::Steered,
-            domain::MailboxMessageStatus::Paused => MailboxMessageStatus::Paused,
-            domain::MailboxMessageStatus::Blocked => MailboxMessageStatus::Blocked,
-            domain::MailboxMessageStatus::Failed => MailboxMessageStatus::Failed,
-            domain::MailboxMessageStatus::Deleted => MailboxMessageStatus::Deleted,
-        },
-        preview: message.preview.clone(),
-        has_images: message.has_images,
-        attempt_count: message.attempt_count,
-        accepted_refs: None,
-        last_error: message.last_error.clone(),
-        created_at: message.created_at.to_rfc3339(),
-        updated_at: message.updated_at.to_rfc3339(),
-        can_promote: can_delete && user_turn_message,
-        can_delete,
-        can_reorder: can_delete && user_turn_message,
-        can_recall: can_delete
-            && message.origin == domain::MailboxMessageOrigin::User
-            && message.payload_json.is_some(),
-    }
-}
-
 fn workspace_to_contract(
     snapshot: app_workspace::AgentRunWorkspaceSnapshot,
     workspace_modules: Vec<agentdash_contracts::workspace_module::WorkspaceModuleDescriptor>,
 ) -> AgentRunWorkspaceView {
-    let mailbox = mailbox_state_to_contract(snapshot.mailbox);
-    let mailbox_messages = snapshot
-        .mailbox_messages
-        .into_iter()
-        .map(mailbox_message_contract)
-        .collect();
-    let conversation =
-        conversation_to_contract(snapshot.conversation, Some(mailbox), mailbox_messages);
+    let conversation = conversation_to_contract(snapshot.conversation);
     AgentRunWorkspaceView {
         run_ref: LifecycleRunRefDto {
             run_id: snapshot.run.id.to_string(),
@@ -349,8 +242,6 @@ fn workspace_to_contract(
 
 fn conversation_to_contract(
     conversation: app_agent_run::AgentConversationSnapshotModel,
-    mailbox_state: Option<MailboxStateView>,
-    mailbox_messages: Vec<MailboxMessageView>,
 ) -> AgentConversationSnapshot {
     AgentConversationSnapshot {
         snapshot_id: conversation.snapshot_id,
@@ -383,20 +274,11 @@ fn conversation_to_contract(
         execution: execution_to_contract(conversation.execution),
         model_config: model_config_to_contract(conversation.model_config),
         commands: command_set_to_contract(conversation.commands),
-        mailbox: ConversationMailboxSnapshotView {
-            visible_message_count: conversation.mailbox.visible_message_count,
-            paused: conversation.mailbox.paused,
-            user_attention: conversation.mailbox.user_attention,
-            resume_command: conversation.mailbox.resume_command.map(command_to_contract),
-            state: mailbox_state,
-            messages: mailbox_messages,
-            waiting_items: conversation
-                .mailbox
-                .waiting_items
-                .into_iter()
-                .map(waiting_item_to_contract)
-                .collect(),
-        },
+        waiting_items: conversation
+            .waiting_items
+            .into_iter()
+            .map(waiting_item_to_contract)
+            .collect(),
         resource_surface: conversation
             .resource_surface
             .map(vfs_surface_dto::surface_from_application),
@@ -533,18 +415,6 @@ fn command_to_contract(
             app_agent_run::ConversationCommandKindModel::SubmitMessage => {
                 ConversationCommandKind::SubmitMessage
             }
-            app_agent_run::ConversationCommandKindModel::PromoteMailboxMessage => {
-                ConversationCommandKind::PromoteMailboxMessage
-            }
-            app_agent_run::ConversationCommandKindModel::DeleteMailboxMessage => {
-                ConversationCommandKind::DeleteMailboxMessage
-            }
-            app_agent_run::ConversationCommandKindModel::MoveMailboxMessage => {
-                ConversationCommandKind::MoveMailboxMessage
-            }
-            app_agent_run::ConversationCommandKindModel::ResumeMailbox => {
-                ConversationCommandKind::ResumeMailbox
-            }
             app_agent_run::ConversationCommandKindModel::Cancel => ConversationCommandKind::Cancel,
             app_agent_run::ConversationCommandKindModel::CompactContext => {
                 ConversationCommandKind::CompactContext
@@ -566,12 +436,6 @@ fn command_to_contract(
                 }
                 app_agent_run::ConversationCommandPlacementModel::ComposerSecondary => {
                     ConversationCommandPlacement::ComposerSecondary
-                }
-                app_agent_run::ConversationCommandPlacementModel::MailboxRow => {
-                    ConversationCommandPlacement::MailboxRow
-                }
-                app_agent_run::ConversationCommandPlacementModel::MailboxBanner => {
-                    ConversationCommandPlacement::MailboxBanner
                 }
                 app_agent_run::ConversationCommandPlacementModel::Header => {
                     ConversationCommandPlacement::Header
@@ -685,18 +549,6 @@ fn frame_runtime_to_contract(
         effective_executor_config: frame
             .effective_executor_config
             .map(effective_executor_config_to_contract),
-    }
-}
-
-fn mailbox_state_to_contract(
-    mailbox: app_workspace::AgentRunWorkspaceMailboxStateModel,
-) -> MailboxStateView {
-    MailboxStateView {
-        paused: mailbox.paused,
-        pause_reason: mailbox.pause_reason,
-        message: mailbox.message,
-        can_resume: mailbox.can_resume,
-        hide_system_steer_messages: mailbox.hide_system_steer_messages,
     }
 }
 

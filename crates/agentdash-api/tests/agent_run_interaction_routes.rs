@@ -12,12 +12,6 @@ fn product_interaction_routes_are_mounted_on_the_production_router() {
         "/agent-runs/{run_id}/agents/{agent_id}/fork",
         "/agent-runs/{run_id}/agents/{agent_id}/fork-submit",
         "/agent-runs/{run_id}/agents/{agent_id}/cancel",
-        "/agent-runs/{run_id}/agents/{agent_id}/mailbox",
-        "/agent-runs/{run_id}/agents/{agent_id}/mailbox/resume",
-        "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}",
-        "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/promote",
-        "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/move",
-        "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/content",
     ] {
         assert!(
             routes.contains(path),

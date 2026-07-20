@@ -16,8 +16,6 @@ pub struct ControlPlaneProjectionChanged {
     pub frame_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mailbox_message_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
@@ -25,7 +23,6 @@ pub struct ControlPlaneProjectionChanged {
 pub enum ControlPlaneProjection {
     Workspace,
     AgentRunList,
-    Mailbox,
     Waiting,
     Delivery,
     HookRuntime,
@@ -39,7 +36,6 @@ pub enum ControlPlaneProjectionChangeReason {
     AgentRunLineageChanged,
     AgentRunShellChanged,
     AgentRunActivityChanged,
-    MailboxStateChanged,
     WaitResolved,
     DeliveryTerminal,
     CompanionResult,
@@ -58,7 +54,6 @@ pub struct ProjectProjectionInvalidation {
     pub agent_id: Uuid,
     pub frame_id: Option<Uuid>,
     pub gate_id: Option<Uuid>,
-    pub mailbox_message_id: Option<Uuid>,
     pub reason: ControlPlaneProjectionChangeReason,
     pub runtime_thread_id: Option<RuntimeThreadId>,
 }
@@ -79,7 +74,6 @@ impl ProjectProjectionInvalidation {
             agent_id,
             frame_id,
             gate_id: None,
-            mailbox_message_id: None,
             reason,
             runtime_thread_id,
         }

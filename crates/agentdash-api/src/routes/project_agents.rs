@@ -159,7 +159,6 @@ fn project_agent_run_start_contract(
         initial_message: AgentRunMessageCommandResponse {
             command_receipt: receipt,
             outcome: AgentRunMessageCommandOutcome::Launched,
-            mailbox_message: None,
             accepted_refs: None,
             fork: None,
         },

@@ -84,7 +84,7 @@ export function SessionChatView({
     showExecutorSelector = true,
     commandState,
     compactContextCommand,
-    mailbox,
+    waitingItems,
     statusBarRunId,
     statusBarAgentId,
     injectedInputValue,
@@ -94,11 +94,6 @@ export function SessionChatView({
     submitComposer,
     cancelAction,
     setExecutorConfigOverride,
-    promoteMailboxMessage,
-    deleteMailboxMessage,
-    resumeMailbox,
-    recallMailboxMessage,
-    moveMailboxMessage,
     injectedInputConsumed,
   } = intents;
   const [isSending, setIsSending] = useState(false);
@@ -608,7 +603,6 @@ export function SessionChatView({
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
   const displayError = sendError ?? (hasRuntimeStreamTarget ? wsError?.message : null) ?? null;
-  const mailboxMessages = mailbox.messages;
 
   // ─── 渲染 ────────────────────────────────────────────
 
@@ -659,18 +653,12 @@ export function SessionChatView({
         onScroll={handleScroll}
       />
 
-      {/* Mailbox 消息 + 输入区 */}
+      {/* Agent 等待项 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
         <SessionStatusBar
           runId={statusBarRunId}
           agentId={statusBarAgentId}
-          messages={mailboxMessages}
-          mailbox={mailbox}
-          onPromote={promoteMailboxMessage ?? (() => {})}
-          onDelete={deleteMailboxMessage ?? (() => {})}
-          onResume={resumeMailbox}
-          onRecall={recallMailboxMessage}
-          onMove={moveMailboxMessage}
+          waitingItems={waitingItems}
         />
 
         <SessionChatComposer

@@ -1,19 +1,13 @@
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind, ManagedRuntimeEntityStatus,
-    ManagedRuntimeLifecycleStatus, ManagedRuntimeSnapshot,
+    ManagedRuntimeEntityStatus, ManagedRuntimeLifecycleStatus, ManagedRuntimeSnapshot,
 };
 use agentdash_application_vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection,
     build_surface_summary,
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
-use agentdash_domain::agent_run_mailbox::AgentRunMailboxState;
 use agentdash_domain::agent_run_target::AgentRunTarget;
-use agentdash_domain::common::error::DomainError;
 use agentdash_domain::inline_file::InlineFileRepository;
-use agentdash_domain::settings::{
-    AGENT_MAILBOX_HIDE_SYSTEM_STEER_MESSAGES_KEY, SettingScope, SettingsRepository,
-};
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleGateRepository, LifecycleRun,
     LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
@@ -39,9 +33,8 @@ use super::state::{derive_workspace_state, is_terminal_agent_status};
 use super::types::{
     AgentRunListItem, AgentRunResourceSurfaceCoordinateModel,
     AgentRunResourceSurfaceSourceAnchorModel, AgentRunWorkspaceFrameRefModel,
-    AgentRunWorkspaceFrameRuntimeModel, AgentRunWorkspaceMailboxStateModel,
-    AgentRunWorkspaceQueryInput, AgentRunWorkspaceShellModel, AgentRunWorkspaceSnapshot,
-    SubjectRefModel,
+    AgentRunWorkspaceFrameRuntimeModel, AgentRunWorkspaceQueryInput, AgentRunWorkspaceShellModel,
+    AgentRunWorkspaceSnapshot, SubjectRefModel,
 };
 
 #[derive(Clone, Copy)]
@@ -52,7 +45,6 @@ pub struct AgentRunWorkspaceQueryDeps<'a> {
     pub project_agent_repo: &'a dyn ProjectAgentRepository,
     pub lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
     pub lifecycle_gate_repo: &'a dyn LifecycleGateRepository,
-    pub settings_repo: &'a dyn SettingsRepository,
     pub inline_file_repo: &'a dyn InlineFileRepository,
 }
 
@@ -95,8 +87,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .unwrap_or(AgentRunExecutionState::Idle);
         let workspace_state = derive_workspace_state(&execution_state);
         let terminal_agent = is_terminal_agent_status(&agent.status);
-        let supports_steering = runtime_snapshot.is_some_and(runtime_supports_steering);
-
         let frame = self.resolve_frame(&agent, binding).await?;
         let frame_ref = frame.as_ref().map(|frame| (frame.id, frame.revision));
         let frame_execution_profile = frame.as_ref().and_then(|frame| {
@@ -142,20 +132,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .map(|gate| ConversationWaitingItemModel::from_lifecycle_gate(&gate))
             .collect::<Vec<_>>();
 
-        let visible_mailbox_messages = Vec::new();
-        let hide_system_steer_messages = load_hide_system_steer_messages_setting(
-            self.repos.settings_repo,
-            viewer_user_id.as_deref(),
-        )
-        .await
-        .map_err(WorkflowApplicationError::from)?;
-        let mailbox = mailbox_state_model(
-            None,
-            frame_ref.is_some() && binding.is_some() && !terminal_agent,
-            0,
-            hide_system_steer_messages,
-        );
-
         let project_agent = self.load_project_agent(&run, &agent).await?;
         let project_agent_preset_config = project_agent
             .as_ref()
@@ -184,9 +160,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 subject_associations: subject_associations.clone(),
                 execution_state: execution_state.clone(),
                 terminal_agent,
-                supports_steering,
-                mailbox_paused: mailbox.paused,
-                mailbox_visible_message_count: 0,
                 open_wait_items,
                 resource_surface: resource_surface.clone(),
                 resource_surface_coordinate: resource_surface_coordinate.clone(),
@@ -211,8 +184,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             agent_view,
             frame_runtime,
             subject_associations,
-            mailbox,
-            mailbox_messages: visible_mailbox_messages,
             resource_surface,
             resource_surface_coordinate,
             conversation,
@@ -425,29 +396,6 @@ impl WorkspaceRuntimeObservation {
     }
 }
 
-pub async fn load_hide_system_steer_messages_setting(
-    settings_repo: &dyn SettingsRepository,
-    user_id: Option<&str>,
-) -> Result<bool, DomainError> {
-    let Some(user_id) = user_id else {
-        return Ok(false);
-    };
-    let setting = settings_repo
-        .get(
-            &SettingScope::user(user_id.to_string()),
-            AGENT_MAILBOX_HIDE_SYSTEM_STEER_MESSAGES_KEY,
-        )
-        .await?;
-    match setting {
-        Some(setting) => setting.value.as_bool().ok_or_else(|| {
-            DomainError::InvalidConfig(format!(
-                "{AGENT_MAILBOX_HIDE_SYSTEM_STEER_MESSAGES_KEY} 必须是 boolean"
-            ))
-        }),
-        None => Ok(false),
-    }
-}
-
 fn runtime_execution_state(snapshot: &ManagedRuntimeSnapshot) -> AgentRunExecutionState {
     let active_turn_id = snapshot.active_turn_id.as_ref().map(ToString::to_string);
     if active_turn_id.is_some() {
@@ -495,15 +443,6 @@ fn runtime_execution_state(snapshot: &ManagedRuntimeSnapshot) -> AgentRunExecuti
             message: Some("Complete Agent Runtime 已丢失".to_string()),
         },
     }
-}
-
-fn runtime_supports_steering(snapshot: &ManagedRuntimeSnapshot) -> bool {
-    matches!(
-        snapshot
-            .command_availability
-            .get(&ManagedRuntimeCommandKind::Steer),
-        Some(ManagedRuntimeCommandAvailability::Available { .. })
-    )
 }
 
 fn applied_surface_vfs(surface: crate::agent_run::AgentRunAppliedResourceSurface) -> Vfs {
@@ -696,33 +635,6 @@ fn delivery_status_for_execution(state: &AgentRunExecutionState) -> String {
         AgentRunExecutionState::Lost { .. } => "lost",
     }
     .to_string()
-}
-
-fn mailbox_state_model(
-    state: Option<&AgentRunMailboxState>,
-    can_resume: bool,
-    visible_message_count: usize,
-    hide_system_steer_messages: bool,
-) -> AgentRunWorkspaceMailboxStateModel {
-    let paused = state.is_some_and(|state| state.paused) && visible_message_count > 0;
-    AgentRunWorkspaceMailboxStateModel {
-        paused,
-        pause_reason: state.and_then(|state| state.pause_reason.clone()),
-        message: state.and_then(|state| state.pause_message.clone()),
-        can_resume: can_resume && paused,
-        hide_system_steer_messages,
-    }
-}
-
-pub fn mailbox_message_visible(
-    message: &agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage,
-) -> bool {
-    !matches!(
-        message.status,
-        agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Dispatched
-            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Steered
-            | agentdash_domain::agent_run_mailbox::MailboxMessageStatus::Deleted
-    )
 }
 
 fn workspace_resource_diagnostics(

@@ -2,7 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto, MailboxMessageView, MailboxStateView } from "./agent-run-mailbox-contracts";
+import type { AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto } from "./agent-run-mailbox-contracts";
 import type { ManagedRuntimeSnapshot, RuntimeThreadId } from "./agent-runtime-contracts";
 import type { ConversationEffectiveExecutorConfigView, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
@@ -31,7 +31,7 @@ export type AgentConversationIdentity = { run_ref: LifecycleRunRefDto, agent_ref
 
 export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, subject_associations: Array<LifecycleSubjectAssociationDto>, };
 
-export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, mailbox: ConversationMailboxSnapshotView, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, diagnostics: Array<ConversationDiagnosticView>, };
+export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, waiting_items: Array<ConversationWaitingItemView>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, diagnostics: Array<ConversationDiagnosticView>, };
 
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_thread_refs: Array<RuntimeThreadRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
 
@@ -97,7 +97,7 @@ export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
 export type ContinueLifecycleRunResponse = { run: LifecycleRunView, drain_result: OrchestrationExecutorDrainResultDto, };
 
-export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "mailbox_row" | "mailbox_banner" | "header";
+export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "header";
 
 export type ConversationCommandSetView = { ownership: AgentRunOwnershipView, commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
 
@@ -110,8 +110,6 @@ export type ConversationExecutionStatus = "draft" | "model_required" | "ready" |
 export type ConversationExecutionView = { status: ConversationExecutionStatus, runtime_thread_ref?: RuntimeThreadRefDto, active_turn_id?: string, reason?: string, };
 
 export type ConversationKeyboardMapView = { enter?: string, ctrl_enter?: string, };
-
-export type ConversationMailboxSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, resume_command?: ConversationCommandView, state?: MailboxStateView, messages: Array<MailboxMessageView>, waiting_items: Array<ConversationWaitingItemView>, };
 
 export type ConversationModelConfigStatus = "resolved" | "model_required";
 

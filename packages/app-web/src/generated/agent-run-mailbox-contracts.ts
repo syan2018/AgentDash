@@ -41,17 +41,11 @@ export type AgentRunForkResponse = { command_receipt: AgentRunCommandReceipt, ou
 
 export type AgentRunForkSubmitRequest = { input: Array<AgentInputContent>, client_command_id: string, executor_config?: JsonValue, title?: string, fork_point_ref?: SessionMessageRefDto, metadata_json?: JsonValue, backend_selection?: BackendSelectionRequestDto, };
 
-export type AgentRunMailboxMessageContentView = { id: string, input: JsonValue, };
-
-export type AgentRunMailboxMoveRequest = { client_command_id: string, command: AgentRunCommandPreconditionView, after_message_id?: string, };
-
-export type AgentRunMailboxView = { state: MailboxStateView, messages: Array<MailboxMessageView>, };
-
 export type AgentRunMessageAcceptedRefs = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref?: AgentFrameRefDto, agent_run_turn_id?: string, protocol_turn_id?: string, };
 
-export type AgentRunMessageCommandOutcome = "launched" | "steered" | "deleted" | "moved" | "resumed" | "blocked" | "failed";
+export type AgentRunMessageCommandOutcome = "launched";
 
-export type AgentRunMessageCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunMessageCommandOutcome, mailbox_message?: MailboxMessageView, accepted_refs?: AgentRunMessageAcceptedRefs, fork?: AgentRunForkOutcomeView, };
+export type AgentRunMessageCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunMessageCommandOutcome, accepted_refs?: AgentRunMessageAcceptedRefs, fork?: AgentRunForkOutcomeView, };
 
 export type AgentRunRefDto = { run_id: string, agent_id: string, };
 
@@ -63,28 +57,10 @@ export type BackendSelectionModeDto = "explicit" | "auto_idle" | "workspace_bind
 
 export type BackendSelectionRequestDto = { mode: BackendSelectionModeDto, backend_id?: string, };
 
-export type ConsumptionBarrier = "immediate_if_idle" | "agent_loop_turn_boundary" | "agent_run_turn_boundary" | "manual_resume";
-
-export type ConversationCommandKind = "submit_message" | "promote_mailbox_message" | "delete_mailbox_message" | "move_mailbox_message" | "resume_mailbox" | "cancel" | "compact_context";
+export type ConversationCommandKind = "submit_message" | "cancel" | "compact_context";
 
 export type ConversationCommandStaleGuardView = { snapshot_id: string, run_id: string, agent_id: string, frame_id?: string, active_turn_id?: string, };
 
 export type LifecycleRunRefDto = { run_id: string, };
 
-export type MailboxDelivery = { "kind": "launch_or_continue_turn" } | { "kind": "steer_active_turn", stop_effect: SteeringStopEffect, } | { "kind": "resume_launch_source", launch_source: string, };
-
-export type MailboxDrainMode = "one" | "all";
-
-export type MailboxMessageOrigin = "user" | "system" | "hook" | "companion" | "workflow";
-
-export type MailboxMessageStatus = "accepted" | "queued" | "ready_to_consume" | "consuming" | "dispatched" | "steered" | "paused" | "blocked" | "failed" | "deleted";
-
-export type MailboxMessageView = { id: string, origin: MailboxMessageOrigin, source: MailboxSourceIdentity, delivery: MailboxDelivery, barrier: ConsumptionBarrier, drain_mode: MailboxDrainMode, status: MailboxMessageStatus, preview: string, has_images: boolean, attempt_count: number, accepted_refs?: AgentRunMessageAcceptedRefs, last_error?: string, created_at: string, updated_at: string, can_promote: boolean, can_delete: boolean, can_reorder: boolean, can_recall: boolean, };
-
-export type MailboxSourceIdentity = { namespace: string, kind: string, source_ref?: string, correlation_ref?: string, actor: string, route?: string, display_label_key: string, metadata?: JsonValue, };
-
-export type MailboxStateView = { paused: boolean, pause_reason?: string, message?: string, can_resume: boolean, hide_system_steer_messages: boolean, };
-
 export type SessionMessageRefDto = { turn_id: string, entry_index: number, };
-
-export type SteeringStopEffect = "none" | "continue_on_stop";

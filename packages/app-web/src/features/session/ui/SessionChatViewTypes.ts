@@ -4,8 +4,6 @@ import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type {
   BackendSelectionRequestDto,
-  MailboxMessageView,
-  MailboxStateView,
   SessionMessageRefDto,
 } from "../../../generated/agent-run-mailbox-contracts";
 import type {
@@ -59,19 +57,6 @@ export interface SessionChatCommandState {
   helperText?: string;
 }
 
-export interface SessionChatMailboxModel {
-  messages: MailboxMessageView[];
-  waiting_items: ConversationWaitingItemView[];
-  state?: MailboxStateView;
-  paused: boolean;
-  user_attention: boolean;
-  hide_system_steer_messages: boolean;
-  can_resume: boolean;
-  resumeAction?: SessionChatCommandModel;
-  promoteAction?: SessionChatCommandModel;
-  deleteAction?: SessionChatCommandModel;
-}
-
 export interface SessionChatModel {
   agentRunTarget?: AgentRunRuntimeTarget | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
@@ -82,7 +67,7 @@ export interface SessionChatModel {
   showExecutorSelector?: boolean;
   commandState: SessionChatCommandState;
   compactContextCommand?: ConversationCommandView;
-  mailbox: SessionChatMailboxModel;
+  waitingItems: ConversationWaitingItemView[];
   statusBarRunId?: string | null;
   statusBarAgentId?: string | null;
   injectedInputValue?: string | null;
@@ -101,11 +86,6 @@ export interface SessionChatViewIntents {
   submitComposer: (intent: SessionChatSubmitIntent) => Promise<void>;
   cancelAction?: () => Promise<void>;
   setExecutorConfigOverride?: (config: ExecutorConfig | null) => void;
-  promoteMailboxMessage?: (messageId: string) => void;
-  deleteMailboxMessage?: (messageId: string) => void;
-  resumeMailbox?: () => void;
-  recallMailboxMessage?: (messageId: string) => void;
-  moveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
   forkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   injectedInputConsumed?: () => void;
 }

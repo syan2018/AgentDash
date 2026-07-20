@@ -18,7 +18,7 @@ pub struct AgentConversationSnapshotModel {
     pub execution: ConversationExecutionModel,
     pub model_config: ConversationModelConfigModel,
     pub commands: ConversationCommandSetModel,
-    pub mailbox: ConversationMailboxSnapshotModel,
+    pub waiting_items: Vec<ConversationWaitingItemModel>,
     pub resource_surface: Option<ResolvedVfsSurface>,
     pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateModel>,
     pub diagnostics: Vec<ConversationDiagnosticModel>,
@@ -120,10 +120,6 @@ pub struct ConversationModelConfigModel {
 #[serde(rename_all = "snake_case")]
 pub enum ConversationCommandKindModel {
     SubmitMessage,
-    PromoteMailboxMessage,
-    DeleteMailboxMessage,
-    MoveMailboxMessage,
-    ResumeMailbox,
     Cancel,
     CompactContext,
 }
@@ -132,8 +128,6 @@ pub enum ConversationCommandKindModel {
 pub enum ConversationCommandPlacementModel {
     ComposerPrimary,
     ComposerSecondary,
-    MailboxRow,
-    MailboxBanner,
     Header,
 }
 
@@ -186,15 +180,6 @@ pub struct ConversationExecutionModel {
     pub runtime_thread_id: Option<String>,
     pub active_turn_id: Option<String>,
     pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ConversationMailboxSnapshotModel {
-    pub visible_message_count: usize,
-    pub paused: bool,
-    pub user_attention: bool,
-    pub resume_command: Option<ConversationCommandModel>,
-    pub waiting_items: Vec<ConversationWaitingItemModel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -474,9 +459,6 @@ pub struct ConversationCommandAvailabilityInput {
     pub runtime_thread_id: Option<String>,
     pub execution_state: AgentRunExecutionState,
     pub terminal_agent: bool,
-    pub supports_steering: bool,
-    pub mailbox_paused: bool,
-    pub mailbox_visible_message_count: usize,
     pub model_config_status: ConversationModelConfigStatusModel,
     pub ownership: AgentRunOwnershipModel,
 }
@@ -490,9 +472,6 @@ impl ConversationCommandAvailabilityInput {
             runtime_thread_id: input.runtime_thread_id.clone(),
             execution_state: input.execution_state.clone(),
             terminal_agent: input.terminal_agent,
-            supports_steering: input.supports_steering,
-            mailbox_paused: input.mailbox_paused,
-            mailbox_visible_message_count: input.mailbox_visible_message_count,
             model_config_status: input.model_config.status,
             ownership: input.ownership.clone(),
         }
@@ -551,9 +530,6 @@ pub struct AgentConversationSnapshotInput {
     pub subject_associations: Vec<LifecycleSubjectAssociationView>,
     pub execution_state: AgentRunExecutionState,
     pub terminal_agent: bool,
-    pub supports_steering: bool,
-    pub mailbox_paused: bool,
-    pub mailbox_visible_message_count: usize,
     pub open_wait_items: Vec<ConversationWaitingItemModel>,
     pub resource_surface: Option<ResolvedVfsSurface>,
     pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateModel>,
@@ -575,12 +551,6 @@ impl AgentConversationSnapshotResolver {
             availability.active_turn_id.clone(),
         );
         let commands = availability.commands;
-        let resume_command = commands
-            .commands
-            .iter()
-            .find(|command| command.kind == ConversationCommandKindModel::ResumeMailbox)
-            .cloned()
-            .filter(|command| command.enabled);
         let diagnostics = conversation_diagnostics(&input.model_config, input.resource_diagnostics);
 
         AgentConversationSnapshotModel {
@@ -604,13 +574,7 @@ impl AgentConversationSnapshotResolver {
             execution,
             model_config: input.model_config,
             commands,
-            mailbox: ConversationMailboxSnapshotModel {
-                visible_message_count: input.mailbox_visible_message_count,
-                paused: input.mailbox_paused,
-                user_attention: input.mailbox_visible_message_count > 0 && input.mailbox_paused,
-                resume_command,
-                waiting_items: input.open_wait_items,
-            },
+            waiting_items: input.open_wait_items,
             resource_surface: input.resource_surface,
             resource_surface_coordinate: input.resource_surface_coordinate,
             diagnostics,
@@ -699,11 +663,6 @@ fn conversation_commands(
             | ConversationExecutionStatusModel::RunningActive
             | ConversationExecutionStatusModel::Cancelling
     );
-    let mailbox_can_resume = !input.terminal_agent
-        && input.frame_ref.is_some()
-        && input.mailbox_paused
-        && input.mailbox_visible_message_count > 0;
-
     let commands = vec![
         command_view(
             input,
@@ -716,62 +675,6 @@ fn conversation_commands(
             true,
             "allowed",
             vec![ConversationCommandPlacementModel::ComposerPrimary],
-        ),
-        command_view(
-            input,
-            ConversationCommandKindModel::PromoteMailboxMessage,
-            snapshot_id,
-            running_active && input.supports_steering,
-            "当前 AgentRun 不在可投递 mailbox 消息的运行状态。",
-            Some(
-                if status == ConversationExecutionStatusModel::StartingClaimed {
-                    "starting_claimed"
-                } else if running_active {
-                    "connector_steer_unsupported"
-                } else {
-                    "command_unavailable"
-                },
-            ),
-            None,
-            false,
-            "ignored",
-            vec![ConversationCommandPlacementModel::MailboxRow],
-        ),
-        command_view(
-            input,
-            ConversationCommandKindModel::DeleteMailboxMessage,
-            snapshot_id,
-            input.mailbox_visible_message_count > 0,
-            "当前没有可删除的 mailbox message。",
-            Some("command_unavailable"),
-            None,
-            false,
-            "ignored",
-            vec![ConversationCommandPlacementModel::MailboxRow],
-        ),
-        command_view(
-            input,
-            ConversationCommandKindModel::MoveMailboxMessage,
-            snapshot_id,
-            input.mailbox_visible_message_count > 0,
-            "当前没有可移动的 mailbox message。",
-            Some("command_unavailable"),
-            None,
-            false,
-            "ignored",
-            vec![ConversationCommandPlacementModel::MailboxRow],
-        ),
-        command_view(
-            input,
-            ConversationCommandKindModel::ResumeMailbox,
-            snapshot_id,
-            mailbox_can_resume,
-            "当前没有需要用户恢复的 mailbox。",
-            Some("command_unavailable"),
-            None,
-            false,
-            "ignored",
-            vec![ConversationCommandPlacementModel::MailboxBanner],
         ),
         command_view(
             input,
@@ -901,10 +804,6 @@ pub fn conversation_execution_state_code(execution_state: &AgentRunExecutionStat
 pub fn conversation_command_id_for(kind: ConversationCommandKindModel) -> &'static str {
     match kind {
         ConversationCommandKindModel::SubmitMessage => "submit_message",
-        ConversationCommandKindModel::PromoteMailboxMessage => "promote_mailbox_message",
-        ConversationCommandKindModel::DeleteMailboxMessage => "delete_mailbox_message",
-        ConversationCommandKindModel::MoveMailboxMessage => "move_mailbox_message",
-        ConversationCommandKindModel::ResumeMailbox => "resume_mailbox",
         ConversationCommandKindModel::Cancel => "cancel",
         ConversationCommandKindModel::CompactContext => "compact_context",
     }
@@ -939,10 +838,10 @@ fn unavailable_reason_for_submit(
             "当前 AgentRun 正在启动中，等待 active turn 建立。"
         }
         ConversationExecutionStatusModel::RunningActive => {
-            "当前 AgentRun 正在执行中，新消息将进入 mailbox。"
+            "当前 AgentRun 正在执行中，新消息将交给当前 Agent 处理。"
         }
         ConversationExecutionStatusModel::Cancelling => {
-            "当前 AgentRun 正在取消中，新消息将由 mailbox 等待可消费边界。"
+            "当前 AgentRun 正在取消中，暂不可提交新消息。"
         }
         ConversationExecutionStatusModel::Terminal => "当前 AgentRun 已结束，不能继续发送消息。",
         ConversationExecutionStatusModel::FrameMissing => {
@@ -1077,9 +976,6 @@ mod tests {
             subject_associations: Vec::new(),
             execution_state,
             terminal_agent: false,
-            supports_steering: true,
-            mailbox_paused: false,
-            mailbox_visible_message_count: 0,
             open_wait_items: Vec::new(),
             resource_surface: None,
             resource_surface_coordinate: None,
@@ -1230,7 +1126,7 @@ mod tests {
     }
 
     #[test]
-    fn starting_claimed_exposes_no_active_turn_commands() {
+    fn starting_claimed_exposes_submit_without_active_turn() {
         let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
             AgentRunExecutionState::Running { turn_id: None },
         ));
@@ -1243,18 +1139,11 @@ mod tests {
             snapshot.commands.keyboard.enter.as_deref(),
             Some("submit_message")
         );
-        let promote = snapshot
-            .commands
-            .commands
-            .iter()
-            .find(|command| command.kind == ConversationCommandKindModel::PromoteMailboxMessage)
-            .expect("promote command exists");
-        assert!(!promote.enabled);
-        assert_eq!(promote.disabled_code.as_deref(), Some("starting_claimed"));
+        assert_eq!(snapshot.execution.active_turn_id, None);
     }
 
     #[test]
-    fn running_active_exposes_submit_and_supported_promote() {
+    fn running_active_exposes_submit_for_the_current_agent() {
         let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
             AgentRunExecutionState::Running {
                 turn_id: Some("turn-1".to_string()),
@@ -1273,9 +1162,6 @@ mod tests {
             == ConversationCommandKindModel::SubmitMessage
             && command.enabled
             && command.stale_guard.active_turn_id.as_deref() == Some("turn-1")));
-        assert!(snapshot.commands.commands.iter().any(|command| command.kind
-            == ConversationCommandKindModel::PromoteMailboxMessage
-            && command.enabled));
     }
 
     #[test]
@@ -1360,32 +1246,6 @@ mod tests {
             .disabled_code
             .as_deref(),
             Some("runtime_thread_missing")
-        );
-    }
-
-    #[test]
-    fn running_active_without_steer_support_keeps_submit_and_disables_promote() {
-        let mut input = snapshot_input(AgentRunExecutionState::Running {
-            turn_id: Some("turn-1".to_string()),
-        });
-        input.supports_steering = false;
-
-        let snapshot = AgentConversationSnapshotResolver::resolve(input);
-
-        assert_eq!(
-            snapshot.commands.keyboard.enter.as_deref(),
-            Some("submit_message")
-        );
-        let promote = snapshot
-            .commands
-            .commands
-            .iter()
-            .find(|command| command.kind == ConversationCommandKindModel::PromoteMailboxMessage)
-            .expect("promote command exists");
-        assert!(!promote.enabled);
-        assert_eq!(
-            promote.disabled_code.as_deref(),
-            Some("connector_steer_unsupported")
         );
     }
 
@@ -1493,19 +1353,6 @@ mod tests {
                 .iter()
                 .all(|command| command.stale_guard.active_turn_id.is_none())
         );
-    }
-
-    #[test]
-    fn paused_empty_mailbox_does_not_need_user_attention() {
-        let mut input = snapshot_input(AgentRunExecutionState::Idle);
-        input.mailbox_paused = true;
-        input.mailbox_visible_message_count = 0;
-
-        let snapshot = AgentConversationSnapshotResolver::resolve(input);
-
-        assert!(snapshot.mailbox.paused);
-        assert!(!snapshot.mailbox.user_attention);
-        assert!(snapshot.mailbox.resume_command.is_none());
     }
 
     #[test]
@@ -1632,8 +1479,8 @@ mod tests {
 
         let snapshot = AgentConversationSnapshotResolver::resolve(input);
 
-        assert_eq!(snapshot.mailbox.waiting_items.len(), 3);
-        let child_wait = &snapshot.mailbox.waiting_items[0];
+        assert_eq!(snapshot.waiting_items.len(), 3);
+        let child_wait = &snapshot.waiting_items[0];
         assert_eq!(child_wait.wait_id, child_gate.id.to_string());
         assert_eq!(child_wait.gate_id, child_gate.id.to_string());
         assert_eq!(child_wait.kind, "subagent");
@@ -1645,13 +1492,13 @@ mod tests {
             Some("Review the implementation")
         );
 
-        let human_wait = &snapshot.mailbox.waiting_items[1];
+        let human_wait = &snapshot.waiting_items[1];
         assert_eq!(human_wait.kind, "human");
         assert_eq!(human_wait.source_label.as_deref(), Some("approval"));
         assert_eq!(human_wait.preview.as_deref(), Some("Approve the release?"));
         assert!(human_wait.resolved_at.is_none());
 
-        let blocking_human_wait = &snapshot.mailbox.waiting_items[2];
+        let blocking_human_wait = &snapshot.waiting_items[2];
         assert_eq!(blocking_human_wait.kind, "human");
         assert_eq!(
             blocking_human_wait.preview.as_deref(),

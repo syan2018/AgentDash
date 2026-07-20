@@ -40,7 +40,6 @@ import {
   conversationCommandByKind,
   isCompleteExecutorConfig,
   projectAgentRunChatCommandState,
-  projectAgentRunChatMailboxModel,
   resolveExecutorConfigForConversationCommand,
 } from "./conversationCommandState";
 import { useAgentRunWorkspaceCommands } from "./useAgentRunWorkspaceCommands";
@@ -263,24 +262,14 @@ export function useAgentRunWorkspaceControlPlane({
     ],
   );
 
-  const conversationMailbox = workspaceControl?.conversation?.mailbox;
-
   const {
     handleAgentRunCommand,
     handleCancelAgentRun,
-    handlePromoteMailboxMessage,
-    handleDeleteMailboxMessage,
-    handleResumeMailbox,
-    handleRecallMailboxMessage,
-    handleMoveMailboxMessage,
     handleForkFromMessageRef,
-    recalledInput,
-    clearRecalledInput,
   } = useAgentRunWorkspaceCommands({
     currentRunId,
     currentAgentId,
     chatCommandState: commandState,
-    conversationMailbox,
     draftProjectId,
     draftProjectAgentKey,
     draftReady: Boolean(draftProjectId && draftProjectAgentKey && draftProjectAgent),
@@ -315,41 +304,6 @@ export function useAgentRunWorkspaceControlPlane({
     refreshAgentRunList("agent_run_cancelled");
   }, [handleCancelAgentRun, refreshAgentRunList]);
 
-  const promoteMailboxMessage = useCallback((messageId: string) => {
-    void (async () => {
-      await handlePromoteMailboxMessage(messageId);
-      refreshAgentRunList("mailbox_message_promoted");
-    })();
-  }, [handlePromoteMailboxMessage, refreshAgentRunList]);
-
-  const deleteMailboxMessage = useCallback((messageId: string) => {
-    void (async () => {
-      await handleDeleteMailboxMessage(messageId);
-      refreshAgentRunList("mailbox_message_deleted");
-    })();
-  }, [handleDeleteMailboxMessage, refreshAgentRunList]);
-
-  const resumeMailbox = useCallback(() => {
-    void (async () => {
-      await handleResumeMailbox();
-      refreshAgentRunList("mailbox_resumed");
-    })();
-  }, [handleResumeMailbox, refreshAgentRunList]);
-
-  const recallMailboxMessage = useCallback((messageId: string) => {
-    void (async () => {
-      await handleRecallMailboxMessage(messageId);
-      refreshAgentRunList("mailbox_message_recalled");
-    })();
-  }, [handleRecallMailboxMessage, refreshAgentRunList]);
-
-  const moveMailboxMessage = useCallback((messageId: string, afterMessageId: string | null) => {
-    void (async () => {
-      await handleMoveMailboxMessage(messageId, afterMessageId);
-      refreshAgentRunList("mailbox_message_moved");
-    })();
-  }, [handleMoveMailboxMessage, refreshAgentRunList]);
-
   const chatModel = useMemo<AgentRunChatModel>(() => ({
     executorHint,
     agentDefaults: draftProjectAgent?.effective_executor_config
@@ -358,19 +312,17 @@ export function useAgentRunWorkspaceControlPlane({
     executorStateKey,
     commandState: projectAgentRunChatCommandState(commandState),
     compactContextCommand: conversationCommandByKind(commandState.commands.commands, "compact_context"),
-    mailbox: projectAgentRunChatMailboxModel(commandState, conversationMailbox),
+    waitingItems: workspaceControl?.conversation?.waiting_items ?? [],
     statusBarRunId: currentRunId,
     statusBarAgentId: currentAgentId,
-    injectedInputValue: recalledInput,
   }), [
     commandState,
-    conversationMailbox,
     currentAgentId,
     currentRunId,
     draftProjectAgent?.effective_executor_config,
     executorHint,
     executorStateKey,
-    recalledInput,
+    workspaceControl?.conversation?.waiting_items,
     workspaceControl?.conversation?.model_config.effective_executor_config,
     taskExecutorSummary,
   ]);
@@ -379,22 +331,10 @@ export function useAgentRunWorkspaceControlPlane({
     submitComposer,
     cancelAction,
     setExecutorConfigOverride: setExplicitExecutorConfigOverride,
-    promoteMailboxMessage,
-    deleteMailboxMessage,
-    resumeMailbox,
-    recallMailboxMessage,
-    moveMailboxMessage,
     forkFromMessageRef: handleForkFromMessageRef,
-    injectedInputConsumed: clearRecalledInput,
   }), [
     cancelAction,
-    clearRecalledInput,
-    deleteMailboxMessage,
     handleForkFromMessageRef,
-    moveMailboxMessage,
-    promoteMailboxMessage,
-    recallMailboxMessage,
-    resumeMailbox,
     setExplicitExecutorConfigOverride,
     submitComposer,
   ]);

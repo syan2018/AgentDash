@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::agent_run_mailbox::{MailboxMessageView, MailboxStateView};
 use crate::shared_library::InstalledAssetSourceDto;
 use crate::vfs::ResolvedVfsSurface;
 use crate::workspace_module::WorkspaceModuleDescriptor;
@@ -1263,10 +1262,6 @@ pub enum ConversationExecutionStatus {
 #[serde(rename_all = "snake_case")]
 pub enum ConversationCommandKind {
     SubmitMessage,
-    PromoteMailboxMessage,
-    DeleteMailboxMessage,
-    MoveMailboxMessage,
-    ResumeMailbox,
     Cancel,
     CompactContext,
 }
@@ -1276,8 +1271,6 @@ pub enum ConversationCommandKind {
 pub enum ConversationCommandPlacement {
     ComposerPrimary,
     ComposerSecondary,
-    MailboxRow,
-    MailboxBanner,
     Header,
 }
 
@@ -1395,24 +1388,6 @@ pub struct ConversationWaitingItemView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ConversationMailboxSnapshotView {
-    pub visible_message_count: usize,
-    pub paused: bool,
-    pub user_attention: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub resume_command: Option<ConversationCommandView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub state: Option<MailboxStateView>,
-    #[serde(default)]
-    pub messages: Vec<MailboxMessageView>,
-    #[serde(default)]
-    pub waiting_items: Vec<ConversationWaitingItemView>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct AgentConversationSnapshot {
     pub snapshot_id: String,
     pub identity: AgentConversationIdentity,
@@ -1420,7 +1395,8 @@ pub struct AgentConversationSnapshot {
     pub execution: ConversationExecutionView,
     pub model_config: ConversationModelConfigView,
     pub commands: ConversationCommandSetView,
-    pub mailbox: ConversationMailboxSnapshotView,
+    #[serde(default)]
+    pub waiting_items: Vec<ConversationWaitingItemView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resource_surface: Option<ResolvedVfsSurface>,

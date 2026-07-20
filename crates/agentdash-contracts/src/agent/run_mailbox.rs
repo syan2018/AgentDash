@@ -8,83 +8,6 @@ use crate::workflow::{
     AgentFrameRefDto, AgentRunCommandPreconditionView, AgentRunRefDto, LifecycleRunRefDto,
 };
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum MailboxMessageStatus {
-    Accepted,
-    Queued,
-    ReadyToConsume,
-    Consuming,
-    Dispatched,
-    Steered,
-    Paused,
-    Blocked,
-    Failed,
-    Deleted,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum MailboxMessageOrigin {
-    User,
-    System,
-    Hook,
-    Companion,
-    Workflow,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub struct MailboxSourceIdentity {
-    pub namespace: String,
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub source_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub correlation_ref: Option<String>,
-    pub actor: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub route: Option<String>,
-    pub display_label_key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "JsonValue")]
-    pub metadata: Option<Value>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SteeringStopEffect {
-    None,
-    ContinueOnStop,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum MailboxDelivery {
-    LaunchOrContinueTurn,
-    SteerActiveTurn { stop_effect: SteeringStopEffect },
-    ResumeLaunchSource { launch_source: String },
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ConsumptionBarrier {
-    ImmediateIfIdle,
-    AgentLoopTurnBoundary,
-    AgentRunTurnBoundary,
-    ManualResume,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum MailboxDrainMode {
-    One,
-    All,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunMessageAcceptedRefs {
@@ -117,48 +40,6 @@ pub struct AgentRunToolCallRejectionResponse {
     pub run_ref: LifecycleRunRefDto,
     pub agent_ref: AgentRunRefDto,
     pub tool_call_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct MailboxMessageView {
-    pub id: String,
-    pub origin: MailboxMessageOrigin,
-    pub source: MailboxSourceIdentity,
-    pub delivery: MailboxDelivery,
-    pub barrier: ConsumptionBarrier,
-    pub drain_mode: MailboxDrainMode,
-    pub status: MailboxMessageStatus,
-    pub preview: String,
-    pub has_images: bool,
-    pub attempt_count: i32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub accepted_refs: Option<AgentRunMessageAcceptedRefs>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub last_error: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-    pub can_promote: bool,
-    pub can_delete: bool,
-    pub can_reorder: bool,
-    pub can_recall: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct MailboxStateView {
-    pub paused: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub pause_reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub message: Option<String>,
-    pub can_resume: bool,
-    #[serde(default)]
-    pub hide_system_steer_messages: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -225,12 +106,6 @@ pub struct AgentRunComposerSubmitRequest {
 #[serde(rename_all = "snake_case")]
 pub enum AgentRunMessageCommandOutcome {
     Launched,
-    Steered,
-    Deleted,
-    Moved,
-    Resumed,
-    Blocked,
-    Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -238,9 +113,6 @@ pub enum AgentRunMessageCommandOutcome {
 pub struct AgentRunMessageCommandResponse {
     pub command_receipt: AgentRunCommandReceipt,
     pub outcome: AgentRunMessageCommandOutcome,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub mailbox_message: Option<MailboxMessageView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub accepted_refs: Option<AgentRunMessageAcceptedRefs>,
@@ -284,24 +156,6 @@ pub struct AgentRunContextCompactionCommandResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunMailboxMoveRequest {
-    pub client_command_id: String,
-    pub command: AgentRunCommandPreconditionView,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub after_message_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunMailboxMessageContentView {
-    pub id: String,
-    #[ts(type = "JsonValue")]
-    pub input: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -379,14 +233,6 @@ pub struct AgentRunForkResponse {
     pub redirect: AgentRunRefDto,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunMailboxView {
-    pub state: MailboxStateView,
-    #[serde(default)]
-    pub messages: Vec<MailboxMessageView>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,13 +276,11 @@ mod tests {
                 message: None,
             },
             outcome: AgentRunMessageCommandOutcome::Launched,
-            mailbox_message: None,
             accepted_refs: None,
             fork: None,
         };
 
         let value = serde_json::to_value(response).expect("serialize launched response");
-        assert!(value.get("mailbox_message_id").is_none());
         assert!(value.get("mailbox_message").is_none());
         assert!(value.get("accepted_refs").is_none());
     }

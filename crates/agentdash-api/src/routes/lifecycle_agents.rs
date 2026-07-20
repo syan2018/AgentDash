@@ -198,7 +198,6 @@ async fn fork_submit_agent_run(
             message: None,
         },
         outcome: AgentRunMessageCommandOutcome::Launched,
-        mailbox_message: None,
         accepted_refs: Some(agent_run_child_message_refs(&fork)),
         fork: Some(fork_outcome_view(&fork)),
     }))
@@ -405,7 +404,6 @@ async fn submit_agent_run_composer_input(
             message: None,
         },
         outcome: AgentRunMessageCommandOutcome::Launched,
-        mailbox_message: None,
         accepted_refs: Some(agent_run_message_refs(&target)),
         fork: None,
     }))

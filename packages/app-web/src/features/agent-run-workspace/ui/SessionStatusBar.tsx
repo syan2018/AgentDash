@@ -1,38 +1,23 @@
 /**
  * AgentRun 状态栏
  *
- * 合并「Task 进度」与「mailbox（pending/steering）」为输入栏上方的单一可折叠栏：
- * - 折叠态：当前待办项（active 优先）+ 整体进度 done/total，外加 pending/暂停徽标。
- * - 展开态：完整 Task 清单（点击打开 TaskDrawer）+ mailbox 分区（保留既有操作）。
+ * 合并「Task 进度」与 Agent 等待项为输入栏上方的单一可折叠栏。
  *
  * Task 数据源为 LifecycleRun.tasks（taskPlanStore，同后端 task_read/task_write 写入源），
- * 不引入第二套事实源。无 Task 且无 mailbox 内容时不渲染。
+ * 不引入第二套事实源。无 Task 且无等待项时不渲染。
  */
 
 import { useEffect, useMemo, useState } from "react";
 
-import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
+import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 import type { Task, TaskPlanStatus } from "../../../types";
 import { TaskStatusToken } from "../../../components/ui/status-badge";
 import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import { TaskDrawer } from "../../task/task-drawer";
-import type { AgentRunChatMailboxModel } from "../model/conversationCommandState";
-import { MailboxSections } from "./MailboxMessageRow";
-import { mailboxHasContent } from "./mailboxContent";
-
 interface SessionStatusBarProps {
-  /** Task scope；缺省时只展示 mailbox（兼容非 AgentRun 场景） */
   runId?: string | null;
   agentId?: string | null;
-
-  // mailbox passthrough
-  messages: MailboxMessageView[];
-  mailbox?: AgentRunChatMailboxModel;
-  onPromote: (messageId: string) => void;
-  onDelete: (messageId: string) => void;
-  onResume?: () => void;
-  onRecall?: (messageId: string) => void;
-  onMove?: (messageId: string, afterMessageId: string | null) => void;
+  waitingItems: ConversationWaitingItemView[];
 }
 
 // 折叠态「当前待办」选取优先级
@@ -65,21 +50,19 @@ export function SessionStatusBar(props: SessionStatusBarProps) {
     return tasks[0] ?? null;
   }, [tasks]);
 
-  const hasMailbox = mailboxHasContent(props.messages, props.mailbox);
   const hasTasks = total > 0;
+  const waitingItems = props.waitingItems;
+  const hasWaitingItems = waitingItems.length > 0;
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) ?? null,
     [selectedTaskId, tasks],
   );
 
-  if (!hasTasks && !hasMailbox) return null;
+  if (!hasTasks && !hasWaitingItems) return null;
 
-  const pendingCount = props.messages.length;
-  const waitingItems = props.mailbox?.waiting_items ?? [];
   const waitingCount = waitingItems.length;
   const currentWait = waitingItems[0] ?? null;
-  const paused = Boolean(props.mailbox?.paused);
 
   return (
     <div className="shrink-0 pb-2">
@@ -115,19 +98,9 @@ export function SessionStatusBar(props: SessionStatusBarProps) {
                 </span>
               </>
             )}
-            {paused && (
-              <span className="shrink-0 rounded-[6px] bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
-                已暂停
-              </span>
-            )}
             {waitingCount > 0 && (
               <span className="shrink-0 rounded-[6px] bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info">
                 {waitingCount} 个等待
-              </span>
-            )}
-            {hasMailbox && pendingCount > 0 && (
-              <span className="shrink-0 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                {pendingCount} 条消息
               </span>
             )}
           </button>
@@ -157,9 +130,18 @@ export function SessionStatusBar(props: SessionStatusBarProps) {
                   ))}
                 </div>
               )}
-              {hasMailbox && (
-                <div className={hasTasks ? "border-t border-border/40 pb-1" : "pb-1"}>
-                  <MailboxSections {...props} />
+              {hasWaitingItems && (
+                <div className={hasTasks ? "border-t border-border/40 p-2" : "p-2"}>
+                  {waitingItems.map((item) => (
+                    <div key={item.wait_id} className="rounded-[8px] px-2 py-1.5">
+                      <div className="text-[13px] font-medium text-foreground/90">
+                        {item.source_label ?? item.kind}
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {item.preview ?? "等待外部事件"}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -193,4 +175,3 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
     </svg>
   );
 }
-

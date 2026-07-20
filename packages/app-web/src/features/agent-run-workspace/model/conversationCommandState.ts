@@ -1,7 +1,6 @@
 import type {
   ConversationCommandSetView,
   ConversationCommandView,
-  ConversationMailboxSnapshotView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
@@ -9,7 +8,6 @@ import type { ProjectAgentSummary } from "../../../types";
 import type {
   SessionChatCommandModel,
   SessionChatCommandState,
-  SessionChatMailboxModel,
   SessionChatModel,
   SessionChatModelConfig,
   SessionChatSubmitIntent,
@@ -20,7 +18,6 @@ import type { ExecutorConfig } from "../../../services/executor";
 // Adapter boundary to the reusable SessionChatView shell; AgentRun command authority stays in the conversation snapshot.
 export type AgentRunChatCommandModel = SessionChatCommandModel;
 export type AgentRunChatCommandState = SessionChatCommandState;
-export type AgentRunChatMailboxModel = SessionChatMailboxModel;
 export type AgentRunChatModel = SessionChatModel;
 export type AgentRunChatModelConfig = SessionChatModelConfig;
 export type AgentRunChatSubmitIntent = SessionChatSubmitIntent;
@@ -308,13 +305,6 @@ export function conversationCommandByKind(
   return commands.find((command) => command.kind === kind);
 }
 
-export function mailboxRowCommand(
-  commands: ConversationCommandView[],
-  kind: ConversationCommandView["kind"],
-): ConversationCommandView | undefined {
-  return commands.find((command) => command.kind === kind && command.placement.includes("mailbox_row"));
-}
-
 export function projectAgentRunChatCommandState(
   commandState: AgentRunConversationCommandState,
 ): AgentRunChatCommandState {
@@ -341,26 +331,5 @@ export function projectAgentRunChatCommandState(
     cancelCommand: cancelCommand ? projectCommand(cancelCommand) : undefined,
     modelConfig: projectModelConfig(commandState.modelConfig),
     helperText: commandState.helperText,
-  };
-}
-
-export function projectAgentRunChatMailboxModel(
-  commandState: AgentRunConversationCommandState,
-  mailbox: ConversationMailboxSnapshotView | null | undefined,
-): AgentRunChatMailboxModel {
-  const promoteCommand = mailboxRowCommand(commandState.commands.commands, "promote_mailbox_message");
-  const deleteCommand = mailboxRowCommand(commandState.commands.commands, "delete_mailbox_message");
-
-  return {
-    messages: mailbox?.messages ?? [],
-    waiting_items: mailbox?.waiting_items ?? [],
-    state: mailbox?.state,
-    paused: Boolean(mailbox?.paused || mailbox?.state?.paused),
-    user_attention: Boolean(mailbox?.user_attention),
-    hide_system_steer_messages: Boolean(mailbox?.state?.hide_system_steer_messages),
-    can_resume: Boolean(mailbox?.state?.can_resume),
-    resumeAction: mailbox?.resume_command ? projectCommand(mailbox.resume_command) : undefined,
-    promoteAction: promoteCommand ? projectCommand(promoteCommand) : undefined,
-    deleteAction: deleteCommand ? projectCommand(deleteCommand) : undefined,
   };
 }

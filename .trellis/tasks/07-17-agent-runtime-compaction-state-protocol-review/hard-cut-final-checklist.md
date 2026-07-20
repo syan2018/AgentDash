@@ -31,7 +31,9 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
   production composition。
 - [x] S5 Atomic Hard Cut：`runtime-legacy-replacement-manifest.md` 的 M1–M5 已在
   `43a5ab52` 删除，`fa48681a` 与 `8603bed5` 完成负向门禁描述和 typed Hook test 收口。
-- [ ] S6 Final Conformance：只剩当前集成 HEAD 的综合门禁与 `.trellis/spec/` 同步。
+- [x] S6 Final Conformance：当前集成 HEAD 的 Runtime/Host/Complete Agent/Product
+  定向矩阵、PostgreSQL 串行行为套件、contracts/metadata/negative gates、最终 specs
+  与 `pnpm check:quick` 已完成。
 
 ### S4/S5 checkpoint evidence
 
@@ -227,9 +229,8 @@ caller、composition、persistence、consumer、behavior tracer 与 negative evi
   `PersistedSessionEvent`、`SessionEventBacklog/Page`、`SessionCompaction*`、
   `SessionProjection*`、`SessionLineage*`、`NewCompactionProjectionCommit`、
   `CompactionProjectionCommitResult` 与 `SESSION_PROJECTION_KIND_*`。
-- [x] `agentdash-api::dto::session` 中零 caller 的
-  `AgentRunJournalStreamQuery` / `AgentRunJournalEventsQuery`；同文件仍被 Product
-  使用的 ContextAudit DTO 保留。
+- [x] `agentdash-api::dto::session` 中零 caller 的 journal query 与 Context Audit DTO；
+  canonical Runtime/Product projection 已覆盖生产读取路径，因此整个 module 删除。
 - [x] `agentdash-agent-protocol::PlatformEvent::ExecutorSessionBound`；Rust、generated
   TypeScript 与 Session frontend consumer 已在同一 checkpoint 删除并通过 freshness。
 - [x] 将 `agentdash-agent::model::message` 中仅存的
@@ -237,10 +238,9 @@ caller、composition、persistence、consumer、behavior tracer 与 negative evi
 
 #### 需要先完成 seam cut 的旧 execution 壳
 
-- [x] `agentdash-application-hooks` 保留 Product presets/rules/script/effects、
-  `evaluate_complete_agent_hook` 与 plan compiler；Product snapshot loader 归 Product
-  owner，零 production consumer 的 aggregate provider、refresh/query shell 与 SPI
-  re-export 已删除。
+- [x] `agentdash-application-hooks` 保留 Product presets/rules/script/effects 与 plan
+  compiler；typed Product event provider 是唯一执行入口，零 production consumer 的
+  aggregate evaluator、global rewrite、refresh/query shell 与 SPI re-export 已删除。
 - [x] capability transition、Runtime command/binding/recovery 与公共错误已迁入
   AgentRun/Application 或 Runtime Contract owner；`session_persistence` 同义外壳已删除。
 - [x] 旧 `RuntimeToolProvider` 与 Application-side composer/adapter 已由 final Product
@@ -312,14 +312,16 @@ S4/S5 focused gates 已通过：ProductCommand 10/10、ProductMailbox 15/15、Pr
 guard 与 legacy negative search。以下条目只在当前集成 HEAD 上完成一次 S6 综合运行后
 勾选，避免用分散 checkpoint 的结果代替最终状态证明。
 
-- [ ] final migration、repositories 和 production composition 使用同一 schema。
-- [ ] canonical Rust/TypeScript protocol roots、schema lock、freshness 与 parity 通过。
-- [ ] `cargo metadata` 符合最终 crate DAG。
-- [ ] 旧 owner negative search 只剩 migration 删除语句或历史任务文档。
-- [ ] Rust affected crates/tests 通过。
-- [ ] PostgreSQL behavior、CAS、outbox、recovery tests 通过。
-- [ ] frontend typecheck、session tests 与 Product feature tests 通过。
-- [ ] 一条真实 production tracer 覆盖：
+- [x] final migration、repositories 和 production composition 使用同一 schema。
+- [x] canonical Rust/TypeScript protocol roots、schema lock、freshness 与 parity 通过。
+- [x] `cargo metadata` 符合最终 crate DAG。
+- [x] 旧 owner negative search 只剩 migration 删除语句、历史 oracle fixture 或明确保留的
+  canonical conversation / Product Hook owner。
+- [x] Rust affected crates/tests 通过。
+- [x] PostgreSQL behavior、CAS、outbox、recovery tests 通过；共享 embedded PostgreSQL
+  data root 的套件按项目约束串行执行，最终 100/100 通过。
+- [x] frontend typecheck、既有 Session tests 与 Product feature tests 通过。
+- [x] 一条真实 production tracer 覆盖：
 
 ```text
 Product command
@@ -330,6 +332,12 @@ Product command
   -> canonical conversation
   -> Product API/UI/VFS consumer
 ```
+
+S6 在 `c4c26d20` 后的同一集成 HEAD 上完成 `pnpm contracts:check`、`cargo metadata`、
+迁移/test-support guards、受影响 Rust crates、PostgreSQL 串行套件与最终
+`pnpm check:quick`（5/5）。`pnpm --filter app-web check` 的 typecheck 通过；其全仓
+ESLint 仍报告 34 个 `c4c26d20` 已存在的 React hooks baseline errors，而 S6 前端源码
+差异只有 canonical JSON fixture，因此这些错误不作为本轮 Runtime 改动的归因结果。
 
 ## 已闭合 replacement evidence
 

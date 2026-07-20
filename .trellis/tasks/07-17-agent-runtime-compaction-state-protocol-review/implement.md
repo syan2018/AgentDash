@@ -2,8 +2,8 @@
 
 ## 0. 执行入口
 
-本任务已经进入执行阶段。当前按 W7/S4 Product lane、S5 final activation 与 S6 final
-conformance 的关键路径收尾，完整状态评估和阶段出口以
+本任务已完成 W7/S4 Product lane、S5 final activation 与 S6 final conformance 的
+关键路径；完整状态评估和阶段出口以
 [`final-convergence-closeout.md`](./final-convergence-closeout.md) 为准。
 
 首次开始实现前的规划 gate 为：
@@ -619,13 +619,16 @@ rg -n "RuntimeJournalFact|RuntimeJournalRecord|journal_records_after|append_pres
 rg -n "AgentConnector|ConnectorCapabilities|ContextActivationDispatch" crates packages
 rg -n "agentdash-agent-types|agentdash-executor" Cargo.toml crates
 rg -n "agentdash_application_hooks" crates/agentdash-api crates/agentdash-infrastructure
-rg -n "BackboneEvent|BackboneEnvelope|PlatformEvent|RuntimeJournal|journal" crates/agentdash-agent-protocol
+rg -n "RuntimeJournal|JournalFact|JournalRecord|ExecutorSessionBound|ControlPlaneProjectionChanged|WorkspaceModulePresentationRequested|PtyTerminalStateChanged" crates/agentdash-agent-protocol
 rg -n "RuntimeSession|runtime_session" crates/agentdash-application-ports crates/agentdash-application crates/agentdash-api crates/agentdash-contracts crates/agentdash-spi crates/agentdash-relay crates/agentdash-application-runtime-gateway
 rg -n "Session" crates/agentdash-agent-runtime crates/agentdash-agent-runtime-host
 ```
 
 `Session` 搜索只允许出现在 vendor/source 引用、迁移删除、历史 test fixture 或明确证明
 history-maintained semantics 的 Dash Agent 内部；Runtime/Host 业务类型结果应为零。
+`BackboneEvent`、`BackboneEnvelope` 与 `PlatformEvent` 是 07-12 canonical conversation
+owner 的稳定类型名，不按名称判定为旧 journal；协议门禁只搜索已经迁出到 Product、
+Runtime 或 journal owner 的具体 carrier/variant。
 
 ### Directed quality gate
 

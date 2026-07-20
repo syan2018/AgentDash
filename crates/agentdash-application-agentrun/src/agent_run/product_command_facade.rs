@@ -6,10 +6,11 @@ use agentdash_agent_runtime_contract::{
     RuntimeProjectionRevision,
 };
 use agentdash_agent_service_api::{
-    AgentCommand, AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentCommandReceipt,
-    AgentEffectIdentity, AgentEffectInspectionState, AgentIdempotencyKey, AgentInput,
-    AgentInputContent, AgentInteractionId, AgentInteractionResponse, AgentPayloadDigest,
-    AgentReadQuery, AgentReceiptState, AgentServiceError, AgentTerminalOutcome, ResumeAgentCommand,
+    AgentAppliedEffectOutcome, AgentCommand, AgentCommandEnvelope, AgentCommandId,
+    AgentCommandMeta, AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspectionState,
+    AgentIdempotencyKey, AgentInput, AgentInputContent, AgentInteractionId,
+    AgentInteractionResponse, AgentPayloadDigest, AgentReadQuery, AgentReceiptState,
+    AgentServiceError, AgentTerminalOutcome, ResumeAgentCommand,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use serde::{Deserialize, Serialize};
@@ -166,7 +167,24 @@ impl AgentRunProductCommandFacade {
                     true,
                 ))
             }
-            AgentEffectInspectionState::NotApplied | AgentEffectInspectionState::Applied { .. } => {
+            AgentEffectInspectionState::Applied { outcome } => {
+                let receipt = applied_product_command_receipt(&request.command, outcome)?;
+                if receipt.source != binding.agent.source {
+                    return Err(AgentRunProductCommandError::InvalidCommand(
+                        "applied effect belongs to another source".to_owned(),
+                    ));
+                }
+                Ok(operation_receipt(
+                    operation_id,
+                    binding.runtime_thread_id,
+                    receipt
+                        .snapshot_revision
+                        .map_or(snapshot.revision.0, |revision| revision.0),
+                    receipt_status(&receipt),
+                    true,
+                ))
+            }
+            AgentEffectInspectionState::NotApplied => {
                 let receipt = match request.command {
                     AgentRunProductCommand::Resume => {
                         service
@@ -191,8 +209,7 @@ impl AgentRunProductCommandFacade {
                         "Agent receipt belongs to another source".to_owned(),
                     ));
                 }
-                let duplicate = !matches!(inspection.state, AgentEffectInspectionState::NotApplied)
-                    || matches!(receipt.state, AgentReceiptState::AlreadyApplied { .. });
+                let duplicate = matches!(receipt.state, AgentReceiptState::AlreadyApplied { .. });
                 Ok(operation_receipt(
                     operation_id,
                     binding.runtime_thread_id,
@@ -222,6 +239,38 @@ impl AgentRunProductCommandFacade {
         .await
         .map(Some)
     }
+}
+
+fn applied_product_command_receipt(
+    command: &AgentRunProductCommand,
+    outcome: AgentAppliedEffectOutcome,
+) -> Result<AgentCommandReceipt, AgentRunProductCommandError> {
+    let receipt = match (command, outcome) {
+        (AgentRunProductCommand::Resume, AgentAppliedEffectOutcome::Resume { receipt })
+        | (
+            AgentRunProductCommand::SubmitInput { .. }
+            | AgentRunProductCommand::Interrupt
+            | AgentRunProductCommand::RequestCompaction
+            | AgentRunProductCommand::ResolveInteraction { .. }
+            | AgentRunProductCommand::Close,
+            AgentAppliedEffectOutcome::Command { receipt },
+        ) => receipt,
+        _ => {
+            return Err(AgentRunProductCommandError::InvalidCommand(
+                "applied effect kind does not match the Product command".to_owned(),
+            ));
+        }
+    };
+    Ok(AgentCommandReceipt {
+        command_id: receipt.command_id,
+        effect_id: receipt.effect_id,
+        source: receipt.source,
+        state: AgentReceiptState::AlreadyApplied {
+            terminal: receipt.terminal,
+        },
+        snapshot_revision: receipt.snapshot_revision,
+        initial_context: receipt.initial_context,
+    })
 }
 
 fn validate_client_command_id(value: &str) -> Result<&str, AgentRunProductCommandError> {
@@ -448,5 +497,63 @@ mod tests {
         )
         .unwrap();
         assert_eq!(source.as_str(), "approval-1");
+    }
+
+    #[test]
+    fn applied_agent_outcome_is_recovered_without_redispatch() {
+        let command_id = AgentCommandId::new("command-1").unwrap();
+        let effect_id = AgentEffectIdentity::new("effect-1").unwrap();
+        let source = agentdash_agent_service_api::AgentSourceCoordinate::new("source-1").unwrap();
+        let receipt = applied_product_command_receipt(
+            &AgentRunProductCommand::Close,
+            AgentAppliedEffectOutcome::Command {
+                receipt: agentdash_agent_service_api::AppliedAgentCommandReceipt {
+                    command_id: command_id.clone(),
+                    effect_id: effect_id.clone(),
+                    source: source.clone(),
+                    terminal: Some(AgentTerminalOutcome::Closed),
+                    snapshot_revision: Some(agentdash_agent_service_api::AgentSnapshotRevision(42)),
+                    initial_context: None,
+                },
+            },
+        )
+        .unwrap();
+
+        assert_eq!(receipt.command_id, command_id);
+        assert_eq!(receipt.effect_id, effect_id);
+        assert_eq!(receipt.source, source);
+        assert_eq!(
+            receipt.state,
+            AgentReceiptState::AlreadyApplied {
+                terminal: Some(AgentTerminalOutcome::Closed)
+            }
+        );
+        assert_eq!(
+            receipt.snapshot_revision,
+            Some(agentdash_agent_service_api::AgentSnapshotRevision(42))
+        );
+    }
+
+    #[test]
+    fn applied_agent_outcome_kind_must_match_product_command() {
+        let result = applied_product_command_receipt(
+            &AgentRunProductCommand::Resume,
+            AgentAppliedEffectOutcome::Command {
+                receipt: agentdash_agent_service_api::AppliedAgentCommandReceipt {
+                    command_id: AgentCommandId::new("command-1").unwrap(),
+                    effect_id: AgentEffectIdentity::new("effect-1").unwrap(),
+                    source: agentdash_agent_service_api::AgentSourceCoordinate::new("source-1")
+                        .unwrap(),
+                    terminal: None,
+                    snapshot_revision: None,
+                    initial_context: None,
+                },
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(AgentRunProductCommandError::InvalidCommand(_))
+        ));
     }
 }

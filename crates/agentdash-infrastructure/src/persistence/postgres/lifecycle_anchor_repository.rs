@@ -1,7 +1,7 @@
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentFrameSurfaceDocument, AgentLineage,
-    AgentLineageRepository, ClaimGateResultParentContinuationRequest, ClaimGateResultWaiterRequest,
+    AgentFrame, AgentFrameRepository, AgentLineage, AgentLineageRepository,
+    ClaimGateResultParentContinuationRequest, ClaimGateResultWaiterRequest,
     CompleteGateResultParentContinuationRequest, GateResultDeliveryClaim, GateResultDeliveryMarker,
     GateResultDeliveryMarkerRepository, GateResultDeliveryStatus, GateWaitPolicyEnvelope,
     LifecycleAgent, LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository,
@@ -9,12 +9,13 @@ use agentdash_domain::workflow::{
     RegisterGateResultWaiterRequest, SubjectRef, WaitProducerRef,
 };
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::db_err;
-use super::json_document::{from_optional_jsonb, to_jsonb, to_optional_jsonb};
+use super::json_document::{to_jsonb, to_optional_jsonb};
 
 fn parse_uuid(s: &str, ctx: &str) -> Result<Uuid, DomainError> {
     Uuid::parse_str(s)
@@ -178,158 +179,145 @@ impl PostgresAgentFrameRepository {
     }
 }
 
-#[derive(sqlx::FromRow)]
-struct FrameRow {
-    id: String,
-    agent_id: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredAgentFrame {
+    id: Uuid,
+    agent_id: Uuid,
     revision: i32,
-    surface: Option<Value>,
-    effective_capability_json: Option<Value>,
-    context_slice_json: Option<Value>,
-    vfs_surface_json: Option<Value>,
-    mcp_surface_json: Option<Value>,
-    execution_profile_json: Option<Value>,
-    hook_plan: Option<Value>,
+    surface: agentdash_domain::workflow::AgentFrameSurfaceDocument,
     created_by_kind: String,
     created_by_id: Option<String>,
     created_at: DateTime<Utc>,
 }
 
-fn parse_opt_surface(
-    s: Option<Value>,
-    ctx: &str,
-) -> Result<Option<AgentFrameSurfaceDocument>, DomainError> {
-    from_optional_jsonb(s, ctx)
+impl From<&AgentFrame> for StoredAgentFrame {
+    fn from(frame: &AgentFrame) -> Self {
+        Self {
+            id: frame.id,
+            agent_id: frame.agent_id,
+            revision: frame.revision,
+            surface: frame.surface_document(),
+            created_by_kind: frame.created_by_kind.clone(),
+            created_by_id: frame.created_by_id.clone(),
+            created_at: frame.created_at,
+        }
+    }
 }
 
-impl TryFrom<FrameRow> for AgentFrame {
-    type Error = DomainError;
-    fn try_from(row: FrameRow) -> Result<Self, Self::Error> {
-        let mut frame = AgentFrame {
-            id: parse_uuid(&row.id, "agent_frames.id")?,
-            agent_id: parse_uuid(&row.agent_id, "agent_frames.agent_id")?,
-            revision: row.revision,
-            surface: parse_opt_surface(row.surface, "agent_frames.surface")?,
-            effective_capability_json: row.effective_capability_json,
-            context_slice_json: row.context_slice_json,
-            vfs_surface_json: row.vfs_surface_json,
-            mcp_surface_json: row.mcp_surface_json,
-            execution_profile_json: row.execution_profile_json,
-            hook_plan: row.hook_plan,
-            created_by_kind: row.created_by_kind,
-            created_by_id: row.created_by_id,
-            created_at: row.created_at,
+impl From<StoredAgentFrame> for AgentFrame {
+    fn from(stored: StoredAgentFrame) -> Self {
+        let mut frame = Self {
+            id: stored.id,
+            agent_id: stored.agent_id,
+            revision: stored.revision,
+            surface: Some(stored.surface),
+            effective_capability_json: None,
+            context_slice_json: None,
+            vfs_surface_json: None,
+            mcp_surface_json: None,
+            execution_profile_json: None,
+            hook_plan: None,
+            created_by_kind: stored.created_by_kind,
+            created_by_id: stored.created_by_id,
+            created_at: stored.created_at,
         };
         frame.apply_surface_projection();
-        Ok(frame)
+        frame
     }
 }
 
 #[async_trait::async_trait]
 impl AgentFrameRepository for PostgresAgentFrameRepository {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
-        let surface = frame.surface_document();
-        sqlx::query(
-            r#"INSERT INTO agent_frames
-                (id, agent_id, revision,
-                 surface,
-                 effective_capability_json, context_slice_json, vfs_surface_json, mcp_surface_json,
-                 execution_profile_json,
-                 hook_plan,
-                 created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+        let document = to_jsonb(&StoredAgentFrame::from(frame), "lifecycle_agents.frames")?;
+        let result = sqlx::query(
+            r#"UPDATE lifecycle_agents
+               SET frames = frames || jsonb_build_array($2::JSONB),
+                   updated_at = GREATEST(updated_at, $3)
+               WHERE id=$1
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM jsonb_array_elements(frames) AS existing
+                     WHERE existing ->> 'id' = $4
+                        OR (existing ->> 'revision')::INTEGER = $5
+                 )"#,
         )
-        .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
-        .bind(frame.revision)
-        .bind(to_jsonb(&surface, "agent_frames.surface")?)
-        .bind(to_optional_jsonb(
-            surface.capability_state.as_ref(),
-            "agent_frames.effective_capability_json",
-        )?)
-        .bind(to_optional_jsonb(
-            surface.context_slice.as_ref(),
-            "agent_frames.context_slice_json",
-        )?)
-        .bind(to_optional_jsonb(
-            surface.vfs_surface.as_ref(),
-            "agent_frames.vfs_surface_json",
-        )?)
-        .bind(to_optional_jsonb(
-            surface.mcp_surface.as_ref(),
-            "agent_frames.mcp_surface_json",
-        )?)
-        .bind(to_optional_jsonb(
-            surface.execution_profile.as_ref(),
-            "agent_frames.execution_profile_json",
-        )?)
-        .bind(to_optional_jsonb(
-            surface.hook_plan.as_ref(),
-            "agent_frames.hook_plan",
-        )?)
-        .bind(&frame.created_by_kind)
-        .bind(&frame.created_by_id)
+        .bind(document)
         .bind(frame.created_at)
+        .bind(frame.id.to_string())
+        .bind(frame.revision)
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
+        if result.rows_affected() != 1 {
+            return Err(DomainError::Conflict {
+                entity: "LifecycleAgent",
+                constraint: "frame_history",
+                message: format!(
+                    "agent {} does not exist or frame id/revision is already present",
+                    frame.agent_id
+                ),
+            });
+        }
         Ok(())
     }
 
     async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-        sqlx::query_as::<_, FrameRow>(
-            r#"SELECT id,agent_id,revision,
-                      surface,
-                      effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      execution_profile_json,
-                      hook_plan,
-                      created_by_kind,created_by_id,created_at
-               FROM agent_frames WHERE id=$1"#,
+        sqlx::query_scalar::<_, Value>(
+            r#"SELECT frame
+               FROM lifecycle_agents AS agent
+               CROSS JOIN LATERAL jsonb_array_elements(agent.frames) AS frame
+               WHERE frame ->> 'id' = $1"#,
         )
         .bind(frame_id.to_string())
         .fetch_optional(&self.pool)
         .await
         .map_err(db_err)?
-        .map(TryInto::try_into)
+        .map(decode_stored_frame)
         .transpose()
     }
 
     async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-        sqlx::query_as::<_, FrameRow>(
-            r#"SELECT id,agent_id,revision,
-                      surface,
-                      effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      execution_profile_json,
-                      hook_plan,
-                      created_by_kind,created_by_id,created_at
-               FROM agent_frames WHERE agent_id=$1 ORDER BY revision DESC, created_at DESC LIMIT 1"#,
+        sqlx::query_scalar::<_, Value>(
+            r#"SELECT frame
+               FROM lifecycle_agents AS agent
+               CROSS JOIN LATERAL jsonb_array_elements(agent.frames) AS frame
+               WHERE agent.id=$1
+               ORDER BY (frame ->> 'revision')::INTEGER DESC,
+                        (frame ->> 'created_at')::TIMESTAMPTZ DESC
+               LIMIT 1"#,
         )
         .bind(agent_id.to_string())
         .fetch_optional(&self.pool)
         .await
         .map_err(db_err)?
-        .map(TryInto::try_into)
+        .map(decode_stored_frame)
         .transpose()
     }
 
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
-        sqlx::query_as::<_, FrameRow>(
-            r#"SELECT id,agent_id,revision,
-                      surface,
-                      effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      execution_profile_json,
-                      hook_plan,
-                      created_by_kind,created_by_id,created_at
-               FROM agent_frames WHERE agent_id=$1 ORDER BY revision ASC"#,
+        sqlx::query_scalar::<_, Value>(
+            r#"SELECT frame
+               FROM lifecycle_agents AS agent
+               CROSS JOIN LATERAL jsonb_array_elements(agent.frames) AS frame
+               WHERE agent.id=$1
+               ORDER BY (frame ->> 'revision')::INTEGER ASC"#,
         )
         .bind(agent_id.to_string())
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?
         .into_iter()
-        .map(TryInto::try_into)
+        .map(decode_stored_frame)
         .collect()
     }
+}
+
+fn decode_stored_frame(value: Value) -> Result<AgentFrame, DomainError> {
+    serde_json::from_value::<StoredAgentFrame>(value)
+        .map(AgentFrame::from)
+        .map_err(DomainError::Serialization)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1113,18 +1101,16 @@ mod tests {
     use crate::persistence::postgres::test_pg_pool;
     use serde_json::json;
 
-    fn frame_row_with_surface(surface: Option<serde_json::Value>) -> FrameRow {
-        FrameRow {
-            id: Uuid::new_v4().to_string(),
-            agent_id: Uuid::new_v4().to_string(),
+    fn stored_frame() -> StoredAgentFrame {
+        StoredAgentFrame {
+            id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
             revision: 3,
-            surface,
-            effective_capability_json: None,
-            context_slice_json: None,
-            vfs_surface_json: None,
-            mcp_surface_json: None,
-            execution_profile_json: None,
-            hook_plan: None,
+            surface: agentdash_domain::workflow::AgentFrameSurfaceDocument {
+                capability_state: Some(json!({"canonical": true})),
+                vfs_surface: Some(json!({"mounts": ["canonical"]})),
+                ..Default::default()
+            },
             created_by_kind: "test".to_string(),
             created_by_id: Some("tester".to_string()),
             created_at: Utc::now(),
@@ -1132,15 +1118,8 @@ mod tests {
     }
 
     #[test]
-    fn frame_row_projects_surface_document_as_canonical_source() {
-        let mut row = frame_row_with_surface(Some(json!({
-            "capability_state": {"canonical": true},
-            "vfs_surface": {"mounts": ["canonical"]}
-        })));
-        row.effective_capability_json = Some(json!({"stale": true}));
-        row.vfs_surface_json = Some(json!({"mounts": ["stale"]}));
-
-        let frame = AgentFrame::try_from(row).expect("frame row should map");
+    fn stored_frame_projects_its_canonical_surface() {
+        let frame = AgentFrame::from(stored_frame());
 
         assert_eq!(
             frame.effective_capability_json,
@@ -1150,21 +1129,6 @@ mod tests {
             frame.vfs_surface_json,
             Some(json!({"mounts": ["canonical"]}))
         );
-    }
-
-    #[test]
-    fn frame_row_without_surface_derives_document_from_split_projection() {
-        let mut row = frame_row_with_surface(None);
-        row.effective_capability_json = Some(json!({"from_split": true}));
-        row.context_slice_json = Some(json!({"slice": "launch"}));
-
-        let frame = AgentFrame::try_from(row).expect("frame row should map");
-        let surface = frame
-            .surface
-            .expect("surface projection should be materialized");
-
-        assert_eq!(surface.capability_state, Some(json!({"from_split": true})));
-        assert_eq!(surface.context_slice, Some(json!({"slice": "launch"})));
     }
 
     async fn seed_marker_gate(repo: &PostgresLifecycleGateRepository) -> LifecycleGate {

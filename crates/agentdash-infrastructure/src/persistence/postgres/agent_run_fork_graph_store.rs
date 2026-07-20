@@ -58,10 +58,11 @@ pub(super) async fn insert_agent_run_fork_graph(
     .map_err(|error| error.to_string())?;
 
     let agent = &graph.child_agent;
+    let frame_document = stored_frame_document(&graph.child_frame)?;
     sqlx::query(
         "INSERT INTO lifecycle_agents \
-         (id,run_id,project_id,created_by_user_id,source,project_agent_id,status,bootstrap_status,workspace_title,workspace_title_source,created_at,updated_at) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+         (id,run_id,project_id,created_by_user_id,source,project_agent_id,status,bootstrap_status,workspace_title,workspace_title_source,frames,created_at,updated_at) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,jsonb_build_array($11::JSONB),$12,$13)",
     )
     .bind(agent.id.to_string())
     .bind(agent.run_id.to_string())
@@ -73,32 +74,9 @@ pub(super) async fn insert_agent_run_fork_graph(
     .bind(&agent.bootstrap_status)
     .bind(&agent.workspace_title)
     .bind(&agent.workspace_title_source)
+    .bind(frame_document)
     .bind(agent.created_at)
     .bind(agent.updated_at)
-    .execute(&mut **tx)
-    .await
-    .map_err(|error| error.to_string())?;
-
-    let frame = &graph.child_frame;
-    let surface = frame.surface_document();
-    sqlx::query(
-        "INSERT INTO agent_frames \
-         (id,agent_id,revision,surface,effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,execution_profile_json,hook_plan,created_by_kind,created_by_id,created_at) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
-    )
-    .bind(frame.id.to_string())
-    .bind(frame.agent_id.to_string())
-    .bind(frame.revision)
-    .bind(serde_json::to_value(&surface).map_err(|error| error.to_string())?)
-    .bind(surface.capability_state)
-    .bind(surface.context_slice)
-    .bind(surface.vfs_surface)
-    .bind(surface.mcp_surface)
-    .bind(surface.execution_profile)
-    .bind(surface.hook_plan)
-    .bind(&frame.created_by_kind)
-    .bind(&frame.created_by_id)
-    .bind(frame.created_at)
     .execute(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
@@ -130,6 +108,21 @@ pub(super) async fn insert_agent_run_fork_graph(
     Ok(())
 }
 
+fn stored_frame_document(
+    frame: &agentdash_domain::workflow::AgentFrame,
+) -> Result<serde_json::Value, String> {
+    serde_json::to_value(serde_json::json!({
+        "id": frame.id,
+        "agent_id": frame.agent_id,
+        "revision": frame.revision,
+        "surface": frame.surface_document(),
+        "created_by_kind": frame.created_by_kind,
+        "created_by_id": frame.created_by_id,
+        "created_at": frame.created_at,
+    }))
+    .map_err(|error| error.to_string())
+}
+
 fn topology(value: LifecycleRunTopology) -> &'static str {
     match value {
         LifecycleRunTopology::Plain => "plain",
@@ -153,7 +146,8 @@ fn status(value: LifecycleRunStatus) -> &'static str {
 mod tests {
     use super::*;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentRunLineage, AgentSource, LifecycleAgent, LifecycleRun,
+        AgentFrame, AgentFrameRepository, AgentRunLineage, AgentSource, LifecycleAgent,
+        LifecycleRun,
     };
     use uuid::Uuid;
 
@@ -166,6 +160,16 @@ mod tests {
 
         store.create_graph(&valid).await.expect("create graph");
         assert_graph_counts(&pool, &valid, [1, 1, 1, 1]).await;
+        let stored_frame = super::super::PostgresAgentFrameRepository::new(pool.clone())
+            .get(valid.child_frame.id)
+            .await
+            .expect("read owner-local frame")
+            .expect("owner-local frame exists");
+        assert_eq!(stored_frame.id, valid.child_frame.id);
+        assert_eq!(
+            stored_frame.surface_document(),
+            valid.child_frame.surface_document()
+        );
         store.delete_graph(&valid).await.expect("delete graph");
         assert_graph_counts(&pool, &valid, [0, 0, 0, 0]).await;
 
@@ -297,11 +301,16 @@ mod tests {
             .fetch_one(pool)
             .await
             .expect("agent count");
-        let frame: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_frames WHERE id=$1")
-            .bind(graph.child_frame.id.to_string())
-            .fetch_one(pool)
-            .await
-            .expect("frame count");
+        let frame: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM lifecycle_agents AS agent
+             CROSS JOIN LATERAL jsonb_array_elements(agent.frames) AS frame
+             WHERE frame ->> 'id'=$1",
+        )
+        .bind(graph.child_frame.id.to_string())
+        .fetch_one(pool)
+        .await
+        .expect("frame count");
         let lineage: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM agent_run_lineages WHERE id=$1")
                 .bind(graph.lineage.id.to_string())

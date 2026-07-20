@@ -47,46 +47,24 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
     ) -> Result<AgentRunCommittedProductRuntimeBinding, String> {
         let receipt = binding.committed_receipt()?;
         let binding_json = product_binding_json(binding)?;
-        let mut tx = self.pool.begin().await.map_err(string_db_error)?;
-        let project_id = load_project_id(&mut tx, &binding.target)
-            .await
-            .map_err(string_db_error)?;
         let result = sqlx::query(
-            "INSERT INTO agent_run_product_runtime_binding(
-                 target_run_id, target_agent_id, project_id, runtime_thread_id,
-                 launch_frame_id, binding_digest, binding
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7)
-             ON CONFLICT (target_run_id,target_agent_id) DO NOTHING",
+            "UPDATE lifecycle_agents
+             SET runtime_binding=$3
+             WHERE id=$1 AND run_id=$2
+               AND (runtime_binding IS NULL OR runtime_binding=$3)",
         )
-        .bind(binding.target.run_id.to_string())
         .bind(binding.target.agent_id.to_string())
-        .bind(project_id)
-        .bind(binding.runtime_thread_id.as_str())
-        .bind(binding.launch_frame.frame_id.to_string())
-        .bind(&receipt.binding_digest)
+        .bind(binding.target.run_id.to_string())
         .bind(&binding_json)
-        .execute(&mut *tx)
+        .execute(&self.pool)
         .await
         .map_err(string_db_error)?;
         if result.rows_affected() == 0 {
-            let row = sqlx::query(
-                "SELECT target_run_id,target_agent_id,runtime_thread_id,launch_frame_id,
-                        binding_digest,binding
-                 FROM agent_run_product_runtime_binding
-                 WHERE target_run_id=$1 AND target_agent_id=$2
-                 FOR UPDATE",
-            )
-            .bind(binding.target.run_id.to_string())
-            .bind(binding.target.agent_id.to_string())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(string_db_error)?;
-            let existing = map_product_binding_row(binding.target.clone(), row)?;
-            if existing.committed_receipt()? != receipt {
-                return Err("AgentRun Product runtime binding conflict".to_string());
-            }
+            return Err(
+                "LifecycleAgent does not exist or already owns a different Agent association"
+                    .to_string(),
+            );
         }
-        tx.commit().await.map_err(string_db_error)?;
         Ok(receipt)
     }
 
@@ -100,31 +78,40 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         }
         let receipt = binding.committed_receipt()?;
         let binding_json = product_binding_json(binding)?;
-        let result = sqlx::query(
-            "UPDATE agent_run_product_runtime_binding
-             SET launch_frame_id=$5,
-                 binding_digest=$6,
-                 binding=$7
-             WHERE target_run_id=$1 AND target_agent_id=$2
-               AND runtime_thread_id=$3
-               AND (
-                   binding_digest=$4
-                   OR (binding_digest=$6 AND binding=$7)
-               )",
+        let mut tx = self.pool.begin().await.map_err(string_db_error)?;
+        let current = sqlx::query_scalar::<_, Value>(
+            "SELECT runtime_binding
+             FROM lifecycle_agents
+             WHERE id=$1 AND run_id=$2 AND runtime_binding IS NOT NULL
+             FOR UPDATE",
         )
-        .bind(binding.target.run_id.to_string())
         .bind(binding.target.agent_id.to_string())
-        .bind(binding.runtime_thread_id.as_str())
-        .bind(expected_previous_binding_digest)
-        .bind(binding.launch_frame.frame_id.to_string())
-        .bind(&receipt.binding_digest)
+        .bind(binding.target.run_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(string_db_error)?
+        .ok_or_else(|| "LifecycleAgent has no Product Agent association".to_string())?;
+        let current = map_product_binding_document(binding.target.clone(), current)?;
+        let current_digest = current.committed_receipt()?.binding_digest;
+        if current_digest != expected_previous_binding_digest {
+            return Err("AgentRun Product binding replacement CAS conflict".to_string());
+        }
+        let result = sqlx::query(
+            "UPDATE lifecycle_agents
+             SET runtime_binding=$3
+             WHERE id=$1 AND run_id=$2 AND runtime_binding=$4",
+        )
+        .bind(binding.target.agent_id.to_string())
+        .bind(binding.target.run_id.to_string())
         .bind(&binding_json)
-        .execute(&self.pool)
+        .bind(product_binding_json(&current)?)
+        .execute(&mut *tx)
         .await
         .map_err(string_db_error)?;
         if result.rows_affected() != 1 {
             return Err("AgentRun Product binding replacement CAS conflict".to_string());
         }
+        tx.commit().await.map_err(string_db_error)?;
         Ok(receipt)
     }
 
@@ -133,10 +120,9 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         runtime_thread_id: &RuntimeThreadId,
     ) -> Result<Option<crate::CommittedRuntimeToolProductBinding>, String> {
         let row = sqlx::query(
-            "SELECT target_run_id,target_agent_id,runtime_thread_id,
-                    launch_frame_id,binding_digest,binding
-             FROM agent_run_product_runtime_binding
-             WHERE runtime_thread_id=$1",
+            "SELECT id,run_id,runtime_binding
+             FROM lifecycle_agents
+             WHERE runtime_binding ->> 'runtime_thread_id'=$1",
         )
         .bind(runtime_thread_id.as_str())
         .fetch_optional(&self.pool)
@@ -147,19 +133,20 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         };
         let target = AgentRunTarget {
             run_id: Uuid::parse_str(
-                &row.try_get::<String, _>("target_run_id")
+                &row.try_get::<String, _>("run_id")
                     .map_err(string_db_error)?,
             )
             .map_err(|error| error.to_string())?,
-            agent_id: Uuid::parse_str(
-                &row.try_get::<String, _>("target_agent_id")
-                    .map_err(string_db_error)?,
-            )
-            .map_err(|error| error.to_string())?,
+            agent_id: Uuid::parse_str(&row.try_get::<String, _>("id").map_err(string_db_error)?)
+                .map_err(|error| error.to_string())?,
         };
-        let binding_digest = row.try_get("binding_digest").map_err(string_db_error)?;
+        let binding = map_product_binding_document(
+            target,
+            row.try_get("runtime_binding").map_err(string_db_error)?,
+        )?;
+        let binding_digest = binding.committed_receipt()?.binding_digest;
         Ok(Some(crate::CommittedRuntimeToolProductBinding {
-            binding: map_product_binding_row(target, row)?,
+            binding,
             binding_digest,
         }))
     }
@@ -169,10 +156,9 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         runtime_thread_id: &RuntimeThreadId,
     ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
         let row = sqlx::query(
-            "SELECT target_run_id,target_agent_id,runtime_thread_id,
-                    launch_frame_id,binding_digest,binding
-             FROM agent_run_product_runtime_binding
-             WHERE runtime_thread_id=$1",
+            "SELECT id,run_id,runtime_binding
+             FROM lifecycle_agents
+             WHERE runtime_binding ->> 'runtime_thread_id'=$1",
         )
         .bind(runtime_thread_id.as_str())
         .fetch_optional(&self.pool)
@@ -182,16 +168,17 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
             return Ok(None);
         };
         let run_id = Uuid::parse_str(
-            &row.try_get::<String, _>("target_run_id")
+            &row.try_get::<String, _>("run_id")
                 .map_err(string_db_error)?,
         )
         .map_err(|error| error.to_string())?;
-        let agent_id = Uuid::parse_str(
-            &row.try_get::<String, _>("target_agent_id")
-                .map_err(string_db_error)?,
+        let agent_id = Uuid::parse_str(&row.try_get::<String, _>("id").map_err(string_db_error)?)
+            .map_err(|error| error.to_string())?;
+        map_product_binding_document(
+            AgentRunTarget { run_id, agent_id },
+            row.try_get("runtime_binding").map_err(string_db_error)?,
         )
-        .map_err(|error| error.to_string())?;
-        map_product_binding_row(AgentRunTarget { run_id, agent_id }, row).map(Some)
+        .map(Some)
     }
 }
 
@@ -211,21 +198,20 @@ impl AgentRunProductRuntimeBindingRepository for PostgresAgentRunProductRuntimeB
         &self,
         target: &AgentRunTarget,
     ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
-        let row = sqlx::query(
-            "SELECT target_run_id,target_agent_id,runtime_thread_id,launch_frame_id,
-                    binding_digest,binding
-             FROM agent_run_product_runtime_binding
-             WHERE target_run_id=$1 AND target_agent_id=$2",
+        let value = sqlx::query_scalar::<_, Value>(
+            "SELECT runtime_binding
+             FROM lifecycle_agents
+             WHERE run_id=$1 AND id=$2 AND runtime_binding IS NOT NULL",
         )
         .bind(target.run_id.to_string())
         .bind(target.agent_id.to_string())
         .fetch_optional(&self.pool)
         .await
         .map_err(string_db_error)?;
-        let Some(row) = row else {
+        let Some(value) = value else {
             return Ok(None);
         };
-        map_product_binding_row(target.clone(), row).map(Some)
+        map_product_binding_document(target.clone(), value).map(Some)
     }
 
     async fn load_product_binding_by_runtime_thread(
@@ -263,35 +249,16 @@ impl AgentRunProductRuntimeBindingStore for PostgresAgentRunProductRuntimeBindin
     }
 }
 
-fn map_product_binding_row(
+fn map_product_binding_document(
     target: AgentRunTarget,
-    row: sqlx::postgres::PgRow,
+    value: Value,
 ) -> Result<AgentRunProductRuntimeBinding, String> {
-    let binding = serde_json::from_value::<AgentRunProductRuntimeBinding>(
-        row.try_get::<Value, _>("binding")
-            .map_err(string_db_error)?,
-    )
-    .map_err(|error| format!("agent_run_product_runtime_binding.binding is invalid: {error}"))?;
-    let runtime_thread_id = row
-        .try_get::<String, _>("runtime_thread_id")
-        .map_err(string_db_error)?;
-    let launch_frame_id = row
-        .try_get::<String, _>("launch_frame_id")
-        .map_err(string_db_error)?;
-    let stored_digest = row
-        .try_get::<String, _>("binding_digest")
-        .map_err(string_db_error)?;
-    let calculated_digest = binding.calculated_digest()?;
-    if binding.target != target
-        || binding.runtime_thread_id.as_str() != runtime_thread_id
-        || binding.launch_frame.frame_id.to_string() != launch_frame_id
-        || stored_digest != calculated_digest
-    {
-        return Err(
-            "agent_run_product_runtime_binding canonical document conflicts with its index evidence"
-                .to_string(),
-        );
+    let binding = serde_json::from_value::<AgentRunProductRuntimeBinding>(value)
+        .map_err(|error| format!("lifecycle_agents.runtime_binding is invalid: {error}"))?;
+    if binding.target != target {
+        return Err("LifecycleAgent runtime binding belongs to a different owner".to_string());
     }
+    binding.calculated_digest()?;
     Ok(binding)
 }
 
@@ -1655,16 +1622,6 @@ mod product_binding_persistence_tests {
         .bind(target.agent_id.to_string())
         .bind(target.run_id.to_string())
         .bind(project_id.to_string())
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO agent_frames(
-                 id,agent_id,revision,surface,created_by_kind,created_at
-             ) VALUES ($1,$2,1,'{}'::JSONB,'test',NOW())",
-        )
-        .bind(launch_frame_id.to_string())
-        .bind(target.agent_id.to_string())
         .execute(&pool)
         .await
         .unwrap();

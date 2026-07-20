@@ -2,13 +2,10 @@ use agentdash_domain::common::error::DomainError;
 use sqlx::PgPool;
 
 const REQUIRED_POSTGRES_TABLES: &[&str] = &[
-    "agent_frame_transitions",
-    "agent_frames",
     "agent_lineages",
     "agent_procedures",
     "agent_run_mailbox_messages",
     "agent_run_mailbox_states",
-    "agent_run_product_runtime_binding",
     "agent_run_product_command_receipts",
     "auth_sessions",
     "backend_execution_leases",
@@ -137,6 +134,9 @@ const RETIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_run_product_mailbox_head",
     "agent_run_product_mailbox_change",
     "agent_run_product_mailbox_command_receipt",
+    "agent_frame_transitions",
+    "agent_frames",
+    "agent_run_product_runtime_binding",
     "dash_agent_branch",
     "dash_agent_history",
     "dash_agent_command",
@@ -166,12 +166,7 @@ pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
 
 pub async fn assert_postgres_schema_ready(pool: &PgPool) -> Result<(), DomainError> {
     assert_postgres_tables_ready(pool, REQUIRED_POSTGRES_TABLES).await?;
-    assert_postgres_columns_ready(
-        pool,
-        "agent_run_product_runtime_binding",
-        &["binding", "binding_digest"],
-    )
-    .await?;
+    assert_postgres_columns_ready(pool, "lifecycle_agents", &["frames", "runtime_binding"]).await?;
     assert_postgres_tables_absent(pool, RETIRED_POSTGRES_TABLES).await
 }
 

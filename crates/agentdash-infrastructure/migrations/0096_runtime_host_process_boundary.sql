@@ -25,7 +25,7 @@ DROP TABLE dash_agent_change;
 DROP TABLE dash_agent_effect;
 DROP TABLE dash_agent_command;
 DROP TABLE dash_agent_branch CASCADE;
-DROP TABLE dash_agent_history;
+DROP TABLE dash_agent_history CASCADE;
 
 ALTER TABLE dash_agent_session
     DROP COLUMN branch_id,

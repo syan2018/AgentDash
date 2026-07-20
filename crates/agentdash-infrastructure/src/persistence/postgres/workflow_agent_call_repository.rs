@@ -284,8 +284,8 @@ async fn ensure_canonical_product_binding(
     mutation: &WorkflowAgentCallBindingCommit,
 ) -> Result<(), String> {
     let stored = sqlx::query_scalar::<_, Value>(
-        "SELECT binding FROM agent_run_product_runtime_binding
-         WHERE target_run_id=$1 AND target_agent_id=$2 FOR UPDATE",
+        "SELECT runtime_binding FROM lifecycle_agents
+         WHERE run_id=$1 AND id=$2 AND runtime_binding IS NOT NULL FOR UPDATE",
     )
     .bind(mutation.target.run_id.to_string())
     .bind(mutation.target.agent_id.to_string())

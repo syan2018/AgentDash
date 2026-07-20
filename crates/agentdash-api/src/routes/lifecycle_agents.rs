@@ -8,20 +8,23 @@ use agentdash_application::agent_run_list::{
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommand, AgentRunProductCommandError, AgentRunProductCommandRequest,
     AgentRunProductDeleteError, AgentRunProductDeleteRequest, AgentRunProductDeleteService,
-    AgentRunProductInputDeliveryError, AgentRunProductProjectionError,
-    AgentRunProductRuntimeRecoveryError, AgentRunProductRuntimeRecoveryRequest,
-    AgentRunProductRuntimeSnapshotObservation, AgentRunTerminalChangeSequence,
-    DeliverAgentRunProductInput, ProductMailboxCommand, ProductMailboxCommandRequest,
-    ProductMailboxError,
+    AgentRunProductForkError, AgentRunProductForkMessageRef, AgentRunProductForkRequest,
+    AgentRunProductForkResult, AgentRunProductForkService, AgentRunProductInputDeliveryError,
+    AgentRunProductProjectionError, AgentRunProductRuntimeRecoveryError,
+    AgentRunProductRuntimeRecoveryRequest, AgentRunProductRuntimeSnapshotObservation,
+    AgentRunTerminalChangeSequence, DeliverAgentRunProductInput, ProductMailboxCommand,
+    ProductMailboxCommandRequest, ProductMailboxError,
 };
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandOnlyRequest, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
-    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
-    AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
-    MailboxStateView,
+    AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkResponse,
+    AgentRunForkSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
+    AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
+    AgentRunMessageCommandResponse, MailboxStateView,
 };
 use agentdash_contracts::agent_run_product_projection as product_projection_contract;
-use agentdash_contracts::workflow::{AgentRunRefDto, LifecycleRunRefDto};
+use agentdash_contracts::session::SessionMessageRefDto;
+use agentdash_contracts::workflow::{AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_integration_api::AuthIdentity;
 use agentdash_workspace_module::workspace_module::presentation_protocol::{
@@ -88,6 +91,14 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::post(submit_agent_run_composer_input),
         )
         .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/fork",
+            axum::routing::post(fork_agent_run),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/fork-submit",
+            axum::routing::post(fork_submit_agent_run),
+        )
+        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/cancel",
             axum::routing::post(cancel_agent_run),
         )
@@ -135,6 +146,250 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/changes",
             axum::routing::get(get_agent_run_terminal_changes),
         )
+}
+
+async fn fork_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<agentdash_contracts::agent_run_mailbox::AgentRunForkRequest>,
+) -> Result<Json<AgentRunForkResponse>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let result = execute_product_fork(
+        state.as_ref(),
+        target,
+        current_user.user_id,
+        body.client_command_id.clone(),
+        body.title,
+        body.fork_point_ref,
+        body.metadata_json,
+    )
+    .await?;
+    Ok(Json(fork_response(&result, body.client_command_id)))
+}
+
+async fn fork_submit_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<AgentRunForkSubmitRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    validate_fork_submit_preconditions(&body)?;
+    if body.executor_config.is_some() || body.backend_selection.is_some() {
+        return Err(ApiError::BadRequest(
+            "fork-submit 的 child 继承已提交 Product frame；当前请求不能覆盖 executor 或 backend"
+                .to_owned(),
+        ));
+    }
+    let parent = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let fork = execute_product_fork(
+        state.as_ref(),
+        parent,
+        current_user.user_id,
+        format!("{}:fork", body.client_command_id),
+        body.title,
+        body.fork_point_ref,
+        body.metadata_json,
+    )
+    .await?;
+    let child = AgentRunTarget {
+        run_id: fork.saga.child().run_id,
+        agent_id: fork.saga.child().agent_id,
+    };
+    let delivery = state
+        .services
+        .agent_run_product_input_delivery
+        .deliver(DeliverAgentRunProductInput {
+            target: child.clone(),
+            content: body.input,
+            source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
+            origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User,
+            client_command_id: body.client_command_id.clone(),
+        })
+        .await
+        .map_err(product_input_delivery_error)?;
+    let mailbox_message = state
+        .services
+        .agent_run_product_mailbox
+        .snapshot(child.clone())
+        .await
+        .map_err(product_mailbox_error)?
+        .messages
+        .into_iter()
+        .find(|message| message.id == delivery.mailbox_message_id)
+        .map(super::agent_run_workspace::mailbox_message_contract);
+    let duplicate = fork.replayed
+        || delivery
+            .operation_receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.duplicate);
+    Ok(Json(AgentRunMessageCommandResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id: body.client_command_id,
+            status: if delivery.queued {
+                "queued".to_owned()
+            } else {
+                "accepted".to_owned()
+            },
+            duplicate,
+            message: None,
+        },
+        outcome: if delivery.queued {
+            AgentRunMessageCommandOutcome::Queued
+        } else {
+            AgentRunMessageCommandOutcome::Launched
+        },
+        mailbox_message,
+        accepted_refs: Some(agent_run_child_message_refs(&fork)),
+        fork: Some(fork_outcome_view(&fork)),
+    }))
+}
+
+fn validate_fork_submit_preconditions(body: &AgentRunForkSubmitRequest) -> Result<(), ApiError> {
+    let client_command_id = body.client_command_id.trim();
+    if client_command_id.is_empty() || client_command_id.len() > 256 {
+        return Err(ApiError::BadRequest(
+            "fork-submit client_command_id 必须为 1..=256 字节".to_owned(),
+        ));
+    }
+    let has_content = body.input.iter().any(|content| {
+        let value = match content {
+            agentdash_agent_service_api::AgentInputContent::Text { text } => text,
+            agentdash_agent_service_api::AgentInputContent::Image { source, .. } => source,
+            agentdash_agent_service_api::AgentInputContent::Resource { uri, .. } => uri,
+            agentdash_agent_service_api::AgentInputContent::Structured { schema, .. } => schema,
+        };
+        !value.trim().is_empty()
+    });
+    if !has_content {
+        return Err(ApiError::BadRequest(
+            "fork-submit input 必须包含可投递内容".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+async fn execute_product_fork(
+    state: &AppState,
+    target: AgentRunTarget,
+    requested_by_user_id: String,
+    client_command_id: String,
+    title: Option<String>,
+    fork_point_ref: Option<SessionMessageRefDto>,
+    metadata_json: Option<serde_json::Value>,
+) -> Result<AgentRunProductForkResult, ApiError> {
+    AgentRunProductForkService::new(
+        state.services.agent_run_product_projection.clone(),
+        state.services.agent_run_product_protocol.clone(),
+    )
+    .fork(AgentRunProductForkRequest {
+        target,
+        client_command_id,
+        requested_by_user_id,
+        title,
+        fork_point_ref: fork_point_ref.map(|point| AgentRunProductForkMessageRef {
+            turn_id: point.turn_id,
+            entry_index: point.entry_index,
+        }),
+        metadata_json,
+    })
+    .await
+    .map_err(product_fork_error)
+}
+
+fn fork_response(
+    result: &AgentRunProductForkResult,
+    client_command_id: String,
+) -> AgentRunForkResponse {
+    let outcome = fork_outcome_view(result);
+    AgentRunForkResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id,
+            status: "completed".to_owned(),
+            duplicate: result.replayed,
+            message: None,
+        },
+        outcome: outcome.outcome,
+        parent_refs: outcome.parent_refs,
+        child_refs: outcome.child_refs,
+        lineage: outcome.lineage,
+        redirect: outcome.redirect,
+    }
+}
+
+fn fork_outcome_view(result: &AgentRunProductForkResult) -> AgentRunForkOutcomeView {
+    let saga = &result.saga;
+    let intent = saga
+        .product_intent()
+        .expect("successful Product fork must retain immutable Product intent");
+    let parent = AgentRunTarget {
+        run_id: saga.parent().run_id,
+        agent_id: saga.parent().agent_id,
+    };
+    let child = AgentRunTarget {
+        run_id: saga.child().run_id,
+        agent_id: saga.child().agent_id,
+    };
+    let parent_refs = agent_run_message_refs(&parent);
+    let child_refs = agent_run_child_message_refs(result);
+    AgentRunForkOutcomeView {
+        outcome: "forked".to_owned(),
+        parent_refs: parent_refs.clone(),
+        child_refs: child_refs.clone(),
+        lineage: AgentRunForkLineageView {
+            id: saga.request_id().0.to_string(),
+            parent: parent_refs,
+            child: child_refs,
+            relation_kind: "fork".to_owned(),
+            fork_point_event_seq: None,
+            fork_point_ref: intent
+                .source_entry_index
+                .map(|entry_index| SessionMessageRefDto {
+                    turn_id: intent.source_turn_id.clone(),
+                    entry_index,
+                }),
+            forked_by_user_id: intent.requested_by_user_id.clone(),
+            created_at: intent.requested_at.to_rfc3339(),
+        },
+        redirect: AgentRunRefDto {
+            run_id: child.run_id.to_string(),
+            agent_id: child.agent_id.to_string(),
+        },
+    }
+}
+
+fn agent_run_child_message_refs(result: &AgentRunProductForkResult) -> AgentRunMessageAcceptedRefs {
+    let child = result.saga.child();
+    AgentRunMessageAcceptedRefs {
+        run_ref: LifecycleRunRefDto {
+            run_id: child.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: child.run_id.to_string(),
+            agent_id: child.agent_id.to_string(),
+        },
+        frame_ref: Some(AgentFrameRefDto {
+            agent_id: child.agent_id.to_string(),
+            frame_id: child.frame_id.to_string(),
+            revision: None,
+        }),
+        agent_run_turn_id: None,
+        protocol_turn_id: None,
+    }
 }
 
 async fn cancel_agent_run(
@@ -543,6 +798,25 @@ fn product_input_delivery_error(error: AgentRunProductInputDeliveryError) -> Api
         | AgentRunProductInputDeliveryError::Command(_) => ApiError::Conflict(error.to_string()),
         AgentRunProductInputDeliveryError::Mailbox(_)
         | AgentRunProductInputDeliveryError::Projection(_) => ApiError::Internal(error.to_string()),
+    }
+}
+
+fn product_fork_error(error: AgentRunProductForkError) -> ApiError {
+    match error {
+        AgentRunProductForkError::InvalidRequest => ApiError::BadRequest(error.to_string()),
+        AgentRunProductForkError::TargetNotBound
+        | AgentRunProductForkError::StaleProjection
+        | AgentRunProductForkError::ForkUnavailable
+        | AgentRunProductForkError::CompletedTurnMissing
+        | AgentRunProductForkError::ForkPointNotFound
+        | AgentRunProductForkError::RequestConflict
+        | AgentRunProductForkError::Failed(_) => ApiError::Conflict(error.to_string()),
+        AgentRunProductForkError::RecoveryPending { .. } | AgentRunProductForkError::Lost(_) => {
+            ApiError::ServiceUnavailable(error.to_string())
+        }
+        AgentRunProductForkError::Projection(_)
+        | AgentRunProductForkError::Persistence(_)
+        | AgentRunProductForkError::Protocol(_) => ApiError::Internal(error.to_string()),
     }
 }
 
@@ -1124,4 +1398,49 @@ fn agent_run_product_command_error(error: AgentRunProductCommandError) -> ApiErr
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_agent_service_api::AgentInputContent;
+
+    use super::*;
+
+    fn fork_submit(
+        client_command_id: &str,
+        input: Vec<AgentInputContent>,
+    ) -> AgentRunForkSubmitRequest {
+        AgentRunForkSubmitRequest {
+            input,
+            client_command_id: client_command_id.to_owned(),
+            executor_config: None,
+            title: None,
+            fork_point_ref: None,
+            metadata_json: None,
+            backend_selection: None,
+        }
+    }
+
+    #[test]
+    fn fork_submit_rejects_invalid_input_before_product_fork_can_start() {
+        assert!(validate_fork_submit_preconditions(&fork_submit("", Vec::new())).is_err());
+        assert!(
+            validate_fork_submit_preconditions(&fork_submit(
+                "fork-submit-1",
+                vec![AgentInputContent::Text {
+                    text: "   ".to_owned(),
+                }],
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_fork_submit_preconditions(&fork_submit(
+                "fork-submit-1",
+                vec![AgentInputContent::Text {
+                    text: "continue".to_owned(),
+                }],
+            ))
+            .is_ok()
+        );
+    }
 }

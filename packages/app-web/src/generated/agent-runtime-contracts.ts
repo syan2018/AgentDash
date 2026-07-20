@@ -144,7 +144,7 @@ export type ManagedRuntimeTerminalStatus = "completed" | "failed" | "interrupted
 
 export type ManagedRuntimeThreadNameSource = { authority: ManagedRuntimeProjectionAuthority, fidelity: ManagedRuntimeProjectionFidelity, source_identity_digest: RuntimePayloadDigest, source_revision_digest: RuntimePayloadDigest | null, observed_at_ms: RuntimeU64, };
 
-export type ManagedRuntimeTurn = { id: RuntimeTurnId, status: ManagedRuntimeEntityStatus, item_ids: Array<RuntimeItemId>, };
+export type ManagedRuntimeTurn = { id: RuntimeTurnId, source_turn_id: string, status: ManagedRuntimeEntityStatus, item_ids: Array<RuntimeItemId>, };
 
 export type ManagedRuntimeUnavailabilityReason = "runtime_not_active" | "admission_denied" | "bound_surface_unavailable" | "applied_surface_mismatch" | "active_turn_required" | "no_active_turn_required" | "pending_interaction_required" | "operation_in_flight" | "source_unavailable";
 

@@ -96,6 +96,9 @@ pub enum ManagedRuntimeContentBlock {
 #[serde(rename_all = "snake_case")]
 pub struct ManagedRuntimeTurn {
     pub id: RuntimeTurnId,
+    // Opaque Complete-Agent turn identity retained as read-only evidence for
+    // presentation-to-Runtime cutoff resolution.
+    pub source_turn_id: String,
     pub status: ManagedRuntimeEntityStatus,
     pub item_ids: Vec<RuntimeItemId>,
 }
@@ -589,6 +592,7 @@ mod tests {
                 active_turn_id: Some(turn_id.clone()),
                 turns: vec![ManagedRuntimeTurn {
                     id: turn_id.clone(),
+                    source_turn_id: "source-turn-1".to_owned(),
                     status: ManagedRuntimeEntityStatus::Running,
                     item_ids: vec![item_id.clone()],
                 }],

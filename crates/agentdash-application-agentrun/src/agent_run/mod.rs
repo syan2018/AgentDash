@@ -6,6 +6,7 @@ pub mod frame;
 pub(crate) mod lifecycle_read_model_facade;
 mod product_command_facade;
 mod product_delete;
+mod product_fork;
 mod product_input_delivery;
 mod product_launch;
 mod product_mailbox_facade;
@@ -49,6 +50,7 @@ pub use frame::{
 pub use lifecycle_read_model_facade::LifecycleSubjectAssociationView;
 pub use product_command_facade::*;
 pub use product_delete::*;
+pub use product_fork::*;
 pub use product_input_delivery::*;
 pub use product_launch::*;
 pub use product_mailbox_facade::*;

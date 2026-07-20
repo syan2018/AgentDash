@@ -15,6 +15,7 @@ describe("AgentRun Runtime projection", () => {
       turns: [
         {
           id: "turn-1",
+          source_turn_id: "turn-1",
           status: "completed",
           item_ids: ["input-1", "tool-1", "output-1"],
         },

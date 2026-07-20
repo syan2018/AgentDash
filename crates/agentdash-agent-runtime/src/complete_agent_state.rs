@@ -2293,6 +2293,7 @@ fn project_turn(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ManagedRuntimeTurn {
         id: runtime_turn_id,
+        source_turn_id: turn.id.to_string(),
         status: project_entity_status(turn.status),
         item_ids,
     })

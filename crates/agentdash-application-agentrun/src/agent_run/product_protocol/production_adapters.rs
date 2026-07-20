@@ -1216,22 +1216,27 @@ impl ProductAgentRunForkGraphAdapter {
         }
 
         let child = saga.child();
+        let product_intent = saga.product_intent();
+        let requested_by_user_id = product_intent
+            .map(|intent| intent.requested_by_user_id.as_str())
+            .unwrap_or(parent_agent.created_by_user_id.as_str());
+        let requested_at = product_intent
+            .map(|intent| intent.requested_at)
+            .unwrap_or(parent_run.last_activity_at);
         let mut child_run = LifecycleRun::new_plain_for_user(
             parent_run.project_id,
-            parent_run.created_by_user_id.clone(),
+            requested_by_user_id.to_owned(),
         );
         child_run.id = child.run_id;
-        // The saga currently owns stable identities but not a separate requested-at timestamp.
-        // Reusing the immutable parent graph timestamp keeps retry preparation byte-identical.
-        child_run.created_at = parent_run.last_activity_at;
-        child_run.updated_at = parent_run.last_activity_at;
-        child_run.last_activity_at = parent_run.last_activity_at;
+        child_run.created_at = requested_at;
+        child_run.updated_at = requested_at;
+        child_run.last_activity_at = requested_at;
 
         let mut child_agent = LifecycleAgent::new_root_for_user(
             child.run_id,
             parent_run.project_id,
             parent_agent.source,
-            parent_agent.created_by_user_id.clone(),
+            requested_by_user_id.to_owned(),
         );
         child_agent.id = child.agent_id;
         child_agent.project_agent_id = saga
@@ -1239,13 +1244,18 @@ impl ProductAgentRunForkGraphAdapter {
             .map(|selection| selection.project_agent_id)
             .or(parent_agent.project_agent_id);
         child_agent.bootstrap_status = parent_agent.bootstrap_status.clone();
-        child_agent.workspace_title = parent_agent.workspace_title.clone();
+        child_agent.workspace_title = product_intent
+            .and_then(|intent| intent.title.clone())
+            .or_else(|| parent_agent.workspace_title.clone());
         child_agent.workspace_title_source = parent_agent
             .workspace_title
             .as_ref()
             .map(|_| "source".to_owned());
-        child_agent.created_at = parent_agent.updated_at;
-        child_agent.updated_at = parent_agent.updated_at;
+        if product_intent.is_some_and(|intent| intent.title.is_some()) {
+            child_agent.workspace_title_source = Some("user".to_owned());
+        }
+        child_agent.created_at = requested_at;
+        child_agent.updated_at = requested_at;
 
         let mut child_frame = if saga.child_product_selection().is_some() {
             agentdash_domain::workflow::AgentFrame::new_revision(
@@ -1261,8 +1271,8 @@ impl ProductAgentRunForkGraphAdapter {
             inherited
         };
         child_frame.id = child.frame_id;
-        child_frame.created_by_id = Some(parent_agent.created_by_user_id.clone());
-        child_frame.created_at = parent_frame.created_at;
+        child_frame.created_by_id = Some(requested_by_user_id.to_owned());
+        child_frame.created_at = requested_at;
 
         let mut lineage = AgentRunLineage::new_fork(
             parent.run_id,
@@ -1270,16 +1280,26 @@ impl ProductAgentRunForkGraphAdapter {
             child.run_id,
             child.agent_id,
             None,
-            Some(json!({
-                "kind": "completed_turn",
-                "runtime_thread_id": parent.runtime_thread_id,
-                "turn_id": parent.through_turn_id,
-            })),
-            parent_agent.created_by_user_id.clone(),
-            Some(json!({
-                "agent_run_id": child.agent_run_id,
-                "runtime_thread_id": child.runtime_thread_id,
-            })),
+            Some(match product_intent {
+                Some(intent) => json!({
+                    "turn_id": intent.source_turn_id,
+                    "entry_index": intent.source_entry_index,
+                }),
+                None => json!({
+                    "kind": "completed_turn",
+                    "runtime_thread_id": parent.runtime_thread_id,
+                    "turn_id": parent.through_turn_id,
+                }),
+            }),
+            requested_by_user_id,
+            product_intent
+                .and_then(|intent| intent.metadata_json.clone())
+                .or_else(|| {
+                    Some(json!({
+                        "agent_run_id": child.agent_run_id,
+                        "runtime_thread_id": child.runtime_thread_id,
+                    }))
+                }),
         )
         .with_frame_baseline(
             parent_frame.id,
@@ -1288,7 +1308,7 @@ impl ProductAgentRunForkGraphAdapter {
             child_frame.revision,
         );
         lineage.id = saga.request_id().0;
-        lineage.created_at = parent_frame.created_at;
+        lineage.created_at = requested_at;
 
         PreparedAgentRunForkGraph::prepare(
             saga,

@@ -1267,6 +1267,9 @@
         "id": {
           "type": "string"
         },
+        "source_turn_id": {
+          "type": "string"
+        },
         "status": {
           "$ref": "#/$defs/ManagedRuntimeEntityStatus"
         },
@@ -1279,6 +1282,7 @@
       },
       "required": [
         "id",
+        "source_turn_id",
         "status",
         "item_ids"
       ]
@@ -9521,31 +9525,6 @@
             },
             "data": {
               "$ref": "#/$defs/ContextFrameChanged"
-            }
-          },
-          "required": [
-            "kind",
-            "data"
-          ]
-        },
-        {
-          "description": "Connector 绑定了底层执行器 session（用于 follow-up / resume）。",
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "executor_session_bound"
-            },
-            "data": {
-              "type": "object",
-              "properties": {
-                "executor_session_id": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "executor_session_id"
-              ]
             }
           },
           "required": [

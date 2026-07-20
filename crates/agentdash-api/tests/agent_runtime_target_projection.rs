@@ -119,6 +119,7 @@ fn snapshot(
             .then_some(turn_id.clone()),
         turns: vec![ManagedRuntimeTurn {
             id: turn_id.clone(),
+            source_turn_id: "source-turn-1".to_owned(),
             status: item_status,
             item_ids: vec![item_id.clone()],
         }],

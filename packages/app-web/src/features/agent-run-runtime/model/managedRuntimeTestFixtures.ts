@@ -72,6 +72,7 @@ function runtimeSnapshot(
     turns: [
       {
         id: "turn-compaction",
+        source_turn_id: "turn-compaction",
         status,
         item_ids: ["item-compaction"],
       },

@@ -12,7 +12,9 @@ use agentdash_agent_runtime_contract::{
 use agentdash_domain::workflow::AgentSource;
 use agentdash_domain::workflow::{AgentFrame, AgentRunLineage, LifecycleAgent, LifecycleRun};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 #[cfg(test)]
@@ -100,6 +102,16 @@ pub struct AgentRunForkChildProductSelection {
     pub materialized_frame_id: Uuid,
     pub execution_profile: ProductExecutionProfileRef,
     pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRunForkProductIntent {
+    pub requested_by_user_id: String,
+    pub requested_at: DateTime<Utc>,
+    pub title: Option<String>,
+    pub source_turn_id: String,
+    pub source_entry_index: Option<u32>,
+    pub metadata_json: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -410,6 +422,7 @@ pub struct AgentRunForkSaga {
     child_history_digest: Option<RuntimePayloadDigest>,
     required_initial_context: Option<RequiredInitialContextEvidence>,
     child_product_selection: Option<AgentRunForkChildProductSelection>,
+    product_intent: Option<AgentRunForkProductIntent>,
     materialized_child_product_selection: Option<AgentRunProductRuntimeProvisioningRequest>,
     initial_context_evidence: Option<CompiledContextApplication>,
     receipts: AgentRunForkSagaReceipts,
@@ -519,6 +532,24 @@ impl AgentRunForkSaga {
         required_initial_context: Option<RequiredInitialContextEvidence>,
         child_product_selection: Option<AgentRunForkChildProductSelection>,
     ) -> Self {
+        Self::requested_with_product_intent(
+            request_id,
+            parent,
+            child,
+            required_initial_context,
+            child_product_selection,
+            None,
+        )
+    }
+
+    pub fn requested_with_product_intent(
+        request_id: AgentRunForkRequestId,
+        parent: AgentRunForkParent,
+        child: PreallocatedAgentRunChild,
+        required_initial_context: Option<RequiredInitialContextEvidence>,
+        child_product_selection: Option<AgentRunForkChildProductSelection>,
+        product_intent: Option<AgentRunForkProductIntent>,
+    ) -> Self {
         Self {
             request_id,
             parent,
@@ -531,6 +562,7 @@ impl AgentRunForkSaga {
             child_history_digest: None,
             required_initial_context,
             child_product_selection,
+            product_intent,
             materialized_child_product_selection: None,
             initial_context_evidence: None,
             receipts: AgentRunForkSagaReceipts::default(),
@@ -638,6 +670,10 @@ impl AgentRunForkSaga {
 
     pub fn child_product_selection(&self) -> Option<&AgentRunForkChildProductSelection> {
         self.child_product_selection.as_ref()
+    }
+
+    pub fn product_intent(&self) -> Option<&AgentRunForkProductIntent> {
+        self.product_intent.as_ref()
     }
 
     pub fn materialized_child_product_selection(
@@ -1472,6 +1508,14 @@ pub struct MaterializeAgentRunFork {
     pub child_product_selection: Option<AgentRunForkChildProductSelection>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterializeProductAgentRunFork {
+    pub request_id: AgentRunForkRequestId,
+    pub parent: AgentRunForkParent,
+    pub child: PreallocatedAgentRunChild,
+    pub product_intent: AgentRunForkProductIntent,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AgentRunForkFacadeError {
     #[error(transparent)]
@@ -1526,10 +1570,45 @@ impl<'a> AgentRunForkFacade<'a> {
                     || existing.child() != requested.child()
                     || existing.required_initial_context != requested.required_initial_context
                     || existing.child_product_selection != requested.child_product_selection
+                    || existing.product_intent != requested.product_intent
                 {
                     return Err(AgentRunForkFacadeError::ExistingRequestDrift);
                 }
                 Ok(existing)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn materialize_product_fork(
+        &self,
+        command: MaterializeProductAgentRunFork,
+    ) -> Result<(AgentRunForkSaga, bool), AgentRunForkFacadeError> {
+        let requested = AgentRunForkSaga::requested_with_product_intent(
+            command.request_id.clone(),
+            command.parent,
+            command.child,
+            None,
+            None,
+            Some(command.product_intent),
+        );
+        match self.repository.create(requested.clone()).await {
+            Ok(saga) => Ok((saga, false)),
+            Err(AgentRunForkSagaRepositoryError::AlreadyExists) => {
+                let existing = self
+                    .repository
+                    .load(&command.request_id)
+                    .await?
+                    .ok_or(AgentRunForkSagaRepositoryError::NotFound)?;
+                if existing.parent() != requested.parent()
+                    || existing.child() != requested.child()
+                    || existing.product_intent != requested.product_intent
+                    || existing.required_initial_context.is_some()
+                    || existing.child_product_selection.is_some()
+                {
+                    return Err(AgentRunForkFacadeError::ExistingRequestDrift);
+                }
+                Ok((existing, true))
             }
             Err(error) => Err(error.into()),
         }
@@ -2118,6 +2197,48 @@ mod tests {
                     child_product_selection: None,
                 })
                 .await,
+            Err(AgentRunForkFacadeError::ExistingRequestDrift)
+        );
+    }
+
+    #[tokio::test]
+    async fn product_fork_replay_preserves_actor_cutoff_and_child_identity() {
+        let repository = RecordingAgentRunForkSagaRepository::default();
+        let runtime = CompleteAgentTargetFixture::default();
+        let facade = AgentRunForkFacade::new(&repository, &runtime, &MatchingProductGraph);
+        let requested = saga();
+        let command = MaterializeProductAgentRunFork {
+            request_id: requested.request_id.clone(),
+            parent: requested.parent.clone(),
+            child: requested.child.clone(),
+            product_intent: AgentRunForkProductIntent {
+                requested_by_user_id: "user-1".to_owned(),
+                requested_at: Utc::now(),
+                title: Some("fork title".to_owned()),
+                source_turn_id: "source-turn-7".to_owned(),
+                source_entry_index: Some(3),
+                metadata_json: Some(serde_json::json!({ "origin": "round-action" })),
+            },
+        };
+
+        let (created, replayed) = facade
+            .materialize_product_fork(command.clone())
+            .await
+            .expect("materialize Product fork");
+        assert!(!replayed);
+        assert_eq!(created.product_intent(), Some(&command.product_intent));
+
+        let (same, replayed) = facade
+            .materialize_product_fork(command.clone())
+            .await
+            .expect("replay Product fork");
+        assert!(replayed);
+        assert_eq!(same.child(), &command.child);
+
+        let mut drifted = command;
+        drifted.product_intent.source_entry_index = Some(4);
+        assert_eq!(
+            facade.materialize_product_fork(drifted).await,
             Err(AgentRunForkFacadeError::ExistingRequestDrift)
         );
     }

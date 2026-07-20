@@ -9,6 +9,8 @@ fn product_interaction_routes_are_mounted_on_the_production_router() {
     let routes = format!("{:?}", routes::lifecycle_agents::router());
     for path in [
         "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
+        "/agent-runs/{run_id}/agents/{agent_id}/fork",
+        "/agent-runs/{run_id}/agents/{agent_id}/fork-submit",
         "/agent-runs/{run_id}/agents/{agent_id}/cancel",
         "/agent-runs/{run_id}/agents/{agent_id}/mailbox",
         "/agent-runs/{run_id}/agents/{agent_id}/mailbox/resume",

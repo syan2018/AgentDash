@@ -12,7 +12,7 @@ import {
   type ManagedRuntimeFeedTransport,
   type ManagedRuntimeFeedTransportOptions,
 } from "./managedRuntimeFeedTransport";
-import { applyManagedRuntimeChangePage } from "./managedRuntimeProjection";
+import { applyAgentLiveEvent } from "./agentLiveProjection";
 
 export interface ManagedRuntimeFeedConnectionObserver {
   onBaseline: (snapshot: ManagedRuntimeSnapshot) => void;
@@ -55,6 +55,22 @@ export function connectManagedRuntimeFeed(
   let closed = false;
   let transport: ManagedRuntimeFeedTransport | null = null;
   let currentSnapshot: ManagedRuntimeSnapshot | null = null;
+  let reloadInFlight: Promise<void> | null = null;
+
+  const reloadAuthoritativeSnapshot = (): Promise<void> => {
+    if (reloadInFlight) return reloadInFlight;
+    reloadInFlight = dependencies
+      .fetchSnapshot(agentRunTarget)
+      .then((snapshot) => {
+        if (closed) return;
+        currentSnapshot = snapshot;
+        observer.onProjection(snapshot, []);
+      })
+      .finally(() => {
+        reloadInFlight = null;
+      });
+    return reloadInFlight;
+  };
 
   const loadBaselineAndSubscribe = async (): Promise<void> => {
     const loaded = await dependencies.fetchSnapshot(agentRunTarget);
@@ -64,35 +80,36 @@ export function connectManagedRuntimeFeed(
     observer.onBaseline(loaded);
     transport = dependencies.createTransport({
       agentRunTarget,
-      after: loaded.latest_change_sequence,
-      onLifecycleChange: observer.onLifecycleChange,
+      onLifecycleChange: (lifecycle) => {
+        observer.onLifecycleChange(lifecycle);
+        if (lifecycle === "reconnecting") {
+          void reloadAuthoritativeSnapshot().catch((error: unknown) => {
+            if (!closed) {
+              observer.onError(
+                normalizeError(error, "Agent authoritative snapshot reload 失败"),
+              );
+            }
+          });
+        }
+      },
       onError: observer.onError,
-      onPage: (page) => {
+      onEvent: (event) => {
         const current = currentSnapshot;
         if (!current || closed) return;
-
-        const unappliedChanges = page.changes.filter(
-          (change) => change.sequence > current.latest_change_sequence,
-        );
-        const applied = applyManagedRuntimeChangePage(current, page);
-        if (applied) {
-          currentSnapshot = applied;
-          if (applied !== current || unappliedChanges.length > 0) {
-            observer.onProjection(applied, unappliedChanges);
-          }
-          return;
+        const projected = applyAgentLiveEvent(current, event);
+        if (projected !== current) {
+          currentSnapshot = projected;
+          observer.onProjection(projected, []);
         }
-
-        transport?.close();
-        transport = null;
-        observer.onLifecycleChange("connecting");
-        void loadBaselineAndSubscribe().catch((error: unknown) => {
-          if (closed) return;
-          observer.onError(
-            normalizeError(error, "Managed Runtime snapshot reload 失败"),
-          );
-          observer.onLifecycleChange("reconnecting");
-        });
+        if (event.payload.kind === "provider_round_completed") {
+          void reloadAuthoritativeSnapshot().catch((error: unknown) => {
+            if (!closed) {
+              observer.onError(
+                normalizeError(error, "Agent authoritative snapshot reload 失败"),
+              );
+            }
+          });
+        }
       },
     });
   };

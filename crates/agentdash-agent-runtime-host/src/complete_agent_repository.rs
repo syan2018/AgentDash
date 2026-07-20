@@ -169,6 +169,37 @@ pub trait CompleteAgentHostRepository: Send + Sync {
     ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError>;
 }
 
+/// Current-process Host routing graph.
+///
+/// Attachments, bindings, leases and callback routes are incarnation-scoped facts. Dropping this
+/// value on restart is the fencing rule: old routes become unknown and a new surface application
+/// establishes the next route.
+#[derive(Default)]
+pub struct ProcessCompleteAgentHostRepository {
+    state: tokio::sync::RwLock<CompleteAgentHostSnapshot>,
+}
+
+impl ProcessCompleteAgentHostRepository {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl CompleteAgentHostRepository for ProcessCompleteAgentHostRepository {
+    async fn load(&self) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+        Ok(self.state.read().await.clone())
+    }
+
+    async fn commit(
+        &self,
+        commit: CompleteAgentHostCommit,
+    ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
+        let mut state = self.state.write().await;
+        apply_complete_agent_host_commit(&mut state, commit)
+    }
+}
+
 pub fn encode_complete_agent_host_snapshot(
     snapshot: &CompleteAgentHostSnapshot,
 ) -> Result<serde_json::Value, CompleteAgentHostStoreError> {

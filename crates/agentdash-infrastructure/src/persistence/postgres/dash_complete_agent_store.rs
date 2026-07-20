@@ -1,11 +1,8 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use agentdash_agent::dash::{
-    AgentHistoryEntry, AgentSessionId, DashAgentRepository, DashAgentRepositoryState,
-    DashAgentRepositoryStore, DashServiceError,
+    AgentSessionId, DashAgentRepository, DashAgentRepositoryState, DashAgentRepositoryStore,
+    DashServiceError,
 };
 use agentdash_agent_service_api::{
     AgentEffectIdentity, AgentServiceError, AgentServiceErrorCode, AgentSourceCoordinate,
@@ -139,8 +136,7 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
             .await
             .map_err(agent_from_dash_error)?;
         let value: Option<Value> = sqlx::query_scalar(
-            "SELECT metadata FROM dash_complete_source \
-             WHERE source_coordinate=$1 FOR UPDATE",
+            "SELECT metadata FROM dash_complete_source WHERE source_coordinate=$1 FOR UPDATE",
         )
         .bind(source.as_str())
         .fetch_optional(&mut *tx)
@@ -148,7 +144,7 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
         .map_err(agent_database_error)?;
         if value.is_some() && repository.is_none() {
             return Err(agent_internal_error(format!(
-                "Dash source {} metadata has no repository aggregate",
+                "Dash source {} metadata has no repository document",
                 source.as_str()
             )));
         }
@@ -167,23 +163,19 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
         &self,
         identity: &AgentEffectIdentity,
     ) -> Result<Option<DashCompleteEffectRecord>, AgentServiceError> {
-        let row = sqlx::query(
-            "SELECT request_fingerprint,receipt,inspection,record \
-             FROM dash_complete_effect WHERE effect_id=$1",
-        )
-        .bind(identity.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(agent_database_error)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        decode_complete_effect_row(&row, identity).map(Some)
+        let row = sqlx::query("SELECT record FROM dash_complete_effect WHERE effect_id=$1")
+            .bind(identity.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(agent_database_error)?;
+        row.as_ref()
+            .map(|row| decode_complete_effect_row(row, identity))
+            .transpose()
     }
 
     async fn commit(&self, commit: DashCompleteAtomicCommit) -> Result<(), AgentServiceError> {
         let mut tx = self.pool.begin().await.map_err(agent_database_error)?;
-        lock_complete_identity(&mut tx, 4_401, commit.effect_id.as_str()).await?;
+        lock_identity(&mut tx, 4_401, commit.effect_id.as_str()).await?;
         let current_effect = lock_complete_effect(&mut tx, &commit.effect_id).await?;
         if current_effect.as_ref() == Some(&commit.replacement_effect) {
             tx.rollback().await.map_err(agent_database_error)?;
@@ -201,8 +193,9 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
             .collect::<Vec<_>>();
         sources.dedup();
         for source in sources {
-            lock_complete_identity(&mut tx, 4_402, source).await?;
+            lock_identity(&mut tx, 4_402, source).await?;
         }
+
         for mutation in mutations {
             match mutation {
                 DashCompleteSourceMutation::Create {
@@ -224,8 +217,7 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
                         .await
                         .map_err(agent_from_dash_error)?;
                     sqlx::query(
-                        "INSERT INTO dash_complete_source \
-                         (source_coordinate,repository_revision,metadata) VALUES ($1,1,$2)",
+                        "INSERT INTO dash_complete_source(source_coordinate,metadata) VALUES ($1,$2)",
                     )
                     .bind(source.as_str())
                     .bind(to_json(&*metadata)?)
@@ -290,16 +282,9 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
                     .await
                     .map_err(agent_from_dash_error)?;
                     sqlx::query(
-                        "UPDATE dash_complete_source \
-                         SET repository_revision=$2,metadata=$3 WHERE source_coordinate=$1",
+                        "UPDATE dash_complete_source SET metadata=$2 WHERE source_coordinate=$1",
                     )
                     .bind(source.as_str())
-                    .bind(
-                        u64_to_i64(revision.checked_add(1).ok_or_else(|| {
-                            agent_internal_error("Dash repository revision is exhausted")
-                        })?)
-                        .map_err(|error| agent_internal_error(error.to_string()))?,
-                    )
                     .bind(to_json(&*replacement_metadata)?)
                     .execute(&mut *tx)
                     .await
@@ -309,44 +294,29 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
         }
 
         let record = to_json(&commit.replacement_effect)?;
-        let receipt = to_json(&commit.replacement_effect.receipt)?;
-        let inspection = to_json(&commit.replacement_effect.inspection)?;
         match commit.expected_effect {
             None => {
-                sqlx::query(
-                    "INSERT INTO dash_complete_effect \
-                     (effect_id,request_fingerprint,receipt,inspection,record) \
-                     VALUES ($1,$2,$3,$4,$5)",
-                )
-                .bind(commit.effect_id.as_str())
-                .bind(&commit.replacement_effect.request_fingerprint)
-                .bind(receipt)
-                .bind(inspection)
-                .bind(record)
-                .execute(&mut *tx)
-                .await
-                .map_err(agent_database_error)?;
+                sqlx::query("INSERT INTO dash_complete_effect(effect_id,record) VALUES ($1,$2)")
+                    .bind(commit.effect_id.as_str())
+                    .bind(record)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(agent_database_error)?;
             }
             Some(_) => {
-                sqlx::query(
-                    "UPDATE dash_complete_effect SET \
-                     request_fingerprint=$2,receipt=$3,inspection=$4,record=$5 WHERE effect_id=$1",
-                )
-                .bind(commit.effect_id.as_str())
-                .bind(&commit.replacement_effect.request_fingerprint)
-                .bind(receipt)
-                .bind(inspection)
-                .bind(record)
-                .execute(&mut *tx)
-                .await
-                .map_err(agent_database_error)?;
+                sqlx::query("UPDATE dash_complete_effect SET record=$2 WHERE effect_id=$1")
+                    .bind(commit.effect_id.as_str())
+                    .bind(record)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(agent_database_error)?;
             }
         }
         tx.commit().await.map_err(agent_database_error)
     }
 }
 
-async fn lock_complete_identity(
+async fn lock_identity(
     tx: &mut Transaction<'_, Postgres>,
     namespace: i32,
     identity: &str,
@@ -371,14 +341,11 @@ async fn lock_complete_effect(
     tx: &mut Transaction<'_, Postgres>,
     identity: &AgentEffectIdentity,
 ) -> Result<Option<DashCompleteEffectRecord>, AgentServiceError> {
-    let row = sqlx::query(
-        "SELECT request_fingerprint,receipt,inspection,record \
-         FROM dash_complete_effect WHERE effect_id=$1 FOR UPDATE",
-    )
-    .bind(identity.as_str())
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(agent_database_error)?;
+    let row = sqlx::query("SELECT record FROM dash_complete_effect WHERE effect_id=$1 FOR UPDATE")
+        .bind(identity.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(agent_database_error)?;
     row.as_ref()
         .map(|row| decode_complete_effect_row(row, identity))
         .transpose()
@@ -392,17 +359,9 @@ fn decode_complete_effect_row(
         row.try_get("record").map_err(agent_database_error)?,
     )
     .map_err(|error| agent_internal_error(format!("decode Dash Complete Agent effect: {error}")))?;
-    let request_fingerprint: String = row
-        .try_get("request_fingerprint")
-        .map_err(agent_database_error)?;
-    let receipt: Value = row.try_get("receipt").map_err(agent_database_error)?;
-    let inspection: Value = row.try_get("inspection").map_err(agent_database_error)?;
-    if request_fingerprint != record.request_fingerprint
-        || receipt != to_json(&record.receipt)?
-        || inspection != to_json(&record.inspection)?
-    {
+    if record.inspection.effect_id != *identity {
         return Err(agent_internal_error(format!(
-            "Dash Complete Agent effect {} scalar projection does not match its record",
+            "Dash Complete Agent effect {} record has a different identity",
             identity.as_str()
         )));
     }
@@ -414,8 +373,7 @@ async fn lock_repository_state(
     source: &str,
 ) -> Result<Option<(u64, DashAgentRepositoryState)>, DashServiceError> {
     let row = sqlx::query(
-        "SELECT repository_revision,branch_id,head_revision,head_entry_id,history_digest,repository \
-         FROM dash_agent_session \
+        "SELECT repository_revision,repository FROM dash_agent_session \
          WHERE source_coordinate=$1 FOR UPDATE",
     )
     .bind(source)
@@ -429,164 +387,14 @@ async fn lock_repository_state(
         row.try_get::<i64, _>("repository_revision")
             .map_err(dash_database_error)?,
     )?;
-    let value: Value = row.try_get("repository").map_err(dash_database_error)?;
-    let state: DashAgentRepositoryState =
-        serde_json::from_value(value).map_err(|error| DashServiceError::Internal {
-            message: format!("decode Dash repository state: {error}"),
-        })?;
-    verify_repository_projection(tx, source, revision, &state, &row).await?;
+    let state: DashAgentRepositoryState = serde_json::from_value(
+        row.try_get("repository").map_err(dash_database_error)?,
+    )
+    .map_err(|error| DashServiceError::Internal {
+        message: format!("decode Dash repository state: {error}"),
+    })?;
+    validate_repository_identity(source, &state)?;
     Ok(Some((revision, state)))
-}
-
-async fn verify_repository_projection(
-    tx: &mut Transaction<'_, Postgres>,
-    source: &str,
-    revision: u64,
-    state: &DashAgentRepositoryState,
-    session: &sqlx::postgres::PgRow,
-) -> Result<(), DashServiceError> {
-    let history = state.history();
-    let head_revision = history.entries().last().map_or(0, |entry| entry.sequence);
-    let branch_id: String = session.try_get("branch_id").map_err(dash_database_error)?;
-    let stored_head_revision = i64_to_u64(
-        session
-            .try_get("head_revision")
-            .map_err(dash_database_error)?,
-    )?;
-    let stored_head_entry_id: Option<String> = session
-        .try_get("head_entry_id")
-        .map_err(dash_database_error)?;
-    let stored_history_digest: String = session
-        .try_get("history_digest")
-        .map_err(dash_database_error)?;
-    if branch_id != history.branch_id.0
-        || stored_head_revision != head_revision
-        || stored_head_entry_id.as_deref() != history.head().map(|head| head.0.as_str())
-        || stored_history_digest != history.digest()
-    {
-        return Err(repository_projection_error(
-            source,
-            "session head or digest",
-        ));
-    }
-
-    let branch: Option<Value> = sqlx::query_scalar(
-        "SELECT branch FROM dash_agent_branch \
-         WHERE source_coordinate=$1 AND branch_id=$2",
-    )
-    .bind(source)
-    .bind(&history.branch_id.0)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(dash_database_error)?;
-    if branch != Some(serde_json::to_value(history).map_err(dash_json_error)?) {
-        return Err(repository_projection_error(source, "branch"));
-    }
-
-    let stored_history = sqlx::query_scalar::<_, Value>(
-        "SELECT entry FROM dash_agent_history \
-         WHERE source_coordinate=$1 AND branch_id=$2 ORDER BY ordinal",
-    )
-    .bind(source)
-    .bind(&history.branch_id.0)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(dash_database_error)?;
-    let expected_history = history
-        .entries()
-        .iter()
-        .map(|entry| serde_json::to_value(entry).map_err(dash_json_error))
-        .collect::<Result<Vec<_>, _>>()?;
-    if stored_history != expected_history {
-        return Err(repository_projection_error(source, "history"));
-    }
-
-    let document = dash_state_json(state)?;
-    let stored_commands = load_keyed_projection(
-        tx,
-        source,
-        "SELECT command_id,command FROM dash_agent_command \
-         WHERE source_coordinate=$1 ORDER BY command_id",
-    )
-    .await?;
-    let expected_commands = lifecycle_map(&document, "commands")
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .collect::<BTreeMap<_, _>>();
-    if stored_commands != expected_commands {
-        return Err(repository_projection_error(source, "commands"));
-    }
-
-    let stored_effects = load_keyed_projection(
-        tx,
-        source,
-        "SELECT effect_id,effect FROM dash_agent_effect \
-         WHERE source_coordinate=$1 ORDER BY effect_id",
-    )
-    .await?;
-    if stored_effects != effect_projection(&document) {
-        return Err(repository_projection_error(source, "effects"));
-    }
-
-    let stored_changes = sqlx::query_scalar::<_, Value>(
-        "SELECT change FROM dash_agent_change \
-         WHERE source_coordinate=$1 ORDER BY revision,ordinal",
-    )
-    .bind(source)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(dash_database_error)?;
-    if stored_changes.as_slice() != repository_changes(&document)? {
-        return Err(repository_projection_error(source, "changes"));
-    }
-
-    let complete_revision: Option<i64> = sqlx::query_scalar(
-        "SELECT repository_revision FROM dash_complete_source WHERE source_coordinate=$1",
-    )
-    .bind(source)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(dash_database_error)?;
-    if complete_revision
-        .map(i64_to_u64)
-        .transpose()?
-        .is_some_and(|complete_revision| complete_revision != revision)
-    {
-        return Err(repository_projection_error(
-            source,
-            "Complete Agent source revision",
-        ));
-    }
-    Ok(())
-}
-
-async fn load_keyed_projection(
-    tx: &mut Transaction<'_, Postgres>,
-    source: &str,
-    query: &str,
-) -> Result<BTreeMap<String, Value>, DashServiceError> {
-    sqlx::query(query)
-        .bind(source)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(dash_database_error)?
-        .into_iter()
-        .map(|row| {
-            Ok((
-                row.try_get::<String, _>(0).map_err(dash_database_error)?,
-                row.try_get::<Value, _>(1).map_err(dash_database_error)?,
-            ))
-        })
-        .collect()
-}
-
-fn repository_projection_error(source: &str, projection: &str) -> DashServiceError {
-    DashServiceError::InvalidState {
-        message: format!(
-            "Dash source {source} normalized {projection} does not match its repository aggregate"
-        ),
-    }
 }
 
 async fn insert_repository_state(
@@ -595,27 +403,19 @@ async fn insert_repository_state(
     revision: u64,
     state: &DashAgentRepositoryState,
 ) -> Result<(), DashServiceError> {
-    let history = state.history();
     validate_repository_identity(source, state)?;
-    let document = dash_state_json(state)?;
-    validate_change_sequence(history.entries().len(), repository_changes(&document)?)?;
-    let head_revision = history.entries().last().map_or(0, |entry| entry.sequence);
+    validate_repository_document(state)?;
     sqlx::query(
-        "INSERT INTO dash_agent_session \
-         (source_coordinate,repository_revision,branch_id,head_revision,head_entry_id,history_digest,repository) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        "INSERT INTO dash_agent_session(source_coordinate,repository_revision,repository) \
+         VALUES ($1,$2,$3)",
     )
     .bind(source)
     .bind(u64_to_i64(revision)?)
-    .bind(&history.branch_id.0)
-    .bind(u64_to_i64(head_revision)?)
-    .bind(history.head().map(|head| head.0.as_str()))
-    .bind(history.digest())
     .bind(dash_state_json(state)?)
     .execute(&mut **tx)
     .await
     .map_err(dash_database_error)?;
-    insert_repository_children(tx, source, state).await
+    Ok(())
 }
 
 async fn replace_repository_state(
@@ -626,27 +426,19 @@ async fn replace_repository_state(
     replacement: &DashAgentRepositoryState,
 ) -> Result<(), DashServiceError> {
     validate_append_only_replacement(source, expected, replacement)?;
-    let history = replacement.history();
     let next_revision =
         current_revision
             .checked_add(1)
             .ok_or_else(|| DashServiceError::Internal {
                 message: "Dash repository revision is exhausted".to_owned(),
             })?;
-    let head_revision = history.entries().last().map_or(0, |entry| entry.sequence);
     let result = sqlx::query(
-        "UPDATE dash_agent_session SET \
-         repository_revision=$3,branch_id=$4,head_revision=$5,head_entry_id=$6, \
-         history_digest=$7,repository=$8 \
+        "UPDATE dash_agent_session SET repository_revision=$3,repository=$4 \
          WHERE source_coordinate=$1 AND repository_revision=$2",
     )
     .bind(source)
     .bind(u64_to_i64(current_revision)?)
     .bind(u64_to_i64(next_revision)?)
-    .bind(&history.branch_id.0)
-    .bind(u64_to_i64(head_revision)?)
-    .bind(history.head().map(|head| head.0.as_str()))
-    .bind(history.digest())
     .bind(dash_state_json(replacement)?)
     .execute(&mut **tx)
     .await
@@ -656,240 +448,7 @@ async fn replace_repository_state(
             message: format!("Dash source {source} repository revision changed"),
         });
     }
-    sqlx::query(
-        "UPDATE dash_complete_source SET repository_revision=$2 WHERE source_coordinate=$1",
-    )
-    .bind(source)
-    .bind(u64_to_i64(next_revision)?)
-    .execute(&mut **tx)
-    .await
-    .map_err(dash_database_error)?;
-    append_repository_children(tx, source, expected, replacement).await
-}
-
-async fn insert_repository_children(
-    tx: &mut Transaction<'_, Postgres>,
-    source: &str,
-    state: &DashAgentRepositoryState,
-) -> Result<(), DashServiceError> {
-    let history = state.history();
-    let document = dash_state_json(state)?;
-    let head_revision = history.entries().last().map_or(0, |entry| entry.sequence);
-    sqlx::query(
-        "INSERT INTO dash_agent_branch \
-         (source_coordinate,branch_id,parent_source_coordinate,parent_branch_id,source_head, \
-          source_digest,fork_cutoff,head_revision,head_entry_id,branch) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-    )
-    .bind(source)
-    .bind(&history.branch_id.0)
-    .bind(
-        history
-            .lineage
-            .as_ref()
-            .map(|lineage| lineage.parent_session_id.0.as_str()),
-    )
-    .bind(
-        history
-            .lineage
-            .as_ref()
-            .map(|lineage| lineage.parent_branch_id.0.as_str()),
-    )
-    .bind(
-        history
-            .lineage
-            .as_ref()
-            .and_then(|lineage| lineage.source_head.as_ref())
-            .map(|head| head.0.as_str()),
-    )
-    .bind(
-        history
-            .lineage
-            .as_ref()
-            .map(|lineage| lineage.source_digest.as_str()),
-    )
-    .bind(
-        history
-            .lineage
-            .as_ref()
-            .map(|lineage| serde_json::to_value(&lineage.cutoff))
-            .transpose()
-            .map_err(dash_json_error)?,
-    )
-    .bind(u64_to_i64(head_revision)?)
-    .bind(history.head().map(|head| head.0.as_str()))
-    .bind(serde_json::to_value(history).map_err(dash_json_error)?)
-    .execute(&mut **tx)
-    .await
-    .map_err(dash_database_error)?;
-
-    for entry in history.entries() {
-        insert_history_entry(tx, source, &history.branch_id.0, entry).await?;
-    }
-
-    upsert_command_projection(tx, source, &document).await?;
-    upsert_effect_projection(tx, source, &document).await?;
-    for change in repository_changes(&document)? {
-        insert_change(tx, source, change).await?;
-    }
     Ok(())
-}
-
-async fn append_repository_children(
-    tx: &mut Transaction<'_, Postgres>,
-    source: &str,
-    expected: &DashAgentRepositoryState,
-    replacement: &DashAgentRepositoryState,
-) -> Result<(), DashServiceError> {
-    let history = replacement.history();
-    let expected_history_len = expected.history().entries().len();
-    let result = sqlx::query(
-        "UPDATE dash_agent_branch SET \
-         head_revision=$3,head_entry_id=$4,branch=$5 \
-         WHERE source_coordinate=$1 AND branch_id=$2",
-    )
-    .bind(source)
-    .bind(&history.branch_id.0)
-    .bind(u64_to_i64(
-        history.entries().last().map_or(0, |entry| entry.sequence),
-    )?)
-    .bind(history.head().map(|head| head.0.as_str()))
-    .bind(serde_json::to_value(history).map_err(dash_json_error)?)
-    .execute(&mut **tx)
-    .await
-    .map_err(dash_database_error)?;
-    if result.rows_affected() != 1 {
-        return Err(DashServiceError::Conflict {
-            message: format!("Dash source {source} branch changed"),
-        });
-    }
-
-    for entry in &history.entries()[expected_history_len..] {
-        insert_history_entry(tx, source, &history.branch_id.0, entry).await?;
-    }
-
-    let expected_document = dash_state_json(expected)?;
-    let replacement_document = dash_state_json(replacement)?;
-    upsert_command_projection(tx, source, &replacement_document).await?;
-    upsert_effect_projection(tx, source, &replacement_document).await?;
-    let expected_changes_len = repository_changes(&expected_document)?.len();
-    for change in &repository_changes(&replacement_document)?[expected_changes_len..] {
-        insert_change(tx, source, change).await?;
-    }
-    Ok(())
-}
-
-async fn insert_history_entry(
-    tx: &mut Transaction<'_, Postgres>,
-    source: &str,
-    branch_id: &str,
-    entry: &AgentHistoryEntry,
-) -> Result<(), DashServiceError> {
-    sqlx::query(
-        "INSERT INTO dash_agent_history \
-         (source_coordinate,branch_id,ordinal,entry_id,parent_entry_id,entry) \
-         VALUES ($1,$2,$3,$4,$5,$6)",
-    )
-    .bind(source)
-    .bind(branch_id)
-    .bind(u64_to_i64(entry.sequence)?)
-    .bind(&entry.entry_id.0)
-    .bind(
-        entry
-            .parent_entry_id
-            .as_ref()
-            .map(|parent| parent.0.as_str()),
-    )
-    .bind(serde_json::to_value(entry).map_err(dash_json_error)?)
-    .execute(&mut **tx)
-    .await
-    .map_err(dash_database_error)?;
-    Ok(())
-}
-
-async fn insert_change(
-    tx: &mut Transaction<'_, Postgres>,
-    source: &str,
-    change: &Value,
-) -> Result<(), DashServiceError> {
-    let revision = change_revision(change)?;
-    let ordinal = change_ordinal(change)?;
-    sqlx::query(
-        "INSERT INTO dash_agent_change(source_coordinate,revision,ordinal,change) \
-         VALUES ($1,$2,$3,$4)",
-    )
-    .bind(source)
-    .bind(u64_to_i64(revision)?)
-    .bind(u64_to_i64(ordinal)?)
-    .bind(change)
-    .execute(&mut **tx)
-    .await
-    .map_err(dash_database_error)?;
-    Ok(())
-}
-
-async fn upsert_command_projection(
-    tx: &mut Transaction<'_, Postgres>,
-    source: &str,
-    document: &Value,
-) -> Result<(), DashServiceError> {
-    if let Some(commands) = lifecycle_map(document, "commands") {
-        for (command_id, command) in commands {
-            sqlx::query(
-                "INSERT INTO dash_agent_command(source_coordinate,command_id,command) \
-                 VALUES ($1,$2,$3) \
-                 ON CONFLICT (source_coordinate,command_id) DO UPDATE SET command=EXCLUDED.command",
-            )
-            .bind(source)
-            .bind(command_id)
-            .bind(command)
-            .execute(&mut **tx)
-            .await
-            .map_err(dash_database_error)?;
-        }
-    }
-    Ok(())
-}
-
-async fn upsert_effect_projection(
-    tx: &mut Transaction<'_, Postgres>,
-    source: &str,
-    document: &Value,
-) -> Result<(), DashServiceError> {
-    for (effect_id, effect) in effect_projection(document) {
-        sqlx::query(
-            "INSERT INTO dash_agent_effect(source_coordinate,effect_id,effect) \
-             VALUES ($1,$2,$3) \
-             ON CONFLICT (source_coordinate,effect_id) DO UPDATE SET effect=EXCLUDED.effect",
-        )
-        .bind(source)
-        .bind(effect_id)
-        .bind(effect)
-        .execute(&mut **tx)
-        .await
-        .map_err(dash_database_error)?;
-    }
-    Ok(())
-}
-
-fn effect_projection(document: &Value) -> BTreeMap<String, Value> {
-    let service = document.pointer("/effects").and_then(Value::as_object);
-    let lifecycle = lifecycle_map(document, "effects");
-    service
-        .into_iter()
-        .flat_map(|values| values.keys())
-        .chain(lifecycle.into_iter().flat_map(|values| values.keys()))
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .map(|effect_id| {
-            let effect = serde_json::json!({
-                "service": service.and_then(|values| values.get(&effect_id)),
-                "lifecycle": lifecycle.and_then(|values| values.get(&effect_id)),
-            });
-            (effect_id, effect)
-        })
-        .collect()
 }
 
 fn validate_repository_identity(
@@ -905,6 +464,12 @@ fn validate_repository_identity(
         });
     }
     Ok(())
+}
+
+fn validate_repository_document(state: &DashAgentRepositoryState) -> Result<(), DashServiceError> {
+    let document = dash_state_json(state)?;
+    let changes = repository_changes(&document)?;
+    validate_change_sequence(state.history().entries().len(), changes)
 }
 
 fn validate_append_only_replacement(
@@ -944,8 +509,7 @@ fn validate_append_only_replacement(
         "commands",
     )?;
     validate_projection_keys(source, &expected_document, &replacement_document, "effects")?;
-    validate_service_effect_keys(source, &expected_document, &replacement_document)?;
-    Ok(())
+    validate_service_effect_keys(source, &expected_document, &replacement_document)
 }
 
 fn validate_projection_keys(

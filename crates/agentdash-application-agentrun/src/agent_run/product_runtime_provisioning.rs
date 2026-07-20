@@ -1,4 +1,7 @@
-use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_agent_runtime_contract::{ManagedRuntimeInitialContextPackage, RuntimeThreadId};
+use agentdash_agent_service_api::{
+    AgentCommandReceipt, AgentServiceInstanceId, AgentSourceCoordinate,
+};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -186,6 +189,23 @@ pub struct AgentRunProductRuntimeProvisioningEvidence {
     pub surface_facts_digest: String,
 }
 
+/// Product-owned stable association to the concrete Agent authority.
+///
+/// The logical service identity survives Host incarnations. The source coordinate is returned by
+/// the concrete Agent after Create and is the only coordinate needed to rebuild read/command
+/// routing after process restart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRunCompleteAgentAssociation {
+    pub service_instance_id: AgentServiceInstanceId,
+    pub source: AgentSourceCoordinate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunProductAgentCreateEvidence {
+    pub association: AgentRunCompleteAgentAssociation,
+    pub receipt: AgentCommandReceipt,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentRunProductRuntimeProvisioningError {
     #[error("Product Runtime provisioning request is invalid: {reason}")]
@@ -210,6 +230,22 @@ pub trait AgentRunProductRuntimeProvisioningPort: Send + Sync {
         &self,
         request: AgentRunProductRuntimeProvisioningRequest,
     ) -> Result<AgentRunProductRuntimeProvisioningEvidence, AgentRunProductRuntimeProvisioningError>;
+
+    /// Creates the concrete Agent source with a stable Product effect identity.
+    ///
+    /// The implementation converges a lost reply through the concrete Agent's `inspect`; Product
+    /// persists only the returned stable association.
+    async fn create_agent_source(
+        &self,
+        request: &AgentRunProductRuntimeProvisioningRequest,
+        initial_context: Option<ManagedRuntimeInitialContextPackage>,
+    ) -> Result<AgentRunProductAgentCreateEvidence, AgentRunProductRuntimeProvisioningError>;
+
+    /// Resolves association evidence after an externally driven Create/Fork convergence step.
+    async fn created_agent_association(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+    ) -> Result<AgentRunCompleteAgentAssociation, AgentRunProductRuntimeProvisioningError>;
 }
 
 /// Product-owned request for replacing the applied surface of an existing Runtime thread.

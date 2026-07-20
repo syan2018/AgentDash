@@ -3,10 +3,6 @@ use agentdash_application_agentrun::agent_run::product_protocol::{
     AgentRunForkSagaRepositoryError, CompanionFreshRepositoryError, CompanionFreshRequestId,
     CompanionFreshSaga, CompanionFreshSagaRepository, PreparedAgentRunForkGraph,
 };
-use agentdash_application_agentrun::agent_run::{
-    AgentRunProductRuntimeRecoveryId, AgentRunProductRuntimeRecoveryRepositoryError,
-    AgentRunProductRuntimeRecoverySaga, AgentRunProductRuntimeRecoverySagaRepository,
-};
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -340,142 +336,6 @@ impl CompanionFreshSagaRepository for PostgresCompanionFreshSagaRepository {
     }
 }
 
-#[derive(Clone)]
-pub struct PostgresAgentRunProductRuntimeRecoverySagaRepository {
-    pool: PgPool,
-}
-
-impl PostgresAgentRunProductRuntimeRecoverySagaRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
-}
-
-#[async_trait]
-impl AgentRunProductRuntimeRecoverySagaRepository
-    for PostgresAgentRunProductRuntimeRecoverySagaRepository
-{
-    async fn create(
-        &self,
-        saga: AgentRunProductRuntimeRecoverySaga,
-    ) -> Result<AgentRunProductRuntimeRecoverySaga, AgentRunProductRuntimeRecoveryRepositoryError>
-    {
-        let saga = saga
-            .advance_persisted_version(0)
-            .map_err(runtime_recovery_unavailable)?;
-        let value = serde_json::to_value(&saga).map_err(runtime_recovery_unavailable)?;
-        let result = sqlx::query(
-            "INSERT INTO agent_run_product_runtime_recovery_saga(
-                recovery_id,target_run_id,target_agent_id,client_command_id,
-                runtime_thread_id,phase,version,saga
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-        )
-        .bind(saga.recovery_id().as_str())
-        .bind(saga.target().run_id.to_string())
-        .bind(saga.target().agent_id.to_string())
-        .bind(saga.client_command_id())
-        .bind(saga.runtime_thread_id().as_str())
-        .bind(string_field(&value, "phase").map_err(runtime_recovery_unavailable)?)
-        .bind(i64_version(saga.version()).map_err(runtime_recovery_unavailable)?)
-        .bind(value)
-        .execute(&self.pool)
-        .await;
-        match result {
-            Ok(_) => Ok(saga),
-            Err(error) if is_unique(&error) => {
-                Err(AgentRunProductRuntimeRecoveryRepositoryError::AlreadyExists)
-            }
-            Err(error) => Err(runtime_recovery_unavailable(error)),
-        }
-    }
-
-    async fn load(
-        &self,
-        recovery_id: &AgentRunProductRuntimeRecoveryId,
-    ) -> Result<
-        Option<AgentRunProductRuntimeRecoverySaga>,
-        AgentRunProductRuntimeRecoveryRepositoryError,
-    > {
-        sqlx::query_scalar::<_, Value>(
-            "SELECT saga
-             FROM agent_run_product_runtime_recovery_saga
-             WHERE recovery_id=$1",
-        )
-        .bind(recovery_id.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(runtime_recovery_unavailable)?
-        .map(|value| serde_json::from_value(value).map_err(runtime_recovery_unavailable))
-        .transpose()
-    }
-
-    async fn list_recoverable(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<AgentRunProductRuntimeRecoveryId>, AgentRunProductRuntimeRecoveryRepositoryError>
-    {
-        let limit = i64::try_from(limit).map_err(runtime_recovery_unavailable)?;
-        let values = sqlx::query_scalar::<_, String>(
-            "SELECT recovery_id
-             FROM agent_run_product_runtime_recovery_saga
-             WHERE phase <> 'succeeded'
-             ORDER BY updated_at,recovery_id
-             LIMIT $1",
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(runtime_recovery_unavailable)?;
-        values
-            .into_iter()
-            .map(AgentRunProductRuntimeRecoveryId::from_persisted)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(runtime_recovery_unavailable)
-    }
-
-    async fn save(
-        &self,
-        expected_version: u64,
-        saga: AgentRunProductRuntimeRecoverySaga,
-    ) -> Result<AgentRunProductRuntimeRecoverySaga, AgentRunProductRuntimeRecoveryRepositoryError>
-    {
-        let saga = saga
-            .advance_persisted_version(expected_version)
-            .map_err(runtime_recovery_unavailable)?;
-        let value = serde_json::to_value(&saga).map_err(runtime_recovery_unavailable)?;
-        let result = sqlx::query(
-            "UPDATE agent_run_product_runtime_recovery_saga
-             SET phase=$3,version=$4,saga=$5,updated_at=NOW()
-             WHERE recovery_id=$1 AND version=$2",
-        )
-        .bind(saga.recovery_id().as_str())
-        .bind(i64_version(expected_version).map_err(runtime_recovery_unavailable)?)
-        .bind(string_field(&value, "phase").map_err(runtime_recovery_unavailable)?)
-        .bind(i64_version(saga.version()).map_err(runtime_recovery_unavailable)?)
-        .bind(value)
-        .execute(&self.pool)
-        .await
-        .map_err(runtime_recovery_unavailable)?;
-        if result.rows_affected() == 1 {
-            return Ok(saga);
-        }
-        let exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(
-                SELECT 1 FROM agent_run_product_runtime_recovery_saga WHERE recovery_id=$1
-             )",
-        )
-        .bind(saga.recovery_id().as_str())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(runtime_recovery_unavailable)?;
-        if exists {
-            Err(AgentRunProductRuntimeRecoveryRepositoryError::Conflict)
-        } else {
-            Err(AgentRunProductRuntimeRecoveryRepositoryError::NotFound)
-        }
-    }
-}
-
 async fn fork_save_conflict(
     pool: &PgPool,
     request_id: &AgentRunForkRequestId,
@@ -498,12 +358,6 @@ async fn fork_save_conflict(
 
 fn nullable_json(value: Option<Value>) -> Option<Value> {
     value.filter(|value| !value.is_null())
-}
-
-fn runtime_recovery_unavailable(
-    error: impl std::fmt::Display,
-) -> AgentRunProductRuntimeRecoveryRepositoryError {
-    AgentRunProductRuntimeRecoveryRepositoryError::Unavailable(error.to_string())
 }
 
 fn string_field(value: &Value, field: &str) -> Result<String, String> {

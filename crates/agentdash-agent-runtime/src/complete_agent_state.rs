@@ -671,6 +671,131 @@ fn normalize_snapshot(
     })
 }
 
+/// Builds the connection/read-scoped Product presentation directly from one authoritative Agent
+/// snapshot.
+///
+/// The mapping owns no durable state. Runtime-facing identities are deterministic wire aliases of
+/// native Agent coordinates, so a reconnect rebuilds the same presentation without an identity
+/// repository. Runtime revision/change fields remain presentation metadata and are never command
+/// admission fences.
+pub fn project_authoritative_agent_snapshot(
+    thread_id: RuntimeThreadId,
+    snapshot: AgentSnapshot,
+) -> Result<ManagedRuntimeSnapshot, CompleteAgentStateError> {
+    let source = snapshot.source.clone();
+    let projection_revision = RuntimeProjectionRevision(snapshot.revision.0);
+    let captured_at_ms = snapshot.source_info.observed_at_ms;
+    let normalized = normalize_snapshot(snapshot, None, projection_revision.0)?;
+    let mut identities = CompleteAgentRuntimeIdentityMap::new(source, thread_id.clone());
+
+    for turn in normalized.turns.values() {
+        identities.bind_turn(
+            turn.id.clone(),
+            RuntimeTurnId::new(format!("agent-turn:{}", turn.id))
+                .expect("Agent turn identity is non-empty"),
+        )?;
+        for item_id in &turn.item_ids {
+            identities.bind_item(
+                item_id.clone(),
+                turn.id.clone(),
+                RuntimeItemId::new(format!("agent-item:{item_id}"))
+                    .expect("Agent item identity is non-empty"),
+            )?;
+        }
+    }
+    for interaction in normalized.interactions.values() {
+        identities.bind_interaction(
+            interaction.id.clone(),
+            interaction.turn_id.clone(),
+            RuntimeInteractionId::new(format!("agent-interaction:{}", interaction.id))
+                .expect("Agent interaction identity is non-empty"),
+        )?;
+    }
+    if let Some(applied) = normalized.applied_surface.as_ref() {
+        identities.bind_surface_revision(applied.revision, SurfaceRevision(applied.revision.0))?;
+    }
+
+    Ok(project_managed_runtime_snapshot(
+        &normalized,
+        &identities,
+        CompleteAgentRuntimeProjectionInput {
+            thread_id,
+            projection_revision,
+            latest_change_sequence: RuntimeChangeSequence(0),
+            captured_at_ms,
+            operations: Vec::new(),
+            command_availability: presentation_command_availability(
+                &normalized,
+                projection_revision,
+            ),
+        },
+    )?)
+}
+
+fn presentation_command_availability(
+    projection: &NormalizedAgentProjection,
+    revision: RuntimeProjectionRevision,
+) -> BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability> {
+    use agentdash_agent_service_api::AgentLifecycleStatus;
+
+    let active = projection.lifecycle == AgentLifecycleStatus::Active;
+    let has_active_turn = projection.active_turn_id.is_some();
+    let has_pending_interaction = projection.interactions.values().any(|interaction| {
+        interaction.status == agentdash_agent_service_api::AgentInteractionStatus::Pending
+    });
+    let applied_surface_revision = projection
+        .applied_surface
+        .as_ref()
+        .map(|surface| SurfaceRevision(surface.revision.0));
+    ManagedRuntimeCommandKind::ALL
+        .into_iter()
+        .map(|command| {
+            let available = match command {
+                ManagedRuntimeCommandKind::Create
+                | ManagedRuntimeCommandKind::Activate
+                | ManagedRuntimeCommandKind::Rebind => false,
+                ManagedRuntimeCommandKind::Resume => {
+                    projection.lifecycle == AgentLifecycleStatus::Suspended
+                }
+                ManagedRuntimeCommandKind::SubmitInput
+                | ManagedRuntimeCommandKind::RequestCompaction
+                | ManagedRuntimeCommandKind::Fork => active && !has_active_turn,
+                ManagedRuntimeCommandKind::Steer | ManagedRuntimeCommandKind::Interrupt => {
+                    active && has_active_turn
+                }
+                ManagedRuntimeCommandKind::ResolveInteraction => active && has_pending_interaction,
+                ManagedRuntimeCommandKind::Close => {
+                    !matches!(
+                        projection.lifecycle,
+                        AgentLifecycleStatus::Closed | AgentLifecycleStatus::Lost
+                    )
+                }
+            };
+            let evidence = agentdash_agent_runtime_contract::ManagedRuntimeAvailabilityEvidence {
+                decided_at_revision: revision,
+                blocking_operation_id: None,
+                bound_surface_revision: applied_surface_revision,
+                applied_surface_revision,
+            };
+            let availability = if available {
+                ManagedRuntimeCommandAvailability::Available { evidence }
+            } else {
+                ManagedRuntimeCommandAvailability::Unavailable {
+                    reason: if !active {
+                        agentdash_agent_runtime_contract::ManagedRuntimeUnavailabilityReason::RuntimeNotActive
+                    } else if has_active_turn {
+                        agentdash_agent_runtime_contract::ManagedRuntimeUnavailabilityReason::NoActiveTurnRequired
+                    } else {
+                        agentdash_agent_runtime_contract::ManagedRuntimeUnavailabilityReason::ActiveTurnRequired
+                    },
+                    evidence,
+                }
+            };
+            (command, availability)
+        })
+        .collect()
+}
+
 fn validate_conversation_history(
     history: &[CanonicalConversationRecord],
 ) -> Result<(), CompleteAgentStateError> {

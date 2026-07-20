@@ -1164,6 +1164,18 @@ mod tests {
         execution_profile.refresh_digest();
         CommittedRuntimeToolProductBinding {
             binding: AgentRunProductRuntimeBinding {
+                agent:
+                    agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
+                        service_instance_id:
+                            agentdash_agent_service_api::AgentServiceInstanceId::new(
+                                "fixture-agent",
+                            )
+                            .unwrap(),
+                        source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+                            "fixture-source",
+                        )
+                        .unwrap(),
+                    },
                 launch_frame: agentdash_application_agentrun::agent_run::ProductAgentFrameRef {
                     frame_id: Uuid::new_v4(),
                     agent_id: target.agent_id,

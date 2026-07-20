@@ -245,21 +245,14 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
     ) -> Result<CompanionEffectProgress<CompanionPreparedFirstInputEvidence>, String> {
         match saga.request().runtime_protocol {
             CompanionContinuationRuntimeProtocol::FullFork => {
-                match self
+                let AgentRunProductInputPreparation::Prepared(envelope) = self
                     .product_input_delivery
                     .prepare_delivery(first_input_command(saga, identity))
                     .await
-                    .map_err(|error| error.to_string())?
-                {
-                    AgentRunProductInputPreparation::Pending { .. } => {
-                        Ok(CompanionEffectProgress::Pending)
-                    }
-                    AgentRunProductInputPreparation::Prepared(envelope) => {
-                        Ok(CompanionEffectProgress::Applied(
-                            CompanionPreparedFirstInputEvidence::ProductDelivery { envelope },
-                        ))
-                    }
-                }
+                    .map_err(|error| error.to_string())?;
+                Ok(CompanionEffectProgress::Applied(
+                    CompanionPreparedFirstInputEvidence::ProductDelivery { envelope },
+                ))
             }
             CompanionContinuationRuntimeProtocol::FreshCreate => {
                 Ok(CompanionEffectProgress::Applied(

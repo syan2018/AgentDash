@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { AgentLiveEvent } from "../../../generated/agent-service-api";
 import type { ManagedRuntimeSnapshot } from "../../../generated/agent-runtime-validators";
 import { managedRuntimeTestFixtures } from "./managedRuntimeTestFixtures";
 import {
@@ -32,9 +33,20 @@ function deferred<T>(): {
 }
 
 describe("Managed Runtime feed connection", () => {
-  it("subscribes after the snapshot tail and reduces each committed change once", async () => {
+  const textDelta: AgentLiveEvent = {
+    source: "source-1",
+    turn_id: "turn-live",
+    item_id: "item-live",
+    sequence: "1" as AgentLiveEvent["sequence"],
+    payload: {
+      kind: "text_delta",
+      round: 1,
+      delta: "hello",
+    },
+  };
+
+  it("subscribes after the authoritative snapshot and folds live events as disposable presentation", async () => {
     const baseline = managedRuntimeTestFixtures.snapshots.started;
-    const changePage = managedRuntimeTestFixtures.changePage;
     const options: ManagedRuntimeFeedTransportOptions[] = [];
     const connectionObserver = observer();
 
@@ -51,22 +63,22 @@ describe("Managed Runtime feed connection", () => {
     );
     await connection.ready;
 
-    expect(options[0]?.after).toBe(8n);
-    options[0]?.onPage(changePage);
+    options[0]?.onEvent(textDelta);
     expect(connectionObserver.onProjection).toHaveBeenCalledTimes(1);
     expect(connectionObserver.onProjection).toHaveBeenCalledWith(
       expect.objectContaining({
-        revision: 6n,
-        latest_change_sequence: 9n,
+        active_turn_id: "agent-turn:turn-live",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: "agent-item:item-live",
+          }),
+        ]),
       }),
-      changePage.changes,
+      [],
     );
-
-    options[0]?.onPage(changePage);
-    expect(connectionObserver.onProjection).toHaveBeenCalledTimes(1);
   });
 
-  it("closes the stale tail and reloads a snapshot before subscribing after a gap", async () => {
+  it("reloads the authoritative snapshot when the live connection reconnects", async () => {
     const started = managedRuntimeTestFixtures.snapshots.started;
     const lost = managedRuntimeTestFixtures.snapshots.lost;
     const transports: Array<{
@@ -93,14 +105,13 @@ describe("Managed Runtime feed connection", () => {
     );
     await connection.ready;
 
-    transports[0]?.options.onPage(managedRuntimeTestFixtures.gapPage);
+    transports[0]?.options.onLifecycleChange("reconnecting");
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(transports[0]?.transport.close).toHaveBeenCalledOnce();
     expect(fetchSnapshot).toHaveBeenCalledTimes(2);
-    expect(connectionObserver.onBaseline).toHaveBeenLastCalledWith(lost);
-    expect(transports[1]?.options.after).toBe(11n);
+    expect(connectionObserver.onProjection).toHaveBeenLastCalledWith(lost, []);
+    expect(transports).toHaveLength(1);
   });
 
   it("does not publish a late baseline after the connection is closed", async () => {

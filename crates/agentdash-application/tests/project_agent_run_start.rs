@@ -269,6 +269,14 @@ impl AgentRunProductLaunchPort for RecordingLaunch {
         let binding = AgentRunProductRuntimeBinding {
             target: request.provisioning.target.clone(),
             runtime_thread_id: request.provisioning.runtime_thread_id.clone(),
+            agent: agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
+                service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+                    "fixture-agent",
+                )
+                .unwrap(),
+                source: agentdash_agent_service_api::AgentSourceCoordinate::new("fixture-source")
+                    .unwrap(),
+            },
             launch_frame: request.provisioning.frame.clone(),
             execution_profile_digest: request
                 .provisioning
@@ -292,7 +300,6 @@ impl AgentRunProductLaunchPort for RecordingLaunch {
         Ok(AgentRunProductLaunchOutcome {
             binding,
             create_receipt: receipt("create", 1),
-            activate_receipt: receipt("activate", 2),
             input_receipt: None,
         })
     }

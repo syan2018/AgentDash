@@ -83,6 +83,11 @@ pub trait CompleteAgentLiveCatalog: Send + Sync {
         attachment_id: &CompleteAgentLiveAttachmentId,
     ) -> Option<CompleteAgentLiveSelection>;
 
+    async fn current(
+        &self,
+        logical_instance_id: &AgentServiceInstanceId,
+    ) -> Option<CompleteAgentLiveSelection>;
+
     async fn availability(
         &self,
         logical_instance_id: &AgentServiceInstanceId,
@@ -187,6 +192,18 @@ impl CompleteAgentLiveCatalog for ProcessCompleteAgentLiveCatalog {
         attachment_id: &CompleteAgentLiveAttachmentId,
     ) -> Option<CompleteAgentLiveSelection> {
         self.state.read().await.entries.get(attachment_id).cloned()
+    }
+
+    async fn current(
+        &self,
+        logical_instance_id: &AgentServiceInstanceId,
+    ) -> Option<CompleteAgentLiveSelection> {
+        let state = self.state.read().await;
+        state
+            .current_by_logical
+            .get(logical_instance_id)
+            .and_then(|attachment_id| state.entries.get(attachment_id))
+            .cloned()
     }
 
     async fn availability(

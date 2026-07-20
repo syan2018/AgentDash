@@ -1,10 +1,10 @@
-import type { ManagedRuntimeChangePage } from "../../../generated/agent-runtime-validators";
+import type { AgentLiveEvent } from "../../../generated/agent-service-api";
+import { buildApiPath } from "../../../api/origin";
+import { FetchNdjsonStream } from "../../../api/ndjsonStream";
 import {
-  fetchManagedRuntimeChangePage,
+  agentRunScopedPath,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
-
-const POLL_INTERVAL_MS = 500;
 
 export type ManagedRuntimeFeedLifecycle =
   | "connecting"
@@ -14,8 +14,7 @@ export type ManagedRuntimeFeedLifecycle =
 
 export interface ManagedRuntimeFeedTransportOptions {
   agentRunTarget: AgentRunRuntimeTarget;
-  after: bigint;
-  onPage: (page: ManagedRuntimeChangePage) => void;
+  onEvent: (event: AgentLiveEvent) => void;
   onLifecycleChange: (lifecycle: ManagedRuntimeFeedLifecycle) => void;
   onError: (error: Error) => void;
 }
@@ -24,62 +23,37 @@ export interface ManagedRuntimeFeedTransport {
   close: () => void;
 }
 
-function normalizeError(error: unknown): Error {
-  return error instanceof Error ? error : new Error("Managed Runtime change 读取失败");
-}
-
-class PollingManagedRuntimeFeedTransport implements ManagedRuntimeFeedTransport {
-  private closed = false;
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private after: bigint;
-  private connected = false;
-  private readonly options: ManagedRuntimeFeedTransportOptions;
-
-  constructor(options: ManagedRuntimeFeedTransportOptions) {
-    this.options = options;
-    this.after = options.after;
-    void this.poll();
+function parseLiveEvent(payload: unknown): AgentLiveEvent | null {
+  if (!payload || typeof payload !== "object") return null;
+  const event = payload as Record<string, unknown>;
+  const body = event.payload;
+  if (
+    typeof event.source !== "string" ||
+    typeof event.turn_id !== "string" ||
+    typeof event.item_id !== "string" ||
+    typeof event.sequence !== "string" ||
+    !body ||
+    typeof body !== "object" ||
+    typeof (body as Record<string, unknown>).kind !== "string"
+  ) {
+    return null;
   }
-
-  private async poll(): Promise<void> {
-    if (this.closed) return;
-    this.options.onLifecycleChange(this.connected ? "connected" : "connecting");
-    try {
-      const page = await fetchManagedRuntimeChangePage(
-        this.options.agentRunTarget,
-        this.after,
-      );
-      if (this.closed) return;
-      this.connected = true;
-      this.after = page.next;
-      this.options.onLifecycleChange("connected");
-      this.options.onPage(page);
-    } catch (error) {
-      if (this.closed) return;
-      this.options.onLifecycleChange("reconnecting");
-      this.options.onError(normalizeError(error));
-    }
-    if (!this.closed) {
-      this.timer = setTimeout(() => {
-        this.timer = null;
-        void this.poll();
-      }, POLL_INTERVAL_MS);
-    }
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
-    this.options.onLifecycleChange("closed");
-  }
+  return payload as AgentLiveEvent;
 }
 
 export function createManagedRuntimeFeedTransport(
   options: ManagedRuntimeFeedTransportOptions,
 ): ManagedRuntimeFeedTransport {
-  return new PollingManagedRuntimeFeedTransport(options);
+  return new FetchNdjsonStream<AgentLiveEvent>({
+    url: buildApiPath(
+      agentRunScopedPath(options.agentRunTarget, "/runtime/live"),
+    ),
+    parsePayload: parseLiveEvent,
+    readCursor: () => null,
+    onEvent: options.onEvent,
+    onLifecycleChange: options.onLifecycleChange,
+    onError: options.onError,
+    connectionErrorMessage: "Agent live stream 连接失败",
+    parseErrorMessage: "Agent live stream 消息解析失败",
+  });
 }

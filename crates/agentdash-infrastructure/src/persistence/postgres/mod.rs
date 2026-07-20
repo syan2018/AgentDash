@@ -3,7 +3,6 @@ mod agent_run_command_receipt_repository;
 mod agent_run_lineage_repository;
 mod agent_run_mailbox_repository;
 mod agent_run_message_submission_store;
-mod agent_run_product_persistence;
 mod agent_run_product_projection_repository;
 mod agent_run_product_saga_repository;
 mod auth_session_repository;
@@ -12,7 +11,6 @@ mod backend_repository;
 mod canvas_repository;
 mod canvas_runtime_state_repository;
 mod companion_continuation_saga_repository;
-mod complete_agent_repositories;
 mod dash_complete_agent_store;
 mod extension_package_artifact_repository;
 mod inline_file_repository;
@@ -160,16 +158,12 @@ pub use agent_run_fork_graph_store::PostgresAgentRunForkGraphStore;
 pub use agent_run_lineage_repository::PostgresAgentRunLineageRepository;
 pub use agent_run_mailbox_repository::PostgresAgentRunMailboxRepository;
 pub use agent_run_message_submission_store::PostgresAgentRunMessageSubmissionStore;
-pub use agent_run_product_persistence::{
-    PostgresProductMailboxRepository, PostgresProductRuntimeCommandClaimRepository,
-};
 pub use agent_run_product_projection_repository::{
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
     PostgresWorkspaceModulePresentationStore, product_runtime_binding_digest,
 };
 pub use agent_run_product_saga_repository::{
-    PostgresAgentRunForkSagaRepository, PostgresAgentRunProductRuntimeRecoverySagaRepository,
-    PostgresCompanionFreshSagaRepository,
+    PostgresAgentRunForkSagaRepository, PostgresCompanionFreshSagaRepository,
 };
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
@@ -177,10 +171,6 @@ pub use backend_repository::PostgresBackendRepository;
 pub use canvas_repository::PostgresCanvasRepository;
 pub use canvas_runtime_state_repository::PostgresCanvasRuntimeStateRepository;
 pub use companion_continuation_saga_repository::PostgresCompanionContinuationSagaRepository;
-pub use complete_agent_repositories::{
-    PostgresCompleteAgentCallbackRepository, PostgresCompleteAgentHostRepository,
-    PostgresManagedRuntimeStateRepository,
-};
 pub use dash_complete_agent_store::{
     PostgresDashAgentRepositoryStore, PostgresDashCompleteAgentStore,
 };

@@ -1,14 +1,10 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{
-    ManagedAgentRuntimeGateway, ManagedRuntimeCommand, ManagedRuntimeCommandEnvelope,
-    ManagedRuntimeOperationStatus, ManagedRuntimeReadRequest, RuntimeIdempotencyKey,
-};
 use agentdash_application_agentrun::agent_run::frame::AgentFrameBuilder;
 use agentdash_application_agentrun::agent_run::{
     AgentFrameSurfaceExt, AgentRunProductRuntimeBinding, AgentRunProductRuntimeBindingStore,
     AgentRunProductRuntimeSurfaceRebindPort, AgentRunProductRuntimeSurfaceRebindRequest,
-    ProductAgentFrameRef, ProductAgentSurfaceFacts, stable_product_command_operation_id,
+    ProductAgentFrameRef, ProductAgentSurfaceFacts,
 };
 use agentdash_application_ports::agent_frame_materialization::{
     AgentFrameWriteRole, AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError,
@@ -26,7 +22,6 @@ use crate::repository_set::RepositorySet;
 pub struct ProductAgentRunRuntimeSurfaceUpdateService {
     repos: RepositorySet,
     bindings: Arc<dyn AgentRunProductRuntimeBindingStore>,
-    runtime: Arc<dyn ManagedAgentRuntimeGateway>,
     surface_rebind: Arc<dyn AgentRunProductRuntimeSurfaceRebindPort>,
 }
 
@@ -34,13 +29,11 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
     pub fn new(
         repos: RepositorySet,
         bindings: Arc<dyn AgentRunProductRuntimeBindingStore>,
-        runtime: Arc<dyn ManagedAgentRuntimeGateway>,
         surface_rebind: Arc<dyn AgentRunProductRuntimeSurfaceRebindPort>,
     ) -> Self {
         Self {
             repos,
             bindings,
-            runtime,
             surface_rebind,
         }
     }
@@ -103,66 +96,29 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
                 .map_err(|_| surface_rejected("AgentFrame revision is negative"))?,
         };
         let operation_key = surface_operation_key(&request, &frame_ref);
-        let mut converged_binding = binding.clone();
-        let runtime_before = self
-            .runtime
-            .read(ManagedRuntimeReadRequest {
-                thread_id: request.runtime_thread_id.clone(),
-            })
-            .await
-            .map_err(surface_rejected)?;
-
-        if converged_binding.launch_frame != frame_ref {
-            if runtime_before
-                .source_binding
-                .as_ref()
-                .is_none_or(|source| source.applied_surface_revision.0 != frame_ref.revision)
-            {
-                self.surface_rebind
-                    .prepare_runtime_surface_rebind(AgentRunProductRuntimeSurfaceRebindRequest {
-                        target: request.target.clone(),
-                        runtime_thread_id: request.runtime_thread_id.clone(),
-                        idempotency_key: format!("{operation_key}:host"),
-                        frame: frame_ref.clone(),
-                        execution_profile_digest: binding.execution_profile_digest.clone(),
-                        execution_configuration: frame.execution_profile_json.clone().ok_or_else(
-                            || {
-                                surface_rejected(
-                                    "surface rebind AgentFrame has no execution profile",
-                                )
-                            },
-                        )?,
-                        surface_facts: ProductAgentSurfaceFacts::from_frame(&frame),
-                    })
-                    .await
-                    .map_err(surface_rejected)?;
-                let receipt = self
-                    .runtime
-                    .execute(surface_envelope(
-                        &request,
-                        &format!("{operation_key}:rebind"),
-                        ManagedRuntimeCommand::Rebind,
-                    )?)
-                    .await
-                    .map_err(surface_rejected)?;
-                require_succeeded(receipt.status)?;
-            }
-            let rebound = self
-                .runtime
-                .read(ManagedRuntimeReadRequest {
-                    thread_id: request.runtime_thread_id.clone(),
+        if binding.launch_frame != frame_ref {
+            let evidence = self
+                .surface_rebind
+                .prepare_runtime_surface_rebind(AgentRunProductRuntimeSurfaceRebindRequest {
+                    target: request.target.clone(),
+                    runtime_thread_id: request.runtime_thread_id.clone(),
+                    idempotency_key: format!("{operation_key}:agent"),
+                    frame: frame_ref.clone(),
+                    execution_profile_digest: binding.execution_profile_digest.clone(),
+                    execution_configuration: binding.execution_profile.configuration.clone(),
+                    surface_facts: ProductAgentSurfaceFacts::from_frame(&frame),
                 })
                 .await
                 .map_err(surface_rejected)?;
-            let rebound_source = rebound
-                .source_binding
-                .ok_or_else(|| surface_rejected("Runtime Rebind omitted source binding"))?;
-            if rebound_source.applied_surface_revision.0 != frame_ref.revision {
+            if evidence.target != request.target
+                || evidence.runtime_thread_id != request.runtime_thread_id
+                || evidence.frame != frame_ref
+            {
                 return Err(surface_rejected(
-                    "Runtime Rebind did not apply the candidate AgentFrame surface",
+                    "surface apply returned different Product coordinates",
                 ));
             }
-            converged_binding = AgentRunProductRuntimeBinding {
+            let converged_binding = AgentRunProductRuntimeBinding {
                 launch_frame: frame_ref.clone(),
                 ..binding.clone()
             };
@@ -173,47 +129,6 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
                 )
                 .await
                 .map_err(surface_rejected)?;
-        }
-
-        let before_activate = self
-            .runtime
-            .read(ManagedRuntimeReadRequest {
-                thread_id: request.runtime_thread_id.clone(),
-            })
-            .await
-            .map_err(surface_rejected)?;
-        if before_activate
-            .source_binding
-            .as_ref()
-            .is_none_or(|source| source.activated_at_revision.is_none())
-        {
-            let receipt = self
-                .runtime
-                .execute(surface_envelope(
-                    &request,
-                    &format!("{operation_key}:activate"),
-                    ManagedRuntimeCommand::Activate,
-                )?)
-                .await
-                .map_err(surface_rejected)?;
-            require_succeeded(receipt.status)?;
-        }
-        let activated = self
-            .runtime
-            .read(ManagedRuntimeReadRequest {
-                thread_id: request.runtime_thread_id.clone(),
-            })
-            .await
-            .map_err(surface_rejected)?;
-        let activated_source = activated
-            .source_binding
-            .ok_or_else(|| surface_rejected("Runtime Activate omitted source binding"))?;
-        if activated_source.applied_surface_revision.0 != frame_ref.revision
-            || activated_source.activated_at_revision.is_none()
-        {
-            return Err(surface_rejected(
-                "Runtime Activate did not apply the candidate AgentFrame surface",
-            ));
         }
 
         let mut outcome =
@@ -335,33 +250,6 @@ fn surface_operation_key(
         "surface-update:v1:{}:{}:{}:{}",
         request.target.run_id, request.target.agent_id, frame.frame_id, frame.revision
     )
-}
-
-fn surface_envelope(
-    request: &RuntimeSurfaceUpdateRequest,
-    identity: &str,
-    command: ManagedRuntimeCommand,
-) -> Result<ManagedRuntimeCommandEnvelope, AgentRunFrameSurfaceError> {
-    Ok(ManagedRuntimeCommandEnvelope {
-        operation_id: stable_product_command_operation_id(&request.target, identity)
-            .map_err(surface_rejected)?,
-        idempotency_key: RuntimeIdempotencyKey::new(identity.to_owned())
-            .map_err(surface_rejected)?,
-        thread_id: request.runtime_thread_id.clone(),
-        command,
-    })
-}
-
-fn require_succeeded(
-    status: ManagedRuntimeOperationStatus,
-) -> Result<(), AgentRunFrameSurfaceError> {
-    if status == ManagedRuntimeOperationStatus::Succeeded {
-        Ok(())
-    } else {
-        Err(surface_rejected(format!(
-            "Runtime surface convergence is not terminal: {status:?}"
-        )))
-    }
 }
 
 #[async_trait]

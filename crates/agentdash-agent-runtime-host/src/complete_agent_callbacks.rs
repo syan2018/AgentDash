@@ -245,6 +245,36 @@ pub trait CompleteAgentCallbackRepository: Send + Sync {
     ) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError>;
 }
 
+/// Incarnation-scoped callback coordination.
+///
+/// Durable callback receipts belong to the concrete Tool/Hook handler. This store only prevents
+/// duplicate in-flight dispatch inside the current Host process.
+#[derive(Default)]
+pub struct ProcessCompleteAgentCallbackRepository {
+    state: tokio::sync::RwLock<CompleteAgentCallbackSnapshot>,
+}
+
+impl ProcessCompleteAgentCallbackRepository {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl CompleteAgentCallbackRepository for ProcessCompleteAgentCallbackRepository {
+    async fn load(&self) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
+        Ok(self.state.read().await.clone())
+    }
+
+    async fn commit(
+        &self,
+        commit: CompleteAgentCallbackCommit,
+    ) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
+        let mut state = self.state.write().await;
+        apply_complete_agent_callback_commit(&mut state, commit)
+    }
+}
+
 pub fn encode_complete_agent_callback_snapshot(
     snapshot: &CompleteAgentCallbackSnapshot,
 ) -> Result<serde_json::Value, CompleteAgentCallbackStoreError> {

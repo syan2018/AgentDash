@@ -30,8 +30,8 @@ use crate::agent_run::{
     AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
     AgentRunProductRuntimeSnapshotObservation, AppliedVfsMount, AppliedVfsOperation,
     ConversationModelConfigInput, ConversationModelConfigResolver,
-    ConversationModelConfigSourceModel, ConversationWaitingItemModel, ProductMailboxFacade,
-    ValidationSeverityModel, resolve_agent_run_display_title,
+    ConversationModelConfigSourceModel, ConversationWaitingItemModel, ValidationSeverityModel,
+    resolve_agent_run_display_title,
 };
 use crate::error::WorkflowApplicationError;
 
@@ -48,7 +48,6 @@ use super::types::{
 pub struct AgentRunWorkspaceQueryDeps<'a> {
     pub product_projection: &'a dyn AgentRunProductProjectionQueryPort,
     pub applied_resource_surfaces: &'a dyn AgentRunAppliedResourceSurfaceQueryPort,
-    pub product_mailbox: &'a ProductMailboxFacade,
     pub agent_frame_repo: &'a dyn AgentFrameRepository,
     pub project_agent_repo: &'a dyn ProjectAgentRepository,
     pub lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
@@ -143,26 +142,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .map(|gate| ConversationWaitingItemModel::from_lifecycle_gate(&gate))
             .collect::<Vec<_>>();
 
-        let mailbox_snapshot = if binding.is_some() {
-            Some(
-                self.repos
-                    .product_mailbox
-                    .snapshot(target.clone())
-                    .await
-                    .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?,
-            )
-        } else {
-            None
-        };
-        let mailbox_messages = mailbox_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.messages.clone())
-            .unwrap_or_default();
-        let visible_mailbox_messages = mailbox_messages
-            .into_iter()
-            .filter(mailbox_message_visible)
-            .collect::<Vec<_>>();
-        let mailbox_visible_message_count = visible_mailbox_messages.len();
+        let visible_mailbox_messages = Vec::new();
         let hide_system_steer_messages = load_hide_system_steer_messages_setting(
             self.repos.settings_repo,
             viewer_user_id.as_deref(),
@@ -170,11 +150,9 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         .await
         .map_err(WorkflowApplicationError::from)?;
         let mailbox = mailbox_state_model(
-            mailbox_snapshot
-                .as_ref()
-                .and_then(|snapshot| snapshot.state.as_ref()),
+            None,
             frame_ref.is_some() && binding.is_some() && !terminal_agent,
-            mailbox_visible_message_count,
+            0,
             hide_system_steer_messages,
         );
 
@@ -208,7 +186,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 terminal_agent,
                 supports_steering,
                 mailbox_paused: mailbox.paused,
-                mailbox_visible_message_count,
+                mailbox_visible_message_count: 0,
                 open_wait_items,
                 resource_surface: resource_surface.clone(),
                 resource_surface_coordinate: resource_surface_coordinate.clone(),
@@ -300,13 +278,16 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         &self,
         target: &AgentRunTarget,
     ) -> Result<WorkspaceRuntimeObservation, WorkflowApplicationError> {
-        match self
+        let observation = match self
             .repos
             .product_projection
             .runtime_snapshot_observation(target)
             .await
-            .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?
         {
+            Ok(observation) => observation,
+            Err(_) => return Ok(WorkspaceRuntimeObservation::Absent),
+        };
+        match observation {
             AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
                 Ok(WorkspaceRuntimeObservation::Absent)
             }
@@ -317,11 +298,8 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 binding: product_binding,
                 snapshot,
             }),
-            AgentRunProductRuntimeSnapshotObservation::Stale(evidence) => {
-                Err(WorkflowApplicationError::Conflict(format!(
-                    "AgentRun Product Runtime 投影已过期: {:?}",
-                    evidence.reason
-                )))
+            AgentRunProductRuntimeSnapshotObservation::Stale(_) => {
+                Ok(WorkspaceRuntimeObservation::Absent)
             }
         }
     }

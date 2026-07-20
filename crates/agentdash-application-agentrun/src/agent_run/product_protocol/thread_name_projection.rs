@@ -382,6 +382,17 @@ mod tests {
                 binding: Some(AgentRunProductRuntimeBinding {
                     target: target.clone(),
                     runtime_thread_id: thread_id.clone(),
+                    agent: crate::agent_run::AgentRunCompleteAgentAssociation {
+                        service_instance_id:
+                            agentdash_agent_service_api::AgentServiceInstanceId::new(
+                                "fixture-agent",
+                            )
+                            .unwrap(),
+                        source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+                            "fixture-source",
+                        )
+                        .unwrap(),
+                    },
                     launch_frame: crate::agent_run::ProductAgentFrameRef {
                         frame_id: Uuid::new_v4(),
                         agent_id: target.agent_id,

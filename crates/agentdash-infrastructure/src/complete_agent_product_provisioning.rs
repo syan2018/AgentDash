@@ -3,37 +3,39 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_runtime::{PlatformToolBroker, RuntimeToolDefinition};
-use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_agent_runtime::{
+    ManagedRuntimeDispatchContext, ManagedRuntimeLifecyclePort, PlatformToolBroker,
+    RuntimeToolDefinition, map_initial_context_package,
+};
+use agentdash_agent_runtime_contract::{ManagedRuntimeInitialContextPackage, RuntimeThreadId};
 use agentdash_agent_runtime_host::{
     CompleteAgentBindingTarget, CompleteAgentHost, CompleteAgentHostError,
-    CompleteAgentRuntimeRecoveryPlanner, CompleteAgentRuntimeTarget,
     CompleteAgentRuntimeTargetProvisioningRequest, CompleteAgentRuntimeTargetRecoveryRequest,
 };
 use agentdash_agent_service_api::{
-    AgentHookAction, AgentHookBlockingSemantics, AgentHookDefinitionId, AgentHookEffectKind,
-    AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming,
-    AgentIdempotencyKey, AgentPayloadDigest, AgentSurfaceContributionPayload, AgentSurfaceDigest,
-    AgentSurfaceRequirement, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
-    AgentSurfaceSnapshot, AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics,
-    SemanticFidelity,
+    AgentBindingGeneration, AgentEffectIdentity, AgentHookAction, AgentHookBlockingSemantics,
+    AgentHookDefinitionId, AgentHookEffectKind, AgentHookMutationKind, AgentHookPoint,
+    AgentHookSemanticFacet, AgentHookTiming, AgentIdempotencyKey, AgentPayloadDigest,
+    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRequirement,
+    AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentSurfaceSnapshot,
+    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, SemanticFidelity,
 };
 use agentdash_application_agentrun::agent_run::frame::{
     AgentContextSourceSnapshot, runtime_backend_anchor_from_vfs,
 };
 use agentdash_application_agentrun::agent_run::{
+    AgentRunCompleteAgentAssociation, AgentRunProductAgentCreateEvidence,
     AgentRunProductRuntimeBinding, AgentRunProductRuntimeProvisioningError,
     AgentRunProductRuntimeProvisioningEvidence, AgentRunProductRuntimeProvisioningPort,
-    AgentRunProductRuntimeProvisioningRequest, AgentRunProductRuntimeRecoveryPreparationPort,
-    AgentRunProductRuntimeSurfaceRebindEvidence, AgentRunProductRuntimeSurfaceRebindPort,
-    AgentRunProductRuntimeSurfaceRebindRequest, ProductAgentSurfaceFacts,
-    ProductExecutionProfileRef,
+    AgentRunProductRuntimeProvisioningRequest, AgentRunProductRuntimeSurfaceRebindEvidence,
+    AgentRunProductRuntimeSurfaceRebindPort, AgentRunProductRuntimeSurfaceRebindRequest,
+    ProductAgentSurfaceFacts, ProductExecutionProfileRef,
 };
 use agentdash_application_ports::agent_frame_hook_plan::{
     AgentFrameHookPlan, AgentFrameHookRequirement, HookAction, HookExecutionSite, HookPoint,
     SemanticStrength,
 };
-use agentdash_domain::common::Vfs;
+use agentdash_domain::{common::Vfs, workflow::AgentFrameRepository};
 use agentdash_platform_spi::{
     AgentConfig, CapabilityState, RelayMcpCallContext, RuntimeMcpServer, RuntimeVfsAccessPolicy,
     ToolCluster,
@@ -220,8 +222,8 @@ pub struct CompleteAgentProductRuntimeProvisioner {
     selections: Arc<dyn CompleteAgentServiceSelector>,
     broker: Arc<PlatformToolBroker>,
     dynamic_tools: Arc<dyn RuntimeDynamicToolCatalog>,
+    frames: Arc<dyn AgentFrameRepository>,
     callback_deadline_ms: u64,
-    prepared_recoveries: RwLock<BTreeMap<RuntimeThreadId, CompleteAgentBindingTarget>>,
 }
 
 impl CompleteAgentProductRuntimeProvisioner {
@@ -230,14 +232,15 @@ impl CompleteAgentProductRuntimeProvisioner {
         selections: Arc<dyn CompleteAgentServiceSelector>,
         broker: Arc<PlatformToolBroker>,
         dynamic_tools: Arc<dyn RuntimeDynamicToolCatalog>,
+        frames: Arc<dyn AgentFrameRepository>,
     ) -> Self {
         Self {
             host,
             selections,
             broker,
             dynamic_tools,
+            frames,
             callback_deadline_ms: DEFAULT_CALLBACK_DEADLINE_MS,
-            prepared_recoveries: RwLock::new(BTreeMap::new()),
         }
     }
 
@@ -245,38 +248,83 @@ impl CompleteAgentProductRuntimeProvisioner {
         self.callback_deadline_ms = callback_deadline_ms;
         self
     }
-}
 
-#[async_trait]
-impl AgentRunProductRuntimeRecoveryPreparationPort for CompleteAgentProductRuntimeProvisioner {
-    async fn prepare_recovery_attachment(
+    /// Rebuilds the current process route from Product intent and the persisted Agent source.
+    ///
+    /// Host state is deliberately absent after restart. The immutable AgentFrame is recompiled,
+    /// the current live attachment is selected, and the concrete Agent receives a new callback
+    /// surface for this Host incarnation.
+    pub async fn ensure_product_binding_route(
         &self,
         binding: &AgentRunProductRuntimeBinding,
-    ) -> Result<(), String> {
-        if !binding.execution_profile.validate()
-            || binding.execution_profile.profile_digest != binding.execution_profile_digest
+    ) -> Result<AgentBindingGeneration, AgentRunProductRuntimeProvisioningError> {
+        if let Ok(generation) = self
+            .host
+            .runtime_binding_generation(&binding.runtime_thread_id, &binding.agent.source)
+            .await
         {
-            return Err(
-                "Product recovery binding does not preserve one exact execution profile snapshot"
-                    .to_owned(),
-            );
+            return Ok(generation);
         }
-        let selection = self
-            .selections
-            .select(&binding.execution_profile)
+        let frame = self
+            .frames
+            .get(binding.launch_frame.frame_id)
             .await
-            .map_err(|error| error.to_string())?;
-        if selection.verified_product_profile_digest != binding.execution_profile_digest {
-            return Err(
-                "Product recovery selection did not verify the persisted execution profile"
+            .map_err(|error| failed(error.to_string()))?
+            .ok_or_else(|| failed("Product binding AgentFrame does not exist"))?;
+        if frame.agent_id != binding.target.agent_id
+            || u64::try_from(frame.revision).ok() != Some(binding.launch_frame.revision)
+        {
+            return Err(AgentRunProductRuntimeProvisioningError::Conflict {
+                reason: "Product binding does not reference the exact immutable AgentFrame"
                     .to_owned(),
-            );
+            });
         }
-        self.prepared_recoveries
-            .write()
+        let surface_facts = ProductAgentSurfaceFacts::from_frame(&frame);
+        let selection = self.selections.select(&binding.execution_profile).await?;
+        let compiled = compile_product_surface(
+            &binding.runtime_thread_id,
+            &binding.execution_profile,
+            &surface_facts,
+            self.broker.as_ref(),
+            self.dynamic_tools.as_ref(),
+        )
+        .await?;
+        let request = AgentRunProductRuntimeProvisioningRequest {
+            target: binding.target.clone(),
+            runtime_thread_id: binding.runtime_thread_id.clone(),
+            idempotency_key: format!("restore-route:v1:{}", binding.runtime_thread_id),
+            frame: binding.launch_frame.clone(),
+            execution_profile: binding.execution_profile.clone(),
+            surface_facts,
+        };
+        let request_digest = provisioning_request_digest(&request)?;
+        let attachment_id = selection.target.live_attachment_id.clone();
+        self.host
+            .provision_runtime_target(CompleteAgentRuntimeTargetProvisioningRequest {
+                idempotency_key: AgentIdempotencyKey::new(request.idempotency_key)
+                    .map_err(|error| invalid(error.to_string()))?,
+                request_digest,
+                runtime_thread_id: binding.runtime_thread_id.clone(),
+                target: selection.target,
+                desired_surface: compiled,
+                callback_deadline_ms: self.callback_deadline_ms,
+            })
             .await
-            .insert(binding.runtime_thread_id.clone(), selection.target);
-        Ok(())
+            .map_err(map_host_error)?;
+        self.host
+            .restore_runtime_source_route(
+                &binding.runtime_thread_id,
+                binding.agent.source.clone(),
+                AgentEffectIdentity::new(format!(
+                    "restore-route:v1:{}:{}",
+                    binding.runtime_thread_id, attachment_id
+                ))
+                .map_err(|error| invalid(error.to_string()))?,
+                format!("restore-route:{}", attachment_id),
+                self.callback_deadline_ms,
+            )
+            .await
+            .map_err(map_host_error)
     }
 }
 
@@ -324,6 +372,86 @@ impl AgentRunProductRuntimeProvisioningPort for CompleteAgentProductRuntimeProvi
             surface_facts_digest: request.surface_facts.surface_digest,
         })
     }
+
+    async fn create_agent_source(
+        &self,
+        request: &AgentRunProductRuntimeProvisioningRequest,
+        initial_context: Option<ManagedRuntimeInitialContextPackage>,
+    ) -> Result<AgentRunProductAgentCreateEvidence, AgentRunProductRuntimeProvisioningError> {
+        request.validate()?;
+        let identity = format!(
+            "{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&(
+                    "agentdash.product-agent-create/v2",
+                    &request.target,
+                    &request.runtime_thread_id,
+                    &request.idempotency_key,
+                ))
+                .map_err(|error| failed(error.to_string()))?
+            )
+        );
+        let effect_id = AgentEffectIdentity::new(format!("product-create:v2:{identity}"))
+            .map_err(|error| invalid(error.to_string()))?;
+        let initial_context = initial_context
+            .map(map_initial_context_package)
+            .transpose()
+            .map_err(|error| invalid(error.to_string()))?;
+        let outcome = ManagedRuntimeLifecyclePort::create(
+            self.host.as_ref(),
+            ManagedRuntimeDispatchContext {
+                runtime_thread_id: request.runtime_thread_id.clone(),
+                effect_id,
+                dispatch_owner: "product-agent-create".to_owned(),
+                now_ms: current_time_ms(),
+                lease_duration_ms: self.callback_deadline_ms,
+            },
+            initial_context,
+        )
+        .await
+        .map_err(|error| failed(error.to_string()))?;
+        let (service_instance_id, source) = self
+            .host
+            .runtime_source_association(&request.runtime_thread_id)
+            .await
+            .map_err(map_host_error)?;
+        if source != outcome.receipt.source {
+            return Err(AgentRunProductRuntimeProvisioningError::Conflict {
+                reason: "Host route and concrete Agent Create receipt identify different sources"
+                    .to_owned(),
+            });
+        }
+        Ok(AgentRunProductAgentCreateEvidence {
+            association: AgentRunCompleteAgentAssociation {
+                service_instance_id,
+                source,
+            },
+            receipt: outcome.receipt,
+        })
+    }
+
+    async fn created_agent_association(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+    ) -> Result<AgentRunCompleteAgentAssociation, AgentRunProductRuntimeProvisioningError> {
+        let (service_instance_id, source) = self
+            .host
+            .runtime_source_association(runtime_thread_id)
+            .await
+            .map_err(map_host_error)?;
+        Ok(AgentRunCompleteAgentAssociation {
+            service_instance_id,
+            source,
+        })
+    }
+}
+
+fn current_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 #[async_trait]
@@ -382,6 +510,35 @@ impl AgentRunProductRuntimeSurfaceRebindPort for CompleteAgentProductRuntimeProv
             })
             .await
             .map_err(map_host_error)?;
+        let applied = self
+            .host
+            .apply_prepared_runtime_surface(
+                &request.runtime_thread_id,
+                AgentEffectIdentity::new(format!(
+                    "product-surface:v2:{:x}",
+                    Sha256::digest(request.idempotency_key.as_bytes())
+                ))
+                .map_err(|error| invalid(error.to_string()))?,
+                "product-surface-apply".to_owned(),
+                self.callback_deadline_ms,
+            )
+            .await
+            .map_err(|error| failed(error.to_string()))?;
+        if applied.binding.generation != prepared.recovered_target.generation
+            || applied.binding.source
+                != self
+                    .host
+                    .runtime_source_association(&request.runtime_thread_id)
+                    .await
+                    .map_err(map_host_error)?
+                    .1
+            || applied.binding.applied_surface.revision.0 != request.frame.revision
+        {
+            return Err(AgentRunProductRuntimeProvisioningError::Conflict {
+                reason: "concrete Agent applied surface does not match the Product frame"
+                    .to_owned(),
+            });
+        }
         Ok(AgentRunProductRuntimeSurfaceRebindEvidence {
             target: request.target,
             runtime_thread_id: request.runtime_thread_id,
@@ -390,99 +547,6 @@ impl AgentRunProductRuntimeSurfaceRebindPort for CompleteAgentProductRuntimeProv
             prepared_generation: prepared.recovered_target.generation.0,
             frame: request.frame,
             surface_facts_digest: request.surface_facts.surface_digest,
-        })
-    }
-}
-
-#[async_trait]
-impl CompleteAgentRuntimeRecoveryPlanner for CompleteAgentProductRuntimeProvisioner {
-    async fn plan_recovery(
-        &self,
-        runtime_thread_id: &agentdash_agent_runtime_contract::RuntimeThreadId,
-        previous_target: &CompleteAgentRuntimeTarget,
-        previous_binding: &agentdash_agent_runtime::ManagedRuntimeAgentBinding,
-        effect_id: &agentdash_agent_service_api::AgentEffectIdentity,
-    ) -> Result<CompleteAgentRuntimeTargetRecoveryRequest, CompleteAgentHostError> {
-        if previous_target.runtime_thread_id != *runtime_thread_id
-            || previous_target.generation != previous_binding.generation
-        {
-            return Err(CompleteAgentHostError::Invariant {
-                reason: "Runtime recovery planner received mismatched binding coordinates"
-                    .to_owned(),
-            });
-        }
-        let target = self
-            .prepared_recoveries
-            .read()
-            .await
-            .get(runtime_thread_id)
-            .cloned()
-            .ok_or_else(|| CompleteAgentHostError::DispatchRejected {
-                reason: "Product recovery did not prepare an exact live attachment".to_owned(),
-            })?;
-        if target == previous_target.target
-            || target.definition_id != previous_target.target.definition_id
-            || target.verified_build_digest != previous_target.target.verified_build_digest
-            || target.verified_profile_digest != previous_target.target.verified_profile_digest
-            || target.offer_profile_digest != previous_target.target.offer_profile_digest
-        {
-            return Err(CompleteAgentHostError::DispatchRejected {
-                reason: "prepared recovery attachment is not a distinct compatible target snapshot"
-                    .to_owned(),
-            });
-        }
-        let desired_surface = AgentSurfaceSnapshot {
-            revision: previous_target.bound_surface.revision,
-            digest: previous_target.bound_surface.digest.clone(),
-            requirements: previous_target
-                .bound_surface
-                .contributions
-                .iter()
-                .map(|contribution| AgentSurfaceRequirement {
-                    key: contribution.key.clone(),
-                    required: contribution.required,
-                    minimum_fidelity: contribution.fidelity,
-                    allowed_routes: BTreeSet::from([contribution.route]),
-                    semantics: contribution.semantics.clone(),
-                    payload: contribution.payload.clone(),
-                    payload_digest: contribution.payload_digest.clone(),
-                })
-                .collect(),
-        };
-        let request_digest = AgentPayloadDigest::new(format!(
-            "sha256:{:x}",
-            Sha256::digest(
-                serde_json::to_vec(&serde_json::json!({
-                    "schema": "agentdash.complete-agent-runtime-recovery/v1",
-                    "runtime_thread_id": runtime_thread_id,
-                    "effect_id": effect_id,
-                    "expected_generation": previous_binding.generation,
-                    "previous_target": previous_target.target,
-                    "target": target,
-                    "desired_surface": desired_surface,
-                }))
-                .map_err(|error| CompleteAgentHostError::Encoding {
-                    reason: error.to_string(),
-                })?
-            )
-        ))
-        .map_err(|error| CompleteAgentHostError::Encoding {
-            reason: error.to_string(),
-        })?;
-        Ok(CompleteAgentRuntimeTargetRecoveryRequest {
-            idempotency_key: AgentIdempotencyKey::new(format!(
-                "runtime-recovery:{}",
-                effect_id.as_str()
-            ))
-            .map_err(|error| CompleteAgentHostError::Encoding {
-                reason: error.to_string(),
-            })?,
-            request_digest,
-            runtime_thread_id: runtime_thread_id.clone(),
-            expected_generation: previous_binding.generation,
-            target,
-            desired_surface,
-            callback_deadline_ms: previous_target.callbacks.default_deadline_ms,
         })
     }
 }

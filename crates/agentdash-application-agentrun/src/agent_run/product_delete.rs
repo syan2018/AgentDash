@@ -1,17 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeLifecycleStatus, ManagedRuntimeOperationStatus,
-};
-use agentdash_domain::workflow::{LifecycleAgentRepository, LifecycleRunRepository};
+use agentdash_domain::workflow::LifecycleRunRepository;
 use thiserror::Error;
 use uuid::Uuid;
-
-use super::{
-    AgentRunProductCommand, AgentRunProductCommandFacade, AgentRunProductCommandRequest,
-    AgentRunProductProjectionQueryPort,
-};
-use agentdash_domain::agent_run_target::AgentRunTarget;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunProductDeleteRequest {
@@ -32,38 +23,19 @@ pub enum AgentRunProductDeleteError {
     ProjectMismatch,
     #[error("AgentRun delete repository failed: {0}")]
     Repository(String),
-    #[error("AgentRun Runtime close failed: {0}")]
-    Runtime(String),
-    #[error("AgentRun Runtime close did not reach terminal Closed state")]
-    RuntimeNotClosed,
 }
 
-/// Product aggregate deletion boundary.
+/// Deletes the Product-owned AgentRun aggregate.
 ///
-/// Every Complete Agent is first closed through the durable Product command claim. The stable
-/// command identity makes a partially completed delete replay the same Runtime effects after a
-/// process restart. The LifecycleRun cascade is only executed after every bound Runtime snapshot
-/// proves terminal `Closed`.
+/// A concrete Agent source has its own owner and lifecycle. Product deletion therefore never
+/// depends on Agent availability or a presentation snapshot reaching a derived `Closed` state.
 pub struct AgentRunProductDeleteService {
     runs: Arc<dyn LifecycleRunRepository>,
-    agents: Arc<dyn LifecycleAgentRepository>,
-    projection: Arc<dyn AgentRunProductProjectionQueryPort>,
-    commands: Arc<AgentRunProductCommandFacade>,
 }
 
 impl AgentRunProductDeleteService {
-    pub fn new(
-        runs: Arc<dyn LifecycleRunRepository>,
-        agents: Arc<dyn LifecycleAgentRepository>,
-        projection: Arc<dyn AgentRunProductProjectionQueryPort>,
-        commands: Arc<AgentRunProductCommandFacade>,
-    ) -> Self {
-        Self {
-            runs,
-            agents,
-            projection,
-            commands,
-        }
+    pub fn new(runs: Arc<dyn LifecycleRunRepository>) -> Self {
+        Self { runs }
     }
 
     pub async fn delete(
@@ -84,51 +56,6 @@ impl AgentRunProductDeleteService {
         };
         if run.project_id != request.project_id {
             return Err(AgentRunProductDeleteError::ProjectMismatch);
-        }
-        let agents = self.agents.list_by_run(run.id).await.map_err(repository)?;
-
-        for agent in &agents {
-            let target = AgentRunTarget {
-                run_id: run.id,
-                agent_id: agent.id,
-            };
-            let snapshot = match self.projection.runtime_snapshot(&target).await {
-                Ok(snapshot) => snapshot,
-                Err(super::AgentRunProductProjectionError::TargetNotBound) => continue,
-                Err(error) => {
-                    return Err(AgentRunProductDeleteError::Runtime(error.to_string()));
-                }
-            };
-            if snapshot.lifecycle == ManagedRuntimeLifecycleStatus::Closed {
-                continue;
-            }
-            let receipt = self
-                .commands
-                .execute(AgentRunProductCommandRequest {
-                    target,
-                    client_command_id: format!("agent-run-delete:v1:{}:{}", run.id, agent.id),
-                    command: AgentRunProductCommand::Close,
-                })
-                .await
-                .map_err(|error| AgentRunProductDeleteError::Runtime(error.to_string()))?;
-            if receipt.status != ManagedRuntimeOperationStatus::Succeeded {
-                return Err(AgentRunProductDeleteError::RuntimeNotClosed);
-            }
-        }
-
-        for agent in &agents {
-            let target = AgentRunTarget {
-                run_id: run.id,
-                agent_id: agent.id,
-            };
-            match self.projection.runtime_snapshot(&target).await {
-                Ok(snapshot) if snapshot.lifecycle == ManagedRuntimeLifecycleStatus::Closed => {}
-                Err(super::AgentRunProductProjectionError::TargetNotBound) => {}
-                Ok(_) => return Err(AgentRunProductDeleteError::RuntimeNotClosed),
-                Err(error) => {
-                    return Err(AgentRunProductDeleteError::Runtime(error.to_string()));
-                }
-            }
         }
 
         self.runs.delete(run.id).await.map_err(repository)?;

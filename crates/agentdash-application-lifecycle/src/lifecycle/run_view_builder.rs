@@ -185,15 +185,20 @@ impl LifecycleRunViewQueryService {
             });
         }
 
-        let observation = self
+        let observation = match self
             .deps
             .product_projection
             .runtime_snapshot_observation(target)
             .await
-            .map_err(|error| LifecycleRunViewQueryError::RuntimeProjection {
-                target: target.clone(),
-                message: error.to_string(),
-            })?;
+        {
+            Ok(observation) => observation,
+            Err(_) => {
+                return Ok(RuntimeExecutionTraceView::Stale {
+                    reason: RuntimeTraceStaleReason::ProjectionBindingMissing,
+                    evidence: stale_fence_evidence(target, Some(&binding), None, None),
+                });
+            }
+        };
         match observation {
             AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
                 Ok(RuntimeExecutionTraceView::Stale {
@@ -919,6 +924,18 @@ mod tests {
             let binding = AgentRunProductRuntimeBinding {
                 target: target.clone(),
                 runtime_thread_id: RuntimeThreadId::new(thread).unwrap(),
+                agent:
+                    agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
+                        service_instance_id:
+                            agentdash_agent_service_api::AgentServiceInstanceId::new(
+                                "fixture-agent",
+                            )
+                            .unwrap(),
+                        source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+                            "fixture-source",
+                        )
+                        .unwrap(),
+                    },
                 launch_frame: ProductAgentFrameRef {
                     frame_id: Uuid::new_v4(),
                     agent_id: target.agent_id,
@@ -1221,6 +1238,18 @@ mod tests {
                 AgentRunProductRuntimeBinding {
                     target: target.clone(),
                     runtime_thread_id: RuntimeThreadId::new("thread-after").unwrap(),
+                    agent:
+                        agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
+                            service_instance_id:
+                                agentdash_agent_service_api::AgentServiceInstanceId::new(
+                                    "fixture-agent",
+                                )
+                                .unwrap(),
+                            source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+                                "fixture-source",
+                            )
+                            .unwrap(),
+                        },
                     launch_frame: ProductAgentFrameRef {
                         frame_id: Uuid::new_v4(),
                         agent_id: target.agent_id,

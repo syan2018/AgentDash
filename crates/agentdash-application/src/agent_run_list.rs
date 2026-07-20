@@ -570,6 +570,14 @@ mod tests {
         AgentRunProductRuntimeBinding {
             target: target.clone(),
             runtime_thread_id: snapshot.thread_id.clone(),
+            agent: agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
+                service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+                    "fixture-agent",
+                )
+                .unwrap(),
+                source: agentdash_agent_service_api::AgentSourceCoordinate::new("fixture-source")
+                    .unwrap(),
+            },
             launch_frame: ProductAgentFrameRef {
                 frame_id: Uuid::new_v4(),
                 agent_id: target.agent_id,

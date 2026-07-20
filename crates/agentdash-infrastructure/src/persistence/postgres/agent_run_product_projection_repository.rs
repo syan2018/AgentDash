@@ -1611,6 +1611,14 @@ mod product_binding_persistence_tests {
         let product_binding = AgentRunProductRuntimeBinding {
             target: target.clone(),
             runtime_thread_id: RuntimeThreadId::new(thread_id.clone()).unwrap(),
+            agent: agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
+                service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+                    "fixture-agent",
+                )
+                .unwrap(),
+                source: agentdash_agent_service_api::AgentSourceCoordinate::new("fixture-source")
+                    .unwrap(),
+            },
             launch_frame: agentdash_application_agentrun::agent_run::ProductAgentFrameRef {
                 frame_id: launch_frame_id,
                 agent_id: target.agent_id,
@@ -1657,14 +1665,6 @@ mod product_binding_persistence_tests {
         )
         .bind(launch_frame_id.to_string())
         .bind(target.agent_id.to_string())
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO agent_runtime_state_revision(thread_id,revision,facts)
-             VALUES ($1,1,'{}'::JSONB)",
-        )
-        .bind(&thread_id)
         .execute(&pool)
         .await
         .unwrap();

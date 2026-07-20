@@ -1,8 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use agentdash_agent_runtime_contract::{
-    ManagedAgentRuntimeGateway, ManagedRuntimeReadRequest, RuntimeThreadId,
-};
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_runtime_host::{
     CompleteAgentBindingTarget, CompleteAgentLiveCatalog, CompleteAgentVerificationMethod,
     CompleteAgentVerificationRecord,
@@ -12,10 +10,7 @@ use agentdash_agent_runtime_wire::{
     RuntimeWirePlacementProvenance, RuntimeWireServiceOfferAdvertisement,
 };
 use agentdash_agent_service_api::{AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId};
-use agentdash_application_agentrun::agent_run::{
-    AgentRunProductRuntimeBindingRepository, AgentRunProductRuntimeRecoveryPort,
-    AgentRunProductRuntimeRecoveryRequest, ProductExecutionProfileRef,
-};
+use agentdash_application_agentrun::agent_run::ProductExecutionProfileRef;
 use agentdash_infrastructure::{
     CompleteAgentComposition, CompleteAgentServiceSelectionCatalog,
     PinnedCompleteAgentVerificationCatalog,
@@ -197,75 +192,6 @@ pub struct RuntimeWireCompleteAgentRecoveryRequest {
 pub trait RuntimeWireCompleteAgentRecoveryObserver: Send + Sync {
     async fn recover(&self, request: RuntimeWireCompleteAgentRecoveryRequest)
     -> Result<(), String>;
-}
-
-pub struct ProductRuntimeWireCompleteAgentRecoveryObserver {
-    runtime: Arc<dyn ManagedAgentRuntimeGateway>,
-    bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-    recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort>,
-}
-
-impl ProductRuntimeWireCompleteAgentRecoveryObserver {
-    pub fn new(
-        runtime: Arc<dyn ManagedAgentRuntimeGateway>,
-        bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-        recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort>,
-    ) -> Self {
-        Self {
-            runtime,
-            bindings,
-            recovery,
-        }
-    }
-}
-
-#[async_trait]
-impl RuntimeWireCompleteAgentRecoveryObserver for ProductRuntimeWireCompleteAgentRecoveryObserver {
-    async fn recover(
-        &self,
-        request: RuntimeWireCompleteAgentRecoveryRequest,
-    ) -> Result<(), String> {
-        let binding = self
-            .bindings
-            .load_product_binding_by_runtime_thread(&request.runtime_thread_id)
-            .await?
-            .ok_or_else(|| {
-                format!(
-                    "Product binding is missing for RuntimeThread {}",
-                    request.runtime_thread_id
-                )
-            })?;
-        let snapshot = self
-            .runtime
-            .read(ManagedRuntimeReadRequest {
-                thread_id: request.runtime_thread_id.clone(),
-            })
-            .await
-            .map_err(|error| error.to_string())?;
-        if binding.runtime_thread_id != request.runtime_thread_id
-            || snapshot.thread_id != request.runtime_thread_id
-        {
-            return Err(format!(
-                "Product recovery coordinates drifted for RuntimeThread {}",
-                request.runtime_thread_id
-            ));
-        }
-        let outcome = self
-            .recovery
-            .recover(AgentRunProductRuntimeRecoveryRequest {
-                target: binding.target,
-                client_command_id: request.recovery_id,
-            })
-            .await
-            .map_err(|error| error.to_string())?;
-        if outcome.binding.runtime_thread_id != request.runtime_thread_id {
-            return Err(format!(
-                "Product recovery rebound an unexpected RuntimeThread for {}",
-                request.runtime_thread_id
-            ));
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone)]

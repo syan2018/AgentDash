@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
+use agentdash_agent_runtime::project_authoritative_agent_snapshot;
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeChangeDelta, ManagedRuntimeChangePage, ManagedRuntimeSnapshot,
-    ManagedRuntimeSourceBindingEvidence, RuntimeChangeSequence, RuntimeThreadId,
+    ManagedRuntimeChangePage, ManagedRuntimeSnapshot, RuntimeChangeSequence, RuntimeThreadId,
+};
+use agentdash_agent_service_api::{
+    AgentBindingGeneration, AgentLiveEventStream, AgentReadQuery, AgentServiceInstanceId,
+    CompleteAgentService,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_workspace_module::workspace_module::presentation_protocol::{
@@ -15,10 +19,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::product_protocol::{
-    AgentRunRuntimeProjectionPort, consume_managed_runtime_change_page,
-    consume_managed_runtime_snapshot,
-};
+use super::AgentRunCompleteAgentAssociation;
 use super::terminal_projection_protocol::{
     AgentRunTerminalChangePage, AgentRunTerminalChangeSequence,
     AgentRunTerminalProjectionRepository, AgentRunTerminalSnapshot,
@@ -29,6 +30,7 @@ use super::{ProductAgentFrameRef, ProductExecutionProfileRef};
 pub struct AgentRunProductRuntimeBinding {
     pub target: AgentRunTarget,
     pub runtime_thread_id: RuntimeThreadId,
+    pub agent: AgentRunCompleteAgentAssociation,
     pub launch_frame: ProductAgentFrameRef,
     pub execution_profile: ProductExecutionProfileRef,
     pub execution_profile_digest: String,
@@ -48,6 +50,7 @@ impl AgentRunProductRuntimeBinding {
                 "agent_id": self.target.agent_id,
             },
             "runtime_thread_id": self.runtime_thread_id,
+            "agent": self.agent,
             "launch_frame": self.launch_frame,
             "execution_profile": self.execution_profile,
             "execution_profile_digest": self.execution_profile_digest,
@@ -132,16 +135,29 @@ pub trait AgentRunProductRuntimeBindingStore:
 
 pub struct AgentRunProductProjectionGateway {
     runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-    runtime_projection: Arc<dyn AgentRunRuntimeProjectionPort>,
+    agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
     workspace_presentations: Arc<dyn WorkspaceModulePresentationRepository>,
     workspace_presentation_acknowledgements: Arc<dyn WorkspaceModulePresentationAcknowledgePort>,
     terminals: Arc<dyn AgentRunTerminalProjectionRepository>,
 }
 
+#[async_trait]
+pub trait AgentRunCompleteAgentResolverPort: Send + Sync {
+    async fn resolve(
+        &self,
+        service_instance_id: &AgentServiceInstanceId,
+    ) -> Result<Arc<dyn CompleteAgentService>, String>;
+
+    async fn binding_generation(
+        &self,
+        binding: &AgentRunProductRuntimeBinding,
+    ) -> Result<AgentBindingGeneration, String>;
+}
+
 impl AgentRunProductProjectionGateway {
     pub fn new(
         runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-        runtime_projection: Arc<dyn AgentRunRuntimeProjectionPort>,
+        agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
         workspace_presentations: Arc<dyn WorkspaceModulePresentationRepository>,
         workspace_presentation_acknowledgements: Arc<
             dyn WorkspaceModulePresentationAcknowledgePort,
@@ -150,7 +166,7 @@ impl AgentRunProductProjectionGateway {
     ) -> Self {
         Self {
             runtime_bindings,
-            runtime_projection,
+            agents,
             workspace_presentations,
             workspace_presentation_acknowledgements,
             terminals,
@@ -173,35 +189,25 @@ impl AgentRunProductProjectionGateway {
         Ok(binding)
     }
 
-    async fn current_runtime_source(
-        &self,
-        target: &AgentRunTarget,
-    ) -> Result<ManagedRuntimeSourceBindingEvidence, AgentRunProductProjectionError> {
-        self.runtime_snapshot(target)
-            .await?
-            .source_binding
-            .ok_or(AgentRunProductProjectionError::RuntimeAppliedSurfaceMismatch)
-    }
-
     pub async fn runtime_snapshot(
         &self,
         target: &AgentRunTarget,
     ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
-        let snapshot = self
-            .runtime_projection
-            .load_snapshot(&binding.runtime_thread_id)
+        let service = self
+            .agents
+            .resolve(&binding.agent.service_instance_id)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
-        let snapshot = consume_managed_runtime_snapshot(snapshot)
+        let snapshot = service
+            .read(AgentReadQuery {
+                source: binding.agent.source.clone(),
+                at_revision: None,
+            })
+            .await
             .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
-        if snapshot.thread_id != binding.runtime_thread_id {
-            return Err(AgentRunProductProjectionError::RuntimeThreadMismatch);
-        }
-        if !runtime_applies_product_binding(&binding, snapshot.source_binding.as_ref()) {
-            return Err(AgentRunProductProjectionError::RuntimeAppliedSurfaceMismatch);
-        }
-        Ok(snapshot)
+        project_authoritative_agent_snapshot(binding.runtime_thread_id, snapshot)
+            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))
     }
 
     pub async fn runtime_snapshot_observation(
@@ -219,39 +225,9 @@ impl AgentRunProductProjectionGateway {
             });
         };
         if binding.target != *target {
-            return Ok(AgentRunProductRuntimeSnapshotObservation::Stale(
-                AgentRunProductRuntimeSnapshotStaleEvidence {
-                    requested_target: target.clone(),
-                    product_binding: binding,
-                    observed_snapshot: None,
-                    reason: AgentRunProductRuntimeSnapshotStaleReason::ProductBindingTargetMismatch,
-                },
-            ));
+            return Err(AgentRunProductProjectionError::TargetMismatch);
         }
-        let snapshot = self
-            .runtime_projection
-            .load_snapshot(&binding.runtime_thread_id)
-            .await
-            .map_err(AgentRunProductProjectionError::Runtime)?;
-        let snapshot = consume_managed_runtime_snapshot(snapshot)
-            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
-        let reason = if snapshot.thread_id != binding.runtime_thread_id {
-            Some(AgentRunProductRuntimeSnapshotStaleReason::RuntimeThreadMismatch)
-        } else if !runtime_applies_product_binding(&binding, snapshot.source_binding.as_ref()) {
-            Some(AgentRunProductRuntimeSnapshotStaleReason::RuntimeAppliedSurfaceMismatch)
-        } else {
-            None
-        };
-        if let Some(reason) = reason {
-            return Ok(AgentRunProductRuntimeSnapshotObservation::Stale(
-                AgentRunProductRuntimeSnapshotStaleEvidence {
-                    requested_target: target.clone(),
-                    product_binding: binding,
-                    observed_snapshot: Some(snapshot),
-                    reason,
-                },
-            ));
-        }
+        let snapshot = self.runtime_snapshot(target).await?;
         Ok(AgentRunProductRuntimeSnapshotObservation::Current {
             product_binding: binding,
             snapshot,
@@ -277,17 +253,12 @@ impl AgentRunProductProjectionGateway {
         if binding.target != *target {
             return Ok(None);
         }
-        let snapshot = self
-            .runtime_projection
-            .load_snapshot(&binding.runtime_thread_id)
-            .await
-            .map_err(AgentRunProductProjectionError::Runtime)?;
-        let snapshot = consume_managed_runtime_snapshot(snapshot)
-            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
-        if snapshot.thread_id != binding.runtime_thread_id {
-            return Ok(None);
+        match self.runtime_snapshot(target).await {
+            Ok(snapshot) => Ok(Some(snapshot)),
+            Err(AgentRunProductProjectionError::Runtime(_))
+            | Err(AgentRunProductProjectionError::TargetNotBound) => Ok(None),
+            Err(error) => Err(error),
         }
-        Ok(Some(snapshot))
     }
 
     pub async fn runtime_changes(
@@ -296,65 +267,41 @@ impl AgentRunProductProjectionGateway {
         after: Option<RuntimeChangeSequence>,
     ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
-        let snapshot = self
-            .runtime_projection
-            .load_snapshot(&binding.runtime_thread_id)
+        let next = after.unwrap_or(RuntimeChangeSequence(0));
+        Ok(ManagedRuntimeChangePage {
+            thread_id: binding.runtime_thread_id,
+            changes: Vec::new(),
+            next,
+            gap: None,
+        })
+    }
+
+    pub async fn runtime_live_events(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError> {
+        let binding = self.binding(target).await?;
+        let service = self
+            .agents
+            .resolve(&binding.agent.service_instance_id)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
-        let snapshot = consume_managed_runtime_snapshot(snapshot)
-            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
-        if snapshot.thread_id != binding.runtime_thread_id {
-            return Err(AgentRunProductProjectionError::RuntimeThreadMismatch);
-        }
-        if !runtime_applies_product_binding(&binding, snapshot.source_binding.as_ref()) {
-            return Err(AgentRunProductProjectionError::RuntimeAppliedSurfaceMismatch);
-        }
-        let page = self
-            .runtime_projection
-            .load_changes(&binding.runtime_thread_id, after)
+        service
+            .live_events(binding.agent.source)
             .await
-            .map_err(AgentRunProductProjectionError::Runtime)?;
-        let page = consume_managed_runtime_change_page(page)
-            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
-        if page.thread_id != binding.runtime_thread_id
-            || page
-                .changes
-                .iter()
-                .any(|change| change.thread_id != binding.runtime_thread_id)
-        {
-            return Err(AgentRunProductProjectionError::RuntimeThreadMismatch);
-        }
-        if page.changes.iter().any(|change| {
-            matches!(
-                &change.delta,
-                ManagedRuntimeChangeDelta::SourceBindingChanged { binding: changed }
-                    if !runtime_applies_product_binding(&binding, changed.as_ref())
-            )
-        }) {
-            return Err(AgentRunProductProjectionError::RuntimeAppliedSurfaceMismatch);
-        }
-        Ok(page)
+            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))
     }
 
     pub async fn workspace_presentation_snapshot(
         &self,
         target: &AgentRunTarget,
     ) -> Result<WorkspaceModulePresentationSnapshot, AgentRunProductProjectionError> {
-        let binding = self.binding(target).await?;
-        let runtime_source = self.current_runtime_source(target).await?;
         let snapshot = self
             .workspace_presentations
             .load_snapshot(target)
             .await
             .map_err(|error| AgentRunProductProjectionError::Workspace(error.to_string()))?;
-        if snapshot.target != *target
-            || snapshot.pending_intents.iter().any(|pending| {
-                pending.intent.target != *target
-                    || pending.intent.currentness_fence.runtime_thread_id
-                        != binding.runtime_thread_id
-                    || pending.intent.currentness_fence.source_ref != runtime_source.source_ref
-            })
-        {
+        if snapshot.target != *target {
             return Err(AgentRunProductProjectionError::TargetMismatch);
         }
         Ok(snapshot)
@@ -366,21 +313,12 @@ impl AgentRunProductProjectionGateway {
         after: Option<WorkspaceModulePresentationChangeSequence>,
         limit: usize,
     ) -> Result<WorkspaceModulePresentationChangePage, AgentRunProductProjectionError> {
-        let binding = self.binding(target).await?;
-        let runtime_source = self.current_runtime_source(target).await?;
         let page = self
             .workspace_presentations
             .load_changes(target, after, limit)
             .await
             .map_err(|error| AgentRunProductProjectionError::Workspace(error.to_string()))?;
-        if page.target != *target
-            || page.changes.iter().any(|change| {
-                change.target != *target
-                    || change.intent.currentness_fence.runtime_thread_id
-                        != binding.runtime_thread_id
-                    || change.intent.currentness_fence.source_ref != runtime_source.source_ref
-            })
-        {
+        if page.target != *target || page.changes.iter().any(|change| change.target != *target) {
             return Err(AgentRunProductProjectionError::TargetMismatch);
         }
         Ok(page)
@@ -390,19 +328,13 @@ impl AgentRunProductProjectionGateway {
         &self,
         request: WorkspaceModulePresentationAcknowledgeRequest,
     ) -> Result<WorkspaceModulePresentationChange, AgentRunProductProjectionError> {
-        let binding = self.binding(&request.target).await?;
-        let runtime_source = self.current_runtime_source(&request.target).await?;
         let target = request.target.clone();
         let change = self
             .workspace_presentation_acknowledgements
             .acknowledge(request)
             .await
             .map_err(|error| AgentRunProductProjectionError::Workspace(error.to_string()))?;
-        if change.target != target
-            || change.intent.target != target
-            || change.intent.currentness_fence.runtime_thread_id != binding.runtime_thread_id
-            || change.intent.currentness_fence.source_ref != runtime_source.source_ref
-        {
+        if change.target != target || change.intent.target != target {
             return Err(AgentRunProductProjectionError::TargetMismatch);
         }
         Ok(change)
@@ -412,19 +344,16 @@ impl AgentRunProductProjectionGateway {
         &self,
         target: &AgentRunTarget,
     ) -> Result<AgentRunTerminalSnapshot, AgentRunProductProjectionError> {
-        let binding = self.binding(target).await?;
-        let runtime_source = self.current_runtime_source(target).await?;
         let snapshot = self
             .terminals
             .load_snapshot(target)
             .await
             .map_err(|error| AgentRunProductProjectionError::Terminal(error.to_string()))?;
         if snapshot.target != *target
-            || snapshot.terminals.iter().any(|terminal| {
-                terminal.owner.target != *target
-                    || terminal.owner.runtime_thread_id != binding.runtime_thread_id
-                    || terminal.owner.source_binding != runtime_source
-            })
+            || snapshot
+                .terminals
+                .iter()
+                .any(|terminal| terminal.owner.target != *target)
         {
             return Err(AgentRunProductProjectionError::TargetMismatch);
         }
@@ -437,35 +366,21 @@ impl AgentRunProductProjectionGateway {
         after: Option<AgentRunTerminalChangeSequence>,
         limit: usize,
     ) -> Result<AgentRunTerminalChangePage, AgentRunProductProjectionError> {
-        let binding = self.binding(target).await?;
-        let runtime_source = self.current_runtime_source(target).await?;
         let page = self
             .terminals
             .load_changes(target, after, limit)
             .await
             .map_err(|error| AgentRunProductProjectionError::Terminal(error.to_string()))?;
         if page.target != *target
-            || page.changes.iter().any(|change| {
-                change.target != *target
-                    || change.delta.owner().target != *target
-                    || change.delta.owner().runtime_thread_id != binding.runtime_thread_id
-                    || change.delta.owner().source_binding != runtime_source
-            })
+            || page
+                .changes
+                .iter()
+                .any(|change| change.target != *target || change.delta.owner().target != *target)
         {
             return Err(AgentRunProductProjectionError::TargetMismatch);
         }
         Ok(page)
     }
-}
-
-fn runtime_applies_product_binding(
-    binding: &AgentRunProductRuntimeBinding,
-    source: Option<&ManagedRuntimeSourceBindingEvidence>,
-) -> bool {
-    source.is_some_and(|source| {
-        source.activated_at_revision.is_some()
-            && source.applied_surface_revision.0 == binding.launch_frame.revision
-    })
 }
 
 #[async_trait]
@@ -497,6 +412,10 @@ pub trait AgentRunProductProjectionQueryPort: Send + Sync {
         target: &AgentRunTarget,
         after: Option<RuntimeChangeSequence>,
     ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError>;
+    async fn runtime_live_events(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError>;
     async fn workspace_presentation_snapshot(
         &self,
         target: &AgentRunTarget,
@@ -552,6 +471,13 @@ impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
         after: Option<RuntimeChangeSequence>,
     ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
         AgentRunProductProjectionGateway::runtime_changes(self, target, after).await
+    }
+
+    async fn runtime_live_events(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError> {
+        AgentRunProductProjectionGateway::runtime_live_events(self, target).await
     }
 
     async fn workspace_presentation_snapshot(
@@ -656,6 +582,16 @@ mod product_runtime_binding_digest_tests {
                 target: target.clone(),
                 runtime_thread_id: RuntimeThreadId::new("thread-canonical-digest")
                     .expect("runtime thread"),
+                agent: crate::agent_run::AgentRunCompleteAgentAssociation {
+                    service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+                        "fixture-agent",
+                    )
+                    .unwrap(),
+                    source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+                        "fixture-source",
+                    )
+                    .unwrap(),
+                },
                 launch_frame: ProductAgentFrameRef {
                     frame_id,
                     agent_id: target.agent_id,

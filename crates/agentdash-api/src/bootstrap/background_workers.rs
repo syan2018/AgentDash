@@ -4,13 +4,10 @@ use std::time::Duration;
 
 use crate::app_state::AppState;
 
-const RUNTIME_PRODUCT_CHANGE_BATCH_LIMIT: usize = 64;
-const RUNTIME_PRODUCT_CHANGE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const WORKFLOW_RECOVERY_BATCH_LIMIT: usize = 64;
 const WORKFLOW_RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const AGENT_RUN_PRODUCT_PROTOCOL_RECOVERY_BATCH_LIMIT: usize = 64;
 const AGENT_RUN_PRODUCT_PROTOCOL_RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const AGENT_RUN_PRODUCT_INPUT_RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const COMPANION_CONTINUATION_RECOVERY_BATCH_LIMIT: usize = 64;
 const COMPANION_CONTINUATION_RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -134,47 +131,7 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
         }
     });
 
-    let product_projection = state
-        .services
-        .agent_run_product_projection_composition
-        .clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(RUNTIME_PRODUCT_CHANGE_POLL_INTERVAL);
-        loop {
-            interval.tick().await;
-            loop {
-                match product_projection
-                    .drain_runtime_change_outbox(RUNTIME_PRODUCT_CHANGE_BATCH_LIMIT)
-                    .await
-                {
-                    Ok(count) if count == RUNTIME_PRODUCT_CHANGE_BATCH_LIMIT => {
-                        tokio::task::yield_now().await;
-                    }
-                    Ok(_) => break,
-                    Err(err) => {
-                        let context = DiagnosticErrorContext::new(
-                            "background_workers.runtime_product_change",
-                            "drain_runtime_change_outbox",
-                        );
-                        diag_error!(
-                            Warn,
-                            Subsystem::Api,
-                            context = &context,
-                            error = &err,
-                            "投递 Managed Runtime Product change 失败"
-                        );
-                        break;
-                    }
-                }
-            }
-        }
-    });
-
     let agent_run_product_protocol = state.services.agent_run_product_protocol.clone();
-    let agent_run_product_recovery_advancement = state
-        .services
-        .agent_run_product_recovery_advancement
-        .clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(AGENT_RUN_PRODUCT_PROTOCOL_RECOVERY_POLL_INTERVAL);
         loop {
@@ -182,7 +139,6 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
             let worker =
                 agentdash_application_agentrun::agent_run::AgentRunProductProtocolRecoveryWorker::new(
                     agent_run_product_protocol.as_ref(),
-                    agent_run_product_recovery_advancement.as_ref(),
                 );
             match worker
                 .advance_batch(AGENT_RUN_PRODUCT_PROTOCOL_RECOVERY_BATCH_LIMIT)
@@ -215,30 +171,6 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
                         "扫描 AgentRun Product protocol saga 失败"
                     );
                 }
-            }
-        }
-    });
-
-    let agent_run_product_input_delivery = state.services.agent_run_product_input_delivery.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(AGENT_RUN_PRODUCT_INPUT_RECOVERY_POLL_INTERVAL);
-        loop {
-            interval.tick().await;
-            if let Err(error) = agent_run_product_input_delivery
-                .recover_promoted_once()
-                .await
-            {
-                let context = DiagnosticErrorContext::new(
-                    "background_workers.agent_run_product_input_recovery",
-                    "recover_promoted_once",
-                );
-                diag_error!(
-                    Warn,
-                    Subsystem::Api,
-                    context = &context,
-                    error = &error,
-                    "恢复已提升的 Product mailbox 输入失败"
-                );
             }
         }
     });

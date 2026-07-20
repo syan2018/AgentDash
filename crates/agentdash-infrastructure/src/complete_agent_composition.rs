@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
+use agentdash_agent_runtime::ProcessManagedRuntimeStateRepository;
 use agentdash_agent_runtime_contract::{ManagedAgentRuntimeGateway, ManagedRuntimeGatewayError};
 use agentdash_agent_runtime_host::{
     CompleteAgentCallbackBroker, CompleteAgentHookHandler, CompleteAgentHost,
@@ -8,6 +9,7 @@ use agentdash_agent_runtime_host::{
     CompleteAgentServiceVerification, CompleteAgentToolHandler, CompleteAgentVerificationError,
     CompleteAgentVerificationRecord, CompleteAgentVerificationRequest,
     CompleteAgentVerifiedBuildEvidence, CompleteAgentVerifiedServiceRegistration,
+    ProcessCompleteAgentCallbackRepository, ProcessCompleteAgentHostRepository,
     ProcessCompleteAgentLiveCatalog, complete_agent_managed_runtime_gateway,
 };
 use agentdash_agent_service_api::{AgentHostCallbacks, AgentServiceInstanceId};
@@ -16,14 +18,8 @@ use agentdash_integration_api::{
     CompleteAgentRegistrationContribution,
 };
 use async_trait::async_trait;
-use sqlx::PgPool;
 use thiserror::Error;
 use tokio::sync::RwLock;
-
-use crate::{
-    PostgresCompleteAgentCallbackRepository, PostgresCompleteAgentHostRepository,
-    PostgresManagedRuntimeStateRepository,
-};
 
 #[derive(Debug, Error)]
 pub enum CompleteAgentCompositionError {
@@ -256,15 +252,14 @@ fn template_matches(
             == request.claimed_conformance_suite_revision
 }
 
-/// Final production kernel for Managed Runtime and Complete Agent coordination.
+/// Production kernel for process-local Runtime/Host coordination.
 ///
-/// The process registry contains live handles only. Every service descriptor, placement,
-/// binding, generation, effect, callback and normalized Runtime fact is recovered from the three
-/// PostgreSQL repositories.
+/// Concrete Agents own source history and effect inspection. Runtime/Host state intentionally
+/// disappears with this process, fencing old routes and forcing authoritative reconstruction.
 pub struct CompleteAgentComposition {
-    pub runtime_repository: Arc<PostgresManagedRuntimeStateRepository>,
-    pub host_repository: Arc<PostgresCompleteAgentHostRepository>,
-    pub callback_repository: Arc<PostgresCompleteAgentCallbackRepository>,
+    pub runtime_repository: Arc<ProcessManagedRuntimeStateRepository>,
+    pub host_repository: Arc<ProcessCompleteAgentHostRepository>,
+    pub callback_repository: Arc<ProcessCompleteAgentCallbackRepository>,
     pub live_catalog: Arc<ProcessCompleteAgentLiveCatalog>,
     pub host: Arc<CompleteAgentHost>,
     pub callbacks: Arc<CompleteAgentCallbackBroker>,
@@ -275,7 +270,6 @@ pub struct CompleteAgentComposition {
 
 impl CompleteAgentComposition {
     pub fn build(
-        pool: PgPool,
         tool_handler: Arc<dyn CompleteAgentToolHandler>,
         hook_handler: Arc<dyn CompleteAgentHookHandler>,
         verifier: Arc<dyn CompleteAgentRegistrationVerifier>,
@@ -287,9 +281,9 @@ impl CompleteAgentComposition {
         if host_incarnation_id.trim().is_empty() {
             return Err(CompleteAgentCompositionError::InvalidHostIncarnation);
         }
-        let runtime_repository = Arc::new(PostgresManagedRuntimeStateRepository::new(pool.clone()));
-        let host_repository = Arc::new(PostgresCompleteAgentHostRepository::new(pool.clone()));
-        let callback_repository = Arc::new(PostgresCompleteAgentCallbackRepository::new(pool));
+        let runtime_repository = Arc::new(ProcessManagedRuntimeStateRepository::new());
+        let host_repository = Arc::new(ProcessCompleteAgentHostRepository::new());
+        let callback_repository = Arc::new(ProcessCompleteAgentCallbackRepository::new());
         let live_catalog = Arc::new(ProcessCompleteAgentLiveCatalog::new());
         let host = Arc::new(CompleteAgentHost::new(
             host_repository.clone(),

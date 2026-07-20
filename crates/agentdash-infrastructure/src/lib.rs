@@ -1,11 +1,9 @@
-mod agent_run_product_persistence_composition;
 mod agent_run_product_projection_composition;
 mod complete_agent_composition;
 mod complete_agent_product_hook_handler;
 mod complete_agent_product_provisioning;
 pub mod function_runner;
 pub mod hooks;
-mod managed_runtime_product_change_delivery;
 pub mod mcp;
 pub mod migration;
 pub mod persistence;
@@ -20,7 +18,6 @@ pub mod skill_source;
 pub mod storage;
 pub mod workflow_scripts;
 
-pub use agent_run_product_persistence_composition::AgentRunProductPersistenceComposition;
 pub use agent_run_product_projection_composition::AgentRunProductProjectionComposition;
 pub use complete_agent_composition::{
     CompleteAgentComposition, CompleteAgentCompositionError, CompleteAgentVerificationTemplate,
@@ -43,7 +40,6 @@ pub use persistence::postgres::PostgresAgentRunLineageRepository;
 pub use persistence::postgres::PostgresAgentRunMailboxRepository;
 pub use persistence::postgres::PostgresAgentRunMessageSubmissionStore;
 pub use persistence::postgres::PostgresAgentRunProductRuntimeBindingRepository;
-pub use persistence::postgres::PostgresAgentRunProductRuntimeRecoverySagaRepository;
 pub use persistence::postgres::PostgresAgentRunTerminalProjectionStore;
 pub use persistence::postgres::PostgresAuthSessionRepository;
 pub use persistence::postgres::PostgresBackendExecutionLeaseRepository;
@@ -52,8 +48,6 @@ pub use persistence::postgres::PostgresCanvasRepository;
 pub use persistence::postgres::PostgresCanvasRuntimeStateRepository;
 pub use persistence::postgres::PostgresCompanionContinuationSagaRepository;
 pub use persistence::postgres::PostgresCompanionFreshSagaRepository;
-pub use persistence::postgres::PostgresCompleteAgentCallbackRepository;
-pub use persistence::postgres::PostgresCompleteAgentHostRepository;
 pub use persistence::postgres::PostgresExtensionPackageArtifactRepository;
 pub use persistence::postgres::PostgresInlineFileRepository;
 pub use persistence::postgres::PostgresLifecycleAgentRepository;
@@ -61,10 +55,7 @@ pub use persistence::postgres::PostgresLifecycleGateRepository;
 pub use persistence::postgres::PostgresLifecycleSubjectAssociationRepository;
 pub use persistence::postgres::PostgresLlmProviderCredentialRepository;
 pub use persistence::postgres::PostgresLlmProviderRepository;
-pub use persistence::postgres::PostgresManagedRuntimeStateRepository;
 pub use persistence::postgres::PostgresMcpPresetRepository;
-pub use persistence::postgres::PostgresProductMailboxRepository;
-pub use persistence::postgres::PostgresProductRuntimeCommandClaimRepository;
 pub use persistence::postgres::PostgresProjectAgentRepository;
 pub use persistence::postgres::PostgresProjectBackendAccessRepository;
 pub use persistence::postgres::PostgresProjectExtensionInstallationRepository;

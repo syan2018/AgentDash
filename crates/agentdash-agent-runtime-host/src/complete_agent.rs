@@ -972,6 +972,123 @@ impl CompleteAgentHost {
             })
     }
 
+    /// Returns the concrete Agent authority created for a process-local Runtime route.
+    ///
+    /// Product persists these two stable coordinates. Attachment, generation and surface routing
+    /// remain Host-local and are intentionally excluded.
+    pub async fn runtime_source_association(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+    ) -> Result<(AgentServiceInstanceId, AgentSourceCoordinate), CompleteAgentHostError> {
+        let target = self.runtime_target(runtime_thread_id).await?;
+        let binding_id = runtime_binding_id(runtime_thread_id, target.generation)?;
+        let binding = self.binding(&binding_id).await?.ok_or_else(|| {
+            CompleteAgentHostError::UnknownBinding {
+                binding_id: binding_id.as_str().to_owned(),
+            }
+        })?;
+        if binding.target != target.target || binding.generation != target.generation {
+            return Err(CompleteAgentHostError::DispatchRejected {
+                reason: "created Agent source does not belong to the current Runtime route"
+                    .to_owned(),
+            });
+        }
+        Ok((binding.target.logical_instance_id, binding.source))
+    }
+
+    pub async fn runtime_binding_generation(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+        source: &AgentSourceCoordinate,
+    ) -> Result<AgentBindingGeneration, CompleteAgentHostError> {
+        let target = self.runtime_target(runtime_thread_id).await?;
+        let binding_id = runtime_binding_id(runtime_thread_id, target.generation)?;
+        let binding = self.binding(&binding_id).await?.ok_or_else(|| {
+            CompleteAgentHostError::UnknownBinding {
+                binding_id: binding_id.as_str().to_owned(),
+            }
+        })?;
+        if &binding.source != source
+            || binding.target != target.target
+            || binding.generation != target.generation
+        {
+            return Err(CompleteAgentHostError::DispatchRejected {
+                reason: "Agent command route is not current for this source".to_owned(),
+            });
+        }
+        Ok(binding.generation)
+    }
+
+    /// Rebuilds the current Host incarnation route for an existing concrete Agent source.
+    pub async fn restore_runtime_source_route(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+        source: AgentSourceCoordinate,
+        effect_id: AgentEffectIdentity,
+        dispatch_owner: String,
+        lease_duration_ms: u64,
+    ) -> Result<AgentBindingGeneration, CompleteAgentHostError> {
+        let target = self.runtime_target(runtime_thread_id).await?;
+        let context = ManagedRuntimeDispatchContext {
+            runtime_thread_id: runtime_thread_id.clone(),
+            effect_id,
+            dispatch_owner,
+            now_ms: current_time_ms(),
+            lease_duration_ms,
+        };
+        self.provision_runtime_binding(&context, &target, source)
+            .await
+            .map(|binding| binding.generation)
+    }
+
+    /// Applies a surface replacement already prepared for the current process.
+    ///
+    /// The previous binding is process-local routing evidence; the concrete Agent remains the
+    /// owner of the applied-surface receipt and effect inspection.
+    pub async fn apply_prepared_runtime_surface(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+        effect_id: AgentEffectIdentity,
+        dispatch_owner: String,
+        lease_duration_ms: u64,
+    ) -> Result<ManagedRuntimeRebindOutcome, ManagedRuntimeLifecycleError> {
+        let current = self
+            .runtime_target(runtime_thread_id)
+            .await
+            .map_err(map_lifecycle_host_error)?;
+        let previous_generation = current
+            .generation
+            .0
+            .checked_sub(1)
+            .filter(|generation| *generation > 0)
+            .ok_or_else(|| ManagedRuntimeLifecycleError::Invalid {
+                reason: "prepared surface replacement has no previous binding".to_owned(),
+            })?;
+        let previous_binding_id = runtime_binding_id(
+            runtime_thread_id,
+            AgentBindingGeneration(previous_generation),
+        )
+        .map_err(map_lifecycle_host_error)?;
+        let previous_binding = self
+            .binding(&previous_binding_id)
+            .await
+            .map_err(map_lifecycle_host_error)?
+            .and_then(managed_binding_from_host)
+            .ok_or(ManagedRuntimeLifecycleError::NotFound)?;
+        ManagedRuntimeLifecyclePort::rebind(
+            self,
+            ManagedRuntimeDispatchContext {
+                runtime_thread_id: runtime_thread_id.clone(),
+                effect_id,
+                dispatch_owner,
+                now_ms: current_time_ms(),
+                lease_duration_ms,
+            },
+            previous_binding,
+        )
+        .await
+    }
+
     pub async fn lifecycle_effect(
         &self,
         effect_id: &AgentEffectIdentity,

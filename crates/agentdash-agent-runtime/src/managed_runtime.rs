@@ -141,6 +141,46 @@ pub trait ManagedRuntimeStateRepository: Send + Sync {
     ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError>;
 }
 
+/// Process-local Runtime transaction state.
+///
+/// The state exists only to coordinate concurrent calls in the current process. It is discarded
+/// on restart and must never be treated as Agent history or Product recovery evidence.
+#[derive(Default)]
+pub struct ProcessManagedRuntimeStateRepository {
+    threads: tokio::sync::RwLock<BTreeMap<RuntimeThreadId, ManagedRuntimeStateSnapshot>>,
+}
+
+impl ProcessManagedRuntimeStateRepository {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl ManagedRuntimeStateRepository for ProcessManagedRuntimeStateRepository {
+    async fn load(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+        Ok(self
+            .threads
+            .read()
+            .await
+            .get(thread_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn commit(
+        &self,
+        commit: ManagedRuntimeStateCommit,
+    ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
+        let mut threads = self.threads.write().await;
+        let current = threads.entry(commit.thread_id.clone()).or_default();
+        apply_managed_runtime_state_commit(current, commit)
+    }
+}
+
 pub fn encode_managed_runtime_state_snapshot(
     snapshot: &ManagedRuntimeStateSnapshot,
 ) -> Result<serde_json::Value, ManagedRuntimeStateStoreError> {

@@ -26,13 +26,7 @@ export type ManagedRuntimeChangeGap = { requested_after: RuntimeChangeSequence |
 
 export type ManagedRuntimeChangePage = { thread_id: RuntimeThreadId, changes: Array<ManagedRuntimePlatformChange>, next: RuntimeChangeSequence, gap: ManagedRuntimeChangeGap | null, };
 
-export type ManagedRuntimeChangesRequest = { thread_id: RuntimeThreadId, after: RuntimeChangeSequence | null, limit: number, };
-
-export type ManagedRuntimeCommand = { "kind": "create", initial_context: ManagedRuntimeInitialContextPackage | null, } | { "kind": "resume" } | { "kind": "rebind" } | { "kind": "activate" } | { "kind": "submit_input", content: Array<ManagedRuntimeContentBlock>, } | { "kind": "steer", expected_turn_id: RuntimeTurnId, content: Array<ManagedRuntimeContentBlock>, } | { "kind": "interrupt", expected_turn_id: RuntimeTurnId, } | { "kind": "request_compaction" } | { "kind": "resolve_interaction", interaction_id: RuntimeInteractionId, response: ManagedRuntimeInteractionResponse, } | { "kind": "close" } | { "kind": "fork", child_thread_id: RuntimeThreadId, through_completed_turn_id: RuntimeTurnId | null, };
-
 export type ManagedRuntimeCommandAvailability = { "status": "available", evidence: ManagedRuntimeAvailabilityEvidence, } | { "status": "unavailable", reason: ManagedRuntimeUnavailabilityReason, evidence: ManagedRuntimeAvailabilityEvidence, };
-
-export type ManagedRuntimeCommandEnvelope = { operation_id: RuntimeOperationId, idempotency_key: RuntimeIdempotencyKey, thread_id: RuntimeThreadId, command: ManagedRuntimeCommand, };
 
 export type ManagedRuntimeCommandKind = "create" | "resume" | "rebind" | "activate" | "submit_input" | "steer" | "interrupt" | "request_compaction" | "resolve_interaction" | "close" | "fork";
 
@@ -44,7 +38,7 @@ export type ManagedRuntimeContextAuthority = "agent_history" | "agent_snapshot" 
 
 export type ManagedRuntimeContextProvenance = { authority: ManagedRuntimeContextAuthority, source: RuntimeContextSourceRef, revision: RuntimeContextSourceRevision, digest: RuntimePayloadDigest, };
 
-export type ManagedRuntimeContractSchema = { command: ManagedRuntimeCommandEnvelope, operation_receipt: ManagedRuntimeOperationReceipt, read: ManagedRuntimeReadRequest, changes: ManagedRuntimeChangesRequest, error: ManagedRuntimeGatewayError, snapshot: ManagedRuntimeSnapshot, change_page: ManagedRuntimeChangePage, };
+export type ManagedRuntimeContractSchema = { initial_context: ManagedRuntimeInitialContextPackage, interaction_response: ManagedRuntimeInteractionResponse, operation_receipt: ManagedRuntimeOperationReceipt, snapshot: ManagedRuntimeSnapshot, };
 
 export type ManagedRuntimeEntityStatus = "accepted" | "running" | "completed" | "failed" | "interrupted" | "lost";
 
@@ -59,8 +53,6 @@ export type ManagedRuntimeFileSearchMode = "grep" | "glob";
 export type ManagedRuntimeForkCutoff = { "kind": "head" } | { "kind": "completed_turn", turn_id: RuntimeTurnId, };
 
 export type ManagedRuntimeForkProgressEvidence = { "status": "child_known", child_thread_id: RuntimeThreadId, child_source_ref: RuntimeSourceRef, cutoff: ManagedRuntimeForkCutoff, child_history_digest: RuntimePayloadDigest | null, } | { "status": "provisioned", child_thread_id: RuntimeThreadId, child_binding: ManagedRuntimeSourceBindingEvidence, cutoff: ManagedRuntimeForkCutoff, child_history_digest: RuntimePayloadDigest, };
-
-export type ManagedRuntimeGatewayError = { "kind": "conflict", actual: RuntimeProjectionRevision, } | { "kind": "not_found" } | { "kind": "unavailable", reason: string, } | { "kind": "invalid", reason: string, } | { "kind": "persistence", reason: string, };
 
 export type ManagedRuntimeInitialContextAppliedFidelity = { "typed_native": { applied_digest: RuntimePayloadDigest, } } | { "canonical_rendered": { renderer_version: string, rendered_digest: RuntimePayloadDigest, } };
 
@@ -130,8 +122,6 @@ export type ManagedRuntimeProjectionSchema = { snapshot: ManagedRuntimeSnapshot,
 
 export type ManagedRuntimeProjectionSection = "snapshot" | "thread_name" | "lifecycle" | "active_turn" | "turns" | "items" | "interactions" | "surface" | "conversation_presentation";
 
-export type ManagedRuntimeReadRequest = { thread_id: RuntimeThreadId, };
-
 export type ManagedRuntimeReviewFinding = { title: string, body: string, path: string | null, line: number | null, severity: string | null, };
 
 export type ManagedRuntimeSnapshot = { thread_id: RuntimeThreadId, revision: RuntimeProjectionRevision, latest_change_sequence: RuntimeChangeSequence, captured_at_ms: RuntimeU64, lifecycle: ManagedRuntimeLifecycleStatus, active_turn_id: RuntimeTurnId | null, turns: Array<ManagedRuntimeTurn>, items: Array<ManagedRuntimeItem>, interactions: Array<ManagedRuntimeInteraction>, thread_name: string | null, thread_name_source: ManagedRuntimeThreadNameSource | null, operations: Array<ManagedRuntimeOperation>, source_binding: ManagedRuntimeSourceBindingEvidence | null, authority: ManagedRuntimeProjectionAuthority, fidelity: ManagedRuntimeProjectionFidelity, command_availability: { [key in ManagedRuntimeCommandKind]?: ManagedRuntimeCommandAvailability }, conversation_history: Array<CanonicalConversationRecord>, };
@@ -157,8 +147,6 @@ export type RuntimeContextPackageId = string;
 export type RuntimeContextSourceRef = string;
 
 export type RuntimeContextSourceRevision = string;
-
-export type RuntimeIdempotencyKey = string;
 
 export type RuntimeInteractionId = string;
 

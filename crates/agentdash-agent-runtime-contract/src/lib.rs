@@ -42,7 +42,6 @@ mod tests {
             "export type RuntimeProjectionRevision = RuntimeU64;",
             "export type RuntimeChangeSequence = RuntimeU64;",
             "captured_at_ms: RuntimeU64",
-            "source_change_sequence: RuntimeU64",
         ] {
             assert!(typescript.contains(declaration), "missing {declaration}");
         }

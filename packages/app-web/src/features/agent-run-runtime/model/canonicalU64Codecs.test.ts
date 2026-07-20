@@ -1,16 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  decodeManagedRuntimeChangesRequest,
-  decodeManagedRuntimeCommandEnvelope,
-  decodeManagedRuntimeGatewayError,
   decodeManagedRuntimeOperationReceipt,
   decodeManagedRuntimeChangePage,
   decodeManagedRuntimeSnapshot,
-  encodeManagedRuntimeChangesRequest,
-  encodeManagedRuntimeCommandEnvelope,
   encodeManagedRuntimeChangePage,
-  encodeManagedRuntimeGatewayError,
   encodeManagedRuntimeOperationReceipt,
   encodeManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-validators";
@@ -34,13 +28,7 @@ const MAX_U64 = "18446744073709551615";
 const MAX_U64_BIGINT = 18_446_744_073_709_551_615n;
 
 describe("Managed Runtime canonical u64 codecs", () => {
-  it("round-trips command and canonical receipt, cursor, and conflict revisions", () => {
-    const command = decodeManagedRuntimeCommandEnvelope({
-      operation_id: "operation-1",
-      idempotency_key: "idem-1",
-      thread_id: "thread-1",
-      command: { kind: "request_compaction" },
-    });
+  it("round-trips the Product command receipt revision", () => {
     const receipt = decodeManagedRuntimeOperationReceipt({
       operation_id: "operation-1",
       thread_id: "thread-1",
@@ -49,32 +37,11 @@ describe("Managed Runtime canonical u64 codecs", () => {
       evidence: null,
       duplicate: false,
     });
-    const changes = decodeManagedRuntimeChangesRequest({
-      thread_id: "thread-1",
-      after: MAX_U64,
-      limit: 1,
-    });
-    const conflict = decodeManagedRuntimeGatewayError({
-      kind: "conflict",
-      actual: MAX_U64,
-    });
 
-    expect(command.command).toEqual({ kind: "request_compaction" });
     expect(receipt.accepted_revision).toBe(MAX_U64_BIGINT);
-    expect(changes.after).toBe(MAX_U64_BIGINT);
-    expect(conflict).toEqual({
-      kind: "conflict",
-      actual: MAX_U64_BIGINT,
-    });
-    expect(encodeManagedRuntimeCommandEnvelope(command)).toEqual(command);
     expect(encodeManagedRuntimeOperationReceipt(receipt).accepted_revision).toBe(
       MAX_U64,
     );
-    expect(encodeManagedRuntimeChangesRequest(changes).after).toBe(MAX_U64);
-    expect(encodeManagedRuntimeGatewayError(conflict)).toEqual({
-      kind: "conflict",
-      actual: MAX_U64,
-    });
   });
 
   it.each([1, "01", "-1", "18446744073709551616"])(

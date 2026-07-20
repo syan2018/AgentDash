@@ -3,16 +3,12 @@
 import type {
   ManagedRuntimeChangeDelta as ManagedRuntimeChangeDeltaWire,
   ManagedRuntimeChangePage as ManagedRuntimeChangePageWire,
-  ManagedRuntimeChangesRequest as ManagedRuntimeChangesRequestWire,
-  ManagedRuntimeCommandEnvelope as ManagedRuntimeCommandEnvelopeWire,
   ManagedRuntimeCommandAvailability as ManagedRuntimeCommandAvailabilityWire,
   ManagedRuntimeContractSchema as ManagedRuntimeContractSchemaWire,
-  ManagedRuntimeGatewayError as ManagedRuntimeGatewayErrorWire,
   ManagedRuntimeOperation as ManagedRuntimeOperationWire,
   ManagedRuntimeOperationReceipt as ManagedRuntimeOperationReceiptWire,
   ManagedRuntimePlatformChange as ManagedRuntimePlatformChangeWire,
   ManagedRuntimeProjectionSchema as ManagedRuntimeProjectionSchemaWire,
-  ManagedRuntimeReadRequest as ManagedRuntimeReadRequestWire,
   ManagedRuntimeSnapshot as ManagedRuntimeSnapshotWire,
   ManagedRuntimeSourceBindingEvidence as ManagedRuntimeSourceBindingEvidenceWire,
   RuntimeU64,
@@ -26,16 +22,8 @@ type DecodeRuntimeU64<T> =
 
 export type ManagedRuntimeCommandAvailability =
   DecodeRuntimeU64<ManagedRuntimeCommandAvailabilityWire>;
-export type ManagedRuntimeCommandEnvelope =
-  DecodeRuntimeU64<ManagedRuntimeCommandEnvelopeWire>;
 export type ManagedRuntimeOperationReceipt =
   DecodeRuntimeU64<ManagedRuntimeOperationReceiptWire>;
-export type ManagedRuntimeReadRequest =
-  DecodeRuntimeU64<ManagedRuntimeReadRequestWire>;
-export type ManagedRuntimeChangesRequest =
-  DecodeRuntimeU64<ManagedRuntimeChangesRequestWire>;
-export type ManagedRuntimeGatewayError =
-  DecodeRuntimeU64<ManagedRuntimeGatewayErrorWire>;
 export type ManagedRuntimeOperation = DecodeRuntimeU64<ManagedRuntimeOperationWire>;
 export type ManagedRuntimePlatformChange = DecodeRuntimeU64<ManagedRuntimePlatformChangeWire>;
 export type ManagedRuntimeSnapshot = DecodeRuntimeU64<ManagedRuntimeSnapshotWire>;
@@ -220,18 +208,6 @@ function encodeOperation(operation: ManagedRuntimeOperation): ManagedRuntimeOper
   } as ManagedRuntimeOperationWire;
 }
 
-export function decodeManagedRuntimeCommandEnvelope(
-  value: unknown,
-): ManagedRuntimeCommandEnvelope {
-  return record(value, "$") as unknown as ManagedRuntimeCommandEnvelope;
-}
-
-export function encodeManagedRuntimeCommandEnvelope(
-  envelope: ManagedRuntimeCommandEnvelope,
-): ManagedRuntimeCommandEnvelopeWire {
-  return { ...envelope } as ManagedRuntimeCommandEnvelopeWire;
-}
-
 export function decodeManagedRuntimeOperationReceipt(
   value: unknown,
 ): ManagedRuntimeOperationReceipt {
@@ -257,63 +233,6 @@ export function encodeManagedRuntimeOperationReceipt(
     ),
     evidence: encodeOperationEvidence(receipt.evidence),
   } as ManagedRuntimeOperationReceiptWire;
-}
-
-export function decodeManagedRuntimeReadRequest(
-  value: unknown,
-): ManagedRuntimeReadRequest {
-  return record(value, "$") as ManagedRuntimeReadRequest;
-}
-
-export function encodeManagedRuntimeReadRequest(
-  value: ManagedRuntimeReadRequest,
-): ManagedRuntimeReadRequestWire {
-  return value as ManagedRuntimeReadRequestWire;
-}
-
-export function decodeManagedRuntimeChangesRequest(
-  value: unknown,
-): ManagedRuntimeChangesRequest {
-  const request = record(value, "$");
-  return {
-    ...request,
-    after: optionalRuntimeU64(request.after, "$.after"),
-  } as ManagedRuntimeChangesRequest;
-}
-
-export function encodeManagedRuntimeChangesRequest(
-  request: ManagedRuntimeChangesRequest,
-): ManagedRuntimeChangesRequestWire {
-  return {
-    ...request,
-    after:
-      request.after === null
-        ? null
-        : encodeRuntimeU64(request.after, "$.after"),
-  } as ManagedRuntimeChangesRequestWire;
-}
-
-export function decodeManagedRuntimeGatewayError(
-  value: unknown,
-): ManagedRuntimeGatewayError {
-  const error = record(value, "$");
-  return (error.kind === "conflict"
-    ? {
-        ...error,
-        actual: runtimeU64(error.actual, "$.actual"),
-      }
-    : error) as ManagedRuntimeGatewayError;
-}
-
-export function encodeManagedRuntimeGatewayError(
-  error: ManagedRuntimeGatewayError,
-): ManagedRuntimeGatewayErrorWire {
-  return (error.kind === "conflict"
-    ? {
-        ...error,
-        actual: encodeRuntimeU64(error.actual, "$.actual"),
-      }
-    : error) as ManagedRuntimeGatewayErrorWire;
 }
 
 function decodeAvailability(value: unknown, path: string): ManagedRuntimeCommandAvailability {
@@ -1278,29 +1197,26 @@ export function decodeManagedRuntimeContractSchema(
 ): ManagedRuntimeContractSchema {
   const root = record(value, "$");
   return {
-    command: decodeManagedRuntimeCommandEnvelope(root.command),
+    initial_context: record(root.initial_context, "$.initial_context"),
+    interaction_response: record(
+      root.interaction_response,
+      "$.interaction_response",
+    ),
     operation_receipt: decodeManagedRuntimeOperationReceipt(root.operation_receipt),
-    read: decodeManagedRuntimeReadRequest(root.read),
-    changes: decodeManagedRuntimeChangesRequest(root.changes),
-    error: decodeManagedRuntimeGatewayError(root.error),
     snapshot: decodeManagedRuntimeSnapshot(root.snapshot),
-    change_page: decodeManagedRuntimeChangePage(root.change_page),
-  };
+  } as ManagedRuntimeContractSchema;
 }
 
 export function encodeManagedRuntimeContractSchema(
   value: ManagedRuntimeContractSchema,
 ): ManagedRuntimeContractSchemaWire {
   return {
-    command: encodeManagedRuntimeCommandEnvelope(value.command),
+    initial_context: value.initial_context,
+    interaction_response: value.interaction_response,
     operation_receipt: encodeManagedRuntimeOperationReceipt(
       value.operation_receipt,
     ),
-    read: encodeManagedRuntimeReadRequest(value.read),
-    changes: encodeManagedRuntimeChangesRequest(value.changes),
-    error: encodeManagedRuntimeGatewayError(value.error),
     snapshot: encodeManagedRuntimeSnapshot(value.snapshot),
-    change_page: encodeManagedRuntimeChangePage(value.change_page),
   };
 }
 

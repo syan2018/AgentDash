@@ -1,16 +1,13 @@
-use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 use ts_rs::TS;
 
 use crate::{
-    ManagedRuntimeChangePage, ManagedRuntimeContentBlock, ManagedRuntimeOperationStatus,
-    ManagedRuntimeSnapshot, RuntimeChangeSequence, RuntimeContextContributionId,
-    RuntimeContextPackageId, RuntimeContextSourceRef, RuntimeContextSourceRevision,
-    RuntimeIdempotencyKey, RuntimeInteractionId, RuntimeOperationId, RuntimePayloadDigest,
-    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
+    ManagedRuntimeContentBlock, ManagedRuntimeOperationStatus, ManagedRuntimeSnapshot,
+    RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
+    RuntimeContextSourceRevision, RuntimeOperationId, RuntimePayloadDigest,
+    RuntimeProjectionRevision, RuntimeThreadId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -133,64 +130,6 @@ pub enum ManagedRuntimeInteractionResponse {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ManagedRuntimeCommand {
-    Create {
-        initial_context: Option<ManagedRuntimeInitialContextPackage>,
-    },
-    Resume,
-    Rebind,
-    Activate,
-    SubmitInput {
-        content: Vec<ManagedRuntimeContentBlock>,
-    },
-    Steer {
-        expected_turn_id: RuntimeTurnId,
-        content: Vec<ManagedRuntimeContentBlock>,
-    },
-    Interrupt {
-        expected_turn_id: RuntimeTurnId,
-    },
-    RequestCompaction,
-    ResolveInteraction {
-        interaction_id: RuntimeInteractionId,
-        response: ManagedRuntimeInteractionResponse,
-    },
-    Close,
-    Fork {
-        child_thread_id: RuntimeThreadId,
-        through_completed_turn_id: Option<RuntimeTurnId>,
-    },
-}
-
-impl ManagedRuntimeCommand {
-    pub fn kind(&self) -> crate::ManagedRuntimeCommandKind {
-        match self {
-            Self::Create { .. } => crate::ManagedRuntimeCommandKind::Create,
-            Self::Resume => crate::ManagedRuntimeCommandKind::Resume,
-            Self::Rebind => crate::ManagedRuntimeCommandKind::Rebind,
-            Self::Activate => crate::ManagedRuntimeCommandKind::Activate,
-            Self::SubmitInput { .. } => crate::ManagedRuntimeCommandKind::SubmitInput,
-            Self::Steer { .. } => crate::ManagedRuntimeCommandKind::Steer,
-            Self::Interrupt { .. } => crate::ManagedRuntimeCommandKind::Interrupt,
-            Self::RequestCompaction => crate::ManagedRuntimeCommandKind::RequestCompaction,
-            Self::ResolveInteraction { .. } => crate::ManagedRuntimeCommandKind::ResolveInteraction,
-            Self::Close => crate::ManagedRuntimeCommandKind::Close,
-            Self::Fork { .. } => crate::ManagedRuntimeCommandKind::Fork,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeCommandEnvelope {
-    pub operation_id: RuntimeOperationId,
-    pub idempotency_key: RuntimeIdempotencyKey,
-    pub thread_id: RuntimeThreadId,
-    pub command: ManagedRuntimeCommand,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ManagedRuntimeOperationReceipt {
@@ -202,63 +141,13 @@ pub struct ManagedRuntimeOperationReceipt {
     pub duplicate: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeReadRequest {
-    pub thread_id: RuntimeThreadId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeChangesRequest {
-    pub thread_id: RuntimeThreadId,
-    pub after: Option<RuntimeChangeSequence>,
-    pub limit: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS, Error)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ManagedRuntimeGatewayError {
-    #[error("managed Runtime command conflicts with revision {actual:?}")]
-    Conflict { actual: RuntimeProjectionRevision },
-    #[error("managed Runtime thread was not found")]
-    NotFound,
-    #[error("managed Runtime command is unavailable: {reason}")]
-    Unavailable { reason: String },
-    #[error("managed Runtime request is invalid: {reason}")]
-    Invalid { reason: String },
-    #[error("managed Runtime persistence failed: {reason}")]
-    Persistence { reason: String },
-}
-
-#[async_trait]
-pub trait ManagedAgentRuntimeGateway: Send + Sync {
-    async fn execute(
-        &self,
-        command: ManagedRuntimeCommandEnvelope,
-    ) -> Result<ManagedRuntimeOperationReceipt, ManagedRuntimeGatewayError>;
-
-    async fn read(
-        &self,
-        request: ManagedRuntimeReadRequest,
-    ) -> Result<ManagedRuntimeSnapshot, ManagedRuntimeGatewayError>;
-
-    async fn changes(
-        &self,
-        request: ManagedRuntimeChangesRequest,
-    ) -> Result<ManagedRuntimeChangePage, ManagedRuntimeGatewayError>;
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ManagedRuntimeContractSchema {
-    pub command: ManagedRuntimeCommandEnvelope,
+    pub initial_context: ManagedRuntimeInitialContextPackage,
+    pub interaction_response: ManagedRuntimeInteractionResponse,
     pub operation_receipt: ManagedRuntimeOperationReceipt,
-    pub read: ManagedRuntimeReadRequest,
-    pub changes: ManagedRuntimeChangesRequest,
-    pub error: ManagedRuntimeGatewayError,
     pub snapshot: ManagedRuntimeSnapshot,
-    pub change_page: ManagedRuntimeChangePage,
 }
 
 #[cfg(test)]
@@ -266,25 +155,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn contract_schema_contains_command_read_and_change_families() {
+    fn contract_schema_contains_product_handoff_and_snapshot_families() {
         let schema = schemars::schema_for!(ManagedRuntimeContractSchema);
         let schema = serde_json::to_string(&schema).expect("serialize Runtime schema");
         for family in [
-            "ManagedRuntimeCommandEnvelope",
+            "ManagedRuntimeInitialContextPackage",
+            "ManagedRuntimeInteractionResponse",
             "ManagedRuntimeOperationReceipt",
-            "ManagedRuntimeReadRequest",
-            "ManagedRuntimeChangesRequest",
             "ManagedRuntimeSnapshot",
-            "ManagedRuntimeChangePage",
         ] {
             assert!(schema.contains(family), "missing {family}");
-        }
-        for lifecycle in ["create", "resume", "activate", "fork"] {
-            assert!(schema.contains(lifecycle), "missing {lifecycle}");
         }
         assert!(schema.contains("ManagedRuntimeOperationEvidence"));
         assert!(!schema.contains("binding_generation"));
         assert!(!schema.contains("AgentSourceCoordinate"));
+        assert!(!schema.contains("ManagedRuntimeGatewayError"));
+        assert!(!schema.contains("ManagedRuntimeCommandEnvelope"));
     }
 
     #[test]

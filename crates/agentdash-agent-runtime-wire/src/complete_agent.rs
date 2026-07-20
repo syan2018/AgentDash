@@ -282,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn every_closed_applied_outcome_round_trips_on_revision_four() {
+    fn every_closed_applied_outcome_round_trips_on_revision_five() {
         let command_id = id("command-inspect", AgentCommandId::new);
         let effect_id = id("effect-inspect", AgentEffectIdentity::new);
         let source = id("source-parent", AgentSourceCoordinate::new);
@@ -355,7 +355,10 @@ mod tests {
 
             assert_eq!(decoded, envelope);
             assert!(inspection.validate());
-            assert_eq!(decoded.protocol_revision, 4);
+            assert_eq!(
+                decoded.protocol_revision,
+                crate::RUNTIME_WIRE_PROTOCOL_REVISION
+            );
         }
     }
 

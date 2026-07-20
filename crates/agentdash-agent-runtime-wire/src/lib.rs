@@ -8,17 +8,12 @@ pub use complete_agent::*;
 pub use placement::*;
 pub use wire_u64::*;
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeChangePage, ManagedRuntimeChangesRequest, ManagedRuntimeCommandEnvelope,
-    ManagedRuntimeGatewayError, ManagedRuntimeOperationReceipt, ManagedRuntimePlatformChange,
-    ManagedRuntimeReadRequest, ManagedRuntimeSnapshot,
-};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 4;
+pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 5;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
@@ -56,9 +51,6 @@ pub enum RuntimeWireFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum RuntimeWireRequest {
-    RuntimeExecute(ManagedRuntimeCommandEnvelope),
-    RuntimeRead(ManagedRuntimeReadRequest),
-    RuntimeChanges(ManagedRuntimeChangesRequest),
     AgentService(Box<RuntimeWireAgentServiceRequest>),
     AgentHostCallback(Box<RuntimeWireAgentHostCallbackRequest>),
 }
@@ -66,38 +58,13 @@ pub enum RuntimeWireRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "result", rename_all = "snake_case")]
 pub enum RuntimeWireResponse {
-    RuntimeExecute(Box<RuntimeWireExecuteResult>),
-    RuntimeRead(RuntimeWireReadResult),
-    RuntimeChanges(RuntimeWireChangesResult),
     AgentService(RuntimeWireAgentServiceResponse),
     AgentHostCallback(RuntimeWireAgentHostCallbackResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "status", content = "value", rename_all = "snake_case")]
-pub enum RuntimeWireExecuteResult {
-    Ok(Box<ManagedRuntimeOperationReceipt>),
-    Error(ManagedRuntimeGatewayError),
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "status", content = "value", rename_all = "snake_case")]
-pub enum RuntimeWireReadResult {
-    Ok(Box<ManagedRuntimeSnapshot>),
-    Error(ManagedRuntimeGatewayError),
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "status", content = "value", rename_all = "snake_case")]
-pub enum RuntimeWireChangesResult {
-    Ok(Box<ManagedRuntimeChangePage>),
-    Error(ManagedRuntimeGatewayError),
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum RuntimeWireNotification {
-    RuntimeChange(Box<ManagedRuntimePlatformChange>),
     AgentChange(Box<RuntimeWireAgentChangeNotification>),
     Heartbeat {
         last_received_frame_id: RuntimeWireFrameId,
@@ -186,7 +153,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn revision_four_is_the_only_accepted_revision() {
+    fn revision_five_is_the_only_accepted_revision() {
         let bytes = serde_json::to_vec(&RuntimeWireEnvelope {
             protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(1),
@@ -202,12 +169,12 @@ mod tests {
         ));
 
         let mut old: serde_json::Value = serde_json::from_slice(&bytes).expect("decode test frame");
-        old["protocol_revision"] = serde_json::json!(3);
+        old["protocol_revision"] = serde_json::json!(4);
         assert_eq!(
             decode_frame(&serde_json::to_vec(&old).expect("encode old frame")),
             Err(RuntimeProtocolViolation::UnsupportedRevision {
-                received: 3,
-                supported: 4,
+                received: 4,
+                supported: 5,
             })
         );
     }
@@ -216,30 +183,25 @@ mod tests {
     fn schema_contains_runtime_and_complete_agent_business_frames() {
         let schema = schemars::schema_for!(RuntimeWireEnvelope);
         let schema = serde_json::to_string(&schema).expect("serialize wire schema");
-        for family in [
-            "runtime_execute",
-            "runtime_read",
-            "runtime_changes",
-            "agent_service",
-            "agent_host_callback",
-            "agent_change",
-            "runtime_change",
-        ] {
+        for family in ["agent_service", "agent_host_callback", "agent_change"] {
             assert!(schema.contains(family), "missing {family}");
         }
+        assert!(!schema.contains("runtime_execute"));
+        assert!(!schema.contains("runtime_read"));
+        assert!(!schema.contains("runtime_changes"));
+        assert!(!schema.contains("runtime_change"));
         assert!(!schema.contains("driver_dispatch"));
         assert!(!schema.contains("journal_fact"));
         assert!(!schema.contains("host_port"));
     }
 
     #[test]
-    fn rev4_typescript_root_exports_lossless_decimal_frame_ids() {
+    fn rev5_typescript_root_exports_lossless_decimal_frame_ids() {
         let temp = tempfile::tempdir().expect("create TypeScript export directory");
         RuntimeWireEnvelope::export_all_to(temp.path()).expect("export Runtime Wire contracts");
         RuntimeWireU64::export_all_to(temp.path()).expect("export Wire u64");
         let typescript = read_typescript(temp.path());
 
-        assert!(!typescript.contains("bigint"));
         for contract in [
             "RuntimeWireFrameId",
             "RuntimeWireAgentServiceRequest",

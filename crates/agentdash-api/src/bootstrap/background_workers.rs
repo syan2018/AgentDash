@@ -6,8 +6,6 @@ use crate::app_state::AppState;
 
 const WORKFLOW_RECOVERY_BATCH_LIMIT: usize = 64;
 const WORKFLOW_RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const AGENT_RUN_PRODUCT_PROTOCOL_RECOVERY_BATCH_LIMIT: usize = 64;
-const AGENT_RUN_PRODUCT_PROTOCOL_RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const COMPANION_CONTINUATION_RECOVERY_BATCH_LIMIT: usize = 64;
 const COMPANION_CONTINUATION_RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -125,50 +123,6 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
                         error = &error,
                         run_id = %run_id,
                         "恢复 Workflow executor 失败"
-                    );
-                }
-            }
-        }
-    });
-
-    let agent_run_product_protocol = state.services.agent_run_product_protocol.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(AGENT_RUN_PRODUCT_PROTOCOL_RECOVERY_POLL_INTERVAL);
-        loop {
-            interval.tick().await;
-            let worker =
-                agentdash_application_agentrun::agent_run::AgentRunProductProtocolRecoveryWorker::new(
-                    agent_run_product_protocol.as_ref(),
-                );
-            match worker
-                .advance_batch(AGENT_RUN_PRODUCT_PROTOCOL_RECOVERY_BATCH_LIMIT)
-                .await
-            {
-                Ok(report) => {
-                    for failure in report.failures {
-                        diag!(
-                            Warn,
-                            Subsystem::Api,
-                            operation = "background_workers.agent_run_product_protocol_recovery",
-                            stage = "advance_saga",
-                            protocol = failure.protocol,
-                            request_id = %failure.request_id,
-                            reason = %failure.reason,
-                            "恢复 AgentRun Product protocol saga 失败"
-                        );
-                    }
-                }
-                Err(error) => {
-                    let context = DiagnosticErrorContext::new(
-                        "background_workers.agent_run_product_protocol_recovery",
-                        "scan_recoverable_sagas",
-                    );
-                    diag_error!(
-                        Warn,
-                        Subsystem::Api,
-                        context = &context,
-                        error = &error,
-                        "扫描 AgentRun Product protocol saga 失败"
                     );
                 }
             }

@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
 use agentdash_application_agentrun::agent_run::{
-    AgentFrameSurfaceExt, AgentRunForkRequestId, AgentRunForkSagaPhase,
-    AgentRunProductInputDeliveryPort, AgentRunProductInputPreparation,
-    AgentRunProductProtocolPorts, CompanionAfterDispatchHookEvidence, CompanionChannelEvidence,
-    CompanionContinuationEffectIdentity, CompanionContinuationEffectPort,
+    AgentFrameSurfaceExt, AgentRunProductInputDeliveryPort, AgentRunProductInputPreparation,
+    AgentRunProductLaunchError, AgentRunProductProtocolPorts, CompanionAfterDispatchHookEvidence,
+    CompanionChannelEvidence, CompanionContinuationEffectIdentity, CompanionContinuationEffectPort,
     CompanionContinuationRuntimeProtocol, CompanionContinuationSaga, CompanionEffectProgress,
-    CompanionFirstInputEvidence, CompanionFreshPhase, CompanionFreshRequestId,
-    CompanionGateEvidence, CompanionPreparedFirstInputEvidence, CompanionRuntimeReadiness,
-    CompanionRuntimeReadyEvidence, CompanionTaskEvidence, DeliverAgentRunProductInput,
+    CompanionFirstInputEvidence, CompanionGateEvidence, CompanionPreparedFirstInputEvidence,
+    CompanionRuntimeReadiness, CompanionRuntimeReadyEvidence, CompanionTaskEvidence,
+    DeliverAgentRunProductInput,
 };
 use agentdash_application_hooks::AppExecutionHookProvider;
 use agentdash_application_ports::agent_frame_hook_plan::{HookExecutionSite, HookPoint};
@@ -71,105 +70,72 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
         saga: &CompanionContinuationSaga,
     ) -> Result<CompanionRuntimeReadiness, String> {
         let request = saga.request();
-        let runtime_exists = match request.runtime_protocol {
-            CompanionContinuationRuntimeProtocol::FullFork => self
-                .protocols
-                .fork_sagas
-                .load(&AgentRunForkRequestId(request.runtime_protocol_request_id))
-                .await
-                .map_err(|error| error.to_string())?
-                .is_some(),
-            CompanionContinuationRuntimeProtocol::FreshCreate => self
-                .protocols
-                .companion_fresh_sagas
-                .load(&CompanionFreshRequestId(
-                    request.runtime_protocol_request_id,
-                ))
-                .await
-                .map_err(|error| error.to_string())?
-                .is_some(),
+        let target = AgentRunTarget {
+            run_id: request.child_run_id,
+            agent_id: request.child_agent_id,
         };
-        if !runtime_exists {
-            CompanionChildDispatchService::new(
-                &self.repos,
-                self.protocols.as_ref(),
-                self.frame_construction.as_ref(),
-            )
-            .dispatch_child(CompanionChildDispatchRequest {
-                project_id: request.project_id,
-                parent_run_id: request.parent_run_id,
-                parent_agent_id: request.parent_agent_id,
-                child_agent_id: request.child_agent_id,
-                child_runtime_thread_id: request.child_runtime_thread_id.clone(),
-                slice_mode: match request.runtime_protocol {
-                    CompanionContinuationRuntimeProtocol::FullFork => {
-                        agentdash_platform_spi::CompanionSliceMode::Full
-                    }
-                    CompanionContinuationRuntimeProtocol::FreshCreate => {
-                        agentdash_platform_spi::CompanionSliceMode::Compact
-                    }
-                },
-                dispatch_id: request.dispatch_id.clone(),
-                selected_project_agent_id: request.selected_project_agent_id,
-                companion_executor_config: request.companion_executor_config.clone(),
-                protocol_plan: request.protocol_plan.clone(),
-            })
+        let binding = match self
+            .protocols
+            .product_launch
+            .load_product_binding(&target)
             .await
-            .map_err(|error| error.to_string())?;
-        }
-        let ready = match request.runtime_protocol {
-            CompanionContinuationRuntimeProtocol::FullFork => {
-                let inner = self
-                    .protocols
-                    .fork_sagas
-                    .load(&AgentRunForkRequestId(request.runtime_protocol_request_id))
+        {
+            Ok(binding) => binding,
+            Err(AgentRunProductLaunchError::AssociationMismatch) => {
+                CompanionChildDispatchService::new(
+                    &self.repos,
+                    self.protocols.as_ref(),
+                    self.frame_construction.as_ref(),
+                )
+                .dispatch_child(CompanionChildDispatchRequest {
+                    project_id: request.project_id,
+                    parent_run_id: request.parent_run_id,
+                    parent_agent_id: request.parent_agent_id,
+                    child_agent_id: request.child_agent_id,
+                    child_runtime_thread_id: request.child_runtime_thread_id.clone(),
+                    slice_mode: match request.runtime_protocol {
+                        CompanionContinuationRuntimeProtocol::FullFork => {
+                            agentdash_platform_spi::CompanionSliceMode::Full
+                        }
+                        CompanionContinuationRuntimeProtocol::FreshCreate => {
+                            agentdash_platform_spi::CompanionSliceMode::Compact
+                        }
+                    },
+                    dispatch_id: request.dispatch_id.clone(),
+                    selected_project_agent_id: request.selected_project_agent_id,
+                    companion_executor_config: request.companion_executor_config.clone(),
+                    protocol_plan: request.protocol_plan.clone(),
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+                self.protocols
+                    .product_launch
+                    .load_product_binding(&target)
                     .await
                     .map_err(|error| error.to_string())?
-                    .ok_or_else(|| "Full Companion fork saga is missing".to_owned())?;
-                if let Some(failure) = inner.failure() {
-                    return Ok(CompanionRuntimeReadiness::Failed(failure.reason.clone()));
-                }
-                if let Some(lost) = inner.lost() {
-                    return Ok(CompanionRuntimeReadiness::Failed(lost.reason.clone()));
-                }
-                if inner.phase() != AgentRunForkSagaPhase::Succeeded {
-                    return Ok(CompanionRuntimeReadiness::Pending);
-                }
-                CompanionRuntimeReadyEvidence {
-                    child_run_id: inner.child().run_id,
-                    child_agent_id: inner.child().agent_id,
-                    child_frame_id: inner
-                        .materialized_child_product_selection()
-                        .map(|selection| selection.frame.frame_id)
-                        .unwrap_or(inner.child().frame_id),
-                    child_runtime_thread_id: inner.child().runtime_thread_id.clone(),
-                }
             }
-            CompanionContinuationRuntimeProtocol::FreshCreate => {
-                let inner = self
-                    .protocols
-                    .companion_fresh_sagas
-                    .load(&CompanionFreshRequestId(
-                        request.runtime_protocol_request_id,
-                    ))
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .ok_or_else(|| "Fresh Companion saga is missing".to_owned())?;
-                if let Some(failure) = inner.failure() {
-                    return Ok(CompanionRuntimeReadiness::Failed(failure.reason.clone()));
-                }
-                if inner.phase() != CompanionFreshPhase::Succeeded {
-                    return Ok(CompanionRuntimeReadiness::Pending);
-                }
-                CompanionRuntimeReadyEvidence {
-                    child_run_id: inner.provisioning().target.run_id,
-                    child_agent_id: inner.provisioning().target.agent_id,
-                    child_frame_id: inner.provisioning().frame.frame_id,
-                    child_runtime_thread_id: inner.provisioning().runtime_thread_id.clone(),
-                }
-            }
+            Err(error) => return Err(error.to_string()),
         };
-        Ok(CompanionRuntimeReadiness::Ready(ready))
+        if binding.runtime_thread_id != request.child_runtime_thread_id {
+            return Err(
+                "Companion Product binding points at a different concrete Agent".to_owned(),
+            );
+        }
+        let frame = self
+            .repos
+            .agent_frame_repo
+            .get_latest(request.child_agent_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "Companion canonical AgentFrame is missing".to_owned())?;
+        Ok(CompanionRuntimeReadiness::Ready(
+            CompanionRuntimeReadyEvidence {
+                child_run_id: request.child_run_id,
+                child_agent_id: request.child_agent_id,
+                child_frame_id: frame.id,
+                child_runtime_thread_id: binding.runtime_thread_id,
+            },
+        ))
     }
 
     async fn converge_first_input(
@@ -213,24 +179,13 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
                     .record_dispatched(command)
                     .await
                     .map_err(|error| error.to_string())?;
-                let inner = self
-                    .protocols
-                    .companion_fresh_sagas
-                    .load(&CompanionFreshRequestId(
-                        request.runtime_protocol_request_id,
-                    ))
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .ok_or_else(|| "Fresh Companion saga is missing".to_owned())?;
-                let operation_id = inner
-                    .receipts()
-                    .first_input
-                    .as_ref()
-                    .map(|receipt| receipt.operation_id.to_string());
                 Ok(CompanionEffectProgress::Applied(
                     CompanionFirstInputEvidence {
                         mailbox_message_id,
-                        runtime_operation_id: operation_id,
+                        runtime_operation_id: Some(format!(
+                            "companion-fresh:{}:submit-first-input",
+                            request.runtime_protocol_request_id
+                        )),
                         submitted_by_runtime_protocol: true,
                     },
                 ))

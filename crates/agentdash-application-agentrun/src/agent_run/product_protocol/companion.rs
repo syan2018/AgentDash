@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 #[cfg(test)]
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{RuntimeOperationId, RuntimeThreadId, RuntimeTurnId};
 use async_trait::async_trait;
@@ -7,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-#[cfg(test)]
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -1065,11 +1065,6 @@ pub trait CompanionFreshSagaRepository: Send + Sync {
         &self,
         request_id: &CompanionFreshRequestId,
     ) -> Result<Option<CompanionFreshSaga>, CompanionFreshRepositoryError>;
-    /// 返回尚未 terminalize 的 durable fresh saga，供重启恢复 worker 继续推进。
-    async fn list_recoverable(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<CompanionFreshRequestId>, CompanionFreshRepositoryError>;
     async fn save(
         &self,
         expected_version: u64,
@@ -1077,27 +1072,58 @@ pub trait CompanionFreshSagaRepository: Send + Sync {
     ) -> Result<CompanionFreshSaga, CompanionFreshRepositoryError>;
 }
 
-/// Product owner 冻结的 Fresh Companion durable shape；W8 持有该合同唯一的 migration
-/// 与 PostgreSQL adapter。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CompanionFreshSagaSchemaContract {
-    pub table: &'static str,
-    pub request_key: &'static str,
-    pub optimistic_revision: &'static str,
-    pub durable_dispatch_identity: &'static str,
-    pub context_evidence: &'static str,
-    pub first_input_receipt: &'static str,
+/// 当前进程内的 fresh Companion 同步编排游标。
+///
+/// concrete Agent 的稳定 Create/SubmitInput effect identity 承担幂等；这里不提供跨重启
+/// 恢复，也不形成 Product 持久化事实源。
+#[derive(Default)]
+pub struct ProcessCompanionFreshSagaRepository {
+    sagas: Mutex<HashMap<CompanionFreshRequestId, CompanionFreshSaga>>,
 }
 
-pub const COMPANION_FRESH_SAGA_SCHEMA_CONTRACT: CompanionFreshSagaSchemaContract =
-    CompanionFreshSagaSchemaContract {
-        table: "companion_fresh_saga",
-        request_key: "request_id",
-        optimistic_revision: "version",
-        durable_dispatch_identity: "durable_dispatch",
-        context_evidence: "context_application_evidence",
-        first_input_receipt: "first_input_receipt",
-    };
+#[async_trait]
+impl CompanionFreshSagaRepository for ProcessCompanionFreshSagaRepository {
+    async fn create(
+        &self,
+        mut saga: CompanionFreshSaga,
+    ) -> Result<CompanionFreshSaga, CompanionFreshRepositoryError> {
+        let mut sagas = self.sagas.lock().await;
+        if sagas.contains_key(saga.request_id()) {
+            return Err(CompanionFreshRepositoryError::AlreadyExists);
+        }
+        saga = saga
+            .advance_persisted_version(0)
+            .map_err(|_| CompanionFreshRepositoryError::Conflict)?;
+        sagas.insert(saga.request_id().clone(), saga.clone());
+        Ok(saga)
+    }
+
+    async fn load(
+        &self,
+        request_id: &CompanionFreshRequestId,
+    ) -> Result<Option<CompanionFreshSaga>, CompanionFreshRepositoryError> {
+        Ok(self.sagas.lock().await.get(request_id).cloned())
+    }
+
+    async fn save(
+        &self,
+        expected_version: u64,
+        mut saga: CompanionFreshSaga,
+    ) -> Result<CompanionFreshSaga, CompanionFreshRepositoryError> {
+        let mut sagas = self.sagas.lock().await;
+        let current = sagas
+            .get(saga.request_id())
+            .ok_or(CompanionFreshRepositoryError::NotFound)?;
+        if current.version != expected_version {
+            return Err(CompanionFreshRepositoryError::Conflict);
+        }
+        saga = saga
+            .advance_persisted_version(expected_version)
+            .map_err(|_| CompanionFreshRepositoryError::Conflict)?;
+        sagas.insert(saga.request_id().clone(), saga.clone());
+        Ok(saga)
+    }
+}
 
 #[cfg(test)]
 #[derive(Default)]
@@ -1128,23 +1154,6 @@ impl CompanionFreshSagaRepository for RecordingCompanionFreshSagaRepository {
         request_id: &CompanionFreshRequestId,
     ) -> Result<Option<CompanionFreshSaga>, CompanionFreshRepositoryError> {
         Ok(self.sagas.lock().await.get(request_id).cloned())
-    }
-
-    async fn list_recoverable(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<CompanionFreshRequestId>, CompanionFreshRepositoryError> {
-        let mut request_ids = self
-            .sagas
-            .lock()
-            .await
-            .values()
-            .filter(|saga| saga.next_step() != CompanionFreshStep::Terminal)
-            .map(|saga| saga.request_id().clone())
-            .collect::<Vec<_>>();
-        request_ids.sort_by_key(|request_id| request_id.0);
-        request_ids.truncate(limit);
-        Ok(request_ids)
     }
 
     async fn save(
@@ -2113,22 +2122,6 @@ mod tests {
         .expect("second");
         assert_eq!(first.preparation, second.preparation);
         assert_ne!(first.adoption_mode, second.adoption_mode);
-    }
-
-    #[test]
-    fn fresh_persistence_contract_keeps_context_and_first_input_evidence_durable() {
-        assert_eq!(
-            COMPANION_FRESH_SAGA_SCHEMA_CONTRACT.table,
-            "companion_fresh_saga"
-        );
-        assert_eq!(
-            COMPANION_FRESH_SAGA_SCHEMA_CONTRACT.context_evidence,
-            "context_application_evidence"
-        );
-        assert_eq!(
-            COMPANION_FRESH_SAGA_SCHEMA_CONTRACT.first_input_receipt,
-            "first_input_receipt"
-        );
     }
 
     #[test]

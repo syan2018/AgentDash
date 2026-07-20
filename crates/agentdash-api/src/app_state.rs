@@ -50,7 +50,8 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductInputDeliveryPort, AgentRunProductInputDeliveryService,
     AgentRunProductLaunchService, AgentRunProductProjectionQueryPort, AgentRunProductProtocolPorts,
     AgentRunTerminalSourceReconcilePort, CompanionContinuationEffectPort,
-    CompanionContinuationSagaRepository, ProductAgentRunForkGraphAdapter,
+    CompanionContinuationSagaRepository, ProcessAgentRunForkSagaRepository,
+    ProcessCompanionFreshSagaRepository, ProductAgentRunForkGraphAdapter,
     ProductAgentRunForkRuntimeAdapter, ProductAgentRunRuntimeProjectionAdapter,
     ProductCompanionFreshRuntimeAdapter, build_workflow_agent_call_dispatch,
 };
@@ -85,12 +86,11 @@ use agentdash_infrastructure::{
     CompleteAgentComposition, CompleteAgentCompositionError,
     CompleteAgentProductRuntimeProvisioner, CompleteAgentServiceSelectionCatalog,
     DeferredProductRuntimeToolService, PinnedCompleteAgentVerificationCatalog,
-    PostgresAgentRunForkSagaRepository, PostgresAgentRunMailboxRepository,
+    PostgresAgentRunForkGraphStore, PostgresAgentRunMailboxRepository,
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
-    PostgresCompanionContinuationSagaRepository, PostgresCompanionFreshSagaRepository,
-    PostgresWorkflowExecutorEffectRepository, PostgresWorkflowRecoveryRepository,
-    PostgresWorkspaceModulePresentationStore, ProcessShellTerminalRegistry,
-    ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
+    PostgresCompanionContinuationSagaRepository, PostgresWorkflowExecutorEffectRepository,
+    PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
+    ProcessShellTerminalRegistry, ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
     ProductionCompleteAgentServiceSelector, WorkspaceModulePresentRuntimeTool,
     final_runtime_tool_catalog, product_runtime_tool_catalog,
 };
@@ -563,7 +563,9 @@ impl AppState {
                 product_input: product_input_delivery.clone(),
             }));
         let agent_run_product_protocol = Arc::new(AgentRunProductProtocolPorts::new(
-            Arc::new(PostgresAgentRunForkSagaRepository::new(pool.clone())),
+            Arc::new(ProcessAgentRunForkSagaRepository::new(Arc::new(
+                PostgresAgentRunForkGraphStore::new(pool.clone()),
+            ))),
             Arc::new(ProductAgentRunForkRuntimeAdapter::with_product_launch(
                 product_launch.clone(),
             )),
@@ -574,10 +576,11 @@ impl AppState {
                 frame_construction.clone(),
                 runtime_product_bindings.clone(),
             )),
-            Arc::new(PostgresCompanionFreshSagaRepository::new(pool.clone())),
+            Arc::new(ProcessCompanionFreshSagaRepository::default()),
             Arc::new(ProductCompanionFreshRuntimeAdapter::with_product_launch(
                 product_launch.clone(),
             )),
+            product_launch.clone(),
             Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(
                 complete_agent.runtime.clone(),
             )),

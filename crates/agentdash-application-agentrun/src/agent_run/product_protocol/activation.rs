@@ -275,6 +275,7 @@ pub struct AgentRunProductProtocolPorts {
     pub fork_product_graph: Arc<dyn AgentRunForkProductGraphPort>,
     pub companion_fresh_sagas: Arc<dyn CompanionFreshSagaRepository>,
     pub companion_fresh_runtime: Arc<dyn CompanionFreshRuntimePort>,
+    pub product_launch: Arc<crate::agent_run::AgentRunProductLaunchService>,
     pub runtime_projection: Arc<dyn AgentRunRuntimeProjectionPort>,
 }
 
@@ -285,6 +286,7 @@ impl AgentRunProductProtocolPorts {
         fork_product_graph: Arc<dyn AgentRunForkProductGraphPort>,
         companion_fresh_sagas: Arc<dyn CompanionFreshSagaRepository>,
         companion_fresh_runtime: Arc<dyn CompanionFreshRuntimePort>,
+        product_launch: Arc<crate::agent_run::AgentRunProductLaunchService>,
         runtime_projection: Arc<dyn AgentRunRuntimeProjectionPort>,
     ) -> Self {
         Self {
@@ -293,6 +295,7 @@ impl AgentRunProductProtocolPorts {
             fork_product_graph,
             companion_fresh_sagas,
             companion_fresh_runtime,
+            product_launch,
             runtime_projection,
         }
     }
@@ -427,28 +430,5 @@ mod tests {
             assert!(!gate.evidence.is_empty());
             assert!(gate.negative_gate.is_some_and(|gate| !gate.is_empty()));
         }
-    }
-
-    #[test]
-    fn app_state_constructor_requires_the_exact_six_product_protocol_ports() {
-        fn construct(
-            fork_sagas: Arc<dyn AgentRunForkSagaRepository>,
-            fork_runtime: Arc<dyn AgentRunForkRuntimePort>,
-            fork_product_graph: Arc<dyn AgentRunForkProductGraphPort>,
-            companion_fresh_sagas: Arc<dyn CompanionFreshSagaRepository>,
-            companion_fresh_runtime: Arc<dyn CompanionFreshRuntimePort>,
-            runtime_projection: Arc<dyn AgentRunRuntimeProjectionPort>,
-        ) -> AgentRunProductProtocolPorts {
-            AgentRunProductProtocolPorts::new(
-                fork_sagas,
-                fork_runtime,
-                fork_product_graph,
-                companion_fresh_sagas,
-                companion_fresh_runtime,
-                runtime_projection,
-            )
-        }
-
-        let _ = construct;
     }
 }

@@ -45,9 +45,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_run_terminal_projection_change",
     "agent_run_terminal_control_correlation",
     "agent_run_terminal_projection_outbox",
-    "agent_run_fork_saga",
-    "agent_run_fork_graph",
-    "companion_fresh_saga",
     "dash_agent_session",
     "dash_complete_source",
     "dash_complete_effect",
@@ -65,6 +62,9 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
 ];
 
 const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "agent_run_fork_saga",
+    "agent_run_fork_graph",
+    "companion_fresh_saga",
     "workflow_agent_call_product_sagas",
     "workflow_agent_call_product_effects",
     "workflow_agent_call_product_graph_effects",

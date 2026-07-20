@@ -1,10 +1,12 @@
-#[cfg(test)]
 use std::{collections::HashMap, sync::Arc};
 
 use super::AgentRunForkGraph;
 use agentdash_agent_runtime_contract::{
     RuntimeOperationId, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId,
     RuntimeTurnId,
+};
+use agentdash_application_ports::agent_run_fork::{
+    AgentRunForkGraph as PersistenceAgentRunForkGraph, AgentRunForkGraphStore,
 };
 #[cfg(test)]
 use agentdash_domain::workflow::AgentSource;
@@ -15,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-#[cfg(test)]
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -1191,14 +1192,6 @@ pub trait AgentRunForkSagaRepository: Send + Sync {
         request_id: &AgentRunForkRequestId,
     ) -> Result<Option<AgentRunForkSaga>, AgentRunForkSagaRepositoryError>;
 
-    /// 返回尚未进入 terminal 状态的 durable saga，供进程重启后的恢复 worker 推进。
-    ///
-    /// 返回顺序必须稳定，避免持续失败的请求使其余请求永久饥饿。
-    async fn list_recoverable(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<AgentRunForkRequestId>, AgentRunForkSagaRepositoryError>;
-
     async fn save(
         &self,
         expected_version: u64,
@@ -1217,32 +1210,122 @@ pub trait AgentRunForkSagaRepository: Send + Sync {
     ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError>;
 }
 
-/// Product owner 冻结的持久化 shape；W8 是唯一 migration 与 PostgreSQL adapter owner。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AgentRunForkSagaSchemaContract {
-    pub table: &'static str,
-    pub request_key: &'static str,
-    pub optimistic_revision: &'static str,
-    pub durable_dispatch_identity: &'static str,
-    pub known_child_coordinate: &'static str,
-    pub graph_commit_revision: &'static str,
+/// 当前请求内的 fork 编排游标。
+///
+/// 这里只缓存同步调用的推进状态，不承担重启恢复。稳定 effect identity 交给 concrete
+/// Agent 去重；已提交的 Product graph 由 canonical LifecycleRun/LifecycleAgent/lineage
+/// 文档证明。
+pub struct ProcessAgentRunForkSagaRepository {
+    state: Mutex<RecordingAgentRunForkSagaState>,
+    graph_store: Arc<dyn AgentRunForkGraphStore>,
 }
 
-pub const AGENT_RUN_FORK_SAGA_SCHEMA_CONTRACT: AgentRunForkSagaSchemaContract =
-    AgentRunForkSagaSchemaContract {
-        table: "agent_run_fork_saga",
-        request_key: "request_id",
-        optimistic_revision: "version",
-        durable_dispatch_identity: "durable_runtime_dispatch",
-        known_child_coordinate: "runtime_thread_id",
-        graph_commit_revision: "graph_commit_revision",
-    };
+impl ProcessAgentRunForkSagaRepository {
+    pub fn new(graph_store: Arc<dyn AgentRunForkGraphStore>) -> Self {
+        Self {
+            state: Mutex::new(RecordingAgentRunForkSagaState::default()),
+            graph_store,
+        }
+    }
+}
 
-#[cfg(test)]
 #[derive(Default)]
 struct RecordingAgentRunForkSagaState {
     sagas: HashMap<AgentRunForkRequestId, AgentRunForkSaga>,
     graphs: HashMap<AgentRunForkRequestId, PreparedAgentRunForkGraph>,
+}
+
+#[async_trait]
+impl AgentRunForkSagaRepository for ProcessAgentRunForkSagaRepository {
+    async fn create(
+        &self,
+        mut saga: AgentRunForkSaga,
+    ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError> {
+        let mut state = self.state.lock().await;
+        if state.sagas.contains_key(&saga.request_id) {
+            return Err(AgentRunForkSagaRepositoryError::AlreadyExists);
+        }
+        saga.version = 1;
+        state.sagas.insert(saga.request_id.clone(), saga.clone());
+        Ok(saga)
+    }
+
+    async fn load(
+        &self,
+        request_id: &AgentRunForkRequestId,
+    ) -> Result<Option<AgentRunForkSaga>, AgentRunForkSagaRepositoryError> {
+        Ok(self.state.lock().await.sagas.get(request_id).cloned())
+    }
+
+    async fn save(
+        &self,
+        expected_version: u64,
+        mut saga: AgentRunForkSaga,
+    ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError> {
+        let mut state = self.state.lock().await;
+        let current = state
+            .sagas
+            .get(&saga.request_id)
+            .ok_or(AgentRunForkSagaRepositoryError::NotFound)?;
+        if current.version != expected_version {
+            return Err(AgentRunForkSagaRepositoryError::Conflict {
+                expected: expected_version,
+                actual: current.version,
+            });
+        }
+        saga.version = expected_version + 1;
+        state.sagas.insert(saga.request_id.clone(), saga.clone());
+        Ok(saga)
+    }
+
+    async fn commit_product_graph(
+        &self,
+        expected_version: u64,
+        mut saga: AgentRunForkSaga,
+        graph: PreparedAgentRunForkGraph,
+    ) -> Result<AgentRunForkSaga, AgentRunForkSagaRepositoryError> {
+        graph.validate_for_saga_transition(&saga).map_err(|error| {
+            AgentRunForkSagaRepositoryError::InvalidGraphPayload(error.to_string())
+        })?;
+        {
+            let state = self.state.lock().await;
+            let current = state
+                .sagas
+                .get(&saga.request_id)
+                .ok_or(AgentRunForkSagaRepositoryError::NotFound)?;
+            if current.version != expected_version {
+                return Err(AgentRunForkSagaRepositoryError::Conflict {
+                    expected: expected_version,
+                    actual: current.version,
+                });
+            }
+        }
+        let product_graph = graph.graph();
+        self.graph_store
+            .create_graph(&PersistenceAgentRunForkGraph {
+                child_run: product_graph.child_run,
+                child_agent: product_graph.child_agent,
+                child_frame: product_graph.child_frame,
+                lineage: product_graph.lineage,
+            })
+            .await
+            .map_err(AgentRunForkSagaRepositoryError::Unavailable)?;
+        let mut state = self.state.lock().await;
+        let current = state
+            .sagas
+            .get(&saga.request_id)
+            .ok_or(AgentRunForkSagaRepositoryError::NotFound)?;
+        if current.version != expected_version {
+            return Err(AgentRunForkSagaRepositoryError::Conflict {
+                expected: expected_version,
+                actual: current.version,
+            });
+        }
+        saga.version = expected_version + 1;
+        state.graphs.insert(saga.request_id.clone(), graph);
+        state.sagas.insert(saga.request_id.clone(), saga.clone());
+        Ok(saga)
+    }
 }
 
 #[cfg(test)]
@@ -1282,24 +1365,6 @@ impl AgentRunForkSagaRepository for RecordingAgentRunForkSagaRepository {
         request_id: &AgentRunForkRequestId,
     ) -> Result<Option<AgentRunForkSaga>, AgentRunForkSagaRepositoryError> {
         Ok(self.state.lock().await.sagas.get(request_id).cloned())
-    }
-
-    async fn list_recoverable(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<AgentRunForkRequestId>, AgentRunForkSagaRepositoryError> {
-        let mut request_ids = self
-            .state
-            .lock()
-            .await
-            .sagas
-            .values()
-            .filter(|saga| saga.next_step() != AgentRunForkSagaStep::Terminal)
-            .map(|saga| saga.request_id().clone())
-            .collect::<Vec<_>>();
-        request_ids.sort_by_key(|request_id| request_id.0);
-        request_ids.truncate(limit);
-        Ok(request_ids)
     }
 
     async fn save(
@@ -2236,22 +2301,6 @@ mod tests {
         assert_eq!(
             facade.materialize_product_fork(drifted).await,
             Err(AgentRunForkFacadeError::ExistingRequestDrift)
-        );
-    }
-
-    #[test]
-    fn persistence_contract_freezes_the_w8_transaction_coordinates() {
-        assert_eq!(
-            AGENT_RUN_FORK_SAGA_SCHEMA_CONTRACT.table,
-            "agent_run_fork_saga"
-        );
-        assert_eq!(
-            AGENT_RUN_FORK_SAGA_SCHEMA_CONTRACT.durable_dispatch_identity,
-            "durable_runtime_dispatch"
-        );
-        assert_eq!(
-            AGENT_RUN_FORK_SAGA_SCHEMA_CONTRACT.graph_commit_revision,
-            "graph_commit_revision"
         );
     }
 

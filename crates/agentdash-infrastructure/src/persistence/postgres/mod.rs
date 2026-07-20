@@ -4,7 +4,6 @@ mod agent_run_lineage_repository;
 mod agent_run_mailbox_repository;
 mod agent_run_message_submission_store;
 mod agent_run_product_projection_repository;
-mod agent_run_product_saga_repository;
 mod auth_session_repository;
 mod backend_execution_lease_repository;
 mod backend_repository;
@@ -160,9 +159,6 @@ pub use agent_run_message_submission_store::PostgresAgentRunMessageSubmissionSto
 pub use agent_run_product_projection_repository::{
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
     PostgresWorkspaceModulePresentationStore, product_runtime_binding_digest,
-};
-pub use agent_run_product_saga_repository::{
-    PostgresAgentRunForkSagaRepository, PostgresCompanionFreshSagaRepository,
 };
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;

@@ -17,8 +17,21 @@ impl PostgresAgentRunForkGraphStore {
 impl AgentRunForkGraphStore for PostgresAgentRunForkGraphStore {
     async fn create_graph(&self, graph: &AgentRunForkGraph) -> Result<(), String> {
         let mut tx = self.pool.begin().await.map_err(|error| error.to_string())?;
-        insert_agent_run_fork_graph(&mut tx, graph).await?;
-        tx.commit().await.map_err(|error| error.to_string())
+        match insert_agent_run_fork_graph(&mut tx, graph).await {
+            Ok(()) => tx.commit().await.map_err(|error| error.to_string()),
+            Err(error) if error.starts_with("duplicate canonical fork graph:") => {
+                tx.rollback().await.map_err(|error| error.to_string())?;
+                if canonical_graph_matches(&self.pool, graph).await? {
+                    Ok(())
+                } else {
+                    Err(
+                        "canonical fork graph identity conflicts with the stable request"
+                            .to_owned(),
+                    )
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn delete_graph(&self, graph: &AgentRunForkGraph) -> Result<(), String> {
@@ -55,7 +68,7 @@ pub(super) async fn insert_agent_run_fork_graph(
     .bind(run.last_activity_at)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(graph_insert_error)?;
 
     let agent = &graph.child_agent;
     let frame_document = stored_frame_document(&graph.child_frame)?;
@@ -79,7 +92,7 @@ pub(super) async fn insert_agent_run_fork_graph(
     .bind(agent.updated_at)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(graph_insert_error)?;
 
     let lineage = &graph.lineage;
     sqlx::query(
@@ -104,8 +117,96 @@ pub(super) async fn insert_agent_run_fork_graph(
     .bind(lineage.created_at)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(graph_insert_error)?;
     Ok(())
+}
+
+fn graph_insert_error(error: sqlx::Error) -> String {
+    if error
+        .as_database_error()
+        .is_some_and(|database| database.is_unique_violation())
+    {
+        format!("duplicate canonical fork graph: {error}")
+    } else {
+        error.to_string()
+    }
+}
+
+async fn canonical_graph_matches(pool: &PgPool, graph: &AgentRunForkGraph) -> Result<bool, String> {
+    let run = &graph.child_run;
+    let run_matches = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1 FROM lifecycle_runs
+            WHERE id=$1 AND project_id=$2 AND created_by_user_id=$3
+        )",
+    )
+    .bind(run.id.to_string())
+    .bind(run.project_id.to_string())
+    .bind(&run.created_by_user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    let agent = &graph.child_agent;
+    let agent_matches = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1 FROM lifecycle_agents
+            WHERE id=$1 AND run_id=$2 AND project_id=$3 AND created_by_user_id=$4
+              AND source=$5 AND project_agent_id IS NOT DISTINCT FROM $6
+        )",
+    )
+    .bind(agent.id.to_string())
+    .bind(agent.run_id.to_string())
+    .bind(agent.project_id.to_string())
+    .bind(&agent.created_by_user_id)
+    .bind(agent.source.as_str())
+    .bind(agent.project_agent_id.map(|id| id.to_string()))
+    .fetch_one(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    let frame = &graph.child_frame;
+    let surface =
+        serde_json::to_value(frame.surface_document()).map_err(|error| error.to_string())?;
+    let frame_matches = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM lifecycle_agents AS owner
+            CROSS JOIN LATERAL jsonb_array_elements(owner.frames) AS frame
+            WHERE owner.id=$1 AND frame->>'id'=$2 AND frame->>'agent_id'=$1
+              AND (frame->>'revision')::INTEGER=$3 AND frame->'surface'=$4::JSONB
+        )",
+    )
+    .bind(frame.agent_id.to_string())
+    .bind(frame.id.to_string())
+    .bind(frame.revision)
+    .bind(surface)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    let lineage = &graph.lineage;
+    let lineage_matches = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1 FROM agent_run_lineages
+            WHERE id=$1 AND parent_run_id=$2 AND parent_agent_id=$3
+              AND child_run_id=$4 AND child_agent_id=$5
+              AND fork_point_ref IS NOT DISTINCT FROM $6::JSONB
+              AND metadata IS NOT DISTINCT FROM $7::JSONB
+        )",
+    )
+    .bind(lineage.id.to_string())
+    .bind(lineage.parent_run_id.to_string())
+    .bind(lineage.parent_agent_id.to_string())
+    .bind(lineage.child_run_id.to_string())
+    .bind(lineage.child_agent_id.to_string())
+    .bind(&lineage.fork_point_ref_json)
+    .bind(&lineage.metadata_json)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    Ok(run_matches && agent_matches && frame_matches && lineage_matches)
 }
 
 fn stored_frame_document(
@@ -159,7 +260,17 @@ mod tests {
         let valid = graph(parent.0, parent.1);
 
         store.create_graph(&valid).await.expect("create graph");
+        store
+            .create_graph(&valid)
+            .await
+            .expect("stable retry verifies the canonical graph");
         assert_graph_counts(&pool, &valid, [1, 1, 1, 1]).await;
+        let mut drifted = valid.clone();
+        drifted.child_run.project_id = Uuid::new_v4();
+        store
+            .create_graph(&drifted)
+            .await
+            .expect_err("stable identity must reject canonical graph drift");
         let stored_frame = super::super::PostgresAgentFrameRepository::new(pool.clone())
             .get(valid.child_frame.id)
             .await

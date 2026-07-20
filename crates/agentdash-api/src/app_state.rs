@@ -566,7 +566,6 @@ impl AppState {
         let agent_run_product_protocol = Arc::new(AgentRunProductProtocolPorts::new(
             Arc::new(PostgresAgentRunForkSagaRepository::new(pool.clone())),
             Arc::new(ProductAgentRunForkRuntimeAdapter::with_product_launch(
-                complete_agent.runtime.clone(),
                 product_launch.clone(),
             )),
             Arc::new(ProductAgentRunForkGraphAdapter::new(
@@ -574,10 +573,10 @@ impl AppState {
                 repos.lifecycle_agent_repo.clone(),
                 repos.agent_frame_repo.clone(),
                 frame_construction.clone(),
+                runtime_product_bindings.clone(),
             )),
             Arc::new(PostgresCompanionFreshSagaRepository::new(pool.clone())),
             Arc::new(ProductCompanionFreshRuntimeAdapter::with_product_launch(
-                complete_agent.runtime.clone(),
                 product_launch.clone(),
             )),
             Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(

@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeContentBlock, ManagedRuntimeInitialContextPackage,
-    ManagedRuntimeOperationReceipt, ManagedRuntimeOperationStatus, RuntimeOperationId,
-    RuntimeProjectionRevision,
+    ManagedRuntimeContentBlock, ManagedRuntimeInitialContextPackage, ManagedRuntimeOperationReceipt,
 };
-use agentdash_agent_service_api::{AgentCommandReceipt, AgentReceiptState, AgentTerminalOutcome};
+use agentdash_agent_service_api::{AgentCommandReceipt, AgentEffectIdentity, AgentForkPoint};
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use super::{
-    AgentRunProductCommand, AgentRunProductCommandFacade, AgentRunProductCommandRequest,
-    AgentRunProductRuntimeBinding, AgentRunProductRuntimeBindingStore,
-    AgentRunProductRuntimeProvisioningPort, AgentRunProductRuntimeProvisioningRequest,
+    AgentRunCompleteAgentAssociation, AgentRunProductAgentForkEvidence, AgentRunProductCommand,
+    AgentRunProductCommandFacade, AgentRunProductCommandRequest, AgentRunProductRuntimeBinding,
+    AgentRunProductRuntimeBindingStore, AgentRunProductRuntimeProvisioningPort,
+    AgentRunProductRuntimeProvisioningRequest,
 };
 
 #[derive(Debug, Clone)]
@@ -25,7 +25,7 @@ pub struct AgentRunProductLaunchRequest {
 #[derive(Debug, Clone)]
 pub struct AgentRunProductLaunchOutcome {
     pub binding: AgentRunProductRuntimeBinding,
-    pub create_receipt: ManagedRuntimeOperationReceipt,
+    pub create_receipt: AgentCommandReceipt,
     pub input_receipt: Option<ManagedRuntimeOperationReceipt>,
 }
 
@@ -194,10 +194,68 @@ impl AgentRunProductLaunchService {
         };
 
         Ok(AgentRunProductLaunchOutcome {
-            create_receipt: managed_create_receipt(&binding.runtime_thread_id, &created.receipt)?,
+            create_receipt: created.receipt,
             binding,
             input_receipt,
         })
+    }
+
+    pub async fn fork_agent_source(
+        &self,
+        parent: &AgentRunTarget,
+        child_runtime_thread_id: &agentdash_agent_runtime_contract::RuntimeThreadId,
+        cutoff: AgentForkPoint,
+        effect_id: AgentEffectIdentity,
+    ) -> Result<AgentRunProductAgentForkEvidence, AgentRunProductLaunchError> {
+        let parent = self
+            .bindings
+            .load_product_binding(parent)
+            .await
+            .map_err(AgentRunProductLaunchError::Binding)?
+            .ok_or(AgentRunProductLaunchError::AssociationMismatch)?;
+        self.provisioning
+            .fork_agent_source(&parent, child_runtime_thread_id, cutoff, effect_id)
+            .await
+            .map_err(AgentRunProductLaunchError::Provisioning)
+    }
+
+    pub async fn bind_forked_agent_source(
+        &self,
+        request: &AgentRunProductRuntimeProvisioningRequest,
+        association: AgentRunCompleteAgentAssociation,
+    ) -> Result<AgentRunProductRuntimeBinding, AgentRunProductLaunchError> {
+        self.provisioning
+            .bind_agent_source(request, &association)
+            .await?;
+        let binding = AgentRunProductRuntimeBinding {
+            target: request.target.clone(),
+            runtime_thread_id: request.runtime_thread_id.clone(),
+            agent: association,
+            launch_frame: request.frame.clone(),
+            execution_profile: request.execution_profile.clone(),
+            execution_profile_digest: request.execution_profile.profile_digest.clone(),
+        };
+        self.bindings
+            .commit_product_binding(&binding)
+            .await
+            .map_err(AgentRunProductLaunchError::Binding)?;
+        Ok(binding)
+    }
+
+    pub async fn submit_input(
+        &self,
+        target: AgentRunTarget,
+        client_command_id: String,
+        content: Vec<ManagedRuntimeContentBlock>,
+    ) -> Result<ManagedRuntimeOperationReceipt, AgentRunProductLaunchError> {
+        self.commands
+            .execute(AgentRunProductCommandRequest {
+                target,
+                client_command_id,
+                command: AgentRunProductCommand::SubmitInput { content },
+            })
+            .await
+            .map_err(|error| AgentRunProductLaunchError::Command(error.to_string()))
     }
 }
 
@@ -223,45 +281,4 @@ fn initial_input_identity(request: &AgentRunProductRuntimeProvisioningRequest) -
             .expect("Product launch identity is serializable")
         )
     )
-}
-
-fn managed_create_receipt(
-    thread_id: &agentdash_agent_runtime_contract::RuntimeThreadId,
-    receipt: &AgentCommandReceipt,
-) -> Result<ManagedRuntimeOperationReceipt, AgentRunProductLaunchError> {
-    let status = match receipt.state {
-        AgentReceiptState::Accepted => ManagedRuntimeOperationStatus::Accepted,
-        AgentReceiptState::Rejected { .. } => ManagedRuntimeOperationStatus::Failed,
-        AgentReceiptState::AlreadyApplied { terminal } => terminal
-            .map(terminal_status)
-            .unwrap_or(ManagedRuntimeOperationStatus::Succeeded),
-        AgentReceiptState::Terminal { outcome } => terminal_status(outcome),
-        AgentReceiptState::Unknown => ManagedRuntimeOperationStatus::Lost,
-    };
-    let operation_id = RuntimeOperationId::new(format!(
-        "product-create:v2:{:x}",
-        Sha256::digest(receipt.effect_id.as_str().as_bytes())
-    ))
-    .map_err(|error| AgentRunProductLaunchError::Invalid(error.to_string()))?;
-    Ok(ManagedRuntimeOperationReceipt {
-        operation_id,
-        thread_id: thread_id.clone(),
-        accepted_revision: RuntimeProjectionRevision(
-            receipt.snapshot_revision.map_or(0, |revision| revision.0),
-        ),
-        status,
-        evidence: None,
-        duplicate: matches!(receipt.state, AgentReceiptState::AlreadyApplied { .. }),
-    })
-}
-
-fn terminal_status(outcome: AgentTerminalOutcome) -> ManagedRuntimeOperationStatus {
-    match outcome {
-        AgentTerminalOutcome::Succeeded | AgentTerminalOutcome::Closed => {
-            ManagedRuntimeOperationStatus::Succeeded
-        }
-        AgentTerminalOutcome::Failed => ManagedRuntimeOperationStatus::Failed,
-        AgentTerminalOutcome::Interrupted => ManagedRuntimeOperationStatus::Interrupted,
-        AgentTerminalOutcome::Lost => ManagedRuntimeOperationStatus::Lost,
-    }
 }

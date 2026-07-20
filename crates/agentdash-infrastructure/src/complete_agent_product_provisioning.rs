@@ -13,23 +13,25 @@ use agentdash_agent_runtime_host::{
     CompleteAgentRuntimeTargetProvisioningRequest, CompleteAgentRuntimeTargetRecoveryRequest,
 };
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentEffectIdentity, AgentHookAction, AgentHookBlockingSemantics,
-    AgentHookDefinitionId, AgentHookEffectKind, AgentHookMutationKind, AgentHookPoint,
-    AgentHookSemanticFacet, AgentHookTiming, AgentIdempotencyKey, AgentPayloadDigest,
-    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRequirement,
-    AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentSurfaceSnapshot,
-    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, SemanticFidelity,
+    AgentBindingGeneration, AgentEffectIdentity, AgentForkPoint, AgentHookAction,
+    AgentHookBlockingSemantics, AgentHookDefinitionId, AgentHookEffectKind, AgentHookMutationKind,
+    AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming, AgentIdempotencyKey,
+    AgentPayloadDigest, AgentSurfaceContributionPayload, AgentSurfaceDigest,
+    AgentSurfaceRequirement, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
+    AgentSurfaceSnapshot, AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    SemanticFidelity,
 };
 use agentdash_application_agentrun::agent_run::frame::{
     AgentContextSourceSnapshot, runtime_backend_anchor_from_vfs,
 };
 use agentdash_application_agentrun::agent_run::{
     AgentRunCompleteAgentAssociation, AgentRunProductAgentCreateEvidence,
-    AgentRunProductRuntimeBinding, AgentRunProductRuntimeProvisioningError,
-    AgentRunProductRuntimeProvisioningEvidence, AgentRunProductRuntimeProvisioningPort,
-    AgentRunProductRuntimeProvisioningRequest, AgentRunProductRuntimeSurfaceRebindEvidence,
-    AgentRunProductRuntimeSurfaceRebindPort, AgentRunProductRuntimeSurfaceRebindRequest,
-    ProductAgentSurfaceFacts, ProductExecutionProfileRef,
+    AgentRunProductAgentForkEvidence, AgentRunProductRuntimeBinding,
+    AgentRunProductRuntimeProvisioningError, AgentRunProductRuntimeProvisioningEvidence,
+    AgentRunProductRuntimeProvisioningPort, AgentRunProductRuntimeProvisioningRequest,
+    AgentRunProductRuntimeSurfaceRebindEvidence, AgentRunProductRuntimeSurfaceRebindPort,
+    AgentRunProductRuntimeSurfaceRebindRequest, ProductAgentSurfaceFacts,
+    ProductExecutionProfileRef,
 };
 use agentdash_application_ports::agent_frame_hook_plan::{
     AgentFrameHookPlan, AgentFrameHookRequirement, HookAction, HookExecutionSite, HookPoint,
@@ -428,6 +430,98 @@ impl AgentRunProductRuntimeProvisioningPort for CompleteAgentProductRuntimeProvi
             },
             receipt: outcome.receipt,
         })
+    }
+
+    async fn fork_agent_source(
+        &self,
+        parent: &AgentRunProductRuntimeBinding,
+        child_runtime_thread_id: &RuntimeThreadId,
+        cutoff: AgentForkPoint,
+        effect_id: AgentEffectIdentity,
+    ) -> Result<AgentRunProductAgentForkEvidence, AgentRunProductRuntimeProvisioningError> {
+        self.ensure_product_binding_route(parent).await?;
+        let outcome = self
+            .host
+            .fork_runtime_source(
+                &parent.runtime_thread_id,
+                &parent.agent.source,
+                child_runtime_thread_id.clone(),
+                cutoff,
+                effect_id,
+                "product-agent-fork".to_owned(),
+                self.callback_deadline_ms,
+            )
+            .await
+            .map_err(|error| failed(error.to_string()))?;
+        let (service_instance_id, source) = self
+            .host
+            .runtime_source_association(child_runtime_thread_id)
+            .await
+            .map_err(map_host_error)?;
+        if source
+            != outcome
+                .receipt
+                .child_source
+                .clone()
+                .ok_or_else(|| failed("concrete Agent Fork receipt has no child source"))?
+        {
+            return Err(AgentRunProductRuntimeProvisioningError::Conflict {
+                reason:
+                    "Host child route and concrete Agent Fork receipt identify different sources"
+                        .to_owned(),
+            });
+        }
+        Ok(AgentRunProductAgentForkEvidence {
+            association: AgentRunCompleteAgentAssociation {
+                service_instance_id,
+                source,
+            },
+            child_history_digest: outcome.child_history_digest,
+            receipt: outcome.receipt,
+        })
+    }
+
+    async fn bind_agent_source(
+        &self,
+        request: &AgentRunProductRuntimeProvisioningRequest,
+        association: &AgentRunCompleteAgentAssociation,
+    ) -> Result<(), AgentRunProductRuntimeProvisioningError> {
+        request.validate()?;
+        self.provision_runtime_target(request.clone()).await?;
+        let target = self
+            .host
+            .runtime_target(&request.runtime_thread_id)
+            .await
+            .map_err(map_host_error)?;
+        if target.target.logical_instance_id != association.service_instance_id {
+            return Err(AgentRunProductRuntimeProvisioningError::Conflict {
+                reason: "child Product profile selected a different concrete Agent service"
+                    .to_owned(),
+            });
+        }
+        self.host
+            .restore_runtime_source_route(
+                &request.runtime_thread_id,
+                association.source.clone(),
+                AgentEffectIdentity::new(format!(
+                    "product-bind-fork:v1:{:x}",
+                    Sha256::digest(
+                        serde_json::to_vec(&(
+                            &request.target,
+                            &request.runtime_thread_id,
+                            association,
+                            &request.idempotency_key,
+                        ))
+                        .map_err(|error| failed(error.to_string()))?
+                    )
+                ))
+                .map_err(|error| invalid(error.to_string()))?,
+                "product-bind-fork".to_owned(),
+                self.callback_deadline_ms,
+            )
+            .await
+            .map_err(map_host_error)?;
+        Ok(())
     }
 
     async fn created_agent_association(

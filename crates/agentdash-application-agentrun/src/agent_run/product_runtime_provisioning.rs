@@ -1,11 +1,14 @@
 use agentdash_agent_runtime_contract::{ManagedRuntimeInitialContextPackage, RuntimeThreadId};
 use agentdash_agent_service_api::{
-    AgentCommandReceipt, AgentServiceInstanceId, AgentSourceCoordinate,
+    AgentCommandReceipt, AgentEffectIdentity, AgentForkPoint, AgentPayloadDigest,
+    AgentServiceInstanceId, AgentSourceCoordinate, ForkAgentReceipt,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use super::AgentRunProductRuntimeBinding;
 
 /// Product 选择 Complete Agent 时使用的稳定执行配置引用。
 ///
@@ -206,6 +209,13 @@ pub struct AgentRunProductAgentCreateEvidence {
     pub receipt: AgentCommandReceipt,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunProductAgentForkEvidence {
+    pub association: AgentRunCompleteAgentAssociation,
+    pub child_history_digest: AgentPayloadDigest,
+    pub receipt: ForkAgentReceipt,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentRunProductRuntimeProvisioningError {
     #[error("Product Runtime provisioning request is invalid: {reason}")]
@@ -240,6 +250,25 @@ pub trait AgentRunProductRuntimeProvisioningPort: Send + Sync {
         request: &AgentRunProductRuntimeProvisioningRequest,
         initial_context: Option<ManagedRuntimeInitialContextPackage>,
     ) -> Result<AgentRunProductAgentCreateEvidence, AgentRunProductRuntimeProvisioningError>;
+
+    /// Forks the concrete parent Agent at an exact Agent-owned cutoff.
+    ///
+    /// The stable effect belongs to the concrete Agent. Runtime and Host only rebuild the current
+    /// process route needed to perform or inspect that effect.
+    async fn fork_agent_source(
+        &self,
+        parent: &AgentRunProductRuntimeBinding,
+        child_runtime_thread_id: &RuntimeThreadId,
+        cutoff: AgentForkPoint,
+        effect_id: AgentEffectIdentity,
+    ) -> Result<AgentRunProductAgentForkEvidence, AgentRunProductRuntimeProvisioningError>;
+
+    /// Attaches an already-created concrete Agent source to the selected child Product surface.
+    async fn bind_agent_source(
+        &self,
+        request: &AgentRunProductRuntimeProvisioningRequest,
+        association: &AgentRunCompleteAgentAssociation,
+    ) -> Result<(), AgentRunProductRuntimeProvisioningError>;
 
     /// Resolves association evidence after an externally driven Create/Fork convergence step.
     async fn created_agent_association(

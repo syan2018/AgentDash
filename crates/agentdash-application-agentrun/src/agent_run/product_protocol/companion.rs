@@ -1,13 +1,7 @@
 #[cfg(test)]
 use std::{collections::HashMap, sync::Arc};
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeSourceBindingEvidence, RuntimeOperationId, RuntimeThreadId, RuntimeTurnId,
-};
-#[cfg(test)]
-use agentdash_agent_runtime_contract::{
-    RuntimeProjectionRevision, RuntimeSourceRef, SurfaceRevision,
-};
+use agentdash_agent_runtime_contract::{RuntimeOperationId, RuntimeThreadId, RuntimeTurnId};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -548,7 +542,7 @@ pub struct CompanionFreshReceipts {
 pub struct CompanionFreshLost {
     pub identity: CompanionFreshOperationIdentity,
     pub known_child_runtime_thread_id: RuntimeThreadId,
-    pub child_binding: Option<ManagedRuntimeSourceBindingEvidence>,
+    pub child_binding: Option<crate::agent_run::AgentRunCompleteAgentAssociation>,
     pub reason: String,
 }
 
@@ -562,13 +556,13 @@ pub struct CompanionFreshFailure {
 pub enum CompanionFreshEffectEvidence {
     Created {
         child_runtime_thread_id: RuntimeThreadId,
-        child_binding: ManagedRuntimeSourceBindingEvidence,
+        child_binding: crate::agent_run::AgentRunCompleteAgentAssociation,
         context: CompiledContextApplication,
         receipt: AcceptedRuntimeOperation,
     },
     Activated {
         child_runtime_thread_id: RuntimeThreadId,
-        child_binding: ManagedRuntimeSourceBindingEvidence,
+        child_binding: crate::agent_run::AgentRunCompleteAgentAssociation,
         receipt: AcceptedRuntimeOperation,
     },
     FirstInputSubmitted {
@@ -602,7 +596,7 @@ pub struct CompanionFreshSaga {
     phase: CompanionFreshPhase,
     version: u64,
     durable_dispatch: Option<CompanionFreshDurableDispatch>,
-    child_binding: Option<ManagedRuntimeSourceBindingEvidence>,
+    child_binding: Option<crate::agent_run::AgentRunCompleteAgentAssociation>,
     context_evidence: Option<CompiledContextApplication>,
     receipts: CompanionFreshReceipts,
     failed: Option<CompanionFreshFailure>,
@@ -777,7 +771,7 @@ impl CompanionFreshSaga {
         self.context_evidence.as_ref()
     }
 
-    pub fn child_binding(&self) -> Option<&ManagedRuntimeSourceBindingEvidence> {
+    pub fn child_binding(&self) -> Option<&crate::agent_run::AgentRunCompleteAgentAssociation> {
         self.child_binding.as_ref()
     }
 
@@ -983,16 +977,13 @@ impl CompanionFreshSaga {
 
     fn pin_provisioned_binding(
         &mut self,
-        binding: &ManagedRuntimeSourceBindingEvidence,
+        binding: &crate::agent_run::AgentRunCompleteAgentAssociation,
     ) -> Result<(), CompanionFreshSagaError> {
-        if binding.activated_at_revision.is_some() {
-            return Err(CompanionFreshSagaError::RuntimeBindingDrift);
-        }
-        if self.child_binding.as_ref().is_some_and(|current| {
-            current.source_ref != binding.source_ref
-                || current.committed_at_revision != binding.committed_at_revision
-                || current.applied_surface_revision != binding.applied_surface_revision
-        }) {
+        if self
+            .child_binding
+            .as_ref()
+            .is_some_and(|current| current != binding)
+        {
             return Err(CompanionFreshSagaError::RuntimeBindingDrift);
         }
         self.child_binding = Some(binding.clone());
@@ -1001,16 +992,12 @@ impl CompanionFreshSaga {
 
     fn pin_activated_binding(
         &mut self,
-        binding: &ManagedRuntimeSourceBindingEvidence,
+        binding: &crate::agent_run::AgentRunCompleteAgentAssociation,
     ) -> Result<(), CompanionFreshSagaError> {
         let Some(current) = self.child_binding.as_ref() else {
             return Err(CompanionFreshSagaError::RuntimeBindingDrift);
         };
-        if binding.activated_at_revision.is_none()
-            || current.source_ref != binding.source_ref
-            || current.committed_at_revision != binding.committed_at_revision
-            || current.applied_surface_revision != binding.applied_surface_revision
-        {
+        if current != binding {
             return Err(CompanionFreshSagaError::RuntimeBindingDrift);
         }
         self.child_binding = Some(binding.clone());
@@ -1542,7 +1529,8 @@ mod tests {
         };
         saga.mark_dispatched(activate.clone()).expect("dispatch");
         let mut rebound = fresh_binding(Some(4));
-        rebound.applied_surface_revision = SurfaceRevision(99);
+        rebound.source = service_api::AgentSourceCoordinate::new("source:another-companion-child")
+            .expect("source");
         let child_runtime_thread_id = saga.runtime_thread_id().clone();
 
         assert_eq!(
@@ -1773,12 +1761,14 @@ mod tests {
         }
     }
 
-    fn fresh_binding(activated_at_revision: Option<u64>) -> ManagedRuntimeSourceBindingEvidence {
-        ManagedRuntimeSourceBindingEvidence {
-            source_ref: RuntimeSourceRef::new("source:companion-child").expect("source"),
-            committed_at_revision: RuntimeProjectionRevision(2),
-            applied_surface_revision: SurfaceRevision(3),
-            activated_at_revision: activated_at_revision.map(RuntimeProjectionRevision),
+    fn fresh_binding(
+        _activated_at_revision: Option<u64>,
+    ) -> crate::agent_run::AgentRunCompleteAgentAssociation {
+        crate::agent_run::AgentRunCompleteAgentAssociation {
+            service_instance_id: service_api::AgentServiceInstanceId::new("dash-test")
+                .expect("service"),
+            source: service_api::AgentSourceCoordinate::new("source:companion-child")
+                .expect("source"),
         }
     }
 
@@ -2344,6 +2334,19 @@ mod tests {
 
     struct ExactForkTargetFixture;
 
+    fn exact_fork_association() -> crate::agent_run::AgentRunCompleteAgentAssociation {
+        crate::agent_run::AgentRunCompleteAgentAssociation {
+            service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+                "dash-test",
+            )
+            .expect("service"),
+            source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+                "source:exact-fork-child",
+            )
+            .expect("source"),
+        }
+    }
+
     #[async_trait]
     impl AgentRunForkRuntimePort for ExactForkTargetFixture {
         async fn execute(
@@ -2358,7 +2361,7 @@ mod tests {
             let evidence = match identity.operation {
                 AgentRunForkRuntimeOperation::Fork => RuntimeForkPhaseEvidence::ForkProvisioned {
                     child_thread_id: saga.child().runtime_thread_id.clone(),
-                    child_binding: fresh_binding(None),
+                    child_binding: exact_fork_association(),
                     child_history_digest:
                         agentdash_agent_runtime_contract::RuntimePayloadDigest::new(
                             "sha256:exact-child-history",
@@ -2367,22 +2370,14 @@ mod tests {
                     context: None,
                     receipt,
                 },
-                AgentRunForkRuntimeOperation::Rebind => {
-                    let mut binding = fresh_binding(None);
-                    binding.applied_surface_revision = SurfaceRevision(1);
-                    RuntimeForkPhaseEvidence::Rebound {
-                        child_thread_id: saga.child().runtime_thread_id.clone(),
-                        child_binding: binding,
-                        receipt,
-                    }
-                }
+                AgentRunForkRuntimeOperation::Rebind => RuntimeForkPhaseEvidence::Rebound {
+                    child_thread_id: saga.child().runtime_thread_id.clone(),
+                    child_binding: exact_fork_association(),
+                    receipt,
+                },
                 AgentRunForkRuntimeOperation::Activate => RuntimeForkPhaseEvidence::Activated {
                     child_thread_id: saga.child().runtime_thread_id.clone(),
-                    child_binding: {
-                        let mut binding = fresh_binding(Some(4));
-                        binding.applied_surface_revision = SurfaceRevision(1);
-                        binding
-                    },
+                    child_binding: exact_fork_association(),
                     context: None,
                     receipt,
                 },

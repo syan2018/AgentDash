@@ -285,21 +285,21 @@ impl AgentRunProductLaunchPort for RecordingLaunch {
                 .clone(),
             execution_profile: request.provisioning.execution_profile.clone(),
         };
-        let receipt = |phase: &str, revision| ManagedRuntimeOperationReceipt {
-            operation_id: RuntimeOperationId::new(format!(
-                "{phase}:{}",
-                request.provisioning.runtime_thread_id
-            ))
-            .expect("operation"),
-            thread_id: request.provisioning.runtime_thread_id.clone(),
-            accepted_revision: RuntimeProjectionRevision(revision),
-            status: ManagedRuntimeOperationStatus::Succeeded,
-            evidence: None,
-            duplicate: false,
-        };
         Ok(AgentRunProductLaunchOutcome {
             binding,
-            create_receipt: receipt("create", 1),
+            create_receipt: agentdash_agent_service_api::AgentCommandReceipt {
+                command_id: agentdash_agent_service_api::AgentCommandId::new("fixture-create")
+                    .unwrap(),
+                effect_id: agentdash_agent_service_api::AgentEffectIdentity::new("fixture-create")
+                    .unwrap(),
+                source: agentdash_agent_service_api::AgentSourceCoordinate::new("fixture-source")
+                    .unwrap(),
+                state: agentdash_agent_service_api::AgentReceiptState::Terminal {
+                    outcome: agentdash_agent_service_api::AgentTerminalOutcome::Succeeded,
+                },
+                snapshot_revision: Some(agentdash_agent_service_api::AgentSnapshotRevision(1)),
+                initial_context: None,
+            },
             input_receipt: None,
         })
     }

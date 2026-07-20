@@ -1041,6 +1041,67 @@ impl CompleteAgentHost {
             .map(|binding| binding.generation)
     }
 
+    /// Forks one concrete Agent source through the current process route.
+    ///
+    /// Callers provide only stable Product/Agent coordinates. Host reconstructs the transient
+    /// binding needed by the lifecycle adapter and returns Agent-owned fork evidence.
+    pub async fn fork_runtime_source(
+        &self,
+        parent_runtime_thread_id: &RuntimeThreadId,
+        parent_source: &AgentSourceCoordinate,
+        child_runtime_thread_id: RuntimeThreadId,
+        cutoff: AgentForkPoint,
+        effect_id: AgentEffectIdentity,
+        dispatch_owner: String,
+        lease_duration_ms: u64,
+    ) -> Result<ManagedRuntimeForkOutcome, ManagedRuntimeLifecycleError> {
+        let target = self
+            .runtime_target(parent_runtime_thread_id)
+            .await
+            .map_err(map_lifecycle_host_error)?;
+        let binding_id = runtime_binding_id(parent_runtime_thread_id, target.generation)
+            .map_err(map_lifecycle_host_error)?;
+        let binding = self
+            .binding(&binding_id)
+            .await
+            .map_err(map_lifecycle_host_error)?
+            .ok_or_else(|| ManagedRuntimeLifecycleError::Invalid {
+                reason: "parent concrete Agent route is not attached".to_owned(),
+            })?;
+        if &binding.source != parent_source
+            || binding.target != target.target
+            || binding.generation != target.generation
+        {
+            return Err(ManagedRuntimeLifecycleError::Invalid {
+                reason: "parent concrete Agent route does not match Product association".to_owned(),
+            });
+        }
+        let applied_surface =
+            binding
+                .applied_surface
+                .ok_or_else(|| ManagedRuntimeLifecycleError::Invalid {
+                    reason: "parent concrete Agent route has no applied surface".to_owned(),
+                })?;
+        ManagedRuntimeLifecyclePort::fork(
+            self,
+            ManagedRuntimeDispatchContext {
+                runtime_thread_id: parent_runtime_thread_id.clone(),
+                effect_id,
+                dispatch_owner,
+                now_ms: current_time_ms(),
+                lease_duration_ms,
+            },
+            ManagedRuntimeAgentBinding {
+                source: binding.source,
+                generation: binding.generation,
+                applied_surface,
+            },
+            child_runtime_thread_id,
+            cutoff,
+        )
+        .await
+    }
+
     /// Applies a surface replacement already prepared for the current process.
     ///
     /// The previous binding is process-local routing evidence; the concrete Agent remains the

@@ -11,6 +11,8 @@ pub struct CodexRuntimeIntegration;
 
 pub fn codex_runtime_contribution() -> AgentRuntimeDriverContribution;
 
+fn codex_app_server_program() -> &'static str;
+
 enum BackboneEvent {
     ThreadNameUpdated(ThreadNameUpdatedNotification),
     // ...other pinned Codex-shaped and AgentDash variants...
@@ -41,6 +43,10 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
   和运行中更新必须得到相同 projection 与校验结果。
 
 - Codex通过Integration contribution/factory进入Driver Host；Application/Executor不硬编码构造Codex connector。旧`codex_bridge`不能与新adapter并存。
+- Codex App Server进程必须通过当前操作系统可直接执行的npm入口启动：Windows使用
+  `npx.cmd`，其它平台使用`npx`，并继续传入审计固定的
+  `@openai/codex@<version> app-server`参数。原因是process adapter不经过交互式shell，
+  Windows的裸`npx`名称不会由`Command`按`PATHEXT`转换成批处理入口。
 - JSON-RPC frame可先保留`method + params` transport形态，但admission必须按method把params依次反序列化为vendor typed params与generated owned params。未知method返回typed `UnsupportedMethod`；刻意忽略的hook notification也必须显式admit为typed no-op。
 - `ThreadItem`先经vendor typed deserialize，再strict transcode为generated owned item。当前Runtime尚未承载的标准family返回typed `UnsupportedItemFamily`；invalid JSON返回`InvalidItemPayload`，禁止转换为AgentMessage文本。
 - 每个Runtime binding拥有独立`Arc<Mutex<CodexSession>>`与持久stdout pump；service instance可并发承载多个binding，不能用全局session锁串行化全部线程。
@@ -67,6 +73,7 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 | 场景 | 必须得到的结果 |
 | --- | --- |
 | Rust/npm/service protocol version不一致 | build/contribution validation失败 |
+| Windows直接启动Codex App Server | 使用`npx.cmd`进入固定版本npm package，不依赖PowerShell命令解析 |
 | notification/request method未知或params不满足0.144.1 typed shape | typed protocol mismatch，不静默忽略 |
 | ThreadItem有效但当前Runtime family尚未承载 | `UnsupportedItemFamily`，不文本化 |
 | binding A/B并发dispatch | 独立session锁，不互相串行或串事件 |
@@ -101,6 +108,7 @@ Runtime reducer；字段缺失只表示vendor没有提供该事实，不能被ad
 ## 6. Tests Required
 
 - Contribution/version/profile测试覆盖真实0.144.1方法与未支持能力不声明。
+- 进程入口测试按目标平台断言Windows=`npx.cmd`、其它平台=`npx`；真实启动验收继续验证固定版本package能够完成App Server初始化。
 - 多binding process/session测试覆盖锁隔离、persistent stdout pump、Arc sink、EOF Lost与request idempotency。
 - Mapping覆盖start/resume/fork、turn/item全部terminal、source coordinates、typed inspect与error message。
 - Thread name mapping覆盖live与bind/start两条入口的string、显式null、字段缺失和原始blank，
@@ -145,4 +153,16 @@ if notification.thread_name.as_deref().is_none_or(str::is_empty) {
 return Ok(Some(BackboneEvent::ThreadNameUpdated(strict_transcode(
     notification,
 )?)));
+```
+
+```rust
+// Wrong: Windows GUI宿主直接启动裸npx，隐含依赖交互式shell解析。
+background_tokio_command_with_cwd(ProcessDomain::CodexAppServer, "npx", cwd);
+
+// Correct: adapter选择操作系统可直接执行的npm入口，package版本仍由协议基线固定。
+background_tokio_command_with_cwd(
+    ProcessDomain::CodexAppServer,
+    codex_app_server_program(),
+    cwd,
+);
 ```

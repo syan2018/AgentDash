@@ -26,6 +26,10 @@ impl AgentRuntimeHost {
     pub async fn dispatch(...) -> Result<(), AgentRuntimeHostError>;
     pub async fn recover_pending_bindings(&self) -> Result<usize, AgentRuntimeHostError>;
 }
+
+fn is_optional_complete_agent_materialization_failure(
+    error: &CompleteAgentCompositionError,
+) -> bool;
 ```
 
 `AgentRuntimeHostRepository` 提供instance revision CAS、generation reserve、activation/offer、binding/source/lease与apply receipt ports。云端Managed Host使用durable实现；Local Integration Host使用进程incarnation内的ephemeral实现。Router输入必须携带binding/generation/lease，不能以裸executor ID发现owner。
@@ -33,6 +37,10 @@ impl AgentRuntimeHost {
 ## 3. Contracts
 
 - Integration API只贡献immutable `AgentServiceDefinition + AgentRuntimeDriverFactory`。同一Integration可贡献多个definition，同一definition可创建多个instance；registry一次性collect后不可变，duplicate definition/factory/schema/protocol/credential定义fail fast。
+- API Host启动时，optional Complete Agent的factory materialization或service describe失败只使该
+  contribution保持未注册、未进入recovery selection，并写入Warn诊断；Host继续注册其它
+  contribution。原因是provider运行环境或凭据不可用不改变平台核心装配的正确性。声明冲突、
+  descriptor mismatch、verification、Host persistence等完整性失败继续fail fast。
 - Service definition是编译期受信元数据；instance保存config、credential refs、placement、desired/observed state与revision。每个instance revision必须保留immutable history，activation始终引用精确历史快照。
 - config JSON Schema、credential slot/ref/purpose与host permission必须在factory/driver side effect前验证。Factory只能得到Scoped Credential Broker，不能借机访问definition或instance未声明的slot、ref或purpose；secret不得Serialize/Debug/日志化。
 - Activation生成单调generation与evidence-backed RuntimeOffer。effective profile严格等于service guarantee、placement transport guarantee与host policy的交集；self-report或配置文件存在不能提升能力。
@@ -58,6 +66,8 @@ impl AgentRuntimeHost {
 | 场景 | 必须得到的结果 |
 | --- | --- |
 | duplicate definition/factory/schema/protocol | bootstrap fail-fast |
+| optional Complete Agent factory/service materialization失败 | 记录不可用诊断，跳过该instance与recovery profile，Host继续启动 |
+| optional Complete Agent descriptor/verification/Host注册失败 | bootstrap fail-fast，不把完整性错误伪装成普通不可用 |
 | config非法、credential缺失或purpose越权 | factory side effect前typed reject |
 | service自报能力但无conformance evidence | offer不提升该guarantee |
 | transport/host policy弱于service | effective profile按交集削弱 |
@@ -89,6 +99,7 @@ impl AgentRuntimeHost {
 ## 6. Tests Required
 
 - Registry/Integration测试覆盖多definition、多instance、duplicate/factory/schema/protocol/credential定义与immutable collect。
+- API composition测试覆盖factory/service materialization失败被隔离、后续contribution仍可注册，以及descriptor/verification/Host错误继续终止bootstrap。
 - Instance/activation测试覆盖config/credential preflight、secret隐藏、revision CAS/history、deactivate/reactivate/unhealthy、evidence-backed profile intersection。
 - Binding测试覆盖sticky/idempotent bind、stale offer、Pending recovery、orphan failure、surface/hook apply gate和configuration boundary。
 - lifecycle failpoint测试覆盖Create binding provision、surface receipt settlement、Create/Resume outcome settlement与Fork child target provision；逐项断言Agent applied后不产生确定Failed，重建Host后通过同一effect inspect收敛，Fork保留child source/history并升级provisioning evidence。
@@ -142,4 +153,18 @@ host.bind(offer.id, surface).await?;
 let offer = host.activate(request).await?;
 ensure_offer_supports_surface(&offer, &surface)?;
 host.bind(offer.id, surface).await?;
+```
+
+```rust
+// Wrong: 任一可选provider的运行时不可用都会终止整个AppState构建。
+let descriptor = complete_agent.register_contribution(contribution).await?;
+
+// Correct: 只隔离materialization/describe失败；完整性与Host错误仍向上返回。
+match complete_agent.register_contribution(contribution).await {
+    Ok(descriptor) => activate_recovery_profile(descriptor).await,
+    Err(error) if is_optional_complete_agent_materialization_failure(&error) => {
+        diagnose_unavailable(instance_id, error);
+    }
+    Err(error) => return Err(error.into()),
+}
 ```

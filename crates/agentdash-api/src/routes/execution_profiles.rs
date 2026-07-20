@@ -18,8 +18,13 @@ use crate::{app_state::AppState, auth::CurrentUser, rpc::ApiError};
 
 pub const MANAGED_EXECUTION_PROFILE_ID: &str = "PI_AGENT";
 pub const CODEX_EXECUTION_PROFILE_ID: &str = "CODEX";
-const NATIVE_DEFINITION_ID: &str = "agentdash.native_agent";
 const CODEX_DEFINITION_ID: &str = "builtin.codex-app-server";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExecutionProfileRegistration {
+    BuiltIn,
+    StaticService(&'static str),
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ExecutionProfileOptionsQuery {
@@ -30,8 +35,11 @@ pub async fn is_known_execution_profile(
     state: &AppState,
     profile_id: &str,
 ) -> Result<bool, ApiError> {
-    let Some(definition_id) = execution_profile_definition_id(profile_id) else {
+    let Some(registration) = execution_profile_registration(profile_id) else {
         return Ok(false);
+    };
+    let ExecutionProfileRegistration::StaticService(definition_id) = registration else {
+        return Ok(true);
     };
     let snapshot = state
         .services
@@ -47,29 +55,23 @@ pub async fn is_known_execution_profile(
         .any(|descriptor| descriptor.definition_id.as_str() == definition_id))
 }
 
-fn execution_profile_definition_id(profile_id: &str) -> Option<&'static str> {
+fn execution_profile_registration(profile_id: &str) -> Option<ExecutionProfileRegistration> {
     match profile_id {
-        MANAGED_EXECUTION_PROFILE_ID => NATIVE_DEFINITION_ID,
-        CODEX_EXECUTION_PROFILE_ID => CODEX_DEFINITION_ID,
-        _ => return None,
+        MANAGED_EXECUTION_PROFILE_ID => Some(ExecutionProfileRegistration::BuiltIn),
+        CODEX_EXECUTION_PROFILE_ID => Some(ExecutionProfileRegistration::StaticService(
+            CODEX_DEFINITION_ID,
+        )),
+        _ => None,
     }
-    .into()
 }
 
-fn managed_profile(native_registered: bool, provider_available: bool) -> ExecutionProfileDto {
-    let available = native_registered && provider_available;
-    let unavailable_reason = (!available).then(|| {
-        if !native_registered {
-            "内置 Managed Agent Runtime Integration 未注册".to_string()
-        } else {
-            "没有可执行的 LLM Provider，请先配置并启用 Provider 凭据".to_string()
-        }
-    });
+fn managed_profile(provider_available: bool) -> ExecutionProfileDto {
     ExecutionProfileDto {
         id: MANAGED_EXECUTION_PROFILE_ID.to_string(),
         name: "Managed Agent".to_string(),
-        available,
-        unavailable_reason,
+        available: provider_available,
+        unavailable_reason: (!provider_available)
+            .then(|| "没有可执行的 LLM Provider，请先配置并启用 Provider 凭据".to_string()),
     }
 }
 
@@ -102,8 +104,6 @@ pub async fn discover_execution_profiles(
     State(state): State<Arc<AppState>>,
     CurrentUser(identity): CurrentUser,
 ) -> Result<Json<ExecutionProfileDiscoveryResponse>, ApiError> {
-    let native_registered =
-        is_known_execution_profile(&state, MANAGED_EXECUTION_PROFILE_ID).await?;
     let catalog = build_effective_profile_catalog_from_db(
         state.repos.llm_provider_repo.as_ref(),
         Some(state.repos.llm_provider_credential_repo.as_ref()),
@@ -114,7 +114,7 @@ pub async fn discover_execution_profiles(
     let provider_available = catalog.providers.iter().any(|provider| provider.executable);
     Ok(Json(ExecutionProfileDiscoveryResponse {
         executors: vec![
-            managed_profile(native_registered, provider_available),
+            managed_profile(provider_available),
             codex_profile(is_known_execution_profile(&state, CODEX_EXECUTION_PROFILE_ID).await?),
         ],
     }))
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn managed_profile_is_visible_with_provider_diagnostic() {
-        let profile = managed_profile(true, false);
+        let profile = managed_profile(false);
         assert_eq!(profile.id, MANAGED_EXECUTION_PROFILE_ID);
         assert!(!profile.available);
         assert!(
@@ -252,9 +252,10 @@ mod tests {
     }
 
     #[test]
-    fn managed_profile_is_available_only_when_definition_and_provider_exist() {
-        assert!(managed_profile(true, true).available);
-        assert!(!managed_profile(false, true).available);
+    fn managed_profile_is_available_when_provider_exists() {
+        let profile = managed_profile(true);
+        assert!(profile.available);
+        assert!(profile.unavailable_reason.is_none());
     }
 
     #[test]
@@ -266,15 +267,17 @@ mod tests {
     }
 
     #[test]
-    fn project_agent_profile_validation_uses_the_same_definition_mapping_as_discovery() {
+    fn execution_profiles_declare_their_registration_lifecycle() {
         assert_eq!(
-            execution_profile_definition_id(MANAGED_EXECUTION_PROFILE_ID),
-            Some(NATIVE_DEFINITION_ID)
+            execution_profile_registration(MANAGED_EXECUTION_PROFILE_ID),
+            Some(ExecutionProfileRegistration::BuiltIn)
         );
         assert_eq!(
-            execution_profile_definition_id(CODEX_EXECUTION_PROFILE_ID),
-            Some(CODEX_DEFINITION_ID)
+            execution_profile_registration(CODEX_EXECUTION_PROFILE_ID),
+            Some(ExecutionProfileRegistration::StaticService(
+                CODEX_DEFINITION_ID
+            ))
         );
-        assert_eq!(execution_profile_definition_id("unknown"), None);
+        assert_eq!(execution_profile_registration("unknown"), None);
     }
 }

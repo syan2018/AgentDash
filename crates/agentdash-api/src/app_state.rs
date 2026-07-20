@@ -78,16 +78,17 @@ use agentdash_application_vfs::{
 };
 use agentdash_application_workflow::OrchestrationExecutorLauncher;
 use agentdash_contracts::project::ProjectEventStreamEnvelope;
-use agentdash_diagnostics::DiagnosticBuffer;
+use agentdash_diagnostics::{DiagnosticBuffer, DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_infrastructure::{
     AgentRunProductPersistenceComposition, AgentRunProductProjectionComposition,
 };
 use agentdash_infrastructure::{
-    CompleteAgentComposition, CompleteAgentProductRuntimeProvisioner,
-    CompleteAgentServiceSelectionCatalog, DeferredProductRuntimeToolService,
-    PinnedCompleteAgentVerificationCatalog, PostgresAgentRunForkSagaRepository,
-    PostgresAgentRunMailboxRepository, PostgresAgentRunProductRuntimeBindingRepository,
+    CompleteAgentComposition, CompleteAgentCompositionError,
+    CompleteAgentProductRuntimeProvisioner, CompleteAgentServiceSelectionCatalog,
+    DeferredProductRuntimeToolService, PinnedCompleteAgentVerificationCatalog,
+    PostgresAgentRunForkSagaRepository, PostgresAgentRunMailboxRepository,
+    PostgresAgentRunProductRuntimeBindingRepository,
     PostgresAgentRunProductRuntimeRecoverySagaRepository, PostgresAgentRunTerminalProjectionStore,
     PostgresCompanionContinuationSagaRepository, PostgresCompanionFreshSagaRepository,
     PostgresWorkflowAgentCallRepository, PostgresWorkflowExecutorEffectRepository,
@@ -97,8 +98,8 @@ use agentdash_infrastructure::{
     final_runtime_tool_catalog, product_runtime_tool_catalog,
 };
 use agentdash_integration_api::{
-    AgentDashIntegration, AuthMode, MarketplaceSourceProvider, MemoryDiscoveryProvider,
-    SkillDiscoveryProvider,
+    AgentDashIntegration, AuthMode, CompleteAgentContributionError, MarketplaceSourceProvider,
+    MemoryDiscoveryProvider, SkillDiscoveryProvider,
 };
 use agentdash_platform_spi::extension_package::ExtensionPackageArtifactStorage;
 use agentdash_workspace_module::workspace_module::presentation_protocol::{
@@ -129,6 +130,17 @@ fn resolve_platform_mcp_base_url(raw_value: Option<String>) -> Option<String> {
     raw_value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn is_optional_complete_agent_materialization_failure(
+    error: &CompleteAgentCompositionError,
+) -> bool {
+    matches!(
+        error,
+        CompleteAgentCompositionError::Contribution(
+            CompleteAgentContributionError::Factory(_) | CompleteAgentContributionError::Service(_)
+        )
+    )
 }
 
 fn builtin_complete_agent_verifier() -> Result<PinnedCompleteAgentVerificationCatalog> {
@@ -435,7 +447,25 @@ impl AppState {
             .drain(..)
         {
             let instance_id = contribution.facts().instance_id().clone();
-            let descriptor = complete_agent.register_contribution(contribution).await?;
+            let descriptor = match complete_agent.register_contribution(contribution).await {
+                Ok(descriptor) => descriptor,
+                Err(error) if is_optional_complete_agent_materialization_failure(&error) => {
+                    let context = DiagnosticErrorContext::new(
+                        "app_state.complete_agent_registration",
+                        "materialize_optional_service",
+                    );
+                    diag_error!(
+                        Warn,
+                        Subsystem::AgentRun,
+                        context = &context,
+                        error = &error,
+                        service_instance_id = %instance_id,
+                        "可选 Complete Agent 服务不可用，跳过本次注册"
+                    );
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
             complete_agent_selections
                 .activate_recovery_profile(descriptor.profile_digest, instance_id)
                 .await;
@@ -889,7 +919,15 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_platform_mcp_base_url;
+    use agentdash_agent_service_api::{AgentServiceError, AgentServiceErrorCode};
+    use agentdash_infrastructure::CompleteAgentCompositionError;
+    use agentdash_integration_api::{
+        CompleteAgentContributionError, CompleteAgentServiceFactoryError,
+    };
+
+    use super::{
+        is_optional_complete_agent_materialization_failure, resolve_platform_mcp_base_url,
+    };
 
     #[test]
     fn platform_mcp_base_url_missing_env_keeps_platform_mcp_disabled() {
@@ -907,5 +945,42 @@ mod tests {
             resolve_platform_mcp_base_url(Some("  http://127.0.0.1:3001/  ".to_string())),
             Some("http://127.0.0.1:3001/".to_string())
         );
+    }
+
+    #[test]
+    fn optional_complete_agent_materialization_failure_is_isolated() {
+        let factory_error =
+            CompleteAgentCompositionError::Contribution(CompleteAgentContributionError::Factory(
+                CompleteAgentServiceFactoryError::Unavailable {
+                    reason: "fixture unavailable".to_owned(),
+                    retryable: true,
+                },
+            ));
+        let service_error = CompleteAgentCompositionError::Contribution(
+            CompleteAgentContributionError::Service(AgentServiceError::new(
+                AgentServiceErrorCode::Unavailable,
+                "fixture describe unavailable",
+                true,
+            )),
+        );
+
+        assert!(is_optional_complete_agent_materialization_failure(
+            &factory_error
+        ));
+        assert!(is_optional_complete_agent_materialization_failure(
+            &service_error
+        ));
+    }
+
+    #[test]
+    fn complete_agent_contract_failure_remains_fatal() {
+        let error = CompleteAgentCompositionError::Contribution(
+            CompleteAgentContributionError::DescriptorMismatch {
+                expected: "expected".to_owned(),
+                actual: "actual".to_owned(),
+            },
+        );
+
+        assert!(!is_optional_complete_agent_materialization_failure(&error));
     }
 }

@@ -26,6 +26,16 @@ use crate::{
 const CODEX_APP_SERVER_PACKAGE: &str = "@openai/codex@0.144.1";
 const OBSERVATION_RETENTION: usize = 4096;
 
+#[cfg(not(windows))]
+fn codex_app_server_program() -> &'static str {
+    "npx"
+}
+
+#[cfg(windows)]
+fn codex_app_server_program() -> &'static str {
+    "npx.cmd"
+}
+
 type PendingResponse = oneshot::Sender<Result<Value, CodexCompleteAgentTransportError>>;
 type ProcessInput = Box<dyn AsyncWrite + Unpin + Send>;
 type ProcessOutput = Box<dyn AsyncRead + Unpin + Send>;
@@ -104,8 +114,11 @@ impl CodexProcessTransport {
                 "Codex process cwd must be absolute",
             ));
         }
-        let mut command =
-            background_tokio_command_with_cwd(ProcessDomain::CodexAppServer, "npx", cwd);
+        let mut command = background_tokio_command_with_cwd(
+            ProcessDomain::CodexAppServer,
+            codex_app_server_program(),
+            cwd,
+        );
         let mut child = command
             .args(["-y", CODEX_APP_SERVER_PACKAGE, "app-server"])
             .kill_on_drop(true)
@@ -622,5 +635,14 @@ mod tests {
             source_thread_id(&json!({ "turn": { "id": "turn-1" } })),
             None
         );
+    }
+
+    #[test]
+    fn codex_app_server_launcher_uses_the_native_npx_entrypoint() {
+        #[cfg(windows)]
+        assert_eq!(codex_app_server_program(), "npx.cmd");
+
+        #[cfg(not(windows))]
+        assert_eq!(codex_app_server_program(), "npx");
     }
 }

@@ -62,7 +62,7 @@ pub const AGENT_RUN_TARGET_ACTIVATION_MANIFEST: &[AgentRunConsumerActivation] = 
     },
     AgentRunConsumerActivation {
         consumer: "agentdash-application",
-        current_artifact: "AgentTool implementations and RuntimeToolProvider catalog",
+        current_artifact: "typed ProductRuntimeToolService contributions and catalog",
         workstream: AgentRunActivationWorkstream::W7ProductCaller,
         final_owner: AgentRunActivationOwner::BusinessSurface,
         action: "publish typed tool contributions and requirements",
@@ -80,7 +80,7 @@ pub const AGENT_RUN_TARGET_ACTIVATION_MANIFEST: &[AgentRunConsumerActivation] = 
     },
     AgentRunConsumerActivation {
         consumer: "agentdash-application-lifecycle",
-        current_artifact: "workflow AgentTool and RuntimeToolProvider",
+        current_artifact: "workflow ProductRuntimeToolService contribution",
         workstream: AgentRunActivationWorkstream::W7ProductCaller,
         final_owner: AgentRunActivationOwner::BusinessSurface,
         action: "publish workflow tool contributions",
@@ -226,7 +226,9 @@ pub const AGENT_RUN_TARGET_S5_ACTIVATION_GATES: &[AgentRunS5ActivationGate] = &[
         prerequisite: AgentRunS5Prerequisite::ProductCallerCutoverTests,
         owner: AgentRunActivationOwner::BusinessSurface,
         evidence: "all six W7 consumer entries pass production caller tests",
-        negative_gate: Some("W7 callers contain no Core AgentTool or RuntimeToolProvider assembly"),
+        negative_gate: Some(
+            "W7 callers contain no Core tool assembly or legacy runtime tool provider assembly",
+        ),
     },
     AgentRunS5ActivationGate {
         order: 5,

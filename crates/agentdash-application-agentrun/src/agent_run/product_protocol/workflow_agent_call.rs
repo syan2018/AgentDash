@@ -326,12 +326,12 @@ pub trait WorkflowAgentCallProductSagaRepository: Send + Sync {
 
 #[cfg(test)]
 #[derive(Default)]
-pub struct InMemoryWorkflowAgentCallProductSagaRepository {
+pub struct RecordingWorkflowAgentCallProductSagaRepository {
     sagas: tokio::sync::Mutex<BTreeMap<String, WorkflowAgentCallProductSaga>>,
 }
 
 #[cfg(test)]
-impl InMemoryWorkflowAgentCallProductSagaRepository {
+impl RecordingWorkflowAgentCallProductSagaRepository {
     pub fn new() -> Self {
         Self::default()
     }
@@ -343,7 +343,7 @@ impl InMemoryWorkflowAgentCallProductSagaRepository {
 
 #[async_trait]
 #[cfg(test)]
-impl WorkflowAgentCallProductSagaRepository for InMemoryWorkflowAgentCallProductSagaRepository {
+impl WorkflowAgentCallProductSagaRepository for RecordingWorkflowAgentCallProductSagaRepository {
     async fn prepare(
         &self,
         saga: WorkflowAgentCallProductSaga,
@@ -1355,7 +1355,7 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_provision_bind_and_submit_survives_receipt_loss_with_same_identity() {
-        let repository = Arc::new(InMemoryWorkflowAgentCallProductSagaRepository::new());
+        let repository = Arc::new(RecordingWorkflowAgentCallProductSagaRepository::new());
         let graph = Arc::new(RecordingProductGraph::default());
         let runtime = Arc::new(RecordingRuntime::with_create_receipt_loss().await);
         let service = ProductWorkflowAgentCallDispatchService::new(
@@ -1396,7 +1396,7 @@ mod tests {
 
     #[tokio::test]
     async fn prepared_request_rejects_payload_digest_conflict_before_product_effects() {
-        let repository = Arc::new(InMemoryWorkflowAgentCallProductSagaRepository::new());
+        let repository = Arc::new(RecordingWorkflowAgentCallProductSagaRepository::new());
         let graph = Arc::new(RecordingProductGraph::default());
         let runtime = Arc::new(RecordingRuntime::default());
         let service = ProductWorkflowAgentCallDispatchService::new(
@@ -1426,7 +1426,7 @@ mod tests {
 
     #[tokio::test]
     async fn continue_current_submits_only_to_durable_authority_thread() {
-        let repository = Arc::new(InMemoryWorkflowAgentCallProductSagaRepository::new());
+        let repository = Arc::new(RecordingWorkflowAgentCallProductSagaRepository::new());
         let graph = Arc::new(RecordingProductGraph::default());
         let runtime = Arc::new(RecordingRuntime::default());
         let service = ProductWorkflowAgentCallDispatchService::new(

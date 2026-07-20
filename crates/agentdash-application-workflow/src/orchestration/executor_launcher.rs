@@ -99,7 +99,7 @@ impl OrchestrationExecutorLauncher {
     pub fn new(repos: WorkflowRepositorySet) -> Self {
         Self::new_for_test(
             repos,
-            Arc::new(MemoryWorkflowExecutorEffectRepository::default()),
+            Arc::new(RecordingWorkflowExecutorEffectRepository::default()),
         )
     }
 
@@ -840,7 +840,7 @@ fn unsupported_attempt_policy(plan_node: &PlanNode) -> Option<(&'static str, Str
 
 #[cfg(test)]
 #[derive(Default)]
-struct MemoryWorkflowExecutorEffectRepository {
+struct RecordingWorkflowExecutorEffectRepository {
     functions: tokio::sync::Mutex<
         std::collections::BTreeMap<
             String,
@@ -866,7 +866,7 @@ struct MemoryWorkflowExecutorEffectRepository {
 
 #[cfg(test)]
 #[async_trait::async_trait]
-impl WorkflowExecutorEffectRepository for MemoryWorkflowExecutorEffectRepository {
+impl WorkflowExecutorEffectRepository for RecordingWorkflowExecutorEffectRepository {
     async fn prepare_function(
         &self,
         request: agentdash_domain::workflow::WorkflowFunctionEffectRequest,
@@ -1535,7 +1535,7 @@ mod tests {
 
     fn launcher_with_effects(
         repo: Arc<RunRepo>,
-        effects: Arc<MemoryWorkflowExecutorEffectRepository>,
+        effects: Arc<RecordingWorkflowExecutorEffectRepository>,
     ) -> OrchestrationExecutorLauncher {
         OrchestrationExecutorLauncher::new_for_test(
             WorkflowRepositorySet {
@@ -1957,7 +1957,7 @@ mod tests {
             conflict_cas_at_expected_revision: Mutex::new(Some(1)),
             ..Default::default()
         });
-        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
         let runner = Arc::new(RecordingStableFunctionRunner::default());
         let launcher = launcher_with_effects(repo.clone(), effects.clone())
             .with_function_runner(runner.clone());
@@ -2010,7 +2010,7 @@ mod tests {
             run: Mutex::new(Some(run)),
             ..Default::default()
         });
-        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
         let runner = Arc::new(RecordingStableFunctionRunner::observing(
             effect_id.clone(),
             FunctionEffectObservation::Accepted,
@@ -2064,7 +2064,7 @@ mod tests {
             run: Mutex::new(Some(run)),
             ..Default::default()
         });
-        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
         let first_runner = Arc::new(RecordingStableFunctionRunner::losing_receipt());
         let first_launcher = launcher_with_effects(repo.clone(), effects.clone())
             .with_function_runner(first_runner.clone());
@@ -2138,7 +2138,7 @@ mod tests {
             fail_cas_at_expected_revision: Mutex::new(Some(1)),
             ..Default::default()
         });
-        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
         let runner = Arc::new(RecordingStableFunctionRunner::returning(
             FunctionEffectObservation::Failed {
                 message: "remote command rejected".to_owned(),
@@ -2177,7 +2177,7 @@ mod tests {
             fail_cas_at_expected_revision: Mutex::new(Some(1)),
             ..Default::default()
         });
-        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
         let runner = Arc::new(RecordingStableFunctionRunner::default());
         let launcher =
             launcher_with_effects(repo.clone(), effects).with_function_runner(runner.clone());
@@ -2218,7 +2218,7 @@ mod tests {
             run: Mutex::new(Some(run)),
             ..Default::default()
         });
-        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
         let first = launcher_with_effects(repo.clone(), effects.clone());
         let second = launcher_with_effects(repo.clone(), effects.clone());
 
@@ -2250,7 +2250,7 @@ mod tests {
             run: Mutex::new(Some(run)),
             ..Default::default()
         });
-        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
         let launcher = launcher_with_effects(repo.clone(), effects.clone());
         let opened = launcher
             .drain_ready_nodes(run_id)
@@ -2326,7 +2326,7 @@ mod tests {
             run: Mutex::new(Some(run)),
             ..Default::default()
         });
-        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
         let launcher = launcher_with_effects(repo.clone(), effects.clone());
         let opened = launcher
             .drain_ready_nodes(run_id)
@@ -2381,7 +2381,7 @@ mod tests {
             run: Mutex::new(Some(run)),
             ..Default::default()
         });
-        let effects = Arc::new(MemoryWorkflowExecutorEffectRepository::default());
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
         let launcher = launcher_with_effects(repo.clone(), effects.clone());
         let opened = launcher
             .drain_ready_nodes(run_id)

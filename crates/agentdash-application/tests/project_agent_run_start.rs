@@ -50,13 +50,13 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 #[derive(Default)]
-struct MemoryReceipts {
+struct RecordingReceipts {
     by_identity: Mutex<BTreeMap<(String, String, String), AgentRunCommandReceipt>>,
     by_id: Mutex<BTreeMap<Uuid, (String, String, String)>>,
 }
 
 #[async_trait]
-impl AgentRunCommandReceiptRepository for MemoryReceipts {
+impl AgentRunCommandReceiptRepository for RecordingReceipts {
     async fn claim(
         &self,
         receipt: NewAgentRunCommandReceipt,
@@ -172,7 +172,7 @@ impl AgentRunCommandReceiptRepository for MemoryReceipts {
     }
 }
 
-impl MemoryReceipts {
+impl RecordingReceipts {
     async fn mutate(
         &self,
         id: Uuid,
@@ -423,7 +423,7 @@ impl Fixture {
             subject_associations: Arc::new(MemoryLifecycleSubjectAssociationRepository::default()),
             lifecycle_gates: Arc::new(MemoryLifecycleGateRepository::default()),
             agent_lineage: Arc::new(MemoryAgentLineageRepository::default()),
-            receipts: Arc::new(MemoryReceipts::default()),
+            receipts: Arc::new(RecordingReceipts::default()),
             frame_construction,
             product_launch: launch.clone(),
             product_input: input.clone(),

@@ -637,19 +637,19 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct MemoryRepository {
+    struct RecordingCompanionContinuationRepository {
         saga: Mutex<Option<CompanionContinuationSaga>>,
         fail_next_save: AtomicBool,
     }
 
-    impl MemoryRepository {
+    impl RecordingCompanionContinuationRepository {
         fn fail_next_save(&self) {
             self.fail_next_save.store(true, Ordering::SeqCst);
         }
     }
 
     #[async_trait]
-    impl CompanionContinuationSagaRepository for MemoryRepository {
+    impl CompanionContinuationSagaRepository for RecordingCompanionContinuationRepository {
         async fn create(
             &self,
             saga: CompanionContinuationSaga,
@@ -999,7 +999,7 @@ mod tests {
     }
 
     async fn drive_to_terminal(
-        repository: &MemoryRepository,
+        repository: &RecordingCompanionContinuationRepository,
         effects: &RecordingEffects,
         request_id: Uuid,
     ) -> CompanionContinuationSaga {
@@ -1015,7 +1015,7 @@ mod tests {
 
     #[tokio::test]
     async fn full_first_input_replay_after_save_crash_has_one_logical_effect() {
-        let repository = Arc::new(MemoryRepository::default());
+        let repository = Arc::new(RecordingCompanionContinuationRepository::default());
         let effects = Arc::new(RecordingEffects::default());
         let request = request(CompanionContinuationRuntimeProtocol::FullFork);
         repository
@@ -1078,7 +1078,7 @@ mod tests {
 
     #[tokio::test]
     async fn fresh_claims_the_inner_protocol_first_input_evidence() {
-        let repository = MemoryRepository::default();
+        let repository = RecordingCompanionContinuationRepository::default();
         let effects = RecordingEffects::default();
         let request = request(CompanionContinuationRuntimeProtocol::FreshCreate);
         repository
@@ -1120,7 +1120,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_persisted_phase_is_recoverable_by_a_new_worker() {
-        let repository = MemoryRepository::default();
+        let repository = RecordingCompanionContinuationRepository::default();
         let effects = RecordingEffects::default();
         let request = request(CompanionContinuationRuntimeProtocol::FullFork);
         repository
@@ -1166,7 +1166,7 @@ mod tests {
 
     #[tokio::test]
     async fn after_dispatch_hook_pending_blocks_success_until_restart_recovers_it() {
-        let repository = MemoryRepository::default();
+        let repository = RecordingCompanionContinuationRepository::default();
         let effects = RecordingEffects::default();
         effects.pend_after_hook_once();
         let request = request(CompanionContinuationRuntimeProtocol::FullFork);
@@ -1205,7 +1205,7 @@ mod tests {
 
     #[tokio::test]
     async fn after_dispatch_hook_lost_save_response_reuses_one_effect_identity_and_real_child() {
-        let repository = MemoryRepository::default();
+        let repository = RecordingCompanionContinuationRepository::default();
         let effects = RecordingEffects::default();
         let request = request(CompanionContinuationRuntimeProtocol::FreshCreate);
         repository

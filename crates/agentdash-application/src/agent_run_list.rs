@@ -385,6 +385,7 @@ mod tests {
         ManagedRuntimeSourceBindingEvidence, RuntimeChangeSequence, RuntimeProjectionRevision,
         RuntimeSourceRef, SurfaceRevision,
     };
+    use agentdash_agent_service_api::AgentLiveEventStream;
     use agentdash_application_agentrun::agent_run::{
         AgentRunProductProjectionError, AgentRunProductRuntimeBinding,
         AgentRunProductRuntimeSnapshotObservation, AgentRunTerminalChangePage,
@@ -466,6 +467,13 @@ mod tests {
             _: &AgentRunTarget,
             _: Option<RuntimeChangeSequence>,
         ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
+            Err(AgentRunProductProjectionError::Runtime("unused".into()))
+        }
+
+        async fn runtime_live_events(
+            &self,
+            _: &AgentRunTarget,
+        ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError> {
             Err(AgentRunProductProjectionError::Runtime("unused".into()))
         }
 

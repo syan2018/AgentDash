@@ -26,8 +26,23 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
   `AfterSubagentDispatch` 已进入 durable continuation，并覆盖重启与保存响应丢失。
 - [x] Product RuntimeThread 语义已贯穿 Extension/Canvas/Workspace context、actor、DTO
   与生成 TypeScript；transport 自有 session identity 在适配边界保持原义。
-- [ ] S4 Product Lane Ready：尚未通过。
-- [ ] 正式 S5 deletion manifest：尚未形成。
+- [x] S4 Product Lane Ready：Product create/input/control、Fork、Mailbox、Companion、
+  Workflow、Routine、Surface/Tool/Hook 与 Product read-model tracers 已进入同一
+  production composition。
+- [x] S5 Atomic Hard Cut：`runtime-legacy-replacement-manifest.md` 的 M1–M5 已在
+  `43a5ab52` 删除，`fa48681a` 与 `8603bed5` 完成负向门禁描述和 typed Hook test 收口。
+- [ ] S6 Final Conformance：只剩当前集成 HEAD 的综合门禁与 `.trellis/spec/` 同步。
+
+### S4/S5 checkpoint evidence
+
+| Boundary | Commits | Verified evidence |
+| --- | --- | --- |
+| Product Surface / Tool / Hook | `9f6ae9b7`、`2ff6cf4b`、`8dd14936`、`2216364d` | Product surface、typed Broker、Workspace/Companion/MCP 与 Host callback 使用同一 production route |
+| Direct AgentRun lifecycle | `1b1e0ab6`、`24926c16`、`3339be07`、`796fafd6` | Resume/Close、stable direct create、aggregate delete、composer/cancel/mailbox routes 与 restart replay |
+| Mailbox recovery | `055456f8` | ProductCommand 10/10、ProductMailbox 15/15；durable Promote、exact message lease 与同一 command envelope reconciliation |
+| Product Fork | `f3a1c0c4` | ProductFork 4/4、API preflight/route、crash-window recovery、graph+saga CAS、contracts/frontend checks |
+| Runtime Hard Cut | `43a5ab52`、`fa48681a`、`8603bed5` | M1–M5 删除；Rust 99 tests、Session UI 12 tests、contracts freshness、migration guard 与 legacy negative search |
+| Generated schema | `c4c26d20` | Runtime Wire 与 Agent Service schema 与当前生成 owner 同步 |
 
 ## C1 — Product Integrity
 
@@ -49,14 +64,15 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] 恢复 Terminal routes。
 - [x] 保持并验证 VFS surface routes。
 - [x] 恢复 AgentRun workspace/runtime trace 读取 routes。
-- [ ] 恢复 AgentRun composer submit、mailbox read/control、cancel、fork 与 fork-submit
+- [x] 恢复 AgentRun composer submit、mailbox read/control、cancel、fork 与 fork-submit
   interaction routes，并只映射现有 ProductMailboxFacade/workspace query/final fork
-  protocol。
+  protocol；`796fafd6`、`055456f8` 与 `f3a1c0c4` 固定 production route、exact message
+  recovery 与 durable fork child identity。
 
 ### AppState / production composition
 
 - [x] 恢复 Companion model preflight。
-- [ ] 将 collaboration tool contribution 接入最终 Runtime Tool Broker production catalog。
+- [x] 将 collaboration tool contribution 接入最终 Runtime Tool Broker production catalog。
 - [x] 恢复 Companion coordinator/worker、parent mailbox delivery、gate wake、
   adoption/result。
 - [x] Routine executor 与 trigger composition 已恢复；trigger 使用稳定 Product target、
@@ -77,12 +93,16 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 ### Product behavior tests
 
 - [x] 从 oracle 恢复 Companion、Frame Construction、Routine tests。
-- [ ] 从 oracle 恢复 AgentRun project start/delete/fork/message/workspace/mailbox tests。
-- [ ] 恢复 API route 与 AppState composition tracer tests。
+- [x] 从 oracle 恢复 AgentRun project start/delete/fork/message/workspace/mailbox tests；
+  `24926c16`、`3339be07`、`796fafd6`、`055456f8` 与 `f3a1c0c4` 分别固定 create、
+  delete、interaction、mailbox recovery 与 fork。
+- [x] 恢复 API route 与 AppState composition tracer tests；`02e3c4f2` 固定 Product
+  control-plane route gate，fork production route 与 API preflight tests 均通过。
 
 ## C2 — Final Seam Wiring
 
-- [ ] AgentRun create/input/control 只调用 Runtime Contract。
+- [x] AgentRun create/input/control 只调用 Runtime Contract；ProductLaunch、
+  ProductInputDelivery、ProductCommandFacade 与 ProductForkService 是唯一写入入口。
 - [x] Companion Full 只调用 exact Runtime / Complete Agent Fork。
 - [x] Companion fresh 只调用 Create + `InitialAgentContextPackage`，随后独立
   `SubmitInput`。
@@ -111,7 +131,7 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] Terminal control与展示只读写 Product terminal projection/control owner。
 - [x] AgentRun workspace/runtime trace 读取 canonical Product/Runtime projection。
 - [x] 所有 conversation presentation 只使用 canonical App Server records。
-- [ ] Product 代码只依赖 Runtime Contract、Product repositories、AppliedResourceSurface
+- [x] Product 代码只依赖 Runtime Contract、Product repositories、AppliedResourceSurface
   与 canonical conversation protocol。
 
 ## C3/C4 — Product parity tracer
@@ -119,11 +139,14 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] AgentRun Resume/Close 经 Product command facade 与 durable claim 调 Runtime；
   Product aggregate Delete 逐一 Close 并复读 canonical Closed 后删除 LifecycleRun，且与
   ProjectAgent 模板删除保持独立。
-- [ ] ProjectAgent direct AgentRun create Product saga、POST route 与首输入纵向 tracer。
-- [ ] AgentRun composer/message/mailbox/cancel/fork/fork-submit API interaction tracer。
-- [ ] 普通 input → Complete Agent → canonical Turn/Item/output → UI；Native Dash history
-  已证明产生 canonical input/Turn start/Turn complete，等待 production
-  AgentRun/API/frontend 纵向 consumer。
+- [x] ProjectAgent direct AgentRun create Product saga、POST route 与首输入纵向 tracer；
+  `24926c16` 覆盖 stable Run/Agent/Frame/Runtime identity、未知结果重放与进程重启。
+- [x] AgentRun composer/message/mailbox/cancel/fork/fork-submit API interaction tracer；
+  Product command 10/10、Product mailbox 15/15、Product fork 4/4、API route/preflight/
+  crash-recovery/CAS gates 通过。
+- [x] 普通 input → Complete Agent → canonical Turn/Item/output → UI；Native canonical
+  history、ProductInputDelivery、Runtime projection 与 Session frontend consumer 使用同一
+  production path。
 - [x] Native exact fork 与 Codex native fork。
 - [x] Companion Full exact history fork；selected child AgentFrame/surface/profile 在
   Activate 前独立应用，并覆盖 parent 与 specialist profile 不同的 tracer。
@@ -136,19 +159,20 @@ Product 控制面为何曾退出构建图、当前 owner 与纵向门禁见
 - [x] Workspace Module list/describe/operate/invoke/present 经 final handler/broker；
   write route 与 Host generation、Product binding、immutable Frame、
   AppliedResourceSurface、presentation effect 具有联合 tracer。
-- [ ] Canvas read/write/promotion/diagnostics。
-- [ ] VFS surface read/list/search。
+- [x] Canvas read/write/promotion/diagnostics；`02e3c4f2` 固定 route 与 management
+  production tracer。
+- [x] VFS surface read/list/search。
 - [x] Lifecycle VFS canonical `events.json` 与 derived indexes。
-- [ ] Terminal create/input/resize/close/projection。
-- [ ] Wait activity 与 gate/terminal convergence。
+- [x] Terminal create/input/resize/close/projection。
+- [x] Wait activity 与 gate/terminal convergence。
 - [x] Complete Agent Tool/Hook callback、permission、deadline、effect correlation 已通过；
   Product Tool families 与 Product-only Hook effect 均进入最终 typed 路径。
 - [x] MCP dynamic tool discovery → surface apply → Host callback → Broker execution。
 - [x] Compaction Dash exact / Codex native projection。
 - [x] reconnect cursor tail与gap snapshot reload。
 - [x] Runtime、Fork、Companion、selected frame 与现有 Tool/Hook callback 的
-  restart/unknown outcome/recovery 使用同一 command/effect/child identity；Routine、
-  Workflow 与剩余 Product Tool families 完成后重新跑总门禁。
+  restart/unknown outcome/recovery 使用同一 command/effect/child identity；S6 在
+  当前集成 HEAD 上重跑总门禁。
 
 ## C5 — Final Hard Cut
 
@@ -173,55 +197,55 @@ Behavior tracer:
 Negative evidence:
 ```
 
-候选范围：
+已执行范围：
 
-- [ ] platform `RuntimeSession*` delivery/live/capability/DTO/event。
-- [ ] universal `RuntimeJournalFact` / journal persistence/readers。
-- [ ] 已被 Complete Agent Host 替代的 connector/driver/executor。
-- [ ] 已被 Tool Broker / AgentHostCallbacks 替代的 Hook execution owner。
-- [ ] `agentdash-agent-types` 中已迁到最终 owner 的类型。
-- [ ] protocol 中 Backbone platform/product、Runtime internal、journal carrier。
-- [ ] Relay Prompt/SessionEvent legacy variants。
-- [ ] 无消费者的 SPI Agent delegate/re-export。
-- [ ] 拆解并删除 `agentdash-platform-spi::session_persistence` 语义聚合：仍有消费者的
+- [x] platform `RuntimeSession*` delivery/live/capability/DTO/event。
+- [x] universal `RuntimeJournalFact` / journal persistence/readers。
+- [x] 已被 Complete Agent Host 替代的 connector/driver/executor。
+- [x] 已被 Tool Broker / AgentHostCallbacks 替代的 Hook execution owner。
+- [x] `agentdash-agent-types` 中已迁到最终 owner 的类型。
+- [x] protocol 中 Backbone platform/product、Runtime internal、journal carrier。
+- [x] Relay Prompt/SessionEvent legacy variants。
+- [x] 无消费者的 SPI Agent delegate/re-export。
+- [x] 拆解并删除 `agentdash-platform-spi::session_persistence` 语义聚合：仍有消费者的
   AgentFrame/capability transition 归 Product owner，Runtime command/binding/recovery
   归 Runtime Contract，history/compaction/lineage 归 Complete Agent 或 canonical
   conversation owner；迁移完成后不保留同义 SPI 外壳。
-- [ ] 旧 schema tables/fields/indexes。
+- [x] 旧 schema tables/fields/indexes；final migration readiness 与 retired-table guards
+  固定物理缺席。
 
-### 当前只读 readiness manifest
+### 已执行 replacement manifest
 
-以下清单只冻结候选，不授权提前删除。所有条目仍需等待 C3/C4 Product tracers 通过，
-并在删除提交中补齐 behavior tracer 与最终 negative evidence。
+以下条目均由 `runtime-legacy-replacement-manifest.md` 的 target owner、production
+caller、composition、persistence、consumer、behavior tracer 与 negative evidence
+共同证明，并由 `43a5ab52` 执行删除。
 
 #### 零生产消费者的旧 Runtime/journal 段
 
-- [ ] `agentdash-platform-spi::session_persistence` 中仅定义/re-export 的旧
+- [x] `agentdash-platform-spi::session_persistence` 中仅定义/re-export 的旧
   journal/read-model 类型：`SessionMeta`、`ExecutionStatus`、
   `PersistedSessionEvent`、`SessionEventBacklog/Page`、`SessionCompaction*`、
   `SessionProjection*`、`SessionLineage*`、`NewCompactionProjectionCommit`、
   `CompactionProjectionCommitResult` 与 `SESSION_PROJECTION_KIND_*`。
-- [ ] `agentdash-api::dto::session` 中零 caller 的
+- [x] `agentdash-api::dto::session` 中零 caller 的
   `AgentRunJournalStreamQuery` / `AgentRunJournalEventsQuery`；同文件仍被 Product
   使用的 ContextAudit DTO 保留。
-- [ ] `agentdash-agent-protocol::PlatformEvent::ExecutorSessionBound`；确认无
-  producer/consumer 后同步 canonical generated TypeScript 与 freshness。
-- [ ] 将 `agentdash-agent::model::message` 中仅存的
+- [x] `agentdash-agent-protocol::PlatformEvent::ExecutorSessionBound`；Rust、generated
+  TypeScript 与 Session frontend consumer 已在同一 checkpoint 删除并通过 freshness。
+- [x] 将 `agentdash-agent::model::message` 中仅存的
   `PersistedSessionEvent` 历史注释改为 Agent history entry coordinate。
 
 #### 需要先完成 seam cut 的旧 execution 壳
 
-- [ ] `agentdash-application-hooks` 保留 Product presets/rules/script/effects、
-  `evaluate_complete_agent_hook` 与 plan compiler。只有在 production hook tracer
-  通过后，才移出 `load_frame_snapshot` 的 Product loader，并删除仅 self/tests 消费的
-  aggregate `ExecutionHookProvider::evaluate_frame_hook/refresh_frame_snapshot`、
-  `NoopExecutionHookProvider`、`HookEvaluationQuery` 与相应 SPI re-export。
-- [ ] `session_persistence` 中仍被 Product 使用的 capability transition、
-  `RuntimeCommandRecord`、`SessionStoreError` 先迁到 AgentRun/Application owner；
-  在消费者归零前不删除 module。
-- [ ] 旧 `RuntimeToolProvider` 与 Application-side composer/adapter 当前仍有 Product
-  caller；等待 final Product callback/catalog tracer 后，只删除 SPI
-  provider/re-export 与已被 typed Broker executor 替代的接入壳。Agent Core 的
+- [x] `agentdash-application-hooks` 保留 Product presets/rules/script/effects、
+  `evaluate_complete_agent_hook` 与 plan compiler；Product snapshot loader 归 Product
+  owner，零 production consumer 的 aggregate provider、refresh/query shell 与 SPI
+  re-export 已删除。
+- [x] capability transition、Runtime command/binding/recovery 与公共错误已迁入
+  AgentRun/Application 或 Runtime Contract owner；`session_persistence` 同义外壳已删除。
+- [x] 旧 `RuntimeToolProvider` 与 Application-side composer/adapter 已由 final Product
+  callback/catalog tracer 替代；SPI provider/re-export 与 typed Broker 已替代的接入壳
+  已删除。Agent Core 的
   `AgentTool` contract、各 Product tool command/业务实现，以及 Companion、Workflow、
   Wait、VFS 等能力本体均保留。
 
@@ -245,42 +269,48 @@ history-derived `AgentSession`。
 
 ### 同一 checkpoint 内切换
 
-- [ ] Domain / workflow：`RuntimeThreadPolicy`、
+- [x] Domain / workflow：`RuntimeThreadPolicy`、
   `ExecutorRunRef::RuntimeThread` 与相关 orchestration value objects。
-- [ ] Contracts / generated TypeScript：workflow、mailbox、permission 与 frame
+- [x] Contracts / generated TypeScript：workflow、mailbox、permission 与 frame
   materialization 中的 `runtime_thread_id` / `RuntimeThreadRef`。
-- [ ] Application / Lifecycle / Hooks：Frame construction、Lifecycle dispatch 与
+- [x] Application / Lifecycle / Hooks：Frame construction、Lifecycle dispatch 与
   association、Hook provenance、Companion gate/tool context/preflight、Canvas 与 Runtime
   tool context。
-- [ ] API / frontend：workflow、canvas、extension runtime、mailbox DTO 与 Workflow
+- [x] API / frontend：workflow、canvas、extension runtime、mailbox DTO 与 Workflow
   inspector/store 全部消费同一 RuntimeThread contract。
-- [ ] Product read models：AgentRun workspace、conversation execution、command
+- [x] Product read models：AgentRun workspace、conversation execution、command
   availability 只读取 fenced Product binding + canonical Managed Runtime snapshot；其
   runtime coordinate 为 `runtime_thread_id`。
-- [ ] VFS、Extension、Canvas、Runtime Tool 与 Frame policy 中的
+- [x] VFS、Extension、Canvas、Runtime Tool 与 Frame policy 中的
   `SessionRuntime*`、`RuntimeContext::Session`、`SharedSessionToolServices*` 同步切换为
   RuntimeThread 语义；倒装命名不能绕过 semantic cut。
-- [ ] 生成、编译和行为验证完成后，非 migration/fixture 的平台
+- [x] 生成、编译和行为验证完成后，非 migration/fixture 的平台
   `RuntimeSession*` / `SessionRuntime*` negative search 为零。
 
 ### 保留的 Session ownership
 
-- [ ] `agentdash-agent-protocol` 与 07-12 App Server presentation 的 `session_id`
+- [x] `agentdash-agent-protocol` 与 07-12 App Server presentation 的 `session_id`
   保持 canonical conversation identity，不参与平台 RuntimeThread 命名切换。
-- [ ] `packages/app-web/src/features/session` 继续作为 canonical conversation
+- [x] `packages/app-web/src/features/session` 继续作为 canonical conversation
   reducer/renderer；输入仅来自 Managed Runtime 的 `conversation_history` 和 change
   coordinate。
-- [ ] Complete Agent / Dash Agent 内部 `AgentSession` 仅在状态可由 ordered history
+- [x] Complete Agent / Dash Agent 内部 `AgentSession` 仅在状态可由 ordered history
   完整重建时使用该名称，并由 Complete Agent 自己拥有。
-- [ ] 历史 migration 中的旧表/字段名以及验证旧表已退出的测试保留为 schema 演进
+- [x] 历史 migration 中的旧表/字段名以及验证旧表已退出的测试保留为 schema 演进
   证据。
 
 ### 退出项
 
-- [ ] 移除只转发已退出 runtime-session boundary 的 application re-export。
-- [ ] 清理已完成 cutover 后仍描述旧 owner 的 activation inventory 与业务注释。
+- [x] 移除只转发已退出 runtime-session boundary 的 application re-export。
+- [x] 清理已完成 cutover 后仍描述旧 owner 的 activation inventory 与业务注释；
+  `fa48681a` 固定最终负向门禁描述。
 
 ## 最终门禁
+
+S4/S5 focused gates 已通过：ProductCommand 10/10、ProductMailbox 15/15、ProductFork
+4/4、Hard Cut Rust 99 tests、Session UI 12 tests、contracts freshness、migration
+guard 与 legacy negative search。以下条目只在当前集成 HEAD 上完成一次 S6 综合运行后
+勾选，避免用分散 checkpoint 的结果代替最终状态证明。
 
 - [ ] final migration、repositories 和 production composition 使用同一 schema。
 - [ ] canonical Rust/TypeScript protocol roots、schema lock、freshness 与 parity 通过。

@@ -2,8 +2,8 @@
 
 > 状态：执行中
 >
-> 当前阶段：完成 S4 Product Lane，随后重新形成 S5 唯一 production path，最后执行
-> S6 Final Conformance
+> 当前阶段：S4 Product Lane 与 S5 Atomic Hard Cut 已完成；正在执行
+> S6 Final Conformance 与 spec 同步
 >
 > Product 控制面 oracle：`58c537b7`（`c3cc58b9^`）
 
@@ -52,42 +52,32 @@ Product state
 
 ## 2. 当前完成度评估
 
-| Area | 当前状态 | 收尾判定 |
+| Area | 当前状态 | 证据 |
 | --- | --- | --- |
-| Runtime Contract / Service API / Wire | target contracts 已建立 | 保留；补最终 consumer 与 conformance |
-| Managed Runtime / Host | operation、binding、effect、projection、change 基础已建立 | 保留；核验唯一 production composition |
-| Dash Agent / AgentCore | 两层 crate 已存在，history/Core 目标基础已建立 | 保留；补 production Native registration 与真实 tracer |
-| Codex Complete Agent | service、registration、native fork/read/compact 基础已存在 | 保留；补 production interaction/presentation parity |
-| Remote Complete Agent | proxy、wire、registration 基础已存在 | 保留；核验真实 placement caller |
-| First-party registration | 当前 builtin 只明确注册 Codex | 补 Dash/Native；Remote 由真实 placement 配置注册 |
-| Fork | Product target saga 与 Agent service seam 已存在 | 补 production repository/coordinator/activation/recovery tracer |
-| Companion | target fork/fresh component 仅有 recording repository/tests | 恢复完整 Product 业务并接 production saga/channel/tool |
-| Compaction | Dash/Codex owner 模型已建立 | 补 Product command、canonical lifecycle 与恢复 tracer |
-| Tool / Hook | final Broker/Host callback 基础已建立 | 恢复 Product catalog/effects composition，证明唯一 route |
-| Canonical conversation | protocol owner、source projectors、Runtime carrier 已恢复 | 收窄 protocol owner并跑 07-12 parity |
-| Frontend Session | reducer/renderer 已恢复 | 补真实 feed、interaction、terminal 与 reconnect tracer |
-| Lifecycle VFS | canonical provider 已建立并注册 VFS kernel | 把 lifecycle mount materialize 到 AgentRun surface |
-| VFS surface | final Product resolver/route 已恢复 | 补真实 read/list/search tracer |
-| Workspace / Canvas / Terminal / Wait | 源码或 projection 部分存在，route/composition 不完整 | 恢复入口并接 final Product owners |
-| Routine / Frame Construction | Product 实现需要从 oracle 恢复 | 恢复业务语义并接 AgentRun/Surface |
-| Workflow AgentCall | durable dispatch 基础存在 | 核验 production route、receipt 与 recovery |
-| Persistence | `0084` 与多数 final repositories 已建立 | 补 Product runtime paths并审计最终约束 |
-| Crate topology | Core/Agent/Service/Runtime/Host/Wire 已存在；旧 executor/hooks 已移除 | 删除 orphan `agent-types`，收窄 protocol/SPI |
-| Legacy vocabulary | universal journal fact 已归零；旧 protocol/session vocabulary 仍有真实消费者 | 迁移 Product consumer 后再删除 |
+| Runtime Contract / Service API / Wire | 最终合同、生成 schema 与 production consumer 已收敛 | `c4c26d20`；contracts freshness 通过 |
+| Managed Runtime / Host | operation、binding、effect、projection、change 与 recovery 使用唯一 production composition | Runtime/Host/Remote recovery owner suites；`0230fe27`、`6991f79a`、`a4297f37` |
+| Dash Agent / AgentCore | 两层 crate、Native Complete Agent registration、history/fork/compaction 路径已进入生产 | `1c11be93`；Native/Complete Agent conformance |
+| Codex / Remote Complete Agent | Codex native lifecycle 与 Remote placement/recovery 均通过 Complete Agent seam | `c0de38bd`、`0230fe27`；adapter owner suites |
+| Product AgentRun | create/list/delete/resume/close/composer/cancel/mailbox/fork/fork-submit 均映射 final Product/Runtime owner | `24926c16`、`3339be07`、`1b1e0ab6`、`796fafd6`、`055456f8`、`f3a1c0c4` |
+| Companion / Workflow / Routine | Full/Fresh、channel/gate/adoption/result、Workflow AgentCall 与 Routine terminal/recovery 均使用 final seam | `de553a77`、`969fe002`、`e995a82e`、`37ccafdd`、`e8c6a310` |
+| Surface / Tool / Hook | Product surface、typed Broker、MCP、Workspace/Wait/Lifecycle/Companion tools 与 Hook callback 形成唯一 causal route | `9f6ae9b7`、`2ff6cf4b`、`8dd14936`、`2216364d`、`0e646ce1` |
+| Canonical conversation / UI | Runtime canonical history、App Server protocol、Session reducer/renderer 与 reconnect 保持同一 owner | canonical parity、Session UI 12/12、contracts freshness |
+| Product read models | Workspace、Canvas、Terminal、Wait、Lifecycle VFS、AgentRun workspace/runtime trace 均恢复 route/composition/tracer | `ad05facf`、`02e3c4f2` 与 Product control-plane route tracer |
+| Persistence / crate topology | final migration/repositories 与 production composition 一致；M1–M5 旧 Runtime 实现完成删除 | `43a5ab52`、`fa48681a`、`8603bed5`；Rust 99 tests、legacy negative search |
 
 当前结论：
 
 ```text
-S1 Contracts            complete enough to retain
-S2 Target domains       complete enough to retain
-S3 Complete Agent lane  implementation-ready, production proof incomplete
-S4 Product lane         incomplete
-S5 Production hard cut  partially activated, not a stable checkpoint
-S6 Final conformance     not started
+S1 Contracts            complete
+S2 Target domains       complete
+S3 Complete Agent lane  complete
+S4 Product lane         complete
+S5 Atomic hard cut      complete
+S6 Final conformance    in progress
 ```
 
-因此收尾关键路径不是继续做零散 crate 删除，而是先闭合 S4 的 Product 纵向路径，再完成
-一次有 replacement evidence 的 S5，最后集中做 S6。
+剩余工作只属于 S6：在当前集成 HEAD 上执行一次完整的 directed gate、PostgreSQL/
+recovery gate、frontend/protocol gate，并把最终 owner 与依赖方向同步到 `.trellis/spec/`。
 
 ## 3. 收尾关键路径
 
@@ -357,9 +347,9 @@ Negative evidence:
 
 ## 7. 当前下一步
 
-1. 提交本收尾规划 checkpoint；
-2. C1：从 `58c537b7` 恢复 Product modules、routes、composition 和 tests；
-3. 对恢复后的编译断点生成 final seam ledger；
-4. C2：优先闭合 Companion/Frame/Routine，再闭合 Workspace/Canvas/Terminal/Wait；
-5. 衔接 Lifecycle mount materialization；
-6. 进入 C3 production tracers。
+1. 在 `c4c26d20` 之后的单一集成 HEAD 上执行 S6 directed quality gate；
+2. 运行最终 PostgreSQL migration、CAS、outbox、fork/mailbox/recovery suite；
+3. 运行 canonical contracts、Session/Product frontend 与 legacy/dependency negative gates；
+4. 将最终 Runtime、Host、Complete Agent、Dash Agent/Core、Product 与 protocol owner
+   同步到 `.trellis/spec/`；
+5. 提交 S6 checkpoint，并在用户审阅后归档任务。

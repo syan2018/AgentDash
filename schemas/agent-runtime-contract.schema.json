@@ -766,9 +766,6 @@
         "revision": {
           "$ref": "#/$defs/RuntimeProjectionRevision"
         },
-        "latest_change_sequence": {
-          "$ref": "#/$defs/RuntimeChangeSequence"
-        },
         "captured_at_ms": {
           "$ref": "#/$defs/RuntimeU64"
         },
@@ -886,7 +883,6 @@
       "required": [
         "thread_id",
         "revision",
-        "latest_change_sequence",
         "captured_at_ms",
         "lifecycle",
         "turns",
@@ -898,9 +894,6 @@
         "command_availability",
         "conversation_history"
       ]
-    },
-    "RuntimeChangeSequence": {
-      "$ref": "#/$defs/RuntimeU64"
     },
     "ManagedRuntimeLifecycleStatus": {
       "type": "string",

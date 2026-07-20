@@ -62,7 +62,6 @@ describe("Managed Runtime canonical u64 codecs", () => {
     const decoded = decodeManagedRuntimeSnapshot({
       thread_id: "thread-1",
       revision: MAX_U64,
-      latest_change_sequence: MAX_U64,
       captured_at_ms: MAX_U64,
       lifecycle: "active",
       active_turn_id: "turn-1",
@@ -193,7 +192,6 @@ describe("Managed Runtime canonical u64 codecs", () => {
       const snapshot = {
         thread_id: "thread-1",
         revision: "1",
-        latest_change_sequence: "1",
         captured_at_ms: "1",
         lifecycle: "active",
         active_turn_id: "turn-1",

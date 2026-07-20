@@ -419,56 +419,6 @@ impl ManagedRuntimeItemPresentation {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ManagedRuntimeItemUpdate {
-    TextAppended {
-        text: String,
-    },
-    ReasoningAppended {
-        text: String,
-    },
-    ContentAppended {
-        content: Vec<ManagedRuntimePresentationContentBlock>,
-    },
-    CommandOutputAppended {
-        output: ManagedRuntimeCommandOutput,
-    },
-    PatchChanged {
-        changes: Vec<ManagedRuntimeFilePatch>,
-    },
-    PlanChanged {
-        explanation: Option<String>,
-        steps: Vec<ManagedRuntimePlanStep>,
-    },
-    ToolProgress {
-        content: Vec<ManagedRuntimePresentationContentBlock>,
-    },
-    CollaborationChanged {
-        status: String,
-        result: Option<Value>,
-    },
-    BodyReplaced {
-        body: ManagedRuntimeItemBody,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[allow(clippy::large_enum_variant)]
-pub enum ManagedRuntimeItemTransition {
-    Started {
-        presentation: ManagedRuntimeItemPresentation,
-    },
-    Updated {
-        update: ManagedRuntimeItemUpdate,
-        presentation: ManagedRuntimeItemPresentation,
-    },
-    Terminal {
-        presentation: ManagedRuntimeItemPresentation,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ManagedRuntimeInteractionRequest {
     Approval {
         prompt: String,

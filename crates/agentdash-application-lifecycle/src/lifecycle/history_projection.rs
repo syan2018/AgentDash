@@ -5,7 +5,7 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeInteraction, ManagedRuntimeItem, ManagedRuntimeItemBody,
     ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
     ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot, ManagedRuntimeTurn,
-    RuntimeChangeSequence, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
+    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
 };
 use agentdash_application_agentrun::agent_run::AgentRunProductProjectionQueryPort;
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -22,7 +22,6 @@ pub struct LifecycleHistoryProjection {
     pub target: AgentRunTarget,
     pub runtime_thread_id: RuntimeThreadId,
     pub projection_revision: RuntimeProjectionRevision,
-    pub latest_change_sequence: RuntimeChangeSequence,
     pub captured_at_ms: u64,
     pub lifecycle: ManagedRuntimeLifecycleStatus,
     pub active_turn_id: Option<RuntimeTurnId>,
@@ -42,7 +41,6 @@ impl LifecycleHistoryProjection {
             target,
             runtime_thread_id: snapshot.thread_id,
             projection_revision: snapshot.revision,
-            latest_change_sequence: snapshot.latest_change_sequence,
             captured_at_ms: snapshot.captured_at_ms,
             lifecycle: snapshot.lifecycle,
             active_turn_id: snapshot.active_turn_id,

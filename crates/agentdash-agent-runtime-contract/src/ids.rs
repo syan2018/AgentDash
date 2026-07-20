@@ -109,7 +109,6 @@ macro_rules! revision {
 
 revision!(SurfaceRevision);
 revision!(RuntimeProjectionRevision);
-revision!(RuntimeChangeSequence);
 
 #[cfg(test)]
 mod tests {

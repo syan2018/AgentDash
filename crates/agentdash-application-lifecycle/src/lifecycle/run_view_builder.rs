@@ -596,8 +596,8 @@ mod tests {
         ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
         ManagedRuntimeCommandKind, ManagedRuntimeLifecycleStatus,
         ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
-        ManagedRuntimeSourceBindingEvidence, RuntimeChangeSequence, RuntimeProjectionRevision,
-        RuntimeSourceRef, RuntimeThreadId, SurfaceRevision,
+        ManagedRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
+        RuntimeThreadId, SurfaceRevision,
     };
     use agentdash_application_agentrun::agent_run::{
         AgentRunProductProjectionError, AgentRunTerminalChangePage, AgentRunTerminalChangeSequence,
@@ -823,7 +823,6 @@ mod tests {
             thread_name: None,
             thread_name_source: None,
             revision: RuntimeProjectionRevision(7),
-            latest_change_sequence: RuntimeChangeSequence(5),
             captured_at_ms: 10,
             lifecycle: ManagedRuntimeLifecycleStatus::Active,
             active_turn_id: None,

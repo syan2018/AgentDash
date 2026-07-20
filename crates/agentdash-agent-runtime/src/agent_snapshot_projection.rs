@@ -7,9 +7,9 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeInteractionStatus, ManagedRuntimeItem, ManagedRuntimeItemPresentation,
     ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
     ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot, ManagedRuntimeThreadNameSource,
-    ManagedRuntimeTurn, ManagedRuntimeUnavailabilityReason, RuntimeChangeSequence,
-    RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest, RuntimeProjectionRevision,
-    RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
+    ManagedRuntimeTurn, ManagedRuntimeUnavailabilityReason, RuntimeInteractionId, RuntimeItemId,
+    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
+    SurfaceRevision,
 };
 use agentdash_agent_service_api::{
     AgentEntityStatus, AgentInteractionStatus, AgentLifecycleStatus, AgentSnapshot,
@@ -156,7 +156,6 @@ pub fn project_authoritative_agent_snapshot(
     Ok(ManagedRuntimeSnapshot {
         thread_id,
         revision,
-        latest_change_sequence: RuntimeChangeSequence(0),
         captured_at_ms,
         lifecycle: project_lifecycle(snapshot.lifecycle),
         active_turn_id,
@@ -413,7 +412,6 @@ mod tests {
         .expect("projection");
 
         assert_eq!(projected.revision, RuntimeProjectionRevision(7));
-        assert_eq!(projected.latest_change_sequence, RuntimeChangeSequence(0));
         assert!(projected.operations.is_empty());
         assert!(projected.source_binding.is_none());
         assert_eq!(

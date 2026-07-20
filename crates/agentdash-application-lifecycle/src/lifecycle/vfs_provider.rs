@@ -118,7 +118,6 @@ impl LifecycleMountProvider {
                 "agent_id": projection.target.agent_id,
                 "runtime_thread_id": projection.runtime_thread_id,
                 "projection_revision": projection.projection_revision,
-                "latest_change_sequence": projection.latest_change_sequence,
                 "captured_at_ms": projection.captured_at_ms,
                 "lifecycle": projection.lifecycle,
                 "active_turn_id": projection.active_turn_id,
@@ -140,7 +139,6 @@ impl LifecycleMountProvider {
                 "target": projection.target,
                 "runtime_thread_id": projection.runtime_thread_id,
                 "projection_revision": projection.projection_revision,
-                "latest_change_sequence": projection.latest_change_sequence,
                 "records": projection.conversation_history,
             })),
             ["items", file] => {
@@ -432,10 +430,7 @@ impl MountProvider for LifecycleMountProvider {
         };
         let revision = if mount.metadata.get("agent_id").is_some() {
             let history = self.mount_history(mount).await?;
-            format!(
-                "runtime:{}:{}",
-                history.projection_revision.0, history.latest_change_sequence.0
-            )
+            format!("runtime:{}", history.projection_revision.0)
         } else {
             format!("lifecycle:{}", run.revision)
         };
@@ -920,8 +915,7 @@ mod tests {
     };
     use agentdash_agent_runtime_contract::{
         ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
-        ManagedRuntimeProjectionFidelity, RuntimeChangeSequence, RuntimeProjectionRevision,
-        RuntimeThreadId,
+        ManagedRuntimeProjectionFidelity, RuntimeProjectionRevision, RuntimeThreadId,
     };
     use agentdash_domain::workflow::{AgentSource, LifecycleAgent};
     use agentdash_test_support::{
@@ -1009,7 +1003,6 @@ mod tests {
             target: target.clone(),
             runtime_thread_id: RuntimeThreadId::new("runtime-thread-1").expect("thread id"),
             projection_revision: RuntimeProjectionRevision(7),
-            latest_change_sequence: RuntimeChangeSequence(11),
             captured_at_ms: 17,
             lifecycle: ManagedRuntimeLifecycleStatus::Active,
             active_turn_id: None,
@@ -1061,8 +1054,7 @@ mod tests {
             .expect("read canonical history");
         let value: serde_json::Value = serde_json::from_str(&read.content).expect("events JSON");
         assert_eq!(value["projection_revision"], "7");
-        assert_eq!(value["latest_change_sequence"], "11");
         assert_eq!(value["records"][0], expected_record);
-        assert_eq!(read.version_token.as_deref(), Some("runtime:7:11"));
+        assert_eq!(read.version_token.as_deref(), Some("runtime:7"));
     }
 }

@@ -1,6 +1,6 @@
 //! Application-facing Managed Agent Runtime contract.
 //!
-//! This crate owns only platform command, snapshot, change, availability, and projection
+//! This crate owns only platform command, snapshot, availability, and projection
 //! vocabulary. Complete Agent commands and source coordinates belong to
 //! `agentdash-agent-service-api`; Host coordination and transport details never cross this
 //! boundary.
@@ -40,7 +40,6 @@ mod tests {
             "export type RuntimeU64 = string & { readonly __runtime_u64: \"canonical_unsigned_decimal\" };",
             "export type SurfaceRevision = RuntimeU64;",
             "export type RuntimeProjectionRevision = RuntimeU64;",
-            "export type RuntimeChangeSequence = RuntimeU64;",
             "captured_at_ms: RuntimeU64",
         ] {
             assert!(typescript.contains(declaration), "missing {declaration}");

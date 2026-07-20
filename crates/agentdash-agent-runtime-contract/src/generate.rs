@@ -59,12 +59,9 @@ fn required_runtime_type_names() -> BTreeSet<String> {
         "ManagedRuntimeContractSchema",
         "ManagedRuntimeProjectionSchema",
         "ManagedRuntimeSnapshot",
-        "ManagedRuntimePlatformChange",
         "ManagedRuntimePresentationContentBlock",
         "ManagedRuntimeItemBody",
         "ManagedRuntimeItemPresentation",
-        "ManagedRuntimeItemTransition",
-        "ManagedRuntimeItemUpdate",
         "ManagedRuntimeItemTerminalEvidence",
         "ManagedRuntimeInteractionRequest",
         "ManagedRuntimeInteractionStatus",
@@ -198,7 +195,6 @@ mod tests {
         for required in [
             "ManagedRuntimeItemBody",
             "ManagedRuntimeItemPresentation",
-            "ManagedRuntimeItemTransition",
             "ManagedRuntimeInteractionRequest",
         ] {
             assert!(names.contains(required), "missing {required}");

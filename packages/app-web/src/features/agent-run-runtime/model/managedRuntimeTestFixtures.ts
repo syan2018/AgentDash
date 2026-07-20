@@ -45,7 +45,6 @@ function availability(
 function runtimeSnapshot(
   status: ManagedRuntimeEntityStatus,
   revision: bigint,
-  latestChangeSequence: bigint,
 ): ManagedRuntimeSnapshot {
   const terminal =
     status === "completed"
@@ -63,7 +62,6 @@ function runtimeSnapshot(
   return {
     thread_id: "runtime-thread-child",
     revision,
-    latest_change_sequence: latestChangeSequence,
     captured_at_ms: 1000n + revision,
     lifecycle: "active",
     active_turn_id: status === "running" ? "turn-compaction" : null,
@@ -117,10 +115,10 @@ function runtimeSnapshot(
   };
 }
 
-const started = runtimeSnapshot("running", 5n, 8n);
-const completed = runtimeSnapshot("completed", 6n, 9n);
-const failed = runtimeSnapshot("failed", 7n, 10n);
-const lost = runtimeSnapshot("lost", 8n, 11n);
+const started = runtimeSnapshot("running", 5n);
+const completed = runtimeSnapshot("completed", 6n);
+const failed = runtimeSnapshot("failed", 7n);
+const lost = runtimeSnapshot("lost", 8n);
 
 export const managedRuntimeTestFixtures = {
   snapshots: { started, completed, failed, lost },

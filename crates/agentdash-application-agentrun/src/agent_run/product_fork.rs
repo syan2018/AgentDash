@@ -390,7 +390,7 @@ mod tests {
     use agentdash_agent_runtime_contract::{
         ManagedRuntimeAvailabilityEvidence, ManagedRuntimeLifecycleStatus,
         ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity, ManagedRuntimeTurn,
-        RuntimeChangeSequence, RuntimeProjectionRevision, RuntimeTurnId,
+        RuntimeProjectionRevision, RuntimeTurnId,
     };
 
     use super::*;
@@ -400,7 +400,6 @@ mod tests {
         ManagedRuntimeSnapshot {
             thread_id: RuntimeThreadId::new("runtime-parent").expect("thread"),
             revision,
-            latest_change_sequence: RuntimeChangeSequence(4),
             captured_at_ms: 10,
             lifecycle: ManagedRuntimeLifecycleStatus::Active,
             active_turn_id: None,

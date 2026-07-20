@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -9,11 +9,10 @@ use agentdash_agent_protocol::CanonicalConversationRecord;
 
 use crate::{
     ManagedRuntimeInteractionRequest, ManagedRuntimeInteractionResolution,
-    ManagedRuntimeInteractionStatus, ManagedRuntimeItemPresentation, ManagedRuntimeItemTransition,
-    RuntimeChangeSequence, RuntimeContextContributionId, RuntimeContextPackageId,
-    RuntimeContextSourceRef, RuntimeContextSourceRevision, RuntimeInteractionId, RuntimeItemId,
-    RuntimeOperationId, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeSourceRef,
-    RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
+    ManagedRuntimeInteractionStatus, ManagedRuntimeItemPresentation, RuntimeContextContributionId,
+    RuntimeContextPackageId, RuntimeContextSourceRef, RuntimeContextSourceRevision,
+    RuntimeInteractionId, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
+    RuntimeProjectionRevision, RuntimeSourceRef, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -374,7 +373,6 @@ impl ManagedRuntimeCommandAvailability {
 pub struct ManagedRuntimeSnapshot {
     pub thread_id: RuntimeThreadId,
     pub revision: RuntimeProjectionRevision,
-    pub latest_change_sequence: RuntimeChangeSequence,
     #[serde(with = "crate::wire_u64")]
     #[schemars(with = "crate::wire_u64::RuntimeU64")]
     #[ts(type = "RuntimeU64")]
@@ -396,156 +394,10 @@ pub struct ManagedRuntimeSnapshot {
     pub conversation_history: Vec<CanonicalConversationRecord>,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ManagedRuntimeProjectionSection {
-    Snapshot,
-    ThreadName,
-    Lifecycle,
-    ActiveTurn,
-    Turns,
-    Items,
-    Interactions,
-    Surface,
-    ConversationPresentation,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[allow(clippy::large_enum_variant)]
-pub enum ManagedRuntimeSourceProjectionDelta {
-    SnapshotReplaced {
-        lifecycle: ManagedRuntimeLifecycleStatus,
-        active_turn_id: Option<RuntimeTurnId>,
-        turns: Vec<ManagedRuntimeTurn>,
-        items: Vec<ManagedRuntimeItem>,
-        interactions: Vec<ManagedRuntimeInteraction>,
-        authority: ManagedRuntimeProjectionAuthority,
-        fidelity: ManagedRuntimeProjectionFidelity,
-        applied_surface_revision: Option<SurfaceRevision>,
-    },
-    LifecycleChanged {
-        lifecycle: ManagedRuntimeLifecycleStatus,
-    },
-    ActiveTurnChanged {
-        active_turn_id: Option<RuntimeTurnId>,
-    },
-    TurnsChanged {
-        turns: Vec<ManagedRuntimeTurn>,
-    },
-    ItemsChanged {
-        items: Vec<ManagedRuntimeItem>,
-    },
-    ItemTransitioned {
-        item_id: RuntimeItemId,
-        transition: ManagedRuntimeItemTransition,
-    },
-    InteractionsChanged {
-        interactions: Vec<ManagedRuntimeInteraction>,
-    },
-    SurfaceChanged {
-        applied_surface_revision: Option<SurfaceRevision>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[allow(clippy::large_enum_variant)]
-pub enum ManagedRuntimeChangeDelta {
-    ConversationPresentationAppended {
-        #[serde(with = "crate::wire_u64")]
-        #[schemars(with = "crate::wire_u64::RuntimeU64")]
-        #[ts(type = "RuntimeU64")]
-        source_change_sequence: u64,
-        source_projection_revision: RuntimeProjectionRevision,
-        #[ts(type = "Array<CanonicalConversationRecord>")]
-        records: Vec<CanonicalConversationRecord>,
-    },
-    ThreadNameChanged {
-        #[serde(with = "crate::wire_u64")]
-        #[schemars(with = "crate::wire_u64::RuntimeU64")]
-        #[ts(type = "RuntimeU64")]
-        source_change_sequence: u64,
-        source_projection_revision: RuntimeProjectionRevision,
-        thread_name: Option<String>,
-        source: ManagedRuntimeThreadNameSource,
-    },
-    SourceObservationApplied {
-        #[serde(with = "crate::wire_u64")]
-        #[schemars(with = "crate::wire_u64::RuntimeU64")]
-        #[ts(type = "RuntimeU64")]
-        source_change_sequence: u64,
-        source_projection_revision: RuntimeProjectionRevision,
-        source_identity_digest: RuntimePayloadDigest,
-        observation_digest: RuntimePayloadDigest,
-        source_revision_digest: Option<RuntimePayloadDigest>,
-        source_cursor_digest: Option<RuntimePayloadDigest>,
-        changed_sections: BTreeSet<ManagedRuntimeProjectionSection>,
-    },
-    SourceProjectionChanged {
-        #[serde(with = "crate::wire_u64")]
-        #[schemars(with = "crate::wire_u64::RuntimeU64")]
-        #[ts(type = "RuntimeU64")]
-        source_change_sequence: u64,
-        source_projection_revision: RuntimeProjectionRevision,
-        observation_digest: RuntimePayloadDigest,
-        section: ManagedRuntimeProjectionSection,
-        section_digest: RuntimePayloadDigest,
-        delta: ManagedRuntimeSourceProjectionDelta,
-    },
-    OperationUpserted {
-        operation: ManagedRuntimeOperation,
-    },
-    CommandAvailabilityChanged {
-        command: ManagedRuntimeCommandKind,
-        availability: ManagedRuntimeCommandAvailability,
-    },
-    SurfaceEvidenceChanged {
-        bound_surface_revision: Option<SurfaceRevision>,
-        applied_surface_revision: Option<SurfaceRevision>,
-    },
-    SourceBindingChanged {
-        binding: Option<ManagedRuntimeSourceBindingEvidence>,
-    },
-    RuntimeLifecycleChanged {
-        lifecycle: ManagedRuntimeLifecycleStatus,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimePlatformChange {
-    pub thread_id: RuntimeThreadId,
-    pub sequence: RuntimeChangeSequence,
-    pub revision: RuntimeProjectionRevision,
-    pub delta: ManagedRuntimeChangeDelta,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeChangeGap {
-    pub requested_after: Option<RuntimeChangeSequence>,
-    pub earliest_available: RuntimeChangeSequence,
-    pub latest_available: RuntimeChangeSequence,
-    pub snapshot_revision: RuntimeProjectionRevision,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeChangePage {
-    pub thread_id: RuntimeThreadId,
-    pub changes: Vec<ManagedRuntimePlatformChange>,
-    pub next: RuntimeChangeSequence,
-    pub gap: Option<ManagedRuntimeChangeGap>,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ManagedRuntimeProjectionSchema {
     pub snapshot: ManagedRuntimeSnapshot,
-    pub change_page: ManagedRuntimeChangePage,
 }
 
 #[cfg(test)]
@@ -569,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn application_contract_round_trips_snapshot_availability_and_typed_gap() {
+    fn application_contract_round_trips_authoritative_snapshot() {
         let thread_id = id("runtime-thread-1", RuntimeThreadId::new);
         let turn_id = id("runtime-turn-1", RuntimeTurnId::new);
         let item_id = id("runtime-item-1", RuntimeItemId::new);
@@ -584,9 +436,8 @@ mod tests {
         }
         let contract = ManagedRuntimeProjectionSchema {
             snapshot: ManagedRuntimeSnapshot {
-                thread_id: thread_id.clone(),
+                thread_id,
                 revision: RuntimeProjectionRevision(5),
-                latest_change_sequence: RuntimeChangeSequence(8),
                 captured_at_ms: 42,
                 lifecycle: ManagedRuntimeLifecycleStatus::Active,
                 active_turn_id: Some(turn_id.clone()),
@@ -621,17 +472,6 @@ mod tests {
                 fidelity: ManagedRuntimeProjectionFidelity::Exact,
                 command_availability,
             },
-            change_page: ManagedRuntimeChangePage {
-                thread_id,
-                changes: Vec::new(),
-                next: RuntimeChangeSequence(8),
-                gap: Some(ManagedRuntimeChangeGap {
-                    requested_after: Some(RuntimeChangeSequence(2)),
-                    earliest_available: RuntimeChangeSequence(5),
-                    latest_available: RuntimeChangeSequence(8),
-                    snapshot_revision: RuntimeProjectionRevision(5),
-                }),
-            },
         };
 
         let json = serde_json::to_value(&contract).expect("serialize contract fixture");
@@ -640,14 +480,13 @@ mod tests {
             json["snapshot"]["command_availability"]["submit_input"]["status"],
             "available"
         );
-        assert_eq!(json["change_page"]["gap"]["earliest_available"], "5");
         let decoded: ManagedRuntimeProjectionSchema =
             serde_json::from_value(json).expect("deserialize contract fixture");
         assert_eq!(decoded, contract);
     }
 
     #[test]
-    fn schema_closure_contains_runtime_ids_availability_and_gap() {
+    fn schema_closure_contains_runtime_ids_and_availability() {
         let schema = schemars::schema_for!(ManagedRuntimeProjectionSchema);
         let schema = serde_json::to_string(&schema).expect("serialize schema");
         for required in [
@@ -658,14 +497,12 @@ mod tests {
             "item_id",
             "operations",
             "command_availability",
-            "ManagedRuntimeChangeGap",
         ] {
             assert!(schema.contains(required), "missing {required}");
         }
         assert!(!schema.contains("AgentSourceCoordinate"));
         assert!(!schema.contains("AgentTurnId"));
         assert!(!schema.contains("AgentItemId"));
-        assert!(schema.contains("thread_name_changed"));
     }
 
     #[test]

@@ -382,8 +382,8 @@ mod tests {
     use agentdash_agent_runtime_contract::{
         ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
         ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot,
-        ManagedRuntimeSourceBindingEvidence, RuntimeChangeSequence, RuntimeProjectionRevision,
-        RuntimeSourceRef, SurfaceRevision,
+        ManagedRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
+        SurfaceRevision,
     };
     use agentdash_agent_service_api::AgentLiveEventStream;
     use agentdash_application_agentrun::agent_run::{
@@ -592,7 +592,6 @@ mod tests {
         ManagedRuntimeSnapshot {
             thread_id: "thread-list-title".parse().expect("thread id"),
             revision: RuntimeProjectionRevision(1),
-            latest_change_sequence: RuntimeChangeSequence(1),
             captured_at_ms: 1,
             lifecycle: ManagedRuntimeLifecycleStatus::Active,
             thread_name: Some(thread_name),

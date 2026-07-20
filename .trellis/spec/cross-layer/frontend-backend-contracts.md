@@ -83,25 +83,38 @@ AgentRunCommandReceipt {
 
 ### Contracts
 
-- Project Agent create 先建立 Lifecycle run/agent/frame 产品事实，再通过 `AgentRunProductDelivery` 提交首条 canonical Runtime mailbox command。响应返回产品 refs 与可选 Runtime thread/operation refs。
+- Project Agent create 先建立 Lifecycle run/agent/frame 产品事实，再通过
+  `AgentRunProductInputDeliveryPort` 同步交接首条 Agent input。响应只有在 concrete Agent
+  返回 operation receipt 后才报告 accepted。
 - ProjectAgent 决定 executor/Integration identity并提供默认运行参数；create-run 使用独立的 `model_selection` 与 `backend_selection` 表达逐 Run 意图，不暴露完整 executor config。`model_selection` 聚合 Provider、model、agent variant 与 thinking level；admission 在 provision 前将这些 generated contract 分片与 ProjectAgent defaults 编译成 effective config并写入 AgentFrame execution profile。这些意图不是无状态 HTTP override，也不改写 ProjectAgent defaults。
-- Composer submit 返回 queued mailbox identity 或 canonical `OperationReceipt`；重复 `client_command_id` 返回同一 operation，不创建第二次 Driver side effect。
-- UI 命令可用性只读取 Runtime snapshot 的 `command_availability`。Lifecycle status、executor kind、Backbone、transcript 或 HTTP success 不能推导 submit/steer/interrupt/compact/resolve 权限。
-- `AgentRunRuntimeBinding` 是 `run_id + agent_id` 到 Runtime thread/Host binding 的唯一产品执行坐标。浏览器不接触 Driver source IDs、Host lease 或 placement credential。
-- Session feed由journal GET建立presentation baseline，再通过持久NDJSON连接消费durable与live transient presentation。订阅携带durable cursor及`transient_generation + transient_sequence`；浏览器按target隔离cursor，terminal清理transient cursor，retention gap/Lagged使用typed stream error重连。
-- Session feed只消费journal中的immutable presentation body，envelope承载durable/transient cursor、target和routing metadata。`features/session` reducer/renderer不感知Managed Runtime internal event，也不从Runtime snapshot摘要重建protocol item。这使Codex App Server标准family和AgentDash typed extension可以共用同一个owned protocol边界，同时保持既有会话UI行为；Runtime inspect/internal stream保留为独立诊断面。
-- Gateway使用subscribe-before-replay封住race：先建立per-thread broadcast receiver，再读取durable与active-turn transient replay，去重后持续等待live broadcast。`include_transient=true`只能与generated双cursor合同共同使用；有限replay batch不得替代该连接。
-- Runtime snapshot携带`latest_event_sequence`与`captured_at_ms`，event envelope携带权威`occurred_at_ms`。前端先hydrate snapshot transcript，再从latest sequence订阅；generated validator拒绝缺失/非法timestamp、revision与durable/transient shape，前端不得使用`Date.now()`补造wire事实。
+- Composer submit 成功返回 concrete Agent `OperationReceipt`；重复 `client_command_id` 命中同一
+  Agent effect，不存在 queued response 或 Product background delivery。
+- UI 命令可用性来自 authoritative Agent snapshot 经内存 mapper 得到的当前 view；Lifecycle
+  status、executor kind、HTTP success 与任何持久 presentation cache 都不能推导命令权限。
+- LifecycleAgent owner document 中的 association 是 `run_id + agent_id` 到 concrete Agent
+  service/source 的稳定 Product 坐标。浏览器不接触 source ID、Host generation、callback route
+  或 placement credential。
+- Session baseline 来自 Complete Agent authoritative `read`。随后连接只消费该 source 的
+  process-local live delta；live delta 不携带跨重启 durable cursor。
+- browser reducer 以 snapshot 为 committed baseline，以当前连接 lane 归约 partial delta。
+  连接断开、source切换、Lagged 或 sequence gap 时丢弃 partial lane并重新读取 snapshot。
+- Complete Agent 真正支持 ordered durable `changes` 时可以用 Agent-owned cursor增量读取；
+  Snapshot-only Agent 不由平台伪造 change tail。
 - 所有直接使用 `fetch` 的NDJSON客户端必须通过 `buildApiPath(agentRunScopedPath(...))` 构造URL；`resolveApiUrl`只拼origin，不会注入`/api`。
 - AgentRun cutover必须维护route ledger：每个前端service方法都要对应仍注册的HTTP route、application owner、generated contract与至少一个contract test。删除router入口时，必须在同一变更中迁移消费者或删除service/contract；文件级替换router不代表cutover完成。
-- Project AgentRun列表使用generated `ProjectAgentRunListView` / `AgentRunListEntryView` / `AgentRunListChildView`。列表Runtime摘要只包含展示需要的`thread_status`与可选`active_turn_id`；Lifecycle状态决定无活跃turn或closed thread的产品展示，但不能参与命令admission。
-- 列表不复用`AgentRunWorkspaceShell`或手写`delivery_status`。title/activity/subject来自Lifecycle产品事实，children来自canonical `AgentLineage`，Runtime状态来自Managed Runtime inspect；这些来源在application query内组合，前端只做纯presentation映射。
-- AgentRun product projection组合Lifecycle/AgentFrame/Managed Runtime当前事实。某一projection加载失败不能通过`Promise.all`清空其他已经成功的canonical Runtime inspect；错误状态按owner独立呈现。
-- Runtime context、compaction、interaction 与 tool approval 均通过 facade/canonical operation；不存在独立 session command、protocol turn ID 或 vendor DTO 路径。
+- Project AgentRun列表使用generated `ProjectAgentRunListView` /
+  `AgentRunListEntryView` / `AgentRunListChildView`。title/activity/subject/lineage来自Product
+  facts；Agent status 是 optional enrichment。
+- Agent resolve/read 失败不能清空 Product list/workspace。前端展示 Product shell 与 typed
+  unavailable，再在 Agent 恢复后重新查询。
+- context、compaction、interaction 与 tool approval 均通过 Product/Agent facade，最终由
+  concrete Agent command/inspection证明；不存在独立 session command 或 vendor DTO 路径。
 - Interaction response使用generated `InteractionResponse` union；approval、user input、MCP elicitation与dynamic tool result共用一个`/respond` route。UI只有在刷新后的Runtime snapshot声明`interaction_respond=available`时才启用对应控件。
 - Runtime context popup直接读取`RuntimeContextView`的active head、materialized checkpoint、blocks与fidelity；target切换以`run_id + agent_id`为request generation，旧target迟到响应不能覆盖当前popup。
-- RuntimeWire `DriverCommandEnvelope.runtime_turn_id`携带Managed Runtime为`ThreadStart`/`TurnStart`分配的canonical Turn identity。Driver source turn只用于Host/adapter correlation，不进入浏览器合同或Runtime command authority。
-- Mailbox 只持久化 queued product intent 与 `accepted_runtime_operation_id`。没有 canonical command 的管理动作不进入 UI，也不保留死 endpoint。
+- RuntimeWire/Relay 只承载 Complete Agent transport；其 connection epoch、route 与 generation
+  不进入浏览器合同或 Product persistence。
+- LifecycleGate 等 Product owner 的 waiting facts单独展示；Agent input handoff不形成 mailbox
+  projection。没有真实 Agent/Product command 的管理动作不进入 UI。
 
 ### Validation & Error Matrix
 
@@ -117,17 +130,17 @@ AgentRunCommandReceipt {
 | options executor 未知 | `400 Bad Request`，不探测 Connector 或任意 offer |
 | AgentRun target 不存在或跨 Project | not found/authorization error before Runtime side effect |
 | client command id 为空 | `400 Bad Request` |
-| stale Runtime revision/active turn | typed stale error；前端刷新 snapshot |
+| Agent turn/interaction coordinate 已过期 | typed stale error；前端刷新 authoritative snapshot |
 | interaction event已到但Runtime inspect尚未刷新 | 控件保持disabled；`interaction_requested`触发inspect refresh后按availability启用 |
 | context target A响应晚于target B | A响应丢弃；popup只提交与当前target key匹配的结果 |
 | Driver回报与`runtime_turn_id`不同的Turn | critical protocol violation；matching identity只作为Observed ack |
 | command availability=false | UI 禁用且 API 在副作用前拒绝 |
-| command queued | 返回 mailbox message identity；worker 后续写 accepted operation |
+| Agent unavailable | 当前请求 typed unavailable；无 queued Product row |
 | command duplicate | 返回原 operation receipt |
-| binding disconnect | snapshot/event 显示 `Lost`，旧 generation 晚到事件不改变 UI |
+| live connection断开 | 清除 partial lane并重读 snapshot；Product shell保持可用 |
 | NDJSON URL 未经过 `buildApiPath` | frontend contract test失败；不得请求缺少`/api`的同名页面路由 |
-| transient generation变化或sequence重复 | 新generation重置cursor；同generation重复sequence丢弃 |
-| broadcast Lagged | 输出typed retryable error并断流；浏览器携带最后已接受双cursor重连 |
+| live source/connection变化或sequence重复 | 重建partial lane；同连接重复sequence丢弃 |
+| broadcast Lagged | 输出typed retryable error并断流；浏览器重新读取authoritative snapshot |
 | presentation envelope合法但protected body无法通过generated validator | 拒绝该frame并显式报protocol error；不降级为文本消息或generic tool card |
 | workspace/list route在cutover中移除但service仍存在 | route ledger/contract test失败；同一变更迁移projection或删除consumer |
 | Runtime thread为`active`但没有`active_turn_id` | 列表显示idle/ready，不伪造running |
@@ -142,20 +155,25 @@ AgentRunCommandReceipt {
 - Selector tests 断言不可用 profile/Provider 保持可见、disabled 且展示原因。
 - Service tests 覆盖 URL encoding、create/composer/cancel/context/generic interaction endpoints。
 - Command-state tests 证明 availability 只取 Runtime snapshot。
-- Feed tests 覆盖 snapshot baseline、durable cursor、duplicate event、reconnect 与 typed stream error。
+- Feed tests 覆盖 authoritative snapshot baseline、duplicate live event、disconnect/gap、reconnect
+  与 typed stream error。
 - Interaction feed tests保留`interaction_id/kind/prompt/terminal`并证明response控件只消费刷新后的availability；context popup tests覆盖target切换迟到响应。
-- Feed URL test断言完整`/api/agent-runs/{run}/agents/{agent}/runtime/events/stream/ndjson`、`include_transient=true`及重连时的durable/transient generation/sequence参数。
-- Stream state测试覆盖target切换、generation变化、重复sequence、terminal reset与Lagged后cursor保持。
+- Feed URL test断言完整AgentRun scoped snapshot/live endpoint，不请求已删除的 mailbox 或
+  Runtime change-tail endpoint。
+- Stream state测试覆盖target切换、连接lane变化、重复sequence、terminal与Lagged后snapshot
+  recovery。
 - Route ledger test至少枚举AgentRun list/workspace/composer/cancel/runtime/context/events/approval的前端consumer与Axum route，防止cutover静默删入口。
 - Project列表测试覆盖service URL、generated DTO消费、status presentation与state分页/失效刷新；真实产品验证覆盖侧栏、完整列表及列表行导航。
-- Project Agent create E2E 覆盖 lifecycle facts -> ProductDelivery -> binding/thread -> operation response。
+- Project Agent create E2E 覆盖 lifecycle facts → Agent create/source association → synchronous
+  first input → operation response → live delta → reconnect snapshot。
 - Create-run contract generation test断言 generated TypeScript 只暴露 `model_selection` 与 `backend_selection`，不重新引入可覆盖 executor 的请求字段。
 
 ## 4. Companion and Workflow Product Facts
 
 - Companion/subagent dispatch 以 Lifecycle run/agent/frame、assignment/activity attempt 与 canonical Runtime thread/operation refs表达。
 - Workflow、Gate、Task、Story 只保存产品编排与 evidence 坐标；Runtime terminal 通过 canonical Runtime event/snapshot 投影，不保存另一份执行 session 状态。
-- 等待与 gate delivery 进入 canonical AgentRun mailbox。恢复依赖 mailbox claim/lease 与 accepted Runtime operation，而不是进程内 callback。
+- 等待状态由 LifecycleGate 持久化；gate result通过同步 Agent input handoff唤醒目标 Agent。
+  Gate owner只保存 waiting fact 与 handoff/operation coordinate作为下游证据。
 - UI 可以展示 Runtime trace link，但不得把 trace metadata当作 AgentRun command authority。
 
 ## 5. Workspace Module, Canvas and VFS
@@ -323,10 +341,11 @@ lastLiveSeq = dispatchLiveSessionEvents(
 - Good：首次运行前 RuntimeOffer 表为空，selector 仍从最终 Host definition inventory 展示 `PI_AGENT`/`CODEX`。
 - Base：没有 executable Provider 时 `PI_AGENT` disabled 并展示凭据诊断，`CODEX` availability 独立计算。
 - Bad：API 读取 composition 前的临时 definition registry，导致动态装配的 Native definition 在真实启动中消失。
-- Base：首条消息排队，响应只有 mailbox identity；worker dispatch 后 workspace refresh 观察 accepted operation 与新 cursor。
-- Bad：前端调用已经没有后端实现的 fork/mailbox endpoint，或根据 `execution_status=running` 自行启用 cancel。
+- Base：Agent 暂时不可用，首条消息请求返回 typed unavailable；使用同一 client identity重试后
+  返回 concrete Agent operation receipt。
+- Bad：前端调用已经没有后端实现的管理 endpoint，或根据 `execution_status=running` 自行启用 cancel。
 - Bad：把Runtime `active`直接映射为running，或把`closed`直接映射为completed，会把thread lifecycle误当成turn/产品终态。
-- Bad：只保存durable cursor或在每次重连从transient sequence 0开始，导致同一delta重复追加。
+- Bad：把 live partial delta 当成 durable history；断线后会缺失未提交内容或重复追加。
 - Good：Canvas presentation 先刷新 `AgentRunWorkspaceView.workspace_modules`，精确匹配
   `canvas://{mount_id}` 后打开 tab；同一响应同时驱动“可打开 Canvas”菜单。
 - Bad：把 RuntimeWire frame转成 Backbone JSON 再由 UI 推导 Runtime terminal。
@@ -372,11 +391,12 @@ import type {
 ```
 
 ```ts
-// Wrong：只携带durable cursor，重连时重复消费active turn delta
-buildApiPath(agentRunScopedPath(target, "/runtime/events/stream/ndjson?include_transient=true&after=42"));
+// Wrong：把上一次连接的partial sequence当成跨重启history cursor
+connectLiveEvents(target, { after: previousConnectionSequence });
 
-// Correct：统一API前缀并携带同一target最后接受的双cursor
-buildApiPath(agentRunScopedPath(target, "/runtime/events/stream/ndjson?include_transient=true&after=42&transient_generation=7&transient_after=18"));
+// Correct：先读authoritative snapshot，再为当前连接建立新的partial lane
+const snapshot = await getAgentRunConversation(target);
+connectLiveEvents(target, { baselineRevision: snapshot.sourceRevision });
 ```
 
 ```ts

@@ -3,16 +3,16 @@
   "name": "agent-runtime-persistence-authority-convergence",
   "title": "Agent Runtime 持久化职责与事实边界清理",
   "description": "删除 Product、Runtime、Host 对 Agent 执行事实的重复维护，使 Runtime/Host 回归纯内存协调层；Product 不提供离线输入队列，只保存业务定义与 Agent source 关联，concrete Complete Agent 独占执行历史与 effect authority。",
-  "status": "in_progress",
-  "dev_type": null,
+  "status": "completed",
+  "dev_type": "refactor",
   "scope": "cross-layer",
   "package": null,
   "priority": "P1",
   "creator": "codex-agent",
   "assignee": "codex-agent",
   "createdAt": "2026-07-20",
-  "completedAt": null,
-  "branch": null,
+  "completedAt": "2026-07-20",
+  "branch": "codex/agent-runtime-final-convergence-plan",
   "base_branch": "codex/agent-runtime-final-convergence-plan",
   "worktree_path": null,
   "commit": null,
@@ -26,6 +26,6 @@
     ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/",
     ".trellis/tasks/07-20-database-persistence-boundary-cleanup/"
   ],
-  "notes": "实施中；Product 输入采用同步 Agent handoff。首个 owner slice 已让 Dash terminal history 与 Complete Agent read 保留真实 error code/message/retryability，并以 0095 hard cut 清理无法补证的旧 Dash execution facts。",
+  "notes": "已完成持久化权威收敛：Product使用LifecycleAgent owner document，Runtime/Host纯内存，concrete Agent独占执行history/effect，输入使用同步Agent handoff；详见 closeout.md。",
   "meta": {}
 }

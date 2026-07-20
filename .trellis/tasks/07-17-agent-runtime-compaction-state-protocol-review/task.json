@@ -3,7 +3,7 @@
   "name": "agent-runtime-compaction-state-protocol-review",
   "title": "Agent Runtime 最终架构收敛与状态协议重构",
   "description": "继承 07-10 尚未完成的目标，从第一性原理收敛统一 Agent Runtime、完整 Agent service seam、Dash Agent、AgentCore、状态权威、compaction、fork、协议投影与 crate 拓扑。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": "refactor",
   "scope": "agent-runtime",
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "codex-agent",
   "assignee": "codex-agent",
   "createdAt": "2026-07-17",
-  "completedAt": null,
+  "completedAt": "2026-07-20",
   "branch": "codex/agent-runtime-final-convergence-plan",
   "base_branch": "codex/agent-runtime-architecture-convergence",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "最终状态权威与持久化模型由 07-20-agent-runtime-persistence-authority-convergence 收口；Runtime/Host为进程内协调，Product保存业务owner document，concrete Agent保存执行history/effect。",
   "meta": {}
 }

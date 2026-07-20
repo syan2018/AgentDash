@@ -1,6 +1,8 @@
 # 数据库规范
 
-PostgreSQL + SQLx承载云端业务库与Managed Runtime durable facts。Local Integration Host的执行状态按process incarnation重建，避免把Dashboard schema生命周期引入Desktop与Standalone Runner启动链。
+PostgreSQL + SQLx 承载 Product 业务 owner、concrete Agent source/effect 与其他具有独立跨重启
+生命周期的事实。Agent Runtime 和 Complete Agent Host 按 process incarnation 重建；它们不以
+Dashboard schema 保存 operation、projection、route、generation 或 callback 状态。
 
 ## 基础规则
 
@@ -443,74 +445,6 @@ frame.surface = Some(surface_document);
 frame.apply_surface_projection();
 frame.attach_immutable_hook_plan(validated_hook_plan);
 repo.insert_frame(&frame).await?;
-```
-
----
-
-## Scenario: AgentRun Product Command Receipts
-
-### 1. Scope / Trigger
-
-AgentRun 产品命令的 client-command 幂等、结果重放或 accepted Runtime coordinate 持久化发生变化时。
-
-### 2. Signatures
-
-```sql
-CREATE TABLE agent_run_product_command_receipts (
-    scope_kind text NOT NULL,
-    scope_key text NOT NULL,
-    client_command_id text NOT NULL,
-    runtime_thread_id text,
-    runtime_operation_id text,
-    UNIQUE (scope_kind, scope_key, client_command_id),
-    CHECK (runtime_operation_id IS NULL OR runtime_thread_id IS NOT NULL)
-);
-```
-
-```rust
-pub struct AgentRunAcceptedRefs {
-    pub runtime_thread_id: Option<String>,
-    pub runtime_operation_id: Option<String>,
-}
-```
-
-### 3. Contracts
-
-- Product receipt 只拥有请求 digest、状态、结果重放与产品坐标；Managed Runtime 仍独占 operation/turn 状态。
-- accepted Runtime 引用使用 `runtime_thread_id + runtime_operation_id` 作为 Runtime 返回的
-  opaque typed evidence；Product 不对 Runtime owner document 的内部 operation 集合建外键。
-- 纯产品命令可以没有 Runtime operation；Runtime 命令被接受后必须保存原 operation ID。
-- `result_json` 保存对调用方返回的 typed response，用于同一 client command 的精确重放。
-
-### 4. Validation & Error Matrix
-
-| 条件 | 结果 |
-| --- | --- |
-| 相同 scope/client ID 与相同 digest | 返回首次 receipt/result，不重复 side effect |
-| 相同 scope/client ID 与不同 digest | typed digest conflict |
-| operation ID 存在但 thread ID 缺失 | Product CHECK 拒绝整个 accepted update |
-| Runtime command accepted 但 receipt 未保存 operation | API/application 测试失败，不得伪造 protocol turn ID |
-| receipt schema 缺失 | readiness 失败，不装配 repository |
-
-### 5. Cases
-
-- Good: compact command -> Runtime operation receipt -> product receipt stores thread/operation -> duplicate replays result。
-- Base: mailbox reorder has no Runtime operation and stores only product refs/result。
-- Bad: 把 Runtime operation ID 编码为 `protocol_turn_id`，或恢复已退役 RuntimeSession FK。
-
-### 6. Tests Required
-
-- Repository: claim/duplicate/digest conflict、accepted refs/result roundtrip，以及 operation
-  coordinate 缺少 thread 时的 Product CHECK。
-- Migration: fresh embedded PostgreSQL 与既有 schema 顺序升级后新表 ready，旧 `agent_run_command_receipts` 仍 retired。
-- API: cancel/compaction 接受后保存真实 operation ID；重复 client command 不产生第二 operation。
-
-### 7. Boundary / Canonical
-
-```text
-AgentRun product command -> product receipt claim -> Managed Runtime command
-                         -> accepted thread/operation refs + typed result
-                         -> duplicate result replay
 ```
 
 ---

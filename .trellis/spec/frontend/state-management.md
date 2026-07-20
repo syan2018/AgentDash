@@ -4,7 +4,9 @@
 
 - Project/Story/Task/Lifecycle stores保存产品read model。
 - AgentRun workspace state按`run_id + agent_id`保存当前产品shell、AgentFrame resource surface与Runtime inspect结果。
-- Runtime feed hook保存snapshot baseline、durable/transient cursor与连接状态；它不复制后端state machine。Snapshot entries标记为durable，live transient按generation lane聚合。
+- Runtime feed hook保存authoritative snapshot baseline、当前 live connection lane与连接状态；
+  它不复制后端或 concrete Agent state machine。Snapshot entries是committed baseline，live
+  partial delta只在当前lane聚合。
 - Runtime feed的`historyReplayBoundarySeq`由当前target第一次成功完成journal history load时建立，
   并在同target重连期间保持不变。source state是否需要reset只决定read model隔离，不决定
   history load是否已经成功；这样React StrictMode取消第一次effect setup后，第二次真正完成的
@@ -21,16 +23,18 @@
 
 - command enabled只来自canonical Runtime snapshot availability。
 - target变化立即隔离旧snapshot/feed/resource surface；loading期间不泄漏前一target状态。
-- reconnect携带durable cursor与transient generation/sequence，duplicate event不重复reduce；generation变化删除旧lane纯transient贡献但保留durable final，Lost和retention gap显示typed diagnostic。
-- failed/cancelled/lost item按item identity终结原entry/card；final durable item覆盖过程delta，terminal后的stale delta不再修改展示。
+- reconnect先重新读取authoritative snapshot，再建立新的live lane；duplicate event不重复reduce，
+  connection/source变化删除旧lane partial贡献。failed/cancelled/lost item按identity终结原entry，
+  snapshot terminal覆盖过程delta，terminal后的stale delta不再修改展示。
 - Backbone product/resource event只触发相应projection invalidate，不推进Runtime state。
 - live 标准 `thread_name_updated` 触发 AgentRun workspace state 与 list 的重新查询；初始
   hydration replay boundary 内的历史名称事件不重复执行该副作用。UI 不直接用事件 payload
   patch shell，原因是重新查询会统一应用 explicit workspace title 与 Runtime name 的后端
   优先级。
-- mailbox只显示queued intent与accepted Runtime operation；没有canonical endpoint的管理动作不进入model/intents。
+- LifecycleGate waiting items作为Product事实单独展示；Agent input handoff不进入持久队列model。
+  没有canonical endpoint的管理动作不进入model/intents。
 
-必须测试target切换、stale snapshot、cursor replay、availability、presentation URI与layout稳定性；
+必须测试target切换、stale snapshot、live lane重建、availability、presentation URI与layout稳定性；
 命令式 presentation 还必须覆盖“历史request不打开”“live request先刷新current projection”
 与“先打开 Tab、后执行 WorkspacePanel 首次初始化”的顺序。
 Runtime feed生命周期测试还必须覆盖StrictMode的`setup → cleanup → setup`：第一次load被取消、

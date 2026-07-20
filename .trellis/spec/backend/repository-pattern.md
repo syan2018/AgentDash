@@ -19,7 +19,11 @@
 
 跨 repository 用例使用具名 deps struct，例如 `AgentRunForkRepos`、`ProjectAgentRunStartRepos`、`DeliveryRuntimeSelectionRepositories` 或 workspace query deps。这样 constructor 签名表达真实依赖集合，测试 fixture 也必须显式构造该用例需要的 port。原因是全量 repository set 会把 service locator 伪装成业务依赖，难以判断某个用例是否跨越了不该跨的 aggregate。
 
-Agent Runtime persistence 不通过 `RepositorySet` 或通用 `SessionPersistence` 聚合表达。Product command/mailbox、Managed Runtime operation/projection/change/outbox、Host binding/effect/lease 与 Dash Agent history/execution ledger分别使用 owner-specific port；composition root 只装配这些窄端口。原因是不同 owner 的事务、CAS、恢复和 retention 语义不同，合并端口会制造跨事实域的假原子与第二权威。
+Agent Runtime 与 Complete Agent Host 不通过 `RepositorySet` 或通用 `SessionPersistence`
+表达，因为它们只拥有当前进程协调状态。composition root 只装配 Product owner repository、
+concrete Agent store 与真实 Tool/Hook effect owner。LifecycleAgent 的 frames/association 通过
+owner-scoped repository 读写；Dash history/effect 通过 Complete Agent store 读写。原因是
+repository 必须对应跨重启仍成立的唯一业务 owner，而不是为中间层缓存或路由提供落库位置。
 
 ---
 

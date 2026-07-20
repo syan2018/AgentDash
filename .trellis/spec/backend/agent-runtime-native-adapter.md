@@ -1,272 +1,141 @@
-# Native Agent Runtime Adapter and Clean Agent Core
+# Dash Complete Agent 与 Clean Agent Core
 
 ## 1. Scope / Trigger
 
-本规范适用于 first-party Native Agent service contribution、Native `AgentRuntimeDriver`、Agent Core依赖边界，以及Managed Runtime Surface/Context/Tool/Hook能力到本地Agent loop的映射。修改Native descriptor、bind/dispatch/inspect、exact context/compaction、Core delegate或旧Pi切换时必须复核本规范。
+本规范适用于 first-party Dash Complete Agent、`DashAgentRepositoryState`、Agent Core、
+provider bridge、execution callbacks、native history/context/fork/compaction 与 live event。
+修改 Dash source document、Core callback、terminal evidence 或 Complete Agent adapter 时必须复核。
+
+Dash 是 concrete Agent owner：它保存自己的 source/history/effect，并实现平台中立
+`CompleteAgentService`。Runtime 与 Product 不复制这些事实。
 
 ## 2. Signatures
 
 ```rust
-pub fn native_agent_contribution(
-    resolver: Arc<dyn NativeBridgeResolver>,
-) -> AgentRuntimeDriverContribution;
-
-pub struct NativeAgentRuntimeIntegration { /* explicit resolver */ }
-
-impl AgentRuntimeDriver for NativeAgentDriver {
-    async fn describe(&self) -> Result<RuntimeDescriptor, DriverError>;
-    async fn bind(&self, request: DriverBindRequest)
-        -> Result<DriverBinding, DriverError>;
-    async fn dispatch(
-        &self,
-        request: DriverCommandEnvelope,
-        sink: Arc<dyn DriverEventSink>,
-    ) -> Result<DriverDispatchReceipt, DriverError>;
-    async fn inspect(&self, request: DriverInspectRequest)
-        -> Result<DriverInspectResult, DriverError>;
+pub struct DashAgentRepositoryState {
+    pub store: DashAgentStore,
+    // source-owned execution/context facts
 }
 
-impl ConversationNamer {
-    pub async fn generate(
+pub trait DashAgentRepository {
+    async fn load(&self) -> Result<DashAgentRepositoryState, DashServiceError>;
+    async fn compare_and_swap(
         &self,
-        input: ConversationNamingInput,
-    ) -> Result<ConversationName, ConversationNamingError>;
-}
-
-DriverCommandEnvelope {
-    request_id,
-    binding_id,
-    generation,
-    source_thread_id,
-    runtime_turn_id: Option<RuntimeTurnId>,
-    command,
+        expected: DashAgentRepositoryState,
+        replacement: DashAgentRepositoryState,
+    ) -> Result<(), DashServiceError>;
 }
 ```
 
 ```rust
-async fn process_responses_stream(
-    response: reqwest::Response,
-    read_error_context: &str,
-    tx: &mpsc::Sender<StreamChunk>,
-) -> Result<(), BridgeError>;
+pub struct DashAgentCompleteService { /* store + bridge + live channels */ }
 
-enum ResponsesEventDisposition {
-    Continue,
-    Completed,
+impl CompleteAgentService for DashAgentCompleteService {
+    async fn create(...);
+    async fn resume(...);
+    async fn fork(...);
+    async fn execute(...);
+    async fn read(...);
+    async fn changes(...);
+    async fn live_events(...);
+    async fn inspect(...);
+    async fn apply_surface(...);
 }
 ```
 
 ```rust
-pub struct AgentLiveEvent {
-    pub source: AgentSourceCoordinate,
-    pub turn_id: AgentTurnId,
-    pub item_id: AgentItemId,
-    pub sequence: AgentServiceU64,
-    pub payload: AgentLiveEventPayload,
-}
-
-#[async_trait]
-pub trait AgentLiveEventStream: Send {
-    async fn next(&mut self) -> Result<Option<AgentLiveEvent>, AgentServiceError>;
-}
-
-#[async_trait]
-pub trait CompleteAgentService: Send + Sync {
-    async fn live_events(
-        &self,
-        source: AgentSourceCoordinate,
-    ) -> Result<Box<dyn AgentLiveEventStream>, AgentServiceError>;
+pub trait DashExecutionCallbacks {
+    async fn on_event(&self, event: DashExecutionEvent) -> Result<(), DashCoreError>;
 }
 ```
-
-Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver只解析真实Native bridge；生产composition显式构造Integration，不使用全局静态connector。
 
 ## 3. Contracts
 
-- Native service通过与Codex/企业service相同的Integration contribution/factory进入Host。Application/router不按Pi或Native类型分支，service descriptor与conformance是能力事实源。
-- Native service instance使用schema-validated `provider`、`model`与显式`credential_scope`。`credential_scope`只能是平台凭据或带非空`user_id`的账户凭据；缺失scope不得解释为平台回退。instance只保存凭据查找坐标，API key/OAuth token仍由repository/secret codec在driver激活时短暂解析。
-- Bind intent显式区分Start、Resume与Fork。Resume必须保留source thread；Fork必须导入请求指定的checkpoint并验证checkpoint ID/context digest，不能选择任意最新context。
-- Native descriptor只声明实际原生支持的输入与能力。Runtime输入仍使用与Codex app-server同构的完整`UserInputBlock`；当前仅Text/Image可在adapter边界翻译进入本地Core。LocalImage/Skill/Mention/Structured不得文本拍平冒充支持，必须在request lock、status event、prompt或任何side effect前typed Unsupported。空数组与纯空白Text必须在同一边界typed Rejected，不能启动一个没有canonical content的Agent turn。
-- Surface materialization返回真实surface/tool-set/hook plan revision与digest。ToolSetReplace receipt必须携带`DriverToolSetApplyReceipt`；其他命令为None。Host只依据ack开放required dispatch gate。
-- Platform tools通过WP03 Direct Callback Broker；Native driver不接收`DynAgentTool`、application delegate、credential或VFS runtime object。Approval使用canonical Interaction。
-- Native tool callback通过Platform Tool Broker执行并提交canonical internal lifecycle；Native Agent Core vendor stream按binding的effective `VendorStream` route发布唯一session-visible ItemStarted/update/terminal。Broker不为同一调用再发布presentation。只有effective route明确为`ToolBroker`时，Native mapper抑制vendor presentation并由Broker投影展示。
-- Native从durable Runtime journal的presentation与internal facts共同恢复provider transcript，覆盖user、assistant、paired tool-call/result、shell/fs/MCP/native typed item与compaction tail。session-scoped identity allocator从durable presentation ID恢复水位，使rebind后的tool/command/readable ref继续单调递增。
-- AgentCore callback facets只表达真实inner-loop Hook点，业务Hook plan/rule仍由Runtime拥有。Native driver不得查询workflow/project/repository。
-- Context read/Thread projection使用typed inspect。Managed compaction只接受Runtime已durable candidate activation，验证activation/checkpoint/digest后幂等应用；Native Core不拥有AgentDash自动压缩策略或checkpoint事实源。
-- Turn、steer、interrupt、settings与tool replace按binding/request维度幂等。Active-turn fence在成功、mapper error、sink error、Agent task error与cancel所有路径都必须finally清理；失败turn不能继续被steer/interrupt命中。
-- Dash provider/Core 失败以 `code + message + retryable` 作为 Agent-owned terminal evidence
-  写入 native history，并由 Complete Agent snapshot/change 原样投影。原因是 Agent history
-  是执行结果的恢复权威；如果先压缩成通用错误文案，Runtime、Product 与 UI 都无法在重连后
-  恢复已经丢失的失败语义。
-- Dash execution callback 在 source service 打开时一次性绑定到 Complete Agent live sink。
-  `AgentLiveEvent.sequence` 只在当前 Complete Agent 进程和 source 内保证递增；事件只用于
-  in-flight presentation，不是 history/change receipt，也不进入 Runtime、Host 或 Product
-  持久化。原因是 partial delta 在终态前可以丢失，而断线恢复需要的是 concrete Agent 已提交的
-  authoritative snapshot，不是平台复制的 durable tail。
-- Complete Agent live stream 慢消费者发生 broadcast gap 时返回 retryable typed
-  `Unavailable`，消费者必须重新 `read(source)` 建立权威 baseline 后再订阅。没有订阅者时
-  callback 仍成功完成，因为 live observation 不参与 Agent execution commit；production
-  composition 若根本没有绑定 source-scoped sink，则必须在执行边界暴露 callback 配置错误，
-  原因是缺失观测链路与暂时没有消费者是两种不同的系统状态。
-- `ThreadStart`/`TurnStart` 的 canonical Turn identity 由 Managed Runtime 根据 accepted operation分配，并通过`DriverCommandEnvelope.runtime_turn_id`交给Driver。Native只生成`DriverTurnId`作为source coordinate；普通事件、Tool callback与Hook callback都必须同时保留这两套坐标，不能把source ID转换成Runtime ID。
-- `TurnStart` acceptance已经把canonical `TurnStarted`写入Runtime projection；Driver回报相同`runtime_turn_id`的`TurnStarted`是同身份ack，不新增第二条lifecycle transition。不同identity仍属于critical protocol violation。
-- Driver一旦已经发送`TurnTerminal`，底层Agent task返回同一失败只能形成成功的dispatch completion；否则durable outbox会把已终态命令当成“acceptance前拒绝”重派。只有尚未产生authoritative terminal的Rejected/Lost才向dispatch caller返回错误。
-- Driver使用`Arc<dyn DriverEventSink>`，streaming和terminal可以异步送达；authoritative sink failure必须向上返回，不能静默丢事件后报告成功。
-- Provider retry/status只映射为完整ephemeral `PlatformEvent::ProviderAttemptStatus` presentation；Native mapper不生成第二份internal transient summary。该状态不推进durable Runtime revision或cursor。
-- event sink返回`DriverError::Terminalized`表示Managed Runtime已原子提交critical terminal；Native accepted-turn pump必须立即停止并清理active-turn fence，不再发送后续terminal或fallback `BindingLost`。其它sink error继续按其原有失败语义传播。
-- Clean Agent Core只拥有provider-neutral inference/stream/tool loop。它不依赖Application、Domain、Codex/Backbone/vendor DTO、AgentDash lifecycle prompt、runtime compaction policy或repository。
-- Provider-specific DTO放在protocol/adapter；`ThinkingLevel`是provider-neutral Core type。Core不公开RuntimeCompactionDelegate，也不执行pre-provider/compact-only/manual AgentDash policy。
-- Native 会话命名复用独立 `ConversationNamer` 调用同一 provider bridge。首个成功 turn 的
-  candidate 包含该 `AgentEnd` 批次中全部 canonical User（包括 steer）以及最后一条非
-  Error/Aborted、含非空 Text 的 Assistant；reasoning-only terminal 不触发命名，原因是标题
-  必须概括用户目标与最终可见回答。
-- naming gate 在 canonical terminal sink 前原子 claim，只有 terminal sink 成功后才启动
-  后台命名；名称以 binding-level durable `ThreadNameUpdated` 回送，operation/turn/item/
-  request/entry 坐标全部为空。cold bind 从 `DriverTranscript.current_thread_name` 初始化 gate，
-  已有名称不会重复调用；名称清除后的 live binding 保持已命名状态，下一次 cold bind/rebind
-  再从 committed projection 决定是否命名，从而避免扫描 journal 与运行中竞态。
-- `ConversationNamer` 的模型请求不携带tools；输出依次去除空行、Markdown heading、成对
-  Markdown/引号包装并按Unicode scalar截断到22字符。空值或只含包装符的输出是
-  `InvalidOutput`，不能生成空白标准事件。
-- API旧Pi生产构造入口在Native阶段删除。Provider registry从legacy Pi源码抽离、Pi物理删除与runtime-session dead compaction SPI删除随WP08唯一cutover完成，不保留双轨或fallback。
-- Responses bridge以协议事件定义推理轮次终态。完整解析`response.completed`并归约usage后立即发送唯一`StreamChunk::Done`并停止读取transport；HTTP EOF只证明传输结束，不能替代协议terminal。
-- 命名的`response.*`/`error`事件必须是合法JSON。协议terminal之前的decoder/read错误保留原Provider分类；没有`response.completed`的EOF形成retryable `stream_disconnected`。无名keepalive/`[DONE]`仅作为transport sentinel忽略。
+- 一个 Dash source 使用一个 canonical repository document 保存 history、context、branch、
+  command/effect state 与 compaction facts。document 内部 CAS 可以使用 owner revision；数据库
+  不再拆出 branch/history/command/effect/change 关系镜像。
+- source metadata 与 repository描述同一个 concrete Agent source，必须在同一 Dash source
+  document/atomic commit 中更新。
+- Create 前还没有 source coordinate 的 effect 可以保留独立 `effect_id` lookup receipt。
+  receipt 属于 Dash Complete Agent，用于 `inspect`，不进入 Runtime/Host/Product。
+- `create/fork/execute/apply_surface` 使用稳定 effect identity。相同 identity + 相同 request
+  返回原 receipt；不同 request 返回 typed conflict。
+- `read` 从 Dash document 投影 authoritative history/context/lifecycle。`changes` 只发布 Dash
+  自己真正保存的 change evidence；平台不能替 Dash 发明 durable cursor。
+- Provider/Core 失败以真实 `code + message + retryable` 写入 Dash terminal history并通过
+  `read/changes` 原样投影。通用错误文案不能替代 owner evidence。
+- source service 打开时必须把真实 `DashExecutionCallbacks` 绑定到 source-scoped Complete Agent
+  live sink。未绑定 callback 是 composition error；当前没有 subscriber 不是错误。
+- `AgentLiveEvent` 是进程内 partial delta，sequence 只在当前 service process + source 内单调。
+  broadcast lag 返回 retryable unavailable；消费者重新 `read`，不从 Runtime DB replay。
+- Core 只拥有 provider-neutral inference/stream/tool loop，不依赖 Product workflow、
+  Lifecycle、PostgreSQL repository、Codex DTO 或 Runtime persistence。
+- Tool/Hook 通过 Host callback route调用真实 handler。Dash 在 callback identity 上重试；
+  handler owner负责副作用幂等。
+- compaction/fork/context state 属于 Dash source。Product只保存 fork lineage与 source
+  association，不复制 checkpoint/history digest作为执行 authority。
+- provider protocol terminal决定一次 model response是否完成。transport EOF不能冒充 terminal；
+  解码/断流保留 provider分类。
 
 ## 4. Validation & Error Matrix
 
-| 场景 | 必须得到的结果 |
+| 场景 | 必须结果 |
 | --- | --- |
-| Start/Resume/Fork缺少或错用source coordinate | typed bind error，无session side effect |
-| user credential scope缺失或user_id为空 | typed configuration error，不尝试平台全局凭据 |
-| Fork broker返回非请求checkpoint/digest | reject，不激活context |
-| LocalImage/Skill/Mention/Structured输入 | side effect前Unsupported，不改变标准Runtime输入事实 |
-| 空数组或纯空白Text输入 | side effect前Rejected，不进入Agent loop |
-| surface/tool/hook applied digest不匹配 | Host gate保持未应用/失败 |
-| duplicate ToolSetReplace | 返回相同revision/digest receipt，不重复替换 |
-| compaction activation重复 | exact idempotent receipt |
-| compaction activation digest不匹配 | reject，不改变live context |
-| mapper/sink/Agent task失败 | error传播且active-turn fence清理 |
-| Provider retry/status | 仅一份ephemeral presentation；无internal fact、durable revision或binding loss |
-| Complete Agent live subscriber 正常跟随 | 同一 source 的事件 sequence 单调递增，delta 保留 turn/item identity |
-| live subscriber 落后于进程内 broadcast 容量 | retryable `Unavailable`；重读 authoritative snapshot，不回放平台 durable tail |
-| 当前没有 live subscriber | Agent execution/history commit 不受影响；后续读取从 authoritative snapshot 恢复 |
-| production source 未绑定 live sink | 返回 callback 配置错误，使缺失链路与暂时没有消费者保持可区分 |
-| sink返回`Terminalized` | accepted-turn pump停止并清理fence，不追加`BindingLost` |
-| 首个成功terminal后命名成功 | terminal先可观察；随后唯一binding-level durable名称事件 |
-| 命名provider或sink失败 | 主turn结果保持成功；gate回到可重试状态，后续成功turn可再次claim |
-| 命名输出为空、只有包装符或超过22个Unicode scalar | 空标题拒绝并允许后续重试；有效标题规范化并截断后发送 |
-| 已有`current_thread_name`的cold bind | gate初始化为Present；后续成功turn不调用命名模型 |
-| live binding收到名称clear | 当前NativeThread仍保持Present；只有下一次cold bind/rebind按projection重新判断 |
-| Turn命令缺少`runtime_turn_id` | side effect前critical protocol error |
-| Tool/Hook callback把source turn作为Runtime turn | Runtime transition拒绝；不得写第二套坐标 |
-| Native与Broker分别投影同一tool started payload | contract violation；只允许binding effective presentation route选中的owner提交 |
-| effective route为`VendorStream`的Native platform tool | Broker只提交internal lifecycle；Native vendor start/update/terminal使用同一presentation ID并继续provider loop |
-| cold rebind存在历史tool pair与presentation ID | provider transcript保留配对调用/结果；下一ID高于durable水位 |
-| canonical Turn已accepted后Driver回报同identity `TurnStarted` | `Observed` ack；revision/cursor不推进 |
-| 已发送`TurnTerminal`后Agent task返回错误 | dispatch成功收口并ack outbox，不重派命令 |
-| 失败后steer/interrupt旧turn | Rejected |
-| stale binding/generation | fence，不发送Core command/event |
-| Core依赖domain/vendor/application | dependency/spec gate失败 |
-| `response.completed`后transport保持连接或继续报错 | 已归约消息立即且仅一次`Done`；不再轮询body |
-| transport在协议terminal前EOF | retryable Provider error，code=`stream_disconnected` |
-| 命名Responses事件包含非法JSON | fatal Provider error，code=`response_decode_error` |
-| 合法`response.failed`/`error` | 保留Provider返回的失败消息与分类，不形成`Done` |
+| source document CAS conflict | reload owner document并按 typed command重试/冲突 |
+| effect identity相同且request相同 | 返回原 receipt |
+| effect identity相同但request不同 | typed idempotency conflict |
+| unsupported input family | Core side effect 前 typed unsupported |
+| 空输入 | side effect 前 rejected |
+| provider失败 | terminal history保留真实 code/message/retryable |
+| source callback未绑定 | composition/configuration error |
+| 没有 live subscriber | execution/history commit 正常完成 |
+| live subscriber lagged | retryable unavailable；重新 read |
+| fork cutoff/context digest不匹配 | typed reject；source document不变 |
+| transport在provider terminal前EOF | retryable `stream_disconnected` |
+| provider terminal后transport继续开放 | 逻辑 response立即完成且只完成一次 |
 
 ## 5. Good / Base / Bad Cases
 
-**Good case:** Host用Native contribution激活service，Fork bind从Context Broker取得指定checkpoint并验证digest，surface/tool/hook ack后以Managed分配的Turn ID启动；Direct Callback工具经Broker执行，Runtime/source坐标同时保留，流式事件通过Arc sink持续进入Runtime，终态清理active fence并ack outbox。
-
-**Base case:** 相同request重放返回原binding/receipt，ToolSet revision和compaction activation不会重复产生副作用。
-
-**Bad case:** Adapter把Structured序列化成普通文本却在profile声明Structured Native，或把`DriverTurnId`直接作为`RuntimeTurnId`发给Tool/Hook callback。这会产生虚假能力或第二Turn identity，必须拒绝。
-
-**Provider terminal case:** `response.completed`到达后即使HTTP/2 body仍开放，Agent Core也取得完整assistant/tool-call/usage并继续tool loop或结束Turn；没有协议terminal的断流保持可诊断失败。
-
-**Live stream case:** UI 连接期间消费 Complete Agent source 的进程内 delta；连接断开或出现
-gap 后丢弃 partial presentation，重新读取同一 source 的 authoritative history，再建立新的
-live subscription。Runtime 只做 normalize/broadcast，不保存 replay tail。
-
-**Conversation naming case:** 首个含可见final assistant文本的成功turn先提交terminal，再异步调用
-无tools命名请求并提交binding-level标准事件；reasoning-only terminal不产生候选，也不占用gate。
+- Good：Dash command 原子更新 source document，live callback 同时发布 partial delta；重连从
+  同一 document read 得到完整终态。
+- Base：live subscriber掉线，Core继续执行并提交 history；新 subscriber先 read再订阅。
+- Bad：Dash 同时写 repository JSONB 与 history/effect镜像，再逐次校验相等。镜像没有独立
+  owner，只会制造 drift。
+- Bad：生产 composition 注入 Noop execution callback。输入可能执行成功，但用户永远看不到
+  live delta。
 
 ## 6. Tests Required
 
-- Native behavior覆盖contribution/factory、truthful descriptor、Start/Resume/Fork、exact checkpoint/digest、Turn/steer/interrupt/settings/idempotency。
-- 覆盖surface/tool/hook applied receipts、hot ToolSetReplace、Direct Callback、approval Interaction与typed inspect。
-- Direct Callback测试必须让source/runtime/presentation item ID不同，并覆盖ApplyPatch、shell control及重复调用经Broker执行且不发生idempotency conflict；`VendorStream`组合场景断言Broker internal与Native presentation各自恰好一次。
-- 覆盖managed compaction exact activation、wrong digest/checkpoint、duplicate replay和digest选择不依赖map ordering。
-- 覆盖标准Text/Image映射、空数组/纯空白拒绝、LocalImage/Skill/Mention/Structured在任何副作用前Unsupported，以及mapper/sink/task error的active fence清理。
-- 覆盖Provider retry/status只有ephemeral presentation，以及`Terminalized`在至少一次成功emit后停止pump、零fallback `BindingLost`。
-- Runtime interface覆盖matching Driver `TurnStarted`只得到`Observed`且revision不变；Native工具轮次覆盖Tool/Hook使用canonical Turn、terminal后task error不触发同request重派。
-- recovery测试从真实durable journal重建完整user/assistant/tool-call/tool-result transcript，并覆盖compaction边界后的tail replay、typed shell/fs/MCP item与readable ID水位。
-- Contract/Wire/TestSupport/Host conformance与generated TS/schema check必须通过。
-- Agent Core dependency tree与source scan必须证明无Application/Domain/Codex/Backbone/repository依赖；Core/Native strict clippy与tests通过。
-- WP08必须验证provider registry抽离后legacy Pi与dead runtime-session compaction SPI物理删除、生产Host composition使用Native Integration。
-- Responses bridge测试覆盖terminal后transport挂起、terminal后decoder error、terminal前EOF/read error、命名非法JSON、合法`response.failed`，并断言content/reasoning/tool calls/usage与`Done` exactly-once。
-- Complete Agent integration测试必须在执行前订阅 live stream，断言 source/turn/item identity、
-  source-local sequence 与真实 text delta；执行后再从 authoritative snapshot 断言同一 turn
-  已终态。production composition测试必须由同一 service registration 同时证明 live delta 和
-  authoritative read，原因是孤立的 Core callback 单测不能证明用户可见链路已经连通。
-- Conversation naming测试覆盖同turn全部User（含steer）+最后可见Assistant候选、reasoning-only/
-  Error/Aborted排除、terminal-before-name时序、single in-flight、provider/sink失败重试、cold bind
-  已命名跳过、无tools请求、nested wrapper清理与22字符Unicode截断。
+- Dash repository测试覆盖首次 create、CAS、restart read、fork、compaction与 owner document
+  原子性。
+- Complete Agent tests覆盖 create/resume/fork/execute/read/changes/inspect/apply surface及
+  stable effect replay/conflict。
+- failure tests断言 provider/Core code、message、retryable 在 terminal history与 Agent snapshot
+  一致。
+- live composition test在执行前订阅，断言真实 text/reasoning/tool delta；执行后从 read断言
+  同 turn 已终态。
+- lag/no-subscriber tests区分临时没有观察者与 callback未装配。
+- source scan/migration test断言 Dash关系镜像表和 production Noop callback缺席。
+- Core dependency test断言不依赖 Application/Domain workflow/vendor DTO/repository。
 
 ## 7. Wrong vs Correct
 
 ```rust
-// Wrong: profile声称Structured，但adapter只是format成文本。
-RuntimeInput::Structured { value, .. } => ContentPart::text(value.to_string())
+// Wrong: 同一个 source 写两份执行事实。
+save_dash_document(&state).await?;
+replace_history_rows(&state.store.history).await?;
 
-// Correct: 未实现保持语义的ingress时，在任何副作用前typed拒绝。
-RuntimeInput::Structured { .. } => return Err(DriverError::Unsupported(...))
+// Correct: Dash owner document是唯一原子事实。
+repository.compare_and_swap(expected, replacement).await?;
 ```
 
 ```rust
-// Wrong: `?`提前返回留下active turn。
-self.active_turn.insert(turn_id.clone());
-run_agent(...).await?;
-self.active_turn.remove(&turn_id);
+// Wrong: live delta缺失时从平台 durable projection恢复。
+let replay = runtime_projection.load_changes(source).await?;
 
-// Correct: 所有成功/失败路径统一清理fence，再返回原结果。
-let result = run_agent(...).await;
-self.active_turn.remove(&turn_id);
-result
-```
-
-```rust
-// Wrong: source coordinate成为第二套Runtime identity。
-let turn_id = RuntimeTurnId::new(source_turn_id.to_string())?;
-
-// Correct: Runtime identity由accepted operation分配，source coordinate只用于Driver映射。
-let turn_id = envelope.runtime_turn_id.clone().ok_or(DriverError::ProtocolViolation { .. })?;
-tool_callback.invoke(DriverToolInvocation {
-    turn_id,
-    source_turn_id,
-    ..
+// Correct: partial stream失效后读取 concrete Agent authority。
+let snapshot = dash_complete_agent.read(AgentReadQuery {
+    source,
+    at_revision: None,
 }).await?;
-```
-
-```rust
-// Wrong: transport lifetime delays the logical Agent message terminal.
-while let Some(chunk) = response.chunk().await? { reduce(chunk); }
-tx.send(StreamChunk::Done(state.into_response())).await?;
-
-// Correct: the provider protocol terminal ends logical production immediately.
-if reduce(event)? == ResponsesEventDisposition::Completed {
-    return send_responses_done(state, tx).await;
-}
-```
-
-```rust
-// Wrong: 在主turn terminal前等待辅助命名，失败时连带turn失败。
-let name = namer.generate(candidate).await?;
-sink.emit(thread_name_updated(name)).await?;
-sink.emit(turn_terminal).await?;
-
-// Correct: claim只防并发；terminal成功后才分离辅助命名，失败只重置gate。
-let claimed = thread.claim_naming().await;
-sink.emit(turn_terminal).await?;
-if claimed {
-    spawn_background_naming(candidate);
-}
 ```

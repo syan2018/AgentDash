@@ -19,15 +19,15 @@
 | [Diagnostics Guidelines](./diagnostics-guidelines.md) | 平台过程诊断 `diag!` facade、Subsystem、落地与查询 |
 | [Logging Guidelines](./logging-guidelines.md) | 日志级别 / 字段 / 脱敏通用约定 |
 | [Runtime Gateway](./runtime-gateway.md) | runtime action 调用边界 |
-| [Managed Agent Runtime Kernel](./agent-runtime-kernel.md) | operation/journal/projection/outbox原子事务、幂等、cursor与Lost收敛合同 |
+| [In-Memory Agent Runtime Kernel](./agent-runtime-kernel.md) | 同步 command handoff、Agent read/inspect、live normalize 与重连合同 |
 | [Managed Agent Runtime Context](./agent-runtime-context.md) | ContextRecipe/checkpoint/head fidelity与managed compaction activation/recovery合同 |
-| [Agent Runtime Owner-Document Persistence](./agent-runtime-persistence.md) | Runtime/Host/Callback canonical JSONB、跨owner evidence与Product consumer cursor合同 |
+| [Agent Runtime 持久化权威](./agent-runtime-persistence.md) | Product owner document、concrete Agent authority 与 Runtime/Host 纯内存边界 |
 | [Managed Agent Runtime Hook Orchestration](./agent-runtime-hooks.md) | immutable HookPlan、canonical HookRun、failure policy、effect与恢复合同 |
 | [Business Agent Surface and Platform Tool Broker](./agent-runtime-surface-tool-broker.md) | capability编译、profile binding与callable tool执行合同 |
-| [Integration Agent Runtime Driver Host](./agent-runtime-driver-host.md) | service contribution、offer、sticky binding、lease与source fencing合同 |
-| [Native Agent Runtime Adapter and Clean Agent Core](./agent-runtime-native-adapter.md) | Native driver、exact context、truthful profile与Clean Core合同 |
+| [Integration Complete Agent Host](./agent-runtime-driver-host.md) | service contribution、live attachment、surface、route 与 callback fencing合同 |
+| [Dash Complete Agent 与 Clean Agent Core](./agent-runtime-native-adapter.md) | Dash source authority、真实 execution callbacks 与 Clean Core合同 |
 | [Codex App Server Runtime Adapter](./agent-runtime-codex-adapter.md) | App Server lifecycle、typed input/interaction、opaque context与native Hook合同 |
-| [AgentRun Runtime Facade and Product Cutover](./agent-runtime-agentrun-facade.md) | 产品命令映射、canonical Runtime读写边界、生产装配与旧schema切换合同 |
+| [AgentRun Product / Agent Facade](./agent-runtime-agentrun-facade.md) | 同步 input handoff、Product shell、Agent read/live 组合合同 |
 | [Embedded Skill Bundles](./embedded-skill-bundles.md) | 源码内嵌 skill bundle 契约 |
 
 ## 模块 Architecture

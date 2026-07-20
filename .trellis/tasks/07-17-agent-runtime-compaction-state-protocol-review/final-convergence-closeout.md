@@ -1,9 +1,22 @@
 # Agent Runtime 最终收敛与收尾计划
 
-> 状态：执行中
+## 2026-07-20 Persistence authority closure
+
+最终权威模型由
+[`07-20-agent-runtime-persistence-authority-convergence`](../07-20-agent-runtime-persistence-authority-convergence/)
+完成：
+
+- Product使用LifecycleAgent owner document保存AgentFrame history与concrete Agent association；
+- Agent Runtime与Complete Agent Host只维护当前进程协调、route与live state；
+- concrete Agent通过`read/changes/inspect`拥有source history、context、fork、compaction与effect；
+- Product input使用同步Agent handoff，成功边界是concrete Agent receipt；
+- conversation以Agent authoritative snapshot为baseline，live delta只属于当前连接lane。
+
+这组边界成为后续Runtime、Host、Product与Native adapter规范的共同authority。
+
+> 状态：已完成
 >
-> 当前阶段：S4 Product Lane 与 S5 Atomic Hard Cut 已完成；正在执行
-> S6 Final Conformance 与 spec 同步
+> 最终权威：Product owner document + in-memory Runtime/Host + concrete Agent source/effect
 >
 > Product 控制面 oracle：`58c537b7`（`c3cc58b9^`）
 

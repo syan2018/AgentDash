@@ -192,7 +192,11 @@ let output = provider.discover_from_vfs(context, files).await;
 
 同一Canvas mount同时提供Workspace Module实例身份和`{canvas_mount_id}://...`文件面；`canvas-system`作为lifecycle-projected SkillAsset进入同一AgentRun skill baseline。ProjectAgent preset只保留长期授权策略，不复制当前Canvas集合。
 
-Canvas runtime observation 与 interaction snapshot 不是 capability transition。它们由 AgentRun→Canvas 引用上的 runtime state repository 保存，Agent 通过 `canvas.inspect` / `canvas.get_interaction_state` operation 查询 latest facts；查询本身不追加 mailbox、不修改 frame revision，也不把状态自动写入模型历史。只有 Canvas source 通过 `window.agentdash.agent.submit(...)` 发起显式用户动作时，后端才把请求转换为 canonical `UserInput` 并进入 AgentRun mailbox。
+Canvas runtime observation 与 interaction snapshot 不是 capability transition。它们由
+AgentRun→Canvas 引用上的 Canvas owner facts提供，Agent 通过 `canvas.inspect` /
+`canvas.get_interaction_state` operation查询latest facts；查询不修改frame revision，也不把状态
+自动写入模型历史。Canvas source通过 `window.agentdash.agent.submit(...)` 发起显式用户动作时，
+后端把请求转换为 canonical Agent input并同步交接给目标 AgentRun。
 
 ## Registry Ordering
 

@@ -27,9 +27,9 @@
 | `agentdash-application-shared-library` | Shared Library seed、external marketplace import/refresh、Project install/publish/source-status use cases |
 | `agentdash-domain` | 实体、值对象、Repository trait、领域错误 |
 | `agentdash-infrastructure` | PostgreSQL / SQLite 持久化实现 |
-| `agentdash-agent-runtime-contract` | Application ↔ Managed Runtime command、snapshot、change 与 availability contract |
-| `agentdash-agent-runtime` | Managed Runtime operation、admission、normalized projection、change/outbox 与 Tool Broker |
-| `agentdash-agent-runtime-host` | Complete Agent service instance、offer、binding、generation、effect 与 recovery host |
+| `agentdash-agent-runtime-contract` | Application ↔ Agent Runtime 的平台中立 command、snapshot 与 presentation contract |
+| `agentdash-agent-runtime` | 进程内 command 协调、Agent snapshot normalize、live broadcast 与 Tool Broker |
+| `agentdash-agent-runtime-host` | 当前进程的 Complete Agent service、offer、binding、generation 与 callback route |
 | `agentdash-agent-runtime-wire` | Cloud/Local 与 Remote Complete Agent 的 typed bidirectional transport |
 | `agentdash-integration-native-agent` | Dash Agent 的 Complete Agent service adapter |
 | `agentdash-integration-codex` | Codex App Server 到 Complete Agent service 的 anti-corruption adapter |
@@ -84,7 +84,10 @@ Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService`
 ## Local Decisions
 
 - Repository trait 按 aggregate 边界定义，原因是持久化接口应反映领域一致性边界，而不是表结构。
-- Product command/mailbox、Managed Runtime operation/change/outbox、Host effect/binding 与 Dash Agent history 分别由其 typed owner contract 定义，原因是这些事实具有不同事务和恢复权威，不能再聚合进平台 `SessionPersistence`。
+- Product lifecycle/workflow、concrete Agent source/effect 与实际 Tool/Hook effect 分别由其
+  typed owner contract 定义，原因是只有拥有跨重启业务承诺的一端才需要 repository。
+  Agent Runtime 与 Complete Agent Host 由 Product association 和 Agent `read/inspect` 重建，
+  因而只保存当前进程的协调与路由状态。
 - `RepositorySet` 只作为 application/bootstrap composition result 保留，原因是启动期需要统一持有 repository ports；业务用例使用具名 deps struct，原因是 constructor 签名必须暴露真实 aggregate 依赖，避免 service locator 进入 application 逻辑。
 - PostgreSQL migration 与 SQLite 初始化策略分开维护，原因是云端业务库需要统一可审计 schema 历史，本机会话缓存则由本机 runtime 拥有 per-user 初始化生命周期。
 - Project 授权放在 domain，原因是角色、主体 grant 与 template 可见性属于 Project 聚合语义，MCP 与 API 都需要在不反向依赖 application 的情况下复用同一判定。`ProjectAuthorizationContext` 保留认证身份的 `user_id` 与 `subject` 别名，原因是企业目录解析、登录态 claim 与授权持久化可能使用不同但等价的用户标识，Project 角色判定需要在同一领域入口完成身份收束。Backend 授权放在 application，原因是 backend scope 可能需要组合 Backend 与 Project repository，属于跨聚合用例编排。
